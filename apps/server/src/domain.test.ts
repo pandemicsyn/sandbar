@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sha256 } from "@sandbar/core";
 import { startFakeProviderServer } from "@sandbar/provider-fake";
 import { openDomainRuntime } from "./runtime";
 
@@ -66,7 +67,8 @@ test("API persists ambiguous create and exec, then observes each once after rest
     expect((await runtime.store.getOperation(project.id, exec.value.operation.id))?.result_json).not.toContain("hello from fake");
     const bytes = Uint8Array.from([0, 255, 1]);
     const write = await runtime.app.request(`/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/blob`, { method: "PUT", headers: { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() }, body: bytes });
-    expect([200, 202]).toContain(write.status);
+    expect(write.status).toBe(200);
+    expect((await write.json() as any).bytesWritten).toBe(bytes.length);
     const read = await runtime.app.request(`/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/blob`, { headers: bearer });
     expect(read.status).toBe(200);
     expect(new Uint8Array(await read.arrayBuffer())).toEqual(bytes);
@@ -77,10 +79,81 @@ test("API persists ambiguous create and exec, then observes each once after rest
     expect(lostOperation.status).toBe("unknown");
     await json(`/v1/projects/${project.id}/operations/${lostOperation.id}/reconcile`, "POST", {}, bearer);
     await runtime.runner.tick();
-    expect((await json(`/v1/projects/${project.id}/operations/${lostOperation.id}`, "GET", undefined, bearer)).value.status).toBe("succeeded");
+    const recoveredWrite = (await json(`/v1/projects/${project.id}/operations/${lostOperation.id}`, "GET", undefined, bearer)).value;
+    expect(recoveredWrite.status).toBe("succeeded");
+    expect(recoveredWrite.result.receipt.bytesWritten).toBe(bytes.length);
     const fakeState = await control("/_test/state");
     expect(fakeState.invocations.filter((item: any) => item.action === "create")).toHaveLength(1);
     expect(fakeState.invocations.filter((item: any) => item.action === "exec")).toHaveLength(1);
     expect(fakeState.invocations.filter((item: any) => item.action === "file_write")).toHaveLength(2);
+  } finally { await runtime.close(); }
+});
+
+test("single-use setup, hashed credentials, session CSRF and logout", async () => {
+  directory = await mkdtemp(join(tmpdir(), "sandbar-auth-"));
+  const keyFile = join(directory, "key"), setupTokenFile = join(directory, "setup");
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32))); await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "long-single-use-setup-token-for-test"); await chmod(setupTokenFile, 0o600);
+  const runtime = await openDomainRuntime({ databaseUrl: join(directory, "control.sqlite"), keyFile, setupTokenFile, fakeProviderUrl: "http://127.0.0.1:8789", fakeProviderToken: transportToken, startRunner: false });
+  try {
+    const setupRequest = () => runtime.app.request("http://localhost/v1/setup", { method: "POST", headers: { "Content-Type": "application/json", Origin: "http://localhost" }, body: JSON.stringify({ setupToken: "long-single-use-setup-token-for-test" }) });
+    const results = await Promise.all([setupRequest(), setupRequest()]);
+    expect(results.map(r => r.status).sort()).toEqual([201, 409]);
+    const success = results.find(r => r.status === 201)!;
+    const { token, csrfToken } = await success.json() as { token: string; csrfToken: string };
+    const cookie = success.headers.get("set-cookie")!.split(";")[0];
+    expect(await runtime.store.authenticateBearer(token)).toBe(false);
+    expect(await runtime.store.authenticateBearer(await sha256(token))).toBe(true);
+    const projectBody = JSON.stringify({ name: "Private" });
+    const mutate = (headers: Record<string, string>) => runtime.app.request("http://localhost/v1/projects", { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie, ...headers }, body: projectBody });
+    expect((await mutate({ Origin: "http://localhost" })).status).toBe(403);
+    expect((await mutate({ Origin: "http://evil.invalid", "X-CSRF-Token": csrfToken })).status).toBe(403);
+    expect((await mutate({ Origin: "http://localhost", "X-CSRF-Token": csrfToken })).status).toBe(201);
+    const refreshed = await runtime.app.request("http://localhost/v1/session", { headers: { Cookie: cookie } });
+    expect(refreshed.status).toBe(200);
+    const nextCsrf = (await refreshed.json() as { csrfToken: string }).csrfToken;
+    expect(nextCsrf).not.toBe(csrfToken);
+    expect((await mutate({ Origin: "http://localhost", "X-CSRF-Token": csrfToken })).status).toBe(403);
+    const logout = await runtime.app.request("http://localhost/v1/sessions/logout", { method: "POST", headers: { Cookie: cookie, Origin: "http://localhost", "X-CSRF-Token": nextCsrf } });
+    expect(logout.status).toBe(204);
+    expect((await runtime.app.request("http://localhost/v1/session", { headers: { Cookie: cookie } })).status).toBe(401);
+    expect((await runtime.app.request("http://localhost/v1/projects", { headers: { Authorization: `Bearer ${token}` } })).status).toBe(200);
+  } finally { await runtime.close(); }
+});
+
+test("hard process kill after submission marker never replays create", async () => {
+  directory = await mkdtemp(join(tmpdir(), "sandbar-crash-"));
+  const keyFile = join(directory, "key"), setupTokenFile = join(directory, "setup"), databaseUrl = join(directory, "control.sqlite");
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32))); await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "long-crash-test-setup-token-content"); await chmod(setupTokenFile, 0o600);
+  server = await startFakeProviderServer({ hostname: "127.0.0.1", port: 0, statePath: join(directory, "fake.json"), token: transportToken, testMode: true });
+  const config = { databaseUrl, keyFile, setupTokenFile, fakeProviderUrl: server.url.toString(), fakeProviderToken: transportToken, startRunner: false };
+  let runtime = await openDomainRuntime(config);
+  let projectId: string, operationId: string;
+  try {
+    const setup = await runtime.app.request("/v1/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ setupToken: "long-crash-test-setup-token-content" }) });
+    const token = (await setup.json() as any).token;
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const project = await runtime.app.request("/v1/projects", { method: "POST", headers, body: JSON.stringify({ name: "Crash" }) });
+    projectId = (await project.json() as any).id;
+    const connection = await runtime.app.request(`/v1/projects/${projectId}/provider-connections`, { method: "POST", headers, body: JSON.stringify({ provider: "fake", name: "Fake" }) });
+    const connectionId = (await connection.json() as any).id;
+    await runtime.app.request(`/v1/projects/${projectId}/provider-connections/${connectionId}/verify`, { method: "POST", headers, body: "{}" });
+    const admission = await runtime.app.request(`/v1/projects/${projectId}/sandboxes`, { method: "POST", headers: { ...headers, "Idempotency-Key": Bun.randomUUIDv7() }, body: JSON.stringify({ environment: { kind: "prepared", imageId: "fake-starter" }, connectionId }) });
+    expect(admission.status).toBe(202);
+    operationId = (await admission.json() as any).operation.id;
+  } finally { await runtime.close(); }
+
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "test-support/crash-after-submission.ts"), databaseUrl], { cwd: join(import.meta.dir, "../../.."), stdout: "ignore", stderr: "pipe" });
+  const exitCode = await child.exited;
+  expect(exitCode).not.toBe(0);
+  runtime = await openDomainRuntime(config);
+  try {
+    expect(await runtime.runner.tick()).toBe(true);
+    const op = await runtime.store.getOperation(projectId!, operationId!);
+    expect(op?.status).toBe("unknown");
+    const stateResponse = await fetch(new URL("/_test/state", server.url), { headers: { Authorization: `Bearer ${transportToken}` } });
+    const state = await stateResponse.json() as { invocations: unknown[] };
+    expect(state.invocations).toHaveLength(0);
   } finally { await runtime.close(); }
 });

@@ -210,6 +210,7 @@ export class ControlStore {
       const generation = Number(op.lease_generation) + 1, attemptId = id("att");
       const observeOnly = !!Number(op.submission_possible);
       await tx.run(sql`UPDATE operations SET status=${observeOnly ? "unknown" : "running"},phase=${observeOnly ? "reconciling" : "claimed"},lease_owner=${owner},lease_generation=${generation},lease_expires_at=${time + leaseMs},next_attempt_at=NULL,updated_at=${time} WHERE id=${op.id}`);
+      if (op.kind === "exec") await tx.run(sql`UPDATE executions SET status=${observeOnly ? "unknown" : "running"} WHERE operation_id=${op.id}`);
       await tx.run(sql`INSERT INTO operation_attempts (id,operation_id,lease_generation,status,submission_possible,started_at,submitted_at,completed_at,error_code) VALUES (${attemptId},${op.id},${generation},${observeOnly ? "observing" : "claimed"},${observeOnly ? 1 : 0},${time},NULL,NULL,NULL)`);
       return { operation: (await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${op.id}`))!, attemptId, generation, observeOnly };
     });
@@ -219,7 +220,7 @@ export class ControlStore {
       const op = await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${claim.operation.id}`);
       if (!op || op.lease_owner !== claim.operation.lease_owner || Number(op.lease_generation) !== claim.generation || Number(op.submission_possible)) return false;
       const time = now();
-      await tx.run(sql`UPDATE operations SET submission_possible=1,phase='submitted',effect='possible',updated_at=${time} WHERE id=${op.id}`);
+      await tx.run(sql`UPDATE operations SET submission_possible=1,phase='submitted',effect='possible',request_json=${op.kind === "file_write" ? "{}" : op.request_json},updated_at=${time} WHERE id=${op.id}`);
       await tx.run(sql`UPDATE operation_attempts SET status='submitted',submission_possible=1,submitted_at=${time} WHERE id=${claim.attemptId}`);
       return true;
     });
@@ -231,6 +232,8 @@ export class ControlStore {
       if (!op || Number(op.lease_generation) !== claim.generation || op.lease_owner !== claim.operation.lease_owner) return;
       const uncertain = !!Number(op.submission_possible);
       await tx.run(sql`UPDATE operations SET status=${uncertain ? "unknown" : "queued"},phase=${phase},effect=${uncertain ? "possible" : "none"},lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=${time + delayMs},updated_at=${time} WHERE id=${op.id}`);
+      if (op.kind === "exec") await tx.run(sql`UPDATE executions SET status=${uncertain ? "unknown" : "queued"} WHERE operation_id=${op.id}`);
+      if (uncertain && op.kind === "create") await tx.run(sql`UPDATE sandboxes SET observed_state='unknown',observation_error=${errorCode ?? "OUTCOME_UNKNOWN"},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
       await tx.run(sql`UPDATE operation_attempts SET status=${uncertain ? "unknown" : "deferred"},completed_at=${time},error_code=${errorCode ?? null} WHERE id=${claim.attemptId}`);
     });
   }
@@ -247,7 +250,7 @@ export class ControlStore {
       const op = await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${claim.operation.id}`);
       if (!op || Number(op.lease_generation) !== claim.generation || op.lease_owner !== claim.operation.lease_owner) return;
       const time = now(), observedAt = result.observedAt ?? time;
-      await tx.run(sql`UPDATE operations SET status='succeeded',phase='completed',effect=${result.effect},result_json=${JSON.stringify(result.value)},error_json=NULL,lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,observed_at=${observedAt},updated_at=${time} WHERE id=${op.id}`);
+      await tx.run(sql`UPDATE operations SET status='succeeded',phase='completed',effect=${result.effect},request_json=${op.kind === "exec" || op.kind === "file_write" ? "{}" : op.request_json},result_json=${JSON.stringify(result.value)},error_json=NULL,lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,observed_at=${observedAt},updated_at=${time} WHERE id=${op.id}`);
       await tx.run(sql`UPDATE operation_attempts SET status='completed',completed_at=${time} WHERE id=${claim.attemptId}`);
       if (op.kind === "create") {
         const obs = (result.value as { kind: string; observation: { ref: { nativeId: string }; state: string } }).observation;
@@ -256,7 +259,9 @@ export class ControlStore {
       } else if (op.kind === "exec") {
         const obs = (result.value as { kind: string; observation: { exitCode?: number | null; truncated?: boolean } }).observation;
         const bytes = result.outputBytes ?? 0;
-        await tx.run(sql`UPDATE executions SET status='completed',exit_code=${obs.exitCode ?? null},output_state=${bytes ? (result.outputTruncated ? "truncated" : "captured") : "not_captured"},output_bytes=${bytes},output_truncated=${result.outputTruncated ? 1 : 0},output_ciphertext=${result.encryptedOutput ?? null},completed_at=${time} WHERE id=${op.execution_id}`);
+        const request = parseJson<{ output?: { capture: string } }>(op.request_json);
+        const outputState = request.output?.capture === "none" ? "not_captured" : result.outputTruncated ? "truncated" : "captured";
+        await tx.run(sql`UPDATE executions SET status='completed',exit_code=${obs.exitCode ?? null},output_state=${outputState},output_bytes=${bytes},output_truncated=${result.outputTruncated ? 1 : 0},output_ciphertext=${result.encryptedOutput ?? null},completed_at=${time} WHERE id=${op.execution_id}`);
         await tx.run(sql`UPDATE reservations SET state='released',released_at=${time} WHERE operation_id=${op.id} AND kind='output'`);
       } else if (op.kind === "destroy") {
         await tx.run(sql`UPDATE sandboxes SET observed_state='destroyed',observed_at=${observedAt},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
@@ -273,10 +278,11 @@ export class ControlStore {
       if (!op || Number(op.lease_generation) !== claim.generation || op.lease_owner !== claim.operation.lease_owner) return;
       if (Number(op.submission_possible) && !certifiedNoEffect) throw new StoreError("CONFLICT", "Cannot mark a possibly submitted operation effect-free");
       const time = now();
-      await tx.run(sql`UPDATE operations SET status='failed',phase='rejected',effect='none',error_json=${JSON.stringify(error)},lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,updated_at=${time} WHERE id=${op.id}`);
+      await tx.run(sql`UPDATE operations SET status='failed',phase='rejected',effect='none',request_json=${op.kind === "exec" || op.kind === "file_write" ? "{}" : op.request_json},error_json=${JSON.stringify(error)},lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,updated_at=${time} WHERE id=${op.id}`);
       await tx.run(sql`UPDATE operation_attempts SET status='rejected',completed_at=${time} WHERE id=${claim.attemptId}`);
       await tx.run(sql`UPDATE reservations SET state='released',released_at=${time} WHERE operation_id=${op.id}`);
       if (op.kind === "exec") await tx.run(sql`UPDATE executions SET status='completed',output_state='not_captured',completed_at=${time} WHERE operation_id=${op.id}`);
+      if (op.kind === "create") await tx.run(sql`UPDATE sandboxes SET observed_state='unknown',observation_error=${String(error.code ?? "CREATE_REJECTED")},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
       await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${op.project_id},${op.sandbox_id},${op.id},'operation.rejected',${JSON.stringify({ code: error.code })},NULL,NULL,${time})`);
     });
   }

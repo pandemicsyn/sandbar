@@ -11,7 +11,7 @@ import type { ProviderDriver, NativeRef, NativeScope } from "@sandbar/provider-s
 import { ControlStore, StoreError, type ConnectionRow, type ExecutionRow, type OperationRow, type SandboxRow } from "@sandbar/store";
 import { DurableRunner, SecretBox, sha256 } from "@sandbar/core";
 
-export interface DomainDependencies { store: ControlStore; driver: ProviderDriver; secrets: SecretBox; setupToken: string; runner?: DurableRunner }
+export interface DomainDependencies { store: ControlStore; driver: ProviderDriver; secrets: SecretBox; setupToken: string; runner?: DurableRunner; publicOrigin?: string }
 type Auth = { kind: "bearer" } | { kind: "session"; idHash: string; csrfHash: string };
 const sessionMs = 12 * 60 * 60 * 1000;
 
@@ -32,13 +32,13 @@ function equalHash(a: string, b: string): boolean {
   const left = Buffer.from(a, "hex"), right = Buffer.from(b, "hex");
   return left.length === right.length && timingSafeEqual(left, right);
 }
-function cookieName(c: Context): string { return new URL(c.req.url).protocol === "https:" ? "__Host-sandbar_session" : "sandbar_session"; }
-function putCookie(c: Context, token: string): void {
-  setCookie(c, cookieName(c), token, { httpOnly: true, secure: new URL(c.req.url).protocol === "https:", sameSite: "Strict", path: "/", maxAge: sessionMs / 1000 });
+function cookieName(c: Context, deps: DomainDependencies): string { return new URL(deps.publicOrigin ?? c.req.url).protocol === "https:" ? "__Host-sandbar_session" : "sandbar_session"; }
+function putCookie(c: Context, deps: DomainDependencies, token: string): void {
+  setCookie(c, cookieName(c, deps), token, { httpOnly: true, secure: new URL(deps.publicOrigin ?? c.req.url).protocol === "https:", sameSite: "Strict", path: "/", maxAge: sessionMs / 1000 });
 }
-function originOkay(c: Context): boolean {
+function originOkay(c: Context, deps: DomainDependencies): boolean {
   const origin = c.req.header("origin");
-  return !origin || origin === new URL(c.req.url).origin;
+  return !origin || origin === new URL(deps.publicOrigin ?? c.req.url).origin;
 }
 async function parseBody<T>(c: Context, schema: { parse(input: unknown): T }): Promise<T> {
   const type = c.req.header("content-type")?.split(";")[0];
@@ -104,13 +104,13 @@ async function auth(c: Context, deps: DomainDependencies, mutate: boolean): Prom
     if (await deps.store.authenticateBearer(await sha256(authorization.slice(7)))) return { kind: "bearer" };
     return c.json(ErrorResponse.parse({ error: safeError("UNAUTHENTICATED", "Invalid bearer token") }), 401);
   }
-  const cookie = getCookie(c, cookieName(c));
+  const cookie = getCookie(c, cookieName(c, deps));
   if (!cookie) return c.json(ErrorResponse.parse({ error: safeError("UNAUTHENTICATED", "Authentication required") }), 401);
   const idHash = await sha256(cookie), session = await deps.store.getSession(idHash);
   if (!session) return c.json(ErrorResponse.parse({ error: safeError("UNAUTHENTICATED", "Session expired") }), 401);
   if (mutate) {
     const csrf = c.req.header("x-csrf-token");
-    if (!originOkay(c) || !csrf || !equalHash(await sha256(csrf), session.csrf_hash)) return c.json(ErrorResponse.parse({ error: safeError("FORBIDDEN", "CSRF or Origin check failed") }), 403);
+    if (!originOkay(c, deps) || !csrf || !equalHash(await sha256(csrf), session.csrf_hash)) return c.json(ErrorResponse.parse({ error: safeError("FORBIDDEN", "CSRF or Origin check failed") }), 403);
   }
   return { kind: "session", idHash, csrfHash: session.csrf_hash };
 }
@@ -159,7 +159,7 @@ async function boundedBody(c: Context, maxBytes: number): Promise<Uint8Array> {
 export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void {
   app.post("/v1/setup", async c => {
     try {
-      if (!originOkay(c)) return c.json(ErrorResponse.parse({ error: safeError("FORBIDDEN", "Origin check failed") }), 403);
+      if (!originOkay(c, deps)) return c.json(ErrorResponse.parse({ error: safeError("FORBIDDEN", "Origin check failed") }), 403);
       const body = await parseBody(c, SetupRequest);
       if (body.setupToken !== deps.setupToken) return c.json(ErrorResponse.parse({ error: safeError("UNAUTHENTICATED", "Invalid setup token") }), 401);
       const token = `sdb_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")}`;
@@ -167,20 +167,20 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       const sessionId = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
       const csrfToken = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
       await deps.store.createSession(await sha256(sessionId), await sha256(csrfToken), Date.now() + sessionMs);
-      putCookie(c, sessionId);
+      putCookie(c, deps, sessionId);
       c.header("Cache-Control", "no-store");
       return c.json(SessionResponse.parse({ operatorId: "operator", csrfToken, token }), 201);
     } catch (error) { return errorResponse(c, error); }
   });
   app.post("/v1/sessions", async c => {
     try {
-      if (!originOkay(c)) return c.json(ErrorResponse.parse({ error: safeError("FORBIDDEN", "Origin check failed") }), 403);
+      if (!originOkay(c, deps)) return c.json(ErrorResponse.parse({ error: safeError("FORBIDDEN", "Origin check failed") }), 403);
       const body = await parseBody(c, SessionRequest);
       if (!await deps.store.authenticateBearer(await sha256(body.token))) return c.json(ErrorResponse.parse({ error: safeError("UNAUTHENTICATED", "Invalid token") }), 401);
       const sessionId = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
       const csrfToken = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
       await deps.store.createSession(await sha256(sessionId), await sha256(csrfToken), Date.now() + sessionMs);
-      putCookie(c, sessionId); c.header("Cache-Control", "no-store");
+      putCookie(c, deps, sessionId); c.header("Cache-Control", "no-store");
       return c.json(SessionResponse.parse({ operatorId: "operator", csrfToken }), 201);
     } catch (error) { return errorResponse(c, error); }
   });
@@ -193,7 +193,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
   }));
   app.post("/v1/sessions/logout", protect(deps, true, async (c, a) => {
     if (a.kind === "session") await deps.store.deleteSession(a.idHash);
-    deleteCookie(c, cookieName(c), { path: "/" });
+    deleteCookie(c, cookieName(c, deps), { path: "/" });
     return c.body(null, 204);
   }));
 
@@ -290,7 +290,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
     const admitted = await deps.store.admitFileWrite({ projectId, sandboxId, endpoint: `PUT /sandboxes/${sandboxId}/files`, key, intentHash, path, overwrite, encryptedBytes, bytes: bytes.length });
     if (!admitted.repeated && deps.runner) await deps.runner.tick();
     const current = (await deps.store.getOperation(projectId, admitted.operation.id))!;
-    const dto = opDto(current) as ReturnType<typeof opDto> & { result?: { kind: string; receipt: unknown } };
+    const dto = opDto(current);
     if (dto.status === "succeeded" && dto.result?.kind === "file_write") return c.json(FileReceipt.parse(dto.result.receipt));
     return accepted(c, current);
   }));
