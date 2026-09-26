@@ -23,6 +23,7 @@ const scopeKey = (scope: NativeScope) => `${scope.provider}\0${scope.connectionI
 const sameScope = (a: NativeScope, b: NativeScope) => scopeKey(a) === scopeKey(b);
 const iso = (tick: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, tick)).toISOString();
 const bytesLength = (b64: string) => Buffer.from(b64, "base64").length;
+class FakeCapacityError extends Error {}
 
 export class FakeProviderEngine {
   private state: State = empty();
@@ -36,13 +37,13 @@ export class FakeProviderEngine {
   }
   private async save(): Promise<void> {
     const json = JSON.stringify(this.state);
-    if (Buffer.byteLength(json) > MAX_TOTAL_BYTES) throw new Error("Fake provider state limit reached");
+    if (Buffer.byteLength(json) > MAX_TOTAL_BYTES) throw new FakeCapacityError("Fake provider state limit reached");
     const temp = `${this.statePath}.tmp`;
     await writeFile(temp, json, { mode: 0o600 });
     await rename(temp, this.statePath);
   }
-  private async mutate<T>(fn: () => T): Promise<T> {
-    const work = this.pending.then(async () => { const previous = structuredClone(this.state); try { const value = fn(); await this.save(); return value; } catch (error) { this.state = previous; throw error; } });
+  private async mutate<T>(fn: () => T, capacityResult?: () => T): Promise<T> {
+    const work = this.pending.then(async () => { const previous = structuredClone(this.state); try { const value = fn(); await this.save(); return value; } catch (error) { this.state = previous; if (error instanceof FakeCapacityError && capacityResult) return capacityResult(); throw error; } });
     this.pending = work.catch(() => undefined);
     return work;
   }
@@ -112,7 +113,7 @@ export class FakeProviderEngine {
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "sandbox", observation: { ref, state: "running", observedAt: iso(this.state.tick++), sourceSequence: 1 } } };
       this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.scope, action: "create", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
-    });
+    }, () => ({ result: this.rejection("capacity"), loseResponse: false }));
   }
   async exec(input: { sandbox: NativeRef; identity: InvocationIdentity; command: z.infer<typeof ExecCommand>; cwd?: string; env?: Record<string, string>; deadlineSeconds: number; maxOutputBytes: number }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
@@ -138,7 +139,7 @@ export class FakeProviderEngine {
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "execution", observation: { ref, sandbox: input.sandbox, completed: true, exitCode: fixture.exitCode, stdoutBase64: stdoutKept.toString("base64"), stderrBase64: stderrKept.toString("base64"), truncated: stdoutKept.length < stdout.length || stderrKept.length < stderr.length, observedAt: iso(this.state.tick++) } } };
       this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.sandbox.scope, action: "exec", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
-    });
+    }, () => ({ result: this.rejection("capacity"), loseResponse: false }));
   }
   async destroy(input: { sandbox: NativeRef; identity: InvocationIdentity }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
@@ -159,7 +160,7 @@ export class FakeProviderEngine {
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "destroy", observation: { sandbox: input.sandbox, computeStopped: true, retainedResources: [] } } };
       this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.sandbox.scope, action: "destroy", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
-    });
+    }, () => ({ result: this.rejection("capacity"), loseResponse: false }));
   }
   async observe(scope: NativeScope, submissionId: string): Promise<z.infer<typeof DriverResult> | null> {
     return this.mutate(() => {
@@ -201,6 +202,6 @@ export class FakeProviderEngine {
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "file_write", observation: { sandbox, path, bytesWritten: bytesLength(bytesBase64), complete: true } } };
       this.state.ledger.push({ submissionId, projectId: identity.projectId, scope: sandbox.scope, action: "file_write", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
-    });
+    }, () => ({ result: this.rejection("capacity"), loseResponse: false }));
   }
 }

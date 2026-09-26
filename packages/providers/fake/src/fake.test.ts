@@ -142,7 +142,12 @@ describe("independent fake provider", () => {
     expect(wrong.status).toBe("rejected");
     const correct = await driver.exec({ sandbox, identity: identity("exec_scoped"), command, cwd: "/workspace", env: { LANG: "C" }, deadlineSeconds: 30, maxOutputBytes: 32 });
     expect(correct.status).toBe("completed");
-    expect((await control("/_test/state")).ledger.filter((x: { action: string }) => x.action === "exec")).toHaveLength(1);
+    await control("/_test/seed", { submissionId: "exec_default_fields", action: "exec", command: { command, exitCode: 0 } });
+    const nondefault = await driver.exec({ sandbox, identity: identity("exec_default_fields"), command, env: { LANG: "C" }, deadlineSeconds: 30, maxOutputBytes: 32 });
+    expect(nondefault.status).toBe("rejected");
+    const defaultFields = await driver.exec({ sandbox, identity: identity("exec_default_fields"), command, deadlineSeconds: 30, maxOutputBytes: 32 });
+    expect(defaultFields.status).toBe("completed");
+    expect((await control("/_test/state")).ledger.filter((x: { action: string }) => x.action === "exec")).toHaveLength(2);
   });
 
   test("authentication rejection before dispatch is definitive", async () => {
@@ -219,5 +224,31 @@ describe("independent fake provider", () => {
     const replay = await engine.writeFile({ sandbox, identity: identity("ledger_write_0"), path: "/blob", bytesBase64: Buffer.from("0").toString("base64"), overwrite: true });
     expect(replay.result.status).toBe("completed");
     expect(engine.snapshot().ledger).toHaveLength(512);
+  });
+
+  test("state byte limit returns definitive capacity without persisting a large execution effect", async () => {
+    directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+    const engine = new FakeProviderEngine(join(directory, "provider.json"), true);
+    await engine.load();
+    const created = await engine.create({ scope, identity: identity("large_parent"), image: "fake-starter", networkPolicy: "blocked" });
+    if (created.result.status !== "completed" || created.result.value.kind !== "sandbox") throw new Error("Create failed");
+    const sandbox = created.result.value.observation.ref;
+    await engine.setProfile({ nativeIdempotency: { create: true, exec: false, destroy: true, writeFile: true }, discoveryBySubmission: true });
+    await engine.seed({ submissionId: "large_exec", action: "exec", command: { command, exitCode: 0, stdoutBase64: Buffer.alloc(700000, 65).toString("base64") } });
+    let rejected = false;
+    for (let index = 0; index < 12; index++) {
+      const before = engine.snapshot();
+      const result = await engine.exec({ sandbox, identity: identity("large_exec"), command, deadlineSeconds: 30, maxOutputBytes: 700000 });
+      if (result.result.status === "rejected") {
+        expect(result.result.error.code).toBe("capacity");
+        expect(result.result.effect).toBe("none");
+        expect(engine.snapshot().ledger).toHaveLength(before.ledger.length);
+        expect(engine.snapshot().nextId).toBe(before.nextId);
+        rejected = true;
+        break;
+      }
+      expect(result.result.status).toBe("completed");
+    }
+    expect(rejected).toBe(true);
   });
 });

@@ -396,8 +396,7 @@
             "in": "header",
             "required": true,
             "schema": {
-              "type": "string",
-              "format": "uuid"
+              "$ref": "#/components/schemas/InvocationKey"
             },
             "description": "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent."
           }
@@ -488,8 +487,7 @@
             "in": "header",
             "required": true,
             "schema": {
-              "type": "string",
-              "format": "uuid"
+              "$ref": "#/components/schemas/InvocationKey"
             },
             "description": "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent."
           }
@@ -545,8 +543,7 @@
             "in": "header",
             "required": true,
             "schema": {
-              "type": "string",
-              "format": "uuid"
+              "$ref": "#/components/schemas/InvocationKey"
             },
             "description": "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent."
           }
@@ -646,8 +643,7 @@
             "in": "header",
             "required": true,
             "schema": {
-              "type": "string",
-              "format": "uuid"
+              "$ref": "#/components/schemas/InvocationKey"
             },
             "description": "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent."
           }
@@ -1426,6 +1422,11 @@
           "name"
         ],
         "additionalProperties": false
+      },
+      "InvocationKey": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
       },
       "CreateSandboxRequest": {
         "type": "object",

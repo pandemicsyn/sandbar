@@ -1,13 +1,13 @@
 import { z } from "zod";
 import {
-  AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest,
+  AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest, InvocationKey,
   CreateSandboxRequest, ErrorResponse, Execution, ExecRequest, FileReceipt, Operation,
   Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage, SandboxListQuery, OperationResult,
   SessionRequest, SessionResponse, SetupRequest, StreamFrame,
 } from "./index";
 
 const schemas = {
-  AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest,
+  AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest, InvocationKey,
   CreateSandboxRequest, ErrorResponse, Execution, ExecRequest, FileReceipt, Operation,
   Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage, SandboxListQuery, OperationResult,
   SessionRequest, SessionResponse, SetupRequest, StreamFrame,
@@ -21,7 +21,7 @@ const projectParameter = { name: "projectId", in: "path", required: true, schema
 const sandboxParameter = { name: "sandboxId", in: "path", required: true, schema: { type: "string" } };
 const operationParameter = { name: "operationId", in: "path", required: true, schema: { type: "string" } };
 const connectionParameter = { name: "connectionId", in: "path", required: true, schema: { type: "string" } };
-const invocationHeader = { name: "Idempotency-Key", in: "header", required: true, schema: { type: "string", format: "uuid" }, description: "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent." };
+const invocationHeader = { name: "Idempotency-Key", in: "header", required: true, schema: component("InvocationKey"), description: "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent." };
 const sandboxListParameters = [
   { name: "cursor", in: "query", required: false, schema: { type: "string", maxLength: 256 } },
   { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 100 } },
