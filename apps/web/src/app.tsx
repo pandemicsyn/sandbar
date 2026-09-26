@@ -1465,12 +1465,12 @@ const routeTree = rootRoute.addChildren([
 export const router = createRouter({
   routeTree,
   defaultNotFoundComponent: () => (
-    <div className="content">
+    <main className="content" id="main-content" tabIndex={-1}>
       <EmptyState title="Page not found">
         The route may have changed. <Link to="/projects">Choose a project</Link>
         .
       </EmptyState>
-    </div>
+    </main>
   ),
 });
 declare module "@tanstack/react-router" {

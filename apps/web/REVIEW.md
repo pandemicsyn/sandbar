@@ -94,6 +94,15 @@ This report records independent static reviews for the management UI and browser
 - Fix: each fallback renders a focusable `<main id="main-content">`; Chromium E2E navigates directly to an unavailable project and verifies keyboard focus reaches the landmark.
 - Validation after fix: `bun run check && bun run build && bun run test` passes (40 passed, 1 local MySQL skip, 0 failed, 1332 assertions; Chromium E2E has 31 assertions); `git diff --check` passes. A fresh zero-finding review remains pending.
 
+## Round 10
+
+- Reviewer: independent subagent, `gpt-6-luna`, high reasoning; read-only.
+- Base: `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b`.
+- Reviewed HEAD: `464e4bd9b1c81d18f25ec02ea343952dd7408023`.
+- Finding: the authenticated not-found route lacked the focusable main target for the global skip link.
+- Fix: the not-found view renders a focusable `<main id="main-content">`; Chromium E2E navigates to an unmatched route and verifies focus reaches it.
+- Validation after fix: `bun run check && bun run build && bun run test` passes (40 passed, 1 local MySQL skip, 0 failed, 1333 assertions; Chromium E2E has 32 assertions); `git diff --check` passes. A fresh zero-finding review remains pending.
+
 ## Final clearance
 
 Current final base: `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed contracts/fake parent `8bf25d4f32c63d6f73d897fdddd5ace6756b58aa`. Control PR #3 is review-cleared at this unchanged SHA. The UI offers exact byte downloads for command stdout and stderr alongside UTF-8 display text. No web pull request will be created until a fresh independent reviewer reports zero actionable findings on the unchanged final base and HEAD.

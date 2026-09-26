@@ -285,6 +285,13 @@ test("browser and public HTTP recover fake effects across service restarts witho
   expect(await page.evaluate(() => document.activeElement?.id)).toBe(
     "main-content",
   );
+  await page.goto(`${serviceUrl}/unmatched-route`);
+  await page.getByRole("heading", { name: "Page not found" }).waitFor();
+  await page.locator(".skip-link").focus();
+  await page.locator(".skip-link").press("Enter");
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+    "main-content",
+  );
   await page.goto(connectionsUrl);
   await page.getByRole("heading", { name: "Provider connections" }).waitFor();
   await page.getByLabel("Connection name").fill("Fake local");
