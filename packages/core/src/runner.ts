@@ -122,6 +122,10 @@ export class DurableRunner {
     if (value.kind === "file_write") {
       const request = JSON.parse(claim.operation.request_json) as { path: string; bytes: number };
       if (!this.sameRef(value.observation.sandbox, this.ref(scope, box)) || value.observation.path !== request.path || value.observation.bytesWritten > request.bytes) throw new Error("File write receipt mismatch");
+      if (!value.observation.complete || value.observation.bytesWritten !== request.bytes) {
+        await store.reschedule(claim, "file_write_unconfirmed", 5_000, "INCOMPLETE_FILE_WRITE");
+        return;
+      }
     }
     if (value.kind === "execution") {
       if (!this.sameRef(value.observation.sandbox, this.ref(scope, box)) || value.observation.ref.kind !== "execution" || !this.sameScope(value.observation.ref.scope, scope)) throw new Error("Execution identity mismatch");

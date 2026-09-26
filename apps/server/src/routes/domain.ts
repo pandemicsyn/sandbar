@@ -225,14 +225,25 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
   }));
   app.get("/v1/projects/:projectId/sandboxes", protect(deps, false, async c => {
     const projectId = idParam(c, "projectId"), params = new URL(c.req.url).searchParams;
-    const limit = Math.min(100, Math.max(1, Number(params.get("limit") ?? 50)));
+    const rawLimit = params.get("limit");
+    if (rawLimit !== null && !/^[1-9][0-9]*$/.test(rawLimit)) throw new SyntaxError("Invalid limit");
+    const limit = rawLimit === null ? 50 : Math.min(100, Number(rawLimit));
     const state = params.get("state") ?? undefined, connectionId = params.get("connectionId") ?? undefined, q = params.get("q") ?? undefined;
     if (state && !["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"].includes(state)) throw new SyntaxError("Invalid state filter");
     if (connectionId) Id.parse(connectionId);
     if (q && q.length > 64) throw new SyntaxError("Search text too long");
     const cursor = params.get("cursor");
     let before: { createdAt: number; id: string } | undefined;
-    if (cursor) { try { before = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")); } catch { throw new SyntaxError("Invalid cursor"); } }
+    if (cursor !== null) {
+      try {
+        if (cursor.length > 1024 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new SyntaxError("Invalid cursor");
+        const decoded: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+        if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) throw new SyntaxError("Invalid cursor");
+        const value = decoded as Record<string, unknown>;
+        if (!Number.isSafeInteger(value.createdAt) || (value.createdAt as number) < 0 || !Id.safeParse(value.id).success) throw new SyntaxError("Invalid cursor");
+        before = { createdAt: value.createdAt as number, id: value.id as string };
+      } catch { throw new SyntaxError("Invalid cursor"); }
+    }
     const rows = await deps.store.listSandboxes(projectId, limit + 1, before, { state, connectionId, q });
     const page = rows.slice(0, limit);
     const last = page.at(-1);

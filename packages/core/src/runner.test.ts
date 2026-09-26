@@ -28,13 +28,15 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
     const observedAt = new Date().toISOString();
     const executionResult = (completed: boolean): DriverResult => ({ status: "completed", effect: "applied", value: { kind: "execution", observation: { ref: { scope, nativeId: "native_execution", kind: "execution" }, sandbox: wrongIdentity ? { ...sandbox, nativeId: "another_sandbox" } : sandbox, completed, exitCode: completed ? 7 : null, stdoutBase64: completed ? Buffer.from("done").toString("base64") : undefined, observedAt } } });
     const unsupported = async () => { throw new Error("Unexpected driver call"); };
+    const fileResult: DriverResult = { status: "completed", effect: "partial", value: { kind: "file_write", observation: { sandbox, path: "/partial", bytesWritten: 1, complete: true } } };
     const driver: ProviderDriver = {
       name: "fake", capabilities: unsupported, prepare: unsupported, create: unsupported, inspect: unsupported,
       inventory: unsupported, exec: async () => executionResult(!wrongIdentity ? false : true),
-      readFile: unsupported, writeFile: unsupported, destroy: unsupported,
+      readFile: unsupported, writeFile: async () => fileResult, destroy: unsupported,
       observe: async () => executionResult(true),
     };
-    const runner = new DurableRunner({ store, driver, secrets: await SecretBox.fromFile(keyFile) });
+    const secrets = await SecretBox.fromFile(keyFile);
+    const runner = new DurableRunner({ store, driver, secrets });
     const first = await store.admitExec({ projectId: project.id, sandboxId: create.sandbox.id, endpoint: `POST /sandboxes/${create.sandbox.id}/executions`, key: Bun.randomUUIDv7(), intentHash: "first", request: { command: { kind: "argv", argv: ["fixture"] } }, captureBytes: 1024 });
     await runner.tick();
     expect((await store.getOperation(project.id, first.operation.id))?.status).toBe("running");
@@ -48,5 +50,12 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
     await runner.tick();
     expect((await store.getOperation(project.id, second.operation.id))?.status).toBe("unknown");
     expect((await store.getExecution(project.id, second.execution!.id))?.exit_code).toBeNull();
+
+    const fileKey = Bun.randomUUIDv7();
+    const file = await store.admitFileWrite({ projectId: project.id, sandboxId: create.sandbox.id, endpoint: `PUT /sandboxes/${create.sandbox.id}/files`, key: fileKey, intentHash: "partial-file", path: "/partial", overwrite: true, bytes: 2, encryptedBytes: await secrets.seal("file-write-input", `${create.sandbox.id}:${fileKey}`, Buffer.from("ab").toString("base64")) });
+    await runner.tick();
+    const partial = await store.getOperation(project.id, file.operation.id);
+    expect(partial?.status).toBe("unknown");
+    expect(partial?.result_json).toBeNull();
   } finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
 });
