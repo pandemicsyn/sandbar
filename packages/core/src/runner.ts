@@ -103,7 +103,8 @@ export class DurableRunner {
       if (value.observation.sandbox.scope.connectionId !== scope.connectionId) throw new Error("Execution scope mismatch");
       const output = this.captureOutput(value.observation.stdoutBase64, value.observation.stderrBase64, claim.operation);
       const encryptedOutput = output.bytes ? await secrets.seal("execution-output", claim.operation.execution_id!, JSON.stringify(output.payload)) : undefined;
-      await store.complete(claim, { effect: result.effect, value, observedAt: Date.parse(value.observation.observedAt), encryptedOutput, outputBytes: output.bytes, outputTruncated: output.truncated || !!value.observation.truncated });
+      const { stdoutBase64: _stdout, stderrBase64: _stderr, ...safeObservation } = value.observation;
+      await store.complete(claim, { effect: result.effect, value: { kind: "execution", observation: safeObservation }, observedAt: Date.parse(value.observation.observedAt), encryptedOutput, outputBytes: output.bytes, outputTruncated: output.truncated || !!value.observation.truncated });
     } else {
       await store.complete(claim, { effect: result.effect, value, observedAt: value.kind === "sandbox" ? Date.parse(value.observation.observedAt) : undefined });
     }
