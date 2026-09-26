@@ -92,4 +92,10 @@ Final complete-diff review after these fixes remains pending.
 - Two actionable findings: closing during a dispatched mutation could hide the accepted effect behind a no-effect `CLIENT_CLOSED` error; abort/close could hang while observation was in flight. Mutation convenience methods now preserve and surface an `OutcomeUnknownError` with the preallocated reference after close, and waits race read-only observation against abort/close signals. Added direct and remote race regressions.
 - Validation after fixes: focused SDK tests 14/14 passed; `bun run check` passed; full `bun run test` passed 57 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 9 is **not** a zero-finding clearance.
 
-Final independent complete-diff review of the resulting HEAD remains pending.
+## Round 10 — zero findings
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `10a0afd04df836d5c064a355a54ed31e9b793e66`.
+- The reviewer inspected the complete diff, including SDK recovery and close behavior, package exports, fake provider split, and surrounding core/SPI/service context. It reported **zero remaining actionable findings**.
+- Final pre-review validation: focused SDK tests 14/14; `bun run check`; full `bun run test` 57 passed, one MySQL 8.4 skip, zero failed, browser E2E passed. `bun install --frozen-lockfile` and package-scope Node 26.4.0/Bun 1.3.14 imports passed earlier on the packaged branch.
