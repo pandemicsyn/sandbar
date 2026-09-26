@@ -87,11 +87,17 @@ export function checkExec(result: ExecOutput): ExecOutput {
   return result;
 }
 export function validateCreate(input: CreateInput): CreateInput {
-  if (!input || !["prepared", "oci"].includes(input.environment?.kind) || !input.environment.value?.trim()) throw new SandbarError("INVALID_ARGUMENT", "A prepared or OCI image is required");
-  const networkPolicy = input.networkPolicy ?? "blocked";
-  if (!networkPolicy || networkPolicy.length > 128) throw new SandbarError("INVALID_ARGUMENT", "Invalid network policy");
-  if (input.region && input.region.length > 128) throw new SandbarError("INVALID_ARGUMENT", "Invalid region");
-  return { ...input, networkPolicy };
+  const parsed = z.strictObject({
+    environment: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("prepared"), value: z.string().min(1) }),
+      z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
+    ]),
+    networkPolicy: z.string().min(1).max(128).optional(),
+    region: z.string().min(1).max(128).optional(),
+    labels: z.record(z.string(), z.string()).optional(),
+  }).safeParse(input);
+  if (!parsed.success || !parsed.data.environment.value.trim()) throw new SandbarError("INVALID_ARGUMENT", "A prepared or OCI image is required");
+  return { ...parsed.data, networkPolicy: parsed.data.networkPolicy ?? "blocked" };
 }
 export function validateExec(input: ExecInput): Required<Pick<ExecInput, "command" | "deadlineSeconds" | "maxOutputBytes">> & ExecInput {
   const parsed = ExecRequest.parse({ command: input.command, cwd: input.cwd, env: input.env, deadlineSeconds: input.deadlineSeconds, output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 } });

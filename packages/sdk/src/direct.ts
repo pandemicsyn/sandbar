@@ -1,6 +1,6 @@
 import { NativeScope, ProviderReadError, SandboxObservation, type NativeRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
 import { normalizeCreate, normalizeExec, correlateDriverResult, sameNativeScope, sameNativeRef, captureBoundedOutput } from "@sandbar/core";
-import { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
+import { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, throwIfAborted, validateCreate, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
 export { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
@@ -169,6 +169,7 @@ export class DirectClient implements SandbarClient {
   async submitCreate(input: CreateInput, options: { signal?: AbortSignal; onDispatch?: (reference: RecoveryReference) => void } = {}): Promise<OperationHandle<SandboxHandle>> {
     this.ensureOpen();
     throwIfAborted(options.signal);
+    input = validateCreate(input);
     await awaitSubmission(this.verified(), this.closedSignal, options.signal, () => undefined);
     this.ensureOpen();
     throwIfAborted(options.signal);

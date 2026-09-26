@@ -1,6 +1,6 @@
 import { AcceptedExecution, AcceptedOperation, CreateSandboxRequest, ErrorResponse, ExecRequest, Execution, FileReceipt, Id, Operation, Sandbox } from "@sandbar/contracts";
 import type { z } from "zod";
-import { Image, SandbarError, OutcomeUnknownError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
+import { Image, SandbarError, OutcomeUnknownError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, throwIfAborted, validateCreate, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
 export { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
@@ -219,6 +219,7 @@ export class RemoteClient implements SandbarClient {
   }
   async submitCreate(input: CreateInput, options: { signal?: AbortSignal } = {}): Promise<OperationHandle<SandboxHandle>> {
     throwIfAborted(options.signal);
+    input = validateCreate(input);
     const body = CreateSandboxRequest.parse({ environment: input.environment.kind === "prepared" ? { kind: "prepared", imageId: input.environment.value } : { kind: "oci", reference: input.environment.value }, region: input.region, network: { policy: input.networkPolicy ?? "blocked" }, labels: input.labels });
     let dispatched: RecoveryReference | undefined;
     const { operation, reference } = await awaitSubmission(this.mutate("create", undefined, "sandboxes", "POST", JSON.stringify(body), AcceptedOperation, undefined, value => { dispatched = value; }), this.closedSignal, options.signal, () => dispatched);

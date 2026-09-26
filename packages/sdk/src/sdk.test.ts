@@ -25,6 +25,8 @@ afterEach(async () => { server?.stop(true); server = undefined; if (directory) a
 
 test("direct resource flow preserves binary files and nonzero output", async () => {
   const { client, control } = await fixture();
+  await expect(client.sandboxes.submitCreate(undefined as never)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect((await control("/_test/state")).invocations).toHaveLength(0);
   const box = await client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
   expect((await box.inspect()).state).toBe("running");
   const preAborted = new AbortController();
@@ -276,6 +278,8 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
     throw new Error(`Unexpected path: ${path}`);
   };
   const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  await expect(client.sandboxes.submitCreate({} as never)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(posts).toBe(0);
   const operation = await client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
   const box = await operation.wait();
   expect(box.id).toBe("box_1");

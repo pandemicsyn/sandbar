@@ -170,3 +170,13 @@ Final independent complete-diff review of this resulting HEAD remains pending.
 - Validation after fixes: `bun run check` passed; full `bun run test` passed 66 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 17 is **not** a zero-finding clearance.
 
 Final independent complete-diff review of this resulting HEAD remains pending.
+
+## Round 18
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `3a7527e067101f87c54bc8e5635d548e0461d68c`.
+- One actionable finding: malformed runtime create input could be dereferenced before validation in both backends. Shared strict create validation now runs before reading environment fields or dispatching. Tests verify invalid input causes `INVALID_ARGUMENT` and no provider/HTTP mutation.
+- Validation after fix: `bun run check` passed; full `bun run test` passed 66 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 18 is **not** a zero-finding clearance.
+
+Final independent complete-diff review of this resulting HEAD remains pending.
