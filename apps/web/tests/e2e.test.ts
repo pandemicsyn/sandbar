@@ -248,6 +248,9 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByLabel("Setup secret").fill(setupToken);
   await page.getByLabel("Setup secret").press("Enter");
   await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
+  const operatorToken = (await page
+    .locator(".one-time-token code")
+    .textContent())!;
   await page.getByRole("heading", { name: "No projects yet" }).waitFor();
   expect(await page.getByText("Save your API token now.").isVisible()).toBe(
     true,
@@ -298,6 +301,10 @@ test("browser and public HTTP recover fake effects across service restarts witho
       (entry: { action: string }) => entry.action === "create",
     ),
   ).toHaveLength(1);
+  await page.reload();
+  await page
+    .getByText("Retry the same inputs to recover this request.")
+    .waitFor();
   await page.getByRole("link", { name: "Connections" }).click();
   await page.getByRole("link", { name: "Fleet" }).click();
   await page.getByLabel("Label key (optional)").fill("team");
@@ -364,6 +371,16 @@ test("browser and public HTTP recover fake effects across service restarts witho
   const downloadedPath = join(temp, "downloaded-example.txt");
   await download.saveAs(downloadedPath);
   expect(await readFile(downloadedPath, "utf8")).toBe("persisted virtual file");
+
+  await page.route("**/sandboxes/*/files?*", (route) =>
+    route.fulfill({ status: 401, contentType: "application/json", body: "{}" }),
+  );
+  await page.getByRole("button", { name: "Download path" }).click();
+  await page.getByRole("heading", { name: "Sign in" }).waitFor();
+  await page.unroute("**/sandboxes/*/files?*");
+  await page.getByLabel("Operator token").fill(operatorToken);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).waitFor();
 
   await seed("exec", "lost_after_effect", fixture);
   await page.getByRole("button", { name: "Run command" }).click();

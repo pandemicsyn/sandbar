@@ -3,16 +3,46 @@ import { newInvocationKey } from "./api";
 
 type PendingInvocation = { key: string; intentHash: string };
 
-// Memory only: a route change keeps an unresolved request's identity, while a
-// browser restart still requires inspecting Sandbar before starting new work.
-const pending = new Map<string, PendingInvocation>();
+// Persist only the invocation identity and intent hash, never the payload.
+const prefix = "sandbar:pending-invocation:v1:";
+const storageKey = (scope: string) => `${prefix}${scope}`;
+
+function readPending(scope: string): PendingInvocation | undefined {
+  const raw = localStorage.getItem(storageKey(scope));
+  if (!raw) return undefined;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "key" in value &&
+      typeof value.key === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+        value.key,
+      ) &&
+      "intentHash" in value &&
+      typeof value.intentHash === "string" &&
+      /^[0-9a-f]{64}$/.test(value.intentHash)
+    )
+      return { key: value.key, intentHash: value.intentHash };
+  } catch {
+    // Keep the unknown record until the operator explicitly starts a new attempt.
+  }
+  throw new Error(
+    "The previous invocation record is unreadable. Inspect Sandbar before starting a new attempt.",
+  );
+}
 
 export function hasPendingInvocation(scope: string): boolean {
-  return pending.has(scope);
+  try {
+    return localStorage.getItem(storageKey(scope)) !== null;
+  } catch {
+    return false;
+  }
 }
 
 export function clearPendingInvocation(scope: string): void {
-  pending.delete(scope);
+  localStorage.removeItem(storageKey(scope));
 }
 
 export async function withInvocation<T>(
@@ -21,7 +51,7 @@ export async function withInvocation<T>(
   submit: (key: string) => Promise<T>,
 ): Promise<T> {
   const intentHash = await intentSha256(intent);
-  let attempt = pending.get(scope);
+  let attempt = readPending(scope);
   if (attempt && attempt.intentHash !== intentHash) {
     throw new Error(
       "An earlier request may have been accepted. Retry its original inputs first, or explicitly start a new attempt with possible duplicate effects.",
@@ -29,10 +59,10 @@ export async function withInvocation<T>(
   }
   if (!attempt) {
     attempt = { key: newInvocationKey(), intentHash };
-    pending.set(scope, attempt);
+    localStorage.setItem(storageKey(scope), JSON.stringify(attempt));
   }
   const result = await submit(attempt.key);
-  pending.delete(scope);
+  clearPendingInvocation(scope);
   return result;
 }
 

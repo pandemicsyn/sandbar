@@ -36,6 +36,11 @@ export function setCsrfToken(value: string | undefined) {
   csrfToken = value;
 }
 
+function notifyUnauthorized() {
+  csrfToken = undefined;
+  window.dispatchEvent(new Event("sandbar:session-expired"));
+}
+
 async function request<T>(
   path: string,
   schema: z.ZodType<T>,
@@ -54,8 +59,7 @@ async function request<T>(
   });
   if (!response.ok) {
     if (response.status === 401 && path !== "/v1/session") {
-      csrfToken = undefined;
-      window.dispatchEvent(new Event("sandbar:session-expired"));
+      notifyUnauthorized();
     }
     const raw: unknown = await response.json().catch(() => undefined);
     const parsed = z
@@ -223,11 +227,13 @@ export const api = {
       `${base(projectId)}/sandboxes/${encodeURIComponent(sandboxId)}/files?path=${encodeURIComponent(path)}`,
       { credentials: "same-origin" },
     );
-    if (!response.ok)
+    if (!response.ok) {
+      if (response.status === 401) notifyUnauthorized();
       throw new ApiError(
         `File read failed (${response.status})`,
         response.status,
       );
+    }
     return response.blob();
   },
   writeFile: (
