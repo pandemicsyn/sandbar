@@ -140,9 +140,7 @@ export class RemoteClient implements SandbarClient {
     validateReference(reference);
     if (reference.mode !== "remote") throw new SandbarError("INVALID_ARGUMENT", "Expected remote recovery reference");
     if (reference.service?.url !== this.endpoint.href || reference.service.projectId !== this.projectId) throw new SandbarError("FORBIDDEN", "Recovery service scope does not match configured client");
-    const op = reference.operationId
-      ? await this.request(`operations/${encodeURIComponent(reference.operationId)}`, Operation)
-      : await this.request(`invocations/${encodeURIComponent(reference.invocationKey)}?${new URLSearchParams({ kind: reference.kind, ...(reference.resourceId ? { sandboxId: reference.resourceId } : {}) })}`, Operation);
+    const op = await this.request(`invocations/${encodeURIComponent(reference.invocationKey)}?${new URLSearchParams({ kind: reference.kind, ...(reference.resourceId ? { sandboxId: reference.resourceId } : {}) })}`, Operation);
     if (op.projectId !== this.projectId || op.kind !== reference.kind || (reference.resourceId && op.sandboxId !== reference.resourceId) || (reference.operationId && op.id !== reference.operationId)) throw new SandbarError("INVALID_RESPONSE", "Service operation identity mismatch", "unknown");
     return op;
   }

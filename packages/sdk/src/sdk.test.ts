@@ -135,6 +135,7 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   expect(posts).toBe(1);
   expect(operation.reference.invocationKey).toBe(key);
   expect(JSON.stringify(operation.reference)).not.toContain("secret");
+  await expect(client.recover({ ...operation.reference, operationId: "op_other" })).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
   await expect(RemoteSandbar.connect({ url: "https://other.example/", token: "secret", projectId, fetch: fetcher }).recover(operation.reference)).rejects.toMatchObject({ code: "FORBIDDEN" });
 });
 
@@ -148,7 +149,7 @@ test("remote recovery rejects an incomplete execution observation", async () => 
   const operation = { id: "op_1", projectId, kind: "exec", sandboxId: "box_1", executionId: "exec_1", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "exec", executionId: "exec_1" } };
   const fetcher: typeof fetch = async (url) => {
     const path = new URL(String(url)).pathname;
-    if (path.endsWith("/operations/op_1")) return Response.json(operation);
+    if (path.includes("/invocations/")) return Response.json(operation);
     if (path.endsWith("/executions/exec_1")) return Response.json({ id: "exec_1", projectId, sandboxId: "box_1", operationId: "op_1", status: "unknown", outputAvailability: "captured", capturedBytes: 0, stdoutBase64: "", stderrBase64: "" });
     throw new Error(`Unexpected path: ${path}`);
   };
@@ -173,7 +174,7 @@ test("remote recovery requires confirmed destroy and exact file receipts", async
 test("remote completed execution without an exit code has a distinct outcome", async () => {
   const projectId = "project_1";
   const operation = { id: "op_1", projectId, kind: "exec", sandboxId: "box_1", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "exec", executionId: "exec_1" } };
-  const fetcher: typeof fetch = async (url) => new URL(String(url)).pathname.endsWith("/operations/op_1")
+  const fetcher: typeof fetch = async (url) => new URL(String(url)).pathname.includes("/invocations/")
     ? Response.json(operation)
     : Response.json({ id: "exec_1", projectId, sandboxId: "box_1", operationId: "op_1", status: "completed", exitCode: null, outputAvailability: "captured", capturedBytes: 0, stdoutBase64: "", stderrBase64: "" });
   const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
