@@ -167,6 +167,8 @@ export class DirectClient implements SandbarClient {
         const bounded = captureBoundedOutput(value.stdoutBase64, value.stderrBase64, reference.maxOutputBytes ?? 1_048_576);
         return checkExec(execOutput(value.exitCode, decodeBase64(bounded.payload.stdoutBase64), decodeBase64(bounded.payload.stderrBase64), (value.truncated ?? false) || bounded.truncated));
       }
+      if (result.value.kind === "destroy" && !result.value.observation.computeStopped) throw new OutcomeUnknownError(reference, "Compute stop has not been confirmed");
+      if (result.value.kind === "file_write" && (!result.value.observation.complete || result.value.observation.bytesWritten !== reference.file?.bytes)) throw new OutcomeUnknownError(reference, "File write receipt is incomplete");
       return result.value.observation;
     });
   }

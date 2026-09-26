@@ -19,7 +19,7 @@ async function fixture() {
     if (!response.ok) throw new Error(`Fixture control failed: ${response.status}`);
     return response.json();
   };
-  return { client: DirectSandbar.direct({ provider: await fakeProvider({ url, token }) }), control };
+  return { client: DirectSandbar.direct({ provider: await fakeProvider({ url, token }) }), control, url };
 }
 afterEach(async () => { server?.stop(true); server = undefined; if (directory) await rm(directory, { recursive: true, force: true }); directory = undefined; });
 
@@ -96,6 +96,18 @@ test("closing a client interrupts pending direct observation without destroying 
   await expect(waiting).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
   await expect(operation.observe()).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
   expect((await control("/_test/state")).resources).toHaveLength(1);
+});
+
+test("direct recovery never treats incomplete destroy or file receipts as success", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const client = DirectSandbar.direct({ provider });
+  const sandbox = { scope: provider.scope, nativeId: "fake_sandbox_1", kind: "sandbox" as const };
+  const common = { version: 1 as const, mode: "direct" as const, invocationKey: "0199f92e-1234-7000-8000-000000000001", operationId: "op_1", submissionId: "sid_1", scope: provider.scope, sandbox };
+  provider.driver.observe = async () => ({ status: "completed", effect: "applied", submissionId: "sid_1", value: { kind: "destroy", observation: { sandbox, computeStopped: false, retainedResources: [] } } });
+  await expect((await client.recover({ ...common, kind: "destroy" })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  provider.driver.observe = async () => ({ status: "completed", effect: "applied", submissionId: "sid_1", value: { kind: "file_write", observation: { sandbox, path: "/data", bytesWritten: 1, complete: false } } });
+  await expect((await client.recover({ ...common, kind: "file_write", file: { path: "/data", bytes: 2 } })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
 });
 
 test("remote lost acceptance is resolved by invocation lookup under one key", async () => {
