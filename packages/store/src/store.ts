@@ -123,7 +123,7 @@ export class ControlStore {
     });
   }
 
-  async admitExec(input: { projectId: string; sandboxId: string; endpoint: string; key: string; intentHash: string; request: Record<string, unknown>; captureBytes: number }): Promise<Admission> {
+  async admitExec(input: { projectId: string; sandboxId: string; endpoint: string; key: string; intentHash: string; encryptedRequest: string; output?: { capture: "bounded" | "none"; maxBytes?: number }; captureBytes: number }): Promise<Admission> {
     return this.backend.transaction(async tx => {
       await this.lockProject(tx, input.projectId);
       const old = await this.existingInvocation(tx, input.projectId, input.endpoint, input.key, input.intentHash);
@@ -136,7 +136,7 @@ export class ControlStore {
       const totals = await tx.row<{ project_bytes: number; sandbox_bytes: number }>(sql`SELECT COALESCE(SUM(amount),0) AS project_bytes, COALESCE(SUM(CASE WHEN sandbox_id=${box.id} THEN amount ELSE 0 END),0) AS sandbox_bytes FROM reservations WHERE project_id=${input.projectId} AND kind='output' AND state='active'`);
       if (Number(totals?.project_bytes ?? 0) + input.captureBytes > 256 * 1024 * 1024 || Number(totals?.sandbox_bytes ?? 0) + input.captureBytes > 16 * 1024 * 1024) throw new StoreError("CAPACITY", "Output reservation capacity exceeded");
       const operationId = id("op"), executionId = id("ex"), submissionId = id("sub"), time = now();
-      await tx.run(sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'exec',${box.id},${executionId},${box.connection_id},'queued','accepted','none',${JSON.stringify(input.request)},NULL,NULL,${submissionId},0,NULL,0,NULL,${time},NULL,${time},${time})`);
+      await tx.run(sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'exec',${box.id},${executionId},${box.connection_id},'queued','accepted','none',${JSON.stringify({ encryptedRequest: input.encryptedRequest, output: input.output })},NULL,NULL,${submissionId},0,NULL,0,NULL,${time},NULL,${time},${time})`);
       await tx.run(sql`INSERT INTO executions (id,project_id,sandbox_id,operation_id,status,exit_code,signal,timed_out,output_state,output_bytes,output_truncated,output_ciphertext,created_at,completed_at) VALUES (${executionId},${input.projectId},${box.id},${operationId},'queued',NULL,NULL,NULL,${input.captureBytes ? "not_captured" : "not_captured"},0,0,NULL,${time},NULL)`);
       await tx.run(sql`INSERT INTO invocation_keys (project_id,endpoint,${sql.raw("`key`")},intent_hash,operation_id,accepted_at) VALUES (${input.projectId},${input.endpoint},${input.key},${input.intentHash},${operationId},${time})`);
       await tx.run(sql`INSERT INTO reservations (id,project_id,sandbox_id,operation_id,kind,amount,state,created_at,released_at) VALUES (${id("res")},${input.projectId},${box.id},${operationId},'output',${input.captureBytes},'active',${time},NULL)`);
@@ -225,7 +225,8 @@ export class ControlStore {
       if (!op || op.lease_owner !== claim.operation.lease_owner || Number(op.lease_generation) !== claim.generation || Number(op.submission_possible)) return false;
       const time = now();
       const fileRequest = op.kind === "file_write" ? parseJson<{ path: string; overwrite: boolean; bytes: number }>(op.request_json) : undefined;
-      const retainedRequest = fileRequest ? JSON.stringify({ path: fileRequest.path, overwrite: fileRequest.overwrite, bytes: fileRequest.bytes }) : op.request_json;
+      const execRequest = op.kind === "exec" ? parseJson<{ output?: { capture: string; maxBytes?: number } }>(op.request_json) : undefined;
+      const retainedRequest = fileRequest ? JSON.stringify({ path: fileRequest.path, overwrite: fileRequest.overwrite, bytes: fileRequest.bytes }) : execRequest ? JSON.stringify({ output: execRequest.output }) : op.request_json;
       await tx.run(sql`UPDATE operations SET submission_possible=1,phase='submitted',effect='possible',request_json=${retainedRequest},updated_at=${time} WHERE id=${op.id}`);
       await tx.run(sql`UPDATE operation_attempts SET status='submitted',submission_possible=1,submitted_at=${time} WHERE id=${claim.attemptId}`);
       return true;

@@ -258,7 +258,8 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
     const projectId = idParam(c, "projectId"), sandboxId = idParam(c, "sandboxId"), key = InvocationKey.parse(c.req.header("idempotency-key"));
     const body = await parseBody(c, ExecRequest);
     const captureBytes = body.output?.capture === "none" ? 0 : body.output?.maxBytes ?? 1_048_576;
-    const admitted = await deps.store.admitExec({ projectId, sandboxId, endpoint: `POST /sandboxes/${sandboxId}/executions`, key, intentHash: await intentSha256(body), request: body, captureBytes });
+    const encryptedRequest = await deps.secrets.seal("execution-request", `${sandboxId}:${key}`, JSON.stringify(body));
+    const admitted = await deps.store.admitExec({ projectId, sandboxId, endpoint: `POST /sandboxes/${sandboxId}/executions`, key, intentHash: await intentSha256(body), encryptedRequest, output: body.output, captureBytes });
     return accepted(c, admitted.operation, await executionDto(deps, admitted.execution!));
   }));
   app.get("/v1/projects/:projectId/executions/:executionId", protect(deps, false, async c => {

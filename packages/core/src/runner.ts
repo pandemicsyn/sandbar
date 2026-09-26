@@ -67,7 +67,8 @@ export class DurableRunner {
         await this.handleResult(claim, validateDriverResult(result), scope);
       } else if (op.kind === "exec") {
         if (!box.native_id) { await store.reschedule(claim, "waiting_for_sandbox", 2_000); return; }
-        const request = JSON.parse(op.request_json) as ExecRequest;
+        const envelope = JSON.parse(op.request_json) as { encryptedRequest: string };
+        const request = JSON.parse(await this.options.secrets.open("execution-request", `${box.id}:${key}`, envelope.encryptedRequest)) as ExecRequest;
         const ref = this.ref(scope, box);
         if (!await store.beginSubmission(claim)) return;
         const result = await driver.exec({ sandbox: ref, identity, command: request.command, cwd: request.cwd, env: request.env, deadlineSeconds: request.deadlineSeconds ?? 300, maxOutputBytes: request.output?.capture === "none" ? 0 : request.output?.maxBytes ?? 1_048_576 });

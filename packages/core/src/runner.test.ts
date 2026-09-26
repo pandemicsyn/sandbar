@@ -37,16 +37,20 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
     };
     const secrets = await SecretBox.fromFile(keyFile);
     const runner = new DurableRunner({ store, driver, secrets });
-    const first = await store.admitExec({ projectId: project.id, sandboxId: create.sandbox.id, endpoint: `POST /sandboxes/${create.sandbox.id}/executions`, key: Bun.randomUUIDv7(), intentHash: "first", request: { command: { kind: "argv", argv: ["fixture"] } }, captureBytes: 1024 });
+    const firstKey = Bun.randomUUIDv7();
+    const first = await store.admitExec({ projectId: project.id, sandboxId: create.sandbox.id, endpoint: `POST /sandboxes/${create.sandbox.id}/executions`, key: firstKey, intentHash: "first", encryptedRequest: await secrets.seal("execution-request", `${create.sandbox.id}:${firstKey}`, JSON.stringify({ command: { kind: "argv", argv: ["fixture"] }, env: { API_KEY: "sensitive-value" } })), captureBytes: 1024 });
+    expect(first.operation.request_json).not.toContain("sensitive-value");
     await runner.tick();
     expect((await store.getOperation(project.id, first.operation.id))?.status).toBe("running");
+    expect((await store.getOperation(project.id, first.operation.id))?.request_json).not.toContain("encryptedRequest");
     expect((await store.getExecution(project.id, first.execution!.id))?.status).toBe("running");
     await store.requestReconcile(project.id, first.operation.id);
     await runner.tick();
     expect((await store.getExecution(project.id, first.execution!.id))?.exit_code).toBe(7);
 
     wrongIdentity = true;
-    const second = await store.admitExec({ projectId: project.id, sandboxId: create.sandbox.id, endpoint: `POST /sandboxes/${create.sandbox.id}/executions`, key: Bun.randomUUIDv7(), intentHash: "second", request: { command: { kind: "argv", argv: ["fixture"] } }, captureBytes: 1024 });
+    const secondKey = Bun.randomUUIDv7();
+    const second = await store.admitExec({ projectId: project.id, sandboxId: create.sandbox.id, endpoint: `POST /sandboxes/${create.sandbox.id}/executions`, key: secondKey, intentHash: "second", encryptedRequest: await secrets.seal("execution-request", `${create.sandbox.id}:${secondKey}`, JSON.stringify({ command: { kind: "argv", argv: ["fixture"] } })), captureBytes: 1024 });
     await runner.tick();
     expect((await store.getOperation(project.id, second.operation.id))?.status).toBe("unknown");
     expect((await store.getExecution(project.id, second.execution!.id))?.exit_code).toBeNull();

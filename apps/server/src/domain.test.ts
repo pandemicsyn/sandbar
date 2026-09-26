@@ -60,9 +60,12 @@ test("API persists ambiguous create and exec, then observes each once after rest
     const exec = await json(`/v1/projects/${project.id}/sandboxes/${boxId}/executions`, "POST", { command: { kind: "argv", argv: ["fixture", "hello"] } }, { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() });
     expect(exec.response.status).toBe(202);
     const execOp = await runtime.store.getOperation(project.id, exec.value.operation.id);
+    expect(execOp!.request_json).toContain("encryptedRequest");
+    expect(execOp!.request_json).not.toContain("fixture");
     await control("/_test/seed", { submissionId: execOp!.provider_token, action: "exec", behavior: "lost_after_effect", command: { command: { kind: "argv", argv: ["fixture", "hello"] }, exitCode: 7, stdoutBase64: Buffer.from("hello from fake").toString("base64") } });
     await runtime.runner.tick();
     expect((await runtime.store.getOperation(project.id, exec.value.operation.id))?.status).toBe("unknown");
+    expect((await runtime.store.getOperation(project.id, exec.value.operation.id))?.request_json).not.toContain("encryptedRequest");
     await json(`/v1/projects/${project.id}/operations/${exec.value.operation.id}/reconcile`, "POST", {}, bearer);
     await runtime.runner.tick();
     const execution = (await json(`/v1/projects/${project.id}/executions/${exec.value.execution.id}`, "GET", undefined, bearer)).value;
