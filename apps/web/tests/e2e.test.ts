@@ -248,6 +248,11 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByLabel("Setup secret").fill(setupToken);
   await page.getByLabel("Setup secret").press("Enter");
   await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
+  await page.locator(".skip-link").focus();
+  await page.locator(".skip-link").press("Enter");
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+    "main-content",
+  );
   const operatorToken = (await page
     .locator(".one-time-token code")
     .textContent())!;
@@ -264,6 +269,11 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByLabel("Project name").fill("E2E project");
   await page.getByRole("button", { name: "Create project" }).click();
   await page.getByRole("heading", { name: "Provider connections" }).waitFor();
+  await page.locator(".skip-link").focus();
+  await page.locator(".skip-link").press("Enter");
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+    "main-content",
+  );
   const projectId = new URL(page.url()).pathname.split("/")[2]!;
   await page.getByLabel("Connection name").fill("Fake local");
   await page.getByRole("button", { name: "Add connection" }).click();

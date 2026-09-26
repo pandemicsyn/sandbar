@@ -76,6 +76,15 @@ This report records independent static reviews for the management UI and browser
 - Findings: zero remaining actionable issues on the complete web diff at this checkpoint.
 - Validation: web check/build and Chromium E2E pass; the full suite had one intermittent control-owned cleanup assertion that passed on focused rerun. Control is fixing that test. The parent branch is still changing, so a final fresh review is required after rebase.
 
+## Round 8
+
+- Reviewer: independent subagent, `gpt-6-luna`, high reasoning; read-only.
+- Base: `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b`.
+- Reviewed HEAD: `c68bec9316312cdee5ff66f0514b38774174daf3`.
+- Finding: skip-link targets were not focusable, so keyboard focus could remain on the link instead of moving to the main content.
+- Fix: both Projects and the authenticated shell main landmarks have `tabIndex={-1}`. Chromium E2E activates each skip link and verifies `document.activeElement.id` is `main-content`.
+- Validation after fix: `bun run check && bun run build && bun run test` passes (40 passed, 1 local MySQL skip, 0 failed, 1331 assertions; Chromium E2E has 30 assertions); `git diff --check` passes. Final zero-finding review remains pending.
+
 ## Final clearance
 
-Current integration checkpoint: base `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed contracts/fake parent `8bf25d4f32c63d6f73d897fdddd5ace6756b58aa`. The UI now offers exact byte downloads for command stdout and stderr alongside UTF-8 display text, and Chromium E2E checks the stdout download. `bun run check && bun run build && bun run test` passes (40 passed, 1 local MySQL skip, 0 failed, 1329 assertions); `git diff --check` passes. Control's independent review and a fresh web full-diff review are pending. No pull request will be created until the reviewer reports zero actionable findings on the unchanged final base and HEAD.
+Current final base: `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed contracts/fake parent `8bf25d4f32c63d6f73d897fdddd5ace6756b58aa`. Control PR #3 is review-cleared at this unchanged SHA. The UI offers exact byte downloads for command stdout and stderr alongside UTF-8 display text. No web pull request will be created until a fresh independent reviewer reports zero actionable findings on the unchanged final base and HEAD.

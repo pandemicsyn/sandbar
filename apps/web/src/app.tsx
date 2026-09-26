@@ -285,7 +285,7 @@ function ProjectsPage() {
     }
   }
   return (
-    <main className="content project-picker" id="main-content">
+    <main className="content project-picker" id="main-content" tabIndex={-1}>
       <PageHead
         title="Projects"
         subtitle="Choose a project to manage its connections and sandboxes."
