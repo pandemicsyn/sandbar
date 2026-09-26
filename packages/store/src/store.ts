@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import type { Backend, QueryConnection } from "./backend";
 
 export class StoreError extends Error {
@@ -41,6 +41,7 @@ export class ControlStore {
   async getSession(idHash: string): Promise<{ csrf_hash: string; expires_at: number } | undefined> {
     return this.backend.row(sql`SELECT csrf_hash,expires_at FROM sessions WHERE id_hash=${idHash} AND expires_at>${now()}`);
   }
+  async rotateSessionCsrf(idHash: string, csrfHash: string): Promise<void> { await this.backend.run(sql`UPDATE sessions SET csrf_hash=${csrfHash} WHERE id_hash=${idHash} AND expires_at>${now()}`); }
   async deleteSession(idHash: string): Promise<void> { await this.backend.run(sql`DELETE FROM sessions WHERE id_hash=${idHash}`); }
 
   async createProject(name: string): Promise<{ id: string; name: string; createdAt: string }> {
@@ -159,11 +160,21 @@ export class ControlStore {
   }
 
   async getSandbox(projectId: string, sandboxId: string): Promise<SandboxRow | undefined> { return this.backend.row(sql`SELECT * FROM sandboxes WHERE project_id=${projectId} AND id=${sandboxId}`); }
-  async listSandboxes(projectId: string, limit = 50, before?: { createdAt: number; id: string }): Promise<SandboxRow[]> {
-    if (before) return this.backend.rows(sql`SELECT * FROM sandboxes WHERE project_id=${projectId} AND (created_at<${before.createdAt} OR (created_at=${before.createdAt} AND id<${before.id})) ORDER BY created_at DESC,id DESC LIMIT ${limit}`);
-    return this.backend.rows(sql`SELECT * FROM sandboxes WHERE project_id=${projectId} ORDER BY created_at DESC,id DESC LIMIT ${limit}`);
+  async listSandboxes(projectId: string, limit = 50, before?: { createdAt: number; id: string }, filters?: { state?: string; connectionId?: string; q?: string }): Promise<SandboxRow[]> {
+    const clauses: SQL[] = [sql`project_id=${projectId}`];
+    if (before) clauses.push(sql`(created_at<${before.createdAt} OR (created_at=${before.createdAt} AND id<${before.id}))`);
+    if (filters?.state) clauses.push(sql`observed_state=${filters.state}`);
+    if (filters?.connectionId) clauses.push(sql`connection_id=${filters.connectionId}`);
+    if (filters?.q) {
+      const pattern = `%${filters.q.replaceAll("!", "!!").replaceAll("%", "!%").replaceAll("_", "!_")}%`;
+      clauses.push(sql`(id LIKE ${pattern} ESCAPE '!' OR labels_json LIKE ${pattern} ESCAPE '!')`);
+    }
+    return this.backend.rows(sql`SELECT * FROM sandboxes WHERE ${sql.join(clauses, sql` AND `)} ORDER BY created_at DESC,id DESC LIMIT ${limit}`);
   }
   async getOperation(projectId: string, operationId: string): Promise<OperationRow | undefined> { return this.backend.row(sql`SELECT * FROM operations WHERE project_id=${projectId} AND id=${operationId}`); }
+  async getActiveOperation(projectId: string, sandboxId: string): Promise<OperationRow | undefined> {
+    return this.backend.row(sql`SELECT * FROM operations WHERE project_id=${projectId} AND sandbox_id=${sandboxId} AND status IN ('queued','running','unknown') ORDER BY created_at DESC,id DESC LIMIT 1`);
+  }
   async getExecution(projectId: string, executionId: string): Promise<ExecutionRow | undefined> { return this.backend.row(sql`SELECT * FROM executions WHERE project_id=${projectId} AND id=${executionId}`); }
   async getInvocationKey(operationId: string): Promise<string | undefined> {
     return (await this.backend.row<{ key: string }>(sql`SELECT ${sql.raw("`key`")} AS ${sql.raw("`key`")} FROM invocation_keys WHERE operation_id=${operationId}`))?.key;

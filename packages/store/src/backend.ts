@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { readFileSync, openSync, closeSync, unlinkSync } from "node:fs";
+import { readFileSync, openSync, closeSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { drizzle as drizzleSqlite } from "drizzle-orm/bun-sqlite";
 import { drizzle as drizzleMysql } from "drizzle-orm/mysql2";
@@ -24,7 +24,18 @@ export function openSqliteBackend(path: string): Backend {
   const lockPath = `${path}.sandbar.lock`;
   let fd: number;
   try { fd = openSync(lockPath, "wx", 0o600); }
-  catch { throw new Error(`SQLite database is already owned: ${lockPath}`); }
+  catch {
+    // A hard process interruption leaves its lock file. Reclaim only when its PID is absent.
+    try {
+      const owner = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number };
+      if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) throw new Error("Invalid lock owner");
+      try { process.kill(owner.pid, 0); throw new Error(`SQLite database is already owned by PID ${owner.pid}`); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+      unlinkSync(lockPath);
+      fd = openSync(lockPath, "wx", 0o600);
+    } catch (error) { throw new Error(`SQLite database is already owned or has an unreadable lock: ${lockPath}`, { cause: error }); }
+  }
+  writeSync(fd, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
   try { return sqliteBackend(new Database(path, { create: true }), { path: lockPath, fd }); }
   catch (error) { closeSync(fd); unlinkSync(lockPath); throw error; }
 }
@@ -63,6 +74,9 @@ function sqliteBackend(native: Database, lock?: { path: string; fd: number }): B
 
 export async function openMysqlBackend(url: string): Promise<Backend> {
   const pool = mysql.createPool({ uri: url, connectionLimit: 8, timezone: "Z", decimalNumbers: false, multipleStatements: false });
+  const lockConnection = await pool.getConnection();
+  const [lockRows] = await lockConnection.query("SELECT GET_LOCK('sandbar-control-service', 0) AS acquired") as [{ acquired: number }[], unknown];
+  if (Number(lockRows[0]?.acquired) !== 1) { lockConnection.release(); await pool.end(); throw new Error("MySQL control database is already owned by another service"); }
   const db = drizzleMysql({ client: pool });
   function wrap(source: Pick<typeof db, "execute">): QueryConnection {
     return {
@@ -80,7 +94,7 @@ export async function openMysqlBackend(url: string): Promise<Backend> {
   return {
     dialect: "mysql", ...wrap(db),
     transaction: <T>(work: (tx: QueryConnection) => Promise<T>) => db.transaction(async tx => work(wrap(tx))),
-    close: () => pool.end(),
+    close: async () => { await lockConnection.query("SELECT RELEASE_LOCK('sandbar-control-service')"); lockConnection.release(); await pool.end(); },
   };
 }
 
