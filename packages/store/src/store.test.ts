@@ -87,4 +87,20 @@ for (const dialect of (["sqlite", ...(process.env.SANDBAR_TEST_MYSQL_URL ? ["mys
       expect((await store.admitDestroy(destroyInput)).operation.kind).toBe("destroy");
     } finally { await store.close(); }
   });
+
+  test("destroy completes locally after definitive create rejection", async () => {
+    const { store, project } = await fixture(dialect);
+    try {
+      const created = await store.admitCreate({ projectId: project.id, endpoint: "POST /sandboxes", key: Bun.randomUUIDv7(), intentHash: "create", request: { environment: { kind: "prepared", imageId: "unsupported" } } });
+      const createClaim = (await store.claimDue("create", 1000, project.id))!;
+      await store.failWithoutEffect(createClaim, { code: "UNSUPPORTED", message: "Unsupported image", effect: "none", retry: "never" });
+      const sandboxId = created.sandbox.id;
+      const destroy = await store.admitDestroy({ projectId: project.id, sandboxId, endpoint: `DELETE /sandboxes/${sandboxId}`, key: Bun.randomUUIDv7(), intentHash: "destroy" });
+      expect(destroy.operation.status).toBe("succeeded");
+      expect(destroy.operation.effect).toBe("none");
+      expect(JSON.parse(destroy.operation.result_json!).observation.computeStopped).toBe(true);
+      expect((await store.getSandbox(project.id, sandboxId))?.observed_state).toBe("destroyed");
+      expect(await store.claimDue("destroy", 1000, project.id)).toBeUndefined();
+    } finally { await store.close(); }
+  });
 });

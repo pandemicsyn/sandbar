@@ -160,10 +160,15 @@ export class ControlStore {
       const activeMutation = await tx.row<{ id: string }>(sql`SELECT id FROM operations WHERE project_id=${input.projectId} AND sandbox_id=${box.id} AND kind IN ('exec','file_write') AND status IN ('queued','running','unknown') LIMIT 1`);
       if (activeMutation) throw new StoreError("CONFLICT", "Sandbox has unresolved execution or file work");
       const operationId = id("op"), submissionId = id("sub"), time = now();
-      await tx.run(sql`UPDATE sandboxes SET desired_state='destroyed',observed_state='destroying',revision=revision+1,updated_at=${time} WHERE id=${box.id}`);
-      await tx.run(sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'destroy',${box.id},NULL,${box.connection_id},'queued','accepted','none','{}',NULL,NULL,${submissionId},0,NULL,0,NULL,${time},NULL,${time},${time})`);
+      const creation = !box.native_id ? await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${box.create_operation_id} AND project_id=${input.projectId}`) : undefined;
+      const localOnly = !!creation && creation.status === "failed" && creation.effect === "none";
+      const observedState = localOnly ? "destroyed" : "destroying";
+      await tx.run(sql`UPDATE sandboxes SET desired_state='destroyed',observed_state=${observedState},observed_at=${localOnly ? time : box.observed_at},revision=revision+1,updated_at=${time} WHERE id=${box.id}`);
+      const resultJson = localOnly ? JSON.stringify({ kind: "destroy", observation: { computeStopped: true, retainedResources: [] } }) : null;
+      await tx.run(sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'destroy',${box.id},NULL,${box.connection_id},${localOnly ? "succeeded" : "queued"},${localOnly ? "completed" : "accepted"},'none','{}',${resultJson},NULL,${submissionId},0,NULL,0,NULL,${localOnly ? null : time},${localOnly ? time : null},${time},${time})`);
       await tx.run(sql`INSERT INTO invocation_keys (project_id,endpoint,${sql.raw("`key`")},intent_hash,operation_id,accepted_at) VALUES (${input.projectId},${input.endpoint},${input.key},${input.intentHash},${operationId},${time})`);
       await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${input.projectId},${box.id},${operationId},'destroy.requested','{}',NULL,NULL,${time})`);
+      if (localOnly) await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${input.projectId},${box.id},${operationId},'destroy.completed',${JSON.stringify({ effect: "none", localOnly: true })},${time},${time},${time})`);
       return { operation: (await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${operationId}`))!, sandbox: (await tx.row<SandboxRow>(sql`SELECT * FROM sandboxes WHERE id=${box.id}`))!, repeated: false };
     });
   }
