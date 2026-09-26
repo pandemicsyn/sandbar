@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { readFileSync, openSync, closeSync, unlinkSync, writeSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, openSync, writeSync, closeSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { drizzle as drizzleSqlite } from "drizzle-orm/bun-sqlite";
 import { drizzle as drizzleMysql } from "drizzle-orm/mysql2";
@@ -18,29 +18,38 @@ export interface Backend extends QueryConnection {
   close(): Promise<void>;
 }
 
-/** Only one process may own a SQLite control database. WAL does not replace this lease. */
+/** Every contender publishes its own live PID before checking for other owners. */
 export function openSqliteBackend(path: string): Backend {
-  if (path === ":memory:") return sqliteBackend(new Database(path), undefined);
-  const lockPath = `${path}.sandbar.lock`;
-  let fd: number;
-  try { fd = openSync(lockPath, "wx", 0o600); }
-  catch {
-    // A hard process interruption leaves its lock file. Reclaim only when its PID is absent.
-    try {
-      const owner = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number };
-      if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) throw new Error("Invalid lock owner");
-      try { process.kill(owner.pid, 0); throw new Error(`SQLite database is already owned by PID ${owner.pid}`); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
-      unlinkSync(lockPath);
-      fd = openSync(lockPath, "wx", 0o600);
-    } catch (error) { throw new Error(`SQLite database is already owned or has an unreadable lock: ${lockPath}`, { cause: error }); }
-  }
-  writeSync(fd, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
-  try { return sqliteBackend(new Database(path, { create: true }), { path: lockPath, fd }); }
-  catch (error) { closeSync(fd); unlinkSync(lockPath); throw error; }
+  if (path === ":memory:") return sqliteBackend(new Database(path));
+  const lockDir = `${path}.sandbar.locks`;
+  mkdirSync(lockDir, { recursive: true, mode: 0o700 });
+  const ownName = `pid-${process.pid}-${crypto.randomUUID()}`;
+  const ownPath = join(lockDir, ownName);
+  const fd = openSync(ownPath, "wx", 0o600);
+  try { writeSync(fd, JSON.stringify({ pid: process.pid, createdAt: Date.now() })); }
+  catch (error) { unlinkSync(ownPath); throw error; }
+  finally { closeSync(fd); }
+  try {
+    for (const name of readdirSync(lockDir)) {
+      if (name === ownName) continue;
+      const match = /^pid-([1-9][0-9]*)-[0-9a-f-]+$/i.exec(name);
+      if (!match) throw new Error("SQLite lock directory contains an unrecognized entry");
+      const pid = Number(match[1]);
+      try { process.kill(pid, 0); throw new Error(`SQLite database has another live contender: PID ${pid}`); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        unlinkSync(join(lockDir, name));
+      }
+    }
+  } catch (error) { unlinkSync(ownPath); throw error; }
+  try {
+    const native = new Database(path, { create: true });
+    try { return sqliteBackend(native, ownPath); }
+    catch (error) { native.close(); throw error; }
+  } catch (error) { unlinkSync(ownPath); throw error; }
 }
 
-function sqliteBackend(native: Database, lock?: { path: string; fd: number }): Backend {
+function sqliteBackend(native: Database, ownLockPath?: string): Backend {
   native.exec("PRAGMA foreign_keys = ON");
   native.exec("PRAGMA journal_mode = WAL");
   native.exec("PRAGMA synchronous = FULL");
@@ -74,7 +83,7 @@ function sqliteBackend(native: Database, lock?: { path: string; fd: number }): B
     }),
     close: () => exclusive(async () => {
       native.close();
-      if (lock) { closeSync(lock.fd); unlinkSync(lock.path); }
+      if (ownLockPath) unlinkSync(ownLockPath);
     }),
   };
 }

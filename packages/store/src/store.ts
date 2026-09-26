@@ -41,7 +41,6 @@ export class ControlStore {
   async getSession(idHash: string): Promise<{ csrf_hash: string; expires_at: number } | undefined> {
     return this.backend.row(sql`SELECT csrf_hash,expires_at FROM sessions WHERE id_hash=${idHash} AND expires_at>${now()}`);
   }
-  async rotateSessionCsrf(idHash: string, csrfHash: string): Promise<void> { await this.backend.run(sql`UPDATE sessions SET csrf_hash=${csrfHash} WHERE id_hash=${idHash} AND expires_at>${now()}`); }
   async deleteSession(idHash: string): Promise<void> { await this.backend.run(sql`DELETE FROM sessions WHERE id_hash=${idHash}`); }
 
   async createProject(name: string): Promise<{ id: string; name: string; createdAt: string }> {

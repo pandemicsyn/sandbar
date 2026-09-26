@@ -134,8 +134,8 @@ test("single-use setup, hashed credentials, session CSRF and logout", async () =
     const refreshed = await runtime.app.request("http://localhost/v1/session", { headers: { Cookie: cookie } });
     expect(refreshed.status).toBe(200);
     const nextCsrf = (await refreshed.json() as { csrfToken: string }).csrfToken;
-    expect(nextCsrf).not.toBe(csrfToken);
-    expect((await mutate({ Origin: "http://localhost", "X-CSRF-Token": csrfToken })).status).toBe(403);
+    expect(nextCsrf).toBe(csrfToken);
+    expect((await mutate({ Origin: "http://localhost", "X-CSRF-Token": csrfToken })).status).toBe(201);
     const logout = await runtime.app.request("http://localhost/v1/sessions/logout", { method: "POST", headers: { Cookie: cookie, Origin: "http://localhost", "X-CSRF-Token": nextCsrf } });
     expect(logout.status).toBe(204);
     expect((await runtime.app.request("http://localhost/v1/session", { headers: { Cookie: cookie } })).status).toBe(401);

@@ -165,7 +165,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       const token = `sdb_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")}`;
       await deps.store.setupOperator(await sha256(token));
       const sessionId = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
-      const csrfToken = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+      const csrfToken = await deps.secrets.sessionCsrfToken(sessionId);
       await deps.store.createSession(await sha256(sessionId), await sha256(csrfToken), Date.now() + sessionMs);
       putCookie(c, deps, sessionId);
       c.header("Cache-Control", "no-store");
@@ -178,7 +178,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       const body = await parseBody(c, SessionRequest);
       if (!await deps.store.authenticateBearer(await sha256(body.token))) return c.json(ErrorResponse.parse({ error: safeError("UNAUTHENTICATED", "Invalid token") }), 401);
       const sessionId = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
-      const csrfToken = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+      const csrfToken = await deps.secrets.sessionCsrfToken(sessionId);
       await deps.store.createSession(await sha256(sessionId), await sha256(csrfToken), Date.now() + sessionMs);
       putCookie(c, deps, sessionId); c.header("Cache-Control", "no-store");
       return c.json(SessionResponse.parse({ operatorId: "operator", csrfToken }), 201);
@@ -186,8 +186,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
   });
   app.get("/v1/session", protect(deps, false, async (c, a) => {
     if (a.kind !== "session") return c.json(ErrorResponse.parse({ error: safeError("FORBIDDEN", "Session required") }), 403);
-    const csrfToken = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
-    await deps.store.rotateSessionCsrf(a.idHash, await sha256(csrfToken));
+    const csrfToken = await deps.secrets.sessionCsrfToken(getCookie(c, cookieName(c, deps))!);
     c.header("Cache-Control", "no-store");
     return c.json(SessionResponse.parse({ operatorId: "operator", csrfToken }));
   }));
