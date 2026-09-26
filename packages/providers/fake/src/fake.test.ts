@@ -126,6 +126,18 @@ describe("independent fake provider", () => {
     expect(calls).toBe(0);
   });
 
+  test("fake driver does not forward mutation bodies across redirects", async () => {
+    let forwarded = 0;
+    const capture = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() { forwarded++; return Response.json({ ok: true }); } });
+    const redirect = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() { return Response.redirect(capture.url.toString(), 307); } });
+    try {
+      const driver = new FakeProviderDriver({ baseUrl: redirect.url.toString(), token });
+      const result = await driver.create({ scope, identity: identity("redirect_1"), image: "fake-starter", networkPolicy: "blocked" });
+      expect(result.status).toBe("unknown");
+      expect(forwarded).toBe(0);
+    } finally { redirect.stop(true); capture.stop(true); }
+  });
+
   test("fake server rejects foreign provider scope before mutation or read", async () => {
     const { driver, control } = await setup();
     const created = await driver.create({ scope, identity: identity("scope_parent"), image: "fake-starter", networkPolicy: "blocked" });

@@ -13,7 +13,7 @@ export class FakeProviderDriver implements ProviderDriver {
   }
 
   private async call(action: FakeAction): Promise<unknown> {
-    const response = await (this.options.fetch ?? fetch)(new URL("/v1/action", this.options.baseUrl), { method: "POST", headers: { Authorization: `Bearer ${this.options.token}`, "Content-Type": "application/json" }, body: JSON.stringify(action) });
+    const response = await (this.options.fetch ?? fetch)(new URL("/v1/action", this.options.baseUrl), { method: "POST", redirect: "error", headers: { Authorization: `Bearer ${this.options.token}`, "Content-Type": "application/json" }, body: JSON.stringify(action) });
     if (!response.ok) throw new FakeTransportError(response.status);
     return response.json();
   }
