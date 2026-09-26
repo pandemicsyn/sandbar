@@ -75,6 +75,7 @@ class RemoteSandbox implements SandboxHandle {
   async writeFile(path: string, bytes: Uint8Array, options: { overwrite?: boolean; signal?: AbortSignal } = {}): Promise<void> {
     validateFilePath(path);
     if (!(bytes instanceof Uint8Array)) throw new SandbarError("INVALID_ARGUMENT", "Expected Uint8Array bytes");
+    if (bytes.length > 1_048_576) throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK write limit");
     const query = new URLSearchParams({ path, overwrite: String(options.overwrite ?? false) });
     const route = `sandboxes/${encodeURIComponent(this.id)}/files?${query}`;
     const { operation, reference } = await this.client.mutate("file_write", this.id, route, "PUT", bytes, undefined, { path, bytes: bytes.length });

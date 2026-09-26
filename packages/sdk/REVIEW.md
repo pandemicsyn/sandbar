@@ -51,3 +51,13 @@ Final Luna-high complete-diff review of this packaged result remains pending.
 - Validation after fixes: `bun run check` passed; full `bun run test` passed 53 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 4 is **not** a zero-finding clearance.
 
 Final complete-diff review after these fixes remains pending.
+
+## Round 5
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `04b015d56751d80a6a9f1a3d45b897045b7c67a5`.
+- One actionable finding: remote file writes sent bytes above the direct SDK's 1 MiB limit and relied on service rejection. Remote now rejects before the HTTP mutation, with a parity test confirming no write request is sent.
+- Validation after fix: `bun run check` passed; full `bun run test` passed 53 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 5 is **not** a zero-finding clearance.
+
+Final independent complete-diff review of the resulting HEAD remains pending.

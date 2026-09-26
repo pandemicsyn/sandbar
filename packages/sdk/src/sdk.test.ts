@@ -127,6 +127,7 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   const operation = await client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
   const box = await operation.wait();
   expect(box.id).toBe("box_1");
+  await expect(box.writeFile("/too-large", new Uint8Array(1_048_577))).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
   expect(posts).toBe(1);
   expect(operation.reference.invocationKey).toBe(key);
   expect(JSON.stringify(operation.reference)).not.toContain("secret");
