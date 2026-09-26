@@ -27,14 +27,14 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
     let wrongIdentity = false;
     let rejectWithSecret = false;
     const observedAt = new Date().toISOString();
-    const executionResult = (completed: boolean): DriverResult => ({ status: "completed", effect: "applied", value: { kind: "execution", observation: { ref: { scope, nativeId: "native_execution", kind: "execution" }, sandbox: wrongIdentity ? { ...sandbox, nativeId: "another_sandbox" } : sandbox, completed, exitCode: completed ? 7 : null, stdoutBase64: completed ? Buffer.from("done").toString("base64") : undefined, observedAt } } });
+    const executionResult = (completed: boolean, submissionId: string): DriverResult => ({ status: "completed", effect: "applied", submissionId, value: { kind: "execution", observation: { ref: { scope, nativeId: "native_execution", kind: "execution" }, sandbox: wrongIdentity ? { ...sandbox, nativeId: "another_sandbox" } : sandbox, completed, exitCode: completed ? 7 : null, stdoutBase64: completed ? Buffer.from("done").toString("base64") : undefined, observedAt } } });
     const unsupported = async () => { throw new Error("Unexpected driver call"); };
-    const fileResult: DriverResult = { status: "completed", effect: "partial", value: { kind: "file_write", observation: { sandbox, path: "/partial", bytesWritten: 1, complete: true } } };
+    const fileResult = (submissionId: string): DriverResult => ({ status: "completed", effect: "partial", submissionId, value: { kind: "file_write", observation: { sandbox, path: "/partial", bytesWritten: 1, complete: true } } });
     const driver: ProviderDriver = {
       name: "fake", capabilities: unsupported, prepare: unsupported, create: unsupported, inspect: unsupported,
-      inventory: unsupported, exec: async () => rejectWithSecret ? { status: "rejected", effect: "none", error: { code: "unavailable", message: "secret-in-provider-error", effect: "none", retry: "never" } } : executionResult(!wrongIdentity ? false : true),
-      readFile: unsupported, writeFile: async () => fileResult, destroy: unsupported,
-      observe: async () => executionResult(true),
+      inventory: unsupported, exec: async input => rejectWithSecret ? { status: "rejected", effect: "none", error: { code: "unavailable", message: "secret-in-provider-error", effect: "none", retry: "never" } } : executionResult(!wrongIdentity ? false : true, input.identity.submissionId),
+      readFile: unsupported, writeFile: async input => fileResult(input.identity.submissionId), destroy: unsupported,
+      observe: async input => executionResult(true, input.submissionId),
     };
     const secrets = await SecretBox.fromFile(keyFile);
     const runner = new DurableRunner({ store, driver, secrets });
@@ -82,4 +82,29 @@ test("polling continues after a transient claim error", async () => {
     await new Promise(resolve => setTimeout(resolve, 30));
     expect(claims).toBeGreaterThan(1);
   } finally { runner.stop(); }
+});
+
+test("a create observation with another submission ID cannot bind a native sandbox", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-create-identity-"));
+  const keyFile = join(directory, "key");
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32))); await chmod(keyFile, 0o600);
+  const backend = openSqliteBackend(":memory:");
+  await migrate(backend, bundledMigration("sqlite"));
+  const store = new ControlStore(backend);
+  try {
+    const project = await store.createProject("Create identity");
+    const connection = await store.createConnection({ id: "conn_identity", projectId: project.id, provider: "fake", name: "Fake", encryptedCredentials: "ciphertext" });
+    await store.verifyConnection(project.id, connection.id, "fake-local");
+    const created = await store.admitCreate({ projectId: project.id, endpoint: "POST /sandboxes", key: Bun.randomUUIDv7(), intentHash: "create", request: { environment: { kind: "prepared", imageId: "fake-starter" } }, connectionId: connection.id });
+    const scope: NativeScope = { provider: "fake", connectionId: connection.id, accountId: "fake-local", region: "local" };
+    const unsupported = async () => { throw new Error("Unexpected driver call"); };
+    const driver: ProviderDriver = {
+      name: "fake", capabilities: unsupported, prepare: async () => ({ supported: true, effectiveImage: "fake-starter" }),
+      create: async () => ({ status: "completed", effect: "applied", submissionId: "sub_other", value: { kind: "sandbox", observation: { ref: { scope, nativeId: "native_other", kind: "sandbox" }, state: "running", observedAt: new Date().toISOString() } } }),
+      inspect: unsupported, inventory: unsupported, exec: unsupported, readFile: unsupported, writeFile: unsupported, destroy: unsupported, observe: unsupported,
+    };
+    await new DurableRunner({ store, driver, secrets: await SecretBox.fromFile(keyFile) }).tick();
+    expect((await store.getOperation(project.id, created.operation.id))?.status).toBe("unknown");
+    expect((await store.getSandbox(project.id, created.sandbox.id))?.native_id).toBeNull();
+  } finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
 });

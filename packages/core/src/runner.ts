@@ -109,6 +109,7 @@ export class DurableRunner {
   }
   private async handleResult(claim: Claimed, result: DriverResult, scope: NativeScope): Promise<void> {
     const { store, secrets } = this.options;
+    if (result.status !== "rejected" && result.submissionId !== claim.operation.provider_token) throw new Error("Provider result submission mismatch");
     if (result.status === "pending") { await store.reschedule(claim, "awaiting_observation", Math.max(500, result.observeAfterMs)); return; }
     if (result.status === "unknown") { await store.reschedule(claim, "outcome_unknown", 5_000, "PROVIDER_UNKNOWN"); return; }
     if (result.status === "rejected") {

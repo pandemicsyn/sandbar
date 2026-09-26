@@ -84,6 +84,14 @@ test("API persists ambiguous create and exec, then observes each once after rest
     const execution = (await json(`/v1/projects/${project.id}/executions/${exec.value.execution.id}`, "GET", undefined, bearer)).value;
     expect(execution.exitCode).toBe(7);
     expect(execution.stdout).toBe("hello from fake");
+    expect(execution.stdoutBase64).toBe(Buffer.from("hello from fake").toString("base64"));
+    const binary = Buffer.from([0xff, 0x00, 0x80]);
+    const binaryExec = await json(`/v1/projects/${project.id}/sandboxes/${boxId}/executions`, "POST", { command: { kind: "argv", argv: ["fixture", "binary"] } }, { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() });
+    const binaryOp = await runtime.store.getOperation(project.id, binaryExec.value.operation.id);
+    await control("/_test/seed", { submissionId: binaryOp!.provider_token, action: "exec", behavior: "normal", command: { command: { kind: "argv", argv: ["fixture", "binary"] }, exitCode: 0, stdoutBase64: binary.toString("base64") } });
+    await runtime.runner.tick();
+    const binaryResult = (await json(`/v1/projects/${project.id}/executions/${binaryExec.value.execution.id}`, "GET", undefined, bearer)).value;
+    expect(Buffer.from(binaryResult.stdoutBase64, "base64")).toEqual(binary);
     expect((await runtime.store.getOperation(project.id, exec.value.operation.id))?.result_json).not.toContain("hello from fake");
     const bytes = Uint8Array.from([0, 255, 1]);
     const write = await runtime.app.request(`/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/blob`, { method: "PUT", headers: { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() }, body: bytes });
@@ -106,14 +114,13 @@ test("API persists ambiguous create and exec, then observes each once after rest
     expect(recoveredWrite.result.receipt.bytesWritten).toBe(bytes.length);
     const fakeState = await control("/_test/state");
     expect(fakeState.invocations.filter((item: any) => item.action === "create")).toHaveLength(1);
-    expect(fakeState.invocations.filter((item: any) => item.action === "exec")).toHaveLength(1);
+    expect(fakeState.invocations.filter((item: any) => item.action === "exec")).toHaveLength(2);
     expect(fakeState.invocations.filter((item: any) => item.action === "file_write")).toHaveLength(2);
     const rejectedCreate = await json(`/v1/projects/${project.id}/sandboxes`, "POST", { environment: { kind: "prepared", imageId: "unsupported-image" }, connectionId: connection.id }, { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() });
     const rejectedBoxId = rejectedCreate.value.operation.sandboxId;
     const cleanup = await json(`/v1/projects/${project.id}/sandboxes/${rejectedBoxId}`, "DELETE", undefined, { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() });
     expect(cleanup.value.operation.status).toBe("queued");
-    await runtime.runner.tick();
-    await runtime.runner.tick();
+    for (let i = 0; i < 5 && (await runtime.store.getOperation(project.id, cleanup.value.operation.id))?.status !== "succeeded"; i++) await runtime.runner.tick();
     expect((await json(`/v1/projects/${project.id}/operations/${cleanup.value.operation.id}`, "GET", undefined, bearer)).value.status).toBe("succeeded");
     expect((await json(`/v1/projects/${project.id}/sandboxes/${rejectedBoxId}`, "GET", undefined, bearer)).value.observedState).toBe("destroyed");
   } finally { await runtime.close(); }
