@@ -1,21 +1,26 @@
 import type {
   ProviderDriver,
-  NativeRef,
   SandboxRef,
   NativeScope,
   DriverResult,
   InvocationIdentity,
 } from "@sandbar/provider-spi";
 import { validateDriverResult } from "@sandbar/provider-spi";
-import { CreateSandboxRequest, ExecRequest } from "@sandbar/contracts";
+import type { ExecRequest } from "@sandbar/contracts";
 import {
   ControlStore,
   type Claimed,
-  type OperationRow,
   type SandboxRow,
   type ConnectionRow,
 } from "@sandbar/store";
 import { SecretBox } from "./crypto";
+import {
+  normalizeCreate,
+  normalizeExec,
+  outputLimit,
+  correlateDriverResult,
+  captureBoundedOutput,
+} from "@sandbar/core";
 
 export interface RunnerOptions {
   store: ControlStore;
@@ -116,20 +121,13 @@ export class DurableRunner {
       if (!box) throw new Error("Sandbox record vanished");
 
       if (op.kind === "create") {
-        const request = CreateSandboxRequest.parse(JSON.parse(op.request_json));
-
-        const image =
-          request.environment.kind === "prepared"
-            ? { kind: "prepared" as const, value: request.environment.imageId }
-            : { kind: "oci" as const, value: request.environment.reference };
-
-        const networkPolicy = request.network?.policy ?? "blocked";
+        const plan = normalizeCreate(JSON.parse(op.request_json));
 
         const preparation = await driver.prepare({
           scope,
-          image,
-          networkPolicy,
-          region: request.region,
+          image: plan.image,
+          networkPolicy: plan.networkPolicy,
+          region: plan.region,
         });
 
         if (!preparation.supported || !preparation.effectiveImage) {
@@ -149,8 +147,8 @@ export class DurableRunner {
           scope,
           identity,
           image: preparation.effectiveImage,
-          networkPolicy,
-          labels: request.labels,
+          networkPolicy: plan.networkPolicy,
+          labels: plan.labels,
         });
 
         await this.handleResult(claim, validateDriverResult(result), scope);
@@ -164,7 +162,7 @@ export class DurableRunner {
         // SAFETY: admitExec persists this encrypted request envelope before dispatch.
         const envelope = JSON.parse(op.request_json) as { encryptedRequest: string };
 
-        const request = ExecRequest.parse(
+        const plan = normalizeExec(
           JSON.parse(
             await this.options.secrets.open(
               "execution-request",
@@ -181,12 +179,7 @@ export class DurableRunner {
         const result = await driver.exec({
           sandbox: ref,
           identity,
-          command: request.command,
-          cwd: request.cwd,
-          env: request.env,
-          deadlineSeconds: request.deadlineSeconds ?? 300,
-          maxOutputBytes:
-            request.output?.capture === "none" ? 0 : (request.output?.maxBytes ?? 1_048_576),
+          ...plan,
         });
 
         await this.handleResult(claim, validateDriverResult(result), scope);
@@ -245,21 +238,6 @@ export class DurableRunner {
 
     return { scope, nativeId: box.native_id, kind: "sandbox" };
   }
-  private sameScope(actual: NativeScope, expected: NativeScope): boolean {
-    return (
-      actual.provider === expected.provider &&
-      actual.connectionId === expected.connectionId &&
-      actual.accountId === expected.accountId &&
-      actual.region === expected.region
-    );
-  }
-  private sameRef(actual: NativeRef, expected: NativeRef): boolean {
-    return (
-      actual.kind === expected.kind &&
-      actual.nativeId === expected.nativeId &&
-      this.sameScope(actual.scope, expected.scope)
-    );
-  }
   private async handleResult(
     claim: Claimed,
     result: DriverResult,
@@ -267,14 +245,13 @@ export class DurableRunner {
   ): Promise<void> {
     const { store, secrets } = this.options;
 
-    if (result.status !== "rejected") {
-      const required = claim.observeOnly || result.status !== "completed";
-
-      if (
-        (required || result.submissionId !== undefined) &&
-        result.submissionId !== claim.operation.provider_token
-      )
-        throw new Error("Provider result submission mismatch");
+    if (result.status !== "completed") {
+      correlateDriverResult(result, {
+        submissionId: claim.operation.provider_token,
+        kind: claim.operation.kind,
+        scope,
+        requireSubmissionId: claim.observeOnly,
+      });
     }
 
     if (result.status === "pending") {
@@ -322,30 +299,24 @@ export class DurableRunner {
       return;
     }
 
-    const value = result.value;
-
-    if (
-      (claim.operation.kind === "create" && value.kind !== "sandbox") ||
-      (claim.operation.kind === "exec" && value.kind !== "execution") ||
-      (claim.operation.kind === "destroy" && value.kind !== "destroy") ||
-      (claim.operation.kind === "file_write" && value.kind !== "file_write")
-    )
-      throw new Error("Provider result kind mismatch");
     const box = await store.getSandbox(claim.operation.project_id, claim.operation.sandbox_id);
 
     if (!box) throw new Error("Sandbox identity missing");
-
-    if (
-      value.kind === "sandbox" &&
-      (value.observation.ref.kind !== "sandbox" ||
-        !this.sameScope(value.observation.ref.scope, scope))
-    )
-      throw new Error("Provider result scope mismatch");
+    // SAFETY: admission stores the path and byte count used to correlate file receipts.
+    const file = claim.operation.kind === "file_write"
+      ? JSON.parse(claim.operation.request_json) as { path: string; bytes: number }
+      : undefined;
+    correlateDriverResult(result, {
+      submissionId: claim.operation.provider_token,
+      kind: claim.operation.kind,
+      scope,
+      sandbox: box.native_id ? this.ref(scope, box) : undefined,
+      file,
+      requireSubmissionId: claim.observeOnly,
+    });
+    const value = result.value;
 
     if (value.kind === "destroy") {
-      if (!this.sameRef(value.observation.sandbox, this.ref(scope, box)))
-        throw new Error("Destroy target mismatch");
-
       if (!value.observation.computeStopped) {
         await store.reschedule(claim, "cleanup_unconfirmed", 5_000, "COMPUTE_NOT_STOPPED");
 
@@ -354,17 +325,7 @@ export class DurableRunner {
     }
 
     if (value.kind === "file_write") {
-      // SAFETY: admitFileWrite stores the path and byte count used to verify this receipt.
-      const request = JSON.parse(claim.operation.request_json) as { path: string; bytes: number };
-
-      if (
-        !this.sameRef(value.observation.sandbox, this.ref(scope, box)) ||
-        value.observation.path !== request.path ||
-        value.observation.bytesWritten > request.bytes
-      )
-        throw new Error("File write receipt mismatch");
-
-      if (!value.observation.complete || value.observation.bytesWritten !== request.bytes) {
+      if (!value.observation.complete || value.observation.bytesWritten !== file!.bytes) {
         await store.reschedule(claim, "file_write_unconfirmed", 5_000, "INCOMPLETE_FILE_WRITE");
 
         return;
@@ -372,23 +333,18 @@ export class DurableRunner {
     }
 
     if (value.kind === "execution") {
-      if (
-        !this.sameRef(value.observation.sandbox, this.ref(scope, box)) ||
-        value.observation.ref.kind !== "execution" ||
-        !this.sameScope(value.observation.ref.scope, scope)
-      )
-        throw new Error("Execution identity mismatch");
-
       if (!value.observation.completed) {
         await store.reschedule(claim, "execution_running", 1_000, undefined, true);
 
         return;
       }
 
-      const output = this.captureOutput(
+      // SAFETY: the submission marker retains bounded output options after the secret request is cleared.
+      const retained = JSON.parse(claim.operation.request_json) as Pick<ExecRequest, "output">;
+      const output = captureBoundedOutput(
         value.observation.stdoutBase64,
         value.observation.stderrBase64,
-        claim.operation,
+        outputLimit(retained.output),
       );
 
       const encryptedOutput = output.bytes
@@ -420,24 +376,5 @@ export class DurableRunner {
         observedAt: value.kind === "sandbox" ? Date.parse(value.observation.observedAt) : undefined,
       });
     }
-  }
-  private captureOutput(
-    stdoutBase64: string | undefined,
-    stderrBase64: string | undefined,
-    op: OperationRow,
-  ) {
-    // SAFETY: The submission marker retains the bounded output options in request_json.
-    const request = JSON.parse(op.request_json) as Pick<ExecRequest, "output">;
-    const max = request.output?.capture === "none" ? 0 : (request.output?.maxBytes ?? 1_048_576);
-    const stdout = stdoutBase64 ? Buffer.from(stdoutBase64, "base64") : Buffer.alloc(0);
-    const stderr = stderrBase64 ? Buffer.from(stderrBase64, "base64") : Buffer.alloc(0);
-    const out = stdout.subarray(0, max);
-    const err = stderr.subarray(0, Math.max(0, max - out.length));
-
-    return {
-      payload: { stdoutBase64: out.toString("base64"), stderrBase64: err.toString("base64") },
-      bytes: out.length + err.length,
-      truncated: stdout.length + stderr.length > max,
-    };
   }
 }

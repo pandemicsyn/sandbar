@@ -1,0 +1,13 @@
+{
+  "name": "@sandbar/service-runtime",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "check": "tsc -p tsconfig.json" },
+  "dependencies": {
+    "@sandbar/contracts": "workspace:*",
+    "@sandbar/core": "workspace:*",
+    "@sandbar/provider-spi": "workspace:*",
+    "@sandbar/store": "workspace:*"
+  }
+}

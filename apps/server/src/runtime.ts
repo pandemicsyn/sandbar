@@ -8,7 +8,7 @@ import {
   openMysqlBackend,
   openSqliteBackend,
 } from "@sandbar/store";
-import { DurableRunner, SecretBox } from "@sandbar/core";
+import { DurableRunner, SecretBox } from "@sandbar/service-runtime";
 import { FakeProviderDriver } from "@sandbar/provider-fake";
 
 export interface RuntimeConfig {

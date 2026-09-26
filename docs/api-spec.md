@@ -8,7 +8,7 @@ The refined schemas/defaults in [contract recommendations](contract-recommendati
 
 Use versioned HTTP routes and JSON for control operations. OpenAPI is the canonical wire specification once implementation starts; examples and SDK models must derive from or be validated against it. Specify streaming frame schemas separately. Do not generate OpenAPI from a bespoke TypeScript SDK's live handles, iterators, or byte arrays.
 
-The service owns placement, policy, provider authentication, durable operations, and reconciliation. SDKs own ergonomic resource handles, language-native iteration, cancellation of waiting, local tunnel listeners, and convenient operation waiting.
+In service-backed mode, the service owns placement, policy, provider authentication, durable operations, and reconciliation. SDKs own ergonomic resource handles, language-native iteration, cancellation of waiting, local tunnel listeners, and convenient operation waiting. The accepted [direct TypeScript mode](direct-typescript-sdk.md) performs caller-local planning/provider access without the service. It shares resource semantics but does not inherit HTTP 202 durable-admission guarantees; the operation protocol below describes the service backend.
 
 First-class clients:
 

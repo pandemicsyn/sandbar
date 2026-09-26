@@ -10,12 +10,6 @@ function unb64(value: string): Uint8Array {
   return Uint8Array.from(Buffer.from(value, "base64url"));
 }
 
-export async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
-
-  return Buffer.from(digest).toString("hex");
-}
-
 /** The key file is outside SQL and outside the artifact directory. */
 export class SecretBox {
   private constructor(

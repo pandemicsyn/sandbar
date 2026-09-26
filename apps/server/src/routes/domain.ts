@@ -40,7 +40,8 @@ import {
   type OperationRow,
   type SandboxRow,
 } from "@sandbar/store";
-import { DurableRunner, SecretBox, sha256 } from "@sandbar/core";
+import { sha256 } from "@sandbar/core";
+import { DurableRunner, SecretBox } from "@sandbar/service-runtime";
 
 export interface DomainDependencies {
   store: ControlStore;
