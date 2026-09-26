@@ -140,7 +140,7 @@ export class ControlStore {
       if (Number(totals?.project_bytes ?? 0) + input.captureBytes > 256 * 1024 * 1024 || Number(totals?.sandbox_bytes ?? 0) + input.captureBytes > 16 * 1024 * 1024) throw new StoreError("CAPACITY", "Output reservation capacity exceeded");
       const operationId = id("op"), executionId = id("ex"), submissionId = id("sub"), time = now();
       await tx.run(sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'exec',${box.id},${executionId},${box.connection_id},'queued','accepted','none',${JSON.stringify({ encryptedRequest: input.encryptedRequest, output: input.output })},NULL,NULL,${submissionId},0,NULL,0,NULL,${time},NULL,${time},${time})`);
-      await tx.run(sql`INSERT INTO executions (id,project_id,sandbox_id,operation_id,status,exit_code,signal,timed_out,output_state,output_bytes,output_truncated,output_ciphertext,created_at,completed_at) VALUES (${executionId},${input.projectId},${box.id},${operationId},'queued',NULL,NULL,NULL,${input.captureBytes ? "not_captured" : "not_captured"},0,0,NULL,${time},NULL)`);
+      await tx.run(sql`INSERT INTO executions (id,project_id,sandbox_id,operation_id,status,exit_code,${sql.raw("`signal`")},timed_out,output_state,output_bytes,output_truncated,output_ciphertext,created_at,completed_at) VALUES (${executionId},${input.projectId},${box.id},${operationId},'queued',NULL,NULL,NULL,'not_captured',0,0,NULL,${time},NULL)`);
       await tx.run(sql`INSERT INTO invocation_keys (project_id,endpoint,${sql.raw("`key`")},intent_hash,operation_id,accepted_at) VALUES (${input.projectId},${input.endpoint},${input.key},${input.intentHash},${operationId},${time})`);
       await tx.run(sql`INSERT INTO reservations (id,project_id,sandbox_id,operation_id,kind,amount,state,created_at,released_at) VALUES (${id("res")},${input.projectId},${box.id},${operationId},'output',${input.captureBytes},'active',${time},NULL)`);
       await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${input.projectId},${box.id},${operationId},'operation.accepted','{}',NULL,NULL,${time})`);
@@ -157,6 +157,8 @@ export class ControlStore {
       const box = await tx.row<SandboxRow>(sql`SELECT * FROM sandboxes WHERE project_id=${input.projectId} AND id=${input.sandboxId}`);
       if (!box) throw new StoreError("NOT_FOUND", "Sandbox not found");
       if (box.desired_state === "destroyed") throw new StoreError("CONFLICT", "Destruction has already been requested");
+      const activeMutation = await tx.row<{ id: string }>(sql`SELECT id FROM operations WHERE project_id=${input.projectId} AND sandbox_id=${box.id} AND kind IN ('exec','file_write') AND status IN ('queued','running','unknown') LIMIT 1`);
+      if (activeMutation) throw new StoreError("CONFLICT", "Sandbox has unresolved execution or file work");
       const operationId = id("op"), submissionId = id("sub"), time = now();
       await tx.run(sql`UPDATE sandboxes SET desired_state='destroyed',observed_state='destroying',revision=revision+1,updated_at=${time} WHERE id=${box.id}`);
       await tx.run(sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'destroy',${box.id},NULL,${box.connection_id},'queued','accepted','none','{}',NULL,NULL,${submissionId},0,NULL,0,NULL,${time},NULL,${time},${time})`);
@@ -224,8 +226,13 @@ export class ControlStore {
   }
   async beginSubmission(claim: Claimed): Promise<boolean> {
     return this.backend.transaction(async tx => {
+      await this.lockProject(tx, claim.operation.project_id);
       const op = await this.lockOperation(tx, claim.operation.id);
       if (!op || op.lease_owner !== claim.operation.lease_owner || Number(op.lease_generation) !== claim.generation || Number(op.submission_possible)) return false;
+      if (op.kind === "exec" || op.kind === "file_write") {
+        const box = await tx.row<SandboxRow>(sql`SELECT * FROM sandboxes WHERE project_id=${op.project_id} AND id=${op.sandbox_id}`);
+        if (!box || box.desired_state !== "running" || box.observed_state !== "running" || !box.native_id) return false;
+      }
       const time = now();
       const fileRequest = op.kind === "file_write" ? parseJson<{ path: string; overwrite: boolean; bytes: number }>(op.request_json) : undefined;
       const execRequest = op.kind === "exec" ? parseJson<{ output?: { capture: string; maxBytes?: number } }>(op.request_json) : undefined;
