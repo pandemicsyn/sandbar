@@ -39,7 +39,7 @@ This report records independent static reviews for the management UI and browser
 
 - Control added a read-only, project-scoped lookup from invocation key and endpoint identity to the accepted operation. The web UI now offers a recovery action for unresolved create, exec, destroy, and file-write submissions without storing command text or file contents in browser storage.
 - Browser E2E drops an accepted exec response, reloads the page, uses the lookup to open the original operation, and verifies its ID and provider effect count.
-- Web check and build pass. The browser test requires rebasing onto the reviewed control branch containing the new lookup route; full validation and final independent review follow that rebase.
+- Integration checkpoint: rebased onto control `b17cca30a9f730ad25aa8088a4e1741f18e947e7` and ran `bun run check && bun run build && bun run test` successfully (27 passed, 1 local MySQL skip, 0 failed, 1239 assertions). The browser test exercises the real lookup route. Contracts and control parent reviews are still in progress; final dependency rebase and independent web review remain required.
 
 ## Final clearance
 
