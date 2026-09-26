@@ -84,4 +84,12 @@ Final complete-diff review after these fixes remains pending.
 - One actionable finding: remote recovery with an operation ID did not prove that the ID belonged to the reference's invocation key. Recovery now resolves by invocation key every time and requires the returned operation ID to match when present. Added mismatch regression coverage.
 - Validation after fix: `bun run check` passed; full `bun run test` passed 54 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 8 is **not** a zero-finding clearance.
 
+## Round 9
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `546045ce7f285df6759bb88008dd6da0eb66e564`.
+- Two actionable findings: closing during a dispatched mutation could hide the accepted effect behind a no-effect `CLIENT_CLOSED` error; abort/close could hang while observation was in flight. Mutation convenience methods now preserve and surface an `OutcomeUnknownError` with the preallocated reference after close, and waits race read-only observation against abort/close signals. Added direct and remote race regressions.
+- Validation after fixes: focused SDK tests 14/14 passed; `bun run check` passed; full `bun run test` passed 57 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 9 is **not** a zero-finding clearance.
+
 Final independent complete-diff review of the resulting HEAD remains pending.

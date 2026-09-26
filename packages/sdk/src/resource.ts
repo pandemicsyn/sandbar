@@ -124,3 +124,18 @@ export function waitDelay(ms: number, signal?: AbortSignal): Promise<void> {
     signal?.addEventListener("abort", abort, { once: true });
   });
 }
+export function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) { void work.catch(() => undefined); return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError")); }
+  return new Promise((resolve, reject) => {
+    const abort = () => { signal.removeEventListener("abort", abort); reject(signal.reason ?? new DOMException("Aborted", "AbortError")); };
+    signal.addEventListener("abort", abort, { once: true });
+    work.then(
+      value => { signal.removeEventListener("abort", abort); resolve(value); },
+      error => { signal.removeEventListener("abort", abort); reject(error); },
+    );
+  });
+}
+export function rethrowCloseWithReference(error: unknown, reference: RecoveryReference): never {
+  if (error instanceof SandbarError && error.code === "CLIENT_CLOSED") throw new OutcomeUnknownError(reference, "Client closed after submission; recover with this reference");
+  throw error;
+}

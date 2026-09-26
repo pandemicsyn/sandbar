@@ -98,6 +98,47 @@ test("closing a client interrupts pending direct observation without destroying 
   expect((await control("/_test/state")).resources).toHaveLength(1);
 });
 
+test("direct close during applied create preserves a recovery reference", async () => {
+  const { url, control } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const create = provider.driver.create.bind(provider.driver);
+  let entered!: () => void, release!: () => void;
+  const dispatched = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  provider.driver.create = async input => { const result = await create(input); entered(); await gate; return result; };
+  const client = DirectSandbar.direct({ provider });
+  const pending = client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
+  await dispatched;
+  await client.close();
+  release();
+  try { await pending; throw new Error("Expected uncertain close"); }
+  catch (error) { expect(error).toBeInstanceOf(OutcomeUnknownError); expect((error as OutcomeUnknownError).reference.submissionId).toStartWith("sdk_"); }
+  expect((await control("/_test/state")).resources).toHaveLength(1);
+});
+
+test("abort ends direct and remote waits even when observation hangs", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const client = DirectSandbar.direct({ provider });
+  const operation = await client.sandboxes.submitCreate({ environment: DirectImage.prepared("fake-starter") });
+  provider.driver.observe = async () => new Promise(() => {});
+  const directAbort = new AbortController();
+  const directRef = await client.recover(operation.reference);
+  const directWait = directRef.wait({ signal: directAbort.signal });
+  setTimeout(() => directAbort.abort(), 10);
+  await expect(directWait).rejects.toMatchObject({ name: "AbortError" });
+
+  const projectId = "project_1";
+  const queued = { id: "op_1", projectId, kind: "create", status: "queued", phase: "queued", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "none", recovery: [] };
+  const fetcher: typeof fetch = async (_url, init) => init?.method === "POST" ? Response.json({ operation: queued }, { status: 202 }) : new Promise(() => {});
+  const remote = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  const remoteOp = await remote.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
+  const remoteAbort = new AbortController();
+  const remoteWait = remoteOp.wait({ signal: remoteAbort.signal });
+  setTimeout(() => remoteAbort.abort(), 10);
+  await expect(remoteWait).rejects.toMatchObject({ name: "AbortError" });
+});
+
 test("direct recovery never treats incomplete destroy or file receipts as success", async () => {
   const { url } = await fixture();
   const provider = await fakeProvider({ url, token });
@@ -137,6 +178,29 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   expect(JSON.stringify(operation.reference)).not.toContain("secret");
   await expect(client.recover({ ...operation.reference, operationId: "op_other" })).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
   await expect(RemoteSandbar.connect({ url: "https://other.example/", token: "secret", projectId, fetch: fetcher }).recover(operation.reference)).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+
+test("remote close after service admission preserves the invocation reference", async () => {
+  let started!: () => void, release!: () => void;
+  const dispatched = new Promise<void>(resolve => { started = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let key = "";
+  const projectId = "project_1";
+  const operation = { id: "op_1", projectId, kind: "create", status: "queued", phase: "queued", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "none", recovery: [] };
+  const fetcher: typeof fetch = async (_url, init) => {
+    if (init?.method !== "POST") throw new Error("Unexpected lookup");
+    key = new Headers(init.headers).get("Idempotency-Key") ?? "";
+    started();
+    await gate;
+    return Response.json({ operation }, { status: 202 });
+  };
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  const pending = client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") });
+  await dispatched;
+  await client.close();
+  release();
+  try { await pending; throw new Error("Expected uncertain close"); }
+  catch (error) { expect(error).toBeInstanceOf(OutcomeUnknownError); expect((error as OutcomeUnknownError).reference.invocationKey).toBe(key); }
 });
 
 test("remote refuses bearer transport over non-loopback HTTP", () => {
