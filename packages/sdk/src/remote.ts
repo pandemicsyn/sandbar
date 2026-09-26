@@ -1,8 +1,8 @@
 import { AcceptedExecution, AcceptedOperation, CreateSandboxRequest, ErrorResponse, Execution, FileReceipt, Id, Operation, Sandbox, type ExecRequest } from "@sandbar/contracts";
 import type { z } from "zod";
-import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
+import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
-export { Image, SandbarError, OutcomeUnknownError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
+export { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
 
 export type RemoteOptions = { url: string; token: string; projectId: string; fetch?: typeof fetch };
@@ -63,8 +63,9 @@ class RemoteSandbox implements SandboxHandle {
     });
   }
   async exec(input: ExecInput, options: { signal?: AbortSignal } = {}) {
+    throwIfAborted(options.signal);
     const operation = await this.submitExec(input);
-    try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference); }
+    try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference, options.signal); }
   }
   async readFile(path: string): Promise<Uint8Array> {
     validateFilePath(path);
@@ -77,6 +78,7 @@ class RemoteSandbox implements SandboxHandle {
     return bytes;
   }
   async writeFile(path: string, bytes: Uint8Array, options: { overwrite?: boolean; signal?: AbortSignal } = {}): Promise<void> {
+    throwIfAborted(options.signal);
     validateFilePath(path);
     if (!(bytes instanceof Uint8Array)) throw new SandbarError("INVALID_ARGUMENT", "Expected Uint8Array bytes");
     if (bytes.length > 1_048_576) throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK write limit");
@@ -86,14 +88,15 @@ class RemoteSandbox implements SandboxHandle {
     const op = new RemoteOperation({ ...reference, operationId: operation.id }, this.client, async current => {
       if (current.result?.kind !== "file_write" || current.sandboxId !== this.id || current.result.receipt.path !== path || !current.result.receipt.complete || current.result.receipt.bytesWritten !== bytes.length) throw new OutcomeUnknownError(reference, "File write receipt is incomplete or mismatched");
     });
-    try { await op.wait(options); } catch (error) { rethrowCloseWithReference(error, op.reference); }
+    try { await op.wait(options); } catch (error) { rethrowCloseWithReference(error, op.reference, options.signal); }
   }
   async destroy(options: { signal?: AbortSignal } = {}): Promise<void> {
+    throwIfAborted(options.signal);
     const { operation, reference } = await this.client.mutate("destroy", this.id, `sandboxes/${encodeURIComponent(this.id)}`, "DELETE", undefined, AcceptedOperation);
     const op = new RemoteOperation({ ...reference, operationId: operation.id }, this.client, async current => {
       if (current.result?.kind !== "destroy" || current.sandboxId !== this.id || !current.result.computeStopped) throw new OutcomeUnknownError(reference, "Compute stop has not been confirmed");
     });
-    try { await op.wait(options); } catch (error) { rethrowCloseWithReference(error, op.reference); }
+    try { await op.wait(options); } catch (error) { rethrowCloseWithReference(error, op.reference, options.signal); }
   }
 }
 
@@ -188,8 +191,9 @@ export class RemoteClient implements SandbarClient {
     });
   }
   async create(input: CreateInput, options: { signal?: AbortSignal } = {}) {
+    throwIfAborted(options.signal);
     const operation = await this.submitCreate(input);
-    try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference); }
+    try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference, options.signal); }
   }
   async recover(reference: RecoveryReference): Promise<OperationHandle<unknown>> {
     this.ensureOpen();

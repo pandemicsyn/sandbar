@@ -99,3 +99,13 @@ Final complete-diff review after these fixes remains pending.
 - Reviewed HEAD: `10a0afd04df836d5c064a355a54ed31e9b793e66`.
 - The reviewer inspected the complete diff, including SDK recovery and close behavior, package exports, fake provider split, and surrounding core/SPI/service context. It reported **zero remaining actionable findings**.
 - Final pre-review validation: focused SDK tests 14/14; `bun run check`; full `bun run test` 57 passed, one MySQL 8.4 skip, zero failed, browser E2E passed. `bun install --frozen-lockfile` and package-scope Node 26.4.0/Bun 1.3.14 imports passed earlier on the packaged branch.
+
+## Round 11
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `48e4178a80408e7346c148ee1182ba713ee3ddab`.
+- One actionable finding: aborting an ordinary mutation after dispatch hid the internally allocated recovery reference. Ordinary direct and remote create/exec/file-write/destroy now throw `WaitAbortedError` with the reference and original abort cause, while a pre-aborted signal is rejected before dispatch. Added controlled after-dispatch tests for both backends.
+- Validation after fix: focused SDK tests 16/16 passed; `bun run check` passed; full `bun run test` passed 59 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 11 is **not** a zero-finding clearance.
+
+Final independent complete-diff review of the resulting HEAD remains pending.

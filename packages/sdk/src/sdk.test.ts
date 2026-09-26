@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 import { startFakeProviderServer } from "@sandbar/provider-fake/server";
-import { Image as DirectImage, Sandbar as DirectSandbar, NonzeroExitError, NoExitCodeError, OutcomeUnknownError } from "./direct";
+import { Image as DirectImage, Sandbar as DirectSandbar, NonzeroExitError, NoExitCodeError, OutcomeUnknownError, WaitAbortedError } from "./direct";
 import { Image as RemoteImage, Sandbar as RemoteSandbar } from "./remote";
 
 let server: Awaited<ReturnType<typeof startFakeProviderServer>> | undefined;
@@ -116,6 +116,26 @@ test("direct close during applied create preserves a recovery reference", async 
   expect((await control("/_test/state")).resources).toHaveLength(1);
 });
 
+test("direct abort after effect retains its reference and cause", async () => {
+  const { url, control } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const create = provider.driver.create.bind(provider.driver);
+  let entered!: () => void, release!: () => void;
+  const dispatched = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  provider.driver.create = async input => { const result = await create(input); entered(); await gate; return result; };
+  const client = DirectSandbar.direct({ provider });
+  const controller = new AbortController();
+  const pending = client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") }, { signal: controller.signal });
+  await dispatched;
+  const reason = new Error("stop waiting");
+  controller.abort(reason);
+  release();
+  try { await pending; throw new Error("Expected abort"); }
+  catch (error) { expect(error).toBeInstanceOf(WaitAbortedError); expect((error as WaitAbortedError).reference.submissionId).toStartWith("sdk_"); expect((error as WaitAbortedError).cause).toBe(reason); }
+  expect((await control("/_test/state")).resources).toHaveLength(1);
+});
+
 test("abort ends direct and remote waits even when observation hangs", async () => {
   const { url } = await fixture();
   const provider = await fakeProvider({ url, token });
@@ -201,6 +221,31 @@ test("remote close after service admission preserves the invocation reference", 
   release();
   try { await pending; throw new Error("Expected uncertain close"); }
   catch (error) { expect(error).toBeInstanceOf(OutcomeUnknownError); expect((error as OutcomeUnknownError).reference.invocationKey).toBe(key); }
+});
+
+test("remote abort after admission retains its invocation reference and cause", async () => {
+  let started!: () => void, release!: () => void;
+  const dispatched = new Promise<void>(resolve => { started = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let key = "";
+  const projectId = "project_1";
+  const operation = { id: "op_1", projectId, kind: "create", status: "queued", phase: "queued", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "none", recovery: [] };
+  const fetcher: typeof fetch = async (_url, init) => {
+    if (init?.method !== "POST") throw new Error("Unexpected lookup");
+    key = new Headers(init.headers).get("Idempotency-Key") ?? "";
+    started();
+    await gate;
+    return Response.json({ operation }, { status: 202 });
+  };
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  const controller = new AbortController();
+  const pending = client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") }, { signal: controller.signal });
+  await dispatched;
+  const reason = new Error("stop waiting");
+  controller.abort(reason);
+  release();
+  try { await pending; throw new Error("Expected abort"); }
+  catch (error) { expect(error).toBeInstanceOf(WaitAbortedError); expect((error as WaitAbortedError).reference.invocationKey).toBe(key); expect((error as WaitAbortedError).cause).toBe(reason); }
 });
 
 test("remote refuses bearer transport over non-loopback HTTP", () => {

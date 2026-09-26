@@ -1,8 +1,8 @@
 import { NativeScope, type NativeRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
 import { normalizeCreate, normalizeExec, correlateDriverResult, sameNativeScope, sameNativeRef, captureBoundedOutput } from "@sandbar/core";
-import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
+import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
-export { Image, SandbarError, OutcomeUnknownError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
+export { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
 
 export type DirectProvider = { driver: ProviderDriver; scope: NativeScope };
@@ -74,8 +74,9 @@ class DirectSandbox implements SandboxHandle {
     }, first);
   }
   async exec(input: ExecInput, options: { signal?: AbortSignal } = {}) {
+    throwIfAborted(options.signal);
     const operation = await this.submitExec(input);
-    try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference); }
+    try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference, options.signal); }
   }
   async readFile(path: string): Promise<Uint8Array> {
     this.client.ensureOpen();
@@ -86,6 +87,7 @@ class DirectSandbox implements SandboxHandle {
     return bytes;
   }
   async writeFile(path: string, bytes: Uint8Array, options: { overwrite?: boolean; signal?: AbortSignal } = {}): Promise<void> {
+    throwIfAborted(options.signal);
     this.client.ensureOpen();
     validateFilePath(path);
     if (!(bytes instanceof Uint8Array)) throw new SandbarError("INVALID_ARGUMENT", "Expected Uint8Array bytes");
@@ -97,9 +99,10 @@ class DirectSandbox implements SandboxHandle {
     const op = new DirectOperation(reference, this.client, result => {
       if (result.status !== "completed" || result.value.kind !== "file_write" || !sameRef(result.value.observation.sandbox, this.ref) || result.value.observation.path !== path || !result.value.observation.complete || result.value.observation.bytesWritten !== bytes.length) throw new OutcomeUnknownError(reference, "File write receipt is incomplete or mismatched");
     }, first);
-    try { await op.wait(options); } catch (error) { rethrowCloseWithReference(error, reference); }
+    try { await op.wait(options); } catch (error) { rethrowCloseWithReference(error, reference, options.signal); }
   }
   async destroy(options: { signal?: AbortSignal } = {}): Promise<void> {
+    throwIfAborted(options.signal);
     this.client.ensureOpen();
     const invocation = identity();
     const reference = this.client.reference("destroy", invocation, this.ref);
@@ -108,7 +111,7 @@ class DirectSandbox implements SandboxHandle {
     const op = new DirectOperation(reference, this.client, result => {
       if (result.status !== "completed" || result.value.kind !== "destroy" || !sameRef(result.value.observation.sandbox, this.ref) || !result.value.observation.computeStopped) throw new OutcomeUnknownError(reference, "Compute stop has not been confirmed");
     }, first);
-    try { await op.wait(options); } catch (error) { rethrowCloseWithReference(error, reference); }
+    try { await op.wait(options); } catch (error) { rethrowCloseWithReference(error, reference, options.signal); }
   }
 }
 
@@ -158,8 +161,9 @@ export class DirectClient implements SandbarClient {
     }, first);
   }
   async create(input: CreateInput, options: { signal?: AbortSignal } = {}) {
+    throwIfAborted(options.signal);
     const operation = await this.submitCreate(input);
-    try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference); }
+    try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference, options.signal); }
   }
   async recover(reference: RecoveryReference): Promise<OperationHandle<unknown>> {
     this.ensureOpen();

@@ -46,6 +46,14 @@ export class SandbarError extends Error {
 export class OutcomeUnknownError extends SandbarError {
   constructor(readonly reference: RecoveryReference, message = "Outcome unknown; observe this reference without resubmitting") { super("OUTCOME_UNKNOWN", message, "possible"); this.name = "OutcomeUnknownError"; }
 }
+export class WaitAbortedError extends SandbarError {
+  readonly cause: unknown;
+  constructor(readonly reference: RecoveryReference, reason: unknown) {
+    super("WAIT_ABORTED", "Waiting stopped after submission; recover with this reference", "possible");
+    this.name = "AbortError";
+    this.cause = reason;
+  }
+}
 export class NonzeroExitError extends SandbarError {
   constructor(readonly result: ExecOutput) { super("NONZERO_EXIT", `Command exited with code ${result.exitCode}`, "applied"); this.name = "NonzeroExitError"; }
 }
@@ -124,6 +132,9 @@ export function waitDelay(ms: number, signal?: AbortSignal): Promise<void> {
     signal?.addEventListener("abort", abort, { once: true });
   });
 }
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+}
 export function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) { void work.catch(() => undefined); return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError")); }
   return new Promise((resolve, reject) => {
@@ -135,7 +146,8 @@ export function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> 
     );
   });
 }
-export function rethrowCloseWithReference(error: unknown, reference: RecoveryReference): never {
+export function rethrowCloseWithReference(error: unknown, reference: RecoveryReference, signal?: AbortSignal): never {
   if (error instanceof SandbarError && error.code === "CLIENT_CLOSED") throw new OutcomeUnknownError(reference, "Client closed after submission; recover with this reference");
+  if (signal?.aborted) throw new WaitAbortedError(reference, signal.reason);
   throw error;
 }
