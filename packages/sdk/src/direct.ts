@@ -1,6 +1,6 @@
 import { NativeScope, type NativeRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
 import { normalizeCreate, normalizeExec, correlateDriverResult, sameNativeScope, sameNativeRef, captureBoundedOutput } from "@sandbar/core";
-import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, sameRef, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
+import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, sameRef, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
 export { Image, SandbarError, OutcomeUnknownError, NonzeroExitError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
@@ -17,9 +17,11 @@ function identity(): InvocationIdentity {
 class DirectOperation<T> implements OperationHandle<T> {
   readonly durability = "process" as const;
   private first?: DriverResult;
-  constructor(readonly reference: RecoveryReference, private readonly driver: ProviderDriver, private readonly decode: (result: DriverResult) => T, first?: DriverResult) { this.first = first; }
+  constructor(readonly reference: RecoveryReference, private readonly client: DirectClient, private readonly decode: (result: DriverResult) => T, first?: DriverResult) { this.first = first; }
   async observe(): Promise<T | null> {
-    const raw = this.first ?? await this.driver.observe({ scope: this.reference.scope!, submissionId: this.reference.submissionId! });
+    this.client.ensureOpen();
+    const raw = this.first ?? await this.client.driver.observe({ scope: this.reference.scope!, submissionId: this.reference.submissionId! });
+    this.client.ensureOpen();
     this.first = undefined;
     if (!raw) throw new OutcomeUnknownError(this.reference, "Provider has no observation for this submission; resubmission is unsafe");
     let result: DriverResult;
@@ -34,11 +36,13 @@ class DirectOperation<T> implements OperationHandle<T> {
   async wait(options: { signal?: AbortSignal; pollMs?: number } = {}): Promise<T> {
     const pollMs = options.pollMs ?? 500;
     if (!Number.isSafeInteger(pollMs) || pollMs < 50 || pollMs > 60_000) throw new RangeError("Invalid pollMs");
+    const signal = options.signal ? AbortSignal.any([options.signal, this.client.closedSignal]) : this.client.closedSignal;
     for (;;) {
+      this.client.ensureOpen();
       if (options.signal?.aborted) throw options.signal.reason ?? new DOMException("Aborted", "AbortError");
       const result = await this.observe();
       if (result !== null) return result;
-      await waitDelay(pollMs, options.signal);
+      await waitDelay(pollMs, signal);
     }
   }
 }
@@ -61,7 +65,7 @@ class DirectSandbox implements SandboxHandle {
     let first: DriverResult | undefined;
     try { first = await this.client.driver.exec({ sandbox: this.ref, identity: invocation, ...request }); }
     catch { /* A thrown response after submission cannot prove absence of effect. */ }
-    return new DirectOperation(reference, this.client.driver, result => {
+    return new DirectOperation(reference, this.client, result => {
       if (result.status !== "completed" || result.value.kind !== "execution") throw new OutcomeUnknownError(reference);
       const observation = result.value.observation;
       if (!observation.completed || observation.exitCode === undefined) throw new OutcomeUnknownError(reference, "Execution has no completed outcome");
@@ -72,7 +76,7 @@ class DirectSandbox implements SandboxHandle {
   async exec(input: ExecInput, options: { signal?: AbortSignal } = {}) { return (await this.submitExec(input)).wait(options); }
   async readFile(path: string): Promise<Uint8Array> {
     this.client.ensureOpen();
-    if (!path || !path.startsWith("/")) throw new SandbarError("INVALID_ARGUMENT", "Expected an absolute path");
+    validateFilePath(path);
     const bytes = await this.client.driver.readFile({ sandbox: this.ref, path });
     if (!(bytes instanceof Uint8Array)) throw new SandbarError("INVALID_RESPONSE", "Provider returned invalid file bytes", "unknown");
     if (bytes.length > 1_048_576) throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK read limit", "unknown");
@@ -80,13 +84,14 @@ class DirectSandbox implements SandboxHandle {
   }
   async writeFile(path: string, bytes: Uint8Array, options: { overwrite?: boolean; signal?: AbortSignal } = {}): Promise<void> {
     this.client.ensureOpen();
-    if (!path?.startsWith("/") || !(bytes instanceof Uint8Array)) throw new SandbarError("INVALID_ARGUMENT", "Expected an absolute path and Uint8Array bytes");
+    validateFilePath(path);
+    if (!(bytes instanceof Uint8Array)) throw new SandbarError("INVALID_ARGUMENT", "Expected Uint8Array bytes");
     if (bytes.length > 1_048_576) throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK write limit");
     const invocation = identity();
     const reference = { ...this.client.reference("file_write", invocation, this.ref), file: { path, bytes: bytes.length } };
     let first: DriverResult | undefined;
     try { first = await this.client.driver.writeFile({ sandbox: this.ref, identity: invocation, path, bytes, overwrite: options.overwrite ?? false }); } catch { /* uncertain */ }
-    const op = new DirectOperation(reference, this.client.driver, result => {
+    const op = new DirectOperation(reference, this.client, result => {
       if (result.status !== "completed" || result.value.kind !== "file_write" || !sameRef(result.value.observation.sandbox, this.ref) || result.value.observation.path !== path || !result.value.observation.complete || result.value.observation.bytesWritten !== bytes.length) throw new OutcomeUnknownError(reference, "File write receipt is incomplete or mismatched");
     }, first);
     await op.wait(options);
@@ -97,7 +102,7 @@ class DirectSandbox implements SandboxHandle {
     const reference = this.client.reference("destroy", invocation, this.ref);
     let first: DriverResult | undefined;
     try { first = await this.client.driver.destroy({ sandbox: this.ref, identity: invocation }); } catch { /* uncertain */ }
-    const op = new DirectOperation(reference, this.client.driver, result => {
+    const op = new DirectOperation(reference, this.client, result => {
       if (result.status !== "completed" || result.value.kind !== "destroy" || !sameRef(result.value.observation.sandbox, this.ref) || !result.value.observation.computeStopped) throw new OutcomeUnknownError(reference, "Compute stop has not been confirmed");
     }, first);
     await op.wait(options);
@@ -112,6 +117,8 @@ function decodeBase64(value?: string): Uint8Array {
 
 export class DirectClient implements SandbarClient {
   private closed = false;
+  private readonly closeController = new AbortController();
+  get closedSignal(): AbortSignal { return this.closeController.signal; }
   readonly driver: ProviderDriver;
   readonly scope: NativeScope;
   readonly sandboxes = { create: (input: CreateInput, options: { signal?: AbortSignal } = {}) => this.create(input, options), submitCreate: (input: CreateInput) => this.submitCreate(input) };
@@ -140,7 +147,7 @@ export class DirectClient implements SandbarClient {
     let first: DriverResult | undefined;
     try { first = await this.driver.create({ scope: this.scope, identity: invocation, image: preparation.effectiveImage, networkPolicy: request.networkPolicy, labels: request.labels }); }
     catch { /* uncertain */ }
-    return new DirectOperation(reference, this.driver, result => {
+    return new DirectOperation(reference, this, result => {
       if (result.status !== "completed" || result.value.kind !== "sandbox") throw new OutcomeUnknownError(reference);
       return new DirectSandbox(this, result.value.observation.ref);
     }, first);
@@ -151,7 +158,7 @@ export class DirectClient implements SandbarClient {
     validateReference(reference);
     if (reference.mode !== "direct" || !sameNativeScope(reference.scope!, this.scope)) throw new SandbarError("FORBIDDEN", "Recovery scope does not match configured provider");
     await this.verified();
-    return new DirectOperation(reference, this.driver, result => {
+    return new DirectOperation(reference, this, result => {
       if (result.status !== "completed") throw new OutcomeUnknownError(reference);
       if (result.value.kind === "sandbox") return new DirectSandbox(this, result.value.observation.ref);
       if (result.value.kind === "execution") {
@@ -163,7 +170,7 @@ export class DirectClient implements SandbarClient {
       return result.value.observation;
     });
   }
-  async close() { this.closed = true; }
+  async close() { if (this.closed) return; this.closed = true; this.closeController.abort(new SandbarError("CLIENT_CLOSED", "Client is closed")); }
 }
 
 export const Sandbar = { direct(options: DirectOptions): DirectClient { return new DirectClient(options); } };

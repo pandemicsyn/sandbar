@@ -1,6 +1,6 @@
 import { AcceptedExecution, AcceptedOperation, CreateSandboxRequest, ErrorResponse, Execution, FileReceipt, Id, Operation, Sandbox, type ExecRequest } from "@sandbar/contracts";
 import type { z } from "zod";
-import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
+import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
 export { Image, SandbarError, OutcomeUnknownError, NonzeroExitError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
@@ -29,11 +29,12 @@ class RemoteOperation<T> implements OperationHandle<T> {
   async wait(options: { signal?: AbortSignal; pollMs?: number } = {}): Promise<T> {
     const pollMs = options.pollMs ?? 500;
     if (!Number.isSafeInteger(pollMs) || pollMs < 50 || pollMs > 60_000) throw new RangeError("Invalid pollMs");
+    const signal = options.signal ? AbortSignal.any([options.signal, this.client.closedSignal]) : this.client.closedSignal;
     for (;;) {
       if (options.signal?.aborted) throw options.signal.reason ?? new DOMException("Aborted", "AbortError");
       const result = await this.observe();
       if (result !== null) return result;
-      await waitDelay(pollMs, options.signal);
+      await waitDelay(pollMs, signal);
     }
   }
 }
@@ -62,6 +63,7 @@ class RemoteSandbox implements SandboxHandle {
   }
   async exec(input: ExecInput, options: { signal?: AbortSignal } = {}) { return (await this.submitExec(input)).wait(options); }
   async readFile(path: string): Promise<Uint8Array> {
+    validateFilePath(path);
     const url = `sandboxes/${encodeURIComponent(this.id)}/files?path=${encodeURIComponent(path)}`;
     const response = await this.client.raw(url, { method: "GET" });
     if (!response.ok) await this.client.throwResponse(response);
@@ -71,6 +73,7 @@ class RemoteSandbox implements SandboxHandle {
     return bytes;
   }
   async writeFile(path: string, bytes: Uint8Array, options: { overwrite?: boolean; signal?: AbortSignal } = {}): Promise<void> {
+    validateFilePath(path);
     if (!(bytes instanceof Uint8Array)) throw new SandbarError("INVALID_ARGUMENT", "Expected Uint8Array bytes");
     const query = new URLSearchParams({ path, overwrite: String(options.overwrite ?? false) });
     const route = `sandboxes/${encodeURIComponent(this.id)}/files?${query}`;
@@ -96,6 +99,8 @@ export class RemoteClient implements SandbarClient {
   private readonly token: string;
   private readonly fetcher: typeof fetch;
   private closed = false;
+  private readonly closeController = new AbortController();
+  get closedSignal(): AbortSignal { return this.closeController.signal; }
   constructor(options: RemoteOptions) {
     this.endpoint = new URL(options.url);
     const loopback = this.endpoint.hostname === "127.0.0.1" || this.endpoint.hostname === "[::1]";
@@ -111,7 +116,9 @@ export class RemoteClient implements SandbarClient {
     this.ensureOpen();
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${this.token}`);
-    return this.fetcher(this.url(path), { ...init, headers, redirect: "error" });
+    const response = await this.fetcher(this.url(path), { ...init, headers, redirect: "error" });
+    this.ensureOpen();
+    return response;
   }
   async throwResponse(response: Response): Promise<never> {
     const raw: unknown = await response.json().catch(() => undefined);
@@ -199,7 +206,7 @@ export class RemoteClient implements SandbarClient {
       return op.result;
     });
   }
-  async close() { this.closed = true; }
+  async close() { if (this.closed) return; this.closed = true; this.closeController.abort(new SandbarError("CLIENT_CLOSED", "Client is closed")); }
 }
 
 export const Sandbar = { connect(options: RemoteOptions): RemoteClient { return new RemoteClient(options); } };

@@ -63,6 +63,10 @@ export function outputText(bytes: Uint8Array, maxBytes = 16_384): string {
   const slice = bytes.subarray(0, maxBytes);
   return new TextDecoder().decode(slice) + (bytes.length > slice.length ? "…" : "");
 }
+export function validateFilePath(path: string): string {
+  if (!path || path.length > 4096 || !path.startsWith("/") || path.includes("\0") || path.split("/").includes("..")) throw new SandbarError("INVALID_ARGUMENT", "Invalid absolute file path");
+  return path;
+}
 export function execOutput(exitCode: number | null, stdout: Uint8Array, stderr: Uint8Array, truncated: boolean): ExecOutput {
   return { exitCode, stdout, stderr, truncated, stdoutText: max => outputText(stdout, max), stderrText: max => outputText(stderr, max) };
 }

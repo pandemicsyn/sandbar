@@ -30,6 +30,8 @@ test("direct resource flow preserves binary files and nonzero output", async () 
   const file = Uint8Array.of(0, 255, 128, 42);
   await box.writeFile("/binary", file);
   expect(await box.readFile("/binary")).toEqual(file);
+  await expect(box.readFile("/../escape")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  await expect(box.writeFile("/bad\0path", file)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(box.writeFile("/too-large", new Uint8Array(1_048_577))).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
   const command = { kind: "argv" as const, argv: ["fixture", "binary"] };
   await control("/_test/seed", { submissionId: "*", action: "exec", command: { command, exitCode: 7, stdoutBase64: Buffer.from(file).toString("base64"), stderrBase64: Buffer.from([1, 2]).toString("base64") } });
@@ -83,6 +85,17 @@ test("direct undiscoverable effect reports unknown without replay", async () => 
   const state = await control("/_test/state");
   expect(state.resources).toHaveLength(1);
   expect(state.invocations.filter((x: { action: string }) => x.action === "create")).toHaveLength(1);
+});
+
+test("closing a client interrupts pending direct observation without destroying compute", async () => {
+  const { client, control } = await fixture();
+  await control("/_test/seed", { submissionId: "*", action: "create", delayObservations: 100 });
+  const operation = await client.sandboxes.submitCreate({ environment: DirectImage.prepared("fake-starter") });
+  const waiting = operation.wait({ pollMs: 60 });
+  await client.close();
+  await expect(waiting).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+  await expect(operation.observe()).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+  expect((await control("/_test/state")).resources).toHaveLength(1);
 });
 
 test("remote lost acceptance is resolved by invocation lookup under one key", async () => {
