@@ -109,3 +109,14 @@ Final complete-diff review after these fixes remains pending.
 - Validation after fix: focused SDK tests 16/16 passed; `bun run check` passed; full `bun run test` passed 59 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 11 is **not** a zero-finding clearance.
 
 Final independent complete-diff review of the resulting HEAD remains pending.
+
+## Round 12
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `e9b364635d10494663e10223b362dc601e9605a5`.
+- Three actionable findings: remote create did not compare the operation sandbox ID with its result sandbox ID; remote file reads allocated the full response before applying the SDK limit; and the shared file path validator accepted `.` segments. Both create and recovery now check sandbox identity, file reads enforce a streaming 1 MiB limit and cancel oversized streams, and direct/remote paths and recovery references reject `.` segments.
+- The qualification review also identified a cancellation gap while mutation submission remained pending, including direct create preparation. Direct creation checks abort after each preparation await and before dispatch. Direct provider mutations and remote service submissions now race against abort and client close, returning the allocated recovery reference after possible dispatch. Gated tests confirm prompt settlement before the provider or HTTP response is released, and no create dispatch after abort during preparation.
+- Validation after fixes: focused SDK tests 19/19 passed; `bun run check` passed; full `bun run test` passed 62 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 12 is **not** a zero-finding clearance.
+
+Final independent complete-diff review of this resulting HEAD remains pending.

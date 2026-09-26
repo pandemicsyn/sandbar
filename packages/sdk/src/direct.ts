@@ -1,6 +1,6 @@
 import { NativeScope, type NativeRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
 import { normalizeCreate, normalizeExec, correlateDriverResult, sameNativeScope, sameNativeRef, captureBoundedOutput } from "@sandbar/core";
-import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
+import { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
 export { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
@@ -57,14 +57,14 @@ class DirectSandbox implements SandboxHandle {
     if (!sameNativeRef(observation.ref, this.ref)) throw new SandbarError("OUTCOME_UNKNOWN", "Provider returned a different sandbox", "unknown");
     return { state: observation.state, observedAt: observation.observedAt };
   }
-  async submitExec(input: ExecInput): Promise<OperationHandle<ExecOutput>> {
+  async submitExec(input: ExecInput, options: { signal?: AbortSignal } = {}): Promise<OperationHandle<ExecOutput>> {
     this.client.ensureOpen();
     const request = normalizeExec({ command: input.command, cwd: input.cwd, env: input.env, deadlineSeconds: input.deadlineSeconds, output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 } });
     const invocation = identity();
     const reference = { ...this.client.reference("exec", invocation, this.ref), maxOutputBytes: request.maxOutputBytes };
     let first: DriverResult | undefined;
-    try { first = await this.client.driver.exec({ sandbox: this.ref, identity: invocation, ...request }); }
-    catch { /* A thrown response after submission cannot prove absence of effect. */ }
+    try { first = await awaitSubmission(this.client.driver.exec({ sandbox: this.ref, identity: invocation, ...request }), this.client.closedSignal, options.signal, () => reference); }
+    catch (error) { if (error instanceof WaitAbortedError || error instanceof OutcomeUnknownError) throw error; /* A thrown response after submission cannot prove absence of effect. */ }
     return new DirectOperation(reference, this.client, result => {
       if (result.status !== "completed" || result.value.kind !== "execution") throw new OutcomeUnknownError(reference);
       const observation = result.value.observation;
@@ -75,7 +75,7 @@ class DirectSandbox implements SandboxHandle {
   }
   async exec(input: ExecInput, options: { signal?: AbortSignal } = {}) {
     throwIfAborted(options.signal);
-    const operation = await this.submitExec(input);
+    const operation = await this.submitExec(input, options);
     try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference, options.signal); }
   }
   async readFile(path: string): Promise<Uint8Array> {
@@ -95,7 +95,8 @@ class DirectSandbox implements SandboxHandle {
     const invocation = identity();
     const reference = { ...this.client.reference("file_write", invocation, this.ref), file: { path, bytes: bytes.length } };
     let first: DriverResult | undefined;
-    try { first = await this.client.driver.writeFile({ sandbox: this.ref, identity: invocation, path, bytes, overwrite: options.overwrite ?? false }); } catch { /* uncertain */ }
+    try { first = await awaitSubmission(this.client.driver.writeFile({ sandbox: this.ref, identity: invocation, path, bytes, overwrite: options.overwrite ?? false }), this.client.closedSignal, options.signal, () => reference); }
+    catch (error) { if (error instanceof WaitAbortedError || error instanceof OutcomeUnknownError) throw error; /* uncertain */ }
     const op = new DirectOperation(reference, this.client, result => {
       if (result.status !== "completed" || result.value.kind !== "file_write" || !sameRef(result.value.observation.sandbox, this.ref) || result.value.observation.path !== path || !result.value.observation.complete || result.value.observation.bytesWritten !== bytes.length) throw new OutcomeUnknownError(reference, "File write receipt is incomplete or mismatched");
     }, first);
@@ -107,7 +108,8 @@ class DirectSandbox implements SandboxHandle {
     const invocation = identity();
     const reference = this.client.reference("destroy", invocation, this.ref);
     let first: DriverResult | undefined;
-    try { first = await this.client.driver.destroy({ sandbox: this.ref, identity: invocation }); } catch { /* uncertain */ }
+    try { first = await awaitSubmission(this.client.driver.destroy({ sandbox: this.ref, identity: invocation }), this.client.closedSignal, options.signal, () => reference); }
+    catch (error) { if (error instanceof WaitAbortedError || error instanceof OutcomeUnknownError) throw error; /* uncertain */ }
     const op = new DirectOperation(reference, this.client, result => {
       if (result.status !== "completed" || result.value.kind !== "destroy" || !sameRef(result.value.observation.sandbox, this.ref) || !result.value.observation.computeStopped) throw new OutcomeUnknownError(reference, "Compute stop has not been confirmed");
     }, first);
@@ -142,19 +144,23 @@ export class DirectClient implements SandbarClient {
     if (caps.provider !== this.scope.provider) throw new SandbarError("INVALID_RESPONSE", "Provider capability identity mismatch");
     return caps;
   }
-  async submitCreate(input: CreateInput): Promise<OperationHandle<SandboxHandle>> {
+  async submitCreate(input: CreateInput, options: { signal?: AbortSignal; onDispatch?: (reference: RecoveryReference) => void } = {}): Promise<OperationHandle<SandboxHandle>> {
     this.ensureOpen();
+    throwIfAborted(options.signal);
     await this.verified();
     this.ensureOpen();
+    throwIfAborted(options.signal);
     const request = normalizeCreate({ environment: input.environment.kind === "prepared" ? { kind: "prepared", imageId: input.environment.value } : { kind: "oci", reference: input.environment.value }, region: input.region, network: { policy: input.networkPolicy ?? "blocked" }, labels: input.labels });
     const preparation = await this.driver.prepare({ scope: this.scope, image: request.image, networkPolicy: request.networkPolicy, region: request.region });
     this.ensureOpen();
+    throwIfAborted(options.signal);
     if (!preparation.supported || !preparation.effectiveImage) throw new SandbarError("UNSUPPORTED", preparation.reason ?? "Provider cannot prepare image");
     const invocation = identity();
     const reference = this.reference("create", invocation);
+    options.onDispatch?.(reference);
     let first: DriverResult | undefined;
-    try { first = await this.driver.create({ scope: this.scope, identity: invocation, image: preparation.effectiveImage, networkPolicy: request.networkPolicy, labels: request.labels }); }
-    catch { /* uncertain */ }
+    try { first = await awaitSubmission(this.driver.create({ scope: this.scope, identity: invocation, image: preparation.effectiveImage, networkPolicy: request.networkPolicy, labels: request.labels }), this.closedSignal, options.signal, () => reference); }
+    catch (error) { if (error instanceof WaitAbortedError || error instanceof OutcomeUnknownError) throw error; /* uncertain */ }
     return new DirectOperation(reference, this, result => {
       if (result.status !== "completed" || result.value.kind !== "sandbox") throw new OutcomeUnknownError(reference);
       return new DirectSandbox(this, result.value.observation.ref);
@@ -162,7 +168,8 @@ export class DirectClient implements SandbarClient {
   }
   async create(input: CreateInput, options: { signal?: AbortSignal } = {}) {
     throwIfAborted(options.signal);
-    const operation = await this.submitCreate(input);
+    let reference: RecoveryReference | undefined;
+    const operation = await awaitSubmission(this.submitCreate(input, { signal: options.signal, onDispatch: value => { reference = value; } }), this.closedSignal, options.signal, () => reference);
     try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference, options.signal); }
   }
   async recover(reference: RecoveryReference): Promise<OperationHandle<unknown>> {

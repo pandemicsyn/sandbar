@@ -75,7 +75,7 @@ export function outputText(bytes: Uint8Array, maxBytes = 16_384): string {
   return new TextDecoder().decode(slice) + (bytes.length > slice.length ? "…" : "");
 }
 export function validateFilePath(path: string): string {
-  if (!path || path.length > 4096 || !path.startsWith("/") || path.includes("\0") || path.split("/").includes("..")) throw new SandbarError("INVALID_ARGUMENT", "Invalid absolute file path");
+  if (!path || path.length > 4096 || !path.startsWith("/") || path.includes("\0") || path.split("/").some(segment => segment === "." || segment === "..")) throw new SandbarError("INVALID_ARGUMENT", "Invalid absolute file path");
   return path;
 }
 export function execOutput(exitCode: number | null, stdout: Uint8Array, stderr: Uint8Array, truncated: boolean): ExecOutput {
@@ -150,4 +150,14 @@ export function rethrowCloseWithReference(error: unknown, reference: RecoveryRef
   if (error instanceof SandbarError && error.code === "CLIENT_CLOSED") throw new OutcomeUnknownError(reference, "Client closed after submission; recover with this reference");
   if (signal?.aborted) throw new WaitAbortedError(reference, signal.reason);
   throw error;
+}
+export async function awaitSubmission<T>(work: Promise<T>, closedSignal: AbortSignal, signal: AbortSignal | undefined, reference: () => RecoveryReference | undefined): Promise<T> {
+  const combined = signal ? AbortSignal.any([signal, closedSignal]) : closedSignal;
+  try { return await raceAbort(work, combined); }
+  catch (error) {
+    const known = reference();
+    if (known && closedSignal.aborted) throw new OutcomeUnknownError(known, "Client closed after submission; recover with this reference");
+    if (known && signal?.aborted) throw new WaitAbortedError(known, signal.reason);
+    throw error;
+  }
 }

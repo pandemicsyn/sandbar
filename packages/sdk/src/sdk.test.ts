@@ -30,6 +30,7 @@ test("direct resource flow preserves binary files and nonzero output", async () 
   const file = Uint8Array.of(0, 255, 128, 42);
   await box.writeFile("/binary", file);
   expect(await box.readFile("/binary")).toEqual(file);
+  await expect(box.readFile("/a/./b")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(box.readFile("/../escape")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(box.writeFile("/bad\0path", file)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(box.writeFile("/too-large", new Uint8Array(1_048_577))).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
@@ -110,9 +111,9 @@ test("direct close during applied create preserves a recovery reference", async 
   const pending = client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
   await dispatched;
   await client.close();
-  release();
   try { await pending; throw new Error("Expected uncertain close"); }
   catch (error) { expect(error).toBeInstanceOf(OutcomeUnknownError); expect((error as OutcomeUnknownError).reference.submissionId).toStartWith("sdk_"); }
+  release();
   expect((await control("/_test/state")).resources).toHaveLength(1);
 });
 
@@ -130,10 +131,33 @@ test("direct abort after effect retains its reference and cause", async () => {
   await dispatched;
   const reason = new Error("stop waiting");
   controller.abort(reason);
-  release();
   try { await pending; throw new Error("Expected abort"); }
   catch (error) { expect(error).toBeInstanceOf(WaitAbortedError); expect((error as WaitAbortedError).reference.submissionId).toStartWith("sdk_"); expect((error as WaitAbortedError).cause).toBe(reason); }
+  release();
   expect((await control("/_test/state")).resources).toHaveLength(1);
+});
+
+test("direct abort during image preparation does not dispatch create", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const prepare = provider.driver.prepare.bind(provider.driver);
+  const create = provider.driver.create.bind(provider.driver);
+  let entered!: () => void, release!: () => void;
+  const preparing = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let creates = 0;
+  provider.driver.prepare = async input => { entered(); await gate; return prepare(input); };
+  provider.driver.create = async input => { creates++; return create(input); };
+  const client = DirectSandbar.direct({ provider });
+  const controller = new AbortController();
+  const reason = new Error("cancel preparation");
+  const pending = client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") }, { signal: controller.signal });
+  await preparing;
+  controller.abort(reason);
+  await expect(pending).rejects.toBe(reason);
+  release();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(creates).toBe(0);
 });
 
 test("abort ends direct and remote waits even when observation hangs", async () => {
@@ -170,6 +194,7 @@ test("direct recovery never treats incomplete destroy or file receipts as succes
   provider.driver.observe = async () => ({ status: "completed", effect: "applied", submissionId: "sid_1", value: { kind: "file_write", observation: { sandbox, path: "/data", bytesWritten: 1, complete: false } } });
   await expect((await client.recover({ ...common, kind: "file_write", file: { path: "/data", bytes: 2 } })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
   await expect(client.recover({ ...common, kind: "file_write", file: { path: "/../escape", bytes: 2 } })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  await expect(client.recover({ ...common, kind: "file_write", file: { path: "/a/./b", bytes: 2 } })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(client.recover({ ...common, kind: "destroy", file: { path: "/data", bytes: 2 } })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   provider.driver.observe = async () => ({ status: "completed", effect: "applied", submissionId: "sid_1", value: { kind: "execution", observation: { ref: { scope: provider.scope, nativeId: "fake_execution_1", kind: "execution" }, sandbox, completed: true, exitCode: null, stdoutBase64: "", stderrBase64: "", observedAt: "2026-01-01T00:00:00Z" } } });
   await expect((await client.recover({ ...common, kind: "exec", maxOutputBytes: 1024 })).observe()).rejects.toBeInstanceOf(NoExitCodeError);
@@ -179,7 +204,7 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   let posts = 0;
   let key = "";
   const projectId = "project_1";
-  const base = { id: "op_1", projectId, kind: "create", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "create", sandboxId: "box_1" } };
+  const base = { id: "op_1", projectId, kind: "create", sandboxId: "box_1", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "create", sandboxId: "box_1" } };
   const fetcher: typeof fetch = async (url, init) => {
     const path = new URL(String(url)).pathname;
     if (init?.method === "POST") { posts++; key = new Headers(init.headers).get("Idempotency-Key") ?? ""; throw new TypeError("response lost"); }
@@ -192,12 +217,45 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   const operation = await client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
   const box = await operation.wait();
   expect(box.id).toBe("box_1");
+  await expect(box.readFile("/a/./b")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(box.writeFile("/too-large", new Uint8Array(1_048_577))).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
   expect(posts).toBe(1);
   expect(operation.reference.invocationKey).toBe(key);
   expect(JSON.stringify(operation.reference)).not.toContain("secret");
   await expect(client.recover({ ...operation.reference, operationId: "op_other" })).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
   await expect(RemoteSandbar.connect({ url: "https://other.example/", token: "secret", projectId, fetch: fetcher }).recover(operation.reference)).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+
+test("remote create rejects disagreement between operation and result sandbox IDs", async () => {
+  const projectId = "project_1";
+  const mismatched = { id: "op_1", projectId, kind: "create", sandboxId: "box_other", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "create", sandboxId: "box_1" } };
+  const fetcher: typeof fetch = async (_url, init) => init?.method === "POST" ? Response.json({ operation: mismatched }, { status: 202 }) : Response.json(mismatched);
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  const operation = await client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
+  await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  await expect((await client.recover(operation.reference)).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+});
+
+test("remote file reads stop at the SDK limit and cancel the response stream", async () => {
+  const projectId = "project_1";
+  const operation = { id: "op_1", projectId, kind: "create", sandboxId: "box_1", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "create", sandboxId: "box_1" } };
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new Uint8Array(600_000)); controller.enqueue(new Uint8Array(600_000)); },
+    cancel() { cancelled = true; }
+  });
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (init?.method === "POST") return Response.json({ operation }, { status: 202 });
+    if (path.includes("/invocations/")) return Response.json(operation);
+    if (path.endsWith("/sandboxes/box_1")) return Response.json({ id: "box_1", projectId, connectionId: "conn_1", desiredState: "running", observedState: "running", revision: 1, environment: { kind: "prepared", imageId: "fake-starter" }, network: { policy: "blocked" }, labels: {} });
+    if (path.endsWith("/files")) return new Response(stream, { headers: { "content-type": "application/octet-stream" } });
+    throw new Error(`Unexpected path: ${path}`);
+  };
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  const box = await client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") });
+  await expect(box.readFile("/large")).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
+  expect(cancelled).toBe(true);
 });
 
 test("remote close after service admission preserves the invocation reference", async () => {
@@ -218,9 +276,9 @@ test("remote close after service admission preserves the invocation reference", 
   const pending = client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") });
   await dispatched;
   await client.close();
-  release();
   try { await pending; throw new Error("Expected uncertain close"); }
   catch (error) { expect(error).toBeInstanceOf(OutcomeUnknownError); expect((error as OutcomeUnknownError).reference.invocationKey).toBe(key); }
+  release();
 });
 
 test("remote abort after admission retains its invocation reference and cause", async () => {
@@ -243,9 +301,9 @@ test("remote abort after admission retains its invocation reference and cause", 
   await dispatched;
   const reason = new Error("stop waiting");
   controller.abort(reason);
-  release();
   try { await pending; throw new Error("Expected abort"); }
   catch (error) { expect(error).toBeInstanceOf(WaitAbortedError); expect((error as WaitAbortedError).reference.invocationKey).toBe(key); expect((error as WaitAbortedError).cause).toBe(reason); }
+  release();
 });
 
 test("remote refuses bearer transport over non-loopback HTTP", () => {

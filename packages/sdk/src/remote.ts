@@ -1,6 +1,6 @@
 import { AcceptedExecution, AcceptedOperation, CreateSandboxRequest, ErrorResponse, Execution, FileReceipt, Id, Operation, Sandbox, type ExecRequest } from "@sandbar/contracts";
 import type { z } from "zod";
-import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
+import { Image, SandbarError, OutcomeUnknownError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
 export { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
@@ -47,10 +47,11 @@ class RemoteSandbox implements SandboxHandle {
     if (box.projectId !== this.client.projectId || box.id !== this.id) throw new SandbarError("INVALID_RESPONSE", "Service returned a different sandbox", "unknown");
     return { state: box.observedState, observedAt: box.observedAt };
   }
-  async submitExec(input: ExecInput): Promise<OperationHandle<ExecOutput>> {
+  async submitExec(input: ExecInput, options: { signal?: AbortSignal } = {}): Promise<OperationHandle<ExecOutput>> {
     const body: ExecRequest = { command: input.command, cwd: input.cwd, env: input.env, deadlineSeconds: input.deadlineSeconds, output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 } };
     const path = `sandboxes/${encodeURIComponent(this.id)}/executions`;
-    const { operation, reference } = await this.client.mutate("exec", this.id, path, "POST", JSON.stringify(body), AcceptedExecution);
+    let dispatched: RecoveryReference | undefined;
+    const { operation, reference } = await awaitSubmission(this.client.mutate("exec", this.id, path, "POST", JSON.stringify(body), AcceptedExecution, undefined, value => { dispatched = value; }), this.client.closedSignal, options.signal, () => dispatched);
     return new RemoteOperation({ ...reference, operationId: operation.id }, this.client, async op => {
       if (op.result?.kind !== "exec" || op.sandboxId !== this.id) throw new OutcomeUnknownError(reference, "Execution operation result mismatched sandbox");
       const value = await this.client.request(`executions/${encodeURIComponent(op.result.executionId)}`, Execution);
@@ -64,7 +65,7 @@ class RemoteSandbox implements SandboxHandle {
   }
   async exec(input: ExecInput, options: { signal?: AbortSignal } = {}) {
     throwIfAborted(options.signal);
-    const operation = await this.submitExec(input);
+    const operation = await this.submitExec(input, options);
     try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference, options.signal); }
   }
   async readFile(path: string): Promise<Uint8Array> {
@@ -73,8 +74,30 @@ class RemoteSandbox implements SandboxHandle {
     const response = await this.client.raw(url, { method: "GET" });
     if (!response.ok) await this.client.throwResponse(response);
     if (response.headers.get("content-type")?.split(";")[0] !== "application/octet-stream") throw new SandbarError("INVALID_RESPONSE", "Expected binary file response", "unknown");
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length > 1_048_576) throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK read limit", "unknown");
+    const declared = response.headers.get("content-length");
+    if (declared !== null && (!/^(0|[1-9][0-9]*)$/.test(declared) || !Number.isSafeInteger(Number(declared)))) throw new SandbarError("INVALID_RESPONSE", "Invalid file length", "unknown");
+    if (declared !== null && Number(declared) > 1_048_576) throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK read limit", "unknown");
+    const reader = response.body?.getReader();
+    if (!reader) {
+      if (declared !== null && Number(declared) !== 0) throw new SandbarError("INVALID_RESPONSE", "File response is incomplete", "unknown");
+      return new Uint8Array();
+    }
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > 1_048_576) {
+        await reader.cancel().catch(() => undefined);
+        throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK read limit", "unknown");
+      }
+      chunks.push(value);
+    }
+    if (declared !== null && length !== Number(declared)) throw new SandbarError("INVALID_RESPONSE", "File response is incomplete", "unknown");
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
     return bytes;
   }
   async writeFile(path: string, bytes: Uint8Array, options: { overwrite?: boolean; signal?: AbortSignal } = {}): Promise<void> {
@@ -84,7 +107,8 @@ class RemoteSandbox implements SandboxHandle {
     if (bytes.length > 1_048_576) throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK write limit");
     const query = new URLSearchParams({ path, overwrite: String(options.overwrite ?? false) });
     const route = `sandboxes/${encodeURIComponent(this.id)}/files?${query}`;
-    const { operation, reference } = await this.client.mutate("file_write", this.id, route, "PUT", bytes, undefined, { path, bytes: bytes.length });
+    let dispatched: RecoveryReference | undefined;
+    const { operation, reference } = await awaitSubmission(this.client.mutate("file_write", this.id, route, "PUT", bytes, undefined, { path, bytes: bytes.length }, value => { dispatched = value; }), this.client.closedSignal, options.signal, () => dispatched);
     const op = new RemoteOperation({ ...reference, operationId: operation.id }, this.client, async current => {
       if (current.result?.kind !== "file_write" || current.sandboxId !== this.id || current.result.receipt.path !== path || !current.result.receipt.complete || current.result.receipt.bytesWritten !== bytes.length) throw new OutcomeUnknownError(reference, "File write receipt is incomplete or mismatched");
     });
@@ -92,7 +116,8 @@ class RemoteSandbox implements SandboxHandle {
   }
   async destroy(options: { signal?: AbortSignal } = {}): Promise<void> {
     throwIfAborted(options.signal);
-    const { operation, reference } = await this.client.mutate("destroy", this.id, `sandboxes/${encodeURIComponent(this.id)}`, "DELETE", undefined, AcceptedOperation);
+    let dispatched: RecoveryReference | undefined;
+    const { operation, reference } = await awaitSubmission(this.client.mutate("destroy", this.id, `sandboxes/${encodeURIComponent(this.id)}`, "DELETE", undefined, AcceptedOperation, undefined, value => { dispatched = value; }), this.client.closedSignal, options.signal, () => dispatched);
     const op = new RemoteOperation({ ...reference, operationId: operation.id }, this.client, async current => {
       if (current.result?.kind !== "destroy" || current.sandboxId !== this.id || !current.result.computeStopped) throw new OutcomeUnknownError(reference, "Compute stop has not been confirmed");
     });
@@ -149,9 +174,11 @@ export class RemoteClient implements SandbarClient {
     if (op.projectId !== this.projectId || op.kind !== reference.kind || (reference.resourceId && op.sandboxId !== reference.resourceId) || (reference.operationId && op.id !== reference.operationId)) throw new SandbarError("INVALID_RESPONSE", "Service operation identity mismatch", "unknown");
     return op;
   }
-  async mutate<T extends { operation: z.infer<typeof Operation> }>(kind: Kind, resourceId: string | undefined, path: string, method: string, body: string | Uint8Array | undefined, schema?: z.ZodType<T>, file?: { path: string; bytes: number }): Promise<{ operation: z.infer<typeof Operation>; reference: RecoveryReference }> {
+  async mutate<T extends { operation: z.infer<typeof Operation> }>(kind: Kind, resourceId: string | undefined, path: string, method: string, body: string | Uint8Array | undefined, schema?: z.ZodType<T>, file?: { path: string; bytes: number }, onDispatch?: (reference: RecoveryReference) => void): Promise<{ operation: z.infer<typeof Operation>; reference: RecoveryReference }> {
+    this.ensureOpen();
     const key = newInvocationKey();
     const reference = { ...this.reference(kind, key, resourceId), ...(file ? { file } : {}) };
+    onDispatch?.(reference);
     let operation: z.infer<typeof Operation> | undefined;
     try {
       const headers = new Headers({ "Idempotency-Key": key });
@@ -180,11 +207,12 @@ export class RemoteClient implements SandbarClient {
     if (operation.projectId !== this.projectId || operation.kind !== kind || (resourceId && operation.sandboxId !== resourceId)) throw new OutcomeUnknownError(reference, "Service admitted a mismatched operation");
     return { operation, reference };
   }
-  async submitCreate(input: CreateInput): Promise<OperationHandle<SandboxHandle>> {
+  async submitCreate(input: CreateInput, options: { signal?: AbortSignal } = {}): Promise<OperationHandle<SandboxHandle>> {
     const body = CreateSandboxRequest.parse({ environment: input.environment.kind === "prepared" ? { kind: "prepared", imageId: input.environment.value } : { kind: "oci", reference: input.environment.value }, region: input.region, network: { policy: input.networkPolicy ?? "blocked" }, labels: input.labels });
-    const { operation, reference } = await this.mutate("create", undefined, "sandboxes", "POST", JSON.stringify(body), AcceptedOperation);
+    let dispatched: RecoveryReference | undefined;
+    const { operation, reference } = await awaitSubmission(this.mutate("create", undefined, "sandboxes", "POST", JSON.stringify(body), AcceptedOperation, undefined, value => { dispatched = value; }), this.closedSignal, options.signal, () => dispatched);
     return new RemoteOperation({ ...reference, operationId: operation.id }, this, async current => {
-      if (current.result?.kind !== "create") throw new OutcomeUnknownError(reference, "Create operation lacks sandbox identity");
+      if (current.result?.kind !== "create" || current.sandboxId !== current.result.sandboxId) throw new OutcomeUnknownError(reference, "Create operation lacks matching sandbox identity");
       const box = new RemoteSandbox(this, current.result.sandboxId);
       await box.inspect();
       return box;
@@ -192,7 +220,7 @@ export class RemoteClient implements SandbarClient {
   }
   async create(input: CreateInput, options: { signal?: AbortSignal } = {}) {
     throwIfAborted(options.signal);
-    const operation = await this.submitCreate(input);
+    const operation = await this.submitCreate(input, options);
     try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference, options.signal); }
   }
   async recover(reference: RecoveryReference): Promise<OperationHandle<unknown>> {
@@ -202,7 +230,7 @@ export class RemoteClient implements SandbarClient {
     await this.operationFor(reference);
     return new RemoteOperation(reference, this, async op => {
       if (reference.kind === "create") {
-        if (op.result?.kind !== "create") throw new OutcomeUnknownError(reference, "Create result is missing or mismatched");
+        if (op.result?.kind !== "create" || op.sandboxId !== op.result.sandboxId) throw new OutcomeUnknownError(reference, "Create result is missing or mismatched");
         const box = new RemoteSandbox(this, op.result.sandboxId);
         await box.inspect();
         return box;
