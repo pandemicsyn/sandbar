@@ -64,8 +64,23 @@ test("API persists ambiguous create and exec, then observes each once after rest
     expect(execution.exitCode).toBe(7);
     expect(execution.stdout).toBe("hello from fake");
     expect((await runtime.store.getOperation(project.id, exec.value.operation.id))?.result_json).not.toContain("hello from fake");
+    const bytes = Uint8Array.from([0, 255, 1]);
+    const write = await runtime.app.request(`/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/blob`, { method: "PUT", headers: { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() }, body: bytes });
+    expect([200, 202]).toContain(write.status);
+    const read = await runtime.app.request(`/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/blob`, { headers: bearer });
+    expect(read.status).toBe(200);
+    expect(new Uint8Array(await read.arrayBuffer())).toEqual(bytes);
+    await control("/_test/seed", { submissionId: "*", action: "file_write", behavior: "lost_after_effect" });
+    const lostWrite = await runtime.app.request(`/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/lost`, { method: "PUT", headers: { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() }, body: bytes });
+    expect(lostWrite.status).toBe(202);
+    const lostOperation = (await lostWrite.json() as any).operation;
+    expect(lostOperation.status).toBe("unknown");
+    await json(`/v1/projects/${project.id}/operations/${lostOperation.id}/reconcile`, "POST", {}, bearer);
+    await runtime.runner.tick();
+    expect((await json(`/v1/projects/${project.id}/operations/${lostOperation.id}`, "GET", undefined, bearer)).value.status).toBe("succeeded");
     const fakeState = await control("/_test/state");
     expect(fakeState.invocations.filter((item: any) => item.action === "create")).toHaveLength(1);
     expect(fakeState.invocations.filter((item: any) => item.action === "exec")).toHaveLength(1);
+    expect(fakeState.invocations.filter((item: any) => item.action === "file_write")).toHaveLength(2);
   } finally { await runtime.close(); }
 });

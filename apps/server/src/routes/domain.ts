@@ -9,9 +9,9 @@ import {
 } from "@sandbar/contracts";
 import type { ProviderDriver, NativeRef, NativeScope } from "@sandbar/provider-spi";
 import { ControlStore, StoreError, type ConnectionRow, type ExecutionRow, type OperationRow, type SandboxRow } from "@sandbar/store";
-import { SecretBox, sha256 } from "@sandbar/core";
+import { DurableRunner, SecretBox, sha256 } from "@sandbar/core";
 
-export interface DomainDependencies { store: ControlStore; driver: ProviderDriver; secrets: SecretBox; setupToken: string }
+export interface DomainDependencies { store: ControlStore; driver: ProviderDriver; secrets: SecretBox; setupToken: string; runner?: DurableRunner }
 type Auth = { kind: "bearer" } | { kind: "session"; idHash: string; csrfHash: string };
 const sessionMs = 12 * 60 * 60 * 1000;
 
@@ -47,12 +47,21 @@ async function parseBody<T>(c: Context, schema: { parse(input: unknown): T }): P
 }
 function idParam(c: Context, name: string): string { return Id.parse(c.req.param(name)); }
 function opDto(row: OperationRow) {
+  let result: Record<string, unknown> | undefined;
+  if (row.status === "succeeded" && row.result_json) {
+    const native = JSON.parse(row.result_json) as { kind: string; observation: any };
+    if (row.kind === "create") result = { kind: "create", sandboxId: row.sandbox_id };
+    if (row.kind === "exec") result = { kind: "exec", executionId: row.execution_id };
+    if (row.kind === "destroy") result = { kind: "destroy", computeStopped: native.observation.computeStopped, retainedResources: native.observation.retainedResources };
+    if (row.kind === "file_write") result = { kind: "file_write", receipt: { path: native.observation.path, bytesWritten: native.observation.bytesWritten, complete: native.observation.complete, effect: row.effect } };
+  }
   return Operation.parse({
     id: row.id, projectId: row.project_id, kind: row.kind, sandboxId: row.sandbox_id,
     ...(row.execution_id ? { executionId: row.execution_id } : {}), status: row.status,
     phase: row.phase, createdAt: new Date(Number(row.created_at)).toISOString(),
     updatedAt: new Date(Number(row.updated_at)).toISOString(), effect: row.effect,
     ...(row.error_json ? { error: JSON.parse(row.error_json) } : {}),
+    ...(result ? { result } : {}),
     recovery: row.status === "unknown" ? ["check_again", "inspect_candidates", "acknowledge", "run_again"] : [],
   });
 }
@@ -126,6 +135,25 @@ function filePath(c: Context): string {
   const path = new URL(c.req.url).searchParams.get("path");
   if (!path || path.length > 4096 || !path.startsWith("/") || path.includes("\0") || path.split("/").includes("..")) throw new SyntaxError("Invalid path");
   return path;
+}
+async function boundedBody(c: Context, maxBytes: number): Promise<Uint8Array> {
+  const length = Number(c.req.header("content-length") ?? 0);
+  if (length > maxBytes) throw new StoreError("CAPACITY", "File exceeds buffered write limit");
+  const reader = c.req.raw.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { await reader.cancel(); throw new StoreError("CAPACITY", "File exceeds buffered write limit"); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) { all.set(part, offset); offset += part.byteLength; }
+  return all;
 }
 
 export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void {
@@ -249,14 +277,21 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
     return new Response(bytes as BodyInit, { headers: { "Content-Type": "application/octet-stream", "Content-Length": String(bytes.length), "Cache-Control": "no-store" } });
   }));
   app.put("/v1/projects/:projectId/sandboxes/:sandboxId/files", protect(deps, true, async c => {
-    const projectId = idParam(c, "projectId"), box = await deps.store.getSandbox(projectId, idParam(c, "sandboxId"));
+    const projectId = idParam(c, "projectId"), sandboxId = idParam(c, "sandboxId"), key = InvocationKey.parse(c.req.header("idempotency-key"));
+    const box = await deps.store.getSandbox(projectId, sandboxId);
     if (!box) throw new StoreError("NOT_FOUND", "Sandbox not found");
     const connection = await deps.store.getConnection(projectId, box.connection_id);
     if (!connection) throw new StoreError("NOT_FOUND", "Connection not found");
-    const path = filePath(c), bytes = new Uint8Array(await c.req.arrayBuffer());
-    if (bytes.length > 1_048_576) throw new StoreError("CAPACITY", "File exceeds buffered write limit");
-    const result = await deps.driver.writeFile({ sandbox: nativeRef(box, connection), path, bytes, overwrite: new URL(c.req.url).searchParams.get("overwrite") === "true" });
-    if (result.status !== "completed" || result.value.kind !== "file_write") throw new StoreError("CONFLICT", "File write completion was not confirmed");
-    return c.json(FileReceipt.parse({ path, bytesWritten: result.value.observation.bytesWritten, complete: result.value.observation.complete, effect: result.effect }));
+    const path = filePath(c), bytes = await boundedBody(c, 1_048_576);
+    const overwrite = new URL(c.req.url).searchParams.get("overwrite") === "true";
+    const base64 = Buffer.from(bytes).toString("base64");
+    const intentHash = await intentSha256({ path, overwrite, bytesBase64: base64 });
+    const encryptedBytes = await deps.secrets.seal("file-write-input", `${sandboxId}:${key}`, base64);
+    const admitted = await deps.store.admitFileWrite({ projectId, sandboxId, endpoint: `PUT /sandboxes/${sandboxId}/files`, key, intentHash, path, overwrite, encryptedBytes, bytes: bytes.length });
+    if (!admitted.repeated && deps.runner) await deps.runner.tick();
+    const current = (await deps.store.getOperation(projectId, admitted.operation.id))!;
+    const dto = opDto(current) as ReturnType<typeof opDto> & { result?: { kind: string; receipt: unknown } };
+    if (dto.status === "succeeded" && dto.result?.kind === "file_write") return c.json(FileReceipt.parse(dto.result.receipt));
+    return accepted(c, current);
   }));
 }

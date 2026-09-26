@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS executions (
   operation_id varchar(128) COLLATE utf8mb4_bin NOT NULL UNIQUE,
   status varchar(32) NOT NULL,
   exit_code int,
-  signal varchar(64),
+  `signal` varchar(64),
   timed_out tinyint(1),
   output_state varchar(32) NOT NULL,
   output_bytes int NOT NULL DEFAULT 0,

@@ -72,6 +72,14 @@ export class DurableRunner {
         if (!await store.beginSubmission(claim)) return;
         const result = await driver.exec({ sandbox: ref, identity, command: request.command, cwd: request.cwd, env: request.env, deadlineSeconds: request.deadlineSeconds ?? 300, maxOutputBytes: request.output?.capture === "none" ? 0 : request.output?.maxBytes ?? 1_048_576 });
         await this.handleResult(claim, validateDriverResult(result), scope);
+      } else if (op.kind === "file_write") {
+        if (!box.native_id) { await store.reschedule(claim, "waiting_for_sandbox", 2_000); return; }
+        const request = JSON.parse(op.request_json) as { path: string; overwrite: boolean; encryptedBytes: string };
+        const base64 = await this.options.secrets.open("file-write-input", `${box.id}:${key}`, request.encryptedBytes);
+        const bytes = Uint8Array.from(Buffer.from(base64, "base64"));
+        if (!await store.beginSubmission(claim)) return;
+        const result = await driver.writeFile({ sandbox: this.ref(scope, box), identity, path: request.path, bytes, overwrite: request.overwrite });
+        await this.handleResult(claim, validateDriverResult(result), scope);
       } else {
         if (!box.native_id) { await store.reschedule(claim, "waiting_for_native_identity", 5_000); return; }
         if (!await store.beginSubmission(claim)) return;
@@ -97,7 +105,7 @@ export class DurableRunner {
       return;
     }
     const value = result.value;
-    if ((claim.operation.kind === "create" && value.kind !== "sandbox") || (claim.operation.kind === "exec" && value.kind !== "execution") || (claim.operation.kind === "destroy" && value.kind !== "destroy")) throw new Error("Provider result kind mismatch");
+    if ((claim.operation.kind === "create" && value.kind !== "sandbox") || (claim.operation.kind === "exec" && value.kind !== "execution") || (claim.operation.kind === "destroy" && value.kind !== "destroy") || (claim.operation.kind === "file_write" && value.kind !== "file_write")) throw new Error("Provider result kind mismatch");
     if (value.kind === "sandbox" && (value.observation.ref.scope.connectionId !== scope.connectionId || value.observation.ref.scope.accountId !== scope.accountId)) throw new Error("Provider result scope mismatch");
     if (value.kind === "execution") {
       if (value.observation.sandbox.scope.connectionId !== scope.connectionId) throw new Error("Execution scope mismatch");

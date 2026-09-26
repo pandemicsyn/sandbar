@@ -27,7 +27,7 @@ export async function openDomainRuntime(config: RuntimeConfig) {
     const store = new ControlStore(backend);
     const driver = new FakeProviderDriver({ baseUrl: config.fakeProviderUrl, token: config.fakeProviderToken });
     const runner = new DurableRunner({ store, driver, secrets });
-    const app = createApp({ registerRoutes: app => registerDomainRoutes(app, { store, driver, secrets, setupToken }) });
+    const app = createApp({ registerRoutes: app => registerDomainRoutes(app, { store, driver, secrets, setupToken, runner }) });
     if (config.startRunner !== false) runner.start();
     return { app, store, driver, runner, close: async () => { runner.stop(); await store.close(); } };
   } catch (error) { await backend.close(); throw error; }

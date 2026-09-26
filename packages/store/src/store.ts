@@ -5,7 +5,7 @@ export class StoreError extends Error {
   constructor(readonly code: "NOT_FOUND" | "CONFLICT" | "CAPACITY" | "INVOCATION_EXPIRED" | "UNAUTHENTICATED", message: string) { super(message); }
 }
 
-export type Kind = "create" | "exec" | "destroy";
+export type Kind = "create" | "exec" | "destroy" | "file_write";
 export type OperationStatus = "queued" | "running" | "succeeded" | "failed" | "unknown";
 export interface ConnectionRow { id: string; project_id: string; provider: string; name: string; scope: string | null; encrypted_credentials: string; credential_revision: number; status: string; created_at: number; updated_at: number }
 export interface SandboxRow { id: string; project_id: string; connection_id: string; native_id: string | null; desired_state: string; observed_state: string; observed_at: number | null; observation_error: string | null; revision: number; create_operation_id: string; labels_json: string; created_at: number; updated_at: number }
@@ -159,6 +159,26 @@ export class ControlStore {
     });
   }
 
+  async admitFileWrite(input: { projectId: string; sandboxId: string; endpoint: string; key: string; intentHash: string; path: string; overwrite: boolean; encryptedBytes: string; bytes: number }): Promise<Admission> {
+    return this.backend.transaction(async tx => {
+      await this.lockProject(tx, input.projectId);
+      const old = await this.existingInvocation(tx, input.projectId, input.endpoint, input.key, input.intentHash);
+      if (old) return old;
+      this.checkNewKey(input.key);
+      await this.checkUnknownQuota(tx, input.projectId);
+      const box = await tx.row<SandboxRow>(sql`SELECT * FROM sandboxes WHERE project_id=${input.projectId} AND id=${input.sandboxId}`);
+      if (!box) throw new StoreError("NOT_FOUND", "Sandbox not found");
+      if (box.observed_state !== "running" || box.desired_state !== "running" || !box.native_id) throw new StoreError("CONFLICT", "Sandbox is not running");
+      const operationId = id("op"), submissionId = id("sub"), time = now();
+      const request = { path: input.path, overwrite: input.overwrite, encryptedBytes: input.encryptedBytes, bytes: input.bytes };
+      await tx.run(sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'file_write',${box.id},NULL,${box.connection_id},'queued','accepted','none',${JSON.stringify(request)},NULL,NULL,${submissionId},0,NULL,0,NULL,${time},NULL,${time},${time})`);
+      await tx.run(sql`INSERT INTO invocation_keys (project_id,endpoint,${sql.raw("`key`")},intent_hash,operation_id,accepted_at) VALUES (${input.projectId},${input.endpoint},${input.key},${input.intentHash},${operationId},${time})`);
+      await tx.run(sql`INSERT INTO reservations (id,project_id,sandbox_id,operation_id,kind,amount,state,created_at,released_at) VALUES (${id("res")},${input.projectId},${box.id},${operationId},'file_input',${input.bytes},'active',${time},NULL)`);
+      await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${input.projectId},${box.id},${operationId},'file_write.accepted',${JSON.stringify({ path: input.path, bytes: input.bytes })},NULL,NULL,${time})`);
+      return { operation: (await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${operationId}`))!, sandbox: box, repeated: false };
+    });
+  }
+
   async getSandbox(projectId: string, sandboxId: string): Promise<SandboxRow | undefined> { return this.backend.row(sql`SELECT * FROM sandboxes WHERE project_id=${projectId} AND id=${sandboxId}`); }
   async listSandboxes(projectId: string, limit = 50, before?: { createdAt: number; id: string }, filters?: { state?: string; connectionId?: string; q?: string }): Promise<SandboxRow[]> {
     const clauses: SQL[] = [sql`project_id=${projectId}`];
@@ -180,11 +200,12 @@ export class ControlStore {
     return (await this.backend.row<{ key: string }>(sql`SELECT ${sql.raw("`key`")} AS ${sql.raw("`key`")} FROM invocation_keys WHERE operation_id=${operationId}`))?.key;
   }
 
-  async claimDue(owner: string, leaseMs = 30_000): Promise<Claimed | undefined> {
+  async claimDue(owner: string, leaseMs = 30_000, projectId?: string): Promise<Claimed | undefined> {
     return this.backend.transaction(async tx => {
       const time = now();
       const lock = this.backend.dialect === "mysql" ? sql.raw(" FOR UPDATE SKIP LOCKED") : sql.raw("");
-      const op = await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE status IN ('queued','running','unknown') AND ((next_attempt_at<=${time} AND (lease_expires_at IS NULL OR lease_expires_at<=${time})) OR (lease_expires_at<=${time})) ORDER BY next_attempt_at,id LIMIT 1${lock}`);
+      const scope = projectId ? sql`AND project_id=${projectId}` : sql.raw("");
+      const op = await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE status IN ('queued','running','unknown') ${scope} AND ((next_attempt_at<=${time} AND (lease_expires_at IS NULL OR lease_expires_at<=${time})) OR (lease_expires_at<=${time})) ORDER BY next_attempt_at,id LIMIT 1${lock}`);
       if (!op) return undefined;
       const generation = Number(op.lease_generation) + 1, attemptId = id("att");
       const observeOnly = !!Number(op.submission_possible);
@@ -239,6 +260,8 @@ export class ControlStore {
         await tx.run(sql`UPDATE reservations SET state='released',released_at=${time} WHERE operation_id=${op.id} AND kind='output'`);
       } else if (op.kind === "destroy") {
         await tx.run(sql`UPDATE sandboxes SET observed_state='destroyed',observed_at=${observedAt},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
+      } else if (op.kind === "file_write") {
+        await tx.run(sql`UPDATE reservations SET state='released',released_at=${time} WHERE operation_id=${op.id} AND kind='file_input'`);
       }
       await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${op.project_id},${op.sandbox_id},${op.id},${`${op.kind}.completed`},${JSON.stringify({ effect: result.effect })},${observedAt},${observedAt},${time})`);
       await tx.run(sql`INSERT INTO usage_evidence (id,project_id,sandbox_id,operation_id,kind,source_key,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("ue")},${op.project_id},${op.sandbox_id},${op.id},${`${op.kind}.observed`},${`${op.id}:completed`},${JSON.stringify({ effect: result.effect })},${observedAt},${observedAt},${time})`);
