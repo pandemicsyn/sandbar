@@ -55,6 +55,18 @@ function age(timestamp?: string): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+function downloadCapturedBytes(base64: string, name: string) {
+  const bytes = Uint8Array.from(atob(base64), (character) =>
+    character.charCodeAt(0),
+  );
+  const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)]));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 function useResource<T>(load: () => Promise<T>, dependency: string) {
   const [state, setState] = useState<{
     key: string;
@@ -1334,10 +1346,38 @@ function OperationPage() {
                 </p>
               ) : (
                 <>
+                  <p className="field-hint">
+                    Text is shown as UTF-8. Download the captured bytes for
+                    exact output.
+                  </p>
                   <h3 className="section-title">Stdout</h3>
                   <pre className="output">{execution.stdout || "(empty)"}</pre>
+                  {execution.stdoutBase64 !== undefined && (
+                    <Button
+                      onClick={() =>
+                        downloadCapturedBytes(
+                          execution.stdoutBase64!,
+                          `${op.id}-stdout.bin`,
+                        )
+                      }
+                    >
+                      Download stdout bytes
+                    </Button>
+                  )}
                   <h3 className="section-title">Stderr</h3>
                   <pre className="output">{execution.stderr || "(empty)"}</pre>
+                  {execution.stderrBase64 !== undefined && (
+                    <Button
+                      onClick={() =>
+                        downloadCapturedBytes(
+                          execution.stderrBase64!,
+                          `${op.id}-stderr.bin`,
+                        )
+                      }
+                    >
+                      Download stderr bytes
+                    </Button>
+                  )}
                   {execution.outputAvailability === "truncated" && (
                     <Notice tone="warning">
                       Output was truncated at the configured capture limit.

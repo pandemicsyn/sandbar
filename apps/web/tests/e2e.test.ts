@@ -439,6 +439,12 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByText("fixture stdout").waitFor();
   await page.getByText("fixture stderr").waitFor();
   expect(await page.getByText("7", { exact: true }).isVisible()).toBe(true);
+  const outputDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download stdout bytes" }).click();
+  const stdoutDownload = await outputDownload;
+  const stdoutPath = join(temp, "downloaded-stdout.bin");
+  await stdoutDownload.saveAs(stdoutPath);
+  expect(await readFile(stdoutPath)).toEqual(Buffer.from("fixture stdout\n"));
 
   await page.getByRole("link", { name: sandboxId }).click();
   await page.getByLabel("Local file").setInputFiles({
