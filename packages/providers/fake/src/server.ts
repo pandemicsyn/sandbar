@@ -1,5 +1,6 @@
 import { FakeProviderEngine } from "./engine";
 import { FakeAction, validFakePath } from "./protocol";
+import { ZodError } from "zod";
 
 export type FakeServerOptions = { hostname: "127.0.0.1" | "::1"; port: number; statePath: string; token: string; testMode: boolean };
 
@@ -16,8 +17,19 @@ export async function startFakeProviderServer(options: FakeServerOptions) {
     if (request.method !== "POST") return json({ error: "not_found" }, 404);
     const declared = Number(request.headers.get("content-length") ?? 0);
     if (declared > 2 * 1024 * 1024) return json({ error: "too_large" }, 413);
-    const raw = await request.text();
-    if (Buffer.byteLength(raw) > 2 * 1024 * 1024) return json({ error: "too_large" }, 413);
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    const reader = request.body?.getReader();
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        length += value.byteLength;
+        if (length > 2 * 1024 * 1024) { await reader.cancel(); return json({ error: "too_large" }, 413); }
+        chunks.push(value);
+      }
+    }
+    const raw = Buffer.concat(chunks).toString("utf8");
     let body: unknown;
     try { body = JSON.parse(raw); } catch { return json({ error: "invalid_json" }, 400); }
     try {
@@ -46,7 +58,7 @@ export async function startFakeProviderServer(options: FakeServerOptions) {
         case "observe": return json(await engine.observe(action.scope, action.submissionId));
         case "events": return json(engine.events(action.scope));
       }
-    } catch { return json({ error: "invalid_request" }, 400); }
+    } catch (error) { return error instanceof ZodError ? json({ error: "invalid_request" }, 400) : json({ error: "provider_failure" }, 500); }
   } });
 }
 
