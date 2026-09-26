@@ -1,0 +1,12 @@
+{
+  "name": "@sandbar/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build": "bun build src/main.ts --target browser --outdir dist && cp index.html dist/index.html"
+  },
+  "dependencies": {
+    "@sandbar/contracts": "workspace:*"
+  }
+}

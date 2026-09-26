@@ -1,0 +1,8 @@
+{
+  "name": "@sandbar/provider-fake",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "check": "tsc -p tsconfig.json" },
+  "dependencies": { "@sandbar/provider-spi": "workspace:*" }
+}
