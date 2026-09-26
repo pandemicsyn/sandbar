@@ -59,8 +59,8 @@ async function consumer(directory, dependencies, source) {
   run("bun", ["install", "--no-save"], directory);
 }
 
-async function checkTypes(directory) {
-  await writeFile(join(directory, "types.ts"), `
+async function checkTypes(directory, mode) {
+  const source = mode === "direct" ? `
 import { Sandbar, Image } from "@sandbar/sdk/direct";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 async function flow() {
@@ -73,7 +73,19 @@ async function flow() {
   return text;
 }
 void flow;
-`);
+` : `
+import { Sandbar, Image } from "@sandbar/sdk/remote";
+async function flow() {
+  const client = Sandbar.connect({ url: "https://sandbar.example", token: "example-token-123456", projectId: "project_1" });
+  const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
+  const result = await box.exec({ command: { kind: "argv", argv: ["fixture"] } });
+  const text: string = result.stdoutText();
+  await client.close();
+  return text;
+}
+void flow;
+`;
+  await writeFile(join(directory, "types.ts"), source);
   await writeFile(join(directory, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", strict: true, noEmit: true, skipLibCheck: false, types: [] }, include: ["types.ts"] }));
   run(join(root, "node_modules/.bin/tsc"), ["-p", "tsconfig.json"], directory);
 }
@@ -114,7 +126,8 @@ try {
   const direct = join(temporary, "direct-consumer");
   await consumer(remote, remoteDeps, remoteSource);
   await consumer(direct, directDeps, directSource);
-  await checkTypes(direct);
+  await checkTypes(direct, "direct");
+  await checkTypes(remote, "remote");
   inspectGraph(remote, ["@sandbar/sdk"]);
   inspectGraph(direct, ["@sandbar/sdk", "@sandbar/provider-fake"]);
   console.log(`Runtimes: Node ${run("node", ["--version"], remote)}, Bun ${run("bun", ["--version"], remote)}`);
