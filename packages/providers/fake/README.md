@@ -39,9 +39,9 @@ Example scenario body:
 }
 ```
 
-`behavior` is `normal`, `lost_after_effect`, `reject`, or `ambiguous_before_effect`. A lost response applies the effect and persists the ledger before returning HTTP 504. The driver normalizes that transport failure to `unknown`, and a later `observe` can recover the result if discovery is supported. `delayObservations` returns pending for that many observe calls before revealing the completed effect; it uses no wall-clock sleep. `reject` is definitive with no effect. `ambiguous_before_effect` returns unknown without ledger evidence, so absence from discovery cannot prove no effect.
+`action` is `create`, `exec`, `destroy`, or `file_write`. `behavior` is `normal`, `lost_after_effect`, `reject`, or `ambiguous_before_effect`. A lost response applies the effect and persists the ledger before returning HTTP 504. The driver normalizes that transport failure to `unknown`, and a later `observe` can recover the result if discovery is supported. `delayObservations` returns pending for that many observe calls before revealing the completed effect; it uses no wall-clock sleep. `reject` is definitive with no effect. `ambiguous_before_effect` returns unknown without ledger evidence, so absence from discovery cannot prove no effect.
 
-For public API E2E flows where Sandbar allocates an opaque submission ID, seed `"submissionId": "*"`. Wildcard scenarios form a FIFO queue per action and are consumed atomically by the next matching create, exec, or destroy. Exact-ID scenarios take precedence. Seed before sending the public request; no polling or timing race is needed.
+For public API E2E flows where Sandbar allocates an opaque submission ID, seed `"submissionId": "*"`. Wildcard scenarios form a FIFO queue per action and are consumed atomically by the next matching mutation. Exact-ID scenarios take precedence. Seed before sending the public request; no polling or timing race is needed.
 
 An exec scenario must include a matching `command` fixture such as:
 
@@ -59,7 +59,7 @@ An exec scenario must include a matching `command` fixture such as:
 }
 ```
 
-No fixture means exec is definitively unsupported. A nonzero exit code is a completed execution, not a provider failure. Captured output is bounded to the requested byte count. File content is binary and limited to 1 MiB per file; all state is capped at 8 MiB, with at most 128 resources and 512 ledger entries. The fake supports exact virtual file paths, not directories, symlinks, mount durability, or a real process deadline.
+No fixture means exec is definitively unsupported. A nonzero exit code is a completed execution, not a provider failure. A fixture may constrain `cwd`, `env`, and `deadlineSeconds`; nonmatching values are rejected. Captured output is bounded to the requested byte count. File content is binary and limited to 1 MiB per file; all state is capped at 8 MiB, with at most 128 resources and 512 ledger entries. The fake supports exact virtual file paths, not directories, symlinks, mount durability, or a real process deadline. File writes carry a stable invocation and can be observed after a lost response.
 
 To test the unsafe retry case, set `POST /_test/profile` to:
 

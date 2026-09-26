@@ -586,6 +586,18 @@
       },
       "put": {
         "operationId": "writeFile",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent."
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -604,6 +616,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FileReceipt"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Durably accepted but transfer effect pending or unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedOperation"
                 }
               }
             }
@@ -698,7 +720,8 @@
                 "enum": [
                   "create",
                   "exec",
-                  "destroy"
+                  "destroy",
+                  "file_write"
                 ]
               },
               "sandboxId": {
@@ -946,7 +969,8 @@
                 "enum": [
                   "create",
                   "exec",
-                  "destroy"
+                  "destroy",
+                  "file_write"
                 ]
               },
               "sandboxId": {
@@ -1501,7 +1525,8 @@
             "enum": [
               "create",
               "exec",
-              "destroy"
+              "destroy",
+              "file_write"
             ]
           },
           "sandboxId": {
@@ -1916,6 +1941,12 @@
             "minimum": 0,
             "maximum": 9007199254740991
           },
+          "currentOperationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
           "environment": {
             "oneOf": [
               {
@@ -2046,6 +2077,12 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 9007199254740991
+                },
+                "currentOperationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_-]+$"
                 },
                 "environment": {
                   "oneOf": [

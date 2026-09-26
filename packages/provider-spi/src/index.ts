@@ -18,7 +18,7 @@ export const DriverError = z.object({
 });
 export const DriverCapabilities = z.object({
   provider: z.string(),
-  nativeIdempotency: z.object({ create: z.boolean(), exec: z.boolean(), destroy: z.boolean() }),
+  nativeIdempotency: z.object({ create: z.boolean(), exec: z.boolean(), destroy: z.boolean(), writeFile: z.boolean() }),
   discoveryBySubmission: z.boolean(),
   supports: z.object({ argv: z.boolean(), shell: z.boolean(), fileBytes: z.boolean(), inventory: z.boolean() }),
   maxFileBytes: z.number().int().nonnegative(), maxOutputBytes: z.number().int().nonnegative(),
@@ -63,7 +63,7 @@ export interface ProviderDriver {
   inventory(input: { scope: NativeScope; cursor?: string; limit: number }): Promise<{ items: SandboxObservation[]; nextCursor?: string }>;
   exec(input: { sandbox: NativeRef; identity: InvocationIdentity; command: z.infer<typeof ExecCommand>; cwd?: string; env?: Record<string, string>; deadlineSeconds: number; maxOutputBytes: number }): Promise<DriverResult>;
   readFile(input: { sandbox: NativeRef; path: string }): Promise<Uint8Array>;
-  writeFile(input: { sandbox: NativeRef; path: string; bytes: Uint8Array; overwrite: boolean }): Promise<DriverResult>;
+  writeFile(input: { sandbox: NativeRef; identity: InvocationIdentity; path: string; bytes: Uint8Array; overwrite: boolean }): Promise<DriverResult>;
   destroy(input: { sandbox: NativeRef; identity: InvocationIdentity }): Promise<DriverResult>;
   // Observe must not submit a mutation. Null means no evidence, never proof of no effect.
   observe(input: { scope: NativeScope; submissionId: string }): Promise<DriverResult | null>;

@@ -5,7 +5,7 @@ import { DriverResult, type NativeRef, type NativeScope, type InvocationIdentity
 
 const CommandFixture = z.strictObject({ command: ExecCommand, cwd: z.string().optional(), env: z.record(z.string(), z.string()).optional(), deadlineSeconds: z.number().int().min(1).max(3600).optional(), exitCode: z.number().int(), stdoutBase64: z.base64().default(""), stderrBase64: z.base64().default("") });
 export const FakeScenario = z.strictObject({
-  submissionId: z.string().min(1), action: z.enum(["create", "exec", "destroy"]),
+  submissionId: z.string().min(1), action: z.enum(["create", "exec", "destroy", "file_write"]),
   behavior: z.enum(["normal", "lost_after_effect", "reject", "ambiguous_before_effect"]).default("normal"),
   delayObservations: z.number().int().min(0).max(100).default(0),
   rejectCode: z.enum(["capacity", "unsupported", "conflict"]).default("capacity"),
@@ -14,10 +14,10 @@ export const FakeScenario = z.strictObject({
 export type FakeScenario = z.infer<typeof FakeScenario>;
 type Resource = { ref: NativeRef; state: "running" | "destroyed"; image: string; networkPolicy: string; files: Record<string, string>; sequence: number };
 type LedgerEntry = { submissionId: string; projectId: string; scope: NativeScope; action: FakeScenario["action"]; result: z.infer<typeof DriverResult>; remaining: number; discoverable: boolean };
-export const FakeProfile = z.strictObject({ nativeIdempotency: z.strictObject({ create: z.boolean(), exec: z.boolean(), destroy: z.boolean() }), discoveryBySubmission: z.boolean() });
+export const FakeProfile = z.strictObject({ nativeIdempotency: z.strictObject({ create: z.boolean(), exec: z.boolean(), destroy: z.boolean(), writeFile: z.boolean().default(true) }), discoveryBySubmission: z.boolean() });
 export const FakeEvent = z.strictObject({ eventId: z.string().min(1), ref: z.object({ scope: z.object({ provider: z.string(), connectionId: z.string(), accountId: z.string(), region: z.string().optional() }), nativeId: z.string(), kind: z.literal("sandbox") }), sequence: z.number().int().nonnegative(), state: z.enum(["running", "destroyed"]), occurredAt: z.iso.datetime({ offset: true }) });
 type State = { version: 1; nextId: number; tick: number; profile: z.infer<typeof FakeProfile>; resources: Resource[]; ledger: LedgerEntry[]; scenarios: FakeScenario[]; events: z.infer<typeof FakeEvent>[]; invocations: { submissionId: string; projectId: string; action: string }[] };
-const empty = (): State => ({ version: 1, nextId: 1, tick: 0, profile: { nativeIdempotency: { create: true, exec: true, destroy: true }, discoveryBySubmission: true }, resources: [], ledger: [], scenarios: [], events: [], invocations: [] });
+const empty = (): State => ({ version: 1, nextId: 1, tick: 0, profile: { nativeIdempotency: { create: true, exec: true, destroy: true, writeFile: true }, discoveryBySubmission: true }, resources: [], ledger: [], scenarios: [], events: [], invocations: [] });
 const MAX_RESOURCES = 128, MAX_LEDGER = 512, MAX_FILE_BYTES = 1024 * 1024, MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const scopeKey = (scope: NativeScope) => `${scope.provider}\0${scope.connectionId}\0${scope.accountId}\0${scope.region ?? ""}`;
 const sameScope = (a: NativeScope, b: NativeScope) => scopeKey(a) === scopeKey(b);
@@ -169,14 +169,26 @@ export class FakeProviderEngine {
     return { items, nextCursor: start + limit < resources.length ? String(start + limit) : undefined };
   }
   readFile(ref: NativeRef, path: string): string | null { return this.find(ref)?.files[path] ?? null; }
-  async writeFile(ref: NativeRef, path: string, bytesBase64: string, overwrite: boolean): Promise<z.infer<typeof DriverResult>> {
+  async writeFile(input: { sandbox: NativeRef; identity: InvocationIdentity; path: string; bytesBase64: string; overwrite: boolean }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     return this.mutate(() => {
-      const resource = this.find(ref);
-      if (!resource || resource.state !== "running") return { status: "rejected", effect: "none", error: { code: "not_found", message: "Fake sandbox not found", effect: "none", retry: "never" } } as const;
-      if (!overwrite && path in resource.files) return this.rejection("conflict");
-      if (bytesLength(bytesBase64) > MAX_FILE_BYTES) return this.rejection("capacity");
+      const { sandbox, identity, path, bytesBase64, overwrite } = input;
+      const { submissionId } = identity;
+      const prior = this.state.ledger.find(x => x.submissionId === submissionId && x.projectId === identity.projectId && sameScope(x.scope, sandbox.scope));
+      if (prior?.action !== undefined && prior.action !== "file_write") return { result: this.rejection("conflict"), loseResponse: false };
+      if (prior && this.state.profile.nativeIdempotency.writeFile) return { result: prior.result, loseResponse: false };
+      const scenario = this.scenario(submissionId, "file_write");
+      this.state.invocations.push({ submissionId, projectId: identity.projectId, action: "file_write" });
+      if (scenario.behavior === "reject") return { result: this.rejection(scenario.rejectCode), loseResponse: false };
+      if (scenario.behavior === "ambiguous_before_effect") return { result: { status: "unknown", effect: "possible", submissionId, reason: "Submission acknowledgement lost" } as const, loseResponse: true };
+      const resource = this.find(sandbox);
+      if (!resource || resource.state !== "running") return { result: { status: "rejected", effect: "none", error: { code: "not_found", message: "Fake sandbox not found", effect: "none", retry: "never" } } as const, loseResponse: false };
+      if (!overwrite && path in resource.files) return { result: this.rejection("conflict"), loseResponse: false };
+      if (bytesLength(bytesBase64) > MAX_FILE_BYTES) return { result: this.rejection("capacity"), loseResponse: false };
       resource.files[path] = bytesBase64;
-      return { status: "completed", effect: "applied", value: { kind: "file_write", observation: { sandbox: ref, path, bytesWritten: bytesLength(bytesBase64), complete: true } } } as const;
+      const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "file_write", observation: { sandbox, path, bytesWritten: bytesLength(bytesBase64), complete: true } } };
+      if (this.state.ledger.length >= MAX_LEDGER) throw new Error("Fake ledger limit reached");
+      this.state.ledger.push({ submissionId, projectId: identity.projectId, scope: sandbox.scope, action: "file_write", result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
+      return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
     });
   }
 }

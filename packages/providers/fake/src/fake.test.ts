@@ -77,7 +77,7 @@ describe("independent fake provider", () => {
     expect(unsupported.status).toBe("rejected");
     expect(unsupported.effect).toBe("none");
     const data = Uint8Array.from([0, 255, 1]);
-    const written = await driver.writeFile({ sandbox, path: "/data/blob", bytes: data, overwrite: false });
+    const written = await driver.writeFile({ sandbox, identity: identity("write_1"), path: "/data/blob", bytes: data, overwrite: false });
     expect(written.status).toBe("completed");
     expect(await driver.readFile({ sandbox, path: "/data/blob" })).toEqual(data);
     await control("/_test/seed", { submissionId: "destroy_1", action: "destroy", behavior: "reject", rejectCode: "capacity" });
@@ -146,5 +146,19 @@ describe("independent fake provider", () => {
     expect(result.status).toBe("rejected");
     expect(result.effect).toBe("none");
     expect((await control("/_test/state")).invocations).toHaveLength(0);
+  });
+
+  test("lost file-write response is recovered through the independent effect ledger", async () => {
+    const { driver, control } = await setup();
+    const created = await driver.create({ scope, identity: identity("file_parent"), image: "fake-starter", networkPolicy: "blocked" });
+    if (created.status !== "completed" || created.value.kind !== "sandbox") throw new Error("Create failed");
+    const sandbox = created.value.observation.ref;
+    await control("/_test/seed", { submissionId: "*", action: "file_write", behavior: "lost_after_effect" });
+    const bytes = Uint8Array.from([1, 0, 255]);
+    expect((await driver.writeFile({ sandbox, identity: identity("file_write_1"), path: "/blob", bytes, overwrite: true })).status).toBe("unknown");
+    const observed = await driver.observe({ scope, submissionId: "file_write_1" });
+    expect(observed?.status).toBe("completed");
+    expect(await driver.readFile({ sandbox, path: "/blob" })).toEqual(bytes);
+    expect((await control("/_test/state")).invocations.filter((x: { action: string }) => x.action === "file_write")).toHaveLength(1);
   });
 });

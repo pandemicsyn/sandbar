@@ -37,7 +37,11 @@ export async function startFakeProviderServer(options: FakeServerOptions) {
         case "inventory": return json(engine.inventory(action.scope, action.cursor, action.limit));
         case "exec": { const outcome = await engine.exec(action); return outcome.loseResponse ? json({ error: "response_lost" }, 504) : json(outcome.result); }
         case "readFile": return validFakePath(action.path) ? json({ bytesBase64: engine.readFile(action.sandbox, action.path) }) : json({ error: "invalid_path" }, 400);
-        case "writeFile": return validFakePath(action.path) ? json(await engine.writeFile(action.sandbox, action.path, action.bytesBase64, action.overwrite)) : json({ error: "invalid_path" }, 400);
+        case "writeFile": {
+          if (!validFakePath(action.path)) return json({ error: "invalid_path" }, 400);
+          const outcome = await engine.writeFile(action);
+          return outcome.loseResponse ? json({ error: "response_lost" }, 504) : json(outcome.result);
+        }
         case "destroy": { const outcome = await engine.destroy(action); return outcome.loseResponse ? json({ error: "response_lost" }, 504) : json(outcome.result); }
         case "observe": return json(await engine.observe(action.scope, action.submissionId));
         case "events": return json(engine.events(action.scope));

@@ -44,8 +44,8 @@ export class FakeProviderDriver implements ProviderDriver {
     if (value.bytesBase64 === null) throw new Error("Fake file not found");
     return Uint8Array.from(Buffer.from(value.bytesBase64, "base64"));
   }
-  async writeFile(input: { sandbox: NativeRef; path: string; bytes: Uint8Array; overwrite: boolean }): Promise<DriverResult> {
-    return DriverResult.parse(await this.call({ kind: "writeFile", sandbox: input.sandbox, path: input.path, bytesBase64: Buffer.from(input.bytes).toString("base64"), overwrite: input.overwrite }));
+  async writeFile(input: { sandbox: NativeRef; identity: InvocationIdentity; path: string; bytes: Uint8Array; overwrite: boolean }): Promise<DriverResult> {
+    return this.mutation({ kind: "writeFile", sandbox: input.sandbox, identity: input.identity, path: input.path, bytesBase64: Buffer.from(input.bytes).toString("base64"), overwrite: input.overwrite }, input.identity.submissionId);
   }
   async destroy(input: { sandbox: NativeRef; identity: InvocationIdentity }) { return this.mutation({ kind: "destroy", ...input }, input.identity.submissionId); }
   async observe(input: { scope: NativeScope; submissionId: string }) { const value = await this.call({ kind: "observe", ...input }); return value === null ? null : DriverResult.parse(value); }

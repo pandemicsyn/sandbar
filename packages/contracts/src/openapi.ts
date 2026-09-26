@@ -53,7 +53,7 @@ export const openApiDocument = {
     "/v1/projects/{projectId}/sandboxes/{sandboxId}/files": {
       parameters: [projectParameter, sandboxParameter, { name: "path", in: "query", required: true, schema: { type: "string" } }],
       get: { operationId: "readFile", responses: { "200": { description: "Raw binary file", content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } }, default: response("Structured error", "ErrorResponse") } },
-      put: { operationId: "writeFile", requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } }, responses: ordinary("FileReceipt") },
+      put: { operationId: "writeFile", parameters: [invocationHeader], requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } }, responses: { ...ordinary("FileReceipt"), "202": response("Durably accepted but transfer effect pending or unknown", "AcceptedOperation") } },
     },
     "/v1/projects/{projectId}/operations/{operationId}": { parameters: [projectParameter, operationParameter], get: { operationId: "getOperation", responses: ordinary("Operation") } },
   },

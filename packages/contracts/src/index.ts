@@ -48,7 +48,7 @@ export const SafeError = z.object({
 export const ErrorResponse = z.object({ error: SafeError });
 export const OperationStatus = z.enum(["queued", "running", "succeeded", "failed", "unknown"]);
 export const Operation = z.object({
-  id: Id, projectId: Id, kind: z.enum(["create", "exec", "destroy"]),
+  id: Id, projectId: Id, kind: z.enum(["create", "exec", "destroy", "file_write"]),
   sandboxId: Id.optional(), executionId: Id.optional(), status: OperationStatus,
   phase: z.string().max(128), createdAt: Rfc3339, updatedAt: Rfc3339,
   effect: Effect, error: SafeError.optional(),
@@ -60,6 +60,7 @@ export const Sandbox = z.object({
   desiredState: z.enum(["running", "destroyed"]),
   observedState: z.enum(["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"]),
   observedAt: Rfc3339.optional(), revision: z.number().int().nonnegative(),
+  currentOperationId: Id.optional(),
   environment: ImageSource, network: NetworkSelection,
   labels: z.record(z.string(), z.string()),
 });
@@ -96,6 +97,7 @@ export const ProviderConnectionPage = z.object({ items: z.array(ProviderConnecti
 export const SandboxListQuery = z.strictObject({
   cursor: z.string().max(256).optional(), limit: z.number().int().min(1).max(100).optional(),
   connectionId: Id.optional(), state: z.enum(["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"]).optional(),
+  q: z.string().max(64).optional(),
 });
 export const StreamFrame = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("stdout"), executionId: Id, sequence: z.number().int().nonnegative(), bytesBase64: z.base64() }),
