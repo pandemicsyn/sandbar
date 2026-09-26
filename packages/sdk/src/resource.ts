@@ -101,12 +101,15 @@ export function validateReference(value: RecoveryReference): RecoveryReference {
   const parsed = schema.safeParse(value);
   if (!parsed.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid recovery reference");
   const ref = parsed.data;
+  if (ref.file) validateFilePath(ref.file.path);
+  if ((ref.kind === "file_write") !== !!ref.file || (ref.kind !== "exec" && ref.maxOutputBytes !== undefined)) throw new SandbarError("INVALID_ARGUMENT", "Recovery fields do not match operation kind");
   if (ref.mode === "direct") {
     if (!ref.scope || !ref.submissionId || !ref.operationId || ref.service || ref.resourceId) throw new SandbarError("INVALID_ARGUMENT", "Incomplete direct recovery reference");
     if (ref.sandbox && (ref.sandbox.kind !== "sandbox" || !sameScope(ref.sandbox.scope, ref.scope))) throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox scope mismatch");
-    if (ref.kind === "file_write" && (!ref.sandbox || !ref.file)) throw new SandbarError("INVALID_ARGUMENT", "Incomplete file recovery reference");
+    if (ref.kind === "create" && ref.sandbox) throw new SandbarError("INVALID_ARGUMENT", "Create recovery reference cannot contain a sandbox");
+    if (ref.kind === "file_write" && !ref.sandbox) throw new SandbarError("INVALID_ARGUMENT", "Incomplete file recovery reference");
     if ((ref.kind === "exec" || ref.kind === "destroy") && !ref.sandbox) throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox missing");
-  } else if (!ref.service || ref.scope || ref.sandbox || ref.submissionId || ref.maxOutputBytes || (ref.kind !== "create" && !ref.resourceId) || (ref.kind === "file_write" ? !ref.file : !!ref.file)) {
+  } else if (!ref.service || ref.scope || ref.sandbox || ref.submissionId || ref.maxOutputBytes || (ref.kind === "create" ? !!ref.resourceId : !ref.resourceId)) {
     throw new SandbarError("INVALID_ARGUMENT", "Incomplete remote recovery reference");
   }
   return ref;

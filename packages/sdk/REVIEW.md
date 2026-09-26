@@ -60,8 +60,6 @@ Final complete-diff review after these fixes remains pending.
 - One actionable finding: remote file writes sent bytes above the direct SDK's 1 MiB limit and relied on service rejection. Remote now rejects before the HTTP mutation, with a parity test confirming no write request is sent.
 - Validation after fix: `bun run check` passed; full `bun run test` passed 53 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 5 is **not** a zero-finding clearance.
 
-Final independent complete-diff review of the resulting HEAD remains pending.
-
 ## Round 6
 
 - Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
@@ -69,5 +67,15 @@ Final independent complete-diff review of the resulting HEAD remains pending.
 - Reviewed HEAD: `83c3dda30e3539b93fc1005175edd4adc873a7ea`.
 - One actionable finding: nullable execution exit codes were classified as ordinary nonzero exits. The SDK now throws a distinct `NoExitCodeError` with the captured result and applied effect. Direct and remote recovery tests cover this outcome; `NonzeroExitError` remains specific to numeric nonzero exits.
 - Validation after fix: `bun run check` passed; full `bun run test` passed 54 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 6 is **not** a zero-finding clearance.
+
+Final independent complete-diff review of the resulting HEAD remains pending.
+
+## Round 7
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `3cc58dc8ca5e552209ca9e04b3b2046213477525`.
+- One actionable finding: imported file-write recovery references accepted traversal or NUL paths, and kind-incompatible fields. References now use the shared file path validator and reject fields that do not belong to their operation kind. Added invalid reference tests.
+- Validation after fix: `bun run check` passed; full `bun run test` passed 54 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 7 is **not** a zero-finding clearance.
 
 Final independent complete-diff review of the resulting HEAD remains pending.

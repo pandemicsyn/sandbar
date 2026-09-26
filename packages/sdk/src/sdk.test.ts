@@ -108,6 +108,8 @@ test("direct recovery never treats incomplete destroy or file receipts as succes
   await expect((await client.recover({ ...common, kind: "destroy" })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
   provider.driver.observe = async () => ({ status: "completed", effect: "applied", submissionId: "sid_1", value: { kind: "file_write", observation: { sandbox, path: "/data", bytesWritten: 1, complete: false } } });
   await expect((await client.recover({ ...common, kind: "file_write", file: { path: "/data", bytes: 2 } })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  await expect(client.recover({ ...common, kind: "file_write", file: { path: "/../escape", bytes: 2 } })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  await expect(client.recover({ ...common, kind: "destroy", file: { path: "/data", bytes: 2 } })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   provider.driver.observe = async () => ({ status: "completed", effect: "applied", submissionId: "sid_1", value: { kind: "execution", observation: { ref: { scope: provider.scope, nativeId: "fake_execution_1", kind: "execution" }, sandbox, completed: true, exitCode: null, stdoutBase64: "", stderrBase64: "", observedAt: "2026-01-01T00:00:00Z" } } });
   await expect((await client.recover({ ...common, kind: "exec", maxOutputBytes: 1024 })).observe()).rejects.toBeInstanceOf(NoExitCodeError);
 });
