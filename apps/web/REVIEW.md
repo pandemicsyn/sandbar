@@ -48,7 +48,7 @@ This report records independent static reviews for the management UI and browser
 - Reviewed HEAD: `4dbb184b0b3d0bfe2c095d6ca8287bff494ff2aa`.
 - Finding: two tabs could race during invocation hashing and local-storage admission, mint different keys for the same effect scope, and lose one recovery identity.
 - Fix: hold a browser Web Lock per action scope while reading, storing, submitting, and clearing the invocation identity. An explicit reset also waits for the lock. Browsers without Web Locks fail before effect dispatch.
-- Validation: web check and build pass. A two-tab browser test exposed a control-session CSRF rotation issue; control is fixing that before final integrated validation and review.
+- Validation after fixes: with control's stable session CSRF and reviewed contracts parent integrated at base `2f9a3fb8b451e00f83f88f8848402ef352e30cea`, `bun run check && bun run build && bun run test` passes (36 passed, 1 local MySQL skip, 0 failed, 1302 assertions). The two-tab held-response test passes with one provider effect and the original operation ID. Control's final review is still running; a subsequent parent change requires a fresh web rebase and review.
 
 ## Final clearance
 
