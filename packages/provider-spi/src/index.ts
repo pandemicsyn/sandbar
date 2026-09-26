@@ -42,10 +42,10 @@ export const DriverValue = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("file_write"), observation: FileWriteObservation }),
 ]);
 export const DriverResult = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("completed"), effect: Effect, value: DriverValue }),
+  z.object({ status: z.literal("completed"), effect: z.enum(["applied", "partial"]), value: DriverValue }),
   z.object({ status: z.literal("pending"), effect: z.literal("possible"), submissionId: Id, observeAfterMs: z.number().int().nonnegative() }),
   z.object({ status: z.literal("unknown"), effect: z.enum(["possible", "unknown"]), submissionId: Id, reason: z.string().max(512) }),
-  z.object({ status: z.literal("rejected"), effect: z.literal("none"), error: DriverError }),
+  z.object({ status: z.literal("rejected"), effect: z.literal("none"), error: DriverError.extend({ effect: z.literal("none") }) }),
 ]);
 export type NativeScope = z.infer<typeof NativeScope>;
 export type NativeRef = z.infer<typeof NativeRef>;
