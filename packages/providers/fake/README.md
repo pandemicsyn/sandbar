@@ -59,7 +59,7 @@ An exec scenario must include a matching `command` fixture such as:
 }
 ```
 
-No fixture means exec is definitively unsupported. A nonzero exit code is a completed execution, not a provider failure. A fixture may constrain `cwd`, `env`, and `deadlineSeconds`; nonmatching values are rejected. Captured output is bounded to the requested byte count. File content is binary and limited to 1 MiB per file; all state is capped at 8 MiB, with at most 128 resources and 512 ledger entries. The fake supports exact virtual file paths, not directories, symlinks, mount durability, or a real process deadline. File writes carry a stable invocation and can be observed after a lost response.
+No fixture means exec is definitively unsupported. A nonzero exit code is a completed execution, not a provider failure. A fixture may constrain `cwd`, `env`, and `deadlineSeconds`; nonmatching values are rejected. Captured output is bounded to the requested byte count. File content is binary and limited to 1 MiB per file; all state is capped at 8 MiB, with at most 128 resources and 512 ledger entries. When the ledger is full, new mutations receive a definitive capacity rejection before effects; existing matching submissions can still retrieve their prior result. The fake supports exact virtual file paths, not directories, symlinks, mount durability, or a real process deadline. File writes carry a stable invocation and can be observed after a lost response.
 
 To test the unsafe retry case, set `POST /_test/profile` to:
 

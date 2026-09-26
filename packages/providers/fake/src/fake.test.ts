@@ -114,6 +114,11 @@ describe("independent fake provider", () => {
     expect(response.status).toBe(404);
   });
 
+  test("exported fake server refuses non-loopback binds at runtime", async () => {
+    directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+    await expect(startFakeProviderServer({ hostname: "0.0.0.0" as "127.0.0.1", port: 0, statePath: join(directory, "state.json"), token, testMode: true })).rejects.toThrow("loopback");
+  });
+
   test("wildcard scenario queue consumes one matching action without knowing allocated submission IDs", async () => {
     const { driver, control } = await setup();
     await control("/_test/seed", { submissionId: "*", action: "create", behavior: "lost_after_effect" });
@@ -193,5 +198,26 @@ describe("independent fake provider", () => {
     const reloaded = new FakeProviderEngine(join(directory, "provider.json"), true);
     await reloaded.load();
     expect(reloaded.snapshot().invocations).toHaveLength(512);
+  });
+
+  test("full effect ledger rejects the 513th mutation before changing provider state while preserving replay evidence", async () => {
+    directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+    const engine = new FakeProviderEngine(join(directory, "provider.json"), true);
+    await engine.load();
+    const created = await engine.create({ scope, identity: identity("ledger_create"), image: "fake-starter", networkPolicy: "blocked" });
+    if (created.result.status !== "completed" || created.result.value.kind !== "sandbox") throw new Error("Create failed");
+    const sandbox = created.result.value.observation.ref;
+    for (let index = 0; index < 511; index++) {
+      const result = await engine.writeFile({ sandbox, identity: identity(`ledger_write_${index}`), path: "/blob", bytesBase64: Buffer.from(String(index)).toString("base64"), overwrite: true });
+      expect(result.result.status).toBe("completed");
+    }
+    expect(engine.snapshot().ledger).toHaveLength(512);
+    const overflow = await engine.writeFile({ sandbox, identity: identity("ledger_write_511"), path: "/blob", bytesBase64: Buffer.from("overflow").toString("base64"), overwrite: true });
+    expect(overflow.result.status).toBe("rejected");
+    expect(overflow.result.effect).toBe("none");
+    expect(Buffer.from(engine.readFile(sandbox, "/blob") ?? "", "base64").toString()).toBe("510");
+    const replay = await engine.writeFile({ sandbox, identity: identity("ledger_write_0"), path: "/blob", bytesBase64: Buffer.from("0").toString("base64"), overwrite: true });
+    expect(replay.result.status).toBe("completed");
+    expect(engine.snapshot().ledger).toHaveLength(512);
   });
 });

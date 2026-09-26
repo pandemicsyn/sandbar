@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 export type FakeServerOptions = { hostname: "127.0.0.1" | "::1"; port: number; statePath: string; token: string; testMode: boolean };
 
 export async function startFakeProviderServer(options: FakeServerOptions) {
+  if (options.hostname !== "127.0.0.1" && options.hostname !== "::1") throw new Error("Fake provider may bind loopback only");
   if (!options.token || options.token.length < 16) throw new Error("Fake provider requires a transport token of at least 16 characters");
   const engine = new FakeProviderEngine(options.statePath, options.testMode);
   await engine.load();

@@ -22,5 +22,8 @@ describe("public contract", () => {
     expect(StreamFrame.safeParse({ kind: "stdout", executionId: "e1", sequence: 1, bytesBase64: "not-base64" }).success).toBe(false);
     expect(openApiDocument.paths["/v1/projects/{projectId}/sandboxes"].post.responses["202"]).toBeDefined();
     expect(openApiDocument.components.schemas.CreateSandboxRequest).toBeDefined();
+    expect(openApiDocument.components.schemas.StreamFrame).toBeDefined();
+    expect(openApiDocument.components.schemas.SandboxListQuery).toBeDefined();
+    expect(openApiDocument.paths["/v1/projects/{projectId}/sandboxes"].get.parameters.map(p => p.name)).toEqual(["cursor", "limit", "connectionId", "state", "q"]);
   });
 });

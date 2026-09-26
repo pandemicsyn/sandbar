@@ -101,6 +101,7 @@ export class FakeProviderEngine {
       if (prior?.action !== undefined && prior.action !== "create") return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && prior.requestHash !== requestHash) return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && this.state.profile.nativeIdempotency.create) return { result: prior.result, loseResponse: false };
+      if (this.state.ledger.length >= MAX_LEDGER) return { result: this.rejection("capacity"), loseResponse: false };
       const scenario = this.scenario(submissionId, "create");
       this.recordInvocation(submissionId, input.identity.projectId, "create");
       if (scenario.behavior === "reject") return { result: this.rejection(scenario.rejectCode), loseResponse: false };
@@ -109,7 +110,6 @@ export class FakeProviderEngine {
       const ref = this.ref(input.scope, "sandbox");
       this.state.resources.push({ ref, state: "running", image: input.image, networkPolicy: input.networkPolicy, labels: input.labels ?? {}, files: {}, sequence: 1 });
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "sandbox", observation: { ref, state: "running", observedAt: iso(this.state.tick++), sourceSequence: 1 } } };
-      if (this.state.ledger.length >= MAX_LEDGER) throw new Error("Fake ledger limit reached");
       this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.scope, action: "create", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
     });
@@ -122,6 +122,7 @@ export class FakeProviderEngine {
       if (prior?.action !== undefined && prior.action !== "exec") return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && prior.requestHash !== requestHash) return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && this.state.profile.nativeIdempotency.exec) return { result: prior.result, loseResponse: false };
+      if (this.state.ledger.length >= MAX_LEDGER) return { result: this.rejection("capacity"), loseResponse: false };
       const scenario = this.scenario(submissionId, "exec");
       this.recordInvocation(submissionId, input.identity.projectId, "exec");
       if (scenario.behavior === "reject") return { result: this.rejection(scenario.rejectCode), loseResponse: false };
@@ -135,7 +136,6 @@ export class FakeProviderEngine {
       const stdoutKept = stdout.subarray(0, cap), stderrKept = stderr.subarray(0, Math.max(0, cap - stdoutKept.length));
       const ref = this.ref(input.sandbox.scope, "execution");
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "execution", observation: { ref, sandbox: input.sandbox, completed: true, exitCode: fixture.exitCode, stdoutBase64: stdoutKept.toString("base64"), stderrBase64: stderrKept.toString("base64"), truncated: stdoutKept.length < stdout.length || stderrKept.length < stderr.length, observedAt: iso(this.state.tick++) } } };
-      if (this.state.ledger.length >= MAX_LEDGER) return { result: this.rejection("capacity"), loseResponse: false };
       this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.sandbox.scope, action: "exec", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
     });
@@ -148,6 +148,7 @@ export class FakeProviderEngine {
       if (prior?.action !== undefined && prior.action !== "destroy") return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && prior.requestHash !== requestHash) return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && this.state.profile.nativeIdempotency.destroy) return { result: prior.result, loseResponse: false };
+      if (this.state.ledger.length >= MAX_LEDGER) return { result: this.rejection("capacity"), loseResponse: false };
       const scenario = this.scenario(submissionId, "destroy");
       this.recordInvocation(submissionId, input.identity.projectId, "destroy");
       if (scenario.behavior === "reject") return { result: this.rejection(scenario.rejectCode), loseResponse: false };
@@ -156,7 +157,6 @@ export class FakeProviderEngine {
       if (!resource) return { result: { status: "rejected", effect: "none", error: { code: "not_found", message: "Fake sandbox not found", effect: "none", retry: "never" } } as const, loseResponse: false };
       resource.state = "destroyed"; resource.sequence++;
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "destroy", observation: { sandbox: input.sandbox, computeStopped: true, retainedResources: [] } } };
-      if (this.state.ledger.length >= MAX_LEDGER) throw new Error("Fake ledger limit reached");
       this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.sandbox.scope, action: "destroy", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
     });
@@ -188,6 +188,7 @@ export class FakeProviderEngine {
       if (prior?.action !== undefined && prior.action !== "file_write") return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && prior.requestHash !== requestHash) return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && this.state.profile.nativeIdempotency.writeFile) return { result: prior.result, loseResponse: false };
+      if (this.state.ledger.length >= MAX_LEDGER) return { result: this.rejection("capacity"), loseResponse: false };
       const scenario = this.scenario(submissionId, "file_write");
       this.recordInvocation(submissionId, identity.projectId, "file_write");
       if (scenario.behavior === "reject") return { result: this.rejection(scenario.rejectCode), loseResponse: false };
@@ -198,7 +199,6 @@ export class FakeProviderEngine {
       if (bytesLength(bytesBase64) > MAX_FILE_BYTES) return { result: this.rejection("capacity"), loseResponse: false };
       resource.files[path] = bytesBase64;
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "file_write", observation: { sandbox, path, bytesWritten: bytesLength(bytesBase64), complete: true } } };
-      if (this.state.ledger.length >= MAX_LEDGER) throw new Error("Fake ledger limit reached");
       this.state.ledger.push({ submissionId, projectId: identity.projectId, scope: sandbox.scope, action: "file_write", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
     });

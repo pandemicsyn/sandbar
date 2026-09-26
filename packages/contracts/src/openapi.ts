@@ -2,15 +2,15 @@ import { z } from "zod";
 import {
   AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest,
   CreateSandboxRequest, ErrorResponse, Execution, ExecRequest, FileReceipt, Operation,
-  Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage, OperationResult,
-  SessionRequest, SessionResponse, SetupRequest,
+  Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage, SandboxListQuery, OperationResult,
+  SessionRequest, SessionResponse, SetupRequest, StreamFrame,
 } from "./index";
 
 const schemas = {
   AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest,
   CreateSandboxRequest, ErrorResponse, Execution, ExecRequest, FileReceipt, Operation,
-  Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage, OperationResult,
-  SessionRequest, SessionResponse, SetupRequest,
+  Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage, SandboxListQuery, OperationResult,
+  SessionRequest, SessionResponse, SetupRequest, StreamFrame,
 };
 const component = (name: keyof typeof schemas) => ({ $ref: `#/components/schemas/${name}` });
 const json = (name: keyof typeof schemas) => ({ content: { "application/json": { schema: component(name) } } });
@@ -22,6 +22,13 @@ const sandboxParameter = { name: "sandboxId", in: "path", required: true, schema
 const operationParameter = { name: "operationId", in: "path", required: true, schema: { type: "string" } };
 const connectionParameter = { name: "connectionId", in: "path", required: true, schema: { type: "string" } };
 const invocationHeader = { name: "Idempotency-Key", in: "header", required: true, schema: { type: "string", format: "uuid" }, description: "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent." };
+const sandboxListParameters = [
+  { name: "cursor", in: "query", required: false, schema: { type: "string", maxLength: 256 } },
+  { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 100 } },
+  { name: "connectionId", in: "query", required: false, schema: { type: "string" } },
+  { name: "state", in: "query", required: false, schema: { type: "string", enum: ["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"] } },
+  { name: "q", in: "query", required: false, schema: { type: "string", maxLength: 64 } },
+];
 
 export const openApiDocument = {
   openapi: "3.1.0",
@@ -42,7 +49,7 @@ export const openApiDocument = {
     },
     "/v1/projects/{projectId}/provider-connections/{connectionId}/verify": { parameters: [projectParameter, connectionParameter], post: { operationId: "verifyProviderConnection", responses: ordinary("ProviderConnection") } },
     "/v1/projects/{projectId}/sandboxes": {
-      parameters: [projectParameter], get: { operationId: "listSandboxes", responses: ordinary("SandboxPage") },
+      parameters: [projectParameter], get: { operationId: "listSandboxes", parameters: sandboxListParameters, responses: ordinary("SandboxPage") },
       post: { operationId: "submitCreate", parameters: [invocationHeader], requestBody: { required: true, ...json("CreateSandboxRequest") }, responses: accepted("AcceptedOperation") },
     },
     "/v1/projects/{projectId}/sandboxes/{sandboxId}": {
