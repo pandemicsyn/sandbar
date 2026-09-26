@@ -1,13 +1,13 @@
 import { z } from "zod";
 import {
-  AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest, InvocationKey,
+  AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest, InvocationKey, Id,
   CreateSandboxRequest, ErrorResponse, Execution, ExecRequest, FileReceipt, Operation,
   Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage, SandboxListQuery, OperationResult,
   SessionRequest, SessionResponse, SetupRequest, StreamFrame,
 } from "./index";
 
 const schemas = {
-  AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest, InvocationKey,
+  AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest, InvocationKey, Id,
   CreateSandboxRequest, ErrorResponse, Execution, ExecRequest, FileReceipt, Operation,
   Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage, SandboxListQuery, OperationResult,
   SessionRequest, SessionResponse, SetupRequest, StreamFrame,
@@ -17,15 +17,15 @@ const json = (name: keyof typeof schemas) => ({ content: { "application/json": {
 const response = (description: string, name: keyof typeof schemas) => ({ description, ...json(name) });
 const accepted = (name: keyof typeof schemas) => ({ "202": response("Durably accepted", name), default: response("Structured error", "ErrorResponse") });
 const ordinary = (name: keyof typeof schemas) => ({ "200": response("Success", name), default: response("Structured error", "ErrorResponse") });
-const projectParameter = { name: "projectId", in: "path", required: true, schema: { type: "string" } };
-const sandboxParameter = { name: "sandboxId", in: "path", required: true, schema: { type: "string" } };
-const operationParameter = { name: "operationId", in: "path", required: true, schema: { type: "string" } };
-const connectionParameter = { name: "connectionId", in: "path", required: true, schema: { type: "string" } };
+const projectParameter = { name: "projectId", in: "path", required: true, schema: component("Id") };
+const sandboxParameter = { name: "sandboxId", in: "path", required: true, schema: component("Id") };
+const operationParameter = { name: "operationId", in: "path", required: true, schema: component("Id") };
+const connectionParameter = { name: "connectionId", in: "path", required: true, schema: component("Id") };
 const invocationHeader = { name: "Idempotency-Key", in: "header", required: true, schema: component("InvocationKey"), description: "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent." };
 const sandboxListParameters = [
   { name: "cursor", in: "query", required: false, schema: { type: "string", maxLength: 256 } },
   { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 100 } },
-  { name: "connectionId", in: "query", required: false, schema: { type: "string" } },
+  { name: "connectionId", in: "query", required: false, schema: component("Id") },
   { name: "state", in: "query", required: false, schema: { type: "string", enum: ["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"] } },
   { name: "q", in: "query", required: false, schema: { type: "string", maxLength: 64 } },
 ];

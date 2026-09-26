@@ -40,10 +40,17 @@ export async function startFakeProviderServer(options: FakeServerOptions) {
       if (path === "/_test/events/seed") { await engine.seedEvents(body); return json({ ok: true }); }
       if (path !== "/v1/action") return json({ error: "not_found" }, 404);
       const action = FakeAction.parse(body);
+      const actionScope = "scope" in action ? action.scope : "ref" in action ? action.ref.scope : action.sandbox.scope;
+      if (actionScope.provider !== "fake") {
+        if (action.kind === "create" || action.kind === "exec" || action.kind === "writeFile" || action.kind === "destroy") {
+          return json({ status: "rejected", effect: "none", error: { code: "unsupported", message: "Fake provider accepts fake native scope only", effect: "none", retry: "never" } });
+        }
+        return json({ error: "invalid_scope" }, 400);
+      }
       switch (action.kind) {
         case "capabilities": return json({ provider: "fake", nativeIdempotency: engine.profile().nativeIdempotency, discoveryBySubmission: engine.profile().discoveryBySubmission, supports: { argv: true, shell: true, fileBytes: true, inventory: true }, maxFileBytes: 1048576, maxOutputBytes: 1048576, networkPolicies: ["blocked"] });
         case "create": {
-          if (action.scope.provider !== "fake" || action.image !== "fake-starter" || action.networkPolicy !== "blocked") return json({ status: "rejected", effect: "none", error: { code: "unsupported", message: "Fake provider supports fake-starter with blocked network only", effect: "none", retry: "never" } });
+          if (action.image !== "fake-starter" || action.networkPolicy !== "blocked") return json({ status: "rejected", effect: "none", error: { code: "unsupported", message: "Fake provider supports fake-starter with blocked network only", effect: "none", retry: "never" } });
           const outcome = await engine.create(action); return outcome.loseResponse ? json({ error: "response_lost" }, 504) : json(outcome.result);
         }
         case "inspect": return json(engine.inspect(action.ref));

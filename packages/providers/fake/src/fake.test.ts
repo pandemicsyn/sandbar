@@ -126,6 +126,24 @@ describe("independent fake provider", () => {
     expect(calls).toBe(0);
   });
 
+  test("fake server rejects foreign provider scope before mutation or read", async () => {
+    const { driver, control } = await setup();
+    const created = await driver.create({ scope, identity: identity("scope_parent"), image: "fake-starter", networkPolicy: "blocked" });
+    if (created.status !== "completed" || created.value.kind !== "sandbox") throw new Error("Create failed");
+    const foreignScope = { ...scope, provider: "other" };
+    const foreignRef = { ...created.value.observation.ref, scope: foreignScope };
+    const foreignCreate = await driver.create({ scope: foreignScope, identity: identity("foreign_create"), image: "fake-starter", networkPolicy: "blocked" });
+    const foreignExec = await driver.exec({ sandbox: foreignRef, identity: identity("foreign_exec"), command, deadlineSeconds: 30, maxOutputBytes: 0 });
+    const foreignWrite = await driver.writeFile({ sandbox: foreignRef, identity: identity("foreign_write"), path: "/blob", bytes: Uint8Array.of(1), overwrite: true });
+    const foreignDestroy = await driver.destroy({ sandbox: foreignRef, identity: identity("foreign_destroy") });
+    for (const outcome of [foreignCreate, foreignExec, foreignWrite, foreignDestroy]) { expect(outcome.status).toBe("rejected"); expect(outcome.effect).toBe("none"); }
+    await expect(driver.inspect(foreignRef)).rejects.toThrow("400");
+    await expect(driver.inventory({ scope: foreignScope, limit: 10 })).rejects.toThrow("400");
+    await expect(driver.readFile({ sandbox: foreignRef, path: "/blob" })).rejects.toThrow("400");
+    await expect(driver.observe({ scope: foreignScope, submissionId: "scope_parent" })).rejects.toThrow("400");
+    expect((await control("/_test/state")).invocations).toHaveLength(1);
+  });
+
   test("wildcard scenario queue consumes one matching action without knowing allocated submission IDs", async () => {
     const { driver, control } = await setup();
     await control("/_test/seed", { submissionId: "*", action: "create", behavior: "lost_after_effect" });

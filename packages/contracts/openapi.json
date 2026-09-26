@@ -188,7 +188,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         }
       ],
@@ -260,7 +260,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         },
         {
@@ -268,7 +268,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         }
       ],
@@ -305,7 +305,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         }
       ],
@@ -336,7 +336,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -442,7 +442,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         },
         {
@@ -450,7 +450,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         }
       ],
@@ -523,7 +523,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         },
         {
@@ -531,7 +531,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         }
       ],
@@ -589,7 +589,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         },
         {
@@ -597,7 +597,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         },
         {
@@ -700,7 +700,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         },
         {
@@ -708,7 +708,7 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "$ref": "#/components/schemas/Id"
           }
         }
       ],
@@ -1427,6 +1427,12 @@
         "type": "string",
         "format": "uuid",
         "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+      },
+      "Id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "CreateSandboxRequest": {
         "type": "object",

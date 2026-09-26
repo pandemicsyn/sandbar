@@ -25,6 +25,8 @@ describe("public contract", () => {
     expect(openApiDocument.components.schemas.CreateSandboxRequest).toBeDefined();
     expect(openApiDocument.components.schemas.StreamFrame).toBeDefined();
     expect(openApiDocument.components.schemas.InvocationKey).toHaveProperty("pattern");
+    expect(openApiDocument.components.schemas.Id).toHaveProperty("pattern");
+    expect(openApiDocument.paths["/v1/projects/{projectId}/sandboxes"].parameters[0].schema).toEqual({ $ref: "#/components/schemas/Id" });
     expect(openApiDocument.components.schemas.SandboxListQuery).toBeDefined();
     expect(openApiDocument.paths["/v1/projects/{projectId}/sandboxes"].get.parameters.map(p => p.name)).toEqual(["cursor", "limit", "connectionId", "state", "q"]);
   });
