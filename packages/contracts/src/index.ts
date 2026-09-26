@@ -1,2 +1,102 @@
-// Public wire schemas and protocol metadata live here.
-export {};
+import { z } from "zod";
+
+// Inputs are strict so a misspelled security or lifecycle setting cannot be ignored.
+// Outputs intentionally strip additive fields when decoded by older clients.
+export const Id = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+export const Rfc3339 = z.iso.datetime({ offset: true });
+export const InvocationKey = z.uuidv7();
+export const ProjectPath = z.strictObject({ projectId: Id });
+export const SandboxPath = ProjectPath.extend({ sandboxId: Id });
+export const OperationPath = ProjectPath.extend({ operationId: Id });
+
+export const ImageSource = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("prepared"), imageId: Id }),
+  z.strictObject({ kind: z.literal("oci"), reference: z.string().min(1).max(1024) }),
+]);
+export const NetworkSelection = z.strictObject({ policy: z.string().min(1).max(128) });
+export const CreateSandboxRequest = z.strictObject({
+  environment: ImageSource,
+  connectionId: Id.optional(),
+  region: z.string().min(1).max(128).optional(),
+  network: NetworkSelection.optional(),
+  labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
+});
+export const ExecCommand = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("argv"), argv: z.array(z.string().max(8192)).min(1).max(128) }),
+  z.strictObject({ kind: z.literal("shell"), script: z.string().min(1).max(65536) }),
+]);
+export const ExecRequest = z.strictObject({
+  command: ExecCommand,
+  cwd: z.string().min(1).max(4096).optional(),
+  env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(8192)).optional(),
+  deadlineSeconds: z.number().int().min(1).max(3600).optional(),
+  output: z.strictObject({ capture: z.enum(["bounded", "none"]), maxBytes: z.number().int().min(0).max(1048576).optional() }).optional(),
+});
+export const Effect = z.enum(["none", "applied", "partial", "possible", "unknown"]);
+export const ErrorCode = z.enum([
+  "INVALID_ARGUMENT", "UNSUPPORTED", "UNAUTHENTICATED", "FORBIDDEN", "NOT_FOUND",
+  "CONFLICT", "CAPACITY", "RATE_LIMIT", "INVOCATION_EXPIRED", "UNAVAILABLE",
+  "TIMEOUT", "OUTPUT_CAPACITY", "OUTCOME_UNKNOWN", "INTERNAL",
+]);
+export const SafeError = z.object({
+  code: ErrorCode,
+  message: z.string().max(1024),
+  effect: Effect,
+  retry: z.enum(["never", "same_invocation", "observe_only", "new_invocation_with_risk"]),
+  retryAfterSeconds: z.number().int().nonnegative().optional(),
+});
+export const ErrorResponse = z.object({ error: SafeError });
+export const OperationStatus = z.enum(["queued", "running", "succeeded", "failed", "unknown"]);
+export const Operation = z.object({
+  id: Id, projectId: Id, kind: z.enum(["create", "exec", "destroy"]),
+  sandboxId: Id.optional(), executionId: Id.optional(), status: OperationStatus,
+  phase: z.string().max(128), createdAt: Rfc3339, updatedAt: Rfc3339,
+  effect: Effect, error: SafeError.optional(),
+  recovery: z.array(z.enum(["check_again", "inspect_candidates", "acknowledge", "run_again"])),
+});
+export const AcceptedOperation = z.object({ operation: Operation });
+export const Sandbox = z.object({
+  id: Id, projectId: Id, connectionId: Id,
+  desiredState: z.enum(["running", "destroyed"]),
+  observedState: z.enum(["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"]),
+  observedAt: Rfc3339.optional(), revision: z.number().int().nonnegative(),
+  environment: ImageSource, network: NetworkSelection,
+  labels: z.record(z.string(), z.string()),
+});
+export const SandboxPage = z.object({ items: z.array(Sandbox), nextCursor: z.string().optional(), asOf: Rfc3339 });
+export const OutputAvailability = z.enum(["captured", "truncated", "not_captured", "expired", "evicted"]);
+export const Execution = z.object({
+  id: Id, projectId: Id, sandboxId: Id, operationId: Id,
+  status: z.enum(["queued", "running", "completed", "unknown"]),
+  exitCode: z.number().int().nullable().optional(), signal: z.string().optional(),
+  outputAvailability: OutputAvailability,
+  capturedBytes: z.number().int().nonnegative(),
+  stdout: z.string().optional(), stderr: z.string().optional(),
+});
+export const AcceptedExecution = z.object({ operation: Operation, execution: Execution });
+export const FileReceipt = z.object({ path: z.string(), bytesWritten: z.number().int().nonnegative(), complete: z.boolean(), effect: Effect });
+export const FileReadHeaders = z.object({ contentType: z.literal("application/octet-stream"), contentLength: z.number().int().nonnegative() });
+export const StreamFrame = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("stdout"), executionId: Id, sequence: z.number().int().nonnegative(), bytesBase64: z.base64() }),
+  z.object({ kind: z.literal("stderr"), executionId: Id, sequence: z.number().int().nonnegative(), bytesBase64: z.base64() }),
+  z.object({ kind: z.literal("gap"), executionId: Id, fromSequence: z.number().int().nonnegative(), toSequence: z.number().int().nonnegative() }),
+  z.object({ kind: z.literal("exit"), executionId: Id, exitCode: z.number().int().nullable(), signal: z.string().optional() }),
+]);
+export type CreateSandboxRequest = z.infer<typeof CreateSandboxRequest>;
+export type ExecRequest = z.infer<typeof ExecRequest>;
+export type Operation = z.infer<typeof Operation>;
+export type Sandbox = z.infer<typeof Sandbox>;
+export type Execution = z.infer<typeof Execution>;
+export type SafeError = z.infer<typeof SafeError>;
+
+// Stable cross-language intent serialization. Omitted keys stay omitted; explicit nulls stay explicit.
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+}
+
+export async function intentSha256(input: unknown): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalJson(input)));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
