@@ -369,21 +369,26 @@ function ProjectLayout() {
   const { projectId } = projectRoute.useParams();
   const projects = useResource(api.projects, "project-context");
   const project = projects.data?.items.find((item) => item.id === projectId);
-  if (projects.loading) return <LoadingRows />;
+  if (projects.loading)
+    return (
+      <main className="content" id="main-content" tabIndex={-1}>
+        <LoadingRows />
+      </main>
+    );
   if (projects.error)
     return (
-      <div className="content">
+      <main className="content" id="main-content" tabIndex={-1}>
         <Notice tone="error">{projects.error}</Notice>
-      </div>
+      </main>
     );
   if (!project)
     return (
-      <div className="content">
+      <main className="content" id="main-content" tabIndex={-1}>
         <Notice tone="error">
           This project is unavailable or you do not have access.
         </Notice>
         <Link to="/projects">Choose another project</Link>
-      </div>
+      </main>
     );
   return (
     <AppShell projectId={projectId} projectName={project.name}>

@@ -275,6 +275,18 @@ test("browser and public HTTP recover fake effects across service restarts witho
     "main-content",
   );
   const projectId = new URL(page.url()).pathname.split("/")[2]!;
+  const connectionsUrl = page.url();
+  await page.goto(`${serviceUrl}/projects/missing-project/connections`);
+  await page
+    .getByText("This project is unavailable or you do not have access.")
+    .waitFor();
+  await page.locator(".skip-link").focus();
+  await page.locator(".skip-link").press("Enter");
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+    "main-content",
+  );
+  await page.goto(connectionsUrl);
+  await page.getByRole("heading", { name: "Provider connections" }).waitFor();
   await page.getByLabel("Connection name").fill("Fake local");
   await page.getByRole("button", { name: "Add connection" }).click();
   await page.getByRole("button", { name: "Verify scope" }).click();
