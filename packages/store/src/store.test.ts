@@ -103,4 +103,21 @@ for (const dialect of (["sqlite", ...(process.env.SANDBAR_TEST_MYSQL_URL ? ["mys
       expect(await store.claimDue("destroy", 1000, project.id)).toBeUndefined();
     } finally { await store.close(); }
   });
+
+  test("queued destroy completes locally when create subsequently fails", async () => {
+    const { store, project } = await fixture(dialect);
+    try {
+      const created = await store.admitCreate({ projectId: project.id, endpoint: "POST /sandboxes", key: Bun.randomUUIDv7(), intentHash: "create", request: { environment: { kind: "prepared", imageId: "unsupported" } } });
+      const createClaim = (await store.claimDue("create", 1000, project.id))!;
+      const sandboxId = created.sandbox.id;
+      const destroy = await store.admitDestroy({ projectId: project.id, sandboxId, endpoint: `DELETE /sandboxes/${sandboxId}`, key: Bun.randomUUIDv7(), intentHash: "destroy" });
+      expect(destroy.operation.status).toBe("queued");
+      await store.failWithoutEffect(createClaim, { code: "UNSUPPORTED", message: "Unsupported image", effect: "none", retry: "never" });
+      const destroyClaim = (await store.claimDue("destroy", 1000, project.id))!;
+      expect(destroyClaim.operation.id).toBe(destroy.operation.id);
+      expect(await store.completeDestroyWithoutNative(destroyClaim)).toBe(true);
+      expect((await store.getOperation(project.id, destroy.operation.id))?.status).toBe("succeeded");
+      expect((await store.getSandbox(project.id, sandboxId))?.observed_state).toBe("destroyed");
+    } finally { await store.close(); }
+  });
 });

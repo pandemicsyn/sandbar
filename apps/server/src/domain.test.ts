@@ -108,6 +108,14 @@ test("API persists ambiguous create and exec, then observes each once after rest
     expect(fakeState.invocations.filter((item: any) => item.action === "create")).toHaveLength(1);
     expect(fakeState.invocations.filter((item: any) => item.action === "exec")).toHaveLength(1);
     expect(fakeState.invocations.filter((item: any) => item.action === "file_write")).toHaveLength(2);
+    const rejectedCreate = await json(`/v1/projects/${project.id}/sandboxes`, "POST", { environment: { kind: "prepared", imageId: "unsupported-image" }, connectionId: connection.id }, { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() });
+    const rejectedBoxId = rejectedCreate.value.operation.sandboxId;
+    const cleanup = await json(`/v1/projects/${project.id}/sandboxes/${rejectedBoxId}`, "DELETE", undefined, { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() });
+    expect(cleanup.value.operation.status).toBe("queued");
+    await runtime.runner.tick();
+    await runtime.runner.tick();
+    expect((await json(`/v1/projects/${project.id}/operations/${cleanup.value.operation.id}`, "GET", undefined, bearer)).value.status).toBe("succeeded");
+    expect((await json(`/v1/projects/${project.id}/sandboxes/${rejectedBoxId}`, "GET", undefined, bearer)).value.observedState).toBe("destroyed");
   } finally { await runtime.close(); }
 });
 

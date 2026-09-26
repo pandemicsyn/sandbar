@@ -82,7 +82,11 @@ export class DurableRunner {
         const result = await driver.writeFile({ sandbox: this.ref(scope, box), identity, path: request.path, bytes, overwrite: request.overwrite });
         await this.handleResult(claim, validateDriverResult(result), scope);
       } else {
-        if (!box.native_id) { await store.reschedule(claim, "waiting_for_native_identity", 5_000); return; }
+        if (!box.native_id) {
+          if (await store.completeDestroyWithoutNative(claim)) return;
+          await store.reschedule(claim, "waiting_for_native_identity", 5_000);
+          return;
+        }
         if (!await store.beginSubmission(claim)) return;
         const result = await driver.destroy({ sandbox: this.ref(scope, box), identity });
         await this.handleResult(claim, validateDriverResult(result), scope);

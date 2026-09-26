@@ -246,6 +246,23 @@ export class ControlStore {
       return true;
     });
   }
+  async completeDestroyWithoutNative(claim: Claimed): Promise<boolean> {
+    return this.backend.transaction(async tx => {
+      const op = await this.lockOperation(tx, claim.operation.id);
+      if (!op || op.kind !== "destroy" || op.lease_owner !== claim.operation.lease_owner || Number(op.lease_generation) !== claim.generation || Number(op.submission_possible)) return false;
+      const box = await tx.row<SandboxRow>(sql`SELECT * FROM sandboxes WHERE project_id=${op.project_id} AND id=${op.sandbox_id}`);
+      if (!box || box.native_id) return false;
+      const creation = await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE project_id=${op.project_id} AND id=${box.create_operation_id}`);
+      if (!creation || creation.status !== "failed" || creation.effect !== "none") return false;
+      const time = now();
+      const result = JSON.stringify({ kind: "destroy", observation: { computeStopped: true, retainedResources: [] } });
+      await tx.run(sql`UPDATE operations SET status='succeeded',phase='completed',effect='none',result_json=${result},error_json=NULL,lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,observed_at=${time},updated_at=${time} WHERE id=${op.id}`);
+      await tx.run(sql`UPDATE operation_attempts SET status='completed',completed_at=${time} WHERE id=${claim.attemptId}`);
+      await tx.run(sql`UPDATE sandboxes SET observed_state='destroyed',observed_at=${time},revision=revision+1,updated_at=${time} WHERE id=${box.id}`);
+      await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${op.project_id},${box.id},${op.id},'destroy.completed',${JSON.stringify({ effect: "none", localOnly: true })},${time},${time},${time})`);
+      return true;
+    });
+  }
   async reschedule(claim: Claimed, phase: string, delayMs: number, errorCode?: string, knownPending = false): Promise<void> {
     await this.backend.transaction(async tx => {
       const time = now();
