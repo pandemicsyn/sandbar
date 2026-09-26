@@ -50,6 +50,15 @@ This report records independent static reviews for the management UI and browser
 - Fix: hold a browser Web Lock per action scope while reading, storing, submitting, and clearing the invocation identity. An explicit reset also waits for the lock. Browsers without Web Locks fail before effect dispatch.
 - Validation after fixes: with control's stable session CSRF and reviewed contracts parent integrated at base `2f9a3fb8b451e00f83f88f8848402ef352e30cea`, `bun run check && bun run build && bun run test` passes (36 passed, 1 local MySQL skip, 0 failed, 1302 assertions). The two-tab held-response test passes with one provider effect and the original operation ID. Control's final review is still running; a subsequent parent change requires a fresh web rebase and review.
 
+## Round 5
+
+- Reviewer: independent subagent, `gpt-6-luna`, high reasoning; read-only.
+- Base: `2f9a3fb8b451e00f83f88f8848402ef352e30cea`.
+- Reviewed HEAD: `736e71ad83b2cdd7376f0c819a812d83d515bd08`.
+- Findings: (1) a 401 sign-out response left the authenticated shell visible because `logout()` bypassed session-expiry notification; (2) each Fleet search keystroke pushed a history entry.
+- Fixes: 401 sign-out now clears session state and returns to sign-in; Fleet filter updates replace the current history entry. Browser E2E covers an expired session at sign-out and verifies Back leaves the filtered Fleet.
+- Validation after fixes: `bun run check && bun run build && bun run test` passes (36 passed, 1 local MySQL skip, 0 failed, 1302 assertions). Final parent review and any resulting rebase remain pending.
+
 ## Final clearance
 
 Pending a fresh independent full-diff review after the final dependency rebase. No pull request will be created until a reviewer reports zero actionable findings on the unchanged final base and HEAD.

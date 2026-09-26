@@ -123,6 +123,10 @@ export const api = {
       credentials: "same-origin",
       headers: csrfToken ? { "X-CSRF-Token": csrfToken } : {},
     });
+    if (response.status === 401) {
+      notifyUnauthorized();
+      return;
+    }
     if (!response.ok)
       throw new ApiError(
         `Sign out failed (${response.status})`,

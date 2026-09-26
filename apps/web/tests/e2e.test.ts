@@ -368,6 +368,10 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByLabel("Search").fill("no-such-label");
   await page.getByRole("heading", { name: "No sandboxes match" }).waitFor();
   await page.getByLabel("Search").fill("e2e");
+  await page.goBack();
+  await page.getByRole("heading", { name: `Operation ${createId}` }).waitFor();
+  await page.goForward();
+  await page.getByRole("heading", { name: "Fleet" }).waitFor();
   await page.getByRole("link", { name: sandboxId }).click();
   await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).waitFor();
 
@@ -521,4 +525,12 @@ test("browser and public HTTP recover fake effects across service restarts witho
       (entry: { action: string }) => entry.action === "destroy",
     ),
   ).toHaveLength(1);
+  await page.route("**/v1/sessions/logout", (route) =>
+    route.fulfill({ status: 401, contentType: "application/json", body: "{}" }),
+  );
+  await page.route("**/v1/session", (route) =>
+    route.fulfill({ status: 401, contentType: "application/json", body: "{}" }),
+  );
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("heading", { name: "Sign in" }).waitFor();
 }, 120_000);

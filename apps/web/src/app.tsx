@@ -577,6 +577,7 @@ function FleetPage() {
       to: fleetRoute.fullPath,
       params: { projectId },
       search: { ...search, ...patch, cursor: "" },
+      replace: true,
     });
   }
   return (
