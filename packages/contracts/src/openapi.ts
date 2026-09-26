@@ -304,6 +304,13 @@ export const openApiDocument = {
       parameters: [projectParameter, operationParameter],
       get: { operationId: "getOperation", responses: ordinary("Operation") },
     },
+    "/v1/projects/{projectId}/invocations/{invocationKey}": {
+      parameters: [projectParameter, { name: "invocationKey", in: "path", required: true, schema: { type: "string", format: "uuid" }, description: "Original UUIDv7 Idempotency-Key" }],
+      get: { operationId: "lookupInvocation", description: "Find a previously admitted operation without resubmitting its request. A missing record does not prove replay is safe.", parameters: [
+        { name: "kind", in: "query", required: true, schema: { type: "string", enum: ["create", "exec", "destroy", "file_write"] } },
+        { name: "sandboxId", in: "query", required: false, schema: { type: "string" }, description: "Required except for create" },
+      ], responses: ordinary("Operation") },
+    },
   },
   components: {
     securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },

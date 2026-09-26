@@ -277,6 +277,18 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
     if (!row) throw new StoreError("NOT_FOUND", "Operation not found");
     return c.json(opDto(row));
   }));
+  app.get("/v1/projects/:projectId/invocations/:invocationKey", protect(deps, false, async c => {
+    const projectId = idParam(c, "projectId"), key = InvocationKey.parse(c.req.param("invocationKey"));
+    const params = new URL(c.req.url).searchParams;
+    const kind = params.get("kind"), sandboxIdValue = params.get("sandboxId");
+    if (!kind || !["create", "exec", "destroy", "file_write"].includes(kind)) throw new SyntaxError("Invalid invocation kind");
+    if ((kind === "create" && sandboxIdValue !== null) || (kind !== "create" && sandboxIdValue === null)) throw new SyntaxError("Invalid invocation sandbox");
+    const sandboxId = sandboxIdValue === null ? undefined : Id.parse(sandboxIdValue);
+    const endpoint = kind === "create" ? "POST /sandboxes" : kind === "exec" ? `POST /sandboxes/${sandboxId}/executions` : kind === "destroy" ? `DELETE /sandboxes/${sandboxId}` : `PUT /sandboxes/${sandboxId}/files`;
+    const row = await deps.store.lookupInvocation(projectId, endpoint, key);
+    if (!row) throw new StoreError("NOT_FOUND", "Invocation not found");
+    return c.json(opDto(row));
+  }));
   app.post("/v1/projects/:projectId/operations/:operationId/reconcile", protect(deps, true, async c => c.json(opDto(await deps.store.requestReconcile(idParam(c, "projectId"), idParam(c, "operationId"))))));
 
   app.get("/v1/projects/:projectId/sandboxes/:sandboxId/files", protect(deps, false, async c => {

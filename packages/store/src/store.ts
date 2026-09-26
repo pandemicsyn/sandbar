@@ -92,6 +92,9 @@ export class ControlStore {
     const execution = op.execution_id ? await tx.row<ExecutionRow>(sql`SELECT * FROM executions WHERE id=${op.execution_id}`) : undefined;
     return { operation: op, sandbox: box, execution, repeated: true };
   }
+  async lookupInvocation(projectId: string, endpoint: string, key: string): Promise<OperationRow | undefined> {
+    return this.backend.row<OperationRow>(sql`SELECT operations.* FROM invocation_keys INNER JOIN operations ON operations.id=invocation_keys.operation_id WHERE invocation_keys.project_id=${projectId} AND invocation_keys.endpoint=${endpoint} AND invocation_keys.${sql.raw("`key`")}=${key} AND operations.project_id=${projectId}`);
+  }
   private checkNewKey(key: string): void {
     const delta = now() - uuidV7Millis(key);
     if (delta > 86_400_000 || delta < -300_000) throw new StoreError("INVOCATION_EXPIRED", "Idempotency-Key is outside the first-admission window");

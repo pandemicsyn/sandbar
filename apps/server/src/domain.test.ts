@@ -44,9 +44,16 @@ test("API persists ambiguous create and exec, then observes each once after rest
     const connection = (await json(`/v1/projects/${project.id}/provider-connections`, "POST", { provider: "fake", name: "Local" }, bearer)).value;
     expect(connection.encryptedCredentials).toBeUndefined();
     expect((await json(`/v1/projects/${project.id}/provider-connections/${connection.id}/verify`, "POST", {}, bearer)).value.status).toBe("verified");
-    const create = await json(`/v1/projects/${project.id}/sandboxes`, "POST", { environment: { kind: "prepared", imageId: "fake-starter" }, connectionId: connection.id }, { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() });
+    const createKey = Bun.randomUUIDv7();
+    const create = await json(`/v1/projects/${project.id}/sandboxes`, "POST", { environment: { kind: "prepared", imageId: "fake-starter" }, connectionId: connection.id }, { ...bearer, "Idempotency-Key": createKey });
     expect(create.response.status).toBe(202);
     const opId = create.value.operation.id, boxId = create.value.operation.sandboxId;
+    const createLookup = `/v1/projects/${project.id}/invocations/${createKey}?kind=create`;
+    expect((await json(createLookup, "GET", undefined, bearer)).value.id).toBe(opId);
+    expect((await json(createLookup)).response.status).toBe(401);
+    expect((await json(`/v1/projects/${project.id}/invocations/${createKey}?kind=exec&sandboxId=${boxId}`, "GET", undefined, bearer)).response.status).toBe(404);
+    const otherProject = (await json("/v1/projects", "POST", { name: "Other" }, bearer)).value;
+    expect((await json(`/v1/projects/${otherProject.id}/invocations/${createKey}?kind=create`, "GET", undefined, bearer)).response.status).toBe(404);
     const op = await runtime.store.getOperation(project.id, opId);
     await control("/_test/seed", { submissionId: op!.provider_token, action: "create", behavior: "lost_after_effect" });
     await runtime.runner.tick();
@@ -61,8 +68,10 @@ test("API persists ambiguous create and exec, then observes each once after rest
     const fleet = await json(`/v1/projects/${project.id}/sandboxes?state=running&q=${boxId}`, "GET", undefined, bearer);
     expect(fleet.value.items).toHaveLength(1);
 
-    const exec = await json(`/v1/projects/${project.id}/sandboxes/${boxId}/executions`, "POST", { command: { kind: "argv", argv: ["fixture", "hello"] } }, { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() });
+    const execKey = Bun.randomUUIDv7();
+    const exec = await json(`/v1/projects/${project.id}/sandboxes/${boxId}/executions`, "POST", { command: { kind: "argv", argv: ["fixture", "hello"] } }, { ...bearer, "Idempotency-Key": execKey });
     expect(exec.response.status).toBe(202);
+    expect((await json(`/v1/projects/${project.id}/invocations/${execKey}?kind=exec&sandboxId=${boxId}`, "GET", undefined, bearer)).value.id).toBe(exec.value.operation.id);
     const execOp = await runtime.store.getOperation(project.id, exec.value.operation.id);
     expect(execOp!.request_json).toContain("encryptedRequest");
     expect(execOp!.request_json).not.toContain("fixture");
@@ -84,9 +93,11 @@ test("API persists ambiguous create and exec, then observes each once after rest
     expect(read.status).toBe(200);
     expect(new Uint8Array(await read.arrayBuffer())).toEqual(bytes);
     await control("/_test/seed", { submissionId: "*", action: "file_write", behavior: "lost_after_effect" });
-    const lostWrite = await runtime.app.request(`/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/lost`, { method: "PUT", headers: { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() }, body: bytes });
+    const lostWriteKey = Bun.randomUUIDv7();
+    const lostWrite = await runtime.app.request(`/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/lost`, { method: "PUT", headers: { ...bearer, "Idempotency-Key": lostWriteKey }, body: bytes });
     expect(lostWrite.status).toBe(202);
     const lostOperation = (await lostWrite.json() as any).operation;
+    expect((await json(`/v1/projects/${project.id}/invocations/${lostWriteKey}?kind=file_write&sandboxId=${boxId}`, "GET", undefined, bearer)).value.id).toBe(lostOperation.id);
     expect(lostOperation.status).toBe("unknown");
     await json(`/v1/projects/${project.id}/operations/${lostOperation.id}/reconcile`, "POST", {}, bearer);
     await runtime.runner.tick();

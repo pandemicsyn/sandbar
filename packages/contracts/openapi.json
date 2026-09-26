@@ -777,6 +777,79 @@
           }
         }
       }
+    },
+    "/v1/projects/{projectId}/invocations/{invocationKey}": {
+      "parameters": [
+        {
+          "name": "projectId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "invocationKey",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "Original UUIDv7 Idempotency-Key"
+        }
+      ],
+      "get": {
+        "operationId": "lookupInvocation",
+        "description": "Find a previously admitted operation without resubmitting its request. A missing record does not prove replay is safe.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "create",
+                "exec",
+                "destroy",
+                "file_write"
+              ]
+            }
+          },
+          {
+            "name": "sandboxId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required except for create"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Operation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
