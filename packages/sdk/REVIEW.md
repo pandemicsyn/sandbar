@@ -150,3 +150,13 @@ Final independent complete-diff review of this resulting HEAD remains pending.
 - Validation after fixes: `bun run check` passed; full `bun run test` passed 65 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 15 is **not** a zero-finding clearance.
 
 Final independent complete-diff review of this resulting HEAD remains pending.
+
+## Round 16
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `28ec91c1429395dc44c26c609f5b7f8c2aeb38df`.
+- One actionable finding: a pre-aborted signal passed to direct or remote `submitExec`, or remote `submitCreate`, could dispatch before `awaitSubmission` rejected. All three entry points now reject before provider/HTTP mutation. Tests verify no invocation or HTTP POST occurs.
+- Validation after fix: `bun run check` passed; full `bun run test` passed 65 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 16 is **not** a zero-finding clearance.
+
+Final independent complete-diff review of this resulting HEAD remains pending.

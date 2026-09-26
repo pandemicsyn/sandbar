@@ -48,6 +48,7 @@ class RemoteSandbox implements SandboxHandle {
     return { state: box.observedState, observedAt: box.observedAt };
   }
   async submitExec(input: ExecInput, options: { signal?: AbortSignal } = {}): Promise<OperationHandle<ExecOutput>> {
+    throwIfAborted(options.signal);
     const body: ExecRequest = { command: input.command, cwd: input.cwd, env: input.env, deadlineSeconds: input.deadlineSeconds, output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 } };
     const path = `sandboxes/${encodeURIComponent(this.id)}/executions`;
     let dispatched: RecoveryReference | undefined;
@@ -217,6 +218,7 @@ export class RemoteClient implements SandbarClient {
     return { operation, reference };
   }
   async submitCreate(input: CreateInput, options: { signal?: AbortSignal } = {}): Promise<OperationHandle<SandboxHandle>> {
+    throwIfAborted(options.signal);
     const body = CreateSandboxRequest.parse({ environment: input.environment.kind === "prepared" ? { kind: "prepared", imageId: input.environment.value } : { kind: "oci", reference: input.environment.value }, region: input.region, network: { policy: input.networkPolicy ?? "blocked" }, labels: input.labels });
     let dispatched: RecoveryReference | undefined;
     const { operation, reference } = await awaitSubmission(this.mutate("create", undefined, "sandboxes", "POST", JSON.stringify(body), AcceptedOperation, undefined, value => { dispatched = value; }), this.closedSignal, options.signal, () => dispatched);

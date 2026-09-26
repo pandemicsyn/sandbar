@@ -27,6 +27,11 @@ test("direct resource flow preserves binary files and nonzero output", async () 
   const { client, control } = await fixture();
   const box = await client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
   expect((await box.inspect()).state).toBe("running");
+  const preAborted = new AbortController();
+  preAborted.abort(new Error("cancel before submission"));
+  const before = (await control("/_test/state")).invocations.length;
+  await expect(box.submitExec({ command: { kind: "argv", argv: ["fixture", "binary"] } }, { signal: preAborted.signal })).rejects.toBe(preAborted.signal.reason);
+  expect((await control("/_test/state")).invocations.length).toBe(before);
   const file = Uint8Array.of(0, 255, 128, 42);
   await box.writeFile("/binary", file);
   expect(await box.readFile("/binary")).toEqual(file);
@@ -265,6 +270,10 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   const operation = await client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
   const box = await operation.wait();
   expect(box.id).toBe("box_1");
+  const preAborted = new AbortController();
+  preAborted.abort(new Error("cancel before submission"));
+  await expect(box.submitExec({ command: { kind: "argv", argv: ["fixture", "binary"] } }, { signal: preAborted.signal })).rejects.toBe(preAborted.signal.reason);
+  await expect(client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") }, { signal: preAborted.signal })).rejects.toBe(preAborted.signal.reason);
   await expect(box.readFile("/a/./b")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(box.writeFile("/too-large", new Uint8Array(1_048_577))).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
   expect(posts).toBe(1);

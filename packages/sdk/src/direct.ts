@@ -74,6 +74,7 @@ class DirectSandbox implements SandboxHandle {
     return { state: observation.state, observedAt: observation.observedAt };
   }
   async submitExec(input: ExecInput, options: { signal?: AbortSignal } = {}): Promise<OperationHandle<ExecOutput>> {
+    throwIfAborted(options.signal);
     this.client.ensureOpen();
     const request = normalizeExec({ command: input.command, cwd: input.cwd, env: input.env, deadlineSeconds: input.deadlineSeconds, output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 } });
     const invocation = identity();
