@@ -1,4 +1,4 @@
-import { AcceptedExecution, AcceptedOperation, CreateSandboxRequest, ErrorResponse, Execution, FileReceipt, Id, Operation, Sandbox, type ExecRequest } from "@sandbar/contracts";
+import { AcceptedExecution, AcceptedOperation, CreateSandboxRequest, ErrorResponse, ExecRequest, Execution, FileReceipt, Id, Operation, Sandbox } from "@sandbar/contracts";
 import type { z } from "zod";
 import { Image, SandbarError, OutcomeUnknownError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
@@ -49,7 +49,7 @@ class RemoteSandbox implements SandboxHandle {
   }
   async submitExec(input: ExecInput, options: { signal?: AbortSignal } = {}): Promise<OperationHandle<ExecOutput>> {
     throwIfAborted(options.signal);
-    const body: ExecRequest = { command: input.command, cwd: input.cwd, env: input.env, deadlineSeconds: input.deadlineSeconds, output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 } };
+    const body = ExecRequest.parse({ command: input.command, cwd: input.cwd, env: input.env, deadlineSeconds: input.deadlineSeconds, output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 } });
     const path = `sandboxes/${encodeURIComponent(this.id)}/executions`;
     let dispatched: RecoveryReference | undefined;
     const { operation, reference } = await awaitSubmission(this.client.mutate("exec", this.id, path, "POST", JSON.stringify(body), AcceptedExecution, undefined, value => { dispatched = value; }), this.client.closedSignal, options.signal, () => dispatched);

@@ -202,6 +202,15 @@ test("direct operation keeps a terminal result without provider discovery", asyn
   expect(observations).toBe(0);
 });
 
+test("direct inspection rejects malformed provider state", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const client = DirectSandbar.direct({ provider });
+  const box = await client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
+  provider.driver.inspect = async ref => ({ ref, state: "impossible", observedAt: "bad" }) as never;
+  await expect(box.inspect()).rejects.toMatchObject({ code: "INVALID_RESPONSE", effect: "unknown" });
+});
+
 test("fake direct reads reject malformed base64 as an invalid provider response", async () => {
   const { url } = await fixture();
   const provider = await fakeProvider({ url, token, fetch: async (request, init) => {
@@ -274,6 +283,7 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   preAborted.abort(new Error("cancel before submission"));
   await expect(box.submitExec({ command: { kind: "argv", argv: ["fixture", "binary"] } }, { signal: preAborted.signal })).rejects.toBe(preAborted.signal.reason);
   await expect(client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") }, { signal: preAborted.signal })).rejects.toBe(preAborted.signal.reason);
+  await expect(box.submitExec({ command: { kind: "argv", argv: [] } })).rejects.toThrow();
   await expect(box.readFile("/a/./b")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(box.writeFile("/too-large", new Uint8Array(1_048_577))).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
   expect(posts).toBe(1);

@@ -1,4 +1,4 @@
-import { NativeScope, ProviderReadError, type NativeRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
+import { NativeScope, ProviderReadError, SandboxObservation, type NativeRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
 import { normalizeCreate, normalizeExec, correlateDriverResult, sameNativeScope, sameNativeRef, captureBoundedOutput } from "@sandbar/core";
 import { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
@@ -68,8 +68,11 @@ class DirectSandbox implements SandboxHandle {
   constructor(private readonly client: DirectClient, readonly ref: NativeRef) { this.id = ref.nativeId; }
   async inspect() {
     this.client.ensureOpen();
-    const observation = await this.client.driver.inspect(this.ref);
-    if (!observation) throw new SandbarError("NOT_FOUND", "Sandbox not found");
+    const raw = await this.client.driver.inspect(this.ref);
+    if (!raw) throw new SandbarError("NOT_FOUND", "Sandbox not found");
+    const parsed = SandboxObservation.safeParse(raw);
+    if (!parsed.success) throw new SandbarError("INVALID_RESPONSE", "Provider returned invalid sandbox observation", "unknown");
+    const observation = parsed.data;
     if (!sameNativeRef(observation.ref, this.ref)) throw new SandbarError("OUTCOME_UNKNOWN", "Provider returned a different sandbox", "unknown");
     return { state: observation.state, observedAt: observation.observedAt };
   }
