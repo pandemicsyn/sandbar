@@ -3,15 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "files": ["dist", "README.md", "openapi.json"],
   "exports": {
-    ".": "./src/index.ts",
-    "./openapi": "./src/openapi.ts"
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./openapi": { "types": "./dist/openapi.d.ts", "import": "./dist/openapi.js" }
   },
   "scripts": {
     "check": "tsc -p tsconfig.json && bun src/generate-openapi.ts --check",
+    "build": "rm -rf dist && bun build src/index.ts src/openapi.ts --target node --format esm --outdir dist --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs",
     "openapi:generate": "bun src/generate-openapi.ts"
   },
-  "dependencies": {
-    "zod": "4.6.5"
-  }
+  "dependencies": { "zod": "4.6.5" }
 }

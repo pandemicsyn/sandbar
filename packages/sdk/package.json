@@ -3,12 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "files": ["dist"],
   "exports": {
-    ".": "./src/index.ts",
-    "./direct": "./src/direct.ts",
-    "./remote": "./src/remote.ts"
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./direct": { "types": "./dist/direct.d.ts", "import": "./dist/direct.js" },
+    "./remote": { "types": "./dist/remote.d.ts", "import": "./dist/remote.js" }
   },
-  "scripts": { "check": "tsc -p tsconfig.json" },
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && bun build src/index.ts src/direct.ts src/remote.ts --target node --format esm --outdir dist --external '@sandbar/*' --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
+  },
   "dependencies": {
     "@sandbar/contracts": "workspace:*",
     "@sandbar/core": "workspace:*",
