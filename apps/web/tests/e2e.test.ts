@@ -330,9 +330,26 @@ test("browser and public HTTP recover fake effects across service restarts witho
     stderrBase64: Buffer.from("fixture stderr\n").toString("base64"),
   };
   await seed("exec", "normal", fixture);
+  let firstExecOperationId: string | undefined;
+  let dropFirstExecResponse = true;
+  await page.route("**/sandboxes/*/executions", async (route) => {
+    if (route.request().method() !== "POST" || !dropFirstExecResponse) {
+      await route.continue();
+      return;
+    }
+    dropFirstExecResponse = false;
+    const accepted = await route.fetch();
+    firstExecOperationId = (await accepted.json()).operation.id;
+    await route.abort("failed");
+  });
   await page.getByRole("button", { name: "Run command" }).click();
+  await page.getByRole("button", { name: "Find accepted operation" }).waitFor();
+  await waitForEffect("exec", 1);
+  await page.reload();
+  await page.getByRole("button", { name: "Find accepted operation" }).click();
   await page.waitForURL(/\/operations\//);
   const execId = new URL(page.url()).pathname.split("/").at(-1)!;
+  expect(execId).toBe(firstExecOperationId!);
   const executed = await waitForOperation(projectId, execId, "succeeded");
   expect(executed.executionId).toBeTruthy();
   await page.getByText("fixture stdout").waitFor();

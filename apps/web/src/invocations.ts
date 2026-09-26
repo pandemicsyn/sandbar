@@ -41,6 +41,10 @@ export function hasPendingInvocation(scope: string): boolean {
   }
 }
 
+export function pendingInvocationKey(scope: string): string | undefined {
+  return readPending(scope)?.key;
+}
+
 export function clearPendingInvocation(scope: string): void {
   localStorage.removeItem(storageKey(scope));
 }

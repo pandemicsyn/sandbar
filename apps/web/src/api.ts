@@ -216,6 +216,19 @@ export const api = {
       `${base(projectId)}/operations/${encodeURIComponent(operationId)}`,
       Operation,
     ),
+  invocation: (
+    projectId: string,
+    invocationKey: string,
+    kind: "create" | "exec" | "destroy" | "file_write",
+    sandboxId?: string,
+  ) => {
+    const query = new URLSearchParams({ kind });
+    if (sandboxId) query.set("sandboxId", sandboxId);
+    return request(
+      `${base(projectId)}/invocations/${encodeURIComponent(invocationKey)}?${query}`,
+      Operation,
+    );
+  },
   reconcile: (projectId: string, operationId: string) =>
     request(
       `${base(projectId)}/operations/${encodeURIComponent(operationId)}/reconcile`,

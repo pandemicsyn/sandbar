@@ -34,6 +34,7 @@ import {
   clearPendingInvocation,
   fileIntent,
   hasPendingInvocation,
+  pendingInvocationKey,
   withInvocation,
 } from "./invocations";
 
@@ -553,6 +554,24 @@ function FleetPage() {
       setBusy(false);
     }
   }
+  async function findCreate() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const key = pendingInvocationKey(createScope);
+      if (!key) return;
+      const accepted = await api.invocation(projectId, key, "create");
+      await navigate({
+        to: "/projects/$projectId/operations/$operationId",
+        params: { projectId, operationId: accepted.id },
+      });
+      clearPendingInvocation(createScope);
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
   function updateSearch(patch: Partial<typeof fleetSearch>) {
     void navigate({
       to: fleetRoute.fullPath,
@@ -629,6 +648,7 @@ function FleetPage() {
             <span className="field-hint">
               Retry the same inputs to recover this request.
             </span>
+            <Button onClick={findCreate}>Find accepted operation</Button>
             <Button
               onClick={() => {
                 if (
@@ -888,6 +908,27 @@ function SandboxPage() {
       setBusy(false);
     }
   }
+  async function findAction(
+    scope: string,
+    kind: "exec" | "destroy" | "file_write",
+  ) {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const key = pendingInvocationKey(scope);
+      if (!key) return;
+      const accepted = await api.invocation(projectId, key, kind, sandboxId);
+      await navigate({
+        to: "/projects/$projectId/operations/$operationId",
+        params: { projectId, operationId: accepted.id },
+      });
+      clearPendingInvocation(scope);
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
   if (box.loading) return <LoadingRows />;
   if (box.error || !box.data)
     return <Notice tone="error">{box.error ?? "Sandbox unavailable"}</Notice>;
@@ -914,14 +955,22 @@ function SandboxPage() {
       />
       {error && <Notice tone="error">{error}</Notice>}
       {!busy &&
-        [execScope, destroyScope, fileScope]
-          .filter(hasPendingInvocation)
-          .map((scope) => (
+        (
+          [
+            { scope: execScope, kind: "exec" as const },
+            { scope: destroyScope, kind: "destroy" as const },
+            { scope: fileScope, kind: "file_write" as const },
+          ] as const
+        )
+          .filter(({ scope }) => hasPendingInvocation(scope))
+          .map(({ scope, kind }) => (
             <div className="actions" key={scope} style={{ marginTop: 12 }}>
               <span className="field-hint">
-                {scope.split(":")[0]}: retry the same inputs to recover this
-                request.
+                {kind}: retry the same inputs or find the accepted operation.
               </span>
+              <Button onClick={() => void findAction(scope, kind)}>
+                Find accepted operation
+              </Button>
               <Button
                 onClick={() => {
                   if (
@@ -1102,8 +1151,16 @@ function OperationPage() {
     () => api.operation(projectId, operationId),
     `${projectId}:${operationId}`,
   );
-  const [execution, setExecution] =
-    useState<Awaited<ReturnType<typeof api.execution>>>();
+  const executionKey = `${projectId}:${operationId}:${operation.data?.executionId ?? ""}`;
+  const [executionState, setExecutionState] = useState<{
+    key: string;
+    data?: Awaited<ReturnType<typeof api.execution>>;
+    error?: string;
+  }>({ key: executionKey });
+  const execution =
+    executionState.key === executionKey ? executionState.data : undefined;
+  const executionError =
+    executionState.key === executionKey ? executionState.error : undefined;
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -1116,12 +1173,23 @@ function OperationPage() {
     return () => window.clearInterval(timer);
   }, [operation.data?.status]);
   useEffect(() => {
-    if (operation.data?.executionId)
-      api
-        .execution(projectId, operation.data.executionId)
-        .then(setExecution)
-        .catch((reason) => setError(errorText(reason)));
-  }, [projectId, operation.data?.executionId, operation.data?.updatedAt]);
+    let alive = true;
+    const executionId = operation.data?.executionId;
+    setExecutionState({ key: executionKey });
+    if (executionId)
+      api.execution(projectId, executionId).then(
+        (data) => {
+          if (alive) setExecutionState({ key: executionKey, data });
+        },
+        (reason) => {
+          if (alive)
+            setExecutionState({ key: executionKey, error: errorText(reason) });
+        },
+      );
+    return () => {
+      alive = false;
+    };
+  }, [executionKey, operation.data?.updatedAt]);
   async function reconcile() {
     setBusy(true);
     setError(undefined);
@@ -1148,6 +1216,7 @@ function OperationPage() {
         action={<Button onClick={operation.refresh}>Refresh operation</Button>}
       />
       {error && <Notice tone="error">{error}</Notice>}
+      {executionError && <Notice tone="error">{executionError}</Notice>}
       {op.status === "unknown" && (
         <Notice tone="warning">
           The provider may already have applied this action. Check again
