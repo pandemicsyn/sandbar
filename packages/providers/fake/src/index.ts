@@ -29,7 +29,7 @@ export class FakeProviderDriver implements ProviderDriver {
     return supported ? { supported: true, effectiveImage: "fake-starter" } : { supported: false, reason: "Fake provider only supports prepared fake-starter, local region, blocked network" };
   }
   async create(input: { scope: NativeScope; identity: InvocationIdentity; image: string; networkPolicy: string; labels?: Record<string, string> }) {
-    return this.mutation({ kind: "create", scope: input.scope, identity: input.identity, image: input.image, networkPolicy: input.networkPolicy }, input.identity.submissionId);
+    return this.mutation({ kind: "create", scope: input.scope, identity: input.identity, image: input.image, networkPolicy: input.networkPolicy, labels: input.labels }, input.identity.submissionId);
   }
   async inspect(ref: NativeRef) { const value = await this.call({ kind: "inspect", ref }); return value === null ? null : SandboxObservation.parse(value); }
   async inventory(input: { scope: NativeScope; cursor?: string; limit: number }) {

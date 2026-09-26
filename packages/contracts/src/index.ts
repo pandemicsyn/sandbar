@@ -47,11 +47,18 @@ export const SafeError = z.object({
 });
 export const ErrorResponse = z.object({ error: SafeError });
 export const OperationStatus = z.enum(["queued", "running", "succeeded", "failed", "unknown"]);
+export const FileReceipt = z.object({ path: z.string(), bytesWritten: z.number().int().nonnegative(), complete: z.boolean(), effect: Effect });
+export const OperationResult = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("create"), sandboxId: Id }),
+  z.object({ kind: z.literal("exec"), executionId: Id }),
+  z.object({ kind: z.literal("destroy"), computeStopped: z.boolean(), retainedResources: z.array(z.string()) }),
+  z.object({ kind: z.literal("file_write"), receipt: FileReceipt }),
+]);
 export const Operation = z.object({
   id: Id, projectId: Id, kind: z.enum(["create", "exec", "destroy", "file_write"]),
   sandboxId: Id.optional(), executionId: Id.optional(), status: OperationStatus,
   phase: z.string().max(128), createdAt: Rfc3339, updatedAt: Rfc3339,
-  effect: Effect, error: SafeError.optional(),
+  effect: Effect, error: SafeError.optional(), result: OperationResult.optional(),
   recovery: z.array(z.enum(["check_again", "inspect_candidates", "acknowledge", "run_again"])),
 });
 export const AcceptedOperation = z.object({ operation: Operation });
@@ -75,7 +82,6 @@ export const Execution = z.object({
   stdout: z.string().optional(), stderr: z.string().optional(),
 });
 export const AcceptedExecution = z.object({ operation: Operation, execution: Execution });
-export const FileReceipt = z.object({ path: z.string(), bytesWritten: z.number().int().nonnegative(), complete: z.boolean(), effect: Effect });
 export const FileReadHeaders = z.object({ contentType: z.literal("application/octet-stream"), contentLength: z.number().int().nonnegative() });
 export const SetupRequest = z.strictObject({ setupToken: z.string().min(1).max(512) });
 export const SessionRequest = z.strictObject({ token: z.string().min(1).max(512) });

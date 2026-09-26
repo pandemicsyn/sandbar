@@ -1,6 +1,6 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { z } from "zod";
-import { ExecCommand, canonicalJson } from "@sandbar/contracts";
+import { ExecCommand, canonicalJson, intentSha256 } from "@sandbar/contracts";
 import { DriverResult, type NativeRef, type NativeScope, type InvocationIdentity } from "@sandbar/provider-spi";
 
 const CommandFixture = z.strictObject({ command: ExecCommand, cwd: z.string().optional(), env: z.record(z.string(), z.string()).optional(), deadlineSeconds: z.number().int().min(1).max(3600).optional(), exitCode: z.number().int(), stdoutBase64: z.base64().default(""), stderrBase64: z.base64().default("") });
@@ -12,13 +12,13 @@ export const FakeScenario = z.strictObject({
   command: CommandFixture.optional(),
 });
 export type FakeScenario = z.infer<typeof FakeScenario>;
-type Resource = { ref: NativeRef; state: "running" | "destroyed"; image: string; networkPolicy: string; files: Record<string, string>; sequence: number };
-type LedgerEntry = { submissionId: string; projectId: string; scope: NativeScope; action: FakeScenario["action"]; result: z.infer<typeof DriverResult>; remaining: number; discoverable: boolean };
+type Resource = { ref: NativeRef; state: "running" | "destroyed"; image: string; networkPolicy: string; labels: Record<string, string>; files: Record<string, string>; sequence: number };
+type LedgerEntry = { submissionId: string; projectId: string; scope: NativeScope; action: FakeScenario["action"]; requestHash: string; result: z.infer<typeof DriverResult>; remaining: number; discoverable: boolean };
 export const FakeProfile = z.strictObject({ nativeIdempotency: z.strictObject({ create: z.boolean(), exec: z.boolean(), destroy: z.boolean(), writeFile: z.boolean().default(true) }), discoveryBySubmission: z.boolean() });
 export const FakeEvent = z.strictObject({ eventId: z.string().min(1), ref: z.object({ scope: z.object({ provider: z.string(), connectionId: z.string(), accountId: z.string(), region: z.string().optional() }), nativeId: z.string(), kind: z.literal("sandbox") }), sequence: z.number().int().nonnegative(), state: z.enum(["running", "destroyed"]), occurredAt: z.iso.datetime({ offset: true }) });
 type State = { version: 1; nextId: number; tick: number; profile: z.infer<typeof FakeProfile>; resources: Resource[]; ledger: LedgerEntry[]; scenarios: FakeScenario[]; events: z.infer<typeof FakeEvent>[]; invocations: { submissionId: string; projectId: string; action: string }[] };
 const empty = (): State => ({ version: 1, nextId: 1, tick: 0, profile: { nativeIdempotency: { create: true, exec: true, destroy: true, writeFile: true }, discoveryBySubmission: true }, resources: [], ledger: [], scenarios: [], events: [], invocations: [] });
-const MAX_RESOURCES = 128, MAX_LEDGER = 512, MAX_FILE_BYTES = 1024 * 1024, MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+const MAX_RESOURCES = 128, MAX_LEDGER = 512, MAX_INVOCATIONS = 512, MAX_FILE_BYTES = 1024 * 1024, MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const scopeKey = (scope: NativeScope) => `${scope.provider}\0${scope.connectionId}\0${scope.accountId}\0${scope.region ?? ""}`;
 const sameScope = (a: NativeScope, b: NativeScope) => scopeKey(a) === scopeKey(b);
 const iso = (tick: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, tick)).toISOString();
@@ -56,6 +56,10 @@ export class FakeProviderEngine {
   private ref(scope: NativeScope, kind: "sandbox" | "execution"): NativeRef {
     return { scope, kind, nativeId: `fake_${kind}_${this.state.nextId++}` };
   }
+  private recordInvocation(submissionId: string, projectId: string, action: string) {
+    this.state.invocations.push({ submissionId, projectId, action });
+    if (this.state.invocations.length > MAX_INVOCATIONS) this.state.invocations.shift();
+  }
   private find(ref: NativeRef): Resource | undefined {
     return this.state.resources.find(x => sameScope(x.ref.scope, ref.scope) && x.ref.nativeId === ref.nativeId && ref.kind === "sandbox");
   }
@@ -89,33 +93,37 @@ export class FakeProviderEngine {
     const { scenarios: _scenarios, ...rest } = this.state;
     return structuredClone(rest);
   }
-  async create(input: { scope: NativeScope; identity: InvocationIdentity; image: string; networkPolicy: string }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
+  async create(input: { scope: NativeScope; identity: InvocationIdentity; image: string; networkPolicy: string; labels?: Record<string, string> }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
+    const requestHash = await intentSha256(input);
     return this.mutate(() => {
       const { submissionId } = input.identity;
       const prior = this.state.ledger.find(x => x.submissionId === submissionId && x.projectId === input.identity.projectId && sameScope(x.scope, input.scope));
       if (prior?.action !== undefined && prior.action !== "create") return { result: this.rejection("conflict"), loseResponse: false };
+      if (prior && prior.requestHash !== requestHash) return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && this.state.profile.nativeIdempotency.create) return { result: prior.result, loseResponse: false };
       const scenario = this.scenario(submissionId, "create");
-      this.state.invocations.push({ submissionId, projectId: input.identity.projectId, action: "create" });
+      this.recordInvocation(submissionId, input.identity.projectId, "create");
       if (scenario.behavior === "reject") return { result: this.rejection(scenario.rejectCode), loseResponse: false };
       if (scenario.behavior === "ambiguous_before_effect") return { result: { status: "unknown", effect: "possible", submissionId, reason: "Submission acknowledgement lost" } as const, loseResponse: true };
       if (this.state.resources.length >= MAX_RESOURCES) return { result: this.rejection("capacity"), loseResponse: false };
       const ref = this.ref(input.scope, "sandbox");
-      this.state.resources.push({ ref, state: "running", image: input.image, networkPolicy: input.networkPolicy, files: {}, sequence: 1 });
+      this.state.resources.push({ ref, state: "running", image: input.image, networkPolicy: input.networkPolicy, labels: input.labels ?? {}, files: {}, sequence: 1 });
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "sandbox", observation: { ref, state: "running", observedAt: iso(this.state.tick++), sourceSequence: 1 } } };
       if (this.state.ledger.length >= MAX_LEDGER) throw new Error("Fake ledger limit reached");
-      this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.scope, action: "create", result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
+      this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.scope, action: "create", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
     });
   }
   async exec(input: { sandbox: NativeRef; identity: InvocationIdentity; command: z.infer<typeof ExecCommand>; cwd?: string; env?: Record<string, string>; deadlineSeconds: number; maxOutputBytes: number }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
+    const requestHash = await intentSha256(input);
     return this.mutate(() => {
       const { submissionId } = input.identity;
       const prior = this.state.ledger.find(x => x.submissionId === submissionId && x.projectId === input.identity.projectId && sameScope(x.scope, input.sandbox.scope));
       if (prior?.action !== undefined && prior.action !== "exec") return { result: this.rejection("conflict"), loseResponse: false };
+      if (prior && prior.requestHash !== requestHash) return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && this.state.profile.nativeIdempotency.exec) return { result: prior.result, loseResponse: false };
       const scenario = this.scenario(submissionId, "exec");
-      this.state.invocations.push({ submissionId, projectId: input.identity.projectId, action: "exec" });
+      this.recordInvocation(submissionId, input.identity.projectId, "exec");
       if (scenario.behavior === "reject") return { result: this.rejection(scenario.rejectCode), loseResponse: false };
       if (scenario.behavior === "ambiguous_before_effect") return { result: { status: "unknown", effect: "possible", submissionId, reason: "Submission acknowledgement lost" } as const, loseResponse: true };
       const resource = this.find(input.sandbox);
@@ -128,18 +136,20 @@ export class FakeProviderEngine {
       const ref = this.ref(input.sandbox.scope, "execution");
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "execution", observation: { ref, sandbox: input.sandbox, completed: true, exitCode: fixture.exitCode, stdoutBase64: stdoutKept.toString("base64"), stderrBase64: stderrKept.toString("base64"), truncated: stdoutKept.length < stdout.length || stderrKept.length < stderr.length, observedAt: iso(this.state.tick++) } } };
       if (this.state.ledger.length >= MAX_LEDGER) return { result: this.rejection("capacity"), loseResponse: false };
-      this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.sandbox.scope, action: "exec", result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
+      this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.sandbox.scope, action: "exec", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
     });
   }
   async destroy(input: { sandbox: NativeRef; identity: InvocationIdentity }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
+    const requestHash = await intentSha256(input);
     return this.mutate(() => {
       const { submissionId } = input.identity;
       const prior = this.state.ledger.find(x => x.submissionId === submissionId && x.projectId === input.identity.projectId && sameScope(x.scope, input.sandbox.scope));
       if (prior?.action !== undefined && prior.action !== "destroy") return { result: this.rejection("conflict"), loseResponse: false };
+      if (prior && prior.requestHash !== requestHash) return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && this.state.profile.nativeIdempotency.destroy) return { result: prior.result, loseResponse: false };
       const scenario = this.scenario(submissionId, "destroy");
-      this.state.invocations.push({ submissionId, projectId: input.identity.projectId, action: "destroy" });
+      this.recordInvocation(submissionId, input.identity.projectId, "destroy");
       if (scenario.behavior === "reject") return { result: this.rejection(scenario.rejectCode), loseResponse: false };
       if (scenario.behavior === "ambiguous_before_effect") return { result: { status: "unknown", effect: "possible", submissionId, reason: "Submission acknowledgement lost" } as const, loseResponse: true };
       const resource = this.find(input.sandbox);
@@ -147,7 +157,7 @@ export class FakeProviderEngine {
       resource.state = "destroyed"; resource.sequence++;
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "destroy", observation: { sandbox: input.sandbox, computeStopped: true, retainedResources: [] } } };
       if (this.state.ledger.length >= MAX_LEDGER) throw new Error("Fake ledger limit reached");
-      this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.sandbox.scope, action: "destroy", result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
+      this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.sandbox.scope, action: "destroy", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
     });
   }
@@ -170,14 +180,16 @@ export class FakeProviderEngine {
   }
   readFile(ref: NativeRef, path: string): string | null { return this.find(ref)?.files[path] ?? null; }
   async writeFile(input: { sandbox: NativeRef; identity: InvocationIdentity; path: string; bytesBase64: string; overwrite: boolean }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
+    const requestHash = await intentSha256(input);
     return this.mutate(() => {
       const { sandbox, identity, path, bytesBase64, overwrite } = input;
       const { submissionId } = identity;
       const prior = this.state.ledger.find(x => x.submissionId === submissionId && x.projectId === identity.projectId && sameScope(x.scope, sandbox.scope));
       if (prior?.action !== undefined && prior.action !== "file_write") return { result: this.rejection("conflict"), loseResponse: false };
+      if (prior && prior.requestHash !== requestHash) return { result: this.rejection("conflict"), loseResponse: false };
       if (prior && this.state.profile.nativeIdempotency.writeFile) return { result: prior.result, loseResponse: false };
       const scenario = this.scenario(submissionId, "file_write");
-      this.state.invocations.push({ submissionId, projectId: identity.projectId, action: "file_write" });
+      this.recordInvocation(submissionId, identity.projectId, "file_write");
       if (scenario.behavior === "reject") return { result: this.rejection(scenario.rejectCode), loseResponse: false };
       if (scenario.behavior === "ambiguous_before_effect") return { result: { status: "unknown", effect: "possible", submissionId, reason: "Submission acknowledgement lost" } as const, loseResponse: true };
       const resource = this.find(sandbox);
@@ -187,7 +199,7 @@ export class FakeProviderEngine {
       resource.files[path] = bytesBase64;
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "file_write", observation: { sandbox, path, bytesWritten: bytesLength(bytesBase64), complete: true } } };
       if (this.state.ledger.length >= MAX_LEDGER) throw new Error("Fake ledger limit reached");
-      this.state.ledger.push({ submissionId, projectId: identity.projectId, scope: sandbox.scope, action: "file_write", result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
+      this.state.ledger.push({ submissionId, projectId: identity.projectId, scope: sandbox.scope, action: "file_write", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
     });
   }

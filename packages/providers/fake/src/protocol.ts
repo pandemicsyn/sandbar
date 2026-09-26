@@ -4,7 +4,7 @@ import { InvocationIdentity, NativeRef, NativeScope } from "@sandbar/provider-sp
 
 export const FakeAction = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("capabilities"), scope: NativeScope }),
-  z.strictObject({ kind: z.literal("create"), scope: NativeScope, identity: InvocationIdentity, image: z.string().min(1), networkPolicy: z.string().min(1) }),
+  z.strictObject({ kind: z.literal("create"), scope: NativeScope, identity: InvocationIdentity, image: z.string().min(1), networkPolicy: z.string().min(1), labels: z.record(z.string(), z.string()).optional() }),
   z.strictObject({ kind: z.literal("inspect"), ref: NativeRef }),
   z.strictObject({ kind: z.literal("inventory"), scope: NativeScope, cursor: z.string().optional(), limit: z.number().int().min(1).max(100) }),
   z.strictObject({ kind: z.literal("exec"), sandbox: NativeRef, identity: InvocationIdentity, command: ExecCommand, cwd: z.string().optional(), env: z.record(z.string(), z.string()).optional(), deadlineSeconds: z.number().int().min(1).max(3600), maxOutputBytes: z.number().int().min(0).max(1048576) }),

@@ -2,14 +2,14 @@ import { z } from "zod";
 import {
   AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest,
   CreateSandboxRequest, ErrorResponse, Execution, ExecRequest, FileReceipt, Operation,
-  Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage,
+  Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage, OperationResult,
   SessionRequest, SessionResponse, SetupRequest,
 } from "./index";
 
 const schemas = {
   AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest,
   CreateSandboxRequest, ErrorResponse, Execution, ExecRequest, FileReceipt, Operation,
-  Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage,
+  Project, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage, OperationResult,
   SessionRequest, SessionResponse, SetupRequest,
 };
 const component = (name: keyof typeof schemas) => ({ $ref: `#/components/schemas/${name}` });

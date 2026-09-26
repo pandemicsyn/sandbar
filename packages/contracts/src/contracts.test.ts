@@ -10,6 +10,7 @@ describe("public contract", () => {
     expect(ExecRequest.safeParse({ command: { kind: "argv", argv: ["echo"] }, shel: true }).success).toBe(false);
     const operation = { id: "op_1", projectId: "p_1", kind: "create", status: "unknown", phase: "submitted", createdAt: "2026-09-26T10:00:00Z", updatedAt: "2026-09-26T10:00:00Z", effect: "possible", recovery: ["check_again"], futureField: "safe" };
     expect(Operation.parse(operation)).not.toHaveProperty("futureField");
+    expect(Operation.parse({ ...operation, kind: "file_write", status: "succeeded", effect: "applied", result: { kind: "file_write", receipt: { path: "/blob", bytesWritten: 3, complete: true, effect: "applied" } } }).result).toEqual({ kind: "file_write", receipt: { path: "/blob", bytesWritten: 3, complete: true, effect: "applied" } });
   });
   test("intent canonicalization preserves omission and is key-order independent", async () => {
     expect(canonicalJson({ b: 2, a: 1 })).toBe(canonicalJson({ a: 1, b: 2 }));

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProviderDriver } from "./index";
+import { FakeProviderEngine } from "./engine";
 import { startFakeProviderServer } from "./server";
 
 const token = "local-test-token-12345";
@@ -160,5 +161,37 @@ describe("independent fake provider", () => {
     expect(observed?.status).toBe("completed");
     expect(await driver.readFile({ sandbox, path: "/blob" })).toEqual(bytes);
     expect((await control("/_test/state")).invocations.filter((x: { action: string }) => x.action === "file_write")).toHaveLength(1);
+  });
+
+  test("same-action submission reuse with different operation or payload is rejected without replay", async () => {
+    const { driver, control } = await setup();
+    const created = await driver.create({ scope, identity: identity("create_fingerprint"), image: "fake-starter", networkPolicy: "blocked" });
+    expect(created.status).toBe("completed");
+    const conflicting = await driver.create({ scope, identity: { ...identity("create_fingerprint"), operationId: "another_operation" }, image: "fake-starter", networkPolicy: "blocked" });
+    expect(conflicting.status).toBe("rejected");
+    expect(conflicting.effect).toBe("none");
+    if (created.status !== "completed" || created.value.kind !== "sandbox") throw new Error("Create failed");
+    const sandbox = created.value.observation.ref;
+    const original = await driver.writeFile({ sandbox, identity: identity("write_fingerprint"), path: "/blob", bytes: Uint8Array.from([1]), overwrite: true });
+    expect(original.status).toBe("completed");
+    const changed = await driver.writeFile({ sandbox, identity: identity("write_fingerprint"), path: "/blob", bytes: Uint8Array.from([2]), overwrite: true });
+    expect(changed.status).toBe("rejected");
+    expect(await driver.readFile({ sandbox, path: "/blob" })).toEqual(Uint8Array.from([1]));
+    expect((await control("/_test/state")).invocations).toHaveLength(2);
+  });
+
+  test("diagnostic invocation history remains bounded after repeated definitive rejections", async () => {
+    directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+    const engine = new FakeProviderEngine(join(directory, "provider.json"), true);
+    await engine.load();
+    const missing = { scope, kind: "sandbox" as const, nativeId: "missing" };
+    for (let index = 0; index < 520; index++) {
+      const result = await engine.exec({ sandbox: missing, identity: identity(`missing_${index}`), command, deadlineSeconds: 30, maxOutputBytes: 0 });
+      expect(result.result.status).toBe("rejected");
+    }
+    expect(engine.snapshot().invocations).toHaveLength(512);
+    const reloaded = new FakeProviderEngine(join(directory, "provider.json"), true);
+    await reloaded.load();
+    expect(reloaded.snapshot().invocations).toHaveLength(512);
   });
 });
