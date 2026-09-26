@@ -108,7 +108,9 @@ export const SandboxListQuery = z.strictObject({
 export const StreamFrame = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("stdout"), executionId: Id, sequence: z.number().int().nonnegative(), bytesBase64: z.base64() }),
   z.object({ kind: z.literal("stderr"), executionId: Id, sequence: z.number().int().nonnegative(), bytesBase64: z.base64() }),
-  z.object({ kind: z.literal("gap"), executionId: Id, fromSequence: z.number().int().nonnegative(), toSequence: z.number().int().nonnegative() }),
+  z.object({ kind: z.literal("gap"), executionId: Id, fromSequence: z.number().int().nonnegative(), toSequence: z.number().int().nonnegative() })
+    .refine(frame => frame.fromSequence <= frame.toSequence, { path: ["toSequence"], message: "Gap end must not precede start" })
+    .describe("Missing inclusive sequence range; fromSequence must be less than or equal to toSequence."),
   z.object({ kind: z.literal("exit"), executionId: Id, exitCode: z.number().int().nullable(), signal: z.string().optional() }),
 ]);
 export type CreateSandboxRequest = z.infer<typeof CreateSandboxRequest>;

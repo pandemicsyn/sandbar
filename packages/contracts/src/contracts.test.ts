@@ -19,6 +19,7 @@ describe("public contract", () => {
   });
   test("stream frames and initial OpenAPI expose real protocol shapes", () => {
     expect(StreamFrame.safeParse({ kind: "gap", executionId: "e1", fromSequence: 1, toSequence: 3 }).success).toBe(true);
+    expect(StreamFrame.safeParse({ kind: "gap", executionId: "e1", fromSequence: 3, toSequence: 1 }).success).toBe(false);
     expect(StreamFrame.safeParse({ kind: "stdout", executionId: "e1", sequence: 1, bytesBase64: "not-base64" }).success).toBe(false);
     expect(openApiDocument.paths["/v1/projects/{projectId}/sandboxes"].post.responses["202"]).toBeDefined();
     expect(openApiDocument.components.schemas.CreateSandboxRequest).toBeDefined();

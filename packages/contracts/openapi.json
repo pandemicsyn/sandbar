@@ -2877,7 +2877,8 @@
               "fromSequence",
               "toSequence"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Missing inclusive sequence range; fromSequence must be less than or equal to toSequence."
           },
           {
             "type": "object",
