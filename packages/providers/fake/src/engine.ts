@@ -156,7 +156,7 @@ export class FakeProviderEngine {
       if (scenario.behavior === "ambiguous_before_effect") return { result: { status: "unknown", effect: "possible", submissionId, reason: "Submission acknowledgement lost" } as const, loseResponse: true };
       const resource = this.find(input.sandbox);
       if (!resource) return { result: { status: "rejected", effect: "none", error: { code: "not_found", message: "Fake sandbox not found", effect: "none", retry: "never" } } as const, loseResponse: false };
-      resource.state = "destroyed"; resource.sequence++;
+      resource.state = "destroyed"; resource.files = {}; resource.sequence++;
       const result: z.infer<typeof DriverResult> = { status: "completed", effect: "applied", value: { kind: "destroy", observation: { sandbox: input.sandbox, computeStopped: true, retainedResources: [] } } };
       this.state.ledger.push({ submissionId, projectId: input.identity.projectId, scope: input.sandbox.scope, action: "destroy", requestHash, result, remaining: scenario.delayObservations, discoverable: this.state.profile.discoveryBySubmission });
       return { result: scenario.delayObservations ? { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const : result, loseResponse: scenario.behavior === "lost_after_effect" };
@@ -179,7 +179,7 @@ export class FakeProviderEngine {
     const items = resources.slice(start, start + limit).map(x => ({ ref: x.ref, state: x.state, observedAt: iso(this.state.tick), sourceSequence: x.sequence }));
     return { items, nextCursor: start + limit < resources.length ? String(start + limit) : undefined };
   }
-  readFile(ref: NativeRef, path: string): string | null { return this.find(ref)?.files[path] ?? null; }
+  readFile(ref: NativeRef, path: string): string | null { const resource = this.find(ref); return resource?.state === "running" ? resource.files[path] ?? null : null; }
   async writeFile(input: { sandbox: NativeRef; identity: InvocationIdentity; path: string; bytesBase64: string; overwrite: boolean }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
     return this.mutate(() => {

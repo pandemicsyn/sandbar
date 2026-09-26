@@ -119,6 +119,13 @@ describe("independent fake provider", () => {
     await expect(startFakeProviderServer({ hostname: "0.0.0.0" as "127.0.0.1", port: 0, statePath: join(directory, "state.json"), token, testMode: true })).rejects.toThrow("loopback");
   });
 
+  test("fake driver refuses remote destinations before sending its transport token", () => {
+    let calls = 0;
+    const transport = (async () => { calls++; throw new Error("must not be called"); }) as unknown as typeof fetch;
+    expect(() => new FakeProviderDriver({ baseUrl: "https://example.com", token, fetch: transport })).toThrow("loopback");
+    expect(calls).toBe(0);
+  });
+
   test("wildcard scenario queue consumes one matching action without knowing allocated submission IDs", async () => {
     const { driver, control } = await setup();
     await control("/_test/seed", { submissionId: "*", action: "create", behavior: "lost_after_effect" });
@@ -171,6 +178,21 @@ describe("independent fake provider", () => {
     expect(observed?.status).toBe("completed");
     expect(await driver.readFile({ sandbox, path: "/blob" })).toEqual(bytes);
     expect((await control("/_test/state")).invocations.filter((x: { action: string }) => x.action === "file_write")).toHaveLength(1);
+  });
+
+  test("destroy removes virtual files and reports no retained resources", async () => {
+    const { driver, control } = await setup();
+    const created = await driver.create({ scope, identity: identity("destroy_files_parent"), image: "fake-starter", networkPolicy: "blocked" });
+    if (created.status !== "completed" || created.value.kind !== "sandbox") throw new Error("Create failed");
+    const sandbox = created.value.observation.ref;
+    await driver.writeFile({ sandbox, identity: identity("destroy_files_write"), path: "/private", bytes: Uint8Array.from([7]), overwrite: true });
+    const destroyed = await driver.destroy({ sandbox, identity: identity("destroy_files") });
+    expect(destroyed.status).toBe("completed");
+    if (destroyed.status !== "completed" || destroyed.value.kind !== "destroy") throw new Error("Destroy failed");
+    expect(destroyed.value.observation.retainedResources).toEqual([]);
+    expect((await driver.inspect(sandbox))?.state).toBe("destroyed");
+    await expect(driver.readFile({ sandbox, path: "/private" })).rejects.toThrow("not found");
+    expect((await control("/_test/state")).resources[0].files).toEqual({});
   });
 
   test("same-action submission reuse with different operation or payload is rejected without replay", async () => {

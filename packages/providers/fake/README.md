@@ -2,7 +2,7 @@
 
 This provider is a deterministic local HTTP simulation for Sandbar control-plane tests. It is **not a sandbox or isolation boundary**. It never runs host commands, builds images, contacts paid providers, or enforces a guest network policy. Command results come only from explicit test fixtures; file writes use an in-memory virtual filesystem persisted in the fake provider's state file.
 
-The fake runs independently of the Sandbar service and control database. Its JSON state file holds native sandbox IDs, virtual files, effect/invocation ledger, and test scenarios. Keep that file when restarting Sandbar to test uncertain submission recovery. Start a separate fake process with a separate state path to test restarting the provider itself. The server binds loopback only, requires a transport token, and marks every response `X-Sandbar-Fake-Provider: simulation`.
+The fake runs independently of the Sandbar service and control database. Its JSON state file holds native sandbox IDs, virtual files, effect/invocation ledger, and test scenarios. Keep that file when restarting Sandbar to test uncertain submission recovery. Start a separate fake process with a separate state path to test restarting the provider itself. Both the server bind and driver destination are restricted to loopback. The server requires a transport token and marks every response `X-Sandbar-Fake-Provider: simulation`.
 
 ## Run
 

@@ -5,7 +5,12 @@ import { FakeEvent } from "./engine";
 
 export class FakeProviderDriver implements ProviderDriver {
   readonly name = "fake";
-  constructor(private readonly options: { baseUrl: string; token: string; fetch?: typeof fetch }) {}
+  constructor(private readonly options: { baseUrl: string; token: string; fetch?: typeof fetch }) {
+    const endpoint = new URL(options.baseUrl);
+    if ((endpoint.protocol !== "http:" && endpoint.protocol !== "https:") || (endpoint.hostname !== "127.0.0.1" && endpoint.hostname !== "[::1]") || endpoint.username || endpoint.password) {
+      throw new Error("Fake provider driver requires a loopback HTTP endpoint");
+    }
+  }
 
   private async call(action: FakeAction): Promise<unknown> {
     const response = await (this.options.fetch ?? fetch)(new URL("/v1/action", this.options.baseUrl), { method: "POST", headers: { Authorization: `Bearer ${this.options.token}`, "Content-Type": "application/json" }, body: JSON.stringify(action) });
