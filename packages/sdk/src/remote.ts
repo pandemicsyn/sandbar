@@ -8,9 +8,12 @@ export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryRefer
 export type RemoteOptions = { url: string; token: string; projectId: string; fetch?: typeof fetch };
 type Kind = RecoveryReference["kind"];
 
-function base64Bytes(value?: string): Uint8Array {
+function base64Bytes(value?: string, maxBytes = 1_048_576): Uint8Array {
   if (!value) return new Uint8Array();
-  return Uint8Array.from(atob(value), c => c.charCodeAt(0));
+  if (value.length > Math.ceil(maxBytes / 3) * 4 + 4) throw new SandbarError("INVALID_RESPONSE", "Service output exceeds requested bound", "unknown");
+  const bytes = Uint8Array.from(atob(value), c => c.charCodeAt(0));
+  if (bytes.length > maxBytes) throw new SandbarError("INVALID_RESPONSE", "Service output exceeds requested bound", "unknown");
+  return bytes;
 }
 
 class RemoteOperation<T> implements OperationHandle<T> {
@@ -49,9 +52,12 @@ class RemoteSandbox implements SandboxHandle {
     return new RemoteOperation({ ...reference, operationId: operation.id }, this.client, async op => {
       if (op.result?.kind !== "exec" || op.sandboxId !== this.id) throw new OutcomeUnknownError(reference, "Execution operation result mismatched sandbox");
       const value = await this.client.request(`executions/${encodeURIComponent(op.result.executionId)}`, Execution);
-      if (value.projectId !== this.client.projectId || value.sandboxId !== this.id || value.operationId !== op.id || value.status !== "completed") throw new OutcomeUnknownError(reference, "Execution response is incomplete or mismatched");
+      if (value.id !== op.result.executionId || value.projectId !== this.client.projectId || value.sandboxId !== this.id || value.operationId !== op.id || value.status !== "completed") throw new OutcomeUnknownError(reference, "Execution response is incomplete or mismatched");
       if (value.outputAvailability !== "captured" && value.outputAvailability !== "truncated") throw new SandbarError("OUTPUT_UNAVAILABLE", `Output is ${value.outputAvailability}`, "applied");
-      return checkExec(execOutput(value.exitCode ?? null, base64Bytes(value.stdoutBase64), base64Bytes(value.stderrBase64), value.outputAvailability === "truncated"));
+      if (value.exitCode === undefined) throw new OutcomeUnknownError(reference, "Execution has no exit code");
+      const stdout = base64Bytes(value.stdoutBase64, input.maxOutputBytes ?? 1_048_576);
+      const stderr = base64Bytes(value.stderrBase64, (input.maxOutputBytes ?? 1_048_576) - stdout.length);
+      return checkExec(execOutput(value.exitCode, stdout, stderr, value.outputAvailability === "truncated"));
     });
   }
   async exec(input: ExecInput, options: { signal?: AbortSignal } = {}) { return (await this.submitExec(input)).wait(options); }
@@ -92,8 +98,10 @@ export class RemoteClient implements SandbarClient {
   private closed = false;
   constructor(options: RemoteOptions) {
     this.endpoint = new URL(options.url);
-    if (!/^https?:$/.test(this.endpoint.protocol) || this.endpoint.username || this.endpoint.password || this.endpoint.search || this.endpoint.hash) throw new SandbarError("INVALID_ARGUMENT", "Invalid service URL");
+    const loopback = this.endpoint.hostname === "127.0.0.1" || this.endpoint.hostname === "[::1]";
+    if ((this.endpoint.protocol !== "https:" && !(this.endpoint.protocol === "http:" && loopback)) || this.endpoint.username || this.endpoint.password || this.endpoint.search || this.endpoint.hash) throw new SandbarError("INVALID_ARGUMENT", "Service URL must use HTTPS or loopback HTTP");
     this.projectId = Id.parse(options.projectId);
+    if (!options.token) throw new SandbarError("INVALID_ARGUMENT", "Service token is required");
     this.token = options.token;
     this.fetcher = options.fetch ?? fetch;
   }
@@ -181,8 +189,12 @@ export class RemoteClient implements SandbarClient {
       if (op.result?.kind === "create") return new RemoteSandbox(this, op.result.sandboxId);
       if (op.result?.kind === "exec") {
         const value = await this.request(`executions/${encodeURIComponent(op.result.executionId)}`, Execution);
-        if (value.projectId !== this.projectId || value.operationId !== op.id) throw new OutcomeUnknownError(reference);
-        return checkExec(execOutput(value.exitCode ?? null, base64Bytes(value.stdoutBase64), base64Bytes(value.stderrBase64), value.outputAvailability === "truncated"));
+        if (value.id !== op.result.executionId || value.projectId !== this.projectId || value.operationId !== op.id || value.sandboxId !== op.sandboxId || value.status !== "completed") throw new OutcomeUnknownError(reference, "Recovered execution identity or completion is unverified");
+        if (value.outputAvailability !== "captured" && value.outputAvailability !== "truncated") throw new SandbarError("OUTPUT_UNAVAILABLE", `Output is ${value.outputAvailability}`, "applied");
+        if (value.exitCode === undefined) throw new OutcomeUnknownError(reference, "Execution has no exit code");
+        const stdout = base64Bytes(value.stdoutBase64);
+        const stderr = base64Bytes(value.stderrBase64, 1_048_576 - stdout.length);
+        return checkExec(execOutput(value.exitCode, stdout, stderr, value.outputAvailability === "truncated"));
       }
       return op.result;
     });

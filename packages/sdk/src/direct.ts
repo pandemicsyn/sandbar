@@ -81,6 +81,7 @@ class DirectSandbox implements SandboxHandle {
   async writeFile(path: string, bytes: Uint8Array, options: { overwrite?: boolean; signal?: AbortSignal } = {}): Promise<void> {
     this.client.ensureOpen();
     if (!path?.startsWith("/") || !(bytes instanceof Uint8Array)) throw new SandbarError("INVALID_ARGUMENT", "Expected an absolute path and Uint8Array bytes");
+    if (bytes.length > 1_048_576) throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK write limit");
     const invocation = identity();
     const reference = { ...this.client.reference("file_write", invocation, this.ref), file: { path, bytes: bytes.length } };
     let first: DriverResult | undefined;

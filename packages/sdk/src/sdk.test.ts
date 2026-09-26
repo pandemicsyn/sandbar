@@ -30,6 +30,7 @@ test("direct resource flow preserves binary files and nonzero output", async () 
   const file = Uint8Array.of(0, 255, 128, 42);
   await box.writeFile("/binary", file);
   expect(await box.readFile("/binary")).toEqual(file);
+  await expect(box.writeFile("/too-large", new Uint8Array(1_048_577))).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
   const command = { kind: "argv" as const, argv: ["fixture", "binary"] };
   await control("/_test/seed", { submissionId: "*", action: "exec", command: { command, exitCode: 7, stdoutBase64: Buffer.from(file).toString("base64"), stderrBase64: Buffer.from([1, 2]).toString("base64") } });
   try { await box.exec({ command }); throw new Error("Expected nonzero exit"); }
@@ -105,4 +106,24 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   expect(operation.reference.invocationKey).toBe(key);
   expect(JSON.stringify(operation.reference)).not.toContain("secret");
   await expect(RemoteSandbar.connect({ url: "https://other.example/", token: "secret", projectId, fetch: fetcher }).recover(operation.reference)).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+
+test("remote refuses bearer transport over non-loopback HTTP", () => {
+  expect(() => RemoteSandbar.connect({ url: "http://sandbar.example/", token: "secret", projectId: "project_1" })).toThrow();
+  expect(() => RemoteSandbar.connect({ url: "http://127.0.0.1:8788/", token: "secret", projectId: "project_1" })).not.toThrow();
+});
+
+test("remote recovery rejects an incomplete execution observation", async () => {
+  const projectId = "project_1";
+  const operation = { id: "op_1", projectId, kind: "exec", sandboxId: "box_1", executionId: "exec_1", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "exec", executionId: "exec_1" } };
+  const fetcher: typeof fetch = async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith("/operations/op_1")) return Response.json(operation);
+    if (path.endsWith("/executions/exec_1")) return Response.json({ id: "exec_1", projectId, sandboxId: "box_1", operationId: "op_1", status: "unknown", outputAvailability: "captured", capturedBytes: 0, stdoutBase64: "", stderrBase64: "" });
+    throw new Error(`Unexpected path: ${path}`);
+  };
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  const reference = { version: 1 as const, mode: "remote" as const, kind: "exec" as const, invocationKey: "0199f92e-1234-7000-8000-000000000001", operationId: "op_1", resourceId: "box_1", service: { url: "https://sandbar.example/", projectId } };
+  const recovered = await client.recover(reference);
+  await expect(recovered.observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
 });
