@@ -542,6 +542,7 @@ function FleetPage() {
   const [labelValue, setLabelValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [, refreshInvocations] = useState(0);
   const createScope = `create:${projectId}`;
   const createStatus = invocationStatus(createScope);
   const available =
@@ -682,6 +683,7 @@ function FleetPage() {
                   try {
                     await clearPendingInvocation(createScope);
                     setError(undefined);
+                    refreshInvocations((revision) => revision + 1);
                   } catch (reason) {
                     setError(errorText(reason));
                   }
@@ -839,6 +841,7 @@ function SandboxPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [, refreshInvocations] = useState(0);
   const execScope = `exec:${projectId}:${sandboxId}`;
   const destroyScope = `destroy:${projectId}:${sandboxId}`;
   const fileScope = `file_write:${projectId}:${sandboxId}`;
@@ -1012,6 +1015,7 @@ function SandboxPage() {
                     try {
                       await clearPendingInvocation(scope);
                       setError(undefined);
+                      refreshInvocations((revision) => revision + 1);
                     } catch (reason) {
                       setError(errorText(reason));
                     }

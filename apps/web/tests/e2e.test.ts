@@ -346,6 +346,21 @@ test("browser and public HTTP recover fake effects across service restarts witho
   const sandboxId = created.sandboxId as string;
   expect(sandboxId).toMatch(/^sb_/);
   await page.getByRole("link", { name: "Fleet" }).click();
+  await page.getByLabel("Label key (optional)").fill("team");
+  await page.getByLabel("Label value").fill("concurrent");
+  await page.getByRole("button", { name: "Create sandbox" }).click();
+  await page
+    .getByText(
+      "The previous request was accepted. Start a new attempt before submitting changed inputs.",
+    )
+    .waitFor();
+  expect(
+    (await control("GET", "/_test/state")).ledger.filter(
+      (entry: { action: string }) => entry.action === "create",
+    ),
+  ).toHaveLength(1);
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Start new create attempt" }).click();
 
   const secondTab = await context.newPage();
   await secondTab.goto(page.url());
@@ -540,6 +555,8 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await waitForOperation(projectId, lostExecId, "succeeded");
 
   await page.getByRole("link", { name: "Fleet" }).click();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Start new create attempt" }).click();
   await seed("create", "lost_after_effect");
   await page.getByRole("button", { name: "Create sandbox" }).click();
   await page.waitForURL(/\/operations\//);

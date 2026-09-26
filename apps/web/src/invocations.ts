@@ -101,11 +101,11 @@ export async function withInvocation<T>(
     );
   return navigator.locks.request(`sandbar:invocation:${scope}`, async () => {
     let attempt = readInvocation(scope);
-    if (attempt?.status === "accepted" && attempt.intentHash !== intentHash)
-      attempt = undefined;
     if (attempt && attempt.intentHash !== intentHash) {
       throw new Error(
-        "An earlier request may have been accepted. Retry its original inputs first, or explicitly start a new attempt with possible duplicate effects.",
+        attempt.status === "accepted"
+          ? "The previous request was accepted. Start a new attempt before submitting changed inputs."
+          : "An earlier request may have been accepted. Retry its original inputs first, or explicitly start a new attempt with possible duplicate effects.",
       );
     }
     if (!attempt) {
