@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
-import "./style.css";
+import { RouterProvider } from "@tanstack/react-router";
+import { router } from "./app";
+import "./styles.css";
 
-createRoot(document.getElementById("root")!).render(
-  <main>Sandbar management UI is being implemented.</main>,
-);
+createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);
