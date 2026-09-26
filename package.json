@@ -17,6 +17,7 @@
     "format:check": "oxfmt --check .",
     "test": "bun run build:packages && bun test",
     "build": "bun run build:packages && bun run --filter '@sandbar/web' build && bun run --filter '@sandbar/server' build",
+    "package:smoke": "bun run build:packages && bun packages/sdk-qualification/package-smoke.mjs",
     "dev": "bun run build:packages && bun --watch apps/server/src/index.ts",
     "start": "bun apps/server/dist/index.js"
   },

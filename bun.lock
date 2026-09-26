@@ -89,6 +89,13 @@
         "@sandbar/provider-fake": "workspace:*",
       },
     },
+    "packages/sdk-qualification": {
+      "name": "@sandbar/sdk-qualification",
+      "dependencies": {
+        "@sandbar/provider-fake": "workspace:*",
+        "@sandbar/sdk": "workspace:*",
+      },
+    },
     "packages/service-runtime": {
       "name": "@sandbar/service-runtime",
       "dependencies": {
@@ -295,6 +302,8 @@
     "@sandbar/provider-spi": ["@sandbar/provider-spi@workspace:packages/provider-spi"],
 
     "@sandbar/sdk": ["@sandbar/sdk@workspace:packages/sdk"],
+
+    "@sandbar/sdk-qualification": ["@sandbar/sdk-qualification@workspace:packages/sdk-qualification"],
 
     "@sandbar/server": ["@sandbar/server@workspace:apps/server"],
 

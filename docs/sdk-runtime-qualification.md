@@ -1,0 +1,17 @@
+# TypeScript SDK runtime and package qualification
+
+The direct SDK is a server-side TypeScript client. `@sandbar/sdk/direct` uses a caller-configured provider driver; `@sandbar/sdk/remote` uses a Sandbar HTTP service. The current verified provider is the deterministic fake. These checks do not establish support for Daytona, E2B, Modal, Tensorlake, or OCI import on a real provider.
+
+## Measured support
+
+The packed direct SDK, portable dependencies, and fake client completed create, binary exec, binary file write/read, and destroy from separate processes outside the monorepo on **Node.js 26.4.0** and **Bun 1.3.14** on macOS arm64. Both imports use built ESM JavaScript and emitted declarations. A strict external TypeScript `NodeNext` consumer typechecked the declarations. CI also runs this packed consumer flow on Ubuntu with **Node.js 22** and **Bun 1.3.14**; treat that runtime as qualified only when the CI `package:smoke` job passes. The Sandbar HTTP service and independent fake server remain Bun processes in these tests. No package was published.
+
+The external consumer uses local package archives. Its remote-only installation omits `@sandbar/provider-fake` and imports `@sandbar/sdk/remote` under both runtimes. The direct dependency graph includes SDK, contracts, core, provider SPI, Zod, and the explicitly installed fake client. It excludes Hono, Drizzle, SQL drivers, `@sandbar/store`, and `@sandbar/service-runtime`. The fake server persists its test ledger separately; this is not direct SDK storage.
+
+## Behavioral coverage
+
+`packages/sdk-qualification/parity.test.ts` runs the same ordinary public resource flow after constructing direct and HTTP clients. It covers create, inspect, execution with non UTF-8 stdout/stderr, nonzero exit, binary file transfer, and destroy. Direct-specific tests cover saved recovery references in a new caller with separately configured provider credentials, lost create/exec/file-write responses without replay, absent native discovery/idempotency, scoped and cross-wired recovery rejection, and AbortSignal stopping a wait while provider compute remains running. The direct tests start only the external fake server; no Sandbar API or database process is launched.
+
+The direct handle has process-lifetime operation state. A recovery reference is versioned and carries no provider token, command, or file bytes; it permits observation where the provider retains evidence. The service owns durable operation admission and reconciliation. `close()` releases client-owned activity and does not destroy provider sandboxes. An application that exits before saving a reference can lose its recovery pointer.
+
+Run `bun run check`, `bun run test`, and `bun run package:smoke` from the repository root. The package smoke command builds and packs five local packages, installs them into temporary consumers outside the workspace, checks the runtime dependency closure and declarations, then runs the direct flow with Node and Bun against a separately launched fake process. It removes temporary consumers and owned processes on completion or failure.
