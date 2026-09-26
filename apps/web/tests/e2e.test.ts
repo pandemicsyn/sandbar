@@ -397,9 +397,42 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("button", { name: "Find accepted operation" }).waitFor();
   await waitForEffect("exec", 1);
   await page.reload();
-  await page.getByRole("button", { name: "Find accepted operation" }).click();
+  const recoveryTab = await context.newPage();
+  await recoveryTab.goto(page.url());
+  let releaseLookup!: () => void;
+  const heldLookup = new Promise<void>((resolve) => {
+    releaseLookup = resolve;
+  });
+  let lookupAccepted = false;
+  await page.route("**/invocations/*?*", async (route) => {
+    if (lookupAccepted) {
+      await route.continue();
+      return;
+    }
+    lookupAccepted = true;
+    const response = await route.fetch();
+    await heldLookup;
+    await route.fulfill({ response });
+  });
+  const lookupClick = page
+    .getByRole("button", { name: "Find accepted operation" })
+    .click();
+  await waitFor(
+    "held invocation lookup",
+    async () => lookupAccepted || undefined,
+  );
+  const retryClick = recoveryTab
+    .getByRole("button", { name: "Run command" })
+    .click();
+  await recoveryTab.waitForTimeout(150);
+  expect(new URL(recoveryTab.url()).pathname).toContain("/sandboxes/");
+  releaseLookup();
+  await Promise.all([lookupClick, retryClick]);
   await page.waitForURL(/\/operations\//);
   const execId = new URL(page.url()).pathname.split("/").at(-1)!;
+  await recoveryTab.waitForURL(/\/operations\//);
+  expect(new URL(recoveryTab.url()).pathname.split("/").at(-1)!).toBe(execId);
+  await recoveryTab.close();
   expect(execId).toBe(firstExecOperationId!);
   const executed = await waitForOperation(projectId, execId, "succeeded");
   expect(executed.executionId).toBeTruthy();
@@ -450,6 +483,8 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).waitFor();
 
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Start new exec attempt" }).click();
   await seed("exec", "lost_after_effect", fixture);
   await page.getByRole("button", { name: "Run command" }).click();
   await page.waitForURL(/\/operations\//);

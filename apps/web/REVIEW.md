@@ -59,6 +59,15 @@ This report records independent static reviews for the management UI and browser
 - Fixes: 401 sign-out now clears session state and returns to sign-in; Fleet filter updates replace the current history entry. Browser E2E covers an expired session at sign-out and verifies Back leaves the filtered Fleet.
 - Validation after fixes: `bun run check && bun run build && bun run test` passes (36 passed, 1 local MySQL skip, 0 failed, 1302 assertions). Final parent review and any resulting rebase remain pending.
 
+## Round 6
+
+- Reviewer: independent subagent, `gpt-6-luna`, high reasoning; read-only.
+- Base: `480cecc7e86f16aa8aba5df21cc0b33934515e91`.
+- Reviewed HEAD: `3a54cb234ea8a5edfad52229bebeec8b4667b61b`.
+- Finding: lookup read the invocation key outside the per-scope Web Lock, then cleared it after lookup; a queued retry could mint a new key and duplicate the accepted effect.
+- Fix: lookup now holds the lock through the read and response, marking the record accepted. Accepted records retain their key as an idempotent tombstone. Same inputs reopen the existing operation; explicitly starting a new attempt or changing accepted inputs creates a new intent. The browser E2E holds an exec lookup while another tab queues a retry and verifies both open the original operation with one provider effect.
+- Validation: web check/build and Chromium E2E pass (27 assertions). Full workspace validation and final parent rebase remain pending.
+
 ## Final clearance
 
-Current integration checkpoint: base `480cecc7e86f16aa8aba5df21cc0b33934515e91` on reviewed contracts/fake parent `8bf25d4f32c63d6f73d897fdddd5ace6756b58aa`. `bun run check && bun run build && bun run test` passes (37 passed, 1 local MySQL skip, 0 failed, 1310 assertions); `git diff --check` passes. Control's independent review and a fresh web full-diff review are pending. No pull request will be created until the reviewer reports zero actionable findings on the unchanged final base and HEAD.
+Current integration checkpoint: base `480cecc7e86f16aa8aba5df21cc0b33934515e91` on reviewed contracts/fake parent `8bf25d4f32c63d6f73d897fdddd5ace6756b58aa`. Control's independent review and a fresh web full-diff review are pending. No pull request will be created until the reviewer reports zero actionable findings on the unchanged final base and HEAD.

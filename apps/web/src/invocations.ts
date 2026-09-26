@@ -1,13 +1,17 @@
 import { intentSha256 } from "@sandbar/contracts";
 import { newInvocationKey } from "./api";
 
-type PendingInvocation = { key: string; intentHash: string };
+type SavedInvocation = {
+  key: string;
+  intentHash: string;
+  status: "pending" | "accepted";
+};
 
 // Persist only the invocation identity and intent hash, never the payload.
 const prefix = "sandbar:pending-invocation:v1:";
 const storageKey = (scope: string) => `${prefix}${scope}`;
 
-function readPending(scope: string): PendingInvocation | undefined {
+function readInvocation(scope: string): SavedInvocation | undefined {
   const raw = localStorage.getItem(storageKey(scope));
   if (!raw) return undefined;
   try {
@@ -22,9 +26,15 @@ function readPending(scope: string): PendingInvocation | undefined {
       ) &&
       "intentHash" in value &&
       typeof value.intentHash === "string" &&
-      /^[0-9a-f]{64}$/.test(value.intentHash)
+      /^[0-9a-f]{64}$/.test(value.intentHash) &&
+      "status" in value &&
+      (value.status === "pending" || value.status === "accepted")
     )
-      return { key: value.key, intentHash: value.intentHash };
+      return {
+        key: value.key,
+        intentHash: value.intentHash,
+        status: value.status,
+      };
   } catch {
     // Keep the unknown record until the operator explicitly starts a new attempt.
   }
@@ -33,16 +43,40 @@ function readPending(scope: string): PendingInvocation | undefined {
   );
 }
 
-export function hasPendingInvocation(scope: string): boolean {
+export function invocationStatus(
+  scope: string,
+): SavedInvocation["status"] | undefined {
   try {
-    return localStorage.getItem(storageKey(scope)) !== null;
+    return readInvocation(scope)?.status;
   } catch {
-    return false;
+    try {
+      return localStorage.getItem(storageKey(scope)) === null
+        ? undefined
+        : "pending";
+    } catch {
+      return undefined;
+    }
   }
 }
 
-export function pendingInvocationKey(scope: string): string | undefined {
-  return readPending(scope)?.key;
+export async function recoverInvocation<T>(
+  scope: string,
+  lookup: (key: string) => Promise<T>,
+): Promise<T | undefined> {
+  if (!navigator.locks?.request)
+    throw new Error(
+      "This browser cannot coordinate safe requests across tabs.",
+    );
+  return navigator.locks.request(`sandbar:invocation:${scope}`, async () => {
+    const attempt = readInvocation(scope);
+    if (!attempt) return undefined;
+    const result = await lookup(attempt.key);
+    localStorage.setItem(
+      storageKey(scope),
+      JSON.stringify({ ...attempt, status: "accepted" }),
+    );
+    return result;
+  });
 }
 
 export async function clearPendingInvocation(scope: string): Promise<void> {
@@ -66,18 +100,23 @@ export async function withInvocation<T>(
       "This browser cannot coordinate safe requests across tabs.",
     );
   return navigator.locks.request(`sandbar:invocation:${scope}`, async () => {
-    let attempt = readPending(scope);
+    let attempt = readInvocation(scope);
+    if (attempt?.status === "accepted" && attempt.intentHash !== intentHash)
+      attempt = undefined;
     if (attempt && attempt.intentHash !== intentHash) {
       throw new Error(
         "An earlier request may have been accepted. Retry its original inputs first, or explicitly start a new attempt with possible duplicate effects.",
       );
     }
     if (!attempt) {
-      attempt = { key: newInvocationKey(), intentHash };
+      attempt = { key: newInvocationKey(), intentHash, status: "pending" };
       localStorage.setItem(storageKey(scope), JSON.stringify(attempt));
     }
     const result = await submit(attempt.key);
-    localStorage.removeItem(storageKey(scope));
+    localStorage.setItem(
+      storageKey(scope),
+      JSON.stringify({ ...attempt, status: "accepted" }),
+    );
     return result;
   });
 }

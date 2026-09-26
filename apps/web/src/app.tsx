@@ -33,8 +33,8 @@ import {
 import {
   clearPendingInvocation,
   fileIntent,
-  hasPendingInvocation,
-  pendingInvocationKey,
+  invocationStatus,
+  recoverInvocation,
   withInvocation,
 } from "./invocations";
 
@@ -526,6 +526,7 @@ function FleetPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const createScope = `create:${projectId}`;
+  const createStatus = invocationStatus(createScope);
   const available =
     connections.data?.items.filter((c) => c.status === "verified") ?? [];
   async function create(event: FormEvent) {
@@ -558,14 +559,14 @@ function FleetPage() {
     setBusy(true);
     setError(undefined);
     try {
-      const key = pendingInvocationKey(createScope);
-      if (!key) return;
-      const accepted = await api.invocation(projectId, key, "create");
+      const accepted = await recoverInvocation(createScope, (key) =>
+        api.invocation(projectId, key, "create"),
+      );
+      if (!accepted) return;
       await navigate({
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.id },
       });
-      await clearPendingInvocation(createScope);
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -644,17 +645,21 @@ function FleetPage() {
           </form>
         )}
         {error && <Notice tone="error">{error}</Notice>}
-        {!busy && hasPendingInvocation(createScope) && (
+        {!busy && createStatus && (
           <div className="actions" style={{ marginTop: 12 }}>
             <span className="field-hint">
-              Retry the same inputs to recover this request.
+              {createStatus === "pending"
+                ? "Retry the same inputs to recover this request."
+                : "The previous create was accepted. Same inputs reopen its operation."}
             </span>
             <Button onClick={findCreate}>Find accepted operation</Button>
             <Button
               onClick={async () => {
                 if (
                   window.confirm(
-                    "A prior request may have taken effect. Starting a new attempt can duplicate it. Continue?",
+                    createStatus === "pending"
+                      ? "A prior request may have taken effect. Starting a new attempt can duplicate it. Continue?"
+                      : "The previous request was accepted. Starting a new attempt can create another effect. Continue?",
                   )
                 ) {
                   try {
@@ -666,7 +671,7 @@ function FleetPage() {
                 }
               }}
             >
-              Start new attempt
+              Start new create attempt
             </Button>
           </div>
         )}
@@ -920,14 +925,14 @@ function SandboxPage() {
     setBusy(true);
     setError(undefined);
     try {
-      const key = pendingInvocationKey(scope);
-      if (!key) return;
-      const accepted = await api.invocation(projectId, key, kind, sandboxId);
+      const accepted = await recoverInvocation(scope, (key) =>
+        api.invocation(projectId, key, kind, sandboxId),
+      );
+      if (!accepted) return;
       await navigate({
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.id },
       });
-      await clearPendingInvocation(scope);
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -967,11 +972,13 @@ function SandboxPage() {
             { scope: fileScope, kind: "file_write" as const },
           ] as const
         )
-          .filter(({ scope }) => hasPendingInvocation(scope))
+          .filter(({ scope }) => Boolean(invocationStatus(scope)))
           .map(({ scope, kind }) => (
             <div className="actions" key={scope} style={{ marginTop: 12 }}>
               <span className="field-hint">
-                {kind}: retry the same inputs or find the accepted operation.
+                {invocationStatus(scope) === "pending"
+                  ? `${kind}: retry the same inputs or find the accepted operation.`
+                  : `${kind}: the previous request was accepted. Same inputs reopen its operation.`}
               </span>
               <Button onClick={() => void findAction(scope, kind)}>
                 Find accepted operation
@@ -980,7 +987,9 @@ function SandboxPage() {
                 onClick={async () => {
                   if (
                     window.confirm(
-                      "A prior request may have taken effect. Starting a new attempt can duplicate it. Continue?",
+                      invocationStatus(scope) === "pending"
+                        ? "A prior request may have taken effect. Starting a new attempt can duplicate it. Continue?"
+                        : "The previous request was accepted. Starting a new attempt can create another effect. Continue?",
                     )
                   ) {
                     try {
@@ -992,7 +1001,7 @@ function SandboxPage() {
                   }
                 }}
               >
-                Start new attempt
+                Start new {kind} attempt
               </Button>
             </div>
           ))}
