@@ -27,7 +27,7 @@ export interface SandboxHandle {
   readonly id: string;
   inspect(): Promise<{ state: string; observedAt?: string }>;
   exec(input: ExecInput, options?: { signal?: AbortSignal }): Promise<ExecOutput>;
-  submitExec(input: ExecInput): Promise<OperationHandle<ExecOutput>>;
+  submitExec(input: ExecInput, options?: { signal?: AbortSignal }): Promise<OperationHandle<ExecOutput>>;
   readFile(path: string): Promise<Uint8Array>;
   writeFile(path: string, bytes: Uint8Array, options?: { overwrite?: boolean; signal?: AbortSignal }): Promise<void>;
   destroy(options?: { signal?: AbortSignal }): Promise<void>;
@@ -35,7 +35,7 @@ export interface SandboxHandle {
 export interface SandbarClient {
   readonly sandboxes: {
     create(input: CreateInput, options?: { signal?: AbortSignal }): Promise<SandboxHandle>;
-    submitCreate(input: CreateInput): Promise<OperationHandle<SandboxHandle>>;
+    submitCreate(input: CreateInput, options?: { signal?: AbortSignal }): Promise<OperationHandle<SandboxHandle>>;
   };
   recover(reference: RecoveryReference): Promise<OperationHandle<unknown>>;
   close(): Promise<void>;

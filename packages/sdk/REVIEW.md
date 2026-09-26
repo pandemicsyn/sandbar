@@ -140,3 +140,13 @@ Final independent complete-diff review of this resulting HEAD remains pending.
 - Validation after fixes: `bun run check` passed; full `bun run test` passed 64 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 14 is **not** a zero-finding clearance.
 
 Final independent complete-diff review of this resulting HEAD remains pending.
+
+## Round 15
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `40b50e8694f3fe0f501bda0e27b28229ef77f71d`.
+- Two actionable findings: the public `submitCreate`/`submitExec` types and namespace wrappers did not expose their implemented cancellation signal, and fake direct file reads accepted unvalidated base64 and returned an untyped missing-file error. Submission interfaces and wrappers now forward signals. The fake client validates its file response and uses a shared SPI read error that the direct SDK maps to `NOT_FOUND` or `INVALID_RESPONSE`.
+- Validation after fixes: `bun run check` passed; full `bun run test` passed 65 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 15 is **not** a zero-finding clearance.
+
+Final independent complete-diff review of this resulting HEAD remains pending.

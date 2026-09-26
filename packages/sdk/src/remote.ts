@@ -136,7 +136,7 @@ class RemoteSandbox implements SandboxHandle {
 
 export class RemoteClient implements SandbarClient {
   readonly projectId: string;
-  readonly sandboxes = { create: (input: CreateInput, options: { signal?: AbortSignal } = {}) => this.create(input, options), submitCreate: (input: CreateInput) => this.submitCreate(input) };
+  readonly sandboxes = { create: (input: CreateInput, options: { signal?: AbortSignal } = {}) => this.create(input, options), submitCreate: (input: CreateInput, options: { signal?: AbortSignal } = {}) => this.submitCreate(input, options) };
   private readonly endpoint: URL;
   private readonly token: string;
   private readonly fetcher: typeof fetch;

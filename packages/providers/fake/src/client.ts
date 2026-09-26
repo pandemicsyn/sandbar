@@ -1,5 +1,6 @@
-import { DriverCapabilities, DriverResult, SandboxObservation, NativeScope, type ProviderDriver, type NativeRef, type InvocationIdentity } from "@sandbar/provider-spi";
+import { DriverCapabilities, DriverResult, SandboxObservation, NativeScope, ProviderReadError, type ProviderDriver, type NativeRef, type InvocationIdentity } from "@sandbar/provider-spi";
 import type { ExecCommand } from "@sandbar/contracts";
+import { z } from "zod";
 import { FakeAction, FakeEvent } from "./protocol";
 
 export class FakeProviderDriver implements ProviderDriver {
@@ -44,8 +45,10 @@ export class FakeProviderDriver implements ProviderDriver {
     return this.mutation({ kind: "exec", sandbox: input.sandbox, identity: input.identity, command: input.command, cwd: input.cwd, env: input.env, deadlineSeconds: input.deadlineSeconds, maxOutputBytes: input.maxOutputBytes }, input.identity.submissionId);
   }
   async readFile(input: { sandbox: NativeRef; path: string }): Promise<Uint8Array> {
-    const value = await this.call({ kind: "readFile", ...input }) as { bytesBase64: string | null };
-    if (value.bytesBase64 === null) throw new Error("Fake file not found");
+    const parsed = z.strictObject({ bytesBase64: z.base64().max(1_398_104).nullable() }).safeParse(await this.call({ kind: "readFile", ...input }));
+    if (!parsed.success) throw new ProviderReadError("INVALID_RESPONSE", "Fake provider returned invalid file data");
+    const value = parsed.data;
+    if (value.bytesBase64 === null) throw new ProviderReadError("NOT_FOUND", "Fake file not found");
     return Uint8Array.from(Buffer.from(value.bytesBase64, "base64"));
   }
   async writeFile(input: { sandbox: NativeRef; identity: InvocationIdentity; path: string; bytes: Uint8Array; overwrite: boolean }): Promise<DriverResult> {

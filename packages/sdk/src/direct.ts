@@ -1,4 +1,4 @@
-import { NativeScope, type NativeRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
+import { NativeScope, ProviderReadError, type NativeRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
 import { normalizeCreate, normalizeExec, correlateDriverResult, sameNativeScope, sameNativeRef, captureBoundedOutput } from "@sandbar/core";
 import { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, throwIfAborted, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
@@ -97,7 +97,9 @@ class DirectSandbox implements SandboxHandle {
   async readFile(path: string): Promise<Uint8Array> {
     this.client.ensureOpen();
     validateFilePath(path);
-    const bytes = await this.client.driver.readFile({ sandbox: this.ref, path });
+    let bytes: Uint8Array;
+    try { bytes = await this.client.driver.readFile({ sandbox: this.ref, path }); }
+    catch (error) { if (error instanceof ProviderReadError) throw new SandbarError(error.code, error.message, error.code === "NOT_FOUND" ? "none" : "unknown"); throw error; }
     if (!(bytes instanceof Uint8Array)) throw new SandbarError("INVALID_RESPONSE", "Provider returned invalid file bytes", "unknown");
     if (bytes.length > 1_048_576) throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK read limit", "unknown");
     return bytes;
@@ -145,7 +147,7 @@ export class DirectClient implements SandbarClient {
   get closedSignal(): AbortSignal { return this.closeController.signal; }
   readonly driver: ProviderDriver;
   readonly scope: NativeScope;
-  readonly sandboxes = { create: (input: CreateInput, options: { signal?: AbortSignal } = {}) => this.create(input, options), submitCreate: (input: CreateInput) => this.submitCreate(input) };
+  readonly sandboxes = { create: (input: CreateInput, options: { signal?: AbortSignal } = {}) => this.create(input, options), submitCreate: (input: CreateInput, options: { signal?: AbortSignal } = {}) => this.submitCreate(input, options) };
   constructor(options: DirectOptions) {
     this.driver = options.provider.driver;
     this.scope = NativeScope.parse(options.provider.scope);

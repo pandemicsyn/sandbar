@@ -30,6 +30,7 @@ test("direct resource flow preserves binary files and nonzero output", async () 
   const file = Uint8Array.of(0, 255, 128, 42);
   await box.writeFile("/binary", file);
   expect(await box.readFile("/binary")).toEqual(file);
+  await expect(box.readFile("/missing")).rejects.toMatchObject({ code: "NOT_FOUND", effect: "none" });
   await expect(box.readFile("/a/./b")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(box.readFile("/../escape")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(box.writeFile("/bad\0path", file)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
@@ -174,7 +175,7 @@ test("direct submitCreate aborts stalled preflight before dispatch", async () =>
   const client = DirectSandbar.direct({ provider });
   const controller = new AbortController();
   const reason = new Error("stop preflight");
-  const pending = client.submitCreate({ environment: DirectImage.prepared("fake-starter") }, { signal: controller.signal });
+  const pending = client.sandboxes.submitCreate({ environment: DirectImage.prepared("fake-starter") }, { signal: controller.signal });
   await checking;
   controller.abort(reason);
   await expect(pending).rejects.toBe(reason);
@@ -194,6 +195,17 @@ test("direct operation keeps a terminal result without provider discovery", asyn
   expect((await operation.observe())?.id).toBe(box.id);
   expect((await operation.wait()).id).toBe(box.id);
   expect(observations).toBe(0);
+});
+
+test("fake direct reads reject malformed base64 as an invalid provider response", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token, fetch: async (request, init) => {
+    if (JSON.parse(String(init?.body)).kind === "readFile") return Response.json({ bytesBase64: "not base64" });
+    return fetch(request, init);
+  } });
+  const client = DirectSandbar.direct({ provider });
+  const box = await client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
+  await expect(box.readFile("/binary")).rejects.toMatchObject({ code: "INVALID_RESPONSE", effect: "unknown" });
 });
 
 test("abort ends direct and remote waits even when observation hangs", async () => {
