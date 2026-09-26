@@ -45,8 +45,14 @@ export function pendingInvocationKey(scope: string): string | undefined {
   return readPending(scope)?.key;
 }
 
-export function clearPendingInvocation(scope: string): void {
-  localStorage.removeItem(storageKey(scope));
+export async function clearPendingInvocation(scope: string): Promise<void> {
+  if (!navigator.locks?.request)
+    throw new Error(
+      "This browser cannot coordinate safe requests across tabs.",
+    );
+  await navigator.locks.request(`sandbar:invocation:${scope}`, () => {
+    localStorage.removeItem(storageKey(scope));
+  });
 }
 
 export async function withInvocation<T>(
@@ -55,19 +61,25 @@ export async function withInvocation<T>(
   submit: (key: string) => Promise<T>,
 ): Promise<T> {
   const intentHash = await intentSha256(intent);
-  let attempt = readPending(scope);
-  if (attempt && attempt.intentHash !== intentHash) {
+  if (!navigator.locks?.request)
     throw new Error(
-      "An earlier request may have been accepted. Retry its original inputs first, or explicitly start a new attempt with possible duplicate effects.",
+      "This browser cannot coordinate safe requests across tabs.",
     );
-  }
-  if (!attempt) {
-    attempt = { key: newInvocationKey(), intentHash };
-    localStorage.setItem(storageKey(scope), JSON.stringify(attempt));
-  }
-  const result = await submit(attempt.key);
-  clearPendingInvocation(scope);
-  return result;
+  return navigator.locks.request(`sandbar:invocation:${scope}`, async () => {
+    let attempt = readPending(scope);
+    if (attempt && attempt.intentHash !== intentHash) {
+      throw new Error(
+        "An earlier request may have been accepted. Retry its original inputs first, or explicitly start a new attempt with possible duplicate effects.",
+      );
+    }
+    if (!attempt) {
+      attempt = { key: newInvocationKey(), intentHash };
+      localStorage.setItem(storageKey(scope), JSON.stringify(attempt));
+    }
+    const result = await submit(attempt.key);
+    localStorage.removeItem(storageKey(scope));
+    return result;
+  });
 }
 
 export async function fileIntent(

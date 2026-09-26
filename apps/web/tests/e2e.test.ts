@@ -317,6 +317,53 @@ test("browser and public HTTP recover fake effects across service restarts witho
   const sandboxId = created.sandboxId as string;
   expect(sandboxId).toMatch(/^sb_/);
   await page.getByRole("link", { name: "Fleet" }).click();
+
+  const secondTab = await context.newPage();
+  await secondTab.goto(page.url());
+  for (const tab of [page, secondTab]) {
+    await tab.getByLabel("Label key (optional)").fill("team");
+    await tab.getByLabel("Label value").fill("concurrent");
+  }
+  let releaseHeldResponse!: () => void;
+  const heldResponse = new Promise<void>((resolve) => {
+    releaseHeldResponse = resolve;
+  });
+  let concurrentOperationId: string | undefined;
+  let holdConcurrentResponse = true;
+  await page.route("**/v1/projects/*/sandboxes", async (route) => {
+    if (route.request().method() !== "POST" || !holdConcurrentResponse) {
+      await route.continue();
+      return;
+    }
+    holdConcurrentResponse = false;
+    const accepted = await route.fetch();
+    const body = await accepted.json();
+    if (!body.operation)
+      throw new Error(
+        `Concurrent admission ${accepted.status()}: ${JSON.stringify(body)}`,
+      );
+    concurrentOperationId = body.operation.id;
+    await heldResponse;
+    await route.abort("failed");
+  });
+  const firstConcurrentClick = page
+    .getByRole("button", { name: "Create sandbox" })
+    .click();
+  await waitFor("held create response", async () => concurrentOperationId);
+  const secondConcurrentClick = secondTab
+    .getByRole("button", { name: "Create sandbox" })
+    .click();
+  await secondTab.waitForTimeout(150);
+  expect(new URL(secondTab.url()).pathname).toContain("/sandboxes");
+  await waitForEffect("create", 2);
+  releaseHeldResponse();
+  await Promise.all([firstConcurrentClick, secondConcurrentClick]);
+  await secondTab.waitForURL(/\/operations\//);
+  expect(new URL(secondTab.url()).pathname.split("/").at(-1)!).toBe(
+    concurrentOperationId!,
+  );
+  await secondTab.close();
+
   await page.getByLabel("State").selectOption("running");
   await page.getByLabel("Search").fill("no-such-label");
   await page.getByRole("heading", { name: "No sandboxes match" }).waitFor();
@@ -423,7 +470,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("button", { name: "Create sandbox" }).click();
   await page.waitForURL(/\/operations\//);
   const lostCreateId = new URL(page.url()).pathname.split("/").at(-1)!;
-  await waitForEffect("create", 2);
+  await waitForEffect("create", 3);
   await page
     .getByText("The provider may already have applied this action.")
     .waitFor();
@@ -445,7 +492,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   const execEntries = state.ledger.filter(
     (entry: { action: string }) => entry.action === "exec",
   );
-  expect(createEntries).toHaveLength(2);
+  expect(createEntries).toHaveLength(3);
   expect(execEntries).toHaveLength(2);
   for (const entry of [...createEntries, ...execEntries]) {
     expect(
@@ -459,7 +506,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
     state.resources.filter(
       (resource: { state: string }) => resource.state === "running",
     ),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
 
   await page.getByRole("link", { name: "Fleet" }).click();
   await page.getByRole("link", { name: sandboxId }).click();

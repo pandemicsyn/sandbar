@@ -41,6 +41,15 @@ This report records independent static reviews for the management UI and browser
 - Browser E2E drops an accepted exec response, reloads the page, uses the lookup to open the original operation, and verifies its ID and provider effect count.
 - Integration checkpoint: rebased onto control `b17cca30a9f730ad25aa8088a4e1741f18e947e7` and ran `bun run check && bun run build && bun run test` successfully (27 passed, 1 local MySQL skip, 0 failed, 1239 assertions). The browser test exercises the real lookup route. Contracts and control parent reviews are still in progress; final dependency rebase and independent web review remain required.
 
+## Round 4
+
+- Reviewer: independent subagent, `gpt-6-luna`, high reasoning; read-only.
+- Base: `b17cca30a9f730ad25aa8088a4e1741f18e947e7`.
+- Reviewed HEAD: `4dbb184b0b3d0bfe2c095d6ca8287bff494ff2aa`.
+- Finding: two tabs could race during invocation hashing and local-storage admission, mint different keys for the same effect scope, and lose one recovery identity.
+- Fix: hold a browser Web Lock per action scope while reading, storing, submitting, and clearing the invocation identity. An explicit reset also waits for the lock. Browsers without Web Locks fail before effect dispatch.
+- Validation: web check and build pass. A two-tab browser test exposed a control-session CSRF rotation issue; control is fixing that before final integrated validation and review.
+
 ## Final clearance
 
 Pending a fresh independent full-diff review after the final dependency rebase. No pull request will be created until a reviewer reports zero actionable findings on the unchanged final base and HEAD.

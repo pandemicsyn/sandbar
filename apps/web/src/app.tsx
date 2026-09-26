@@ -565,7 +565,7 @@ function FleetPage() {
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.id },
       });
-      clearPendingInvocation(createScope);
+      await clearPendingInvocation(createScope);
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -650,14 +650,18 @@ function FleetPage() {
             </span>
             <Button onClick={findCreate}>Find accepted operation</Button>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (
                   window.confirm(
                     "A prior request may have taken effect. Starting a new attempt can duplicate it. Continue?",
                   )
                 ) {
-                  clearPendingInvocation(createScope);
-                  setError(undefined);
+                  try {
+                    await clearPendingInvocation(createScope);
+                    setError(undefined);
+                  } catch (reason) {
+                    setError(errorText(reason));
+                  }
                 }
               }}
             >
@@ -922,7 +926,7 @@ function SandboxPage() {
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.id },
       });
-      clearPendingInvocation(scope);
+      await clearPendingInvocation(scope);
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -972,14 +976,18 @@ function SandboxPage() {
                 Find accepted operation
               </Button>
               <Button
-                onClick={() => {
+                onClick={async () => {
                   if (
                     window.confirm(
                       "A prior request may have taken effect. Starting a new attempt can duplicate it. Continue?",
                     )
                   ) {
-                    clearPendingInvocation(scope);
-                    setError(undefined);
+                    try {
+                      await clearPendingInvocation(scope);
+                      setError(undefined);
+                    } catch (reason) {
+                      setError(errorText(reason));
+                    }
                   }
                 }}
               >
