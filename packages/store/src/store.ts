@@ -79,6 +79,10 @@ export class ControlStore {
     const project = await tx.row(sql`SELECT id FROM projects WHERE id=${projectId}${suffix}`);
     if (!project) throw new StoreError("NOT_FOUND", "Project not found");
   }
+  private async lockOperation(tx: QueryConnection, operationId: string): Promise<OperationRow | undefined> {
+    const suffix = this.backend.dialect === "mysql" ? sql.raw(" FOR UPDATE") : sql.raw("");
+    return tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${operationId}${suffix}`);
+  }
   private async existingInvocation(tx: QueryConnection, projectId: string, endpoint: string, key: string, hash: string): Promise<Admission | undefined> {
     const prior = await tx.row<{ intent_hash: string; operation_id: string }>(sql`SELECT intent_hash,operation_id FROM invocation_keys WHERE project_id=${projectId} AND endpoint=${endpoint} AND ${sql.raw("`key`")}=${key}`);
     if (!prior) return undefined;
@@ -217,22 +221,24 @@ export class ControlStore {
   }
   async beginSubmission(claim: Claimed): Promise<boolean> {
     return this.backend.transaction(async tx => {
-      const op = await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${claim.operation.id}`);
+      const op = await this.lockOperation(tx, claim.operation.id);
       if (!op || op.lease_owner !== claim.operation.lease_owner || Number(op.lease_generation) !== claim.generation || Number(op.submission_possible)) return false;
       const time = now();
-      await tx.run(sql`UPDATE operations SET submission_possible=1,phase='submitted',effect='possible',request_json=${op.kind === "file_write" ? "{}" : op.request_json},updated_at=${time} WHERE id=${op.id}`);
+      const fileRequest = op.kind === "file_write" ? parseJson<{ path: string; overwrite: boolean; bytes: number }>(op.request_json) : undefined;
+      const retainedRequest = fileRequest ? JSON.stringify({ path: fileRequest.path, overwrite: fileRequest.overwrite, bytes: fileRequest.bytes }) : op.request_json;
+      await tx.run(sql`UPDATE operations SET submission_possible=1,phase='submitted',effect='possible',request_json=${retainedRequest},updated_at=${time} WHERE id=${op.id}`);
       await tx.run(sql`UPDATE operation_attempts SET status='submitted',submission_possible=1,submitted_at=${time} WHERE id=${claim.attemptId}`);
       return true;
     });
   }
-  async reschedule(claim: Claimed, phase: string, delayMs: number, errorCode?: string): Promise<void> {
+  async reschedule(claim: Claimed, phase: string, delayMs: number, errorCode?: string, knownPending = false): Promise<void> {
     await this.backend.transaction(async tx => {
       const time = now();
-      const op = await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${claim.operation.id}`);
+      const op = await this.lockOperation(tx, claim.operation.id);
       if (!op || Number(op.lease_generation) !== claim.generation || op.lease_owner !== claim.operation.lease_owner) return;
       const uncertain = !!Number(op.submission_possible);
-      await tx.run(sql`UPDATE operations SET status=${uncertain ? "unknown" : "queued"},phase=${phase},effect=${uncertain ? "possible" : "none"},lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=${time + delayMs},updated_at=${time} WHERE id=${op.id}`);
-      if (op.kind === "exec") await tx.run(sql`UPDATE executions SET status=${uncertain ? "unknown" : "queued"} WHERE operation_id=${op.id}`);
+      await tx.run(sql`UPDATE operations SET status=${knownPending ? "running" : uncertain ? "unknown" : "queued"},phase=${phase},effect=${uncertain ? "possible" : "none"},lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=${time + delayMs},updated_at=${time} WHERE id=${op.id}`);
+      if (op.kind === "exec") await tx.run(sql`UPDATE executions SET status=${knownPending ? "running" : uncertain ? "unknown" : "queued"} WHERE operation_id=${op.id}`);
       if (uncertain && op.kind === "create") await tx.run(sql`UPDATE sandboxes SET observed_state='unknown',observation_error=${errorCode ?? "OUTCOME_UNKNOWN"},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
       await tx.run(sql`UPDATE operation_attempts SET status=${uncertain ? "unknown" : "deferred"},completed_at=${time},error_code=${errorCode ?? null} WHERE id=${claim.attemptId}`);
     });
@@ -247,8 +253,10 @@ export class ControlStore {
 
   async complete(claim: Claimed, result: { effect: string; value: Record<string, unknown>; observedAt?: number; encryptedOutput?: string; outputBytes?: number; outputTruncated?: boolean }): Promise<void> {
     await this.backend.transaction(async tx => {
-      const op = await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${claim.operation.id}`);
+      const op = await this.lockOperation(tx, claim.operation.id);
       if (!op || Number(op.lease_generation) !== claim.generation || op.lease_owner !== claim.operation.lease_owner) return;
+      if (op.kind === "destroy" && (result.value as { observation?: { computeStopped?: boolean } }).observation?.computeStopped !== true) throw new StoreError("CONFLICT", "Cannot confirm destruction while compute may still be running");
+      if (op.kind === "exec" && (result.value as { observation?: { completed?: boolean } }).observation?.completed !== true) throw new StoreError("CONFLICT", "Cannot complete an execution before a terminal observation");
       const time = now(), observedAt = result.observedAt ?? time;
       await tx.run(sql`UPDATE operations SET status='succeeded',phase='completed',effect=${result.effect},request_json=${op.kind === "exec" || op.kind === "file_write" ? "{}" : op.request_json},result_json=${JSON.stringify(result.value)},error_json=NULL,lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,observed_at=${observedAt},updated_at=${time} WHERE id=${op.id}`);
       await tx.run(sql`UPDATE operation_attempts SET status='completed',completed_at=${time} WHERE id=${claim.attemptId}`);
@@ -274,7 +282,7 @@ export class ControlStore {
   }
   async failWithoutEffect(claim: Claimed, error: Record<string, unknown>, certifiedNoEffect = false): Promise<void> {
     await this.backend.transaction(async tx => {
-      const op = await tx.row<OperationRow>(sql`SELECT * FROM operations WHERE id=${claim.operation.id}`);
+      const op = await this.lockOperation(tx, claim.operation.id);
       if (!op || Number(op.lease_generation) !== claim.generation || op.lease_owner !== claim.operation.lease_owner) return;
       if (Number(op.submission_possible) && !certifiedNoEffect) throw new StoreError("CONFLICT", "Cannot mark a possibly submitted operation effect-free");
       const time = now();
@@ -283,6 +291,7 @@ export class ControlStore {
       await tx.run(sql`UPDATE reservations SET state='released',released_at=${time} WHERE operation_id=${op.id}`);
       if (op.kind === "exec") await tx.run(sql`UPDATE executions SET status='completed',output_state='not_captured',completed_at=${time} WHERE operation_id=${op.id}`);
       if (op.kind === "create") await tx.run(sql`UPDATE sandboxes SET observed_state='unknown',observation_error=${String(error.code ?? "CREATE_REJECTED")},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
+      if (op.kind === "destroy") await tx.run(sql`UPDATE sandboxes SET desired_state='running',observed_state='running',observation_error=${String(error.code ?? "DESTROY_REJECTED")},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
       await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${op.project_id},${op.sandbox_id},${op.id},'operation.rejected',${JSON.stringify({ code: error.code })},NULL,NULL,${time})`);
     });
   }

@@ -62,7 +62,7 @@ function opDto(row: OperationRow) {
     updatedAt: new Date(Number(row.updated_at)).toISOString(), effect: row.effect,
     ...(row.error_json ? { error: JSON.parse(row.error_json) } : {}),
     ...(result ? { result } : {}),
-    recovery: row.status === "unknown" ? ["check_again", "inspect_candidates", "acknowledge", "run_again"] : [],
+    recovery: row.status === "unknown" ? ["check_again"] : [],
   });
 }
 function connectionDto(row: ConnectionRow) {

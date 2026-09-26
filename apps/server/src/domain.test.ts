@@ -44,6 +44,7 @@ test("API persists ambiguous create and exec, then observes each once after rest
     await control("/_test/seed", { submissionId: op!.provider_token, action: "create", behavior: "lost_after_effect" });
     await runtime.runner.tick();
     expect((await runtime.store.getOperation(project.id, opId))?.status).toBe("unknown");
+    expect((await json(`/v1/projects/${project.id}/operations/${opId}`, "GET", undefined, bearer)).value.recovery).toEqual(["check_again"]);
     await runtime.close();
     runtime = await openDomainRuntime(config);
     expect((await json(`/v1/projects/${project.id}/operations/${opId}/reconcile`, "POST", {}, bearer)).response.status).toBe(200);

@@ -95,6 +95,12 @@ export class DurableRunner {
     if (!box.native_id) throw new Error("Native identity unavailable");
     return { scope, nativeId: box.native_id, kind: "sandbox" };
   }
+  private sameScope(actual: NativeScope, expected: NativeScope): boolean {
+    return actual.provider === expected.provider && actual.connectionId === expected.connectionId && actual.accountId === expected.accountId && actual.region === expected.region;
+  }
+  private sameRef(actual: NativeRef, expected: NativeRef): boolean {
+    return actual.kind === expected.kind && actual.nativeId === expected.nativeId && this.sameScope(actual.scope, expected.scope);
+  }
   private async handleResult(claim: Claimed, result: DriverResult, scope: NativeScope): Promise<void> {
     const { store, secrets } = this.options;
     if (result.status === "pending") { await store.reschedule(claim, "awaiting_observation", Math.max(500, result.observeAfterMs)); return; }
@@ -106,9 +112,20 @@ export class DurableRunner {
     }
     const value = result.value;
     if ((claim.operation.kind === "create" && value.kind !== "sandbox") || (claim.operation.kind === "exec" && value.kind !== "execution") || (claim.operation.kind === "destroy" && value.kind !== "destroy") || (claim.operation.kind === "file_write" && value.kind !== "file_write")) throw new Error("Provider result kind mismatch");
-    if (value.kind === "sandbox" && (value.observation.ref.scope.connectionId !== scope.connectionId || value.observation.ref.scope.accountId !== scope.accountId)) throw new Error("Provider result scope mismatch");
+    const box = await store.getSandbox(claim.operation.project_id, claim.operation.sandbox_id);
+    if (!box) throw new Error("Sandbox identity missing");
+    if (value.kind === "sandbox" && (value.observation.ref.kind !== "sandbox" || !this.sameScope(value.observation.ref.scope, scope))) throw new Error("Provider result scope mismatch");
+    if (value.kind === "destroy") {
+      if (!this.sameRef(value.observation.sandbox, this.ref(scope, box))) throw new Error("Destroy target mismatch");
+      if (!value.observation.computeStopped) { await store.reschedule(claim, "cleanup_unconfirmed", 5_000, "COMPUTE_NOT_STOPPED"); return; }
+    }
+    if (value.kind === "file_write") {
+      const request = JSON.parse(claim.operation.request_json) as { path: string; bytes: number };
+      if (!this.sameRef(value.observation.sandbox, this.ref(scope, box)) || value.observation.path !== request.path || value.observation.bytesWritten > request.bytes) throw new Error("File write receipt mismatch");
+    }
     if (value.kind === "execution") {
-      if (value.observation.sandbox.scope.connectionId !== scope.connectionId) throw new Error("Execution scope mismatch");
+      if (!this.sameRef(value.observation.sandbox, this.ref(scope, box)) || value.observation.ref.kind !== "execution" || !this.sameScope(value.observation.ref.scope, scope)) throw new Error("Execution identity mismatch");
+      if (!value.observation.completed) { await store.reschedule(claim, "execution_running", 1_000, undefined, true); return; }
       const output = this.captureOutput(value.observation.stdoutBase64, value.observation.stderrBase64, claim.operation);
       const encryptedOutput = output.bytes ? await secrets.seal("execution-output", claim.operation.execution_id!, JSON.stringify(output.payload)) : undefined;
       const { stdoutBase64: _stdout, stderrBase64: _stderr, ...safeObservation } = value.observation;

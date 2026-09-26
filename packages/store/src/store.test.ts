@@ -41,4 +41,25 @@ for (const dialect of (["sqlite", ...(process.env.SANDBAR_TEST_MYSQL_URL ? ["mys
       expect(await store.beginSubmission(second)).toBe(false);
     } finally { await store.close(); }
   });
+
+  test("definitive destroy rejection reopens cleanup; unconfirmed stop never certifies deletion", async () => {
+    const { store, project } = await fixture(dialect);
+    try {
+      const created = await store.admitCreate({ projectId: project.id, endpoint: "POST /sandboxes", key: Bun.randomUUIDv7(), intentHash: "create", request: { environment: { kind: "prepared", imageId: "fake-starter" } } });
+      const createClaim = (await store.claimDue("create", 1000, project.id))!;
+      await store.beginSubmission(createClaim);
+      await store.complete(createClaim, { effect: "applied", value: { kind: "sandbox", observation: { ref: { nativeId: `native_${crypto.randomUUID()}` }, state: "running" } } });
+      const destroy = await store.admitDestroy({ projectId: project.id, sandboxId: created.sandbox.id, endpoint: `DELETE /sandboxes/${created.sandbox.id}`, key: Bun.randomUUIDv7(), intentHash: "destroy" });
+      const destroyClaim = (await store.claimDue("destroy", 1000, project.id))!;
+      await store.beginSubmission(destroyClaim);
+      await store.failWithoutEffect(destroyClaim, { code: "CAPACITY", message: "Definitively rejected", effect: "none", retry: "never" }, true);
+      expect((await store.getSandbox(project.id, created.sandbox.id))?.desired_state).toBe("running");
+      const retry = await store.admitDestroy({ projectId: project.id, sandboxId: created.sandbox.id, endpoint: `DELETE /sandboxes/${created.sandbox.id}`, key: Bun.randomUUIDv7(), intentHash: "destroy" });
+      expect(retry.operation.id).not.toBe(destroy.operation.id);
+      const retryClaim = (await store.claimDue("destroy-retry", 1000, project.id))!;
+      await store.beginSubmission(retryClaim);
+      await expect(store.complete(retryClaim, { effect: "partial", value: { kind: "destroy", observation: { computeStopped: false, retainedResources: [] } } })).rejects.toMatchObject({ code: "CONFLICT" });
+      expect((await store.getSandbox(project.id, created.sandbox.id))?.observed_state).not.toBe("destroyed");
+    } finally { await store.close(); }
+  });
 });

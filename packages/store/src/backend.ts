@@ -47,28 +47,35 @@ function sqliteBackend(native: Database, lock?: { path: string; fd: number }): B
   native.exec("PRAGMA busy_timeout = 5000");
   const db = drizzleSqlite({ client: native });
   let tail: Promise<unknown> = Promise.resolve();
-  const connection: QueryConnection = {
+  const direct: QueryConnection = {
     rows: async <T>(query: SQL) => db.all<T>(query),
     row: async <T>(query: SQL) => db.get<T>(query),
     run: async (query: SQL) => { db.run(query); },
   };
+  async function exclusive<T>(work: () => Promise<T>): Promise<T> {
+    let release!: () => void;
+    const previous = tail;
+    tail = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try { return await work(); }
+    finally { release(); }
+  }
+  const connection: QueryConnection = {
+    rows: <T>(query: SQL) => exclusive(() => direct.rows<T>(query)),
+    row: <T>(query: SQL) => exclusive(() => direct.row<T>(query)),
+    run: (query: SQL) => exclusive(() => direct.run(query)),
+  };
   return {
     dialect: "sqlite", ...connection,
-    transaction: async <T>(work: (tx: QueryConnection) => Promise<T>): Promise<T> => {
-      let release!: () => void;
-      const previous = tail;
-      tail = new Promise<void>(resolve => { release = resolve; });
-      await previous;
+    transaction: <T>(work: (tx: QueryConnection) => Promise<T>): Promise<T> => exclusive(async () => {
       native.exec("BEGIN IMMEDIATE");
-      try { const value = await work(connection); native.exec("COMMIT"); return value; }
+      try { const value = await work(direct); native.exec("COMMIT"); return value; }
       catch (error) { native.exec("ROLLBACK"); throw error; }
-      finally { release(); }
-    },
-    close: async () => {
-      await tail;
+    }),
+    close: () => exclusive(async () => {
       native.close();
       if (lock) { closeSync(lock.fd); unlinkSync(lock.path); }
-    },
+    }),
   };
 }
 
