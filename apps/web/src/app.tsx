@@ -30,6 +30,12 @@ import {
   PageHead,
   StatusBadge,
 } from "./components";
+import {
+  clearPendingInvocation,
+  fileIntent,
+  hasPendingInvocation,
+  withInvocation,
+} from "./invocations";
 
 function errorText(error: unknown): string {
   return error instanceof Error
@@ -518,6 +524,7 @@ function FleetPage() {
   const [labelValue, setLabelValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const createScope = `create:${projectId}`;
   const available =
     connections.data?.items.filter((c) => c.status === "verified") ?? [];
   async function create(event: FormEvent) {
@@ -525,14 +532,17 @@ function FleetPage() {
     setBusy(true);
     setError(undefined);
     try {
-      const accepted = await api.createSandbox(projectId, {
-        environment: { kind: "prepared", imageId: "fake-starter" },
-        network: { policy: "blocked" },
+      const input = {
+        environment: { kind: "prepared" as const, imageId: "fake-starter" },
+        network: { policy: "blocked" as const },
         connectionId: connectionId || available[0]?.id,
         ...(labelKey.trim()
           ? { labels: { [labelKey.trim()]: labelValue.trim() } }
           : {}),
-      });
+      };
+      const accepted = await withInvocation(createScope, input, (key) =>
+        api.createSandbox(projectId, input, key),
+      );
       await navigate({
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.operation.id },
@@ -614,6 +624,27 @@ function FleetPage() {
           </form>
         )}
         {error && <Notice tone="error">{error}</Notice>}
+        {!busy && hasPendingInvocation(createScope) && (
+          <div className="actions" style={{ marginTop: 12 }}>
+            <span className="field-hint">
+              Retry the same inputs to recover this request.
+            </span>
+            <Button
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "A prior request may have taken effect. Starting a new attempt can duplicate it. Continue?",
+                  )
+                ) {
+                  clearPendingInvocation(createScope);
+                  setError(undefined);
+                }
+              }}
+            >
+              Start new attempt
+            </Button>
+          </div>
+        )}
       </section>
       <section style={{ marginTop: 28 }}>
         <div className="page-head">
@@ -761,15 +792,21 @@ function SandboxPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const execScope = `exec:${projectId}:${sandboxId}`;
+  const destroyScope = `destroy:${projectId}:${sandboxId}`;
+  const fileScope = `file_write:${projectId}:${sandboxId}`;
   async function run(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
     try {
-      const accepted = await api.execute(projectId, sandboxId, {
-        command: { kind: "shell", script: command },
-        output: { capture: "bounded", maxBytes: 65536 },
-      });
+      const input = {
+        command: { kind: "shell" as const, script: command },
+        output: { capture: "bounded" as const, maxBytes: 65536 },
+      };
+      const accepted = await withInvocation(execScope, input, (key) =>
+        api.execute(projectId, sandboxId, input, key),
+      );
       await navigate({
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.operation.id },
@@ -790,7 +827,11 @@ function SandboxPage() {
     setBusy(true);
     setError(undefined);
     try {
-      const accepted = await api.destroySandbox(projectId, sandboxId);
+      const accepted = await withInvocation(
+        destroyScope,
+        { projectId, sandboxId },
+        (key) => api.destroySandbox(projectId, sandboxId, key),
+      );
       await navigate({
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.operation.id },
@@ -813,7 +854,10 @@ function SandboxPage() {
     setNotice(undefined);
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const result = await api.writeFile(projectId, sandboxId, path, bytes);
+      const intent = await fileIntent(path, bytes);
+      const result = await withInvocation(fileScope, intent, (key) =>
+        api.writeFile(projectId, sandboxId, path, bytes, key),
+      );
       setFile(undefined);
       if ("operation" in result)
         await navigate({
@@ -869,6 +913,31 @@ function SandboxPage() {
         }
       />
       {error && <Notice tone="error">{error}</Notice>}
+      {!busy &&
+        [execScope, destroyScope, fileScope]
+          .filter(hasPendingInvocation)
+          .map((scope) => (
+            <div className="actions" key={scope} style={{ marginTop: 12 }}>
+              <span className="field-hint">
+                {scope.split(":")[0]}: retry the same inputs to recover this
+                request.
+              </span>
+              <Button
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "A prior request may have taken effect. Starting a new attempt can duplicate it. Continue?",
+                    )
+                  ) {
+                    clearPendingInvocation(scope);
+                    setError(undefined);
+                  }
+                }}
+              >
+                Start new attempt
+              </Button>
+            </div>
+          ))}
       {notice && <Notice>{notice}</Notice>}
       {sandbox.observedState === "unknown" && (
         <Notice tone="warning">

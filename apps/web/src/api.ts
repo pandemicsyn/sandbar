@@ -88,7 +88,7 @@ async function request<T>(
 const json = (value: unknown) => JSON.stringify(value);
 const base = (projectId: string) =>
   `/v1/projects/${encodeURIComponent(projectId)}`;
-function key(): string {
+export function newInvocationKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   const millis = Date.now();
   for (let i = 0; i < 6; i++)
@@ -170,29 +170,35 @@ export const api = {
   createSandbox: (
     projectId: string,
     input: z.infer<typeof CreateSandboxRequest>,
+    invocationKey: string,
   ) =>
     request(`${base(projectId)}/sandboxes`, AcceptedOperation, {
       method: "POST",
-      headers: { "Idempotency-Key": key() },
+      headers: { "Idempotency-Key": invocationKey },
       body: json(CreateSandboxRequest.parse(input)),
     }),
-  destroySandbox: (projectId: string, sandboxId: string) =>
+  destroySandbox: (
+    projectId: string,
+    sandboxId: string,
+    invocationKey: string,
+  ) =>
     request(
       `${base(projectId)}/sandboxes/${encodeURIComponent(sandboxId)}`,
       AcceptedOperation,
-      { method: "DELETE", headers: { "Idempotency-Key": key() } },
+      { method: "DELETE", headers: { "Idempotency-Key": invocationKey } },
     ),
   execute: (
     projectId: string,
     sandboxId: string,
     input: z.infer<typeof ExecRequest>,
+    invocationKey: string,
   ) =>
     request(
       `${base(projectId)}/sandboxes/${encodeURIComponent(sandboxId)}/executions`,
       AcceptedExecution,
       {
         method: "POST",
-        headers: { "Idempotency-Key": key() },
+        headers: { "Idempotency-Key": invocationKey },
         body: json(ExecRequest.parse(input)),
       },
     ),
@@ -229,6 +235,7 @@ export const api = {
     sandboxId: string,
     path: string,
     bytes: Uint8Array,
+    invocationKey: string,
   ) =>
     request(
       `${base(projectId)}/sandboxes/${encodeURIComponent(sandboxId)}/files?path=${encodeURIComponent(path)}`,
@@ -237,7 +244,7 @@ export const api = {
         method: "PUT",
         headers: {
           "Content-Type": "application/octet-stream",
-          "Idempotency-Key": key(),
+          "Idempotency-Key": invocationKey,
         },
         body: bytes as BodyInit,
       },

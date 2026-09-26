@@ -271,9 +271,41 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByLabel("Label key (optional)").fill("team");
   await page.getByLabel("Label value").fill("e2e");
 
+  let firstCreateOperationId: string | undefined;
+  let dropFirstCreateResponse = true;
+  await page.route("**/v1/projects/*/sandboxes", async (route) => {
+    if (route.request().method() !== "POST" || !dropFirstCreateResponse) {
+      await route.continue();
+      return;
+    }
+    dropFirstCreateResponse = false;
+    const accepted = await route.fetch();
+    firstCreateOperationId = (await accepted.json()).operation.id;
+    await route.abort("failed");
+  });
+  await page.getByRole("button", { name: "Create sandbox" }).click();
+  await page
+    .getByText("Retry the same inputs to recover this request.")
+    .waitFor();
+  await waitForEffect("create", 1);
+  await page.getByLabel("Label value").fill("changed");
+  await page.getByRole("button", { name: "Create sandbox" }).click();
+  await page
+    .getByText("An earlier request may have been accepted.", { exact: false })
+    .waitFor();
+  expect(
+    (await control("GET", "/_test/state")).ledger.filter(
+      (entry: { action: string }) => entry.action === "create",
+    ),
+  ).toHaveLength(1);
+  await page.getByRole("link", { name: "Connections" }).click();
+  await page.getByRole("link", { name: "Fleet" }).click();
+  await page.getByLabel("Label key (optional)").fill("team");
+  await page.getByLabel("Label value").fill("e2e");
   await page.getByRole("button", { name: "Create sandbox" }).click();
   await page.waitForURL(/\/operations\//);
   const createId = new URL(page.url()).pathname.split("/").at(-1)!;
+  expect(createId).toBe(firstCreateOperationId!);
   const created = await waitForOperation(projectId, createId, "succeeded");
   const sandboxId = created.sandboxId as string;
   expect(sandboxId).toMatch(/^sb_/);
