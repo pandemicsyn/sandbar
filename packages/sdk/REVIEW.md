@@ -120,3 +120,13 @@ Final independent complete-diff review of the resulting HEAD remains pending.
 - Validation after fixes: focused SDK tests 19/19 passed; `bun run check` passed; full `bun run test` passed 62 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 12 is **not** a zero-finding clearance.
 
 Final independent complete-diff review of this resulting HEAD remains pending.
+
+## Round 13
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `9d416784ec12f5819ec245d62fdbe5dd490a09a3`.
+- One actionable finding: an oversized file response with a declared `Content-Length` was rejected without cancelling its unread body. Remote reads now cancel the body on early content-type, length-validation, and declared-overflow rejection. A regression exercises both declared and streamed overflow and verifies cancellation.
+- Validation after fix: `bun run check` passed; full `bun run test` passed 62 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 13 is **not** a zero-finding clearance.
+
+Final independent complete-diff review of this resulting HEAD remains pending.

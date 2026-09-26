@@ -73,10 +73,19 @@ class RemoteSandbox implements SandboxHandle {
     const url = `sandboxes/${encodeURIComponent(this.id)}/files?path=${encodeURIComponent(path)}`;
     const response = await this.client.raw(url, { method: "GET" });
     if (!response.ok) await this.client.throwResponse(response);
-    if (response.headers.get("content-type")?.split(";")[0] !== "application/octet-stream") throw new SandbarError("INVALID_RESPONSE", "Expected binary file response", "unknown");
+    if (response.headers.get("content-type")?.split(";")[0] !== "application/octet-stream") {
+      await response.body?.cancel().catch(() => undefined);
+      throw new SandbarError("INVALID_RESPONSE", "Expected binary file response", "unknown");
+    }
     const declared = response.headers.get("content-length");
-    if (declared !== null && (!/^(0|[1-9][0-9]*)$/.test(declared) || !Number.isSafeInteger(Number(declared)))) throw new SandbarError("INVALID_RESPONSE", "Invalid file length", "unknown");
-    if (declared !== null && Number(declared) > 1_048_576) throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK read limit", "unknown");
+    if (declared !== null && (!/^(0|[1-9][0-9]*)$/.test(declared) || !Number.isSafeInteger(Number(declared)))) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new SandbarError("INVALID_RESPONSE", "Invalid file length", "unknown");
+    }
+    if (declared !== null && Number(declared) > 1_048_576) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK read limit", "unknown");
+    }
     const reader = response.body?.getReader();
     if (!reader) {
       if (declared !== null && Number(declared) !== 0) throw new SandbarError("INVALID_RESPONSE", "File response is incomplete", "unknown");

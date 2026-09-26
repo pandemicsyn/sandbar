@@ -239,23 +239,27 @@ test("remote create rejects disagreement between operation and result sandbox ID
 test("remote file reads stop at the SDK limit and cancel the response stream", async () => {
   const projectId = "project_1";
   const operation = { id: "op_1", projectId, kind: "create", sandboxId: "box_1", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "create", sandboxId: "box_1" } };
-  let cancelled = false;
-  const stream = new ReadableStream<Uint8Array>({
+  let cancelled = 0;
+  let declaredLength = false;
+  const stream = () => new ReadableStream<Uint8Array>({
     start(controller) { controller.enqueue(new Uint8Array(600_000)); controller.enqueue(new Uint8Array(600_000)); },
-    cancel() { cancelled = true; }
+    cancel() { cancelled++; }
   });
   const fetcher: typeof fetch = async (url, init) => {
     const path = new URL(String(url)).pathname;
     if (init?.method === "POST") return Response.json({ operation }, { status: 202 });
     if (path.includes("/invocations/")) return Response.json(operation);
     if (path.endsWith("/sandboxes/box_1")) return Response.json({ id: "box_1", projectId, connectionId: "conn_1", desiredState: "running", observedState: "running", revision: 1, environment: { kind: "prepared", imageId: "fake-starter" }, network: { policy: "blocked" }, labels: {} });
-    if (path.endsWith("/files")) return new Response(stream, { headers: { "content-type": "application/octet-stream" } });
+    if (path.endsWith("/files")) return new Response(stream(), { headers: { "content-type": "application/octet-stream", ...(declaredLength ? { "content-length": "1200000" } : {}) } });
     throw new Error(`Unexpected path: ${path}`);
   };
   const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
   const box = await client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") });
   await expect(box.readFile("/large")).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
-  expect(cancelled).toBe(true);
+  expect(cancelled).toBe(1);
+  declaredLength = true;
+  await expect(box.readFile("/large")).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
+  expect(cancelled).toBe(2);
 });
 
 test("remote close after service admission preserves the invocation reference", async () => {
