@@ -302,6 +302,18 @@ test("browser and public HTTP recover fake effects across service restarts witho
 
   await page.getByRole("link", { name: sandboxId }).click();
   await page.getByLabel("Local file").setInputFiles({
+    name: "too-large.bin",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(1_048_577),
+  });
+  await page.getByRole("button", { name: "Upload file" }).click();
+  await page.getByText("Choose a file of 1 MiB or less.").waitFor();
+  expect(
+    (await control("GET", "/_test/state")).ledger.filter(
+      (entry: { action: string }) => entry.action === "file_write",
+    ),
+  ).toHaveLength(0);
+  await page.getByLabel("Local file").setInputFiles({
     name: "sample.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("persisted virtual file"),

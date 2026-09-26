@@ -49,29 +49,35 @@ function age(timestamp?: string): string {
 }
 
 function useResource<T>(load: () => Promise<T>, dependency: string) {
-  const [data, setData] = useState<T>();
-  const [error, setError] = useState<string>();
-  const [loading, setLoading] = useState(true);
+  const [state, setState] = useState<{
+    key: string;
+    data?: T;
+    error?: string;
+    loading: boolean;
+  }>({ key: dependency, loading: true });
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setError(undefined);
+    setState({ key: dependency, loading: true });
     load()
       .then((value) => {
-        if (alive) setData(value);
+        if (alive) setState({ key: dependency, data: value, loading: false });
       })
       .catch((reason) => {
-        if (alive) setError(errorText(reason));
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
+        if (alive)
+          setState({
+            key: dependency,
+            error: errorText(reason),
+            loading: false,
+          });
       });
     return () => {
       alive = false;
     };
   }, [dependency, revision]);
-  return { data, error, loading, refresh: () => setRevision((n) => n + 1) };
+  const current =
+    state.key === dependency ? state : { key: dependency, loading: true };
+  return { ...current, refresh: () => setRevision((n) => n + 1) };
 }
 
 function AuthGate() {
@@ -260,7 +266,7 @@ function ProjectsPage() {
     }
   }
   return (
-    <div className="content project-picker">
+    <main className="content project-picker" id="main-content">
       <PageHead
         title="Projects"
         subtitle="Choose a project to manage its connections and sandboxes."
@@ -336,7 +342,7 @@ function ProjectsPage() {
           </div>
         </form>
       </section>
-    </div>
+    </main>
   );
 }
 
@@ -798,6 +804,10 @@ function SandboxPage() {
   async function upload(event: FormEvent) {
     event.preventDefault();
     if (!file) return;
+    if (file.size > 1_048_576) {
+      setError("Choose a file of 1 MiB or less.");
+      return;
+    }
     setBusy(true);
     setError(undefined);
     setNotice(undefined);
@@ -953,7 +963,11 @@ function SandboxPage() {
                   onChange={(e) => setPath(e.target.value)}
                 />
               </Field>
-              <Field label="Local file" htmlFor="file-upload">
+              <Field
+                label="Local file"
+                hint="Maximum 1 MiB."
+                htmlFor="file-upload"
+              >
                 <input
                   id="file-upload"
                   type="file"

@@ -23,6 +23,7 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install Chromium
         run: bunx playwright install --with-deps chromium
+        working-directory: apps/web
       - name: Lint
         run: bun run lint
       - name: Check formatting
