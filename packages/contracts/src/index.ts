@@ -76,6 +76,27 @@ export const Execution = z.object({
 export const AcceptedExecution = z.object({ operation: Operation, execution: Execution });
 export const FileReceipt = z.object({ path: z.string(), bytesWritten: z.number().int().nonnegative(), complete: z.boolean(), effect: Effect });
 export const FileReadHeaders = z.object({ contentType: z.literal("application/octet-stream"), contentLength: z.number().int().nonnegative() });
+export const SetupRequest = z.strictObject({ setupToken: z.string().min(1).max(512) });
+export const SessionRequest = z.strictObject({ token: z.string().min(1).max(512) });
+export const SessionResponse = z.object({ operatorId: Id, csrfToken: z.string().min(1), token: z.string().optional() });
+export const CreateProjectRequest = z.strictObject({ name: z.string().min(1).max(120) });
+export const Project = z.object({ id: Id, name: z.string(), createdAt: Rfc3339 });
+export const ProjectPage = z.object({ items: z.array(Project) });
+export const CreateProviderConnectionRequest = z.strictObject({
+  provider: z.literal("fake"), name: z.string().min(1).max(120),
+  // A fake connection has no vendor secret. URL/token are service configuration, not public API fields.
+});
+export const ProviderConnection = z.object({
+  id: Id, projectId: Id, provider: z.literal("fake"), name: z.string(),
+  status: z.enum(["unverified", "verified", "draining"]),
+  nativeScope: z.object({ accountId: z.string(), region: z.string().optional() }).optional(),
+  capabilities: z.object({ create: z.boolean(), exec: z.boolean(), files: z.boolean(), destroy: z.boolean() }).optional(),
+});
+export const ProviderConnectionPage = z.object({ items: z.array(ProviderConnection) });
+export const SandboxListQuery = z.strictObject({
+  cursor: z.string().max(256).optional(), limit: z.number().int().min(1).max(100).optional(),
+  connectionId: Id.optional(), state: z.enum(["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"]).optional(),
+});
 export const StreamFrame = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("stdout"), executionId: Id, sequence: z.number().int().nonnegative(), bytesBase64: z.base64() }),
   z.object({ kind: z.literal("stderr"), executionId: Id, sequence: z.number().int().nonnegative(), bytesBase64: z.base64() }),
@@ -88,10 +109,16 @@ export type Operation = z.infer<typeof Operation>;
 export type Sandbox = z.infer<typeof Sandbox>;
 export type Execution = z.infer<typeof Execution>;
 export type SafeError = z.infer<typeof SafeError>;
+export type ExecCommand = z.infer<typeof ExecCommand>;
+export type Project = z.infer<typeof Project>;
+export type ProviderConnection = z.infer<typeof ProviderConnection>;
 
 // Stable cross-language intent serialization. Omitted keys stay omitted; explicit nulls stay explicit.
 export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
+  if (typeof value !== "object") throw new TypeError("Intent must be JSON-compatible");
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   return `{${Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
 }
