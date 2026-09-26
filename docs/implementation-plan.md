@@ -17,7 +17,7 @@ Recommendations and numeric defaults remain proposals. Provider documentation in
 
 ## Immediate next wave: direct TypeScript SDK
 
-The service is now optional for TypeScript callers. Implement the accepted [direct SDK design](direct-typescript-sdk.md) before expanding real-provider integrations. Preserve reviewed PRs #1–#4 and stack three focused changes after #4: portable semantic-core extraction, ergonomic direct/HTTP SDK backends, then Node/Bun package and parity qualification. The first integration uses the existing independent fake provider. All new PRs retain the mandatory independent Luna/high review-to-zero gate.
+Make the service optional for TypeScript callers by implementing the accepted [direct SDK design](direct-typescript-sdk.md) before expanding real-provider integrations. Preserve reviewed PRs #1–#4 and stack three focused changes after #4: portable semantic-core extraction, ergonomic direct/HTTP SDK backends, then Node/Bun package and parity qualification. The first integration uses the existing independent fake provider. All new PRs retain the mandatory independent Luna/high review-to-zero gate.
 
 Direct mode requires no Hono, Drizzle, database, hidden service or synthetic project setup. Share resource semantics while distinguishing process-lifetime recovery from service durability. Keep administration and central fleet/quota/accounting features on the service. Rust/Python remain first-class remote targets. Package publication and real/paid provider use are separate later actions.
 

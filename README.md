@@ -2,7 +2,7 @@
 
 Sandbar is a provider-neutral API for creating, controlling, and observing sandboxes across Daytona, E2B, Modal, Tensorlake, and future providers.
 
-Sandbar supports direct TypeScript provider access and an optional self-hosted service with a management UI for provider credentials, fleet control, environments, policies, and accounting visibility. TypeScript, Rust, and Python are first-class remote SDK targets; TypeScript also has first-class direct mode.
+Sandbar's target design includes direct TypeScript provider access and an optional self-hosted service with a management UI for provider credentials, fleet control, environments, policies, and accounting visibility. TypeScript, Rust, and Python are first-class remote SDK targets; TypeScript also has a planned direct mode.
 
 The selected architecture is a Bun/Hono TypeScript service with Drizzle, SQLite by default and a tested MySQL option. The management UI uses Vite, React, TanStack Router and Tailwind. Zod 4 validates public contracts and IO boundaries. Drizzle ORM and Kit target the verified `beta` tag, currently `1.0.0-beta.22`, pinned exactly at scaffolding.
 
