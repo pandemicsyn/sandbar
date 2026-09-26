@@ -17,9 +17,14 @@ function identity(): InvocationIdentity {
 class DirectOperation<T> implements OperationHandle<T> {
   readonly durability = "process" as const;
   private first?: DriverResult;
+  private settled?: { value: T } | { error: unknown };
   constructor(readonly reference: RecoveryReference, private readonly client: DirectClient, private readonly decode: (result: DriverResult) => T, first?: DriverResult) { this.first = first; }
   async observe(): Promise<T | null> {
     this.client.ensureOpen();
+    if (this.settled) {
+      if ("error" in this.settled) throw this.settled.error;
+      return this.settled.value;
+    }
     const raw = this.first ?? await this.client.driver.observe({ scope: this.reference.scope!, submissionId: this.reference.submissionId! });
     this.client.ensureOpen();
     this.first = undefined;
@@ -28,10 +33,21 @@ class DirectOperation<T> implements OperationHandle<T> {
     try {
       result = correlateDriverResult(raw, { submissionId: this.reference.submissionId!, kind: this.reference.kind, scope: this.reference.scope!, sandbox: this.reference.sandbox, file: this.reference.file });
     } catch { throw new OutcomeUnknownError(this.reference, "Provider result failed identity or scope validation; observe without replay"); }
-    if (result.status === "rejected") throw new SandbarError(result.error.code.toUpperCase(), result.error.message, "none");
+    if (result.status === "rejected") {
+      const error = new SandbarError(result.error.code.toUpperCase(), result.error.message, "none");
+      this.settled = { error };
+      throw error;
+    }
     if (result.status === "unknown") throw new OutcomeUnknownError(this.reference);
     if (result.status !== "completed") return null;
-    return this.decode(result);
+    try {
+      const value = this.decode(result);
+      this.settled = { value };
+      return value;
+    } catch (error) {
+      this.settled = { error };
+      throw error;
+    }
   }
   async wait(options: { signal?: AbortSignal; pollMs?: number } = {}): Promise<T> {
     const pollMs = options.pollMs ?? 500;
@@ -147,11 +163,11 @@ export class DirectClient implements SandbarClient {
   async submitCreate(input: CreateInput, options: { signal?: AbortSignal; onDispatch?: (reference: RecoveryReference) => void } = {}): Promise<OperationHandle<SandboxHandle>> {
     this.ensureOpen();
     throwIfAborted(options.signal);
-    await this.verified();
+    await awaitSubmission(this.verified(), this.closedSignal, options.signal, () => undefined);
     this.ensureOpen();
     throwIfAborted(options.signal);
     const request = normalizeCreate({ environment: input.environment.kind === "prepared" ? { kind: "prepared", imageId: input.environment.value } : { kind: "oci", reference: input.environment.value }, region: input.region, network: { policy: input.networkPolicy ?? "blocked" }, labels: input.labels });
-    const preparation = await this.driver.prepare({ scope: this.scope, image: request.image, networkPolicy: request.networkPolicy, region: request.region });
+    const preparation = await awaitSubmission(this.driver.prepare({ scope: this.scope, image: request.image, networkPolicy: request.networkPolicy, region: request.region }), this.closedSignal, options.signal, () => undefined);
     this.ensureOpen();
     throwIfAborted(options.signal);
     if (!preparation.supported || !preparation.effectiveImage) throw new SandbarError("UNSUPPORTED", preparation.reason ?? "Provider cannot prepare image");

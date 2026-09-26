@@ -160,6 +160,42 @@ test("direct abort during image preparation does not dispatch create", async () 
   expect(creates).toBe(0);
 });
 
+test("direct submitCreate aborts stalled preflight before dispatch", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const capabilities = provider.driver.capabilities.bind(provider.driver);
+  const create = provider.driver.create.bind(provider.driver);
+  let entered!: () => void, release!: () => void;
+  const checking = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let creates = 0;
+  provider.driver.capabilities = async scope => { entered(); await gate; return capabilities(scope); };
+  provider.driver.create = async input => { creates++; return create(input); };
+  const client = DirectSandbar.direct({ provider });
+  const controller = new AbortController();
+  const reason = new Error("stop preflight");
+  const pending = client.submitCreate({ environment: DirectImage.prepared("fake-starter") }, { signal: controller.signal });
+  await checking;
+  controller.abort(reason);
+  await expect(pending).rejects.toBe(reason);
+  release();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(creates).toBe(0);
+});
+
+test("direct operation keeps a terminal result without provider discovery", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const client = DirectSandbar.direct({ provider });
+  const operation = await client.sandboxes.submitCreate({ environment: DirectImage.prepared("fake-starter") });
+  const box = await operation.wait();
+  let observations = 0;
+  provider.driver.observe = async () => { observations++; return null; };
+  expect((await operation.observe())?.id).toBe(box.id);
+  expect((await operation.wait()).id).toBe(box.id);
+  expect(observations).toBe(0);
+});
+
 test("abort ends direct and remote waits even when observation hangs", async () => {
   const { url } = await fixture();
   const provider = await fakeProvider({ url, token });

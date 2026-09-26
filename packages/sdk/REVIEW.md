@@ -130,3 +130,13 @@ Final independent complete-diff review of this resulting HEAD remains pending.
 - Validation after fix: `bun run check` passed; full `bun run test` passed 62 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 13 is **not** a zero-finding clearance.
 
 Final independent complete-diff review of this resulting HEAD remains pending.
+
+## Round 14
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `8073a3d44155b83c85cd3b6a23660b867ae917e5`.
+- Two actionable findings: public direct `submitCreate` could remain pending while capability lookup or image preparation hung after abort/close, and a direct operation handle discarded its terminal result after the first observation. Direct preflight now races cancellation before dispatch, and operation handles cache terminal success or definitive failure for their process lifetime. Regressions cover stalled preflight and repeated observation without provider discovery.
+- Validation after fixes: `bun run check` passed; full `bun run test` passed 64 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 14 is **not** a zero-finding clearance.
+
+Final independent complete-diff review of this resulting HEAD remains pending.
