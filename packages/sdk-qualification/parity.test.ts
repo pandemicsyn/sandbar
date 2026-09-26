@@ -155,8 +155,17 @@ describe("direct recovery evidence", () => {
     try {
       const operation = await client.sandboxes.submitCreate({ environment: image });
       const controller = new AbortController();
+      const waiting = operation.wait({ signal: controller.signal, pollMs: 1_000 });
+      const outcome = waiting.then(() => ({ completed: true as const }), error => ({ completed: false as const, error }));
+      let observed = false;
+      for (let attempt = 0; attempt < 120; attempt++) {
+        const state = await fixture.fakeControl("/_test/state");
+        if (state.ledger.some((entry: any) => entry.action === "create" && entry.remaining < 100)) { observed = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      expect(observed).toBe(true);
       controller.abort(new DOMException("Wait cancelled", "AbortError"));
-      await expect(operation.wait({ signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+      expect(await outcome).toMatchObject({ completed: false, error: { name: "AbortError" } });
       const state = await fixture.fakeControl("/_test/state");
       expect(state.resources.filter((entry: any) => entry.state === "running")).toHaveLength(1);
       expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
