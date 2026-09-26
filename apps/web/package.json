@@ -4,9 +4,21 @@
   "type": "module",
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "bun build src/main.ts --target browser --outdir dist && cp index.html dist/index.html"
+    "build": "vite build",
+    "dev": "vite"
   },
   "dependencies": {
-    "@sandbar/contracts": "workspace:*"
+    "@sandbar/contracts": "workspace:*",
+    "@tanstack/react-router": "1.170.39",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "tailwindcss": "4.3.3",
+    "vite": "8.3.1"
   }
 }
