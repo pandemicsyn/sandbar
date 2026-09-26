@@ -25,13 +25,14 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
     await store.beginSubmission(createClaim);
     await store.complete(createClaim, { effect: "applied", value: { kind: "sandbox", observation: { ref: sandbox, state: "running" } } });
     let wrongIdentity = false;
+    let rejectWithSecret = false;
     const observedAt = new Date().toISOString();
     const executionResult = (completed: boolean): DriverResult => ({ status: "completed", effect: "applied", value: { kind: "execution", observation: { ref: { scope, nativeId: "native_execution", kind: "execution" }, sandbox: wrongIdentity ? { ...sandbox, nativeId: "another_sandbox" } : sandbox, completed, exitCode: completed ? 7 : null, stdoutBase64: completed ? Buffer.from("done").toString("base64") : undefined, observedAt } } });
     const unsupported = async () => { throw new Error("Unexpected driver call"); };
     const fileResult: DriverResult = { status: "completed", effect: "partial", value: { kind: "file_write", observation: { sandbox, path: "/partial", bytesWritten: 1, complete: true } } };
     const driver: ProviderDriver = {
       name: "fake", capabilities: unsupported, prepare: unsupported, create: unsupported, inspect: unsupported,
-      inventory: unsupported, exec: async () => executionResult(!wrongIdentity ? false : true),
+      inventory: unsupported, exec: async () => rejectWithSecret ? { status: "rejected", effect: "none", error: { code: "unavailable", message: "secret-in-provider-error", effect: "none", retry: "never" } } : executionResult(!wrongIdentity ? false : true),
       readFile: unsupported, writeFile: async () => fileResult, destroy: unsupported,
       observe: async () => executionResult(true),
     };
@@ -54,6 +55,14 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
     await runner.tick();
     expect((await store.getOperation(project.id, second.operation.id))?.status).toBe("unknown");
     expect((await store.getExecution(project.id, second.execution!.id))?.exit_code).toBeNull();
+
+    rejectWithSecret = true;
+    const rejectedKey = Bun.randomUUIDv7();
+    const rejected = await store.admitExec({ projectId: project.id, sandboxId: create.sandbox.id, endpoint: `POST /sandboxes/${create.sandbox.id}/executions`, key: rejectedKey, intentHash: "rejected", encryptedRequest: await secrets.seal("execution-request", `${create.sandbox.id}:${rejectedKey}`, JSON.stringify({ command: { kind: "argv", argv: ["fixture"] } })), captureBytes: 0 });
+    await runner.tick();
+    const rejectedOperation = await store.getOperation(project.id, rejected.operation.id);
+    expect(rejectedOperation?.status).toBe("failed");
+    expect(rejectedOperation?.error_json).not.toContain("secret-in-provider-error");
 
     const fileKey = Bun.randomUUIDv7();
     const file = await store.admitFileWrite({ projectId: project.id, sandboxId: create.sandbox.id, endpoint: `PUT /sandboxes/${create.sandbox.id}/files`, key: fileKey, intentHash: "partial-file", path: "/partial", overwrite: true, bytes: 2, encryptedBytes: await secrets.seal("file-write-input", `${create.sandbox.id}:${fileKey}`, Buffer.from("ab").toString("base64")) });

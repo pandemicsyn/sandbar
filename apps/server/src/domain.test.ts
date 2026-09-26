@@ -11,6 +11,10 @@ let server: Awaited<ReturnType<typeof startFakeProviderServer>> | undefined;
 let directory: string | undefined;
 afterEach(async () => { server?.stop(true); server = undefined; if (directory) await rm(directory, { recursive: true, force: true }); directory = undefined; });
 
+test("runtime rejects remote fake provider endpoints before opening storage", async () => {
+  await expect(openDomainRuntime({ databaseUrl: ":memory:", keyFile: "/missing", setupTokenFile: "/missing", fakeProviderUrl: "http://provider.example", fakeProviderToken: transportToken })).rejects.toThrow("loopback");
+});
+
 test("API persists ambiguous create and exec, then observes each once after restart", async () => {
   directory = await mkdtemp(join(tmpdir(), "sandbar-domain-"));
   const keyFile = join(directory, "key"), setupTokenFile = join(directory, "setup"), databaseUrl = join(directory, "control.sqlite");

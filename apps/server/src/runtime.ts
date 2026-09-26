@@ -17,6 +17,8 @@ export interface RuntimeConfig {
 
 export async function openDomainRuntime(config: RuntimeConfig) {
   if (!config.databaseUrl || !config.keyFile || !config.setupTokenFile || !config.fakeProviderUrl || !config.fakeProviderToken) throw new Error("Database, key, setup token, fake provider URL and fake transport token are required");
+  const fakeEndpoint = new URL(config.fakeProviderUrl);
+  if (!(["http:", "https:"].includes(fakeEndpoint.protocol) && ["127.0.0.1", "[::1]"].includes(fakeEndpoint.hostname) && !fakeEndpoint.username && !fakeEndpoint.password)) throw new Error("Fake provider must use a loopback HTTP endpoint");
   if (config.publicOrigin) {
     const origin = new URL(config.publicOrigin);
     if (origin.origin !== config.publicOrigin || (origin.protocol !== "https:" && !["localhost", "127.0.0.1", "::1"].includes(origin.hostname))) throw new Error("Public origin must be an HTTPS origin, or local loopback for development");

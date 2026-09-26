@@ -107,7 +107,7 @@ export class DurableRunner {
     if (result.status === "pending") { await store.reschedule(claim, "awaiting_observation", Math.max(500, result.observeAfterMs)); return; }
     if (result.status === "unknown") { await store.reschedule(claim, "outcome_unknown", 5_000, "PROVIDER_UNKNOWN"); return; }
     if (result.status === "rejected") {
-      const error = { code: result.error.code === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE", message: result.error.message, effect: "none", retry: "never" };
+      const error = { code: result.error.code === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE", message: result.error.code === "unsupported" ? "Provider does not support this request" : "Provider rejected the request", effect: "none", retry: "never" };
       await store.failWithoutEffect(claim, error, true);
       return;
     }
