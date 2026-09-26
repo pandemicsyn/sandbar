@@ -31,3 +31,12 @@ Final complete-diff Luna-high review of the integrated result remains pending.
 - Validation after fix: SDK tests 9/9 passed. Round 3 is **not** a zero-finding clearance.
 
 Production package export/build integration and a new complete-diff review remain pending.
+
+## Packaging integration
+
+- Cherry-picked focused production packaging commit `e6e8048` from qualification task as `b7bc5ef` into SDK branch, after recovery fix `2ca2c53`. This adds ESM JavaScript and declaration builds/exports for SDK, contracts, SPI, core, and fake client/server, plus build order and an import-safe fake server/CLI split. The qualification child retains independent packed-consumer tests and CI.
+- `bun run check` passed, including portable package builds and TypeScript checks.
+- `bun run test` passed: 52 tests, one MySQL 8.4 test skipped without a configured instance, zero failures; browser E2E passed.
+- `bun run build` passed. Node 26.4.0 and Bun 1.3.14 imported `@sandbar/sdk/direct`, `@sandbar/sdk/remote`, and `@sandbar/provider-fake/client` from the SDK package scope.
+
+Final Luna-high complete-diff review of this packaged result remains pending.
