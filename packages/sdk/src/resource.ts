@@ -102,7 +102,7 @@ export function validateReference(value: RecoveryReference): RecoveryReference {
     if (ref.sandbox && (ref.sandbox.kind !== "sandbox" || !sameScope(ref.sandbox.scope, ref.scope))) throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox scope mismatch");
     if (ref.kind === "file_write" && (!ref.sandbox || !ref.file)) throw new SandbarError("INVALID_ARGUMENT", "Incomplete file recovery reference");
     if ((ref.kind === "exec" || ref.kind === "destroy") && !ref.sandbox) throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox missing");
-  } else if (!ref.service || ref.scope || ref.sandbox || ref.submissionId || ref.file || ref.maxOutputBytes || (ref.kind !== "create" && !ref.resourceId)) {
+  } else if (!ref.service || ref.scope || ref.sandbox || ref.submissionId || ref.maxOutputBytes || (ref.kind !== "create" && !ref.resourceId) || (ref.kind === "file_write" ? !ref.file : !!ref.file)) {
     throw new SandbarError("INVALID_ARGUMENT", "Incomplete remote recovery reference");
   }
   return ref;

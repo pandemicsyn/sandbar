@@ -53,6 +53,7 @@
     },
     "packages/core": {
       "name": "@sandbar/core",
+      "version": "0.0.0",
       "dependencies": {
         "@sandbar/contracts": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",

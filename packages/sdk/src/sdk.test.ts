@@ -152,3 +152,15 @@ test("remote recovery rejects an incomplete execution observation", async () => 
   const recovered = await client.recover(reference);
   await expect(recovered.observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
 });
+
+test("remote recovery requires confirmed destroy and exact file receipts", async () => {
+  const projectId = "project_1";
+  const base = { id: "op_1", projectId, sandboxId: "box_1", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [] };
+  let operation: unknown = { ...base, kind: "destroy", result: { kind: "destroy", computeStopped: false, retainedResources: [] } };
+  const fetcher: typeof fetch = async () => Response.json(operation);
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  const common = { version: 1 as const, mode: "remote" as const, invocationKey: "0199f92e-1234-7000-8000-000000000001", operationId: "op_1", resourceId: "box_1", service: { url: "https://sandbar.example/", projectId } };
+  await expect((await client.recover({ ...common, kind: "destroy" })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  operation = { ...base, kind: "file_write", result: { kind: "file_write", receipt: { path: "/data", bytesWritten: 1, complete: false, effect: "partial" } } };
+  await expect((await client.recover({ ...common, kind: "file_write", file: { path: "/data", bytes: 2 } })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
+});

@@ -77,7 +77,7 @@ class RemoteSandbox implements SandboxHandle {
     if (!(bytes instanceof Uint8Array)) throw new SandbarError("INVALID_ARGUMENT", "Expected Uint8Array bytes");
     const query = new URLSearchParams({ path, overwrite: String(options.overwrite ?? false) });
     const route = `sandboxes/${encodeURIComponent(this.id)}/files?${query}`;
-    const { operation, reference } = await this.client.mutate("file_write", this.id, route, "PUT", bytes, undefined);
+    const { operation, reference } = await this.client.mutate("file_write", this.id, route, "PUT", bytes, undefined, { path, bytes: bytes.length });
     const op = new RemoteOperation({ ...reference, operationId: operation.id }, this.client, async current => {
       if (current.result?.kind !== "file_write" || current.sandboxId !== this.id || current.result.receipt.path !== path || !current.result.receipt.complete || current.result.receipt.bytesWritten !== bytes.length) throw new OutcomeUnknownError(reference, "File write receipt is incomplete or mismatched");
     });
@@ -145,9 +145,9 @@ export class RemoteClient implements SandbarClient {
     if (op.projectId !== this.projectId || op.kind !== reference.kind || (reference.resourceId && op.sandboxId !== reference.resourceId) || (reference.operationId && op.id !== reference.operationId)) throw new SandbarError("INVALID_RESPONSE", "Service operation identity mismatch", "unknown");
     return op;
   }
-  async mutate<T extends { operation: z.infer<typeof Operation> }>(kind: Kind, resourceId: string | undefined, path: string, method: string, body: string | Uint8Array | undefined, schema?: z.ZodType<T>): Promise<{ operation: z.infer<typeof Operation>; reference: RecoveryReference }> {
+  async mutate<T extends { operation: z.infer<typeof Operation> }>(kind: Kind, resourceId: string | undefined, path: string, method: string, body: string | Uint8Array | undefined, schema?: z.ZodType<T>, file?: { path: string; bytes: number }): Promise<{ operation: z.infer<typeof Operation>; reference: RecoveryReference }> {
     const key = newInvocationKey();
-    const reference = this.reference(kind, key, resourceId);
+    const reference = { ...this.reference(kind, key, resourceId), ...(file ? { file } : {}) };
     let operation: z.infer<typeof Operation> | undefined;
     try {
       const headers = new Headers({ "Idempotency-Key": key });
@@ -193,8 +193,14 @@ export class RemoteClient implements SandbarClient {
     if (reference.mode !== "remote") throw new SandbarError("INVALID_ARGUMENT", "Expected remote reference");
     await this.operationFor(reference);
     return new RemoteOperation(reference, this, async op => {
-      if (op.result?.kind === "create") return new RemoteSandbox(this, op.result.sandboxId);
-      if (op.result?.kind === "exec") {
+      if (reference.kind === "create") {
+        if (op.result?.kind !== "create") throw new OutcomeUnknownError(reference, "Create result is missing or mismatched");
+        const box = new RemoteSandbox(this, op.result.sandboxId);
+        await box.inspect();
+        return box;
+      }
+      if (reference.kind === "exec") {
+        if (op.result?.kind !== "exec") throw new OutcomeUnknownError(reference, "Execution result is missing or mismatched");
         const value = await this.request(`executions/${encodeURIComponent(op.result.executionId)}`, Execution);
         if (value.id !== op.result.executionId || value.projectId !== this.projectId || value.operationId !== op.id || value.sandboxId !== op.sandboxId || value.status !== "completed") throw new OutcomeUnknownError(reference, "Recovered execution identity or completion is unverified");
         if (value.outputAvailability !== "captured" && value.outputAvailability !== "truncated") throw new SandbarError("OUTPUT_UNAVAILABLE", `Output is ${value.outputAvailability}`, "applied");
@@ -203,7 +209,12 @@ export class RemoteClient implements SandbarClient {
         const stderr = base64Bytes(value.stderrBase64, 1_048_576 - stdout.length);
         return checkExec(execOutput(value.exitCode, stdout, stderr, value.outputAvailability === "truncated"));
       }
-      return op.result;
+      if (reference.kind === "destroy") {
+        if (op.result?.kind !== "destroy" || !op.result.computeStopped) throw new OutcomeUnknownError(reference, "Compute stop has not been confirmed");
+        return op.result;
+      }
+      if (op.result?.kind !== "file_write" || !op.result.receipt.complete || op.result.receipt.path !== reference.file?.path || op.result.receipt.bytesWritten !== reference.file?.bytes) throw new OutcomeUnknownError(reference, "File write receipt is incomplete or mismatched");
+      return op.result.receipt;
     });
   }
   async close() { if (this.closed) return; this.closed = true; this.closeController.abort(new SandbarError("CLIENT_CLOSED", "Client is closed")); }
