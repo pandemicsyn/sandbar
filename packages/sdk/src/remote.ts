@@ -2,7 +2,7 @@ import { AcceptedExecution, AcceptedOperation, CreateSandboxRequest, ErrorRespon
 import type { z } from "zod";
 import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
-export { Image, SandbarError, OutcomeUnknownError, NonzeroExitError, outputText } from "./resource";
+export { Image, SandbarError, OutcomeUnknownError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
 
 export type RemoteOptions = { url: string; token: string; projectId: string; fetch?: typeof fetch };

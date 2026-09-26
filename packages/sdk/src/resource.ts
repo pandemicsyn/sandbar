@@ -49,6 +49,9 @@ export class OutcomeUnknownError extends SandbarError {
 export class NonzeroExitError extends SandbarError {
   constructor(readonly result: ExecOutput) { super("NONZERO_EXIT", `Command exited with code ${result.exitCode}`, "applied"); this.name = "NonzeroExitError"; }
 }
+export class NoExitCodeError extends SandbarError {
+  constructor(readonly result: ExecOutput) { super("EXIT_STATUS_UNKNOWN", "Execution completed without an exit code", "applied"); this.name = "NoExitCodeError"; }
+}
 export function newInvocationKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   const millis = Date.now();
@@ -71,6 +74,7 @@ export function execOutput(exitCode: number | null, stdout: Uint8Array, stderr: 
   return { exitCode, stdout, stderr, truncated, stdoutText: max => outputText(stdout, max), stderrText: max => outputText(stderr, max) };
 }
 export function checkExec(result: ExecOutput): ExecOutput {
+  if (result.exitCode === null) throw new NoExitCodeError(result);
   if (result.exitCode !== 0) throw new NonzeroExitError(result);
   return result;
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 import { startFakeProviderServer } from "@sandbar/provider-fake/server";
-import { Image as DirectImage, Sandbar as DirectSandbar, NonzeroExitError, OutcomeUnknownError } from "./direct";
+import { Image as DirectImage, Sandbar as DirectSandbar, NonzeroExitError, NoExitCodeError, OutcomeUnknownError } from "./direct";
 import { Image as RemoteImage, Sandbar as RemoteSandbar } from "./remote";
 
 let server: Awaited<ReturnType<typeof startFakeProviderServer>> | undefined;
@@ -108,6 +108,8 @@ test("direct recovery never treats incomplete destroy or file receipts as succes
   await expect((await client.recover({ ...common, kind: "destroy" })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
   provider.driver.observe = async () => ({ status: "completed", effect: "applied", submissionId: "sid_1", value: { kind: "file_write", observation: { sandbox, path: "/data", bytesWritten: 1, complete: false } } });
   await expect((await client.recover({ ...common, kind: "file_write", file: { path: "/data", bytes: 2 } })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  provider.driver.observe = async () => ({ status: "completed", effect: "applied", submissionId: "sid_1", value: { kind: "execution", observation: { ref: { scope: provider.scope, nativeId: "fake_execution_1", kind: "execution" }, sandbox, completed: true, exitCode: null, stdoutBase64: "", stderrBase64: "", observedAt: "2026-01-01T00:00:00Z" } } });
+  await expect((await client.recover({ ...common, kind: "exec", maxOutputBytes: 1024 })).observe()).rejects.toBeInstanceOf(NoExitCodeError);
 });
 
 test("remote lost acceptance is resolved by invocation lookup under one key", async () => {
@@ -164,4 +166,15 @@ test("remote recovery requires confirmed destroy and exact file receipts", async
   await expect((await client.recover({ ...common, kind: "destroy" })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
   operation = { ...base, kind: "file_write", result: { kind: "file_write", receipt: { path: "/data", bytesWritten: 1, complete: false, effect: "partial" } } };
   await expect((await client.recover({ ...common, kind: "file_write", file: { path: "/data", bytes: 2 } })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
+});
+
+test("remote completed execution without an exit code has a distinct outcome", async () => {
+  const projectId = "project_1";
+  const operation = { id: "op_1", projectId, kind: "exec", sandboxId: "box_1", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "exec", executionId: "exec_1" } };
+  const fetcher: typeof fetch = async (url) => new URL(String(url)).pathname.endsWith("/operations/op_1")
+    ? Response.json(operation)
+    : Response.json({ id: "exec_1", projectId, sandboxId: "box_1", operationId: "op_1", status: "completed", exitCode: null, outputAvailability: "captured", capturedBytes: 0, stdoutBase64: "", stderrBase64: "" });
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  const reference = { version: 1 as const, mode: "remote" as const, kind: "exec" as const, invocationKey: "0199f92e-1234-7000-8000-000000000001", operationId: "op_1", resourceId: "box_1", service: { url: "https://sandbar.example/", projectId } };
+  await expect((await client.recover(reference)).observe()).rejects.toBeInstanceOf(NoExitCodeError);
 });

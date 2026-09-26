@@ -2,7 +2,7 @@ import { NativeScope, type NativeRef, type ProviderDriver, type DriverResult, ty
 import { normalizeCreate, normalizeExec, correlateDriverResult, sameNativeScope, sameNativeRef, captureBoundedOutput } from "@sandbar/core";
 import { Image, SandbarError, OutcomeUnknownError, checkExec, execOutput, newInvocationKey, sameRef, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
-export { Image, SandbarError, OutcomeUnknownError, NonzeroExitError, outputText } from "./resource";
+export { Image, SandbarError, OutcomeUnknownError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
 
 export type DirectProvider = { driver: ProviderDriver; scope: NativeScope };

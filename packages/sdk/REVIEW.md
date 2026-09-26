@@ -61,3 +61,13 @@ Final complete-diff review after these fixes remains pending.
 - Validation after fix: `bun run check` passed; full `bun run test` passed 53 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 5 is **not** a zero-finding clearance.
 
 Final independent complete-diff review of the resulting HEAD remains pending.
+
+## Round 6
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only.
+- Reviewed base: `d4a91f395e149f53baf0231e518410deff5eb83f`.
+- Reviewed HEAD: `83c3dda30e3539b93fc1005175edd4adc873a7ea`.
+- One actionable finding: nullable execution exit codes were classified as ordinary nonzero exits. The SDK now throws a distinct `NoExitCodeError` with the captured result and applied effect. Direct and remote recovery tests cover this outcome; `NonzeroExitError` remains specific to numeric nonzero exits.
+- Validation after fix: `bun run check` passed; full `bun run test` passed 54 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 6 is **not** a zero-finding clearance.
+
+Final independent complete-diff review of the resulting HEAD remains pending.
