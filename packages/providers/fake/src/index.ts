@@ -9,12 +9,18 @@ export class FakeProviderDriver implements ProviderDriver {
 
   private async call(action: FakeAction): Promise<unknown> {
     const response = await (this.options.fetch ?? fetch)(new URL("/v1/action", this.options.baseUrl), { method: "POST", headers: { Authorization: `Bearer ${this.options.token}`, "Content-Type": "application/json" }, body: JSON.stringify(action) });
-    if (!response.ok) throw new Error(`Fake provider transport status ${response.status}`);
+    if (!response.ok) throw new FakeTransportError(response.status);
     return response.json();
   }
   private async mutation(action: FakeAction, submissionId: string): Promise<DriverResult> {
     try { return DriverResult.parse(await this.call(action)); }
-    catch { return { status: "unknown", effect: "possible", submissionId, reason: "Fake provider submission response unavailable or invalid; observe without replay" }; }
+    catch (error) {
+      if (error instanceof FakeTransportError && [400, 401, 403, 404, 413].includes(error.status)) {
+        const code = error.status === 401 || error.status === 403 ? "unauthorized" : error.status === 404 ? "not_found" : error.status === 413 ? "capacity" : "invalid";
+        return { status: "rejected", effect: "none", error: { code, message: `Fake provider rejected request before dispatch (${error.status})`, effect: "none", retry: "never" } };
+      }
+      return { status: "unknown", effect: "possible", submissionId, reason: "Fake provider submission response unavailable or invalid; observe without replay" };
+    }
   }
   async capabilities(scope: NativeScope) { return DriverCapabilities.parse(await this.call({ kind: "capabilities", scope })); }
   async prepare(input: { scope: NativeScope; image: { kind: "prepared" | "oci"; value: string }; networkPolicy: string; region?: string }) {
@@ -31,7 +37,7 @@ export class FakeProviderDriver implements ProviderDriver {
     return { items: value.items.map(x => SandboxObservation.parse(x)), nextCursor: value.nextCursor };
   }
   async exec(input: { sandbox: NativeRef; identity: InvocationIdentity; command: ExecCommand; cwd?: string; env?: Record<string, string>; deadlineSeconds: number; maxOutputBytes: number }): Promise<DriverResult> {
-    return this.mutation({ kind: "exec", sandbox: input.sandbox, identity: input.identity, command: input.command, maxOutputBytes: input.maxOutputBytes }, input.identity.submissionId);
+    return this.mutation({ kind: "exec", sandbox: input.sandbox, identity: input.identity, command: input.command, cwd: input.cwd, env: input.env, deadlineSeconds: input.deadlineSeconds, maxOutputBytes: input.maxOutputBytes }, input.identity.submissionId);
   }
   async readFile(input: { sandbox: NativeRef; path: string }): Promise<Uint8Array> {
     const value = await this.call({ kind: "readFile", ...input }) as { bytesBase64: string | null };
@@ -48,3 +54,5 @@ export class FakeProviderDriver implements ProviderDriver {
 
 export { FakeScenario, FakeProfile, FakeEvent } from "./engine";
 export { startFakeProviderServer } from "./server";
+
+class FakeTransportError extends Error { constructor(readonly status: number) { super(`Fake provider transport status ${status}`); } }

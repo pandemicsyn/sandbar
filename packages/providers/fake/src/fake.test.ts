@@ -112,4 +112,39 @@ describe("independent fake provider", () => {
     const response = await fetch(new URL("/_test/state", server.url), { headers: { Authorization: `Bearer ${token}` } });
     expect(response.status).toBe(404);
   });
+
+  test("wildcard scenario queue consumes one matching action without knowing allocated submission IDs", async () => {
+    const { driver, control } = await setup();
+    await control("/_test/seed", { submissionId: "*", action: "create", behavior: "lost_after_effect" });
+    await control("/_test/seed", { submissionId: "*", action: "create", behavior: "reject", rejectCode: "capacity" });
+    expect((await driver.create({ scope, identity: identity("opaque_1"), image: "fake-starter", networkPolicy: "blocked" })).status).toBe("unknown");
+    expect((await driver.create({ scope, identity: identity("opaque_2"), image: "fake-starter", networkPolicy: "blocked" })).status).toBe("rejected");
+    expect((await driver.create({ scope, identity: identity("opaque_3"), image: "fake-starter", networkPolicy: "blocked" })).status).toBe("completed");
+    expect((await control("/_test/state")).resources).toHaveLength(2);
+  });
+
+  test("exec translates cwd, environment, deadline and rejects cross-action submission reuse", async () => {
+    const { driver, control } = await setup();
+    const created = await driver.create({ scope, identity: identity("shared_sub"), image: "fake-starter", networkPolicy: "blocked" });
+    if (created.status !== "completed" || created.value.kind !== "sandbox") throw new Error("Create failed");
+    const sandbox = created.value.observation.ref;
+    const collision = await driver.exec({ sandbox, identity: identity("shared_sub"), command, deadlineSeconds: 30, maxOutputBytes: 32 });
+    expect(collision.status).toBe("rejected");
+    expect(collision.effect).toBe("none");
+    await control("/_test/seed", { submissionId: "exec_scoped", action: "exec", command: { command, cwd: "/workspace", env: { LANG: "C" }, deadlineSeconds: 30, exitCode: 0 } });
+    const wrong = await driver.exec({ sandbox, identity: identity("exec_scoped"), command, cwd: "/wrong", env: { LANG: "C" }, deadlineSeconds: 30, maxOutputBytes: 32 });
+    expect(wrong.status).toBe("rejected");
+    const correct = await driver.exec({ sandbox, identity: identity("exec_scoped"), command, cwd: "/workspace", env: { LANG: "C" }, deadlineSeconds: 30, maxOutputBytes: 32 });
+    expect(correct.status).toBe("completed");
+    expect((await control("/_test/state")).ledger.filter((x: { action: string }) => x.action === "exec")).toHaveLength(1);
+  });
+
+  test("authentication rejection before dispatch is definitive", async () => {
+    const { control } = await setup();
+    const wrongTokenDriver = new FakeProviderDriver({ baseUrl: server!.url.toString(), token: "wrong-token-123456" });
+    const result = await wrongTokenDriver.create({ scope, identity: identity("unauthorized_1"), image: "fake-starter", networkPolicy: "blocked" });
+    expect(result.status).toBe("rejected");
+    expect(result.effect).toBe("none");
+    expect((await control("/_test/state")).invocations).toHaveLength(0);
+  });
 });

@@ -41,6 +41,8 @@ Example scenario body:
 
 `behavior` is `normal`, `lost_after_effect`, `reject`, or `ambiguous_before_effect`. A lost response applies the effect and persists the ledger before returning HTTP 504. The driver normalizes that transport failure to `unknown`, and a later `observe` can recover the result if discovery is supported. `delayObservations` returns pending for that many observe calls before revealing the completed effect; it uses no wall-clock sleep. `reject` is definitive with no effect. `ambiguous_before_effect` returns unknown without ledger evidence, so absence from discovery cannot prove no effect.
 
+For public API E2E flows where Sandbar allocates an opaque submission ID, seed `"submissionId": "*"`. Wildcard scenarios form a FIFO queue per action and are consumed atomically by the next matching create, exec, or destroy. Exact-ID scenarios take precedence. Seed before sending the public request; no polling or timing race is needed.
+
 An exec scenario must include a matching `command` fixture such as:
 
 ```json
