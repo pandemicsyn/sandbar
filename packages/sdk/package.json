@@ -1,0 +1,19 @@
+{
+  "name": "@sandbar/sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./direct": "./src/direct.ts",
+    "./remote": "./src/remote.ts"
+  },
+  "scripts": { "check": "tsc -p tsconfig.json" },
+  "dependencies": {
+    "@sandbar/contracts": "workspace:*",
+    "@sandbar/core": "workspace:*",
+    "@sandbar/provider-spi": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": { "@sandbar/provider-fake": "workspace:*" }
+}

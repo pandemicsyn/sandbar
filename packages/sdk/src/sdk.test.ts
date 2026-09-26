@@ -1,0 +1,108 @@
+import { afterEach, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fakeProvider } from "@sandbar/provider-fake/client";
+import { startFakeProviderServer } from "@sandbar/provider-fake/server";
+import { Image as DirectImage, Sandbar as DirectSandbar, NonzeroExitError, OutcomeUnknownError } from "./direct";
+import { Image as RemoteImage, Sandbar as RemoteSandbar } from "./remote";
+
+let server: Awaited<ReturnType<typeof startFakeProviderServer>> | undefined;
+let directory: string | undefined;
+const token = "sdk-fake-token-12345";
+async function fixture() {
+  directory = await mkdtemp(join(tmpdir(), "sandbar-sdk-"));
+  server = await startFakeProviderServer({ hostname: "127.0.0.1", port: 0, statePath: join(directory, "fake.json"), token, testMode: true });
+  const url = server.url.toString();
+  const control = async (path: string, body?: unknown) => {
+    const response = await fetch(new URL(path, url), { method: body === undefined ? "GET" : "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    if (!response.ok) throw new Error(`Fixture control failed: ${response.status}`);
+    return response.json();
+  };
+  return { client: DirectSandbar.direct({ provider: await fakeProvider({ url, token }) }), control };
+}
+afterEach(async () => { server?.stop(true); server = undefined; if (directory) await rm(directory, { recursive: true, force: true }); directory = undefined; });
+
+test("direct resource flow preserves binary files and nonzero output", async () => {
+  const { client, control } = await fixture();
+  const box = await client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
+  expect((await box.inspect()).state).toBe("running");
+  const file = Uint8Array.of(0, 255, 128, 42);
+  await box.writeFile("/binary", file);
+  expect(await box.readFile("/binary")).toEqual(file);
+  const command = { kind: "argv" as const, argv: ["fixture", "binary"] };
+  await control("/_test/seed", { submissionId: "*", action: "exec", command: { command, exitCode: 7, stdoutBase64: Buffer.from(file).toString("base64"), stderrBase64: Buffer.from([1, 2]).toString("base64") } });
+  try { await box.exec({ command }); throw new Error("Expected nonzero exit"); }
+  catch (error) {
+    expect(error).toBeInstanceOf(NonzeroExitError);
+    const result = (error as NonzeroExitError).result;
+    expect(result.exitCode).toBe(7);
+    expect(result.stdout).toEqual(file);
+    expect(result.stderr).toEqual(Uint8Array.of(1, 2));
+  }
+  await box.destroy();
+  await client.close();
+  expect(box.inspect()).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+});
+
+test("direct lost response is recovered by observation without replay; wrong scope is rejected", async () => {
+  const { client, control } = await fixture();
+  await control("/_test/seed", { submissionId: "*", action: "create", behavior: "lost_after_effect" });
+  const operation = await client.sandboxes.submitCreate({ environment: DirectImage.prepared("fake-starter") });
+  const reference = JSON.parse(JSON.stringify(operation.reference));
+  expect(JSON.stringify(reference)).not.toContain(token);
+  const recovered = await client.recover(reference);
+  const box = await recovered.wait();
+  expect((box as { id: string }).id).toStartWith("fake_sandbox_");
+  const state = await control("/_test/state");
+  expect(state.invocations.filter((x: { action: string }) => x.action === "create")).toHaveLength(1);
+  await expect(client.recover({ ...reference, scope: { ...reference.scope, accountId: "other" } })).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+
+test("fake provider registration binds recovery to the configured endpoint", async () => {
+  const { client } = await fixture();
+  const op = await client.sandboxes.submitCreate({ environment: DirectImage.prepared("fake-starter") });
+  const otherDirectory = await mkdtemp(join(tmpdir(), "sandbar-sdk-other-"));
+  const other = await startFakeProviderServer({ hostname: "127.0.0.1", port: 0, statePath: join(otherDirectory, "fake.json"), token, testMode: true });
+  try {
+    const otherClient = DirectSandbar.direct({ provider: await fakeProvider({ url: other.url.toString(), token }) });
+    await expect(otherClient.recover(op.reference)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  } finally {
+    other.stop(true);
+    await rm(otherDirectory, { recursive: true, force: true });
+  }
+});
+
+test("direct undiscoverable effect reports unknown without replay", async () => {
+  const { client, control } = await fixture();
+  await control("/_test/profile", { nativeIdempotency: { create: false, exec: false, destroy: false, writeFile: false }, discoveryBySubmission: false });
+  await control("/_test/seed", { submissionId: "*", action: "create", behavior: "lost_after_effect" });
+  const operation = await client.sandboxes.submitCreate({ environment: DirectImage.prepared("fake-starter") });
+  await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  const state = await control("/_test/state");
+  expect(state.resources).toHaveLength(1);
+  expect(state.invocations.filter((x: { action: string }) => x.action === "create")).toHaveLength(1);
+});
+
+test("remote lost acceptance is resolved by invocation lookup under one key", async () => {
+  let posts = 0;
+  let key = "";
+  const projectId = "project_1";
+  const base = { id: "op_1", projectId, kind: "create", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "create", sandboxId: "box_1" } };
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (init?.method === "POST") { posts++; key = new Headers(init.headers).get("Idempotency-Key") ?? ""; throw new TypeError("response lost"); }
+    if (path.includes("/invocations/")) return Response.json(base);
+    if (path.includes("/operations/")) return Response.json(base);
+    if (path.includes("/sandboxes/box_1")) return Response.json({ id: "box_1", projectId, connectionId: "conn_1", desiredState: "running", observedState: "running", revision: 1, environment: { kind: "prepared", imageId: "fake-starter" }, network: { policy: "blocked" }, labels: {} });
+    throw new Error(`Unexpected path: ${path}`);
+  };
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  const operation = await client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
+  const box = await operation.wait();
+  expect(box.id).toBe("box_1");
+  expect(posts).toBe(1);
+  expect(operation.reference.invocationKey).toBe(key);
+  expect(JSON.stringify(operation.reference)).not.toContain("secret");
+  await expect(RemoteSandbar.connect({ url: "https://other.example/", token: "secret", projectId, fetch: fetcher }).recover(operation.reference)).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
