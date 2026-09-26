@@ -31,8 +31,8 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Success",
+          "201": {
+            "description": "Created",
             "content": {
               "application/json": {
                 "schema": {
@@ -69,8 +69,8 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Success",
+          "201": {
+            "description": "Created",
             "content": {
               "application/json": {
                 "schema": {
@@ -105,6 +105,26 @@
                 }
               }
             }
+          },
+          "default": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/logout": {
+      "post": {
+        "operationId": "logoutSession",
+        "responses": {
+          "204": {
+            "description": "Session closed"
           },
           "default": {
             "description": "Structured error",
@@ -612,6 +632,51 @@
         }
       }
     },
+    "/v1/projects/{projectId}/executions/{executionId}": {
+      "parameters": [
+        {
+          "name": "projectId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        {
+          "name": "executionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getExecution",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Execution"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/projects/{projectId}/sandboxes/{sandboxId}/files": {
       "parameters": [
         {
@@ -754,6 +819,52 @@
       ],
       "get": {
         "operationId": "getOperation",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Operation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{projectId}/operations/{operationId}/reconcile": {
+      "parameters": [
+        {
+          "name": "projectId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        {
+          "name": "operationId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "reconcileOperation",
+        "description": "Request another read-only provider observation; never resubmit the mutation.",
         "responses": {
           "200": {
             "description": "Success",

@@ -38,7 +38,7 @@ test("API persists ambiguous create and exec, then observes each once after rest
     const bearer = { Authorization: `Bearer ${setup.value.token}` };
     expect(setup.response.headers.get("set-cookie")).toContain("HttpOnly");
     const project = (await json("/v1/projects", "POST", { name: "Demo" }, bearer)).value;
-    for (const query of ["limit=NaN", "limit=1.5", "limit=0", `cursor=${Buffer.from("{}").toString("base64url")}`, `cursor=${Buffer.from(JSON.stringify({ createdAt: 1, id: 3 })).toString("base64url")}`]) {
+    for (const query of ["limit=NaN", "limit=1.5", "limit=0", "limit=101", `cursor=${Buffer.from("{}").toString("base64url")}`, `cursor=${Buffer.from(JSON.stringify({ createdAt: 1, id: 3 })).toString("base64url")}`]) {
       expect((await json(`/v1/projects/${project.id}/sandboxes?${query}`, "GET", undefined, bearer)).response.status).toBe(400);
     }
     const connection = (await json(`/v1/projects/${project.id}/provider-connections`, "POST", { provider: "fake", name: "Local" }, bearer)).value;

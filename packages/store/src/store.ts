@@ -164,7 +164,7 @@ export class ControlStore {
       const observedState = localOnly ? "destroyed" : "destroying";
       await tx.run(sql`UPDATE sandboxes SET desired_state='destroyed',observed_state=${observedState},observed_at=${localOnly ? time : box.observed_at},revision=revision+1,updated_at=${time} WHERE id=${box.id}`);
       const resultJson = localOnly ? JSON.stringify({ kind: "destroy", observation: { computeStopped: true, retainedResources: [] } }) : null;
-      await tx.run(sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'destroy',${box.id},NULL,${box.connection_id},${localOnly ? "succeeded" : "queued"},${localOnly ? "completed" : "accepted"},'none','{}',${resultJson},NULL,${submissionId},0,NULL,0,NULL,${localOnly ? null : time},${localOnly ? time : null},${time},${time})`);
+      await tx.run(sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'destroy',${box.id},NULL,${box.connection_id},${localOnly ? "succeeded" : "queued"},${localOnly ? "completed" : "accepted"},'none',${JSON.stringify({ previousObservedState: box.observed_state })},${resultJson},NULL,${submissionId},0,NULL,0,NULL,${localOnly ? null : time},${localOnly ? time : null},${time},${time})`);
       await tx.run(sql`INSERT INTO invocation_keys (project_id,endpoint,${sql.raw("`key`")},intent_hash,operation_id,accepted_at) VALUES (${input.projectId},${input.endpoint},${input.key},${input.intentHash},${operationId},${time})`);
       await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${input.projectId},${box.id},${operationId},'destroy.requested','{}',NULL,NULL,${time})`);
       if (localOnly) await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${input.projectId},${box.id},${operationId},'destroy.completed',${JSON.stringify({ effect: "none", localOnly: true })},${time},${time},${time})`);
@@ -323,7 +323,10 @@ export class ControlStore {
       await tx.run(sql`UPDATE reservations SET state='released',released_at=${time} WHERE operation_id=${op.id}`);
       if (op.kind === "exec") await tx.run(sql`UPDATE executions SET status='completed',output_state='not_captured',completed_at=${time} WHERE operation_id=${op.id}`);
       if (op.kind === "create") await tx.run(sql`UPDATE sandboxes SET observed_state='unknown',observation_error=${String(error.code ?? "CREATE_REJECTED")},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
-      if (op.kind === "destroy") await tx.run(sql`UPDATE sandboxes SET desired_state='running',observed_state='running',observation_error=${String(error.code ?? "DESTROY_REJECTED")},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
+      if (op.kind === "destroy") {
+        const prior = parseJson<{ previousObservedState?: string }>(op.request_json).previousObservedState ?? "unknown";
+        await tx.run(sql`UPDATE sandboxes SET desired_state='running',observed_state=${prior},observation_error=${String(error.code ?? "DESTROY_REJECTED")},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
+      }
       await tx.run(sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${op.project_id},${op.sandbox_id},${op.id},'operation.rejected',${JSON.stringify({ code: error.code })},NULL,NULL,${time})`);
     });
   }

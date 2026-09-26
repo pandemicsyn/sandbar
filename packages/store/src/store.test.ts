@@ -120,4 +120,22 @@ for (const dialect of (["sqlite", ...(process.env.SANDBAR_TEST_MYSQL_URL ? ["mys
       expect((await store.getSandbox(project.id, sandboxId))?.observed_state).toBe("destroyed");
     } finally { await store.close(); }
   });
+
+  test("rejected destroy preserves an unknown prior observation", async () => {
+    const { store, project } = await fixture(dialect);
+    try {
+      const created = await store.admitCreate({ projectId: project.id, endpoint: "POST /sandboxes", key: Bun.randomUUIDv7(), intentHash: "create", request: { environment: { kind: "prepared", imageId: "fake-starter" } } });
+      const createClaim = (await store.claimDue("create", 1000, project.id))!;
+      await store.beginSubmission(createClaim);
+      await store.complete(createClaim, { effect: "applied", value: { kind: "sandbox", observation: { ref: { nativeId: "native_uncertain" }, state: "unknown" } } });
+      const sandboxId = created.sandbox.id;
+      const destroy = await store.admitDestroy({ projectId: project.id, sandboxId, endpoint: `DELETE /sandboxes/${sandboxId}`, key: Bun.randomUUIDv7(), intentHash: "destroy" });
+      const destroyClaim = (await store.claimDue("destroy", 1000, project.id))!;
+      expect(destroyClaim.operation.id).toBe(destroy.operation.id);
+      await store.beginSubmission(destroyClaim);
+      await store.failWithoutEffect(destroyClaim, { code: "UNAVAILABLE", message: "Definitively rejected", effect: "none", retry: "never" }, true);
+      expect((await store.getSandbox(project.id, sandboxId))?.observed_state).toBe("unknown");
+      expect((await store.getSandbox(project.id, sandboxId))?.desired_state).toBe("running");
+    } finally { await store.close(); }
+  });
 });

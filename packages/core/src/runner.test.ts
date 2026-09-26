@@ -72,3 +72,14 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
     expect(partial?.result_json).toBeNull();
   } finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test("polling continues after a transient claim error", async () => {
+  let claims = 0;
+  const store = { claimDue: async () => { claims++; if (claims === 1) throw new Error("transient"); return undefined; } } as unknown as ControlStore;
+  const runner = new DurableRunner({ store, driver: {} as ProviderDriver, secrets: {} as SecretBox, pollMs: 5 });
+  runner.start();
+  try {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(claims).toBeGreaterThan(1);
+  } finally { runner.stop(); }
+});

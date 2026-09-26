@@ -225,8 +225,8 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
   app.get("/v1/projects/:projectId/sandboxes", protect(deps, false, async c => {
     const projectId = idParam(c, "projectId"), params = new URL(c.req.url).searchParams;
     const rawLimit = params.get("limit");
-    if (rawLimit !== null && !/^[1-9][0-9]*$/.test(rawLimit)) throw new SyntaxError("Invalid limit");
-    const limit = rawLimit === null ? 50 : Math.min(100, Number(rawLimit));
+    if (rawLimit !== null && (!/^[1-9][0-9]*$/.test(rawLimit) || Number(rawLimit) > 100)) throw new SyntaxError("Invalid limit");
+    const limit = rawLimit === null ? 50 : Number(rawLimit);
     const state = params.get("state") ?? undefined, connectionId = params.get("connectionId") ?? undefined, q = params.get("q") ?? undefined;
     if (state && !["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"].includes(state)) throw new SyntaxError("Invalid state filter");
     if (connectionId) Id.parse(connectionId);
@@ -235,7 +235,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
     let before: { createdAt: number; id: string } | undefined;
     if (cursor !== null) {
       try {
-        if (cursor.length > 1024 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new SyntaxError("Invalid cursor");
+        if (cursor.length > 256 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new SyntaxError("Invalid cursor");
         const decoded: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
         if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) throw new SyntaxError("Invalid cursor");
         const value = decoded as Record<string, unknown>;

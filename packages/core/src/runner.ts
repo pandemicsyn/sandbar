@@ -12,8 +12,9 @@ export class DurableRunner {
   constructor(private readonly options: RunnerOptions) { this.owner = options.owner ?? `runner_${crypto.randomUUID()}`; }
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.tick(), this.options.pollMs ?? 500);
-    void this.tick();
+    const poll = () => { void this.tick().catch(() => console.error("Durable runner poll failed; retrying on next interval")); };
+    this.timer = setInterval(poll, this.options.pollMs ?? 500);
+    poll();
   }
   stop(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
   async tick(): Promise<boolean> {
