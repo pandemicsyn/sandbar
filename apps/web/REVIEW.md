@@ -61,4 +61,4 @@ This report records independent static reviews for the management UI and browser
 
 ## Final clearance
 
-Pending a fresh independent full-diff review after the final dependency rebase. No pull request will be created until a reviewer reports zero actionable findings on the unchanged final base and HEAD.
+Current integration checkpoint: base `480cecc7e86f16aa8aba5df21cc0b33934515e91` on reviewed contracts/fake parent `8bf25d4f32c63d6f73d897fdddd5ace6756b58aa`. `bun run check && bun run build && bun run test` passes (37 passed, 1 local MySQL skip, 0 failed, 1310 assertions); `git diff --check` passes. Control's independent review and a fresh web full-diff review are pending. No pull request will be created until the reviewer reports zero actionable findings on the unchanged final base and HEAD.
