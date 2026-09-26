@@ -1,8 +1,13 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "playwright";
 
 const root = resolve(import.meta.dir, "../../..");
 const fakeToken = "fake-test-token-only-123456789";
@@ -20,36 +25,64 @@ let fakePort: number;
 let servicePort: number;
 
 async function freePort(): Promise<number> {
-  const listener = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("reserved") });
+  const listener = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => new Response("reserved"),
+  });
   const port = listener.port;
   listener.stop(true);
   if (!port) throw new Error("Failed to reserve a local port");
   return port;
 }
 
-async function waitFor<T>(label: string, attempt: () => Promise<T | undefined>, timeoutMs = 15_000): Promise<T> {
+async function waitFor<T>(
+  label: string,
+  attempt: () => Promise<T | undefined>,
+  timeoutMs = 15_000,
+): Promise<T> {
   const end = Date.now() + timeoutMs;
   let last: unknown;
   while (Date.now() < end) {
-    try { const result = await attempt(); if (result !== undefined) return result; }
-    catch (error) { last = error; }
-    await new Promise(resolve => setTimeout(resolve, 50));
+    try {
+      const result = await attempt();
+      if (result !== undefined) return result;
+    } catch (error) {
+      last = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Timed out waiting for ${label}${last ? `: ${String(last)}` : ""}`);
+  throw new Error(
+    `Timed out waiting for ${label}${last ? `: ${String(last)}` : ""}`,
+  );
 }
 
 async function stop(child?: Process): Promise<void> {
   if (!child) return;
   if (child.exitCode === null) child.kill("SIGTERM");
-  await Promise.race([child.exited, new Promise(resolve => setTimeout(resolve, 3_000))]);
-  if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
+  await Promise.race([
+    child.exited,
+    new Promise((resolve) => setTimeout(resolve, 3_000)),
+  ]);
+  if (child.exitCode === null) {
+    child.kill("SIGKILL");
+    await child.exited;
+  }
 }
 
 function launchFake(): Process {
   return Bun.spawn(["bun", "packages/providers/fake/src/server.ts"], {
     cwd: root,
-    env: { ...process.env, SANDBAR_ENABLE_FAKE_PROVIDER: "1", SANDBAR_FAKE_TEST_MODE: "1", SANDBAR_FAKE_STATE_PATH: join(temp, "fake.json"), SANDBAR_FAKE_TOKEN: fakeToken, SANDBAR_FAKE_PORT: String(fakePort) },
-    stdout: "inherit", stderr: "inherit",
+    env: {
+      ...process.env,
+      SANDBAR_ENABLE_FAKE_PROVIDER: "1",
+      SANDBAR_FAKE_TEST_MODE: "1",
+      SANDBAR_FAKE_STATE_PATH: join(temp, "fake.json"),
+      SANDBAR_FAKE_TOKEN: fakeToken,
+      SANDBAR_FAKE_PORT: String(fakePort),
+    },
+    stdout: "inherit",
+    stderr: "inherit",
   });
 }
 
@@ -57,88 +90,173 @@ function launchService(): Process {
   return Bun.spawn(["bun", "apps/server/src/index.ts"], {
     cwd: root,
     env: {
-      ...process.env, PORT: String(servicePort), SANDBAR_DB_URL: join(temp, "control.sqlite"),
-      SANDBAR_KEY_FILE: join(temp, "key"), SANDBAR_SETUP_TOKEN_FILE: join(temp, "setup-token"),
-      SANDBAR_FAKE_PROVIDER_URL: fakeUrl, SANDBAR_FAKE_PROVIDER_TOKEN: fakeToken,
+      ...process.env,
+      PORT: String(servicePort),
+      SANDBAR_DB_URL: join(temp, "control.sqlite"),
+      SANDBAR_KEY_FILE: join(temp, "key"),
+      SANDBAR_SETUP_TOKEN_FILE: join(temp, "setup-token"),
+      SANDBAR_FAKE_PROVIDER_URL: fakeUrl,
+      SANDBAR_FAKE_PROVIDER_TOKEN: fakeToken,
     },
-    stdout: "inherit", stderr: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
   });
 }
 
-async function ready(url: string, headers?: Record<string, string>): Promise<void> {
-  await waitFor(url, async () => { const response = await fetch(url, { headers }); return response.ok ? true : undefined; });
+async function ready(
+  url: string,
+  headers?: Record<string, string>,
+): Promise<void> {
+  await waitFor(url, async () => {
+    const response = await fetch(url, { headers });
+    return response.ok ? true : undefined;
+  });
 }
 
-async function control(method: "GET" | "POST", path: string, body?: unknown): Promise<any> {
-  const response = await fetch(`${fakeUrl}${path}`, { method, headers: { Authorization: `Bearer ${fakeToken}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  if (!response.ok) throw new Error(`Fake control ${path}: ${response.status} ${await response.text()}`);
+async function control(
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<any> {
+  const response = await fetch(`${fakeUrl}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${fakeToken}`,
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!response.ok)
+    throw new Error(
+      `Fake control ${path}: ${response.status} ${await response.text()}`,
+    );
   return response.json();
 }
 
-async function seed(action: "create" | "exec" | "destroy", behavior: "normal" | "lost_after_effect", command?: { exitCode: number; stdoutBase64: string; stderrBase64: string }) {
+async function seed(
+  action: "create" | "exec" | "destroy",
+  behavior: "normal" | "lost_after_effect",
+  command?: { exitCode: number; stdoutBase64: string; stderrBase64: string },
+) {
   await control("POST", "/_test/seed", {
-    submissionId: "*", action, behavior,
-    ...(command ? { command: { command: { kind: "shell", script: "echo hello" }, ...command } } : {}),
+    submissionId: "*",
+    action,
+    behavior,
+    ...(command
+      ? {
+          command: {
+            command: { kind: "shell", script: "echo hello" },
+            ...command,
+          },
+        }
+      : {}),
   });
 }
 
 async function operation(projectId: string, operationId: string): Promise<any> {
-  const response = await context.request.get(`${serviceUrl}/v1/projects/${projectId}/operations/${operationId}`);
-  if (!response.ok()) throw new Error(`Operation fetch failed ${response.status()}`);
+  const response = await context.request.get(
+    `${serviceUrl}/v1/projects/${projectId}/operations/${operationId}`,
+  );
+  if (!response.ok())
+    throw new Error(`Operation fetch failed ${response.status()}`);
   return response.json();
 }
 
-async function waitForOperation(projectId: string, operationId: string, status: string) {
-  return waitFor(`operation ${operationId} ${status}`, async () => {
-    const result = await operation(projectId, operationId);
-    if (result.status === "failed") throw new Error(`Operation failed: ${JSON.stringify(result.error)}`);
-    return result.status === status ? result : undefined;
-  }, 20_000);
+async function waitForOperation(
+  projectId: string,
+  operationId: string,
+  status: string,
+) {
+  return waitFor(
+    `operation ${operationId} ${status}`,
+    async () => {
+      const result = await operation(projectId, operationId);
+      if (result.status === "failed")
+        throw new Error(`Operation failed: ${JSON.stringify(result.error)}`);
+      return result.status === status ? result : undefined;
+    },
+    20_000,
+  );
 }
 
 async function waitForEffect(action: string, count: number): Promise<void> {
   await waitFor(`${count} ${action} effects`, async () => {
     const state = await control("GET", "/_test/state");
-    return state.ledger.filter((entry: { action: string }) => entry.action === action).length >= count ? true : undefined;
+    return state.ledger.filter(
+      (entry: { action: string }) => entry.action === action,
+    ).length >= count
+      ? true
+      : undefined;
   });
 }
 
 beforeAll(async () => {
-  if (!await Bun.file(join(root, "apps/web/dist/index.html")).exists()) {
-    const build = Bun.spawnSync(["bun", "run", "--filter", "@sandbar/web", "build"], { cwd: root, stdout: "inherit", stderr: "inherit" });
+  if (!(await Bun.file(join(root, "apps/web/dist/index.html")).exists())) {
+    const build = Bun.spawnSync(
+      ["bun", "run", "--filter", "@sandbar/web", "build"],
+      { cwd: root, stdout: "inherit", stderr: "inherit" },
+    );
     if (build.exitCode !== 0) throw new Error("Web build failed before E2E");
   }
   temp = await mkdtemp(join(tmpdir(), "sandbar-e2e-"));
-  await writeFile(join(temp, "key"), Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64"), { mode: 0o600 });
+  await writeFile(
+    join(temp, "key"),
+    Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64"),
+    { mode: 0o600 },
+  );
   await writeFile(join(temp, "setup-token"), setupToken, { mode: 0o600 });
   await chmod(join(temp, "key"), 0o600);
   await chmod(join(temp, "setup-token"), 0o600);
-  fakePort = await freePort(); servicePort = await freePort();
-  fakeUrl = `http://127.0.0.1:${fakePort}`; serviceUrl = `http://127.0.0.1:${servicePort}`;
+  fakePort = await freePort();
+  servicePort = await freePort();
+  fakeUrl = `http://127.0.0.1:${fakePort}`;
+  serviceUrl = `http://127.0.0.1:${servicePort}`;
   fake = launchFake();
-  await ready(`${fakeUrl}/_test/state`, { Authorization: `Bearer ${fakeToken}` });
+  await ready(`${fakeUrl}/_test/state`, {
+    Authorization: `Bearer ${fakeToken}`,
+  });
   server = launchService();
   await ready(`${serviceUrl}/healthz`);
   browser = await chromium.launch({ headless: true });
-  context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 900 } });
+  context = await browser.newContext({
+    acceptDownloads: true,
+    viewport: { width: 1440, height: 900 },
+  });
   page = await context.newPage();
 });
 
 afterAll(async () => {
-  await context?.close();
-  await browser?.close();
-  await stop(server);
-  await stop(fake);
+  try {
+    await context?.close();
+  } catch {
+    /* Continue process cleanup. */
+  }
+  try {
+    await browser?.close();
+  } catch {
+    /* Continue process cleanup. */
+  }
+  await Promise.allSettled([stop(server), stop(fake)]);
   if (temp) await rm(temp, { recursive: true, force: true });
 });
 
 test("browser and public HTTP recover fake effects across service restarts without duplicate dispatch", async () => {
   await page.goto(serviceUrl);
-  await page.getByRole("button", { name: "First time? Set up an operator" }).click();
+  await page
+    .getByRole("button", { name: "First time? Set up an operator" })
+    .click();
   await page.getByLabel("Setup secret").fill(setupToken);
-  await page.getByRole("button", { name: "Create operator" }).click();
+  await page.getByLabel("Setup secret").press("Enter");
   await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
-  expect(await page.getByText("Save your API token now.").isVisible()).toBe(true);
+  await page.getByRole("heading", { name: "No projects yet" }).waitFor();
+  expect(await page.getByText("Save your API token now.").isVisible()).toBe(
+    true,
+  );
+  const deniedWithoutCsrf = await context.request.post(
+    `${serviceUrl}/v1/projects`,
+    { data: { name: "denied" } },
+  );
+  expect(deniedWithoutCsrf.status()).toBe(403);
   await page.getByRole("button", { name: "I saved it" }).click();
   await page.getByLabel("Project name").fill("E2E project");
   await page.getByRole("button", { name: "Create project" }).click();
@@ -150,6 +268,8 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByText("Connection scope verified.").waitFor();
   await page.getByRole("link", { name: "Fleet" }).click();
   await page.getByRole("heading", { name: "Fleet" }).waitFor();
+  await page.getByLabel("Label key (optional)").fill("team");
+  await page.getByLabel("Label value").fill("e2e");
 
   await page.getByRole("button", { name: "Create sandbox" }).click();
   await page.waitForURL(/\/operations\//);
@@ -157,10 +277,19 @@ test("browser and public HTTP recover fake effects across service restarts witho
   const created = await waitForOperation(projectId, createId, "succeeded");
   const sandboxId = created.sandboxId as string;
   expect(sandboxId).toMatch(/^sb_/);
+  await page.getByRole("link", { name: "Fleet" }).click();
+  await page.getByLabel("State").selectOption("running");
+  await page.getByLabel("Search").fill("no-such-label");
+  await page.getByRole("heading", { name: "No sandboxes match" }).waitFor();
+  await page.getByLabel("Search").fill("e2e");
   await page.getByRole("link", { name: sandboxId }).click();
   await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).waitFor();
 
-  const fixture = { exitCode: 7, stdoutBase64: Buffer.from("fixture stdout\n").toString("base64"), stderrBase64: Buffer.from("fixture stderr\n").toString("base64") };
+  const fixture = {
+    exitCode: 7,
+    stdoutBase64: Buffer.from("fixture stdout\n").toString("base64"),
+    stderrBase64: Buffer.from("fixture stderr\n").toString("base64"),
+  };
   await seed("exec", "normal", fixture);
   await page.getByRole("button", { name: "Run command" }).click();
   await page.waitForURL(/\/operations\//);
@@ -172,27 +301,42 @@ test("browser and public HTTP recover fake effects across service restarts witho
   expect(await page.getByText("7", { exact: true }).isVisible()).toBe(true);
 
   await page.getByRole("link", { name: sandboxId }).click();
-  if (process.env.SANDBAR_E2E_SKIP_FILES !== "1") {
-    await page.getByLabel("Local file").setInputFiles({ name: "sample.txt", mimeType: "text/plain", buffer: Buffer.from("persisted virtual file") });
-    await page.getByRole("button", { name: "Upload file" }).click();
-    await page.getByRole("button", { name: "Upload file" }).waitFor();
-    await page.getByText("Wrote 22 bytes to /work/example.txt.").waitFor();
-    const fileResponse = await context.request.get(`${serviceUrl}/v1/projects/${projectId}/sandboxes/${sandboxId}/files?path=%2Fwork%2Fexample.txt`);
-    expect(fileResponse.ok()).toBe(true);
-    expect(await fileResponse.text()).toBe("persisted virtual file");
-  }
+  await page.getByLabel("Local file").setInputFiles({
+    name: "sample.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("persisted virtual file"),
+  });
+  await page.getByRole("button", { name: "Upload file" }).click();
+  await page.getByRole("button", { name: "Upload file" }).waitFor();
+  await page.getByText("Wrote 22 bytes to /work/example.txt.").waitFor();
+  const fileResponse = await context.request.get(
+    `${serviceUrl}/v1/projects/${projectId}/sandboxes/${sandboxId}/files?path=%2Fwork%2Fexample.txt`,
+  );
+  expect(fileResponse.ok()).toBe(true);
+  expect(await fileResponse.text()).toBe("persisted virtual file");
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download path" }).click();
+  const download = await downloaded;
+  const downloadedPath = join(temp, "downloaded-example.txt");
+  await download.saveAs(downloadedPath);
+  expect(await readFile(downloadedPath, "utf8")).toBe("persisted virtual file");
 
   await seed("exec", "lost_after_effect", fixture);
   await page.getByRole("button", { name: "Run command" }).click();
   await page.waitForURL(/\/operations\//);
   const lostExecId = new URL(page.url()).pathname.split("/").at(-1)!;
   await waitForEffect("exec", 2);
-  await page.getByText("The provider may already have applied this action.").waitFor();
+  await page
+    .getByText("The provider may already have applied this action.")
+    .waitFor();
   await stop(server);
+  expect(fake.exitCode).toBeNull();
   server = launchService();
   await ready(`${serviceUrl}/healthz`);
   await page.reload();
-  await page.getByRole("heading", { name: `Operation ${lostExecId}` }).waitFor();
+  await page
+    .getByRole("heading", { name: `Operation ${lostExecId}` })
+    .waitFor();
   await page.getByRole("button", { name: "Check again" }).click();
   await waitForOperation(projectId, lostExecId, "succeeded");
 
@@ -202,32 +346,54 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.waitForURL(/\/operations\//);
   const lostCreateId = new URL(page.url()).pathname.split("/").at(-1)!;
   await waitForEffect("create", 2);
-  await page.getByText("The provider may already have applied this action.").waitFor();
+  await page
+    .getByText("The provider may already have applied this action.")
+    .waitFor();
   await stop(server);
+  expect(fake.exitCode).toBeNull();
   server = launchService();
   await ready(`${serviceUrl}/healthz`);
   await page.reload();
-  await page.getByRole("heading", { name: `Operation ${lostCreateId}` }).waitFor();
+  await page
+    .getByRole("heading", { name: `Operation ${lostCreateId}` })
+    .waitFor();
   await page.getByRole("button", { name: "Check again" }).click();
   await waitForOperation(projectId, lostCreateId, "succeeded");
 
   const state = await control("GET", "/_test/state");
-  const createEntries = state.ledger.filter((entry: { action: string }) => entry.action === "create");
-  const execEntries = state.ledger.filter((entry: { action: string }) => entry.action === "exec");
+  const createEntries = state.ledger.filter(
+    (entry: { action: string }) => entry.action === "create",
+  );
+  const execEntries = state.ledger.filter(
+    (entry: { action: string }) => entry.action === "exec",
+  );
   expect(createEntries).toHaveLength(2);
   expect(execEntries).toHaveLength(2);
   for (const entry of [...createEntries, ...execEntries]) {
-    expect(state.invocations.filter((invocation: { submissionId: string }) => invocation.submissionId === entry.submissionId)).toHaveLength(1);
+    expect(
+      state.invocations.filter(
+        (invocation: { submissionId: string }) =>
+          invocation.submissionId === entry.submissionId,
+      ),
+    ).toHaveLength(1);
   }
-  expect(state.resources.filter((resource: { state: string }) => resource.state === "running")).toHaveLength(2);
+  expect(
+    state.resources.filter(
+      (resource: { state: string }) => resource.state === "running",
+    ),
+  ).toHaveLength(2);
 
   await page.getByRole("link", { name: "Fleet" }).click();
   await page.getByRole("link", { name: sandboxId }).click();
-  page.once("dialog", dialog => void dialog.accept());
+  page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "Destroy sandbox" }).click();
   await page.waitForURL(/\/operations\//);
   const destroyId = new URL(page.url()).pathname.split("/").at(-1)!;
   await waitForOperation(projectId, destroyId, "succeeded");
   const finalState = await control("GET", "/_test/state");
-  expect(finalState.ledger.filter((entry: { action: string }) => entry.action === "destroy")).toHaveLength(1);
+  expect(
+    finalState.ledger.filter(
+      (entry: { action: string }) => entry.action === "destroy",
+    ),
+  ).toHaveLength(1);
 }, 120_000);
