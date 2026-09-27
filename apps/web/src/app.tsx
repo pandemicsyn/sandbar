@@ -879,7 +879,8 @@ function FleetPage() {
                 />
                 {!connectionId && (
                   <span className="field-hint">
-                    Enter an active Daytona snapshot ID or existing Modal im- image ID.
+                    Enter an active Daytona snapshot ID or existing Modal im- image ID; fake-starter
+                    is the fake default.
                   </span>
                 )}
               </Field>
