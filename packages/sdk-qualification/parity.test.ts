@@ -175,6 +175,8 @@ describe("remote recovery evidence", () => {
       }
       expect(failedReads).toBe(1);
       const imported = JSON.parse(JSON.stringify(reference)) as RecoveryReference;
+      expect(imported.invocationKey).toBeTruthy();
+      expect(imported.operationId).toBeTruthy();
       expect(JSON.stringify(imported)).not.toContain(setup.token);
       await first.close();
 
