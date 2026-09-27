@@ -64,7 +64,10 @@ export function sameNativeScope(actual: NativeScope, expected: NativeScope): boo
     actual.provider === expected.provider &&
     actual.connectionId === expected.connectionId &&
     actual.accountId === expected.accountId &&
-    actual.region === expected.region
+    actual.resourceScope?.kind === expected.resourceScope?.kind &&
+    actual.resourceScope?.id === expected.resourceScope?.id &&
+    actual.region === expected.region &&
+    actual.endpoint === expected.endpoint
   );
 }
 

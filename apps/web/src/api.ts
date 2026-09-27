@@ -148,10 +148,10 @@ export const api = {
     }),
   connections: (projectId: string) =>
     request(`${base(projectId)}/provider-connections`, ProviderConnectionPage),
-  createConnection: (projectId: string, name: string) =>
+  createConnection: (projectId: string, input: z.infer<typeof CreateProviderConnectionRequest>) =>
     request(`${base(projectId)}/provider-connections`, ProviderConnection, {
       method: "POST",
-      body: JSON.stringify(CreateProviderConnectionRequest.parse({ provider: "fake", name })),
+      body: JSON.stringify(CreateProviderConnectionRequest.parse(input)),
     }),
   verifyConnection: (projectId: string, connectionId: string) =>
     request(

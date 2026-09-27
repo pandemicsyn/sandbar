@@ -429,6 +429,11 @@ function ConnectionsPage() {
   const { projectId } = projectRoute.useParams();
   const connections = useResource(() => api.connections(projectId), projectId);
   const [name, setName] = useState("");
+  const [provider, setProvider] = useState<"fake" | "daytona">("fake");
+  const [apiKey, setApiKey] = useState("");
+  const [target, setTarget] = useState("us");
+  const [apiUrl, setApiUrl] = useState("https://app.daytona.io/api");
+  const [toolboxOrigin, setToolboxOrigin] = useState("https://proxy.app.daytona.io");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -440,9 +445,10 @@ function ConnectionsPage() {
     setNotice(undefined);
 
     try {
-      await api.createConnection(projectId, name.trim());
+      await api.createConnection(projectId, provider === "fake" ? { provider, name: name.trim() } : { provider, name: name.trim(), credentials: { apiKey }, configuration: { apiUrl, toolboxOrigin, target, ttlMinutes: "60" } });
       setName("");
-      setNotice("Fake connection added. Verify its scope before creating a sandbox.");
+      setApiKey("");
+      setNotice("Connection added. Verify its native scope before creating a sandbox.");
       connections.refresh();
     } catch (reason) {
       setError(ErrorMessage.parse(reason));
@@ -471,13 +477,18 @@ function ConnectionsPage() {
     <>
       <PageHead
         title="Provider connections"
-        subtitle="This milestone connects only to a configured independent fake provider. Its service token stays on the Sandbar host."
+        subtitle="Credentials are encrypted by the service. Verification reads native identity before this connection can create sandboxes."
       />
       {notice && <Notice>{notice}</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
       <section className="surface panel" style={{ marginTop: 18 }}>
-        <h2 className="section-title">Add fake provider connection</h2>
+        <h2 className="section-title">Add provider connection</h2>
         <form className="toolbar" onSubmit={create}>
+          <Field label="Provider" htmlFor="connection-provider">
+            <select className="select" id="connection-provider" value={provider} onChange={(e) => setProvider(e.target.value as "fake" | "daytona")}>
+              <option value="fake">Fake test provider</option><option value="daytona">Daytona</option>
+            </select>
+          </Field>
           <Field label="Connection name" htmlFor="connection-name">
             <input
               className="input"
@@ -488,6 +499,12 @@ function ConnectionsPage() {
               onChange={(e) => setName(e.target.value)}
             />
           </Field>
+          {provider === "daytona" && <>
+            <Field label="Daytona API key" htmlFor="connection-api-key"><input className="input" id="connection-api-key" type="password" autoComplete="off" required value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></Field>
+            <Field label="Daytona target" htmlFor="connection-target"><input className="input" id="connection-target" required value={target} onChange={(e) => setTarget(e.target.value)} /></Field>
+            <Field label="Daytona API URL" htmlFor="connection-api-url"><input className="input" id="connection-api-url" type="url" required value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} /></Field>
+            <Field label="Daytona toolbox origin" htmlFor="connection-toolbox-origin"><input className="input" id="connection-toolbox-origin" type="url" required value={toolboxOrigin} onChange={(e) => setToolboxOrigin(e.target.value)} /></Field>
+          </>}
           <Button variant="primary" busy={busy} type="submit">
             Add connection
           </Button>
@@ -556,7 +573,7 @@ function ConnectionsPage() {
           </div>
         ) : (
           <EmptyState title="No connections">
-            Add the fake provider connection to make sandbox creation available.
+            Add a provider connection to make sandbox creation available.
           </EmptyState>
         )}
       </section>
@@ -578,6 +595,7 @@ function FleetPage() {
 
   const connections = useResource(() => api.connections(projectId), projectId);
   const [connectionId, setConnectionId] = useState("");
+  const [preparedImageId, setPreparedImageId] = useState("");
   const [labelKey, setLabelKey] = useState("");
   const [labelValue, setLabelValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -594,10 +612,11 @@ function FleetPage() {
     setError(undefined);
 
     try {
+      const selected = available.find((item) => item.id === connectionId) ?? available[0];
       const candidate: CreateSandboxRequest = {
-        environment: { kind: "prepared" as const, imageId: "fake-starter" },
+        environment: { kind: "prepared" as const, imageId: selected?.provider === "fake" ? "fake-starter" : preparedImageId.trim() },
         network: { policy: "blocked" as const },
-        connectionId: connectionId || available[0]?.id,
+        connectionId: selected?.id,
       };
 
       if (labelKey.trim()) candidate.labels = { [labelKey.trim()]: labelValue.trim() };
@@ -667,7 +686,7 @@ function FleetPage() {
           </Notice>
         ) : !available.length ? (
           <Notice tone="warning">
-            Verify a fake provider connection before creating a sandbox.{" "}
+            Verify a provider connection before creating a sandbox.{" "}
             <Link to="/projects/$projectId/connections" params={{ projectId }}>
               Manage connections
             </Link>
@@ -675,8 +694,8 @@ function FleetPage() {
         ) : (
           <form className="toolbar" onSubmit={create}>
             <div className="field">
-              <span className="field-label">Simulation profile</span>
-              <span className="field-hint">fake-starter image, blocked network</span>
+              <span className="field-label">Blocked network</span>
+              <span className="field-hint">Daytona requires an existing active snapshot ID. OCI builds are not enabled in this slice.</span>
             </div>
             <Field label="Connection" htmlFor="create-connection">
               <select
@@ -693,6 +712,7 @@ function FleetPage() {
                 ))}
               </select>
             </Field>
+            {(available.find((item) => item.id === connectionId) ?? available[0])?.provider !== "fake" && <Field label="Prepared image ID" htmlFor="create-prepared-image"><input className="input" id="create-prepared-image" required value={preparedImageId} onChange={(e) => setPreparedImageId(e.target.value)} /></Field>}
             <Field label="Label key (optional)" htmlFor="create-label-key">
               <input
                 className="input"

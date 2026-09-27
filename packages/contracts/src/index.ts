@@ -364,18 +364,19 @@ export const Project = z.object({ id: Id, name: z.string(), createdAt: Rfc3339 }
 export const ProjectPage = z.object({ items: z.array(Project) });
 
 export const CreateProviderConnectionRequest = z.strictObject({
-  provider: z.literal("fake"),
+  provider: z.enum(["fake", "daytona", "modal"]),
   name: z.string().min(1).max(120),
-  // A fake connection has no vendor secret. URL/token are service configuration, not public API fields.
+  credentials: z.record(z.string(), z.string()).optional(),
+  configuration: z.record(z.string(), z.string()).optional(),
 });
 
 export const ProviderConnection = z.object({
   id: Id,
   projectId: Id,
-  provider: z.literal("fake"),
+  provider: z.enum(["fake", "daytona", "modal"]),
   name: z.string(),
   status: z.enum(["unverified", "verified", "draining"]),
-  nativeScope: z.object({ accountId: z.string(), region: z.string().optional() }).optional(),
+  nativeScope: z.object({ accountId: z.string().optional(), resourceScope: z.object({ kind: z.literal("app"), id: z.string() }).optional(), region: z.string().optional(), endpoint: z.url().optional() }).optional(),
   capabilities: z
     .object({ create: z.boolean(), exec: z.boolean(), files: z.boolean(), destroy: z.boolean() })
     .optional(),

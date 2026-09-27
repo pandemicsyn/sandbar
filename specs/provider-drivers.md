@@ -2,6 +2,12 @@
 
 Draft 0.3 · Research-backed design targets; no adapter has passed live conformance yet
 
+## First real adapter implementation wave
+
+Modal and Daytona were selected first on September 26, 2026. Their initial packages implement only the verified shared resource subset for direct TypeScript and the service. Registration factories take provider credentials plus explicit native configuration, verify scope through read-only native calls, and return a driver lease. Service connections encrypt credentials and pin the verified native scope and endpoint; direct callers hold credentials in their own process. Provider status is implemented and fixture-tested until separately authorized live qualification. OCI builds, retained snapshots, volumes, accounting, registry publication and production deployment are outside this initial adapter slice.
+
+The provider lease distinguishes caller-owned and borrowed drivers. Releasing an owned lease cleans only local transport state. It never destroys remote compute and never authorizes replay of an uncertain mutation. A capability check cannot implicitly create an app, snapshot, image or paid sandbox.
+
 Refined contracts: [storage/images](storage-and-images.md), [observability/accounting](observability-and-accounting.md), and [security/operations](contract-recommendations.md). The selected runtime and persistence model are described in [architecture](design.md).
 
 ## Integration architecture

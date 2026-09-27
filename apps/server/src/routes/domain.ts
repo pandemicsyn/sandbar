@@ -29,6 +29,7 @@ import {
 import {
   ProviderReadError,
   type ProviderDriver,
+  type ProviderLease,
   type NativeScope,
   type SandboxRef,
 } from "@sandbar/provider-spi";
@@ -41,11 +42,12 @@ import {
   type SandboxRow,
 } from "@sandbar/store";
 import { sha256 } from "@sandbar/core";
-import { DurableRunner, SecretBox } from "@sandbar/service-runtime";
+import { DurableRunner, SecretBox, ProviderRegistry, storedScope, publicScope } from "@sandbar/service-runtime";
 
 export interface DomainDependencies {
   store: ControlStore;
-  driver: ProviderDriver;
+  driver?: ProviderDriver;
+  registry?: ProviderRegistry;
   secrets: SecretBox;
   setupToken: string;
   runner?: DurableRunner;
@@ -217,7 +219,7 @@ function connectionDto(row: ConnectionRow) {
 
   if (row.scope)
     Object.assign(dto, {
-      nativeScope: { accountId: row.scope, region: "local" },
+      nativeScope: publicScope(row.scope),
       capabilities: { create: true, exec: true, files: true, destroy: true },
     });
 
@@ -364,18 +366,21 @@ function accepted(
   );
 }
 
-function nativeRef(box: SandboxRow, connection: ConnectionRow): SandboxRef {
-  if (!box.native_id || !connection.scope)
+function nativeRef(box: SandboxRow, scope: NativeScope): SandboxRef {
+  if (!box.native_id)
     throw new StoreError("CONFLICT", "Sandbox has no verified native identity");
-
-  const scope: NativeScope = {
-    provider: connection.provider,
-    connectionId: connection.id,
-    accountId: connection.scope,
-    region: "local",
-  };
-
   return { scope, nativeId: box.native_id, kind: "sandbox" };
+}
+
+async function providerFor(deps: DomainDependencies, connection: ConnectionRow): Promise<ProviderLease> {
+  if (deps.registry) return deps.registry.connect(connection);
+  if (!deps.driver || deps.driver.name !== connection.provider || !connection.scope) throw new StoreError("CONFLICT", "Provider connection unavailable");
+  return { driver: deps.driver, scope: { provider: connection.provider, connectionId: connection.id, accountId: connection.scope, region: "local" } };
+}
+async function withProvider<T>(deps: DomainDependencies, connection: ConnectionRow, use: (lease: ProviderLease) => Promise<T>): Promise<T> {
+  const lease = await providerFor(deps, connection);
+  try { return await use(lease); }
+  finally { if (lease.ownership === "owned") { try { await lease.release(); } catch { console.error("Provider transport release failed"); } } }
 }
 
 function filePath(c: Context): string {
@@ -563,10 +568,12 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       const id = `conn_${crypto.randomUUID().replaceAll("-", "")}`;
 
+      if (deps.registry) deps.registry.validate(body.provider, { credentials: body.credentials ?? {}, configuration: body.configuration ?? {} });
+      else if (body.provider !== "fake" || body.credentials || body.configuration) throw new SyntaxError("Provider is not configured");
       const encryptedCredentials = await deps.secrets.seal(
         "provider-connection",
         id,
-        JSON.stringify({ provider: "fake" }),
+        JSON.stringify({ credentials: body.credentials ?? {}, configuration: body.configuration ?? {} }),
       );
 
       const row = await deps.store.createConnection({
@@ -599,21 +606,11 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       const row = await deps.store.getConnection(projectId, connectionId);
 
       if (!row) throw new StoreError("NOT_FOUND", "Connection not found");
-      await deps.secrets.open("provider-connection", row.id, row.encrypted_credentials);
-
-      const capabilities = await deps.driver.capabilities({
-        provider: "fake",
-        connectionId: row.id,
-        accountId: "fake-local",
-        region: "local",
+      return withProvider(deps, row, async ({ driver, scope }) => {
+        const capabilities = await driver.capabilities(scope);
+        if (capabilities.provider !== row.provider) throw new StoreError("CONFLICT", "Provider identity mismatch");
+        return c.json(connectionDto(await deps.store.verifyConnection(projectId, connectionId, deps.registry ? storedScope(scope) : scope.accountId!)));
       });
-
-      if (capabilities.provider !== "fake")
-        throw new StoreError("CONFLICT", "Provider identity mismatch");
-
-      return c.json(
-        connectionDto(await deps.store.verifyConnection(projectId, connectionId, "fake-local")),
-      );
     }),
   );
 
@@ -856,20 +853,10 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       if (!connection) throw new StoreError("NOT_FOUND", "Connection not found");
 
-      const bytes = await deps.driver.readFile({
-        sandbox: nativeRef(box, connection),
-        path: filePath(c),
-      });
-
-      if (bytes.length > 1_048_576)
-        throw new StoreError("CAPACITY", "File exceeds buffered read limit");
-
-      return new Response(Buffer.from(bytes), {
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "Content-Length": String(bytes.length),
-          "Cache-Control": "no-store",
-        },
+      return withProvider(deps, connection, async ({ driver, scope }) => {
+        const bytes = await driver.readFile({ sandbox: nativeRef(box, scope), path: filePath(c) });
+        if (bytes.length > 1_048_576) throw new StoreError("CAPACITY", "File exceeds buffered read limit");
+        return new Response(Buffer.from(bytes), { headers: { "Content-Type": "application/octet-stream", "Content-Length": String(bytes.length), "Cache-Control": "no-store" } });
       });
     }),
   );

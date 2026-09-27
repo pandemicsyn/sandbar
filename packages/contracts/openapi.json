@@ -2932,12 +2932,34 @@
         "properties": {
           "provider": {
             "type": "string",
-            "const": "fake"
+            "enum": [
+              "fake",
+              "daytona",
+              "modal"
+            ]
           },
           "name": {
             "type": "string",
             "minLength": 1,
             "maxLength": 120
+          },
+          "credentials": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "configuration": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -4483,7 +4505,11 @@
           },
           "provider": {
             "type": "string",
-            "const": "fake"
+            "enum": [
+              "fake",
+              "daytona",
+              "modal"
+            ]
           },
           "name": {
             "type": "string"
@@ -4502,13 +4528,30 @@
               "accountId": {
                 "type": "string"
               },
+              "resourceScope": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "app"
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ]
+              },
               "region": {
                 "type": "string"
+              },
+              "endpoint": {
+                "type": "string",
+                "format": "uri"
               }
-            },
-            "required": [
-              "accountId"
-            ]
+            }
           },
           "capabilities": {
             "type": "object",
@@ -4564,7 +4607,11 @@
                 },
                 "provider": {
                   "type": "string",
-                  "const": "fake"
+                  "enum": [
+                    "fake",
+                    "daytona",
+                    "modal"
+                  ]
                 },
                 "name": {
                   "type": "string"
@@ -4583,13 +4630,30 @@
                     "accountId": {
                       "type": "string"
                     },
+                    "resourceScope": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "app"
+                        },
+                        "id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "id"
+                      ]
+                    },
                     "region": {
                       "type": "string"
+                    },
+                    "endpoint": {
+                      "type": "string",
+                      "format": "uri"
                     }
-                  },
-                  "required": [
-                    "accountId"
-                  ]
+                  }
                 },
                 "capabilities": {
                   "type": "object",
