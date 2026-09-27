@@ -7,7 +7,7 @@ description: Routes and schemas generated from the executable Sandbar OpenAPI co
 
 OpenAPI **3.1.0** · contract version **0.1.0**. [Download the complete JSON contract](https://github.com/pandemicsyn/sandbar/blob/c4dea72/packages/contracts/openapi.json). Responses and schemas below describe the current development API.
 
-The service uses Bearer authorization except where an operation explicitly has no security requirement. Project IDs appear in project-scoped paths. Mutation endpoints use an `Idempotency-Key` header; consult the full OpenAPI JSON for schema constraints and status-specific responses.
+The service uses Bearer authorization except where an operation explicitly has no security requirement. Project IDs appear in project-scoped paths. Sandbox create, destroy, execution and file-write requests declare an `Idempotency-Key` header; consult the full OpenAPI JSON for schema constraints and status-specific responses.
 
 ## Endpoints
 
@@ -19,29 +19,19 @@ The service uses Bearer authorization except where an operation explicitly has n
 | POST | `/v1/sessions/logout` | `logoutSession` | 204 | — |
 | GET | `/v1/projects` | `listProjects` | 200 | — |
 | POST | `/v1/projects` | `createProject` | 201 | CreateProjectRequest |
-| PARAMETERS | `/v1/projects/{projectId}/provider-connections` | `—` | — | — |
 | GET | `/v1/projects/{projectId}/provider-connections` | `listProviderConnections` | 200 | — |
 | POST | `/v1/projects/{projectId}/provider-connections` | `createProviderConnection` | 201 | CreateProviderConnectionRequest |
-| PARAMETERS | `/v1/projects/{projectId}/provider-connections/{connectionId}/verify` | `—` | — | — |
 | POST | `/v1/projects/{projectId}/provider-connections/{connectionId}/verify` | `verifyProviderConnection` | 200 | — |
-| PARAMETERS | `/v1/projects/{projectId}/sandboxes` | `—` | — | — |
 | GET | `/v1/projects/{projectId}/sandboxes` | `listSandboxes` | 200 | — |
 | POST | `/v1/projects/{projectId}/sandboxes` | `submitCreate` | 202 | CreateSandboxRequest |
-| PARAMETERS | `/v1/projects/{projectId}/sandboxes/{sandboxId}` | `—` | — | — |
 | GET | `/v1/projects/{projectId}/sandboxes/{sandboxId}` | `getSandbox` | 200 | — |
 | DELETE | `/v1/projects/{projectId}/sandboxes/{sandboxId}` | `submitDestroy` | 202 | — |
-| PARAMETERS | `/v1/projects/{projectId}/sandboxes/{sandboxId}/executions` | `—` | — | — |
 | POST | `/v1/projects/{projectId}/sandboxes/{sandboxId}/executions` | `submitExec` | 202 | ExecRequest |
-| PARAMETERS | `/v1/projects/{projectId}/executions/{executionId}` | `—` | — | — |
 | GET | `/v1/projects/{projectId}/executions/{executionId}` | `getExecution` | 200 | — |
-| PARAMETERS | `/v1/projects/{projectId}/sandboxes/{sandboxId}/files` | `—` | — | — |
 | GET | `/v1/projects/{projectId}/sandboxes/{sandboxId}/files` | `readFile` | 200 | — |
 | PUT | `/v1/projects/{projectId}/sandboxes/{sandboxId}/files` | `writeFile` | 200, 202 | inline |
-| PARAMETERS | `/v1/projects/{projectId}/operations/{operationId}` | `—` | — | — |
 | GET | `/v1/projects/{projectId}/operations/{operationId}` | `getOperation` | 200 | — |
-| PARAMETERS | `/v1/projects/{projectId}/operations/{operationId}/reconcile` | `—` | — | — |
 | POST | `/v1/projects/{projectId}/operations/{operationId}/reconcile` | `reconcileOperation` | 200 | — |
-| PARAMETERS | `/v1/projects/{projectId}/invocations/{invocationKey}` | `—` | — | — |
 | GET | `/v1/projects/{projectId}/invocations/{invocationKey}` | `lookupInvocation` | 200 | — |
 
 ## Schema names

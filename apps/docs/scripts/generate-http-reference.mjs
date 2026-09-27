@@ -13,7 +13,7 @@ const lines = [
   '',
   `OpenAPI **${openApiDocument.openapi}** · contract version **${openApiDocument.info.version}**. [Download the complete JSON contract](https://github.com/pandemicsyn/sandbar/blob/c4dea72/packages/contracts/openapi.json). Responses and schemas below describe the current development API.`,
   '',
-  'The service uses Bearer authorization except where an operation explicitly has no security requirement. Project IDs appear in project-scoped paths. Mutation endpoints use an `Idempotency-Key` header; consult the full OpenAPI JSON for schema constraints and status-specific responses.',
+  'The service uses Bearer authorization except where an operation explicitly has no security requirement. Project IDs appear in project-scoped paths. Sandbox create, destroy, execution and file-write requests declare an `Idempotency-Key` header; consult the full OpenAPI JSON for schema constraints and status-specific responses.',
   '',
   '## Endpoints',
   '',
@@ -22,6 +22,7 @@ const lines = [
 ];
 for (const [path, pathItem] of Object.entries(openApiDocument.paths)) {
   for (const [method, operation] of Object.entries(pathItem)) {
+    if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'trace'].includes(method)) continue;
     const successes = Object.entries(operation.responses ?? {}).filter(([status]) => /^2\d\d$/.test(status)).map(([status]) => status).join(', ');
     const body = operation.requestBody?.content;
     const schema = body && Object.values(body)[0]?.schema;
