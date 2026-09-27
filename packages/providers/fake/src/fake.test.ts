@@ -517,7 +517,8 @@ describe("independent fake provider", () => {
 
   test("scope matching keeps NUL-containing account and region tuples distinct", async () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
-    const engine = new FakeProviderEngine(join(directory, "provider.json"), true);
+    const statePath = join(directory, "provider.json");
+    const engine = new FakeProviderEngine(statePath, true);
     await engine.load();
     const owner = { ...scope, accountId: "a\0b", region: "c" };
     const foreign = { ...scope, accountId: "a", region: "b\0c" };
@@ -536,6 +537,12 @@ describe("independent fake provider", () => {
     expect(engine.inventory(foreign, undefined, 10).items).toHaveLength(0);
     expect(await engine.observe(foreign, "nul_scope_create")).toBeNull();
     expect((await engine.observe(owner, "nul_scope_create"))?.status).toBe("completed");
+    const reloaded = new FakeProviderEngine(statePath, true);
+    await reloaded.load();
+    expect(reloaded.inspect({ ...ref, scope: foreign })).toBeNull();
+    expect(reloaded.inventory(foreign, undefined, 10).items).toHaveLength(0);
+    expect(await reloaded.observe(foreign, "nul_scope_create")).toBeNull();
+    expect((await reloaded.observe(owner, "nul_scope_create"))?.status).toBe("completed");
   });
 
   test("wildcard scenario queue consumes one matching action without knowing allocated submission IDs", async () => {
