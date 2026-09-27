@@ -13,12 +13,15 @@ description: Measured support and planned integrations.
 | SQLite service store                  | Implemented and tested                | Store and service tests                                      |
 | MySQL service store                   | Implemented, separately tested        | Requires test database for live run                          |
 | Daytona                               | Implemented; fixture tested only      | Direct, service and packed Node/Bun tests; no live call      |
-| E2B, Modal, Tensorlake                | Planned                               | No adapters qualified                                        |
+| Modal                                 | Safe subset; fixture tested only      | Direct, service and packed Node/Bun fixtures; no live call   |
+| E2B, Tensorlake                       | Planned                               | No adapters qualified                                        |
 | Rust and Python remote SDKs           | Planned                               | No packages implemented                                      |
 | Snapshots, storage mounts, accounting | Planned design                        | No public API implemented                                    |
 
 The fake returns fixture output and maintains a virtual file system. It never executes host commands, builds images, enforces network isolation or calls a paid provider. A successful fake test does not establish real-provider behavior. [Runtime qualification](https://github.com/pandemicsyn/sandbar/blob/af06bb6/docs/sdk-runtime-qualification.md) records the measured package matrix.
 
-Daytona's adapter accepts an existing active snapshot in a verified region and uses native sandbox, process and file APIs. Its tests use an independent fetch fixture; they do not establish live provider conformance or authorize paid usage. Modal registration follows in a separate stack.
+Daytona's adapter accepts an existing active snapshot in a verified region and uses native sandbox, process and file APIs. Its tests use an independent fetch fixture; they do not establish live provider conformance or authorize paid usage.
+
+Modal's adapter verifies an existing App and uses an existing `im-` image to create blocked-network sandboxes. It supports inspect, inventory, bounded binary file read, and destroy. Exec and file write are unavailable because the pinned SDK can retry those mutations without a safe replay boundary. Tests use native-boundary fixtures; no live Modal calls or paid usage are qualified.
 
 Malformed successful fake inspect responses may currently surface a Zod validation error directly. This behavior does not qualify error handling for a real provider.

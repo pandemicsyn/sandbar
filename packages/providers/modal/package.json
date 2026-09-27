@@ -19,6 +19,7 @@
     "test:live": "bun live/conformance.mjs"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "2.0.0",
     "@sandbar/contracts": "workspace:*",
     "@sandbar/provider-spi": "workspace:*",
     "modal": "0.10.1",
