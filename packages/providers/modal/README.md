@@ -1,10 +1,10 @@
-# Modal provider adapter
+# sandbar-modal (experimental)
 
 Status: **create, exec, files, inspect, inventory and destroy implemented; deterministic fixtures and packed Node/Bun consumers tested; live unverified**. This package uses the official `modal@0.10.1` JavaScript SDK plus a version-pinned TaskCommandRouter wire subset. Direct SDK use does not require Hono, SQL or a Sandbar service.
 
 ```ts
 import { Sandbar, Image } from "sandbar-sdk";
-import { modalAdapter } from "@sandbar/provider-modal";
+import { modalAdapter } from "sandbar-modal";
 
 const client = await Sandbar.connect({
   adapter: modalAdapter,
@@ -26,7 +26,7 @@ try {
 
 The adapter verifies the existing Modal App and registers an owned close hook. `client.close()` releases local resources and stops Sandbar waits; it does not destroy provider compute. Modal's transport cannot guarantee cancellation of an already submitted native call.
 
-The standalone service installs `modalAdapter` by default. It keeps encrypted credentials and project binding; the adapter's verified scope pins the native App, environment, region, and fixed endpoint.
+The standalone service accepts `modalAdapter` through its explicit installed-adapter registration. It keeps encrypted credentials and project binding; the adapter's verified scope pins the native App, environment, region, and fixed endpoint. Installing this package alone does not register it in a service.
 
 The deployed Modal App must already exist; a prepared image ID must exist when that image path is used. `modalAdapter` looks up the App without `createIfMissing`. The server returned App ID, configured environment and official endpoint bind the native scope. The SDK does not expose a verified workspace ID, so this adapter makes no workspace identity claim. Region is explicit when configured. Custom endpoints and profile endpoint overrides fail closed. Credential strings are never placed in resource or recovery references.
 
@@ -36,7 +36,7 @@ The pinned SDK automatically retries task-router `execStart` and its filesystem 
 
 File reads use the pinned SDK's read-only filesystem tool with a 1 MiB transfer cap. File writes stream raw bytes to a sandbox-side POSIX shell command and verify the original process's exit code and byte-count output. `overwrite:false` uses shell noclobber (`O_EXCL` for an absent regular target), so a concurrent writer cannot be overwritten; an already present target is rejected before submission. `overwrite:true` replaces the target. The sandbox image must provide `/bin/sh`, `cat`, `mkdir`, and `wc`. The standard `python:3.12-slim` image has these tools; arbitrary prepared images should be checked by their owner. A crash or lost response while stdin is incomplete can leave a partial file or a waiting process; observation never replays bytes. A successful write is confirmed only by the same process's exit and byte count. No live Modal calls, paid builds or sandboxes have been run for qualification.
 
-The task-router API and protobuf messages are private Modal interfaces. `createSdkTransport` checks the exact SDK version and official control endpoint; a Modal upgrade requires a wire audit. Local gRPC fixtures exercise one outbound start after a lost response, binary output and stdin offsets, truncation, abort/close, and observation by the original execution ID. Public SDK fixtures cover create, exec and write recovery across a reopened connection. The service fixture covers normal HTTP exec/write/read with encrypted credentials. Packed strict-TypeScript and Node/Bun consumers cover the SDK subpath and direct fixture flow. These fixtures do not certify the real Modal service or every prepared image.
+The task-router API and protobuf messages are private Modal interfaces. `createSdkTransport` checks the exact SDK version and official control endpoint; a Modal upgrade requires a wire audit. Local gRPC fixtures exercise one outbound start after a lost response, binary output and stdin offsets, truncation, abort/close, and observation by the original execution ID. Public SDK fixtures cover create, exec and write recovery across a reopened connection. The service fixture covers normal HTTP exec/write/read with encrypted credentials. Packed strict-TypeScript and Node/Bun consumers cover the separately installed package and direct fixture flow. These fixtures do not certify the real Modal service or every prepared image.
 
 Modal's control-plane retry middleware performs three automatic retries by default even if the documented constructor `maxRetries:0` is passed. This package's public `grpcMiddleware` forwards `retries:0` to the built-in middleware. A local fake gRPC fixture demonstrated four outbound create attempts with only `maxRetries:0`, and one each for guarded App lookup, sandbox create, image build, and terminate calls. Ambiguous responses never trigger automatic mutation replay. Create recovery may discover an **active** sandbox by its unique native name and matching submission/operation tags. Destroy recovery polls the original native ID after a scope-checked submission and confirms success only when Modal reports it stopped; missing or running stays unknown. Absence is not proof of no effect, and expired or terminated sandboxes may be unobservable.
 

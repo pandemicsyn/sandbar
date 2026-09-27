@@ -48,13 +48,16 @@ Import from `sandbar-sdk/daytona`.
 | --------- | -------- |
 | `daytona` | function |
 
-## Modal adapter
+## Experimental Modal adapter
 
-Import from `sandbar-sdk/modal`.
+Import from `sandbar-modal`.
 
-| Export  | Kind     |
-| ------- | -------- |
-| `modal` | function |
+| Export               | Kind      |
+| -------------------- | --------- |
+| `createModalAdapter` | re-export |
+| `MODAL_ENDPOINT`     | re-export |
+| `modalAdapter`       | re-export |
+| `ModalTransport`     | type      |
 
 ## Adapter authoring
 

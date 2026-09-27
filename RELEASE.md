@@ -27,6 +27,6 @@ Run `bun run release:fixture` after building packages. It uses temporary package
 
 ## Intended installs after publication
 
-Install the SDK alone for direct mode: `npm install sandbar-sdk`, `pnpm add sandbar-sdk`, or `bun add sandbar-sdk`. Its current built-in provider imports are `sandbar-sdk/daytona` and `sandbar-sdk/modal`; E2B is planned and has no package or export yet.
+Install the SDK alone for direct mode: `npm install sandbar-sdk`, `pnpm add sandbar-sdk`, or `bun add sandbar-sdk`. Its current built-in provider import is `sandbar-sdk/daytona`; E2B is planned and has no package or export yet. The experimental `sandbar-modal` adapter is a separate package outside this 1.0 release workflow.
 
 Adapter authors install `sandbar-adapter` and import `sandbar-adapter/testing` for the conformance suite. The optional self-hosted service installs with `npm install sandbar-service` (or the equivalent pnpm/Bun command), runs on Bun, and provides a separate `sandbar-service/client` import for remote SDK clients. The service depends on the published SDK and adapter API. These are package shapes for a future authorized publication; no npm release is performed by this task.

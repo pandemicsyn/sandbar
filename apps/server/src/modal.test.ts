@@ -3,7 +3,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { type ModalTransport } from "@sandbar/provider-modal";
+import { createModalAdapter, type ModalTransport } from "sandbar-modal";
 import { openDomainRuntime } from "./runtime";
 
 type FixtureJson =
@@ -147,7 +147,7 @@ test("service verifies Modal App scope, encrypts credentials and routes bounded 
     keyFile,
     setupTokenFile,
     startRunner: false,
-    modalTransportFactory: () => transport,
+    adapters: [createModalAdapter(() => transport)],
   };
 
   let runtime = await openDomainRuntime(runtimeOptions);

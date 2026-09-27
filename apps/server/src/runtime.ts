@@ -16,11 +16,6 @@ import {
 } from "@sandbar/service-runtime";
 import { createFakeAdapter } from "@sandbar/provider-fake";
 import { createDaytonaAdapter, type DaytonaEndpointPair } from "@sandbar/provider-daytona";
-import {
-  createModalAdapter,
-  type ModalProviderOptions,
-  type ModalTransport,
-} from "@sandbar/provider-modal";
 
 export interface RuntimeConfig {
   databaseUrl: string;
@@ -31,7 +26,6 @@ export interface RuntimeConfig {
   adapters?: readonly InstalledAdapter[];
   daytonaFetch?: typeof fetch;
   daytonaTrustedEndpoints?: DaytonaEndpointPair[];
-  modalTransportFactory?: (options: ModalProviderOptions) => ModalTransport;
   publicOrigin?: string;
   webDist?: string;
   startRunner?: boolean;
@@ -97,7 +91,6 @@ export async function openDomainRuntime(config: RuntimeConfig) {
 
     const registry = new ProviderRegistry(store, secrets, [
       createDaytonaAdapter(config.daytonaFetch, config.daytonaTrustedEndpoints),
-      createModalAdapter(config.modalTransportFactory),
       ...(fakeAdapter ? [fakeAdapter] : []),
       ...(config.adapters ?? []),
     ]);

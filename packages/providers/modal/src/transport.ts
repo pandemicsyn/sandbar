@@ -6,7 +6,7 @@ import {
   type ModalClientParams,
   type Sandbox,
 } from "modal";
-import { ProviderReadError } from "@sandbar/provider-spi";
+import { AdapterError } from "sandbar-adapter";
 import { ModalRouterWire, type RouterRun } from "./router-wire";
 
 export const MODAL_ENDPOINT = "https://api.modal.com:443";
@@ -84,7 +84,7 @@ export async function readModalFile(
     return bytes;
   } catch (error) {
     if (error instanceof SandboxFilesystemNotFoundError)
-      throw new ProviderReadError("NOT_FOUND", "Modal file not found");
+      throw new AdapterError("NOT_FOUND", "Modal file not found");
     throw error;
   }
 }

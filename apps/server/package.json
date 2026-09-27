@@ -13,7 +13,6 @@
     "@sandbar/provider-spi": "workspace:*",
     "@sandbar/provider-fake": "workspace:*",
     "@sandbar/provider-daytona": "workspace:*",
-    "@sandbar/provider-modal": "workspace:*",
     "@sandbar/service-runtime": "workspace:*",
     "@sandbar/store": "workspace:*",
     "hono": "4.13.9",
@@ -23,6 +22,7 @@
     "./runtime": "./src/runtime.ts"
   },
   "devDependencies": {
+    "sandbar-modal": "workspace:*",
     "drizzle-orm": "1.0.0-beta.22",
     "oxfmt": "0.70.0"
   }

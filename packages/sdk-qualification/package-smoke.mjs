@@ -14,7 +14,7 @@ const packages = [
   ["@sandbar/core", "packages/core"],
   ["@sandbar/provider-fake", "packages/providers/fake"],
   ["@sandbar/provider-daytona", "packages/providers/daytona"],
-  ["@sandbar/provider-modal", "packages/providers/modal"],
+  ["sandbar-modal", "packages/providers/modal"],
   ["sandbar-sdk", "packages/sdk"],
   ["sandbar-service", "packages/service"],
 ];
@@ -142,9 +142,9 @@ void flow;
   else if (mode === "modal")
     source = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { modal } from "sandbar-sdk/modal";
+import { modalAdapter } from "sandbar-modal";
 async function flow() {
-  const client = await Sandbar.connect(modal({ appName: "existing", environment: "main", tokenId: "ak-fixture", tokenSecret: "as-fixture" }));
+  const client = await Sandbar.connect({ adapter: modalAdapter, config: { appName: "existing", environment: "main" }, credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" } });
   const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked" });
   const bytes: Uint8Array = await box.readFile("/file");
   const exec = await box.exec({ command: { kind: "argv", argv: ["printf", "ready"] }, cwd: "/tmp", env: { KEY: "value" }, maxOutputBytes: 16 });
@@ -174,17 +174,12 @@ void flow;
     source = `
 import { Sandbar } from "sandbar-sdk";
 import { daytona } from "sandbar-sdk/daytona";
-import { modal } from "sandbar-sdk/modal";
 async function flow() {
   const daytonaClient = await Sandbar.connect(daytona({ apiKey: "fixture", target: "us" }));
-  const modalClient = await Sandbar.connect(modal({ tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main" }));
   await daytonaClient.close();
-  await modalClient.close();
 }
 // @ts-expect-error Daytona requires an API key
 void daytona({ target: "us" });
-// @ts-expect-error Modal requires an App name
-void modal({ tokenId: "ak-fixture", tokenSecret: "as-fixture", environment: "main" });
 void flow;
 `;
   else if (mode === "direct")
@@ -310,7 +305,7 @@ try {
 
 const modalSource = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { createModalAdapter } from "@sandbar/provider-modal";
+import { createModalAdapter } from "sandbar-modal";
 let creates = 0, terminates = 0, closed = 0;
 const records = new Map();
 const files = new Map();
@@ -365,14 +360,12 @@ process.stdout.write("packed Modal fixture flow passed\\n");
 
 const builtinsSource = `
 import { daytona } from "sandbar-sdk/daytona";
-import { modal } from "sandbar-sdk/modal";
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw Error("Factory construction performed provider I/O"); };
 try {
   const daytonaAdapter = daytona({ apiKey: "fixture", target: "us" });
-  const modalAdapter = modal({ tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main" });
-  if (daytonaAdapter.name !== "daytona" || modalAdapter.name !== "modal") throw Error("Built-in factory identity mismatch");
-  if (!daytonaAdapter.bound || !modalAdapter.bound) throw Error("Built-in factory did not bind public adapter contract");
+  if (daytonaAdapter.name !== "daytona") throw Error("Built-in factory identity mismatch");
+  if (!daytonaAdapter.bound) throw Error("Built-in factory did not bind public adapter contract");
   process.stdout.write("packed built-in SDK subpaths passed\\n");
 } finally { globalThis.fetch = originalFetch; }
 `;
@@ -596,7 +589,7 @@ try {
 
   const modalDeps = {
     ...sdkDeps,
-    "@sandbar/provider-modal": archiveOverrides["@sandbar/provider-modal"],
+    "sandbar-modal": archiveOverrides["sandbar-modal"],
   };
 
   const remote = join(temporary, "remote-consumer");
@@ -636,14 +629,23 @@ try {
   inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
   inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);
-  inspectGraph(modal, ["sandbar-sdk", "@sandbar/provider-modal"]);
+  const modalGraph = inspectGraph(modal, ["sandbar-sdk", "sandbar-modal"]);
   const publicSdkGraph = inspectGraph(builtins, ["sandbar-sdk"]);
 
   if (publicSdkGraph.some((name) => name.startsWith("@sandbar/")))
     throw new Error(`SDK package leaked a private workspace dependency: ${publicSdkGraph}`);
 
+  if (modalGraph.some((name) => name.startsWith("@sandbar/")))
+    throw new Error(`Modal package leaked a private workspace dependency: ${modalGraph}`);
+
+  if (publicSdkGraph.some((name) => ["modal", "sandbar-modal", "@grpc/grpc-js"].includes(name)))
+    throw new Error(`SDK package retained Modal dependencies: ${publicSdkGraph}`);
+
   if (serviceGraph.some((name) => name.startsWith("@sandbar/")))
     throw new Error(`Service package leaked a private workspace dependency: ${serviceGraph}`);
+
+  if (serviceGraph.some((name) => ["modal", "sandbar-modal", "@grpc/grpc-js"].includes(name)))
+    throw new Error(`Service package retained Modal dependencies: ${serviceGraph}`);
   console.log(`bun: ${run("bun", ["consumer.mjs"], service)}`);
   console.log(
     `Runtimes: Node ${run("node", ["--version"], remote)}, Bun ${run("bun", ["--version"], remote)}`,
