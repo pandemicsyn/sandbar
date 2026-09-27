@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
 import { ModalClient } from "modal";
-import { noRetryGrpcMiddleware } from "./transport";
+import { noRetryGrpcMiddleware, readBoundedStream } from "./transport";
 
 const server = new grpc.Server();
 
@@ -63,6 +63,32 @@ beforeAll(async () => {
 
 afterAll(() => {
   server.forceShutdown();
+});
+
+test("bounded file stream stops when a file grows after stat", async () => {
+  let cancelled = false;
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(Uint8Array.from([0, 255]));
+      controller.enqueue(Uint8Array.from([1, 2, 3, 4, 5]));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  await expect(readBoundedStream(stream, 4)).rejects.toThrow("bounded read size");
+  expect(cancelled).toBe(true);
+
+  const exact = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(Uint8Array.from([0, 255, 129]));
+      controller.close();
+    },
+  });
+
+  expect(await readBoundedStream(exact, 3)).toEqual(Uint8Array.from([0, 255, 129]));
 });
 
 test("pinned SDK's public middleware limits ambiguous control-plane calls to one outbound attempt", async () => {

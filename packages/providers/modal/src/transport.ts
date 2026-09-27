@@ -10,6 +10,44 @@ import { ProviderReadError } from "@sandbar/provider-spi";
 
 export const MODAL_ENDPOINT = "https://api.modal.com:443";
 
+// Modal 0.10.1's filesystem.readBytes() collects all stdout before returning.
+// Its own filesystem helper uses this command; stream it through the public
+// Sandbox.exec API so a growing file cannot exceed Sandbar's transfer bound.
+const MODAL_FS_TOOL = "/__modal/.bin/modal-sandbox-fs-tools";
+
+export async function readBoundedStream(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new RangeError("Invalid byte limit");
+
+  const bytes = new Uint8Array(maxBytes);
+  const reader = stream.getReader();
+  let used = 0;
+
+  try {
+    for (;;) {
+      const part = await reader.read();
+
+      if (part.done) return bytes.slice(0, used);
+
+      if (!(part.value instanceof Uint8Array))
+        throw new Error("Modal returned non-binary file data");
+
+      if (part.value.length > maxBytes - used)
+        throw new Error("Modal file exceeded bounded read size");
+
+      bytes.set(part.value, used);
+      used += part.value.length;
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export interface ModalSandboxRecord {
   id: string;
   tags: Record<string, string>;
@@ -158,10 +196,15 @@ export function createSdkTransport(input: {
           info.size > maxBytes
         )
           throw new Error("Modal file is not a bounded regular file");
-        const bytes = await sandbox.filesystem.readBytes(path);
 
-        if (!(bytes instanceof Uint8Array) || bytes.length > maxBytes)
-          throw new Error("Modal file exceeded bounded read size");
+        const process = await sandbox.exec(
+          [MODAL_FS_TOOL, JSON.stringify({ ReadFile: { path } })],
+          { mode: "binary" },
+        );
+
+        const bytes = await readBoundedStream(process.stdout, maxBytes);
+
+        if ((await process.wait()) !== 0) throw new Error("Modal file read failed");
 
         return bytes;
       } catch (error) {
