@@ -483,6 +483,13 @@ export class RemoteClient implements SandbarClient {
     this.projectId = projectId.data;
 
     if (!options.token) throw new SandbarError("INVALID_ARGUMENT", "Service token is required");
+
+    try {
+      new Headers().set("Authorization", `Bearer ${options.token}`);
+    } catch {
+      throw new SandbarError("INVALID_ARGUMENT", "Invalid service token");
+    }
+
     this.#token = options.token;
     this.fetcher = options.fetch ?? fetch;
   }

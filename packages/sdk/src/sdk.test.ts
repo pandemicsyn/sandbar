@@ -2480,6 +2480,42 @@ test("remote rejects invalid project IDs with public errors before fetch", () =>
   expect(fetches).toBe(0);
 });
 
+test("remote rejects tokens that cannot be sent as bearer headers before dispatch", () => {
+  let fetches = 0;
+
+  const fetcher: typeof fetch = async () => {
+    fetches++;
+
+    throw new Error("Unexpected fetch");
+  };
+
+  for (const token of ["bad\rvalue", "bad\nvalue", "bad\0value"]) {
+    try {
+      RemoteSandbar.connect({
+        url: "https://sandbar.example/",
+        token,
+        projectId: "project_1",
+        fetch: fetcher,
+      });
+      throw new Error("Expected invalid token");
+    } catch (error) {
+      if (!(error instanceof SandbarError)) throw error;
+      expect(error).toMatchObject({ code: "INVALID_ARGUMENT", effect: "none" });
+      expect(error.message).not.toContain(token);
+    }
+  }
+
+  expect(() =>
+    RemoteSandbar.connect({
+      url: "https://sandbar.example/",
+      token: "normal-token",
+      projectId: "project_1",
+      fetch: fetcher,
+    }),
+  ).not.toThrow();
+  expect(fetches).toBe(0);
+});
+
 test("remote rejects malformed service URLs with public errors before fetch", () => {
   let fetches = 0;
 
