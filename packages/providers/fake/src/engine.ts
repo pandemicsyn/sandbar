@@ -93,7 +93,7 @@ const LedgerEntrySchema = z
       (value) => value.status === "completed",
       "Persisted effect must be completed",
     ),
-    remaining: z.number().int().nonnegative(),
+    remaining: z.number().int().min(0).max(100),
     discoverable: z.boolean(),
   })
   .superRefine((entry, context) => {
@@ -165,6 +165,7 @@ const StateSchema = z
     const submissions = new Map<string, z.infer<typeof LedgerEntrySchema>>();
     const resourcesById = new Map<string, z.infer<typeof ResourceSchema>>();
     const createdResourceIds = new Set<string>();
+    const destroyedResourceIds = new Set<string>();
     const executionIds = new Set<string>();
     const allRefs: z.infer<typeof NativeRef>[] = [];
 
@@ -231,6 +232,10 @@ const StateSchema = z
         createdResourceIds.add(createdId);
       }
 
+      if (value.kind === "destroy") {
+        destroyedResourceIds.add(value.observation.sandbox.nativeId);
+      }
+
       const sandboxRef =
         value.kind === "sandbox"
           ? value.observation.ref
@@ -278,6 +283,22 @@ const StateSchema = z
           code: "custom",
           path: ["resources"],
           message: "Native sandbox has no matching create effect",
+        });
+      }
+
+      if (resource.state === "destroyed" && !destroyedResourceIds.has(resource.ref.nativeId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["resources"],
+          message: "Destroyed sandbox has no matching destroy effect",
+        });
+      }
+
+      if (resource.state === "destroyed" && Object.keys(resource.files).length > 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["resources"],
+          message: "Destroyed sandbox cannot retain virtual files",
         });
       }
     }

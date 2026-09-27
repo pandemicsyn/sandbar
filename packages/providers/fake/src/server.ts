@@ -16,21 +16,22 @@ export async function startFakeProviderServer(options: FakeServerOptions) {
 
   if (!options.token || options.token.length < 16)
     throw new Error("Fake provider requires a transport token of at least 16 characters");
-  const engine = new FakeProviderEngine(options.statePath, options.testMode);
+  const { hostname, port, statePath, token, testMode } = options;
+  const engine = new FakeProviderEngine(statePath, testMode);
   await engine.load();
 
   const json = <T>(value: T, status = 200) =>
     Response.json(value, { status, headers: { "X-Sandbar-Fake-Provider": "simulation" } });
 
   return Bun.serve({
-    hostname: options.hostname,
-    port: options.port,
+    hostname,
+    port,
     async fetch(request) {
-      if (request.headers.get("Authorization") !== `Bearer ${options.token}`)
+      if (request.headers.get("Authorization") !== `Bearer ${token}`)
         return json({ error: "unauthorized" }, 401);
       const path = new URL(request.url).pathname;
 
-      if (path.startsWith("/_test/") && !options.testMode) return json({ error: "not_found" }, 404);
+      if (path.startsWith("/_test/") && !testMode) return json({ error: "not_found" }, 404);
 
       if (request.method === "GET" && path === "/_test/state") return json(engine.snapshot());
 

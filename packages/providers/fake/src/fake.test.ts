@@ -306,6 +306,37 @@ describe("independent fake provider", () => {
     expect(response.status).toBe(404);
   });
 
+  test("fake server retains validated transport options after caller mutation", async () => {
+    directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+
+    const options = {
+      hostname: "127.0.0.1" as const,
+      port: 0,
+      statePath: join(directory, "provider.json"),
+      token,
+      testMode: false,
+    };
+
+    server = await startFakeProviderServer(options);
+    options.token = "weak";
+    options.testMode = true;
+
+    const unauthorized = await fetch(new URL("/_test/state", server.url), {
+      headers: { Authorization: "Bearer weak" },
+    });
+
+    expect(unauthorized.status).toBe(401);
+
+    const testControl = await fetch(new URL("/_test/state", server.url), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(testControl.status).toBe(404);
+
+    const driver = new FakeProviderDriver({ baseUrl: server.url.toString(), token });
+    expect((await driver.capabilities(scope)).provider).toBe("fake");
+  });
+
   test("exported fake server refuses non-loopback binds at runtime", async () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
     // SAFETY: This test deliberately passes a disallowed hostname to verify the runtime guard rejects it before binding a socket.
@@ -1230,6 +1261,7 @@ describe("independent fake provider", () => {
       },
       { ...source, ledger: [{ ...source.ledger[0], action: "destroy" }] },
       { ...source, ledger: [{ ...source.ledger[0], remaining: -1 }] },
+      { ...source, ledger: [{ ...source.ledger[0], remaining: 101 }] },
       {
         ...source,
         ledger: [source.ledger[0], { ...source.ledger[0], projectId: "project_2" }],
@@ -1280,7 +1312,7 @@ describe("independent fake provider", () => {
     );
   });
 
-  test("fake state recovery rejects destroy evidence for a running sandbox", async () => {
+  test("fake state recovery requires destroy evidence and cleared files for destroyed sandboxes", async () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
     const statePath = join(directory, "provider.json");
     const engine = new FakeProviderEngine(statePath, true);
@@ -1304,12 +1336,21 @@ describe("independent fake provider", () => {
     await recovered.load();
     expect(recovered.inspect(sandbox)?.state).toBe("destroyed");
 
-    const damaged = JSON.parse(await readFile(statePath, "utf8"));
-    damaged.resources[0].state = "running";
-    await writeFile(statePath, JSON.stringify(damaged));
-    await expect(new FakeProviderEngine(statePath, true).load()).rejects.toThrow(
-      "Invalid fake provider state",
-    );
+    const valid = JSON.parse(await readFile(statePath, "utf8"));
+
+    for (const damaged of [
+      { ...valid, resources: [{ ...valid.resources[0], state: "running" }] },
+      {
+        ...valid,
+        ledger: valid.ledger.filter((entry: { action: string }) => entry.action !== "destroy"),
+      },
+      { ...valid, resources: [{ ...valid.resources[0], files: { "/blob": "AA==" } }] },
+    ]) {
+      await writeFile(statePath, JSON.stringify(damaged));
+      await expect(new FakeProviderEngine(statePath, true).load()).rejects.toThrow(
+        "Invalid fake provider state",
+      );
+    }
   });
 
   test("full effect ledger rejects the 513th mutation before changing provider state while preserving replay evidence", async () => {
