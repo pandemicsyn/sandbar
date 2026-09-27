@@ -141,3 +141,10 @@ The initial PR base was `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed c
 - Base: `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b`; reviewed HEAD: `d9027fa80efced248e0e8ada03900f4938112b0f`.
 - Complete diff: `/private/tmp/sandbar-web-pr4-tooling-preparent.diff` (3,565 lines).
 - Finding: zero remaining actionable findings in the web implementation and tests, including lint adaptation, Fleet search parsing, file-input reset, and fresh-build E2E. Final parent rebase and final independent review remain required.
+
+## Merged-parent integration checkpoint
+
+- Rebased the web branch onto merged `main` at `1e1acd832f6c9b8dd075bc78ea95c672e75467a2`, which includes the reviewed durable-control branch. The CI conflict resolution preserves foundation's lint, format, typecheck, test, and build gates and installs Chromium from `apps/web`.
+- Execution display now decodes the exact `stdoutBase64` and `stderrBase64` contract fields as UTF-8, replacing invalid sequences for display; download uses the original bytes. Chromium E2E checks both display and byte-exact download for an invalid UTF-8 fixture.
+- Validation: `bun install --frozen-lockfile`, `bun run lint:fix`, `bun run format`, `bun run lint`, `bun run format:check`, `bun run check`, `bun run build`, `bun run test`, and `git diff --check` pass. Full test result: 82 passed, 5 MySQL tests skipped without a local MySQL test URL, 0 failed, 1,823 assertions. Chromium E2E rebuilt the current web assets and passed with 38 assertions.
+- A fresh read-only independent review of the complete `main...HEAD` diff is required before PR #4 is updated. The final exact base/HEAD review record is kept locally alongside the PR provenance.

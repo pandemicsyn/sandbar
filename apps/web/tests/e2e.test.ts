@@ -430,6 +430,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).waitFor();
 
   const stderrBytes = Buffer.concat([Buffer.from("fixture stderr\n"), Buffer.from([0xff])]);
+
   const fixture = {
     exitCode: 7,
     stdoutBase64: Buffer.from("fixture stdout\n").toString("base64"),
