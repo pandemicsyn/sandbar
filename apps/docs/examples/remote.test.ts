@@ -26,10 +26,11 @@ async function post(url: string, token: string | undefined, body: RequestBody): 
 
 test("service quickstart exercises the remote SDK", async () => {
   const fixture = new ProcessFixture();
-  await fixture.startFake();
-  await fixture.startService();
 
   try {
+    await fixture.startFake();
+    await fixture.startService();
+
     const setup = await post(`${fixture.serviceUrl}/v1/setup`, undefined, {
       setupToken: fixture.setupToken,
     });
