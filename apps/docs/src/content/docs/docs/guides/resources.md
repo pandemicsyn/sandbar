@@ -11,11 +11,21 @@ description: Create, inspect, execute, and clean up resources with the TypeScrip
 const box = await sandbar.sandboxes.create({ environment: Image.prepared("fake-starter") });
 try {
   const state = await box.inspect();
-  const output = await box.exec({ command: { kind: "argv", argv: ["fixture", "hello"] } });
+  const output = await box.exec(["fixture", "hello"]);
   console.log(state.state, output.stdoutText(4096));
 } finally {
   await box.destroy();
 }
+```
+
+`exec` and `submitExec` also accept readonly argument arrays. Each element is passed literally, without shell interpretation. Use the object form when you need execution options:
+
+```ts
+const output = await box.exec({
+  command: { kind: "argv", argv: ["fixture", "hello"] },
+  cwd: "/workspace",
+  deadlineSeconds: 30,
+});
 ```
 
 The fake accepts `exec` only when the matching command fixture has been seeded through its **test-only** control endpoint. A nonzero exit throws `NonzeroExitError` with the captured result. A completed execution without an exit code throws `NoExitCodeError`. `exec` returns exact `Uint8Array` stdout and stderr plus a `truncated` flag; the text helpers decode a bounded number of bytes for display.

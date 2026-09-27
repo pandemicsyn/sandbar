@@ -269,7 +269,7 @@ class DirectSandbox implements SandboxHandle {
     return { state: observation.state, observedAt: observation.observedAt };
   }
   async submitExec(
-    input: ExecInput,
+    input: ExecInput | readonly string[],
     options: { signal?: AbortSignal } = {},
   ): Promise<OperationHandle<ExecOutput>> {
     throwIfAborted(options.signal);
@@ -327,7 +327,7 @@ class DirectSandbox implements SandboxHandle {
       first,
     );
   }
-  async exec(input: ExecInput, options: { signal?: AbortSignal } = {}) {
+  async exec(input: ExecInput | readonly string[], options: { signal?: AbortSignal } = {}) {
     throwIfAborted(options.signal);
     const operation = await this.submitExec(input, options);
 

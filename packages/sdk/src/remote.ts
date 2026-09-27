@@ -167,19 +167,19 @@ class RemoteSandbox implements SandboxHandle {
     return { state: box.observedState, observedAt: box.observedAt };
   }
   async submitExec(
-    input: ExecInput,
+    input: ExecInput | readonly string[],
     options: { signal?: AbortSignal } = {},
   ): Promise<OperationHandle<ExecOutput>> {
     throwIfAborted(options.signal);
 
-    input = validateExec(input);
+    const request = validateExec(input);
 
     const body = ExecRequest.parse({
-      command: input.command,
-      cwd: input.cwd,
-      env: input.env,
-      deadlineSeconds: input.deadlineSeconds,
-      output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 },
+      command: request.command,
+      cwd: request.cwd,
+      env: request.env,
+      deadlineSeconds: request.deadlineSeconds,
+      output: { capture: "bounded", maxBytes: request.maxOutputBytes },
     });
 
     const maxOutputBytes = body.output?.maxBytes ?? 1_048_576;
@@ -248,7 +248,7 @@ class RemoteSandbox implements SandboxHandle {
       },
     );
   }
-  async exec(input: ExecInput, options: { signal?: AbortSignal } = {}) {
+  async exec(input: ExecInput | readonly string[], options: { signal?: AbortSignal } = {}) {
     throwIfAborted(options.signal);
     const operation = await this.submitExec(input, options);
 

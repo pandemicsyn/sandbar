@@ -74,9 +74,12 @@ export interface OperationHandle<T> {
 export interface SandboxHandle {
   readonly id: string;
   inspect(): Promise<{ state: string; observedAt?: string }>;
-  exec(input: ExecInput, options?: { signal?: AbortSignal }): Promise<ExecOutput>;
+  exec(
+    input: ExecInput | readonly string[],
+    options?: { signal?: AbortSignal },
+  ): Promise<ExecOutput>;
   submitExec(
-    input: ExecInput,
+    input: ExecInput | readonly string[],
     options?: { signal?: AbortSignal },
   ): Promise<OperationHandle<ExecOutput>>;
   readFile(path: string): Promise<Uint8Array>;
@@ -239,15 +242,23 @@ export function validateCreate(input: CreateInput): CreateInput {
   return { ...parsed.data, networkPolicy: parsed.data.networkPolicy ?? "blocked" };
 }
 
+function isArgumentArray(input: ExecInput | readonly string[]): input is readonly string[] {
+  return Array.isArray(input);
+}
+
 export function validateExec(
-  input: ExecInput,
+  input: ExecInput | readonly string[],
 ): Required<Pick<ExecInput, "command" | "deadlineSeconds" | "maxOutputBytes">> & ExecInput {
+  const request = isArgumentArray(input)
+    ? { command: { kind: "argv" as const, argv: [...input] } }
+    : input;
+
   const parsed = ExecRequest.safeParse({
-    command: input?.command,
-    cwd: input?.cwd,
-    env: input?.env,
-    deadlineSeconds: input?.deadlineSeconds,
-    output: { capture: "bounded", maxBytes: input?.maxOutputBytes ?? 1_048_576 },
+    command: request?.command,
+    cwd: request?.cwd,
+    env: request?.env,
+    deadlineSeconds: request?.deadlineSeconds,
+    output: { capture: "bounded", maxBytes: request?.maxOutputBytes ?? 1_048_576 },
   });
 
   if (!parsed.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid execution request");

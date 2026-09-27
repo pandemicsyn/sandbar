@@ -13,7 +13,7 @@ try {
   const box = await sandbar.sandboxes.create({ environment: Image.prepared("fake-starter") });
   await box.writeFile("/input.bin", Uint8Array.of(0, 255));
   const bytes = await box.readFile("/input.bin");
-  const result = await box.exec({ command: { kind: "argv", argv: ["fixture", "hello"] } });
+  const result = await box.exec(["fixture", "hello"]);
   console.log(result.stdoutText(4096), bytes.length);
   await box.destroy();
 } finally {
@@ -31,6 +31,8 @@ const box = await sandbar.sandboxes.create({ environment: Image.prepared("fake-s
 await box.destroy();
 await sandbar.close();
 ```
+
+`exec` and `submitExec` accept a `readonly string[]` shorthand, such as `box.exec(["git", "status"])`. Each element is a literal argument; arrays never invoke a shell. The shorthand uses the same validation and defaults as `{ command: { kind: "argv", argv } }`, including rejection of empty arrays. Use the object form for `cwd`, `env`, deadlines, output limits, or an explicit `{ kind: "shell", script }` command. Arguments are copied before dispatch.
 
 `exec` returns exact `Uint8Array` stdout/stderr. A nonzero exit throws `NonzeroExitError` with the captured result; a completed execution with no exit code throws `NoExitCodeError`. Transport errors and unknown effects use separate errors. `stdoutText(maxBytes)` and `stderrText(maxBytes)` are bounded UTF-8 display helpers. File reads and writes are currently buffered to 1 MiB.
 
