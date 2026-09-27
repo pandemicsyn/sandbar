@@ -95,6 +95,10 @@ export const FileReceipt = z.object({
   complete: z.boolean(),
   effect: Effect,
 });
+export const FileWriteQuery = z.strictObject({
+  path: z.string(),
+  overwrite: z.enum(["true", "false"]).optional(),
+});
 
 const CreateOperationResult = z.object({ kind: z.literal("create"), sandboxId: Id });
 

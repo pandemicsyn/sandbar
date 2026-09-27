@@ -299,10 +299,14 @@ export class ControlStore {
       } else if (op.kind === "exec") {
         const obs = (result.value as { kind: string; observation: { exitCode?: number | null; truncated?: boolean } }).observation;
         const bytes = result.outputBytes ?? 0;
+        if (!Number.isSafeInteger(bytes) || bytes < 0 || (bytes > 0) !== Boolean(result.encryptedOutput)) throw new StoreError("CONFLICT", "Captured output metadata is inconsistent");
+        const reservation = await tx.row<{ amount: number }>(sql`SELECT amount FROM reservations WHERE operation_id=${op.id} AND kind='output' AND state='active'`);
+        if (!reservation || bytes > Number(reservation.amount)) throw new StoreError("CONFLICT", "Captured output exceeds its reservation");
         const request = parseJson<{ output?: { capture: string } }>(op.request_json);
         const outputState = request.output?.capture === "none" ? "not_captured" : result.outputTruncated ? "truncated" : "captured";
         await tx.run(sql`UPDATE executions SET status='completed',exit_code=${obs.exitCode ?? null},output_state=${outputState},output_bytes=${bytes},output_truncated=${result.outputTruncated ? 1 : 0},output_ciphertext=${result.encryptedOutput ?? null},completed_at=${time} WHERE id=${op.execution_id}`);
-        await tx.run(sql`UPDATE reservations SET state='released',released_at=${time} WHERE operation_id=${op.id} AND kind='output'`);
+        // Retained ciphertext consumes capacity until it is actually removed. Return only unused capacity.
+        await tx.run(sql`UPDATE reservations SET amount=${bytes},state=${bytes > 0 ? "active" : "released"},released_at=${bytes > 0 ? null : time} WHERE operation_id=${op.id} AND kind='output'`);
       } else if (op.kind === "destroy") {
         await tx.run(sql`UPDATE sandboxes SET observed_state='destroyed',observed_at=${observedAt},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`);
       } else if (op.kind === "file_write") {

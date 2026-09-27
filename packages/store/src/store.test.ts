@@ -1,6 +1,32 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { bundledMigration, migrate, openMysqlBackend, openSqliteBackend, type Dialect } from "./backend";
 import { ControlStore } from "./store";
+
+test("SQLite retains captured-output capacity across restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-output-quota-"));
+  const path = join(directory, "control.sqlite");
+  let store = new ControlStore(openSqliteBackend(path));
+  try {
+    await migrate(store.backend, bundledMigration("sqlite"));
+    const project = await store.createProject("quota-restart");
+    const connection = await store.createConnection({ id: `conn_${crypto.randomUUID().replaceAll("-", "")}`, projectId: project.id, provider: "fake", name: "Fake", encryptedCredentials: "ciphertext" });
+    await store.verifyConnection(project.id, connection.id, "fake-local");
+    const created = await store.admitCreate({ projectId: project.id, endpoint: "POST /sandboxes", key: Bun.randomUUIDv7(), intentHash: "create", request: { environment: { kind: "prepared", imageId: "fake-starter" } } });
+    const createClaim = (await store.claimDue("setup", 1000, project.id))!;
+    await store.complete(createClaim, { effect: "applied", value: { kind: "sandbox", observation: { ref: { nativeId: "native_restart" }, state: "running" } } });
+    const sandboxId = created.sandbox.id;
+    const admitted = await store.admitExec({ projectId: project.id, sandboxId, endpoint: "POST /executions", key: Bun.randomUUIDv7(), intentHash: "capture", encryptedRequest: "sealed", captureBytes: 16 * 1024 * 1024 });
+    const claim = (await store.claimDue("capture", 1000, project.id))!;
+    await store.complete(claim, { effect: "applied", value: { kind: "execution", observation: { completed: true } }, encryptedOutput: "sealed-output", outputBytes: 16 * 1024 * 1024 });
+    expect((await store.getExecution(project.id, admitted.execution!.id))?.output_ciphertext).toBe("sealed-output");
+    await store.close();
+    store = new ControlStore(openSqliteBackend(path));
+    await expect(store.admitExec({ projectId: project.id, sandboxId, endpoint: "POST /executions", key: Bun.randomUUIDv7(), intentHash: "overflow", encryptedRequest: "sealed", captureBytes: 1 })).rejects.toMatchObject({ code: "CAPACITY" });
+  } finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
+});
 
 async function fixture(dialect: Dialect) {
   const backend = dialect === "sqlite" ? openSqliteBackend(":memory:") : await openMysqlBackend(process.env.SANDBAR_TEST_MYSQL_URL!);
@@ -13,6 +39,38 @@ async function fixture(dialect: Dialect) {
 }
 
 for (const dialect of (["sqlite", ...(process.env.SANDBAR_TEST_MYSQL_URL ? ["mysql"] : [])] as Dialect[])) describe(`${dialect} durable admission`, () => {
+  test("retained captures continue consuming sandbox and project capacity after completion", async () => {
+    const { store, project, connection } = await fixture(dialect);
+    const mebibyte = 1024 * 1024;
+    try {
+      async function runningSandbox() {
+        const created = await store.admitCreate({ projectId: project.id, endpoint: "POST /sandboxes", key: Bun.randomUUIDv7(), intentHash: "create", request: { environment: { kind: "prepared", imageId: "fake-starter" } }, connectionId: connection.id });
+        const claim = (await store.claimDue("setup", 1000, project.id))!;
+        await store.beginSubmission(claim);
+        await store.complete(claim, { effect: "applied", value: { kind: "sandbox", observation: { ref: { nativeId: `native_${crypto.randomUUID()}` }, state: "running" } } });
+        return created.sandbox.id;
+      }
+      async function capture(sandboxId: string, bytes: number) {
+        const admitted = await store.admitExec({ projectId: project.id, sandboxId, endpoint: `POST /sandboxes/${sandboxId}/executions`, key: Bun.randomUUIDv7(), intentHash: "capture", encryptedRequest: "sealed", captureBytes: bytes });
+        const claim = (await store.claimDue("capture", 1000, project.id))!;
+        expect(claim.operation.id).toBe(admitted.operation.id);
+        await store.beginSubmission(claim);
+        await store.complete(claim, { effect: "applied", value: { kind: "execution", observation: { completed: true, exitCode: 0 } }, encryptedOutput: "sealed-output", outputBytes: bytes });
+        expect((await store.getExecution(project.id, admitted.execution!.id))?.output_ciphertext).toBe("sealed-output");
+      }
+      const first = await runningSandbox();
+      for (let index = 0; index < 16; index++) await capture(first, mebibyte);
+      await expect(store.admitExec({ projectId: project.id, sandboxId: first, endpoint: "POST /executions", key: Bun.randomUUIDv7(), intentHash: "overflow", encryptedRequest: "sealed", captureBytes: 1 })).rejects.toMatchObject({ code: "CAPACITY" });
+      for (let index = 0; index < 14; index++) await capture(await runningSandbox(), 16 * mebibyte);
+      const last = await runningSandbox();
+      await capture(last, 15 * mebibyte);
+      const admission = () => store.admitExec({ projectId: project.id, sandboxId: last, endpoint: "POST /executions", key: Bun.randomUUIDv7(), intentHash: "race", encryptedRequest: "sealed", captureBytes: mebibyte });
+      const race = await Promise.allSettled([admission(), admission()]);
+      expect(race.filter(result => result.status === "fulfilled")).toHaveLength(1);
+      expect(race.filter(result => result.status === "rejected")).toHaveLength(1);
+      expect((race.find(result => result.status === "rejected") as PromiseRejectedResult).reason.code).toBe("CAPACITY");
+    } finally { await store.close(); }
+  });
   test("persists accepted intent and returns the same operation for a duplicate key", async () => {
     const { store, project, connection } = await fixture(dialect);
     try {

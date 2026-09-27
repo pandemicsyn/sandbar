@@ -90,9 +90,23 @@ function sqliteBackend(native: Database, ownLockPath?: string): Backend {
 
 export async function openMysqlBackend(url: string): Promise<Backend> {
   const pool = mysql.createPool({ uri: url, connectionLimit: 8, timezone: "Z", decimalNumbers: false, multipleStatements: false });
-  const lockConnection = await pool.getConnection();
-  const [lockRows] = await lockConnection.query("SELECT GET_LOCK('sandbar-control-service', 0) AS acquired") as [{ acquired: number }[], unknown];
-  if (Number(lockRows[0]?.acquired) !== 1) { lockConnection.release(); await pool.end(); throw new Error("MySQL control database is already owned by another service"); }
+  let lockConnection: Awaited<ReturnType<typeof pool.getConnection>> | undefined;
+  let lockName: string | undefined;
+  try {
+    lockConnection = await pool.getConnection();
+    const [databaseRows] = await lockConnection.query("SELECT DATABASE() AS name") as [{ name: string | null }[], unknown];
+    const databaseName = databaseRows[0]?.name;
+    if (!databaseName) throw new Error("MySQL control database must select a database");
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(databaseName));
+    lockName = `sandbar-control-${Buffer.from(digest).toString("hex").slice(0, 40)}`;
+    const [lockRows] = await lockConnection.query("SELECT GET_LOCK(?, 0) AS acquired", [lockName]) as [{ acquired: number }[], unknown];
+    if (Number(lockRows[0]?.acquired) !== 1) throw new Error("MySQL control database is already owned by another service");
+  } catch (error) {
+    lockConnection?.release();
+    await pool.end();
+    throw error;
+  }
+  if (!lockConnection || !lockName) throw new Error("MySQL control database lock was not initialized");
   const db = drizzleMysql({ client: pool });
   function wrap(source: Pick<typeof db, "execute">): QueryConnection {
     return {
@@ -110,7 +124,7 @@ export async function openMysqlBackend(url: string): Promise<Backend> {
   return {
     dialect: "mysql", ...wrap(db),
     transaction: <T>(work: (tx: QueryConnection) => Promise<T>) => db.transaction(async tx => work(wrap(tx))),
-    close: async () => { await lockConnection.query("SELECT RELEASE_LOCK('sandbar-control-service')"); lockConnection.release(); await pool.end(); },
+    close: async () => { await lockConnection.query("SELECT RELEASE_LOCK(?)", [lockName]); lockConnection.release(); await pool.end(); },
   };
 }
 

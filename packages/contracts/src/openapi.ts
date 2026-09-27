@@ -288,7 +288,16 @@ export const openApiDocument = {
       },
       put: {
         operationId: "writeFile",
-        parameters: [invocationHeader],
+        parameters: [
+          invocationHeader,
+          {
+            name: "overwrite",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["true", "false"] },
+            description: "Whether an existing file may be replaced; defaults to false.",
+          },
+        ],
         requestBody: {
           required: true,
           content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },

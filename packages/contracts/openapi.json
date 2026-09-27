@@ -741,6 +741,19 @@
               "$ref": "#/components/schemas/InvocationKey"
             },
             "description": "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent."
+          },
+          {
+            "name": "overwrite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "Whether an existing file may be replaced; defaults to false."
           }
         ],
         "requestBody": {

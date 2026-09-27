@@ -3,7 +3,7 @@ import type { Context, Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import {
   AcceptedExecution, AcceptedOperation, CreateProjectRequest, CreateProviderConnectionRequest,
-  CreateSandboxRequest, ErrorResponse, ExecRequest, Execution, FileReceipt, Id, InvocationKey,
+  CreateSandboxRequest, ErrorResponse, ExecRequest, Execution, FileReceipt, FileWriteQuery, Id, InvocationKey,
   Operation, ProjectPage, ProviderConnection, ProviderConnectionPage, Sandbox, SandboxPage,
   SessionRequest, SessionResponse, SetupRequest, intentSha256,
 } from "@sandbar/contracts";
@@ -138,6 +138,13 @@ function filePath(c: Context): string {
   const path = new URL(c.req.url).searchParams.get("path");
   if (!path || path.length > 4096 || !path.startsWith("/") || path.includes("\0") || path.split("/").includes("..")) throw new SyntaxError("Invalid path");
   return path;
+}
+function fileWriteQuery(c: Context): { path: string; overwrite: boolean } {
+  const params = new URL(c.req.url).searchParams;
+  if ([...params.keys()].length !== new Set(params.keys()).size) throw new SyntaxError("Duplicate query parameter");
+  const query = FileWriteQuery.parse(Object.fromEntries(params));
+  const path = filePath(c);
+  return { path, overwrite: query.overwrite === "true" };
 }
 async function boundedBody(c: Context, maxBytes: number): Promise<Uint8Array> {
   const length = Number(c.req.header("content-length") ?? 0);
@@ -304,12 +311,12 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
   }));
   app.put("/v1/projects/:projectId/sandboxes/:sandboxId/files", protect(deps, true, async c => {
     const projectId = idParam(c, "projectId"), sandboxId = idParam(c, "sandboxId"), key = InvocationKey.parse(c.req.header("idempotency-key"));
+    const { path, overwrite } = fileWriteQuery(c);
     const box = await deps.store.getSandbox(projectId, sandboxId);
     if (!box) throw new StoreError("NOT_FOUND", "Sandbox not found");
     const connection = await deps.store.getConnection(projectId, box.connection_id);
     if (!connection) throw new StoreError("NOT_FOUND", "Connection not found");
-    const path = filePath(c), bytes = await boundedBody(c, 1_048_576);
-    const overwrite = new URL(c.req.url).searchParams.get("overwrite") === "true";
+    const bytes = await boundedBody(c, 1_048_576);
     const base64 = Buffer.from(bytes).toString("base64");
     const intentHash = await intentSha256({ path, overwrite, bytesBase64: base64 });
     const encryptedBytes = await deps.secrets.seal("file-write-input", `${sandboxId}:${key}`, base64);

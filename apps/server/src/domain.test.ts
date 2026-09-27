@@ -94,6 +94,11 @@ test("API persists ambiguous create and exec, then observes each once after rest
     expect(Buffer.from(binaryResult.stdoutBase64, "base64")).toEqual(binary);
     expect((await runtime.store.getOperation(project.id, exec.value.operation.id))?.result_json).not.toContain("hello from fake");
     const bytes = Uint8Array.from([0, 255, 1]);
+    for (const query of ["overwrite=1", "overwrite=True", "overwrite=true&overwrite=false", "overwrite=true&extra=1"]) {
+      const invalid = await runtime.app.request(`/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/invalid&${query}`, { method: "PUT", headers: { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() }, body: bytes });
+      expect(invalid.status).toBe(400);
+      expect((await invalid.json() as any).error.code).toBe("INVALID_ARGUMENT");
+    }
     const write = await runtime.app.request(`/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/blob`, { method: "PUT", headers: { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() }, body: bytes });
     expect(write.status).toBe(200);
     expect((await write.json() as any).bytesWritten).toBe(bytes.length);
