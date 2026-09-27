@@ -460,6 +460,7 @@ describe("independent fake provider", () => {
     const foreignCompleted = {
       status: "completed",
       effect: "applied",
+      submissionId: "other",
       value: {
         kind: "sandbox",
         observation: {
@@ -484,6 +485,16 @@ describe("independent fake provider", () => {
         reason: "lost",
       }),
       Response.json(foreignCompleted),
+      Response.json({
+        ...foreignCompleted,
+        value: {
+          ...foreignCompleted.value,
+          observation: {
+            ...foreignCompleted.value.observation,
+            ref: { ...foreignCompleted.value.observation.ref, scope },
+          },
+        },
+      }),
       Response.json({
         status: "pending",
         effect: "possible",
@@ -527,6 +538,62 @@ describe("independent fake provider", () => {
     });
     await expect(driver.observe({ scope, submissionId: "expected" })).rejects.toMatchObject({
       code: "INVALID_RESPONSE",
+    });
+    await expect(driver.observe({ scope, submissionId: "expected" })).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+    });
+  });
+
+  test("fake driver correlates file-write receipts to the submitted path and byte count", async () => {
+    const sandbox = { scope, nativeId: "fake_sandbox_1", kind: "sandbox" as const };
+    const receipt = { sandbox, path: "/blob", bytesWritten: 2, complete: true };
+
+    const result = {
+      status: "completed",
+      effect: "applied",
+      value: { kind: "file_write", observation: receipt },
+    };
+
+    const responses = [
+      Response.json({
+        ...result,
+        value: { ...result.value, observation: { ...receipt, path: "/other" } },
+      }),
+      Response.json({
+        ...result,
+        value: { ...result.value, observation: { ...receipt, bytesWritten: 3 } },
+      }),
+      Response.json({
+        ...result,
+        value: { ...result.value, observation: { ...receipt, bytesWritten: 1, complete: false } },
+      }),
+    ];
+
+    const driver = new FakeProviderDriver({
+      baseUrl: "http://127.0.0.1:8789",
+      token,
+      fetch: fetchStub(async () => responses.shift()!),
+    });
+
+    const input = {
+      sandbox,
+      identity: identity("write_expected"),
+      path: "/blob",
+      bytes: Uint8Array.from([0, 255]),
+      overwrite: true,
+    };
+
+    expect(await driver.writeFile(input)).toMatchObject({
+      status: "unknown",
+      submissionId: "write_expected",
+    });
+    expect(await driver.writeFile(input)).toMatchObject({
+      status: "unknown",
+      submissionId: "write_expected",
+    });
+    expect(await driver.writeFile(input)).toMatchObject({
+      status: "completed",
+      value: { kind: "file_write", observation: { bytesWritten: 1, complete: false } },
     });
   });
 

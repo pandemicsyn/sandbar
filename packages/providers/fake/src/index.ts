@@ -40,8 +40,19 @@ const completedMatchesAction = (action: MutationAction, result: DriverResult) =>
       return value.kind === "sandbox" && sameScope(value.observation.ref.scope, action.scope);
     case "exec":
       return value.kind === "execution" && sameSandbox(value.observation.sandbox, action.sandbox);
-    case "writeFile":
-      return value.kind === "file_write" && sameSandbox(value.observation.sandbox, action.sandbox);
+    case "writeFile": {
+      if (value.kind !== "file_write" || !sameSandbox(value.observation.sandbox, action.sandbox))
+        return false;
+      const receipt = value.observation;
+      const requestedBytes = Buffer.from(action.bytesBase64, "base64").length;
+
+      return (
+        receipt.path === action.path &&
+        receipt.bytesWritten <= requestedBytes &&
+        (!receipt.complete || receipt.bytesWritten === requestedBytes)
+      );
+    }
+
     case "destroy":
       return value.kind === "destroy" && sameSandbox(value.observation.sandbox, action.sandbox);
   }
@@ -268,6 +279,7 @@ export class FakeProviderDriver implements ProviderDriver {
     if (
       ((result.status === "pending" || result.status === "unknown") &&
         result.submissionId !== input.submissionId) ||
+      (result.status === "completed" && result.submissionId !== input.submissionId) ||
       !completedMatchesScope(input.scope, result)
     ) {
       throw new ProviderReadError("INVALID_RESPONSE", "Fake observation mismatches its request");

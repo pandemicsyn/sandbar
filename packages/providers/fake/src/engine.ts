@@ -807,7 +807,7 @@ export class FakeProviderEngine {
         return { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const;
       }
 
-      return entry.result;
+      return { ...entry.result, submissionId };
     });
   }
   inspect(ref: SandboxRef) {

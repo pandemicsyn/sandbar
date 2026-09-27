@@ -117,6 +117,8 @@ export const DriverResult = z.discriminatedUnion("status", [
     status: z.literal("completed"),
     effect: z.enum(["applied", "partial"]),
     value: DriverValue,
+    // Required by observe() responses so a completed effect can be tied to its submission.
+    submissionId: Id.optional(),
   }),
   z.object({
     status: z.literal("pending"),
