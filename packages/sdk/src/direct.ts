@@ -492,7 +492,7 @@ export class DirectClient implements SandbarClient {
     return this.closeController.signal;
   }
   readonly driver: ProviderDriver;
-  readonly scope: NativeScope;
+  readonly scope: Readonly<NativeScope>;
   readonly sandboxes = {
     create: (input: CreateInput, options: { signal?: AbortSignal } = {}) =>
       this.create(input, options),
@@ -504,7 +504,7 @@ export class DirectClient implements SandbarClient {
     const scope = NativeScope.safeParse(options.provider.scope);
 
     if (!scope.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid provider scope");
-    this.scope = scope.data;
+    this.scope = Object.freeze(scope.data);
 
     if (this.driver.name !== this.scope.provider)
       throw new SandbarError("INVALID_ARGUMENT", "Provider name and scope mismatch");

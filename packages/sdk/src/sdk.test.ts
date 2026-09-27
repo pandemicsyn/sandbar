@@ -286,6 +286,36 @@ test("direct lost response is recovered by observation without replay; wrong sco
   ).rejects.toMatchObject({ code: "FORBIDDEN" });
 });
 
+test("direct client scope stays fixed across ambiguous sandbox mutation recovery", async () => {
+  const { client, control } = await fixture();
+  const box = await client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
+  const accountId = client.scope.accountId;
+
+  expect(() => Object.assign(client.scope, { accountId: "other" })).toThrow();
+  expect(client.scope.accountId).toBe(accountId);
+
+  const command = { kind: "argv" as const, argv: ["fixture", "ok"] };
+
+  await control("/_test/seed", {
+    submissionId: "*",
+    action: "exec",
+    behavior: "lost_after_effect",
+    command: { command, exitCode: 0, stdoutBase64: "" },
+  });
+
+  const operation = await box.submitExec({ command });
+  expect(operation.reference.scope?.accountId).toBe(accountId);
+
+  const recovered = await client.recover(operation.reference);
+  const result = await recovered.wait();
+  expect(result).toMatchObject({ exitCode: 0 });
+
+  const state = await control("/_test/state");
+  expect(
+    state.invocations.filter((item: { action: string }) => item.action === "exec"),
+  ).toHaveLength(1);
+});
+
 test("fake provider registration binds recovery to the configured endpoint", async () => {
   const { client } = await fixture();
   expect(JSON.stringify(client)).not.toContain(token);
