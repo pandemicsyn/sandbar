@@ -426,14 +426,14 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
           401,
         );
       const token = `sdb_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")}`;
-      await deps.store.setupOperator(await sha256(token));
 
       const sessionId = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString(
         "base64url",
       );
 
       const csrfToken = await deps.secrets.sessionCsrfToken(sessionId);
-      await deps.store.createSession(
+      await deps.store.setupOperator(
+        await sha256(token),
         await sha256(sessionId),
         await sha256(csrfToken),
         Date.now() + sessionMs,

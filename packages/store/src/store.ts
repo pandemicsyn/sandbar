@@ -137,12 +137,25 @@ export class ControlStore {
     return this.backend.close();
   }
 
-  async setupOperator(tokenHash: string): Promise<void> {
+  async setupOperator(
+    tokenHash: string,
+    sessionIdHash: string,
+    csrfHash: string,
+    expiresAt: number,
+  ): Promise<void> {
     try {
-      await this.backend.run(
-        sql`INSERT INTO operators (id,token_hash,created_at) VALUES ('operator',${tokenHash},${now()})`,
-      );
-    } catch {
+      await this.backend.transaction(async (tx) => {
+        const createdAt = now();
+
+        await tx.run(
+          sql`INSERT INTO operators (id,token_hash,created_at) VALUES ('operator',${tokenHash},${createdAt})`,
+        );
+        await tx.run(
+          sql`INSERT INTO sessions (id_hash,operator_id,csrf_hash,expires_at,created_at) VALUES (${sessionIdHash},'operator',${csrfHash},${expiresAt},${createdAt})`,
+        );
+      });
+    } catch (error) {
+      if (!(await this.hasOperator())) throw error;
       throw new StoreError("CONFLICT", "Operator setup has already completed");
     }
   }

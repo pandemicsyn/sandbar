@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sql } from "drizzle-orm";
 import {
   bundledMigration,
   migrate,
@@ -10,6 +11,27 @@ import {
   type Dialect,
 } from "./backend";
 import { ControlStore } from "./store";
+
+test("operator setup rolls back when its first session cannot be stored", async () => {
+  const store = new ControlStore(openSqliteBackend(":memory:"));
+
+  try {
+    await migrate(store.backend, bundledMigration("sqlite"));
+    await store.backend.run(
+      sql`CREATE TRIGGER fail_setup_session BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'injected'); END`,
+    );
+    await expect(
+      store.setupOperator("first-token", "first-session", "first-csrf", Date.now() + 60_000),
+    ).rejects.toThrow();
+    expect(await store.hasOperator()).toBe(false);
+    await store.backend.run(sql`DROP TRIGGER fail_setup_session`);
+    await store.setupOperator("second-token", "second-session", "second-csrf", Date.now() + 60_000);
+    expect(await store.authenticateBearer("second-token")).toBe(true);
+    expect(await store.getSession("second-session")).toBeDefined();
+  } finally {
+    await store.close();
+  }
+});
 
 test("SQLite retains captured-output capacity across restart", async () => {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-output-quota-"));
