@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openSqliteBackend } from "./backend";
@@ -22,4 +22,70 @@ test("SQLite owner records exclude a contender and ignore dead owners", async ()
   const reopened = openSqliteBackend(path);
   await reopened.close();
   await rm(directory, { recursive: true, force: true });
+});
+
+test("SQLite owner records distinguish process instances and fail closed on ambiguous records", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-sqlite-instance-"));
+  const path = join(directory, "control.sqlite");
+  const lockDir = `${path}.sandbar.locks`;
+
+  const child = Bun.spawn(
+    [process.execPath, join(import.meta.dir, "test-support/hold-sqlite-owner.ts"), path],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+
+  try {
+    const ready = await child.stdout.getReader().read();
+    expect(new TextDecoder().decode(ready.value)).toContain("ready");
+    expect(() => openSqliteBackend(path)).toThrow("another live contender");
+
+    child.kill("SIGKILL");
+    await child.exited;
+    const recovered = openSqliteBackend(path);
+
+    try {
+      expect(() => openSqliteBackend(path)).toThrow("another live contender");
+    } finally {
+      await recovered.close();
+    }
+
+    const active = openSqliteBackend(path);
+
+    const activeName = (await readdir(lockDir)).find((name) =>
+      name.startsWith(`pid-${process.pid}-`),
+    );
+
+    expect(activeName).toBeDefined();
+
+    // SAFETY: The backend writes this JSON owner record before it returns.
+    const activeRecord = JSON.parse(await readFile(join(lockDir, activeName!), "utf8")) as {
+      identity: string;
+    };
+
+    await active.close();
+    const oldIdentity = `${activeRecord.identity.slice(0, -1)}${activeRecord.identity.endsWith("0") ? "1" : "0"}`;
+    const stalePath = join(lockDir, `pid-${process.pid}-${crypto.randomUUID()}`);
+    await writeFile(
+      stalePath,
+      JSON.stringify({ pid: process.pid, identity: oldIdentity, createdAt: Date.now() }),
+    );
+    const afterReuse = openSqliteBackend(path);
+    await afterReuse.close();
+    await expect(readFile(stalePath)).rejects.toThrow();
+
+    const legacyPath = join(lockDir, `pid-${process.pid}-${crypto.randomUUID()}`);
+    await writeFile(legacyPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+    expect(() => openSqliteBackend(path)).toThrow("Cannot verify live SQLite owner");
+    expect(await readFile(legacyPath, "utf8")).toContain("createdAt");
+    await rm(legacyPath);
+
+    const damagedPath = join(lockDir, `pid-${process.pid}-${crypto.randomUUID()}`);
+    await writeFile(damagedPath, "not-json");
+    expect(() => openSqliteBackend(path)).toThrow("Cannot verify live SQLite owner");
+    expect(await readFile(damagedPath, "utf8")).toBe("not-json");
+  } finally {
+    child.kill("SIGKILL");
+    await child.exited;
+    await rm(directory, { recursive: true, force: true });
+  }
 });

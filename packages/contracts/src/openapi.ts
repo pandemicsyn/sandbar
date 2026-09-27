@@ -216,7 +216,13 @@ export const openApiDocument = {
         },
       },
     },
-    "/v1/session": { get: { operationId: "getSession", responses: ordinary("SessionResponse") } },
+    "/v1/session": {
+      get: {
+        operationId: "getSession",
+        security: [{ localSessionCookie: [] }, { secureSessionCookie: [] }],
+        responses: ordinary("SessionResponse"),
+      },
+    },
     "/v1/sessions/logout": {
       post: {
         operationId: "logoutSession",
@@ -382,7 +388,11 @@ export const openApiDocument = {
     },
   },
   components: {
-    securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+    securitySchemes: {
+      bearerAuth: { type: "http", scheme: "bearer" },
+      localSessionCookie: { type: "apiKey", in: "cookie", name: "sandbar_session" },
+      secureSessionCookie: { type: "apiKey", in: "cookie", name: "__Host-sandbar_session" },
+    },
     schemas: Object.fromEntries(
       Object.entries(schemas).map(([name, schema]) => [
         name,

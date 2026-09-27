@@ -72,6 +72,7 @@
       "dependencies": {
         "drizzle-orm": "1.0.0-beta.22",
         "mysql2": "3.24.4",
+        "zod": "4.6.5",
       },
     },
   },

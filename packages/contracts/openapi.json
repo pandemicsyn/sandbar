@@ -95,6 +95,14 @@
     "/v1/session": {
       "get": {
         "operationId": "getSession",
+        "security": [
+          {
+            "localSessionCookie": []
+          },
+          {
+            "secureSessionCookie": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success",
@@ -981,6 +989,16 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer"
+      },
+      "localSessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sandbar_session"
+      },
+      "secureSessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-sandbar_session"
       }
     },
     "schemas": {

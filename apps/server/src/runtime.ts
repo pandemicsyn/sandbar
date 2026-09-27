@@ -49,7 +49,8 @@ export async function openDomainRuntime(config: RuntimeConfig) {
 
     if (
       origin.origin !== config.publicOrigin ||
-      (origin.protocol !== "https:" && !["localhost", "127.0.0.1", "::1"].includes(origin.hostname))
+      (origin.protocol !== "https:" &&
+        !["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname))
     )
       throw new Error("Public origin must be an HTTPS origin, or local loopback for development");
   }

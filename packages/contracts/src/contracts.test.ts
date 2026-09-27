@@ -374,6 +374,23 @@ describe("public contract", () => {
       expect.stringContaining("result.executionId equal execution.id"),
     );
   });
+  test("OpenAPI session lookup uses the cookie names issued by HTTP and HTTPS", () => {
+    expect(openApiDocument.paths["/v1/session"].get.security).toEqual([
+      { localSessionCookie: [] },
+      { secureSessionCookie: [] },
+    ]);
+    expect(openApiDocument.components.securitySchemes.localSessionCookie).toEqual({
+      type: "apiKey",
+      in: "cookie",
+      name: "sandbar_session",
+    });
+    expect(openApiDocument.components.securitySchemes.secureSessionCookie).toEqual({
+      type: "apiKey",
+      in: "cookie",
+      name: "__Host-sandbar_session",
+    });
+  });
+
   test("OpenAPI retains constrained label keys", () => {
     expect(openApiDocument.components.schemas.CreateSandboxRequest).toMatchObject({
       properties: {

@@ -65,6 +65,14 @@ test("API persists ambiguous create and exec, then observes each once after rest
     startRunner: false,
   };
 
+  const ipv6Runtime = await openDomainRuntime({
+    ...config,
+    databaseUrl: ":memory:",
+    publicOrigin: "http://[::1]:3000",
+  });
+
+  await ipv6Runtime.close();
+
   let runtime = await openDomainRuntime(config);
 
   const json = async (

@@ -10,10 +10,12 @@ import {
   unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { drizzle as drizzleSqlite } from "drizzle-orm/bun-sqlite";
 import { drizzle as drizzleMysql } from "drizzle-orm/mysql2";
 import { sql, type SQL } from "drizzle-orm";
 import mysql from "mysql2/promise";
+import { z } from "zod";
 
 export type Dialect = "sqlite" | "mysql";
 
@@ -29,17 +31,63 @@ export interface Backend extends QueryConnection {
   close(): Promise<void>;
 }
 
-/** Every contender publishes its own live PID before checking for other owners. */
+const SqliteOwnerRecord = z.strictObject({
+  pid: z.number().int().positive(),
+  identity: z.string().min(1),
+  createdAt: z.number().int(),
+});
+
+function processIdentity(pid: number): string {
+  if (process.platform === "linux") {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const commandEnd = stat.lastIndexOf(")");
+
+    if (!stat.startsWith(`${pid} (`) || commandEnd < 0)
+      throw new Error(`Cannot verify SQLite owner process ${pid}`);
+
+    // Fields after the parenthesized command start at field 3; starttime is field 22.
+    const startTicks = stat
+      .slice(commandEnd + 1)
+      .trim()
+      .split(/\s+/)[19];
+
+    const bootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+
+    if (!startTicks || !/^[1-9][0-9]*$/.test(startTicks) || !bootId)
+      throw new Error(`Cannot verify SQLite owner process ${pid}`);
+
+    return `linux:${bootId}:${startTicks}`;
+  }
+
+  if (process.platform === "darwin") {
+    // ps reports whole seconds on macOS; same-second PID reuse remains ambiguous.
+    const started = execFileSync("/bin/ps", ["-p", String(pid), "-o", "lstart="], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+    })
+      .trim()
+      .replace(/\s+/g, " ");
+
+    if (!started) throw new Error(`Cannot verify SQLite owner process ${pid}`);
+
+    return `darwin:${started}`;
+  }
+
+  throw new Error(`SQLite process ownership is unsupported on ${process.platform}`);
+}
+
+/** Every contender publishes its process instance before checking for other owners. */
 export function openSqliteBackend(path: string): Backend {
   if (path === ":memory:") return sqliteBackend(new Database(path));
   const lockDir = `${path}.sandbar.locks`;
   mkdirSync(lockDir, { recursive: true, mode: 0o700 });
+  const identity = processIdentity(process.pid);
   const ownName = `pid-${process.pid}-${crypto.randomUUID()}`;
   const ownPath = join(lockDir, ownName);
   const fd = openSync(ownPath, "wx", 0o600);
 
   try {
-    writeSync(fd, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+    writeSync(fd, JSON.stringify({ pid: process.pid, identity, createdAt: Date.now() }));
   } catch (error) {
     unlinkSync(ownPath);
     throw error;
@@ -57,11 +105,44 @@ export function openSqliteBackend(path: string): Backend {
 
       try {
         process.kill(pid, 0);
-        throw new Error(`SQLite database has another live contender: PID ${pid}`);
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
         unlinkSync(join(lockDir, name));
+        continue;
       }
+
+      const otherPath = join(lockDir, name);
+
+      const unverified = () =>
+        new Error(
+          `Cannot verify live SQLite owner PID ${pid} at ${otherPath}; stop all Sandbar processes and remove this lock file only after confirming no owner remains`,
+        );
+
+      let observedIdentity: string;
+
+      try {
+        observedIdentity = processIdentity(pid);
+      } catch {
+        throw unverified();
+      }
+
+      let recordedIdentity: string | undefined;
+
+      try {
+        const record = SqliteOwnerRecord.safeParse(JSON.parse(readFileSync(otherPath, "utf8")));
+
+        if (record.success && record.data.pid === pid) recordedIdentity = record.data.identity;
+      } catch {
+        // Legacy or damaged live-owner records cannot be removed safely.
+      }
+
+      if (!recordedIdentity || !recordedIdentity.startsWith(`${process.platform}:`))
+        throw unverified();
+
+      if (recordedIdentity === observedIdentity)
+        throw new Error(`SQLite database has another live contender: PID ${pid}`);
+
+      unlinkSync(otherPath);
     }
   } catch (error) {
     unlinkSync(ownPath);
