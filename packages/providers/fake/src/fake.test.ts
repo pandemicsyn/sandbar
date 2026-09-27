@@ -428,6 +428,108 @@ describe("independent fake provider", () => {
     expect(await driver.inventory(input)).toEqual({ items: [], nextCursor: "10" });
   });
 
+  test("fake driver rejects inspect and inventory observations outside the requested identity", async () => {
+    const requested = { scope, nativeId: "fake_sandbox_1", kind: "sandbox" as const };
+    const observation = { ref: requested, state: "running", observedAt: "2026-09-26T10:00:00Z" };
+    const foreignScope = { ...scope, accountId: "foreign" };
+
+    const responses = [
+      Response.json({ ...observation, ref: { ...requested, nativeId: "fake_sandbox_2" } }),
+      Response.json({ ...observation, ref: { ...requested, scope: foreignScope } }),
+      Response.json({ items: [{ ...observation, ref: { ...requested, scope: foreignScope } }] }),
+      Response.json({ items: [observation] }),
+    ];
+
+    const driver = new FakeProviderDriver({
+      baseUrl: "http://127.0.0.1:8789",
+      token,
+      fetch: fetchStub(async () => responses.shift()!),
+    });
+
+    await expect(driver.inspect(requested)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    await expect(driver.inspect(requested)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    await expect(driver.inventory({ scope, limit: 10 })).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+    });
+    expect((await driver.inventory({ scope, limit: 10 })).items).toHaveLength(1);
+  });
+
+  test("fake driver correlates mutation and observation replies to submitted identity", async () => {
+    const foreignScope = { ...scope, accountId: "foreign" };
+
+    const foreignCompleted = {
+      status: "completed",
+      effect: "applied",
+      value: {
+        kind: "sandbox",
+        observation: {
+          ref: { scope: foreignScope, nativeId: "fake_sandbox_1", kind: "sandbox" },
+          state: "running",
+          observedAt: "2026-09-26T10:00:00Z",
+        },
+      },
+    };
+
+    const responses = [
+      Response.json({
+        status: "pending",
+        effect: "possible",
+        submissionId: "other",
+        observeAfterMs: 0,
+      }),
+      Response.json({
+        status: "unknown",
+        effect: "possible",
+        submissionId: "other",
+        reason: "lost",
+      }),
+      Response.json(foreignCompleted),
+      Response.json({
+        status: "pending",
+        effect: "possible",
+        submissionId: "other",
+        observeAfterMs: 0,
+      }),
+      Response.json({
+        status: "unknown",
+        effect: "possible",
+        submissionId: "other",
+        reason: "lost",
+      }),
+      Response.json(foreignCompleted),
+    ];
+
+    const driver = new FakeProviderDriver({
+      baseUrl: "http://127.0.0.1:8789",
+      token,
+      fetch: fetchStub(async () => responses.shift()!),
+    });
+
+    const input = {
+      scope,
+      identity: identity("expected"),
+      image: "fake-starter",
+      networkPolicy: "blocked",
+    };
+
+    for (let index = 0; index < 3; index++) {
+      expect(await driver.create(input)).toMatchObject({
+        status: "unknown",
+        submissionId: "expected",
+      });
+    }
+
+    await expect(driver.observe({ scope, submissionId: "expected" })).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+    });
+    await expect(driver.observe({ scope, submissionId: "expected" })).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+    });
+    await expect(driver.observe({ scope, submissionId: "expected" })).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+    });
+  });
+
   test("fake inventory rejects malformed cursors before paging", async () => {
     const { driver } = await setup();
     expect(

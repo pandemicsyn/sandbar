@@ -20,6 +20,43 @@ const InventoryResponse = z.strictObject({
 
 const FakeHttpJson = z.json();
 
+type MutationAction = Extract<FakeAction, { kind: "create" | "exec" | "writeFile" | "destroy" }>;
+
+const sameScope = (left: NativeScope, right: NativeScope) =>
+  left.provider === right.provider &&
+  left.connectionId === right.connectionId &&
+  left.accountId === right.accountId &&
+  left.region === right.region;
+
+const sameSandbox = (left: SandboxRef, right: SandboxRef) =>
+  left.nativeId === right.nativeId && sameScope(left.scope, right.scope);
+
+const completedMatchesAction = (action: MutationAction, result: DriverResult) => {
+  if (result.status !== "completed") return true;
+  const value = result.value;
+
+  switch (action.kind) {
+    case "create":
+      return value.kind === "sandbox" && sameScope(value.observation.ref.scope, action.scope);
+    case "exec":
+      return value.kind === "execution" && sameSandbox(value.observation.sandbox, action.sandbox);
+    case "writeFile":
+      return value.kind === "file_write" && sameSandbox(value.observation.sandbox, action.sandbox);
+    case "destroy":
+      return value.kind === "destroy" && sameSandbox(value.observation.sandbox, action.sandbox);
+  }
+};
+
+const completedMatchesScope = (scope: NativeScope, result: DriverResult) => {
+  if (result.status !== "completed") return true;
+  const value = result.value;
+
+  const effectScope =
+    value.kind === "sandbox" ? value.observation.ref.scope : value.observation.sandbox.scope;
+
+  return sameScope(effectScope, scope);
+};
+
 export class FakeProviderDriver implements ProviderDriver {
   readonly name = "fake";
   private readonly endpoint: string;
@@ -54,9 +91,19 @@ export class FakeProviderDriver implements ProviderDriver {
 
     return FakeHttpJson.parse(await response.json());
   }
-  private async mutation(action: FakeAction, submissionId: string): Promise<DriverResult> {
+  private async mutation(action: MutationAction, submissionId: string): Promise<DriverResult> {
     try {
-      return DriverResult.parse(await this.call(action));
+      const result = DriverResult.parse(await this.call(action));
+
+      if (
+        ((result.status === "pending" || result.status === "unknown") &&
+          result.submissionId !== submissionId) ||
+        !completedMatchesAction(action, result)
+      ) {
+        throw new Error("Fake provider returned a result for a different mutation");
+      }
+
+      return result;
     } catch (error) {
       if (error instanceof FakeTransportError && [400, 401, 403, 404, 413].includes(error.status)) {
         const code =
@@ -136,10 +183,23 @@ export class FakeProviderDriver implements ProviderDriver {
   async inspect(ref: SandboxRef) {
     const value = await this.call({ kind: "inspect", ref });
 
-    return value === null ? null : SandboxObservation.parse(value);
+    if (value === null) return null;
+    const observation = SandboxObservation.parse(value);
+
+    if (!sameSandbox(observation.ref, ref)) {
+      throw new ProviderReadError("INVALID_RESPONSE", "Fake inspect returned another sandbox");
+    }
+
+    return observation;
   }
   async inventory(input: { scope: NativeScope; cursor?: string; limit: number }) {
-    return InventoryResponse.parse(await this.call({ kind: "inventory", ...input }));
+    const response = InventoryResponse.parse(await this.call({ kind: "inventory", ...input }));
+
+    if (response.items.some((item) => !sameScope(item.ref.scope, input.scope))) {
+      throw new ProviderReadError("INVALID_RESPONSE", "Fake inventory returned a foreign scope");
+    }
+
+    return response;
   }
   async exec(input: {
     sandbox: SandboxRef;
@@ -202,7 +262,18 @@ export class FakeProviderDriver implements ProviderDriver {
   async observe(input: { scope: NativeScope; submissionId: string }) {
     const value = await this.call({ kind: "observe", ...input });
 
-    return value === null ? null : DriverResult.parse(value);
+    if (value === null) return null;
+    const result = DriverResult.parse(value);
+
+    if (
+      ((result.status === "pending" || result.status === "unknown") &&
+        result.submissionId !== input.submissionId) ||
+      !completedMatchesScope(input.scope, result)
+    ) {
+      throw new ProviderReadError("INVALID_RESPONSE", "Fake observation mismatches its request");
+    }
+
+    return result;
   }
   async events(scope: NativeScope) {
     const value = await this.call({ kind: "events", scope });
