@@ -381,6 +381,12 @@ export class AdapterSandbox {
 
     if (!this.client.session.files?.read) unsupported("readFile");
     validateFilePath(path);
+    const adapterMaxBytes = this.client.session.files.maxBytes;
+
+    if (!Number.isSafeInteger(adapterMaxBytes) || adapterMaxBytes < 0)
+      throw new SandbarError("INVALID_ARGUMENT", "Adapter file limit is invalid", "none");
+
+    const maxBytes = Math.min(adapterMaxBytes, 1_048_576);
 
     const value = await readWhileOpen(
       this.client,
@@ -391,7 +397,7 @@ export class AdapterSandbox {
     );
 
     if (value instanceof Uint8Array) {
-      if (value.length > this.client.session.files.maxBytes)
+      if (value.length > maxBytes)
         throw new SandbarError("OUTPUT_CAPACITY", "File exceeds adapter limit", "unknown");
 
       return Uint8Array.from(value);
@@ -407,10 +413,7 @@ export class AdapterSandbox {
 
         if (part.done) break;
 
-        if (
-          !(part.value instanceof Uint8Array) ||
-          total + part.value.length > this.client.session.files.maxBytes
-        )
+        if (!(part.value instanceof Uint8Array) || total + part.value.length > maxBytes)
           throw new SandbarError("OUTPUT_CAPACITY", "File exceeds adapter limit", "unknown");
         chunks.push(Uint8Array.from(part.value));
         total += part.value.length;

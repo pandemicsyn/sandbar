@@ -1624,3 +1624,85 @@ test("oversized streamed file returns capacity error despite stalled or rejected
     await client.close();
   }
 });
+
+test("file reads enforce the SDK ceiling and reject invalid adapter limits before IO", async () => {
+  let sequence = 0;
+
+  const open = async (maxBytes: number, value: Uint8Array | ReadableStream<Uint8Array>) => {
+    let reads = 0;
+
+    const adapter = defineAdapter({
+      name: `example.file-bound-${sequence++}`,
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async create() {
+            return { id: "box", state: "running" as const };
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+          files: {
+            maxBytes,
+            async read() {
+              reads++;
+
+              return value;
+            },
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+    const box = await client.sandboxes.create({ environment: Image.prepared("image") });
+
+    return { box, client, reads: () => reads };
+  };
+
+  const over = new Uint8Array(1_048_577);
+  const buffered = await open(2_000_000, over);
+  await expect(buffered.box.readFile("/over")).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
+  expect(buffered.reads()).toBe(1);
+  await buffered.client.close();
+
+  const streamed = await open(
+    2_000_000,
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(over);
+        controller.close();
+      },
+    }),
+  );
+
+  await expect(streamed.box.readFile("/over")).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
+  await streamed.client.close();
+
+  const lower = await open(2, Uint8Array.of(1, 2, 3));
+  await expect(lower.box.readFile("/lower")).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
+  await lower.client.close();
+
+  const exactBytes = new Uint8Array(1_048_576);
+  exactBytes[0] = 7;
+  exactBytes[exactBytes.length - 1] = 9;
+  const exact = await open(2_000_000, exactBytes);
+  const result = await exact.box.readFile("/exact");
+  expect(result.length).toBe(1_048_576);
+  expect(result[0]).toBe(7);
+  expect(result[result.length - 1]).toBe(9);
+  await exact.client.close();
+
+  for (const invalid of [Number.NaN, Infinity, -1, 1.5]) {
+    const bad = await open(invalid, Uint8Array.of(1));
+    await expect(bad.box.readFile("/invalid")).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+    expect(bad.reads()).toBe(0);
+    await bad.client.close();
+  }
+});
