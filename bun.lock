@@ -61,6 +61,13 @@
         "vite": "8.3.1",
       },
     },
+    "packages/adapter": {
+      "name": "@sandbar/adapter",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.6.5",
+      },
+    },
     "packages/contracts": {
       "name": "@sandbar/contracts",
       "version": "0.0.0",
@@ -124,6 +131,7 @@
       "name": "@sandbar/sdk",
       "version": "0.0.0",
       "dependencies": {
+        "@sandbar/adapter": "workspace:*",
         "@sandbar/contracts": "workspace:*",
         "@sandbar/core": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
@@ -580,6 +588,8 @@
     "@rolldown/binding-win32-x64-msvc": ["@rolldown/binding-win32-x64-msvc@1.2.11", "", { "os": "win32", "cpu": "x64" }, "sha512-/PzKqzAJ03i19oy2ItPvyvaVjOjBCNnfaJs8yvUdGBKmiESgnrJSQ2awd81QzFbbnAmu7YO9ZnJrDCb9VSJPRA=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
+
+    "@sandbar/adapter": ["@sandbar/adapter@workspace:packages/adapter"],
 
     "@sandbar/contracts": ["@sandbar/contracts@workspace:packages/contracts"],
 

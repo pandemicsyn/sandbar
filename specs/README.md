@@ -24,6 +24,7 @@ These documents mix accepted behavioral requirements with resource/features beyo
 - [Observability, usage and accounting](observability-and-accounting.md)
 - [Management UI scope](management-ui.md)
 - [Provider research and design targets](provider-drivers.md)
+- [First-class custom adapter DX](custom-adapters.md) — approved implementation direction, not implemented; permits changes to the unpublished SPI and service integration.
 
 ## Historical material
 

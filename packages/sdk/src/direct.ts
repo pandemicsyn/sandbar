@@ -1,3 +1,6 @@
+import { connectDirect } from "./adapter-direct";
+export { AdapterDirectClient, AdapterSandbox, AdapterOperation } from "./adapter-direct";
+export type { AdapterRecoveryReference, AdapterConnectOptions, AdapterCapabilities } from "./adapter-direct";
 import {
   NativeScope,
   ProviderReadError,
@@ -756,6 +759,7 @@ export class DirectClient implements SandbarClient {
 }
 
 export const Sandbar = {
+  connect: connectDirect,
   direct(options: DirectOptions): DirectClient {
     return new DirectClient(options);
   },
