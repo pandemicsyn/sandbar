@@ -25,6 +25,8 @@ const RecordSchema = z.strictObject({
 
 const ExecToken = z.strictObject({ maxBytes: z.number().int().min(0).max(MAX_BYTES) });
 
+const WriteToken = z.strictObject({ expectedBytes: z.number().int().min(0).max(MAX_BYTES) });
+
 const DestroyToken = z.strictObject({ id: z.string().min(1).max(128) });
 
 type RecordValue = z.output<typeof RecordSchema>;
@@ -369,6 +371,7 @@ export function createModalAdapter(
             return bytes;
           },
           write: {
+            recovery: { version: 1, token: WriteToken },
             async prepare(input) {
               if (!(await find(input.sandbox.id)))
                 throw new AdapterError(
@@ -406,9 +409,7 @@ export function createModalAdapter(
                   ctx.signal,
                 );
               } catch {
-                return ctx.unknown(
-                  "Modal file submission is uncertain; observe the original execution ID",
-                );
+                return ctx.pending({ expectedBytes: input.bytes.length });
               }
 
               try {
@@ -430,12 +431,17 @@ export function createModalAdapter(
                   "Modal file write failed after submission; inspect destination before retry",
                 );
               } catch {
-                return ctx.unknown("Modal file result is unavailable; observe without replay");
+                return ctx.pending({ expectedBytes: input.bytes.length });
               }
             },
             async observe(attempt, ctx) {
               if (!attempt.sandbox || !(await find(attempt.sandbox.id)))
                 return ctx.unknown("Modal write sandbox is unavailable in the verified App");
+
+              const token = WriteToken.safeParse(attempt.token);
+
+              if (!token.success)
+                return ctx.unknown("Modal write length is unavailable; do not replay");
 
               try {
                 const signal = AbortSignal.any([
@@ -456,8 +462,7 @@ export function createModalAdapter(
                   result.exitCode === 0 &&
                   !result.truncated &&
                   Number.isSafeInteger(count) &&
-                  count >= 0 &&
-                  count <= MAX_BYTES
+                  count === token.data.expectedBytes
                 )
                   return { bytesWritten: count };
 

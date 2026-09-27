@@ -222,6 +222,12 @@ test("Modal direct exec and write recover by execution ID after one uncertain su
 
       if (loseWrite) {
         loseWrite = false;
+        processes.set(execId, {
+          exitCode: 0,
+          stdout: new TextEncoder().encode(`${bytes.length - 1}\n`),
+          stderr: new Uint8Array(),
+          truncated: false,
+        });
         throw new Error("lost write acknowledgement");
       }
 
@@ -290,10 +296,27 @@ test("Modal direct exec and write recover by execution ID after one uncertain su
     await client.recover(createReference as never)
   ).observe()) as typeof box;
 
-  await expect(
-    recoveredBox.writeFile("/tmp/binary", Uint8Array.from([0, 255, 129]), { overwrite: false }),
-  ).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
-  const writeReference = saved;
+  let writeReference: unknown;
+
+  try {
+    await recoveredBox.writeFile("/tmp/binary", Uint8Array.from([0, 255, 129]), {
+      overwrite: false,
+    });
+    throw new Error("Expected uncertain write evidence");
+  } catch (error) {
+    expect(error).toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    // SAFETY: The thrown SDK outcome carries the recovery reference checked above.
+    writeReference = (error as { reference: unknown }).reference;
+  }
+
+  expect(writeReference).toMatchObject({ token: { expectedBytes: 3 }, tokenVersion: 1 });
+  const writeExecId = starts[1]!.execId;
+  processes.set(writeExecId, {
+    exitCode: 0,
+    stdout: new TextEncoder().encode("3\n"),
+    stderr: new Uint8Array(),
+    truncated: false,
+  });
   await client.close();
   client = await open();
   // SAFETY: The SDK produced this reference before the original fixture write submission.

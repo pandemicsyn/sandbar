@@ -293,24 +293,24 @@ export class ModalRouterWire {
           });
         });
 
-      const output = Promise.all([collect(0), collect(1)]);
-
-      const wait = parse(
-        await this.unary(
+      const [waitBytes, [stdout, stderr]] = await Promise.all([
+        this.unary(
           client,
           metadata,
           "TaskExecWait",
           message(field(1, taskId), field(2, execId)),
           signal,
         ),
-      );
+        Promise.all([collect(0), collect(1)]),
+      ]);
+
+      const wait = parse(waitBytes);
 
       const code = intField(wait, 1);
       const processSignal = intField(wait, 2);
 
       if (code === undefined && processSignal === undefined)
         throw new Error("Modal exec exit status unavailable");
-      const [stdout, stderr] = await output;
 
       return { exitCode: code ?? 128 + processSignal!, stdout, stderr, truncated };
     } finally {
