@@ -12,6 +12,13 @@ const Options = z.strictObject({
   timeoutSeconds: z.number().int().min(60).max(3600).default(300),
   endpoint: z.literal(MODAL_ENDPOINT).optional(),
 });
+const Credentials = z.strictObject({ tokenId: z.string().min(1), tokenSecret: z.string().min(1) });
+const Configuration = z.strictObject({
+  appName: z.string().min(1).max(128),
+  environment: z.string().min(1).max(128),
+  region: z.string().min(1).max(128).optional(),
+  timeoutSeconds: z.string().regex(/^[0-9]+$/).optional(),
+});
 
 export type ModalProviderOptions = z.input<typeof Options>;
 
@@ -26,14 +33,14 @@ async function connectionId(appId: string, environment: string, region?: string)
  * The SDK has no public authoritative workspace-ID reader, so this adapter
  * claims only the verified App, environment and fixed control endpoint.
  */
-export async function modalProvider(options: ModalProviderOptions, injectedTransport?: ModalTransport): Promise<{ driver: ModalProviderDriver; scope: NativeScope; ownership: "owned"; release: () => void }> {
+async function connect(options: ModalProviderOptions, injectedTransport?: ModalTransport, suppliedConnectionId?: string): Promise<{ driver: ModalProviderDriver; scope: NativeScope; ownership: "owned"; release: () => void }> {
   const parsed = Options.parse(options);
   const transport = injectedTransport ?? createSdkTransport(parsed);
   try {
     const appId = await transport.lookupApp(parsed.appName, parsed.environment);
     if (!/^ap-[A-Za-z0-9_-]+$/.test(appId)) throw new Error("Modal app lookup returned an invalid native ID");
     const scope = NativeScope.parse({
-      provider: "modal", connectionId: await connectionId(appId, parsed.environment, parsed.region),
+      provider: "modal", connectionId: suppliedConnectionId ?? await connectionId(appId, parsed.environment, parsed.region),
       resourceScope: { kind: "app", id: appId },
       endpoint: MODAL_ENDPOINT, region: parsed.region,
     });
@@ -44,6 +51,28 @@ export async function modalProvider(options: ModalProviderOptions, injectedTrans
     throw error;
   }
 }
+
+export async function modalProvider(options: ModalProviderOptions, injectedTransport?: ModalTransport) {
+  return connect(options, injectedTransport);
+}
+
+/** Structural registry factory: the portable package does not import service-runtime. */
+export function createModalRegistration(transportFactory?: (options: ModalProviderOptions) => ModalTransport) {
+  const validate = (input: { credentials: Record<string, string>; configuration: Record<string, string> }) => ({
+    credentials: Credentials.parse(input.credentials), configuration: Configuration.parse(input.configuration),
+  });
+  return {
+    provider: "modal" as const,
+    validate,
+    async connect(input: { connectionId: string; credentials: Record<string, string>; configuration: Record<string, string> }) {
+      const validated = validate(input);
+      const { timeoutSeconds, ...configuration } = validated.configuration;
+      const options = { ...validated.credentials, ...configuration, ...(timeoutSeconds === undefined ? {} : { timeoutSeconds: Number(timeoutSeconds) }) };
+      return connect(options, transportFactory?.(options), input.connectionId);
+    },
+  };
+}
+export const modalRegistration = createModalRegistration();
 
 export { ModalProviderDriver } from "./driver";
 export { MODAL_ENDPOINT, type ModalTransport } from "./transport";

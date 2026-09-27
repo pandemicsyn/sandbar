@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Image, Sandbar, OutcomeUnknownError, type RecoveryReference } from "@sandbar/sdk/direct";
-import { modalProvider, MODAL_ENDPOINT, type ModalTransport } from "./index";
+import { createModalRegistration, modalProvider, MODAL_ENDPOINT, type ModalTransport } from "./index";
 import type { NativeRef } from "@sandbar/provider-spi";
 
 const options = { tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main", region: "us-east-1", timeoutSeconds: 300 };
@@ -57,6 +57,16 @@ test("factory binds server App identity, environment and fixed endpoint", async 
   expect(provider.scope.region).toBe("us-east-1");
   expect(provider.ownership).toBe("owned");
   provider.release();
+});
+
+test("service registration validates secret/config maps and pins stored connection ID", async () => {
+  const fixture = new Fixture();
+  const registration = createModalRegistration(() => fixture);
+  expect(() => registration.validate({ credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture", extra: "hidden" }, configuration: { appName: "existing", environment: "main" } })).toThrow();
+  const lease = await registration.connect({ connectionId: "conn_modal", credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" }, configuration: { appName: "existing", environment: "main", region: "us-east-1", timeoutSeconds: "300" } });
+  expect(lease.scope.connectionId).toBe("conn_modal");
+  expect(lease.scope.region).toBe("us-east-1");
+  lease.release();
 });
 
 test("prepare rejects OCI and nonblocked network before any create", async () => {
