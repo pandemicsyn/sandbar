@@ -14,6 +14,7 @@ const packages = [
   ["@sandbar/core", "packages/core"],
   ["@sandbar/provider-fake", "packages/providers/fake"],
   ["@sandbar/provider-daytona", "packages/providers/daytona"],
+  ["@sandbar/provider-modal", "packages/providers/modal"],
   ["@sandbar/sdk", "packages/sdk"],
 ];
 
@@ -109,7 +110,21 @@ async function consumer(directory, dependencies, overrides, source) {
 async function checkTypes(directory, mode) {
   let source;
 
-  if (mode === "daytona")
+  if (mode === "modal")
+    source = `
+import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { modalProvider } from "@sandbar/provider-modal";
+async function flow() {
+  const provider = await modalProvider({ tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main" });
+  const client = Sandbar.direct({ provider });
+  const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked" });
+  const bytes: Uint8Array = await box.readFile("/file");
+  await client.close();
+  return bytes;
+}
+void flow;
+`;
+  else if (mode === "daytona")
     source = `
 import { Sandbar, Image } from "@sandbar/sdk/direct";
 import { daytonaProvider } from "@sandbar/provider-daytona";
@@ -237,6 +252,39 @@ try {
 } finally { await client.close(); }
 `;
 
+const modalSource = `
+import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { modalProvider } from "@sandbar/provider-modal";
+let creates = 0, terminates = 0, closed = 0;
+const records = new Map();
+const transport = {
+  async lookupApp(name, environment) { if (name !== "existing" || environment !== "main") throw Error("Wrong App"); return "ap-fixture"; },
+  async imageExists(id) { return id === "im-fixture"; },
+  async create(input) {
+    if (input.appId !== "ap-fixture" || input.imageId !== "im-fixture" || input.timeoutMs !== 300000 || input.regions?.[0] !== "us-east-1") throw Error("Wrong create input");
+    creates++;
+    records.set(input.name, { id: "sb-1", tags: input.tags, running: true });
+    return "sb-1";
+  },
+  async findByName(_app, _environment, name) { return records.get(name) ?? null; },
+  async *list(appId) { if (appId !== "ap-fixture") throw Error("Wrong inventory scope"); for (const record of records.values()) if (record.running) yield record; },
+  async readBytes(id, path, maxBytes) { if (id !== "sb-1" || path !== "/file" || maxBytes !== 1048576) throw Error("Wrong read"); return Uint8Array.from([0, 255, 128]); },
+  async terminate(id) { if (id !== "sb-1") throw Error("Wrong termination"); terminates++; for (const record of records.values()) record.running = false; return true; },
+  close() { closed++; },
+};
+const provider = await modalProvider({ tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main", region: "us-east-1", timeoutSeconds: 300 }, transport);
+const client = Sandbar.direct({ provider });
+try {
+  const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked", region: "us-east-1" });
+  const bytes = await box.readFile("/file");
+  if (bytes.length !== 3 || bytes[0] !== 0 || bytes[1] !== 255 || bytes[2] !== 128) throw Error("Binary read mismatch");
+  await box.destroy();
+  if (creates !== 1 || terminates !== 1) throw Error("Mutation replay in packed Modal consumer");
+} finally { await client.close(); }
+if (closed !== 1) throw Error("Owned provider was not released");
+process.stdout.write("packed Modal fixture flow passed\\n");
+`;
+
 const temporary = await mkdtemp(join(tmpdir(), "sandbar-packed-sdk-"));
 
 const archives = join(temporary, "archives");
@@ -265,21 +313,30 @@ try {
     "@sandbar/provider-daytona": archiveOverrides["@sandbar/provider-daytona"],
   };
 
+  const modalDeps = {
+    ...remoteDeps,
+    "@sandbar/provider-modal": archiveOverrides["@sandbar/provider-modal"],
+  };
+
   const remote = join(temporary, "remote-consumer");
   const direct = join(temporary, "direct-consumer");
   const daytona = join(temporary, "daytona-consumer");
+  const modal = join(temporary, "modal-consumer");
   await consumer(remote, remoteDeps, archiveOverrides, remoteSource);
   await consumer(direct, directDeps, archiveOverrides, directSource);
   await consumer(daytona, daytonaDeps, archiveOverrides, daytonaSource);
+  await consumer(modal, modalDeps, archiveOverrides, modalSource);
 
   if ((await readdir(join(remote, "node_modules", "@sandbar"))).includes("provider-fake"))
     throw new Error("Remote-only consumer installed the fake provider");
   await checkTypes(direct, "direct");
   await checkTypes(daytona, "daytona");
+  await checkTypes(modal, "modal");
   await checkTypes(remote, "remote");
   inspectGraph(remote, ["@sandbar/sdk"]);
   inspectGraph(direct, ["@sandbar/sdk", "@sandbar/provider-fake"]);
   inspectGraph(daytona, ["@sandbar/sdk", "@sandbar/provider-daytona"]);
+  inspectGraph(modal, ["@sandbar/sdk", "@sandbar/provider-modal"]);
   console.log(
     `Runtimes: Node ${run("node", ["--version"], remote)}, Bun ${run("bun", ["--version"], remote)}`,
   );
@@ -288,6 +345,9 @@ try {
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], daytona)}`);
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], modal)}`);
   await fixture.startFake();
 
   for (const runtime of ["node", "bun"]) {

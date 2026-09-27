@@ -12,6 +12,7 @@
     "@sandbar/provider-spi": "workspace:*",
     "@sandbar/provider-fake": "workspace:*",
     "@sandbar/provider-daytona": "workspace:*",
+    "@sandbar/provider-modal": "workspace:*",
     "@sandbar/service-runtime": "workspace:*",
     "@sandbar/store": "workspace:*",
     "hono": "4.13.9",

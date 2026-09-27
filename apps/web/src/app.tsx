@@ -13,6 +13,7 @@ import {
   CreateSandboxRequest,
   ExecRequest,
   SandboxListQuery,
+  type CreateProviderConnectionRequest,
   type Operation,
   type Sandbox,
 } from "@sandbar/contracts";
@@ -429,11 +430,16 @@ function ConnectionsPage() {
   const { projectId } = projectRoute.useParams();
   const connections = useResource(() => api.connections(projectId), projectId);
   const [name, setName] = useState("");
-  const [provider, setProvider] = useState<"fake" | "daytona">("fake");
+  const [provider, setProvider] = useState<"fake" | "daytona" | "modal">("fake");
   const [apiKey, setApiKey] = useState("");
   const [target, setTarget] = useState("us");
   const [apiUrl, setApiUrl] = useState("https://app.daytona.io/api");
   const [toolboxOrigin, setToolboxOrigin] = useState("https://proxy.app.daytona.io");
+  const [tokenId, setTokenId] = useState("");
+  const [tokenSecret, setTokenSecret] = useState("");
+  const [appName, setAppName] = useState("");
+  const [environment, setEnvironment] = useState("main");
+  const [region, setRegion] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -445,19 +451,40 @@ function ConnectionsPage() {
     setNotice(undefined);
 
     try {
-      await api.createConnection(
-        projectId,
-        provider === "fake"
-          ? { provider, name: name.trim() }
-          : {
-              provider,
-              name: name.trim(),
-              credentials: { apiKey },
-              configuration: { apiUrl, toolboxOrigin, target, ttlMinutes: "60" },
-            },
-      );
+      let input: z.infer<typeof CreateProviderConnectionRequest>;
+
+      if (provider === "fake") input = { provider, name: name.trim() };
+      else if (provider === "daytona")
+        input = {
+          provider,
+          name: name.trim(),
+          credentials: { apiKey },
+          configuration: { apiUrl, toolboxOrigin, target, ttlMinutes: "60" },
+        };
+      else {
+        const configuration = {
+          appName: appName.trim(),
+          environment: environment.trim(),
+          timeoutSeconds: "300",
+        };
+
+        const configuredRegion = region.trim();
+
+        input = {
+          provider,
+          name: name.trim(),
+          credentials: { tokenId, tokenSecret },
+          configuration: configuredRegion
+            ? { ...configuration, region: configuredRegion }
+            : configuration,
+        };
+      }
+
+      await api.createConnection(projectId, input);
       setName("");
       setApiKey("");
+      setTokenId("");
+      setTokenSecret("");
       setNotice("Connection added. Verify its native scope before creating a sandbox.");
       connections.refresh();
     } catch (reason) {
@@ -499,10 +526,13 @@ function ConnectionsPage() {
               className="select"
               id="connection-provider"
               value={provider}
-              onChange={(e) => setProvider(z.enum(["fake", "daytona"]).parse(e.target.value))}
+              onChange={(e) =>
+                setProvider(z.enum(["fake", "daytona", "modal"]).parse(e.target.value))
+              }
             >
               <option value="fake">Fake test provider</option>
               <option value="daytona">Daytona</option>
+              <option value="modal">Modal</option>
             </select>
           </Field>
           <Field label="Connection name" htmlFor="connection-name">
@@ -559,6 +589,58 @@ function ConnectionsPage() {
               </Field>
             </>
           )}
+          {provider === "modal" && (
+            <>
+              <Field label="Modal token ID" htmlFor="connection-token-id">
+                <input
+                  className="input"
+                  id="connection-token-id"
+                  type="password"
+                  autoComplete="off"
+                  required
+                  value={tokenId}
+                  onChange={(e) => setTokenId(e.target.value)}
+                />
+              </Field>
+              <Field label="Modal token secret" htmlFor="connection-token-secret">
+                <input
+                  className="input"
+                  id="connection-token-secret"
+                  type="password"
+                  autoComplete="off"
+                  required
+                  value={tokenSecret}
+                  onChange={(e) => setTokenSecret(e.target.value)}
+                />
+              </Field>
+              <Field label="Existing Modal App" htmlFor="connection-app-name">
+                <input
+                  className="input"
+                  id="connection-app-name"
+                  required
+                  value={appName}
+                  onChange={(e) => setAppName(e.target.value)}
+                />
+              </Field>
+              <Field label="Modal environment" htmlFor="connection-environment">
+                <input
+                  className="input"
+                  id="connection-environment"
+                  required
+                  value={environment}
+                  onChange={(e) => setEnvironment(e.target.value)}
+                />
+              </Field>
+              <Field label="Modal region (optional)" htmlFor="connection-region">
+                <input
+                  className="input"
+                  id="connection-region"
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
           <Button variant="primary" busy={busy} type="submit">
             Add connection
           </Button>
@@ -602,7 +684,11 @@ function ConnectionsPage() {
                     <td>
                       <StatusBadge status={connection.status} />
                     </td>
-                    <td>{connection.nativeScope?.accountId ?? "Not verified"}</td>
+                    <td>
+                      {connection.nativeScope?.accountId ??
+                        connection.nativeScope?.resourceScope?.id ??
+                        "Not verified"}
+                    </td>
                     <td>
                       {connection.capabilities
                         ? Object.entries(connection.capabilities)
@@ -793,7 +879,8 @@ function FleetPage() {
                 />
                 {!connectionId && (
                   <span className="field-hint">
-                    Enter an active snapshot ID for Daytona or fake-starter for a fake default.
+                    Enter an active Daytona snapshot ID or existing Modal im- image ID; fake-starter
+                    is the fake default.
                   </span>
                 )}
               </Field>

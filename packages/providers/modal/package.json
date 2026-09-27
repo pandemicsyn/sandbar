@@ -1,0 +1,32 @@
+{
+  "name": "@sandbar/provider-modal",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external '@sandbar/*' --external modal --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs",
+    "test:live": "bun live/conformance.mjs"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.0.0",
+    "@sandbar/contracts": "workspace:*",
+    "@sandbar/provider-spi": "workspace:*",
+    "modal": "0.10.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@grpc/grpc-js": "1.14.5",
+    "@sandbar/sdk": "workspace:*"
+  }
+}
