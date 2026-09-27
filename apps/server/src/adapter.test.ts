@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
 import { defineAdapter } from "sandbar-adapter";
+import { ProviderConfigurationError, SecretBox } from "@sandbar/service-runtime";
+import { Sandbar } from "../../../packages/sdk/src/index";
 import { openDomainRuntime } from "./runtime";
 
 test("custom adapter catalog, encrypted structured connection, and pending restart observation", async () => {
@@ -193,6 +195,139 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
     const stale = await runtime.store.getConnection(projectId, connectionId);
     await expect(runtime.registry.connect(stale!)).rejects.toThrow("stored contract version 99");
     expect(submissions).toBe(1);
+  } finally {
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("transformed adapter inputs remain raw in encrypted service connections", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-transform-connection-"));
+  const keyFile = join(directory, "key");
+  const setupTokenFile = join(directory, "setup");
+  const databaseUrl = join(directory, "control.sqlite");
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)));
+  await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "long-transform-connection-setup-token");
+  await chmod(setupTokenFile, 0o600);
+  let connects = 0;
+
+  const adapter = defineAdapter({
+    name: "example.transformed",
+    config: z.strictObject({ region: z.string() }).transform(({ region }) => region),
+    credentials: z.strictObject({ token: z.string() }).transform(({ token }) => token),
+    async connect({ config, credentials }) {
+      connects++;
+      expect(config).toBe("us");
+      expect(credentials).toBe("secret-credential");
+
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: { region: config } },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          return { id: "box", state: "running" as const };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const direct = await Sandbar.connect({
+    adapter,
+    config: { region: "us" },
+    credentials: { token: "secret-credential" },
+  });
+
+  expect(direct.scope.partition.region).toBe("us");
+  await direct.close();
+  expect(connects).toBe(1);
+
+  const options = { databaseUrl, keyFile, setupTokenFile, startRunner: false, adapters: [adapter] };
+  let runtime = await openDomainRuntime(options);
+  let bearer = "";
+
+  const request = async (path: string, body: z.infer<ReturnType<typeof z.json>>) => {
+    const headers = new Headers({ "Content-Type": "application/json" });
+
+    if (bearer) headers.set("Authorization", `Bearer ${bearer}`);
+
+    const response = await runtime.app.request(path, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    return { status: response.status, body: await response.json() };
+  };
+
+  try {
+    const setup = await request("/v1/setup", {
+      setupToken: "long-transform-connection-setup-token",
+    });
+
+    bearer = setup.body.token;
+
+    const project = await request("/v1/projects", { name: "Transformed" });
+    const projectId = String(project.body.id);
+
+    const created = await request(`/v1/projects/${projectId}/provider-connections`, {
+      provider: "example.transformed",
+      name: "Transformed",
+      configuration: { region: "us" },
+      credentials: { token: "secret-credential" },
+    });
+
+    expect(created.status).toBe(201);
+    expect(connects).toBe(1);
+
+    const connectionId = String(created.body.id);
+    const stored = await runtime.store.getConnection(projectId, connectionId);
+
+    expect(stored?.encrypted_credentials).not.toContain("secret-credential");
+    expect((await readFile(databaseUrl)).toString()).not.toContain("secret-credential");
+
+    const secrets = await SecretBox.fromFile(keyFile);
+
+    const plaintext = await secrets.open(
+      "provider-connection",
+      connectionId,
+      stored!.encrypted_credentials,
+    );
+
+    expect(JSON.parse(plaintext)).toEqual({
+      credentials: { token: "secret-credential" },
+      configuration: { region: "us" },
+    });
+
+    await runtime.close();
+    runtime = await openDomainRuntime(options);
+
+    const verified = await request(
+      `/v1/projects/${projectId}/provider-connections/${connectionId}/verify`,
+      {},
+    );
+
+    expect(verified.status).toBe(200);
+    expect(connects).toBe(2);
+
+    const invalid = await secrets.seal(
+      "provider-connection",
+      connectionId,
+      JSON.stringify({ credentials: { token: "secret-credential" }, configuration: {} }),
+    );
+
+    await runtime.store.backend.run(
+      sql`UPDATE provider_connections SET encrypted_credentials=${invalid} WHERE id=${connectionId}`,
+    );
+
+    const corrupted = await runtime.store.getConnection(projectId, connectionId);
+
+    await expect(runtime.registry.connect(corrupted!)).rejects.toBeInstanceOf(
+      ProviderConfigurationError,
+    );
+    expect(connects).toBe(2);
   } finally {
     await runtime.close();
     await rm(directory, { recursive: true, force: true });

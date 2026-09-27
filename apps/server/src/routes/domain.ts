@@ -623,12 +623,12 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       const id = `conn_${crypto.randomUUID().replaceAll("-", "")}`;
 
-      const validated = deps.registry
-        ? deps.registry.validate(body.provider, {
-            credentials: body.credentials ?? {},
-            configuration: body.configuration ?? {},
-          })
-        : { credentials: body.credentials ?? {}, configuration: body.configuration ?? {} };
+      const raw = structuredClone({
+        credentials: body.credentials ?? {},
+        configuration: body.configuration ?? {},
+      });
+
+      deps.registry?.validate(body.provider, structuredClone(raw));
 
       if (!deps.registry && (body.provider !== "fake" || body.credentials || body.configuration))
         throw new SyntaxError("Provider is not configured");
@@ -636,10 +636,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       const encryptedCredentials = await deps.secrets.seal(
         "provider-connection",
         id,
-        JSON.stringify({
-          credentials: validated.credentials,
-          configuration: validated.configuration,
-        }),
+        JSON.stringify(raw),
       );
 
       const row = await deps.store.createConnection({

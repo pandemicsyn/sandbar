@@ -131,10 +131,8 @@ export class ProviderRegistry {
       })
       .parse(JSON.parse(plaintext));
 
-    let config: { credentials: unknown; configuration: unknown };
-
     try {
-      config = this.validate(row.provider, decoded);
+      this.validate(row.provider, decoded);
     } catch {
       throw new ProviderConfigurationError();
     }
@@ -144,8 +142,8 @@ export class ProviderRegistry {
 
     const connection = await Sandbar.connect({
       adapter,
-      config: config.configuration,
-      credentials: config.credentials,
+      config: decoded.configuration,
+      credentials: decoded.credentials,
     });
 
     try {
