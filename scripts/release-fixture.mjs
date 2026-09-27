@@ -74,7 +74,6 @@ try {
   }
 
   const paths = JSON.parse(readFileSync(join(temporary, "scripts/release-packages.json"), "utf8"));
-  const names = [];
 
   for (const path of paths) {
     const file = join(temporary, path, "package.json");
@@ -88,18 +87,11 @@ try {
       join(temporary, path, "CHANGELOG.md"),
       "# Changelog\n\n## 0.1.0\n\nFixture release.\n",
     );
-    names.push(manifest.name);
 
     if (path === "packages/sdk") sdkName = manifest.name;
   }
 
   if (!sdkName) throw new Error("Fixture release graph has no SDK");
-
-  const configPath = join(temporary, ".changeset/config.json");
-  const config = JSON.parse(readFileSync(configPath, "utf8"));
-
-  config.fixed = [names];
-  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
 
   run("bun", ["scripts/refresh-workspace-lock.mjs"]);
 

@@ -60,6 +60,12 @@ function load() {
   const names = new Set(packages.map(({ manifest }) => manifest.name));
 
   if (names.size !== packages.length) throw new Error("Duplicate release package names");
+
+  const fixed = JSON.parse(readFileSync(join(root, ".changeset/config.json"), "utf8")).fixed;
+  const fixedNames = Array.isArray(fixed) && fixed.length === 1 ? new Set(fixed[0]) : new Set();
+
+  if (fixedNames.size !== names.size || [...names].some((name) => !fixedNames.has(name)))
+    throw new Error("Changesets fixed group must match the public release package list");
   const version = packages[0].manifest.version;
 
   if (packages.some(({ manifest }) => manifest.version !== version))

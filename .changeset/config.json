@@ -1,12 +1,30 @@
 {
   "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
-  "changelog": ["@changesets/changelog-github", { "repo": "pandemicsyn/sandbar" }],
+  "changelog": [
+    "@changesets/changelog-github",
+    {
+      "repo": "pandemicsyn/sandbar"
+    }
+  ],
   "commit": false,
-  "fixed": [],
+  "fixed": [
+    [
+      "@sandbar/contracts",
+      "@sandbar/provider-spi",
+      "@sandbar/core",
+      "@sandbar/provider-fake",
+      "@sandbar/provider-daytona",
+      "@sandbar/provider-modal",
+      "@sandbar/sdk"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": [],
-  "privatePackages": { "version": false, "tag": false }
+  "privatePackages": {
+    "version": false,
+    "tag": false
+  }
 }
