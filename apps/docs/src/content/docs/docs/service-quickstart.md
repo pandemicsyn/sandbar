@@ -15,7 +15,7 @@ bun run build:packages
 bun run --cwd apps/docs examples:test
 ```
 
-The [checked-in remote example](https://github.com/pandemicsyn/sandbar/blob/codex/docs-site/apps/docs/examples/remote.test.ts) creates temporary key and setup-token files, starts a fake provider and the service on loopback, creates a project and fake connection, then exercises the remote SDK. The test cleans up its temporary files and processes. This is the reproducible onboarding path until packages are published.
+The [checked-in remote example](https://github.com/pandemicsyn/sandbar/blob/f1c61f8a32353a9cf78cafa5792ebdbe30e15987/apps/docs/examples/remote.test.ts) creates temporary key and setup-token files, starts a fake provider and the service on loopback, creates a project and fake connection, then exercises the remote SDK. The test cleans up its temporary files and processes. This is the reproducible onboarding path until packages are published.
 
 ## Connect from server-side TypeScript
 

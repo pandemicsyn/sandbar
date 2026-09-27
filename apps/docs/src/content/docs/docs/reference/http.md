@@ -11,28 +11,28 @@ The service uses Bearer authorization except where an operation explicitly has n
 
 ## Endpoints
 
-| Method | Path | Operation | Success | Request schema |
-|---|---|---|---|---|
-| POST | `/v1/setup` | `setupOperator` | 201 | SetupRequest |
-| POST | `/v1/sessions` | `createSession` | 201 | SessionRequest |
-| GET | `/v1/session` | `getSession` | 200 | — |
-| POST | `/v1/sessions/logout` | `logoutSession` | 204 | — |
-| GET | `/v1/projects` | `listProjects` | 200 | — |
-| POST | `/v1/projects` | `createProject` | 201 | CreateProjectRequest |
-| GET | `/v1/projects/{projectId}/provider-connections` | `listProviderConnections` | 200 | — |
-| POST | `/v1/projects/{projectId}/provider-connections` | `createProviderConnection` | 201 | CreateProviderConnectionRequest |
-| POST | `/v1/projects/{projectId}/provider-connections/{connectionId}/verify` | `verifyProviderConnection` | 200 | — |
-| GET | `/v1/projects/{projectId}/sandboxes` | `listSandboxes` | 200 | — |
-| POST | `/v1/projects/{projectId}/sandboxes` | `submitCreate` | 202 | CreateSandboxRequest |
-| GET | `/v1/projects/{projectId}/sandboxes/{sandboxId}` | `getSandbox` | 200 | — |
-| DELETE | `/v1/projects/{projectId}/sandboxes/{sandboxId}` | `submitDestroy` | 202 | — |
-| POST | `/v1/projects/{projectId}/sandboxes/{sandboxId}/executions` | `submitExec` | 202 | ExecRequest |
-| GET | `/v1/projects/{projectId}/executions/{executionId}` | `getExecution` | 200 | — |
-| GET | `/v1/projects/{projectId}/sandboxes/{sandboxId}/files` | `readFile` | 200 | — |
-| PUT | `/v1/projects/{projectId}/sandboxes/{sandboxId}/files` | `writeFile` | 200, 202 | inline |
-| GET | `/v1/projects/{projectId}/operations/{operationId}` | `getOperation` | 200 | — |
-| POST | `/v1/projects/{projectId}/operations/{operationId}/reconcile` | `reconcileOperation` | 200 | — |
-| GET | `/v1/projects/{projectId}/invocations/{invocationKey}` | `lookupInvocation` | 200 | — |
+| Method | Path | Operation | Parameters | Success | Request schema |
+|---|---|---|---|---|---|
+| POST | `/v1/setup` | `setupOperator` | — | 201 | SetupRequest |
+| POST | `/v1/sessions` | `createSession` | — | 201 | SessionRequest |
+| GET | `/v1/session` | `getSession` | — | 200 | — |
+| POST | `/v1/sessions/logout` | `logoutSession` | — | 204 | — |
+| GET | `/v1/projects` | `listProjects` | — | 200 | — |
+| POST | `/v1/projects` | `createProject` | — | 201 | CreateProjectRequest |
+| GET | `/v1/projects/{projectId}/provider-connections` | `listProviderConnections` | `projectId` (path, required) | 200 | — |
+| POST | `/v1/projects/{projectId}/provider-connections` | `createProviderConnection` | `projectId` (path, required) | 201 | CreateProviderConnectionRequest |
+| POST | `/v1/projects/{projectId}/provider-connections/{connectionId}/verify` | `verifyProviderConnection` | `projectId` (path, required)<br>`connectionId` (path, required) | 200 | — |
+| GET | `/v1/projects/{projectId}/sandboxes` | `listSandboxes` | `projectId` (path, required)<br>`cursor` (query)<br>`limit` (query)<br>`connectionId` (query)<br>`state` (query)<br>`q` (query) | 200 | — |
+| POST | `/v1/projects/{projectId}/sandboxes` | `submitCreate` | `projectId` (path, required)<br>`Idempotency-Key` (header, required) | 202 | CreateSandboxRequest |
+| GET | `/v1/projects/{projectId}/sandboxes/{sandboxId}` | `getSandbox` | `projectId` (path, required)<br>`sandboxId` (path, required) | 200 | — |
+| DELETE | `/v1/projects/{projectId}/sandboxes/{sandboxId}` | `submitDestroy` | `projectId` (path, required)<br>`sandboxId` (path, required)<br>`Idempotency-Key` (header, required) | 202 | — |
+| POST | `/v1/projects/{projectId}/sandboxes/{sandboxId}/executions` | `submitExec` | `projectId` (path, required)<br>`sandboxId` (path, required)<br>`Idempotency-Key` (header, required) | 202 | ExecRequest |
+| GET | `/v1/projects/{projectId}/executions/{executionId}` | `getExecution` | `projectId` (path, required)<br>`executionId` (path, required) | 200 | — |
+| GET | `/v1/projects/{projectId}/sandboxes/{sandboxId}/files` | `readFile` | `projectId` (path, required)<br>`sandboxId` (path, required)<br>`path` (query, required) | 200 | — |
+| PUT | `/v1/projects/{projectId}/sandboxes/{sandboxId}/files` | `writeFile` | `projectId` (path, required)<br>`sandboxId` (path, required)<br>`path` (query, required)<br>`Idempotency-Key` (header, required) | 200, 202 | inline |
+| GET | `/v1/projects/{projectId}/operations/{operationId}` | `getOperation` | `projectId` (path, required)<br>`operationId` (path, required) | 200 | — |
+| POST | `/v1/projects/{projectId}/operations/{operationId}/reconcile` | `reconcileOperation` | `projectId` (path, required)<br>`operationId` (path, required) | 200 | — |
+| GET | `/v1/projects/{projectId}/invocations/{invocationKey}` | `lookupInvocation` | `projectId` (path, required)<br>`invocationKey` (path, required)<br>`kind` (query, required)<br>`sandboxId` (query) | 200 | — |
 
 ## Schema names
 

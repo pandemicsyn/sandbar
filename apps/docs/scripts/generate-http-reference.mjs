@@ -17,8 +17,8 @@ const lines = [
   '',
   '## Endpoints',
   '',
-  '| Method | Path | Operation | Success | Request schema |',
-  '|---|---|---|---|---|',
+  '| Method | Path | Operation | Parameters | Success | Request schema |',
+  '|---|---|---|---|---|---|',
 ];
 for (const [path, pathItem] of Object.entries(openApiDocument.paths)) {
   for (const [method, operation] of Object.entries(pathItem)) {
@@ -27,7 +27,10 @@ for (const [path, pathItem] of Object.entries(openApiDocument.paths)) {
     const body = operation.requestBody?.content;
     const schema = body && Object.values(body)[0]?.schema;
     const name = schema?.$ref?.split('/').at(-1) ?? (schema ? 'inline' : '—');
-    lines.push(`| ${method.toUpperCase()} | \`${path}\` | \`${operation.operationId ?? '—'}\` | ${successes || '—'} | ${name} |`);
+    const parameters = [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])]
+      .map(parameter => `\`${parameter.name}\` (${parameter.in}${parameter.required ? ', required' : ''})`)
+      .join('<br>') || '—';
+    lines.push(`| ${method.toUpperCase()} | \`${path}\` | \`${operation.operationId ?? '—'}\` | ${parameters} | ${successes || '—'} | ${name} |`);
   }
 }
 lines.push('', '## Schema names', '', 'The following names are derived from the same OpenAPI document. Use the [full JSON contract](https://github.com/pandemicsyn/sandbar/blob/c4dea72/packages/contracts/openapi.json) for required fields, types and response envelopes.', '');
