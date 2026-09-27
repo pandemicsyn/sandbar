@@ -1,0 +1,30 @@
+{
+  "name": "@sandbar/effect-prototype",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external '@sandbar/*' --external effect --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun finalize.mjs"
+  },
+  "dependencies": {
+    "@sandbar/sdk": "workspace:*",
+    "@sandbar/contracts": "workspace:*",
+    "@sandbar/core": "workspace:*",
+    "@sandbar/provider-spi": "workspace:*",
+    "effect": "3.22.2",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@sandbar/provider-fake": "workspace:*"
+  }
+}
