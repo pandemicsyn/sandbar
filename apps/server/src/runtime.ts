@@ -13,10 +13,9 @@ import {
   DurableRunner,
   ProviderRegistry,
   SecretBox,
-  type ProviderRegistration,
   type InstalledAdapter,
 } from "@sandbar/service-runtime";
-import { FakeProviderDriver, createFakeAdapter } from "@sandbar/provider-fake";
+import { createFakeAdapter } from "@sandbar/provider-fake";
 import { createDaytonaAdapter, type DaytonaEndpointPair } from "@sandbar/provider-daytona";
 import {
   createModalAdapter,
@@ -30,7 +29,6 @@ export interface RuntimeConfig {
   setupTokenFile: string;
   fakeProviderUrl?: string;
   fakeProviderToken?: string;
-  providerRegistrations?: ProviderRegistration[];
   adapters?: readonly InstalledAdapter[];
   daytonaFetch?: typeof fetch;
   daytonaTrustedEndpoints?: DaytonaEndpointPair[];
@@ -93,21 +91,11 @@ export async function openDomainRuntime(config: RuntimeConfig) {
       throw new Error("Setup token file must contain at least 24 characters");
     const store = new ControlStore(backend);
 
-    const driver =
-      config.fakeProviderUrl && config.fakeProviderToken
-        ? new FakeProviderDriver({
-            baseUrl: config.fakeProviderUrl,
-            token: config.fakeProviderToken,
-          })
-        : undefined;
-
     const fakeAdapter = config.fakeProviderUrl && config.fakeProviderToken
       ? createFakeAdapter({ url: config.fakeProviderUrl, token: config.fakeProviderToken })
       : undefined;
 
     const registry = new ProviderRegistry(store, secrets, [
-      ...(config.providerRegistrations ?? []),
-    ], [
       createDaytonaAdapter(config.daytonaFetch, config.daytonaTrustedEndpoints),
       createModalAdapter(config.modalTransportFactory),
       ...(fakeAdapter ? [fakeAdapter] : []),
@@ -134,7 +122,6 @@ export async function openDomainRuntime(config: RuntimeConfig) {
     return {
       app,
       store,
-      driver,
       registry,
       runner,
       close: async () => {

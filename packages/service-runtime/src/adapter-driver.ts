@@ -3,9 +3,6 @@ import { AdapterSandbox, type AdapterDirectClient } from "sandbar-sdk/direct";
 import {
   NativeScope,
   ProviderReadError,
-  type DriverResult,
-  type InvocationIdentity,
-  type ProviderDriver,
   type SandboxRef,
 } from "@sandbar/provider-spi";
 
@@ -20,7 +17,7 @@ export function adapterNativeScope(provider: string, connectionId: string, scope
   });
 }
 
-export class AdapterProviderDriver implements ProviderDriver {
+export class AdapterProviderDriver {
   constructor(
     readonly name: string,
     readonly scope: NativeScope,
@@ -43,10 +40,6 @@ export class AdapterProviderDriver implements ProviderDriver {
       networkPolicies: [...caps.network],
     };
   }
-  async prepare(): Promise<never> { throw new Error("Adapter mutations use the normalized service operation path"); }
-  async create(_input: { scope: NativeScope; identity: InvocationIdentity; image: string; networkPolicy: string; labels?: Record<string, string> }): Promise<DriverResult> {
-    throw new Error("Adapter mutations use the normalized service operation path");
-  }
   async inspect(ref: SandboxRef) {
     if (ref.scope.connectionId !== this.scope.connectionId)
       throw new ProviderReadError("UNAUTHENTICATED", "Sandbox scope mismatch");
@@ -66,13 +59,9 @@ export class AdapterProviderDriver implements ProviderDriver {
       nextCursor: result.nextCursor,
     };
   }
-  async exec(): Promise<DriverResult> { throw new Error("Adapter mutations use normalized service path"); }
   async readFile(input: { sandbox: SandboxRef; path: string }): Promise<Uint8Array> {
     if (input.sandbox.scope.connectionId !== this.scope.connectionId)
       throw new ProviderReadError("UNAUTHENTICATED", "Sandbox scope mismatch");
     return new AdapterSandbox(this.connection, input.sandbox.nativeId).readFile(input.path);
   }
-  async writeFile(): Promise<DriverResult> { throw new Error("Adapter mutations use normalized service path"); }
-  async destroy(): Promise<DriverResult> { throw new Error("Adapter mutations use normalized service path"); }
-  async observe(): Promise<DriverResult | null> { throw new Error("Adapter observations use normalized service path"); }
 }

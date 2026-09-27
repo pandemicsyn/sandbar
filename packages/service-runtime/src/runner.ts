@@ -1,16 +1,13 @@
 import { AdapterError } from "@sandbar/adapter";
 import type { AdvancedOperationResult as RuntimeResult } from "sandbar-sdk/direct";
 import type {
-  ProviderDriver,
-  ProviderLease,
   SandboxRef,
   NativeScope,
   DriverResult,
-  InvocationIdentity,
 } from "@sandbar/provider-spi";
-import { ProviderReadError, validateDriverResult } from "@sandbar/provider-spi";
+import { ProviderReadError } from "@sandbar/provider-spi";
 import type { ExecRequest } from "@sandbar/contracts";
-import { ControlStore, type Claimed, type SandboxRow, type ConnectionRow } from "@sandbar/store";
+import { ControlStore, type Claimed, type SandboxRow } from "@sandbar/store";
 import { SecretBox } from "./crypto";
 import {
   ProviderConfigurationError,
@@ -27,14 +24,9 @@ import {
   captureBoundedOutput,
 } from "@sandbar/core";
 
-function isAdapterLease(lease: ProviderLease | AdapterProviderLease): lease is AdapterProviderLease {
-  return "adapterConnection" in lease;
-}
-
 export interface RunnerOptions {
   store: ControlStore;
-  driver?: ProviderDriver;
-  registry?: ProviderRegistry;
+  registry: ProviderRegistry;
   secrets: SecretBox;
   pollMs?: number;
   owner?: string;
@@ -80,40 +72,18 @@ export class DurableRunner {
     }
   }
 
-  private async connection(connection: ConnectionRow): Promise<ProviderLease> {
-    if (
-      !this.options.driver ||
-      connection.provider !== this.options.driver.name ||
-      connection.status !== "verified" ||
-      !connection.scope
-    )
-      throw new Error("Provider connection is unavailable");
-
-    return {
-      driver: this.options.driver,
-      scope: {
-        provider: connection.provider,
-        connectionId: connection.id,
-        accountId: connection.scope,
-        region: "local",
-      },
-    };
-  }
   private async process(claim: Claimed): Promise<void> {
-    const { store } = this.options;
+    const { store, registry } = this.options;
     const op = claim.operation;
-    let lease: ProviderLease | AdapterProviderLease | undefined;
+    let lease: AdapterProviderLease | undefined;
 
     try {
       const connection = await store.getConnection(op.project_id, op.connection_id);
-
       if (!connection || connection.status !== "verified" || !connection.scope)
         throw new Error("Provider connection is unavailable");
 
       try {
-        lease = this.options.registry
-          ? await this.options.registry.connect(connection)
-          : await this.connection(connection);
+        lease = await registry.connect(connection);
       } catch (error) {
         if (
           !claim.observeOnly &&
@@ -123,179 +93,26 @@ export class DurableRunner {
             error instanceof AdapterContractMismatchError)
         ) {
           await store.failWithoutEffect(claim, {
-            code:
-              error instanceof ProviderIdentityMismatchError
-                ? "CONFLICT"
-                : error instanceof ProviderConfigurationError || error instanceof AdapterContractMismatchError
-                  ? "INVALID_ARGUMENT"
-                  : "UNAUTHENTICATED",
+            code: error instanceof ProviderIdentityMismatchError
+              ? "CONFLICT"
+              : error instanceof ProviderConfigurationError || error instanceof AdapterContractMismatchError
+                ? "INVALID_ARGUMENT"
+                : "UNAUTHENTICATED",
             message: "Provider connection verification failed",
             effect: "none",
             retry: "never",
           });
-
           return;
         }
-
         throw error;
       }
 
-      const { driver, scope } = lease;
-
-      if (isAdapterLease(lease)) {
-        await this.processAdapter(claim, lease);
-        return;
-      }
-
-      if (claim.observeOnly) {
-        // This path is read only even when the claim follows a process crash.
-        const result = await driver.observe({
-          scope,
-          submissionId: op.provider_token,
-          operationId: op.id,
-        });
-
-        if (result) await this.handleResult(claim, validateDriverResult(result), scope);
-        else await store.reschedule(claim, "outcome_unknown", 5_000, "NO_OBSERVATION");
-
-        return;
-      }
-
-      const key = await store.getInvocationKey(op.id);
-
-      if (!key) throw new Error("Durable invocation identity is missing");
-
-      const identity: InvocationIdentity = {
-        projectId: op.project_id,
-        operationId: op.id,
-        invocationKey: key,
-        submissionId: op.provider_token,
-      };
-
-      const box = await store.getSandbox(op.project_id, op.sandbox_id);
-
-      if (!box) throw new Error("Sandbox record vanished");
-
-      if (op.kind === "create") {
-        const plan = normalizeCreate(JSON.parse(op.request_json));
-
-        const preparation = await driver.prepare({
-          scope,
-          image: plan.image,
-          networkPolicy: plan.networkPolicy,
-          region: plan.region,
-        });
-
-        if (!preparation.supported || !preparation.effectiveImage) {
-          await store.failWithoutEffect(claim, {
-            code: "UNSUPPORTED",
-            message: preparation.reason ?? "Provider cannot prepare this input",
-            effect: "none",
-            retry: "never",
-          });
-
-          return;
-        }
-
-        if (!(await store.beginSubmission(claim))) return;
-
-        const result = await driver.create({
-          scope,
-          identity,
-          image: preparation.effectiveImage,
-          networkPolicy: plan.networkPolicy,
-          labels: plan.labels,
-        });
-
-        await this.handleResult(claim, validateDriverResult(result), scope);
-      } else if (op.kind === "exec") {
-        if (!box.native_id) {
-          await store.reschedule(claim, "waiting_for_sandbox", 2_000);
-
-          return;
-        }
-
-        // SAFETY: admitExec persists this encrypted request envelope before dispatch.
-        const envelope = JSON.parse(op.request_json) as {
-          encryptedRequest: string;
-        };
-
-        const plan = normalizeExec(
-          JSON.parse(
-            await this.options.secrets.open(
-              "execution-request",
-              `${box.id}:${key}`,
-              envelope.encryptedRequest,
-            ),
-          ),
-        );
-
-        const ref = this.ref(scope, box);
-
-        if (!(await store.beginSubmission(claim))) return;
-
-        const result = await driver.exec({
-          sandbox: ref,
-          identity,
-          ...plan,
-        });
-
-        await this.handleResult(claim, validateDriverResult(result), scope);
-      } else if (op.kind === "file_write") {
-        if (!box.native_id) {
-          await store.reschedule(claim, "waiting_for_sandbox", 2_000);
-
-          return;
-        }
-
-        // SAFETY: admitFileWrite persists these fields before the runner reads them.
-        const request = JSON.parse(op.request_json) as {
-          path: string;
-          overwrite: boolean;
-          encryptedBytes: string;
-        };
-
-        const base64 = await this.options.secrets.open(
-          "file-write-input",
-          `${box.id}:${key}`,
-          request.encryptedBytes,
-        );
-
-        const bytes = Uint8Array.from(Buffer.from(base64, "base64"));
-
-        if (!(await store.beginSubmission(claim))) return;
-
-        const result = await driver.writeFile({
-          sandbox: this.ref(scope, box),
-          identity,
-          path: request.path,
-          bytes,
-          overwrite: request.overwrite,
-        });
-
-        await this.handleResult(claim, validateDriverResult(result), scope);
-      } else {
-        if (!box.native_id) {
-          if (await store.completeDestroyWithoutNative(claim)) return;
-          await store.reschedule(claim, "waiting_for_native_identity", 5_000);
-
-          return;
-        }
-
-        if (!(await store.beginSubmission(claim))) return;
-
-        const result = await driver.destroy({
-          sandbox: this.ref(scope, box),
-          identity,
-        });
-
-        await this.handleResult(claim, validateDriverResult(result), scope);
-      }
+      await this.processAdapter(claim, lease);
     } catch {
-      // Errors after possible submission are ambiguous. Never infer no effect from a thrown transport/decoder error.
+      // A thrown transport or decoder error after possible submission is ambiguous.
       await store.reschedule(claim, "outcome_unknown", 5_000, "DRIVER_ERROR");
     } finally {
-      if (lease?.ownership === "owned") {
+      if (lease) {
         try {
           await lease.release();
         } catch {

@@ -1,5 +1,5 @@
 import { Sandbar, Image } from "sandbar-sdk/direct";
-import { modalProvider } from "../dist/index.js";
+import { createModalAdapter } from "../dist/index.js";
 
 function required(name) {
   const value = process.env[name];
@@ -15,16 +15,16 @@ if (process.env.SANDBAR_MODAL_LIVE !== "1") throw new Error("Set SANDBAR_MODAL_L
 if (process.env.SANDBAR_MODAL_BUDGET_ACK !== "one sandbox, at most 300 seconds")
   throw new Error("Acknowledge the one-sandbox, 300-second native timeout budget");
 
-const provider = await modalProvider({
-  tokenId: required("MODAL_TOKEN_ID"),
-  tokenSecret: required("MODAL_TOKEN_SECRET"),
-  appName: required("SANDBAR_MODAL_APP"),
-  environment: required("SANDBAR_MODAL_ENVIRONMENT"),
-  region: required("SANDBAR_MODAL_REGION"),
-  timeoutSeconds: 300,
+const client = await Sandbar.connect({
+  adapter: createModalAdapter(),
+  config: {
+    appName: required("SANDBAR_MODAL_APP"),
+    environment: required("SANDBAR_MODAL_ENVIRONMENT"),
+    region: required("SANDBAR_MODAL_REGION"),
+    timeoutSeconds: 300,
+  },
+  credentials: { tokenId: required("MODAL_TOKEN_ID"), tokenSecret: required("MODAL_TOKEN_SECRET") },
 });
-
-const client = Sandbar.direct({ provider });
 
 let box;
 

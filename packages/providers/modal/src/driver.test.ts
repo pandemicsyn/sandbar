@@ -1,10 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-  Image,
-  Sandbar,
-  OutcomeUnknownError,
-  WaitAbortedError,
-  type RecoveryReference,
 } from "sandbar-sdk/direct";
 import {
   createModalRegistration,
@@ -391,80 +386,3 @@ test("lost termination response stays unknown and is not retried", async () => {
   expect(fixture.terminates).toBe(1);
 });
 
-test("direct SDK uses the same package and returns recovery reference after an applied lost response", async () => {
-  const fixture = new Fixture();
-  fixture.throwAfterCreate = true;
-  const provider = await modalProvider(options, fixture);
-  const client = Sandbar.direct({ provider });
-  let reference: RecoveryReference | undefined;
-
-  try {
-    await client.sandboxes.create({
-      environment: Image.prepared("im-fixture"),
-      networkPolicy: "blocked",
-      region: "us-east-1",
-    });
-    throw new Error("Expected uncertain create");
-  } catch (error) {
-    if (!(error instanceof OutcomeUnknownError)) throw error;
-    reference = error.reference;
-  }
-
-  if (!reference) throw new Error("Missing recovery reference");
-  expect(fixture.creates).toBe(1);
-  const resumed = Sandbar.direct({ provider: await modalProvider(options, fixture) });
-  const box = await (await resumed.recover(reference)).wait({ pollMs: 50 });
-  expect(box).toHaveProperty("id");
-  expect(fixture.creates).toBe(1);
-  await resumed.close();
-  await client.close();
-});
-
-test("pre-aborted direct create has no provider submission", async () => {
-  const fixture = new Fixture();
-  const client = Sandbar.direct({ provider: await modalProvider(options, fixture) });
-  const abort = new AbortController();
-  abort.abort();
-  await expect(
-    client.sandboxes.create(
-      { environment: Image.prepared("im-fixture"), networkPolicy: "blocked", region: "us-east-1" },
-      { signal: abort.signal },
-    ),
-  ).rejects.toThrow();
-  expect(fixture.creates).toBe(0);
-  await client.close();
-});
-
-test("aborting a submitted create preserves a recovery reference without replay", async () => {
-  const fixture = new Fixture();
-  const abort = new AbortController();
-  let release!: () => void;
-  fixture.responseGate = new Promise((resolve) => {
-    release = resolve;
-  });
-  fixture.onCreate = () => abort.abort();
-  const provider = await modalProvider(options, fixture);
-  const client = Sandbar.direct({ provider });
-  let reference: RecoveryReference | undefined;
-
-  try {
-    await client.sandboxes.create(
-      { environment: Image.prepared("im-fixture"), networkPolicy: "blocked", region: "us-east-1" },
-      { signal: abort.signal },
-    );
-    throw new Error("Expected aborted wait");
-  } catch (error) {
-    if (!(error instanceof WaitAbortedError)) throw error;
-    reference = error.reference;
-  } finally {
-    release();
-  }
-
-  if (!reference) throw new Error("Missing recovery reference");
-  expect(fixture.creates).toBe(1);
-  const resumed = Sandbar.direct({ provider: await modalProvider(options, fixture) });
-  expect(await (await resumed.recover(reference)).observe()).toHaveProperty("id");
-  expect(fixture.creates).toBe(1);
-  await resumed.close();
-  await client.close();
-});

@@ -31,8 +31,6 @@ import {
 } from "@sandbar/contracts";
 import {
   ProviderReadError,
-  type ProviderDriver,
-  type ProviderLease,
   type NativeScope,
   type SandboxRef,
 } from "@sandbar/provider-spi";
@@ -49,6 +47,7 @@ import {
   DurableRunner,
   SecretBox,
   ProviderRegistry,
+  type AdapterProviderLease,
   ProviderConfigurationError,
   storedScope,
   publicScope,
@@ -56,8 +55,7 @@ import {
 
 export interface DomainDependencies {
   store: ControlStore;
-  driver?: ProviderDriver;
-  registry?: ProviderRegistry;
+  registry: ProviderRegistry;
   secrets: SecretBox;
   setupToken: string;
   runner?: DurableRunner;
@@ -405,45 +403,23 @@ function nativeRef(box: SandboxRow, scope: NativeScope): SandboxRef {
 }
 
 function providerAvailable(deps: DomainDependencies, provider: string): boolean {
-  return deps.registry ? deps.registry.has(provider) : deps.driver?.name === provider;
-}
-
-async function providerFor(
-  deps: DomainDependencies,
-  connection: ConnectionRow,
-): Promise<ProviderLease> {
-  if (deps.registry) return deps.registry.connect(connection);
-
-  if (!deps.driver || deps.driver.name !== connection.provider || !connection.scope)
-    throw new StoreError("CONFLICT", "Provider connection unavailable");
-
-  return {
-    driver: deps.driver,
-    scope: {
-      provider: connection.provider,
-      connectionId: connection.id,
-      accountId: connection.scope,
-      region: "local",
-    },
-  };
+  return deps.registry.has(provider);
 }
 
 async function withProvider<T>(
   deps: DomainDependencies,
   connection: ConnectionRow,
-  use: (lease: ProviderLease) => Promise<T>,
+  use: (lease: AdapterProviderLease) => Promise<T>,
 ): Promise<T> {
-  const lease = await providerFor(deps, connection);
+  const lease = await deps.registry.connect(connection);
 
   try {
     return await use(lease);
   } finally {
-    if (lease.ownership === "owned") {
-      try {
-        await lease.release();
-      } catch {
-        console.error("Provider transport release failed");
-      }
+    try {
+      await lease.release();
+    } catch {
+      console.error("Provider transport release failed");
     }
   }
 }
@@ -699,7 +675,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       if (!row) throw new StoreError("NOT_FOUND", "Connection not found");
 
       return withProvider(deps, row, async ({ driver, scope }) => {
-        const capabilities = await driver.capabilities(scope);
+        const capabilities = await driver.capabilities();
 
         if (capabilities.provider !== row.provider)
           throw new StoreError("CONFLICT", "Provider identity mismatch");

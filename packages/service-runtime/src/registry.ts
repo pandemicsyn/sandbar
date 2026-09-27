@@ -3,27 +3,11 @@ import {
   type Scope,
 } from "@sandbar/adapter";
 import { Sandbar, ADAPTER_CONTRACT_VERSION, type AdapterDirectClient } from "sandbar-sdk/direct";
-import { NativeScope, type ProviderLease } from "@sandbar/provider-spi";
+import { NativeScope } from "@sandbar/provider-spi";
 import { z } from "zod";
 import { StoreError, type ConnectionRow, type ControlStore } from "@sandbar/store";
 import { AdapterProviderDriver, adapterNativeScope } from "./adapter-driver";
 import { SecretBox } from "./crypto";
-
-export interface ProviderConfiguration {
-  credentials: Record<string, string>;
-  configuration: Record<string, string>;
-}
-
-export interface ProviderRegistration {
-  readonly provider: string;
-  validate(input: ProviderConfiguration): ProviderConfiguration;
-  connect(input: ProviderConfiguration & { connectionId: string }): Promise<ProviderLease>;
-  readonly catalog?: {
-    displayName: string;
-    configurationSchema: unknown;
-    credentialsSchema: unknown;
-  };
-}
 
 export interface InstalledAdapter {
   readonly name: string;
@@ -37,9 +21,12 @@ export interface InstalledAdapter {
   } }): Promise<unknown>;
 }
 
-export type AdapterProviderLease = ProviderLease & {
+export interface AdapterProviderLease {
+  driver: AdapterProviderDriver;
+  scope: NativeScope;
+  release(): Promise<void>;
   adapterConnection: AdapterDirectClient;
-};
+}
 
 export function storedScope(scope: NativeScope): string {
   return JSON.stringify({
@@ -55,13 +42,6 @@ export function storedScope(scope: NativeScope): string {
 }
 
 export function publicScope(value: string): NativeScope {
-  if (!value.startsWith("{"))
-    return NativeScope.parse({
-      provider: "stored",
-      connectionId: "stored",
-      accountId: value,
-      region: "local",
-    });
   const parsed = JSON.parse(value);
   return NativeScope.parse({
     provider: "stored",
@@ -89,58 +69,41 @@ export class ProviderConfigurationError extends Error {
 }
 
 export class ProviderRegistry {
-  private readonly registrations = new Map<string, ProviderRegistration>();
   private readonly adapters = new Map<string, InstalledAdapter>();
   constructor(
     private readonly store: ControlStore,
     private readonly secrets: SecretBox,
-    registrations: ProviderRegistration[],
-    adapters: readonly InstalledAdapter[] = [],
+    adapters: readonly InstalledAdapter[],
   ) {
-    for (const entry of registrations) {
-      if (this.registrations.has(entry.provider))
-        throw new Error(`Duplicate provider registration: ${entry.provider}`);
-      this.registrations.set(entry.provider, entry);
-    }
     for (const entry of adapters) {
-      if (this.registrations.has(entry.name) || this.adapters.has(entry.name))
+      if (this.adapters.has(entry.name))
         throw new Error(`Duplicate provider registration: ${entry.name}`);
       this.adapters.set(entry.name, entry);
     }
   }
   has(provider: string): boolean {
-    return this.registrations.has(provider) || this.adapters.has(provider);
+    return this.adapters.has(provider);
   }
   catalog() {
-    const legacy = [...this.registrations.values()]
-      .filter((registration) => registration.catalog)
-      .map((registration) => ({ name: registration.provider, ...registration.catalog! }));
     const installed = [...this.adapters.values()].map((adapter) => ({
       name: adapter.name,
       displayName: adapter.displayName ?? adapter.name,
       configurationSchema: z.toJSONSchema(adapter.config, { unrepresentable: "any" }),
       credentialsSchema: z.toJSONSchema(adapter.credentials, { unrepresentable: "any" }),
     }));
-    return [...legacy, ...installed].sort((a, b) => a.name.localeCompare(b.name));
+    return installed.sort((a, b) => a.name.localeCompare(b.name));
   }
   validate(provider: string, input: { credentials: unknown; configuration: unknown }): {
     credentials: unknown;
     configuration: unknown;
   } {
     const adapter = this.adapters.get(provider);
-    if (adapter) return validateAdapterConfiguration(adapter, input);
-    const registration = this.registrations.get(provider);
-    if (!registration) throw new StoreError("CONFLICT", "Provider is not registered");
-    const legacy = z.strictObject({
-      credentials: z.record(z.string(), z.string()),
-      configuration: z.record(z.string(), z.string()),
-    }).parse(input);
-    return registration.validate(legacy);
+    if (!adapter) throw new StoreError("CONFLICT", "Provider is not registered");
+    return validateAdapterConfiguration(adapter, input);
   }
-  async connect(row: ConnectionRow): Promise<ProviderLease | AdapterProviderLease> {
+  async connect(row: ConnectionRow): Promise<AdapterProviderLease> {
     const adapter = this.adapters.get(row.provider);
-    const registration = this.registrations.get(row.provider);
-    if (!adapter && !registration) throw new StoreError("CONFLICT", "Provider is not registered");
+    if (!adapter) throw new StoreError("CONFLICT", "Provider is not registered");
 
     const plaintext = await this.secrets.open("provider-connection", row.id, row.encrypted_credentials);
     const decoded = z.strictObject({
@@ -155,53 +118,27 @@ export class ProviderRegistry {
       throw new ProviderConfigurationError();
     }
 
-    if (adapter) {
-      if (row.adapter_contract_version !== ADAPTER_CONTRACT_VERSION)
-        throw new AdapterContractMismatchError(row.provider, row.adapter_contract_version);
-      const connection = await Sandbar.connect({
-        adapter: adapter as never,
-        config: config.configuration,
-        credentials: config.credentials,
-      });
-      try {
-        const scope = adapterNativeScope(row.provider, row.id, connection.scope);
-        if (row.scope && storedScope(scope) !== row.scope)
-          throw new ProviderIdentityMismatchError("Verified native scope or endpoint changed");
-        const driver = new AdapterProviderDriver(row.provider, scope, connection);
-        return {
-          driver, scope, ownership: "owned", release: () => connection.close(),
-          adapterConnection: connection,
-        };
-      } catch (error) {
-        await connection.close();
-        throw error;
-      }
-    }
-
-    const legacy = z.strictObject({
-      credentials: z.record(z.string(), z.string()),
-      configuration: z.record(z.string(), z.string()),
-    }).parse(config);
-    const result = await registration!.connect({ ...legacy, connectionId: row.id });
+    if (row.adapter_contract_version !== ADAPTER_CONTRACT_VERSION)
+      throw new AdapterContractMismatchError(row.provider, row.adapter_contract_version);
+    const connection = await Sandbar.connect({
+      adapter: adapter as never,
+      config: config.configuration,
+      credentials: config.credentials,
+    });
     try {
-      const scope = NativeScope.parse(result.scope);
-      if (scope.provider !== row.provider || scope.connectionId !== row.id || result.driver.name !== row.provider)
-        throw new ProviderIdentityMismatchError("Provider identity mismatch");
-      if (
-        row.scope &&
-        storedScope(scope) !== row.scope &&
-        !(row.provider === "fake" && row.scope === "fake-local" && scope.accountId === "fake-local")
-      )
+      const scope = adapterNativeScope(row.provider, row.id, connection.scope);
+      if (row.scope && storedScope(scope) !== row.scope)
         throw new ProviderIdentityMismatchError("Verified native scope or endpoint changed");
-      return { ...result, scope };
+      const driver = new AdapterProviderDriver(row.provider, scope, connection);
+      return {
+        driver, scope, release: () => connection.close(), adapterConnection: connection,
+      };
     } catch (error) {
-      if (result.ownership === "owned") {
-        try { await result.release(); } catch { console.error("Provider transport release failed"); }
-      }
+      await connection.close();
       throw error;
     }
   }
-  async resolve(projectId: string, connectionId: string): Promise<ProviderLease | AdapterProviderLease> {
+  async resolve(projectId: string, connectionId: string): Promise<AdapterProviderLease> {
     const row = await this.store.getConnection(projectId, connectionId);
     if (!row || row.status !== "verified" || !row.scope)
       throw new StoreError("CONFLICT", "Provider connection is unavailable");

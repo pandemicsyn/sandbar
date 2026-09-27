@@ -16,6 +16,8 @@ import {
 } from "@sandbar/adapter";
 import {
   Image,
+  NonzeroExitError,
+  NoExitCodeError,
   OutcomeUnknownError,
   WaitAbortedError,
   SandbarError,
@@ -177,6 +179,10 @@ export class AdapterOperation<T> {
       return value;
     } catch (error) {
       if (error instanceof OutcomeUnknownError) throw error;
+      if (error instanceof NonzeroExitError || error instanceof NoExitCodeError) {
+        this.terminal = { error };
+        throw error;
+      }
       throw asUnknown(this.reference, "Provider completion failed validation");
     }
   }
@@ -211,7 +217,7 @@ export class AdapterSandbox {
     if (result.id !== this.id) throw new SandbarError("INVALID_RESPONSE", "Provider returned another sandbox", "unknown");
     return { state: result.state };
   }
-  async submitExec(input: ExecInput, options: { signal?: AbortSignal } = {}): Promise<AdapterOperation<ExecOutput>> {
+  async submitExec(input: ExecInput | readonly string[], options: { signal?: AbortSignal } = {}): Promise<AdapterOperation<ExecOutput>> {
     if (!this.supports("exec")) unsupported("exec");
     const request = validateExec(input);
     const max = this.client.session.supports.exec!.maxOutputBytes;
@@ -230,7 +236,7 @@ export class AdapterSandbox {
       return checkExec(execOutput(output.exitCode, output.stdout, output.stderr, output.truncated));
     }, { ...options, sandboxId: this.id, maxOutputBytes: request.maxOutputBytes });
   }
-  async exec(input: ExecInput, options: { signal?: AbortSignal } = {}): Promise<ExecOutput> {
+  async exec(input: ExecInput | readonly string[], options: { signal?: AbortSignal } = {}): Promise<ExecOutput> {
     return (await this.submitExec(input, options)).wait(options);
   }
   async readFile(path: string): Promise<Uint8Array> {

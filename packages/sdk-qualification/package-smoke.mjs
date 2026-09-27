@@ -143,10 +143,9 @@ void flow;
   else if (mode === "modal")
     source = `
 import { Sandbar, Image } from "sandbar-sdk/direct";
-import { modalProvider } from "@sandbar/provider-modal";
+import { createModalAdapter } from "@sandbar/provider-modal";
 async function flow() {
-  const provider = await modalProvider({ tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main" });
-  const client = Sandbar.direct({ provider });
+  const client = await Sandbar.connect({ adapter: createModalAdapter(), config: { appName: "existing", environment: "main" }, credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" } });
   const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked" });
   const bytes: Uint8Array = await box.readFile("/file");
   await client.close();
@@ -157,10 +156,9 @@ void flow;
   else if (mode === "daytona")
     source = `
 import { Sandbar, Image } from "sandbar-sdk/direct";
-import { daytonaProvider } from "@sandbar/provider-daytona";
+import { createDaytonaAdapter } from "@sandbar/provider-daytona";
 async function flow() {
-  const provider = await daytonaProvider({ apiKey: "fixture", target: "us" });
-  const client = Sandbar.direct({ provider });
+  const client = await Sandbar.connect({ adapter: createDaytonaAdapter(), config: { target: "us" }, credentials: { apiKey: "fixture" } });
   const box = await client.sandboxes.create({ environment: Image.prepared("snap-1") });
   const result = await box.exec({ command: { kind: "shell", script: "printf ready" } });
   const text = result.stdoutText();
@@ -172,10 +170,9 @@ void flow;
   else if (mode === "direct")
     source = `
 import { Sandbar, Image } from "sandbar-sdk/direct";
-import { fakeProvider } from "@sandbar/provider-fake/client";
+import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 async function flow() {
-  const provider = await fakeProvider({ url: "http://127.0.0.1:1234", token: "example-token-123456" });
-  const client = Sandbar.direct({ provider });
+  const client = await Sandbar.connect({ adapter: createFakeAdapter({ url: "http://127.0.0.1:1234", token: "example-token-123456" }), config: {}, credentials: {} });
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
   const argv = ["fixture"] as const;
   const result = await box.exec(argv);
@@ -227,9 +224,9 @@ const directSource = `
 import { OutcomeUnknownError as RootUnknown } from "sandbar-sdk";
 import { Sandbar, Image, OutcomeUnknownError as DirectUnknown } from "sandbar-sdk/direct";
 import { OutcomeUnknownError as RemoteUnknown } from "sandbar-sdk/remote";
-import { fakeProvider } from "@sandbar/provider-fake/client";
+import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 if (RootUnknown !== DirectUnknown || RootUnknown !== RemoteUnknown) throw new Error("SDK entry points disagree on error identity");
-const client = Sandbar.direct({ provider: await fakeProvider({ url: process.env.FAKE_URL, token: process.env.FAKE_TOKEN }) });
+const client = await Sandbar.connect({ adapter: createFakeAdapter({ url: process.env.FAKE_URL, token: process.env.FAKE_TOKEN }), config: {}, credentials: {} });
 try {
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
   const command = { kind: "argv", argv: ["fixture", "packed"] };
@@ -254,7 +251,7 @@ process.stdout.write("packed remote import passed\\n");
 
 const daytonaSource = `
 import { Sandbar, Image } from "sandbar-sdk/direct";
-import { daytonaProvider } from "@sandbar/provider-daytona";
+import { createDaytonaAdapter } from "@sandbar/provider-daytona";
 let name = "", mutations = 0;
 const origin = "https://proxy.app.daytona.io/toolbox";
 const native = (state = "started") => ({ id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
@@ -273,8 +270,7 @@ const mock = async (input, init = {}) => {
   if (url.pathname.endsWith("/files/download")) return new Response(Uint8Array.from([0,255]));
   throw new Error("Unexpected fixture request: " + url.pathname);
 };
-const provider = await daytonaProvider({ apiKey: "fixture-only", target: "us", fetch: mock });
-const client = Sandbar.direct({ provider });
+const client = await Sandbar.connect({ adapter: createDaytonaAdapter(mock), config: { target: "us" }, credentials: { apiKey: "fixture-only" } });
 try {
   const box = await client.sandboxes.create({ environment: Image.prepared("snap-1") });
   const result = await box.exec({ command: { kind: "shell", script: "printf test" } });
@@ -290,7 +286,7 @@ try {
 
 const modalSource = `
 import { Sandbar, Image } from "sandbar-sdk/direct";
-import { modalProvider } from "@sandbar/provider-modal";
+import { createModalAdapter } from "@sandbar/provider-modal";
 let creates = 0, terminates = 0, closed = 0;
 const records = new Map();
 const transport = {
@@ -308,8 +304,7 @@ const transport = {
   async terminate(id) { if (id !== "sb-1") throw Error("Wrong termination"); terminates++; for (const record of records.values()) record.running = false; return true; },
   close() { closed++; },
 };
-const provider = await modalProvider({ tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main", region: "us-east-1", timeoutSeconds: 300 }, transport);
-const client = Sandbar.direct({ provider });
+const client = await Sandbar.connect({ adapter: createModalAdapter(() => transport), config: { appName: "existing", environment: "main", region: "us-east-1", timeoutSeconds: 300 }, credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" } });
 try {
   const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked", region: "us-east-1" });
   const bytes = await box.readFile("/file");
