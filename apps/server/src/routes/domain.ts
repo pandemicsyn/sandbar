@@ -59,6 +59,8 @@ type JsonRequestBody = { [key: string]: JsonValue };
 
 const sessionMs = 12 * 60 * 60 * 1000;
 
+const publicJsonBodyLimit = 64 * 1024;
+
 function safeError(code: string, message: string, effect: "none" | "possible" = "none") {
   return { code, message, effect, retry: effect === "possible" ? "observe_only" : "never" };
 }
@@ -126,12 +128,25 @@ function originOkay(c: Context, deps: DomainDependencies): boolean {
   return !origin || origin === new URL(deps.publicOrigin ?? c.req.url).origin;
 }
 
-async function parseBody<T>(c: Context, schema: { parse(input: JsonRequestBody): T }): Promise<T> {
+async function parseBody<T>(
+  c: Context,
+  schema: { parse(input: JsonRequestBody): T },
+  maxBytes?: number,
+): Promise<T> {
   const type = c.req.header("content-type")?.split(";")[0];
 
   if (type !== "application/json") throw new SyntaxError("JSON required");
 
-  return schema.parse(await c.req.json());
+  const body =
+    maxBytes === undefined
+      ? await c.req.json()
+      : JSON.parse(
+          new TextDecoder().decode(
+            await boundedBody(c, maxBytes, "JSON body exceeds 64 KiB limit"),
+          ),
+        );
+
+  return schema.parse(body);
 }
 
 function idParam(c: Context, name: string): string {
@@ -388,10 +403,18 @@ function fileWriteQuery(c: Context) {
   return { path, overwrite: query.overwrite === "true" };
 }
 
-async function boundedBody(c: Context, maxBytes: number): Promise<Uint8Array> {
+async function boundedBody(
+  c: Context,
+  maxBytes: number,
+  message = "File exceeds buffered write limit",
+): Promise<Uint8Array> {
   const length = Number(c.req.header("content-length") ?? 0);
 
-  if (length > maxBytes) throw new StoreError("CAPACITY", "File exceeds buffered write limit");
+  if (length > maxBytes) {
+    await c.req.raw.body?.cancel();
+    throw new StoreError("CAPACITY", message);
+  }
+
   const reader = c.req.raw.body?.getReader();
 
   if (!reader) return new Uint8Array();
@@ -406,7 +429,7 @@ async function boundedBody(c: Context, maxBytes: number): Promise<Uint8Array> {
 
     if (total > maxBytes) {
       await reader.cancel();
-      throw new StoreError("CAPACITY", "File exceeds buffered write limit");
+      throw new StoreError("CAPACITY", message);
     }
 
     parts.push(value);
@@ -431,7 +454,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
           ErrorResponse.parse({ error: safeError("FORBIDDEN", "Origin check failed") }),
           403,
         );
-      const body = await parseBody(c, SetupRequest);
+      const body = await parseBody(c, SetupRequest, publicJsonBodyLimit);
 
       if (body.setupToken !== deps.setupToken)
         return c.json(
@@ -466,7 +489,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
           ErrorResponse.parse({ error: safeError("FORBIDDEN", "Origin check failed") }),
           403,
         );
-      const body = await parseBody(c, SessionRequest);
+      const body = await parseBody(c, SessionRequest, publicJsonBodyLimit);
 
       if (!(await deps.store.authenticateBearer(await sha256(body.token))))
         return c.json(

@@ -216,7 +216,11 @@ export const openApiDocument = {
       post: {
         operationId: "setupOperator",
         security: [],
-        requestBody: { required: true, ...json("SetupRequest") },
+        requestBody: {
+          required: true,
+          description: "JSON body limit: 64 KiB. Oversized requests return CAPACITY (409).",
+          ...json("SetupRequest"),
+        },
         responses: {
           "201": response("Created", "SessionResponse"),
           default: response("Structured error", "ErrorResponse"),
@@ -227,7 +231,11 @@ export const openApiDocument = {
       post: {
         operationId: "createSession",
         security: [],
-        requestBody: { required: true, ...json("SessionRequest") },
+        requestBody: {
+          required: true,
+          description: "JSON body limit: 64 KiB. Oversized requests return CAPACITY (409).",
+          ...json("SessionRequest"),
+        },
         responses: {
           "201": response("Created", "SessionResponse"),
           default: response("Structured error", "ErrorResponse"),

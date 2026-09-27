@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -642,6 +643,118 @@ test("single-use setup, hashed credentials, session CSRF and logout", async () =
         })
       ).status,
     ).toBe(200);
+  } finally {
+    await runtime.close();
+  }
+});
+
+test("public JSON routes reject declared and streamed bodies above 64 KiB before mutation", async () => {
+  directory = await mkdtemp(join(tmpdir(), "sandbar-public-json-"));
+
+  const keyFile = join(directory, "key"),
+    setupTokenFile = join(directory, "setup");
+
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)));
+  await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "long-public-json-setup-token-for-test");
+  await chmod(setupTokenFile, 0o600);
+
+  const runtime = await openDomainRuntime({
+    databaseUrl: join(directory, "control.sqlite"),
+    keyFile,
+    setupTokenFile,
+    fakeProviderUrl: "http://127.0.0.1:8789",
+    fakeProviderToken: transportToken,
+    startRunner: false,
+  });
+
+  // SAFETY: Bun accepts the standard Request duplex option for streamed request bodies.
+  const request = (path: string, body: BodyInit, headers: Record<string, string> = {}) =>
+    runtime.app.request(`http://localhost${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body,
+      duplex: "half",
+    } as RequestInit);
+
+  const streamedBody = () => {
+    let canceled = false;
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(32 * 1024));
+        controller.enqueue(new Uint8Array(32 * 1024));
+        controller.enqueue(new Uint8Array(1));
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+
+    return { stream, wasCanceled: () => canceled };
+  };
+
+  const expectCapacity = async (response: Response) => {
+    expect(response.status).toBe(409);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(await response.json()).toEqual({
+      error: {
+        code: "CAPACITY",
+        message: "JSON body exceeds 64 KiB limit",
+        effect: "none",
+        retry: "never",
+      },
+    });
+  };
+
+  try {
+    const setupBody = JSON.stringify({ setupToken: "long-public-json-setup-token-for-test" });
+
+    await expectCapacity(
+      await request("/v1/setup", setupBody, { "Content-Length": String(64 * 1024 + 1) }),
+    );
+    expect(await runtime.store.hasOperator()).toBe(false);
+
+    const oversizedSetup = streamedBody();
+    await expectCapacity(await request("/v1/setup", oversizedSetup.stream));
+    expect(oversizedSetup.wasCanceled()).toBe(true);
+    expect(await runtime.store.hasOperator()).toBe(false);
+
+    const setup = await request("/v1/setup", setupBody);
+    expect(setup.status).toBe(201);
+    // SAFETY: Successful setup returns the bearer token for this test fixture.
+    const { token } = (await setup.json()) as { token: string };
+
+    const sessionCount = () => {
+      const database = new Database(join(directory!, "control.sqlite"), { readonly: true });
+
+      try {
+        // SAFETY: This fixed aggregate query returns one row with an integer count.
+        return (database.query("SELECT COUNT(*) AS count FROM sessions").get() as { count: number })
+          .count;
+      } finally {
+        database.close();
+      }
+    };
+
+    expect(sessionCount()).toBe(1);
+
+    const sessionBody = JSON.stringify({ token });
+
+    await expectCapacity(
+      await request("/v1/sessions", sessionBody, { "Content-Length": String(64 * 1024 + 1) }),
+    );
+    const oversizedSession = streamedBody();
+    await expectCapacity(
+      await request("/v1/sessions", oversizedSession.stream, { "Content-Length": "1" }),
+    );
+    expect(oversizedSession.wasCanceled()).toBe(true);
+    expect(sessionCount()).toBe(1);
+
+    const session = await request("/v1/sessions", sessionBody);
+    expect(session.status).toBe(201);
+    expect(session.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(sessionCount()).toBe(2);
   } finally {
     await runtime.close();
   }
