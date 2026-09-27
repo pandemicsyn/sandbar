@@ -1143,6 +1143,10 @@ describe("independent fake provider", () => {
       { ...source, ledger: [source.ledger[0], source.ledger[0]] },
       {
         ...source,
+        ledger: [source.ledger[0], { ...source.ledger[0], submissionId: "another_create" }],
+      },
+      {
+        ...source,
         ledger: [
           {
             ...source.ledger[0],

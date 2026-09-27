@@ -164,6 +164,7 @@ const StateSchema = z
   .superRefine((state, context) => {
     const submissions = new Map<string, z.infer<typeof LedgerEntrySchema>>();
     const resourceRefs = new Map<string, z.infer<typeof NativeRef>>();
+    const createdResourceIds = new Set<string>();
     const executionIds = new Set<string>();
     const allRefs: z.infer<typeof NativeRef>[] = [];
 
@@ -215,6 +216,20 @@ const StateSchema = z
 
       if (entry.result.status !== "completed") continue;
       const value = entry.result.value;
+
+      if (value.kind === "sandbox") {
+        const createdId = value.observation.ref.nativeId;
+
+        if (createdResourceIds.has(createdId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["ledger"],
+            message: "A native sandbox cannot be the result of multiple create effects",
+          });
+        }
+
+        createdResourceIds.add(createdId);
+      }
 
       const sandboxRef =
         value.kind === "sandbox"
