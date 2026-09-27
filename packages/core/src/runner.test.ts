@@ -53,6 +53,8 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
       value: { kind: "sandbox", observation: { ref: sandbox, state: "running" } },
     });
     let wrongIdentity = false;
+    let returnPending = false;
+    let rejectObservation = false;
 
     let rejectCode:
       | "invalid"
@@ -108,22 +110,41 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
       inspect: unsupported,
       inventory: unsupported,
       exec: async (input) =>
-        rejectCode
+        returnPending
+          ? {
+              status: "pending",
+              effect: "possible",
+              submissionId: input.identity.submissionId,
+              observeAfterMs: 500,
+            }
+          : rejectCode
+            ? {
+                status: "rejected",
+                effect: "none",
+                error: {
+                  code: rejectCode,
+                  message: "secret-in-provider-error",
+                  effect: "none",
+                  retry: "never",
+                },
+              }
+            : executionResult(!wrongIdentity ? false : true, input.identity.submissionId),
+      readFile: unsupported,
+      writeFile: async (input) => fileResult(input.identity.submissionId),
+      destroy: unsupported,
+      observe: async (input) =>
+        rejectObservation
           ? {
               status: "rejected",
               effect: "none",
               error: {
-                code: rejectCode,
-                message: "secret-in-provider-error",
+                code: "not_found",
+                message: "Uncorrelated provider rejection",
                 effect: "none",
                 retry: "never",
               },
             }
-          : executionResult(!wrongIdentity ? false : true, input.identity.submissionId),
-      readFile: unsupported,
-      writeFile: async (input) => fileResult(input.identity.submissionId),
-      destroy: unsupported,
-      observe: async (input) => executionResult(true, input.submissionId),
+          : executionResult(true, input.submissionId),
     };
 
     const secrets = await SecretBox.fromFile(keyFile);
@@ -221,6 +242,38 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
       });
       expect(rejectedOperation?.error_json).not.toContain("secret-in-provider-error");
     }
+
+    rejectCode = null;
+    returnPending = true;
+    rejectObservation = true;
+    const pendingKey = Bun.randomUUIDv7();
+
+    const pending = await store.admitExec({
+      projectId: project.id,
+      sandboxId: create.sandbox.id,
+      endpoint: `POST /sandboxes/${create.sandbox.id}/executions`,
+      key: pendingKey,
+      intentHash: "pending-observation",
+      encryptedRequest: await secrets.seal(
+        "execution-request",
+        `${create.sandbox.id}:${pendingKey}`,
+        JSON.stringify({ command: { kind: "argv", argv: ["fixture"] } }),
+      ),
+      captureBytes: 0,
+    });
+
+    await runner.tick();
+    expect((await store.getOperation(project.id, pending.operation.id))?.status).toBe("running");
+    expect((await store.getExecution(project.id, pending.execution!.id))?.status).toBe("running");
+    await store.requestReconcile(project.id, pending.operation.id);
+    await runner.tick();
+    const uncorrelated = await store.getOperation(project.id, pending.operation.id);
+    expect(uncorrelated?.status).toBe("unknown");
+    expect(uncorrelated?.effect).toBe("possible");
+    expect(uncorrelated?.phase).toBe("outcome_unknown");
+    expect((await store.getExecution(project.id, pending.execution!.id))?.status).toBe("unknown");
+    returnPending = false;
+    rejectObservation = false;
 
     const fileKey = Bun.randomUUIDv7();
 

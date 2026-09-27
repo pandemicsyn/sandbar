@@ -277,7 +277,13 @@ export class DurableRunner {
     }
 
     if (result.status === "pending") {
-      await store.reschedule(claim, "awaiting_observation", Math.max(500, result.observeAfterMs));
+      await store.reschedule(
+        claim,
+        "awaiting_observation",
+        Math.max(500, result.observeAfterMs),
+        undefined,
+        true,
+      );
 
       return;
     }
@@ -289,6 +295,12 @@ export class DurableRunner {
     }
 
     if (result.status === "rejected") {
+      if (claim.observeOnly) {
+        await store.reschedule(claim, "outcome_unknown", 5_000, "UNCORRELATED_REJECTION");
+
+        return;
+      }
+
       const errors = {
         invalid: ["INVALID_ARGUMENT", "Provider rejected the request as invalid"],
         unsupported: ["UNSUPPORTED", "Provider does not support this request"],
