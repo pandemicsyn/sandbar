@@ -1,18 +1,14 @@
+import type { AdapterRecoveryReference } from "./adapter-direct";
 import { z } from "zod";
 import {
-  CreateSandboxRequest,
+  CreateSandboxInput,
   ExecCommand,
   ExecRequest,
+  FilePath,
   Id,
   InvocationKey,
   type SafeError,
-} from "@sandbar/contracts";
-import {
-  NativeRef as NativeRefSchema,
-  NativeScope as NativeScopeSchema,
-  type NativeRef,
-  type NativeScope,
-} from "@sandbar/provider-spi";
+} from "sandbar-adapter/portable";
 
 export type ImageInput = { kind: "prepared"; value: string } | { kind: "oci"; value: string };
 
@@ -50,18 +46,14 @@ export type ExecOutput = {
 };
 
 export type RecoveryReference = {
-  version: 1;
-  mode: "direct" | "remote";
+  version: 2;
+  mode: "remote";
   kind: "create" | "exec" | "destroy" | "file_write";
   invocationKey: string;
-  submissionId?: string;
   operationId?: string;
-  scope?: NativeScope;
-  sandbox?: NativeRef;
   resourceId?: string;
   file?: { path: string; bytes: number };
-  maxOutputBytes?: number;
-  service?: { url: string; projectId: string };
+  service: { url: string; projectId: string };
 };
 
 export interface OperationHandle<T> {
@@ -114,9 +106,11 @@ export class SandbarError extends Error {
   }
 }
 
-export class OutcomeUnknownError extends SandbarError {
+export class OutcomeUnknownError<
+  R extends RecoveryReference | AdapterRecoveryReference = RecoveryReference,
+> extends SandbarError {
   constructor(
-    readonly reference: RecoveryReference,
+    readonly reference: R,
     message = "Outcome unknown; observe this reference without resubmitting",
   ) {
     super("OUTCOME_UNKNOWN", message, "possible");
@@ -124,10 +118,12 @@ export class OutcomeUnknownError extends SandbarError {
   }
 }
 
-export class WaitAbortedError extends SandbarError {
+export class WaitAbortedError<
+  R extends RecoveryReference | AdapterRecoveryReference = RecoveryReference,
+> extends SandbarError {
   readonly cause: unknown;
   constructor(
-    readonly reference: RecoveryReference,
+    readonly reference: R,
     reason: AbortSignal["reason"],
   ) {
     super(
@@ -175,13 +171,7 @@ export function outputText(bytes: Uint8Array, maxBytes = 16_384): string {
 }
 
 export function validateFilePath(path: string): string {
-  if (
-    !path ||
-    path.length > 4096 ||
-    !path.startsWith("/") ||
-    path.includes("\0") ||
-    path.split("/").some((segment) => segment === "." || segment === "..")
-  )
+  if (!FilePath.safeParse(path).success)
     throw new SandbarError("INVALID_ARGUMENT", "Invalid absolute file path");
 
   return path;
@@ -227,7 +217,7 @@ export function validateCreate(input: CreateInput): CreateInput {
   if (!parsed.success || !parsed.data.environment.value.trim())
     throw new SandbarError("INVALID_ARGUMENT", "A prepared or OCI image is required");
 
-  const contract = CreateSandboxRequest.safeParse({
+  const contract = CreateSandboxInput.safeParse({
     environment:
       parsed.data.environment.kind === "prepared"
         ? { kind: "prepared", imageId: parsed.data.environment.value }
@@ -274,14 +264,11 @@ export function validateExec(
 
 export function validateReference(value: RecoveryReference): RecoveryReference {
   const schema = z.strictObject({
-    version: z.literal(1),
-    mode: z.enum(["direct", "remote"]),
+    version: z.literal(2),
+    mode: z.literal("remote"),
     kind: z.enum(["create", "exec", "destroy", "file_write"]),
     invocationKey: InvocationKey,
-    submissionId: Id.optional(),
     operationId: Id.optional(),
-    scope: NativeScopeSchema.optional(),
-    sandbox: NativeRefSchema.optional(),
     resourceId: Id.optional(),
     file: z
       .strictObject({
@@ -289,8 +276,7 @@ export function validateReference(value: RecoveryReference): RecoveryReference {
         bytes: z.number().int().nonnegative().max(1_048_576),
       })
       .optional(),
-    maxOutputBytes: z.number().int().nonnegative().max(1_048_576).optional(),
-    service: z.strictObject({ url: z.url(), projectId: Id }).optional(),
+    service: z.strictObject({ url: z.url(), projectId: Id }),
   });
 
   const parsed = schema.safeParse(value);
@@ -302,38 +288,9 @@ export function validateReference(value: RecoveryReference): RecoveryReference {
 
   if (
     (ref.kind === "file_write") !== !!ref.file ||
-    (ref.kind !== "exec" && ref.maxOutputBytes !== undefined)
+    (ref.kind === "create" ? !!ref.resourceId : !ref.resourceId)
   )
     throw new SandbarError("INVALID_ARGUMENT", "Recovery fields do not match operation kind");
-
-  if (ref.mode === "direct") {
-    if (!ref.scope || !ref.submissionId || !ref.operationId || ref.service || ref.resourceId)
-      throw new SandbarError("INVALID_ARGUMENT", "Incomplete direct recovery reference");
-
-    if (ref.sandbox && (ref.sandbox.kind !== "sandbox" || !sameScope(ref.sandbox.scope, ref.scope)))
-      throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox scope mismatch");
-
-    if (ref.kind === "create" && ref.sandbox)
-      throw new SandbarError(
-        "INVALID_ARGUMENT",
-        "Create recovery reference cannot contain a sandbox",
-      );
-
-    if (ref.kind === "file_write" && !ref.sandbox)
-      throw new SandbarError("INVALID_ARGUMENT", "Incomplete file recovery reference");
-
-    if ((ref.kind === "exec" || ref.kind === "destroy") && !ref.sandbox)
-      throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox missing");
-  } else if (
-    !ref.service ||
-    ref.scope ||
-    ref.sandbox ||
-    ref.submissionId ||
-    ref.maxOutputBytes ||
-    (ref.kind === "create" ? !!ref.resourceId : !ref.resourceId)
-  ) {
-    throw new SandbarError("INVALID_ARGUMENT", "Incomplete remote recovery reference");
-  }
 
   return structuredClone(ref);
 }
@@ -341,31 +298,10 @@ export function validateReference(value: RecoveryReference): RecoveryReference {
 export function sealedReference(value: RecoveryReference): RecoveryReference {
   const ref = validateReference(value);
 
-  if (ref.scope) Object.freeze(ref.scope);
-
-  if (ref.sandbox) {
-    Object.freeze(ref.sandbox.scope);
-    Object.freeze(ref.sandbox);
-  }
-
   if (ref.file) Object.freeze(ref.file);
-
-  if (ref.service) Object.freeze(ref.service);
+  Object.freeze(ref.service);
 
   return Object.freeze(ref);
-}
-
-export function sameScope(a: NativeScope, b: NativeScope): boolean {
-  return (
-    a.provider === b.provider &&
-    a.connectionId === b.connectionId &&
-    a.accountId === b.accountId &&
-    a.region === b.region
-  );
-}
-
-export function sameRef(a: NativeRef, b: NativeRef): boolean {
-  return a.kind === b.kind && a.nativeId === b.nativeId && sameScope(a.scope, b.scope);
 }
 
 export function waitDelay(ms: number, signal?: AbortSignal): Promise<void> {

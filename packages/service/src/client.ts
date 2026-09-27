@@ -9,13 +9,22 @@ import {
   Id,
   Operation,
   Sandbox,
-} from "@sandbar/contracts";
+} from "../../../apps/server/src/http-contracts";
 import type { z } from "zod";
 import {
   SandbarError,
   OutcomeUnknownError,
   NoExitCodeError,
   NonzeroExitError,
+  type CreateInput,
+  type ExecInput,
+  type ExecOutput,
+  type OperationHandle,
+  type RecoveryReference,
+  type SandboxHandle,
+  type SandbarClient,
+} from "sandbar-sdk";
+import {
   awaitSubmission,
   checkExec,
   execOutput,
@@ -29,14 +38,7 @@ import {
   validateFilePath,
   validateReference,
   waitDelay,
-  type CreateInput,
-  type ExecInput,
-  type ExecOutput,
-  type OperationHandle,
-  type RecoveryReference,
-  type SandboxHandle,
-  type SandbarClient,
-} from "./resource";
+} from "sandbar-sdk/service-support";
 
 export {
   Image,
@@ -46,7 +48,7 @@ export {
   NonzeroExitError,
   NoExitCodeError,
   outputText,
-} from "./resource";
+} from "sandbar-sdk";
 
 export type {
   CreateInput,
@@ -55,7 +57,7 @@ export type {
   OperationHandle,
   RecoveryReference,
   SandboxHandle,
-} from "./resource";
+} from "sandbar-sdk";
 
 export type RemoteOptions = { url: string; token: string; projectId: string; fetch?: typeof fetch };
 
@@ -557,7 +559,7 @@ export class RemoteClient implements SandbarClient {
   }
   private reference(kind: Kind, key: string, resourceId?: string): RecoveryReference {
     return {
-      version: 1,
+      version: 2,
       mode: "remote",
       kind,
       invocationKey: key,

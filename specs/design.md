@@ -86,7 +86,7 @@ MySQL uses InnoDB and tested transactions through Drizzle's MySQL adapter. Use r
 
 ## Contracts and provider isolation
 
-`packages/contracts` contains Zod 4 wire schemas and protocol metadata. `packages/core` owns policy, placement, operations and resource semantics. `packages/store` owns Drizzle schemas, migrations and transaction implementations. Provider modules own native schemas and driver translation. `apps/server` composes Hono, the runner and IO; `apps/web` owns Vite/React/Router/Tailwind. SDK workspaces hold generated transport and handwritten language APIs. These are proposed package boundaries, not a requirement to publish every module.
+The service owns HTTP Zod schemas and OpenAPI metadata in `apps/server`; the SDK owns portable resource validation. `packages/core` owns policy, placement, operations and resource semantics. `packages/store` owns Drizzle schemas, migrations and transaction implementations. Provider modules own native schemas and driver translation. `apps/server` composes Hono, the runner and IO; `apps/web` owns Vite/React/Router/Tailwind. SDK workspaces hold generated transport and handwritten language APIs. These are proposed package boundaries, not a requirement to publish every module.
 
 Validate every IO boundary as detailed in [validation and contracts](validation-and-contracts.md). DB rows are not public API DTOs. Hono routing does not bind Rust/Python clients to TypeScript RPC inference. Runtime capability checks remain separate from syntactic validation.
 

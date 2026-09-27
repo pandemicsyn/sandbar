@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { Sandbar, Image } from "@sandbar/sdk/direct";
-import { fakeProvider } from "@sandbar/provider-fake/client";
+import { Sandbar, Image } from "sandbar-sdk";
+import { createFakeAdapter } from "@sandbar/provider-fake";
 import { ProcessFixture } from "../../../packages/sdk-qualification/processes";
 
 test("direct quickstart uses the independent fake provider", async () => {
@@ -16,8 +16,10 @@ test("direct quickstart uses the independent fake provider", async () => {
       command: { command, exitCode: 0, stdoutBase64: Buffer.from("hello").toString("base64") },
     });
 
-    const sandbar = Sandbar.direct({
-      provider: await fakeProvider({ url: fixture.fakeUrl!, token: fixture.fakeToken }),
+    const sandbar = await Sandbar.connect({
+      adapter: createFakeAdapter({ url: fixture.fakeUrl!, token: fixture.fakeToken }),
+      config: {},
+      credentials: {},
     });
 
     try {

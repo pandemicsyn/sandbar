@@ -1,4 +1,8 @@
-import { intentSha256, type CreateSandboxRequest, type ExecRequest } from "@sandbar/contracts";
+import {
+  intentSha256,
+  type CreateSandboxRequest,
+  type ExecRequest,
+} from "../../server/src/http-contracts";
 import { z } from "zod";
 import { newInvocationKey } from "./api";
 

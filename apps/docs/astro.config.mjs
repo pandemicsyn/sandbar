@@ -25,7 +25,11 @@ export default defineConfig({
         { label: "Guides", items: [{ autogenerate: { directory: "docs/guides" } }] },
         {
           label: "Reference",
-          items: [{ slug: "docs/reference/typescript" }, { slug: "docs/reference/http" }],
+          items: [
+            { slug: "docs/reference/typescript" },
+            { slug: "docs/reference/generated-typescript" },
+            { slug: "docs/reference/http" },
+          ],
         },
         {
           label: "Operate",

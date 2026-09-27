@@ -1,5 +1,5 @@
 {
-  "name": "@sandbar/sdk",
+  "name": "sandbar-sdk",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,26 +11,31 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./direct": {
-      "types": "./dist/direct.d.ts",
-      "import": "./dist/direct.js"
+    "./service-support": {
+      "types": "./dist/service-support.d.ts",
+      "import": "./dist/service-support.js"
     },
-    "./remote": {
-      "types": "./dist/remote.d.ts",
-      "import": "./dist/remote.js"
+    "./daytona": {
+      "types": "./dist/daytona.d.ts",
+      "import": "./dist/daytona.js"
+    },
+    "./modal": {
+      "types": "./dist/modal.d.ts",
+      "import": "./dist/modal.js"
     }
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts src/direct.ts src/remote.ts --target node --format esm --splitting --outdir dist --external '@sandbar/*' --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts src/service-support.ts src/daytona.ts src/modal.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external modal --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
   },
   "dependencies": {
-    "@sandbar/contracts": "workspace:*",
-    "@sandbar/core": "workspace:*",
-    "@sandbar/provider-spi": "workspace:*",
-    "zod": "4.6.5"
+    "sandbar-adapter": "workspace:*",
+    "zod": "4.6.5",
+    "modal": "0.10.1"
   },
   "devDependencies": {
-    "@sandbar/provider-fake": "workspace:*"
+    "@sandbar/provider-fake": "workspace:*",
+    "@sandbar/provider-daytona": "workspace:*",
+    "@sandbar/provider-modal": "workspace:*"
   }
 }

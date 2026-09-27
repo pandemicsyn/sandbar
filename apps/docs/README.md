@@ -14,7 +14,7 @@ bun run --cwd apps/docs dev
 
 `docs:check` builds public workspace packages, checks Astro content and TypeScript examples, validates internal Markdown routes and anchors, checks generated OpenAPI reference drift, builds the static site and Pagefind index, checks output, and runs direct/remote quickstart flows against temporary fake and service processes. The fake is a simulation only.
 
-Edit the executable contract in `packages/contracts/src/openapi.ts`, run `bun run --cwd packages/contracts openapi:generate`, then `bun run --cwd apps/docs reference:generate` when routes change. Commit both generated artifacts. Do not edit the generated HTTP reference by hand.
+Edit the executable contract in `apps/server/src/openapi.ts`, run `bun run --cwd apps/server openapi:generate`, then `bun run --cwd apps/docs reference:generate` when routes change. Commit both generated artifacts. Do not edit the generated HTTP reference by hand.
 
 ## Cloudflare Workers Static Assets
 

@@ -10,4 +10,4 @@ await box.writeFile("/data.bin", Uint8Array.of(0, 255));
 const bytes = await box.readFile("/data.bin");
 ```
 
-The execution request accepts `maxOutputBytes`; the default is **1 MiB**. `stdout` and `stderr` are byte arrays. Use `stdoutText(maxBytes)` or `stderrText(maxBytes)` only for display, and check `truncated` when complete output matters. File transfer is buffered in this build; streaming file APIs are not implemented.
+The execution request accepts `maxOutputBytes`; the default is **1 MiB**. `stdout` and `stderr` are byte arrays. Use `stdoutText(maxBytes)` or `stderrText(maxBytes)` only for display, and check `truncated` when complete output matters. For streamed output, `truncated: true` also means the byte cap was reached before end-of-stream could be confirmed; the SDK stops reading at the cap. File transfer is buffered in this build; streaming file APIs are not implemented.

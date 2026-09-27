@@ -3,7 +3,7 @@ title: Sandbar documentation
 description: Development documentation for Sandbar's direct TypeScript SDK and self-hosted service.
 ---
 
-Sandbar is a provider-neutral sandbox API. This documentation describes an **unpublished development build**. Its independent fake provider is qualified for local simulation; it **does not isolate or execute host processes**. The Daytona adapter has fixture coverage for direct and service use, but has not passed live provider conformance.
+Sandbar is a server-side sandbox SDK with first-class custom adapters. The service is an optional standalone package. This documentation describes an **unpublished development build**. Its independent fake provider is qualified for local simulation; it **does not isolate or execute host processes**. The fake, Daytona and Modal adapters have deterministic fixture coverage for direct and service use, but has not passed live provider conformance.
 
 Choose a starting point:
 

@@ -1,10 +1,8 @@
 ---
-title: Contributing a provider driver
-description: Driver boundaries and conformance expectations.
+title: Contributing an adapter
+description: Authoring and conformance for provider integrations.
 ---
 
-Provider drivers implement the `@sandbar/provider-spi` interface. Direct mode passes a verified native scope and driver in the caller process. Service mode holds provider credentials and translates persisted operations through the service runtime. Keep credential custody and SQL dependencies outside `@sandbar/core`.
+Use `defineAdapter` from `sandbar-adapter` to describe a provider. The same definition connects through `sandbar-sdk` and can be registered with the optional service. Implement only the operations the provider supports; the SDK handles resource references, validation, polling and public errors. Start with the [adapter authoring guide](/docs/guides/write-an-adapter/) and the [copyable Acme example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/acme-adapter.ts).
 
-Start with the [fake client and server](https://github.com/pandemicsyn/sandbar/tree/af06bb6/packages/providers/fake). It runs independently of the Sandbar service, persists a native effect ledger and exposes test-only scenarios for lost responses, delayed observation, definitive rejection and ambiguous submission. Do not treat it as a real isolation boundary.
-
-A real adapter needs explicit evidence for image preparation, native idempotency, submission discovery, stable scope identity, command output, file transfer, termination and event ordering. If the provider cannot prove whether a submitted mutation took effect, return an unknown result; never replay it silently. Add conformance and recovery tests before claiming support in the [matrix](/docs/providers/support/). The [provider research](https://github.com/pandemicsyn/sandbar/blob/af06bb6/docs/provider-drivers.md) is design context, not qualification.
+Use `adapterSuite` from `sandbar-adapter/testing` with a deterministic provider fixture. Include loss after effect, scope changes, binary output and recovery without another submission for every capability you claim. The fake provider is a simulation; it persists native effect evidence for these tests. Real-provider support requires separate native conformance evidence in the [support matrix](/docs/providers/support/).

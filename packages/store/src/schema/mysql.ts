@@ -50,8 +50,9 @@ export const providerConnections = mysqlTable(
       .references(() => projects.id),
     provider: varchar("provider", { length: 128 }).notNull(),
     name: varchar("name", { length: 255 }).notNull(),
-    scope: varchar("scope", { length: 512 }),
+    scope: longtext("scope"),
     encryptedCredentials: longtext("encrypted_credentials").notNull(),
+    adapterContractVersion: int("adapter_contract_version").notNull().default(1),
     credentialRevision: int("credential_revision").notNull().default(1),
     status: varchar("status", { length: 32 }).notNull(),
     createdAt: ms("created_at").notNull(),
@@ -73,7 +74,7 @@ export const sandboxes = mysqlTable(
     connectionId: id("connection_id")
       .notNull()
       .references(() => providerConnections.id),
-    nativeId: varchar("native_id", { length: 255 }),
+    nativeId: varchar("native_id", { length: 512 }),
     desiredState: varchar("desired_state", { length: 32 }).notNull(),
     observedState: varchar("observed_state", { length: 32 }).notNull(),
     observedAt: ms("observed_at"),
@@ -113,6 +114,7 @@ export const operations = mysqlTable(
     requestJson: longtext("request_json").notNull(),
     resultJson: longtext("result_json"),
     errorJson: longtext("error_json"),
+    adapterTokenCiphertext: longtext("adapter_token_ciphertext"),
     providerToken: id("provider_token").notNull(),
     submissionPossible: tinyint("submission_possible").notNull().default(0),
     leaseOwner: id("lease_owner"),

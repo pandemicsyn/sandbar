@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Sandbar as DirectSandbar, Image as DirectImage } from "@sandbar/sdk/direct";
-import { Sandbar as RemoteSandbar, Image as RemoteImage } from "@sandbar/sdk/remote";
-import type { RecoveryReference, SandbarClient, SandboxHandle } from "@sandbar/sdk";
-import { fakeProvider } from "@sandbar/provider-fake/client";
+import { Sandbar as DirectSandbar, Image as DirectImage } from "sandbar-sdk";
+import { Sandbar as RemoteSandbar, Image as RemoteImage } from "sandbar-service/client";
+import type { RecoveryReference, SandboxHandle } from "sandbar-sdk";
+import { createFakeAdapter } from "@sandbar/provider-fake";
 import { ProcessFixture } from "./processes";
 
 type Backend = "direct" | "remote";
@@ -31,19 +31,32 @@ async function post(url: string, token: string | undefined, body: ServiceRequest
   return response.json();
 }
 
+type DirectClient = Awaited<ReturnType<typeof DirectSandbar.connect>>;
+
+type RemoteClient = ReturnType<typeof RemoteSandbar.connect>;
+
+type FixtureBackend<T> = {
+  fixture: ProcessFixture;
+  client: T;
+  image: ReturnType<typeof DirectImage.prepared>;
+};
+
+async function backend(kind: "direct"): Promise<FixtureBackend<DirectClient>>;
+async function backend(kind: "remote"): Promise<FixtureBackend<RemoteClient>>;
+async function backend(kind: Backend): Promise<FixtureBackend<DirectClient | RemoteClient>>;
 async function backend(kind: Backend) {
   const fixture = new ProcessFixture();
   fixtures.push(fixture);
   await fixture.startFake();
 
   if (kind === "direct") {
-    const client = DirectSandbar.direct({
-      provider: await fakeProvider({ url: fixture.fakeUrl!, token: fixture.fakeToken }),
+    const client = await DirectSandbar.connect({
+      adapter: createFakeAdapter({ url: fixture.fakeUrl!, token: fixture.fakeToken }),
+      config: {},
+      credentials: {},
     });
 
-    const sharedClient: SandbarClient = client;
-
-    return { fixture, client: sharedClient, image: DirectImage.prepared("fake-starter") };
+    return { fixture, client, image: DirectImage.prepared("fake-starter") };
   }
 
   await fixture.startService();
@@ -74,9 +87,7 @@ async function backend(kind: Backend) {
     projectId: project.id,
   });
 
-  const sharedClient: SandbarClient = client;
-
-  return { fixture, client: sharedClient, image: RemoteImage.prepared("fake-starter") };
+  return { fixture, client, image: RemoteImage.prepared("fake-starter") };
 }
 
 for (const kind of ["direct", "remote"] as const) {
@@ -372,254 +383,6 @@ describe("remote recovery evidence", () => {
       }
     } finally {
       await first.close();
-    }
-  }, 30_000);
-});
-
-describe("direct recovery evidence", () => {
-  test("a separately configured caller observes a lost create without submitting again", async () => {
-    const { fixture, client, image } = await backend("direct");
-    await fixture.fakeControl("/_test/seed", {
-      submissionId: "*",
-      action: "create",
-      behavior: "lost_after_effect",
-    });
-
-    try {
-      const operation = await client.sandboxes.submitCreate({ environment: image });
-      const reference = structuredClone(operation.reference);
-      const serialized = JSON.stringify(reference);
-      expect(serialized).not.toContain(fixture.fakeToken);
-      expect(serialized).not.toContain("fake-starter");
-      await client.close();
-
-      const next = DirectSandbar.direct({
-        provider: await fakeProvider({ url: fixture.fakeUrl!, token: fixture.fakeToken }),
-      });
-
-      try {
-        // SAFETY: The reference came from submitCreate, whose completed result is a sandbox handle.
-        const box = (await (await next.recover(reference)).wait()) as SandboxHandle;
-        expect((await box.inspect()).state).toBe("running");
-        const state = await fixture.fakeControl("/_test/state");
-        expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
-        await box.destroy();
-      } finally {
-        await next.close();
-      }
-    } finally {
-      await client.close();
-    }
-  }, 30_000);
-
-  test("an imported reference cannot retain or forward extra scope credentials", async () => {
-    const { fixture, client, image } = await backend("direct");
-    await fixture.fakeControl("/_test/seed", {
-      submissionId: "*",
-      action: "create",
-      behavior: "lost_after_effect",
-    });
-
-    try {
-      const operation = await client.sandboxes.submitCreate({ environment: image });
-      const clean = structuredClone(operation.reference);
-      await client.close();
-
-      const registration = await fakeProvider({ url: fixture.fakeUrl!, token: fixture.fakeToken });
-      const observed: unknown[] = [];
-
-      const observe = registration.driver.observe.bind(registration.driver);
-      registration.driver.observe = async (input) => {
-        observed.push(structuredClone(input));
-
-        return observe(input);
-      };
-
-      const next = DirectSandbar.direct({ provider: registration });
-
-      try {
-        const tainted = structuredClone(clean);
-        Object.assign(tainted.scope!, { credential: "never-forward-this-secret" });
-
-        const attempt = await next.recover(tainted).then(
-          (handle) => ({ handle }),
-          (error) => ({ error }),
-        );
-
-        if ("error" in attempt) {
-          expect(attempt.error).toMatchObject({ code: "INVALID_ARGUMENT" });
-        } else {
-          expect(JSON.stringify(attempt.handle.reference)).not.toContain(
-            "never-forward-this-secret",
-          );
-          Object.assign(tainted.scope!, { credential: "mutated-after-import" });
-          await attempt.handle.wait();
-          expect(JSON.stringify(attempt.handle.reference)).not.toContain("mutated-after-import");
-        }
-
-        // SAFETY: The clean reference came from submitCreate, whose completed result is a sandbox handle.
-        const box = (await (await next.recover(clean)).wait()) as SandboxHandle;
-        expect((await box.inspect()).state).toBe("running");
-        expect(JSON.stringify(observed)).not.toContain("never-forward-this-secret");
-        expect(JSON.stringify(observed)).not.toContain("mutated-after-import");
-        const state = await fixture.fakeControl("/_test/state");
-        expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
-        await box.destroy();
-      } finally {
-        await next.close();
-      }
-    } finally {
-      await client.close();
-    }
-  }, 30_000);
-
-  test("missing native discovery leaves an ambiguous create unknown without replay", async () => {
-    const { fixture, client, image } = await backend("direct");
-    await fixture.fakeControl("/_test/profile", {
-      nativeIdempotency: { create: false, exec: false, destroy: false, writeFile: false },
-      discoveryBySubmission: false,
-    });
-    await fixture.fakeControl("/_test/seed", {
-      submissionId: "*",
-      action: "create",
-      behavior: "lost_after_effect",
-    });
-
-    try {
-      const operation = await client.sandboxes.submitCreate({ environment: image });
-      await expect(operation.wait()).rejects.toMatchObject({ name: "OutcomeUnknownError" });
-      await expect(operation.observe()).rejects.toMatchObject({ name: "OutcomeUnknownError" });
-      const state = await fixture.fakeControl("/_test/state");
-      expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
-      expect(state.resources.filter((entry: any) => entry.state === "running")).toHaveLength(1);
-    } finally {
-      await client.close();
-    }
-  }, 30_000);
-
-  test("lost exec and file write responses remain one effect each without native replay", async () => {
-    const { fixture, client, image } = await backend("direct");
-    await fixture.fakeControl("/_test/profile", {
-      nativeIdempotency: { create: false, exec: false, destroy: false, writeFile: false },
-      discoveryBySubmission: false,
-    });
-
-    try {
-      const box = await client.sandboxes.create({ environment: image });
-      const command = { kind: "argv" as const, argv: ["fixture", "uncertain"] };
-      await fixture.fakeControl("/_test/seed", {
-        submissionId: "*",
-        action: "exec",
-        behavior: "lost_after_effect",
-        command: { command, exitCode: 0, stdoutBase64: Buffer.from([0x7f]).toString("base64") },
-      });
-      await expect(box.exec({ command })).rejects.toMatchObject({ name: "OutcomeUnknownError" });
-      await fixture.fakeControl("/_test/seed", {
-        submissionId: "*",
-        action: "file_write",
-        behavior: "lost_after_effect",
-      });
-      await expect(box.writeFile("/data/uncertain", Uint8Array.from([0xff]))).rejects.toMatchObject(
-        { name: "OutcomeUnknownError" },
-      );
-      const state = await fixture.fakeControl("/_test/state");
-      expect(state.invocations.filter((entry: any) => entry.action === "exec")).toHaveLength(1);
-      expect(state.invocations.filter((entry: any) => entry.action === "file_write")).toHaveLength(
-        1,
-      );
-      expect(await box.readFile("/data/uncertain")).toEqual(Uint8Array.from([0xff]));
-      await box.destroy();
-    } finally {
-      await client.close();
-    }
-  }, 30_000);
-
-  test("aborting a wait leaves provider compute running, and a foreign scope cannot recover it", async () => {
-    const { fixture, client, image } = await backend("direct");
-    await fixture.fakeControl("/_test/seed", {
-      submissionId: "*",
-      action: "create",
-      behavior: "normal",
-      delayObservations: 100,
-    });
-
-    try {
-      const operation = await client.sandboxes.submitCreate({ environment: image });
-      const controller = new AbortController();
-      const waiting = operation.wait({ signal: controller.signal, pollMs: 1_000 });
-
-      const outcome = waiting.then(
-        () => ({ completed: true as const }),
-        (error) => ({ completed: false as const, error }),
-      );
-
-      let observed = false;
-
-      for (let attempt = 0; attempt < 120; attempt++) {
-        const state = await fixture.fakeControl("/_test/state");
-
-        if (state.ledger.some((entry: any) => entry.action === "create" && entry.remaining < 100)) {
-          observed = true;
-          break;
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-
-      expect(observed).toBe(true);
-      controller.abort(new DOMException("Wait cancelled", "AbortError"));
-      expect(await outcome).toMatchObject({ completed: false, error: { name: "AbortError" } });
-      const state = await fixture.fakeControl("/_test/state");
-      expect(state.resources.filter((entry: any) => entry.state === "running")).toHaveLength(1);
-      expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
-      await expect(
-        client.recover({
-          ...operation.reference,
-          scope: { ...operation.reference.scope!, accountId: "other" },
-        }),
-      ).rejects.toMatchObject({ code: "FORBIDDEN" });
-      await client.close();
-      const afterClose = await fixture.fakeControl("/_test/state");
-      expect(afterClose.resources.filter((entry: any) => entry.state === "running")).toHaveLength(
-        1,
-      );
-    } finally {
-      await client.close();
-    }
-  }, 30_000);
-
-  test("a cross-wired observation stays unknown and does not replay create", async () => {
-    const fixture = new ProcessFixture();
-    fixtures.push(fixture);
-    await fixture.startFake();
-    const registration = await fakeProvider({ url: fixture.fakeUrl!, token: fixture.fakeToken });
-
-    const observe = registration.driver.observe.bind(registration.driver);
-    registration.driver.observe = async (input) => {
-      const result = await observe(input);
-
-      return result?.status === "completed"
-        ? { ...result, submissionId: "wrong_submission" }
-        : result;
-    };
-
-    const client = DirectSandbar.direct({ provider: registration });
-    await fixture.fakeControl("/_test/seed", {
-      submissionId: "*",
-      action: "create",
-      behavior: "lost_after_effect",
-    });
-
-    try {
-      const operation = await client.sandboxes.submitCreate({
-        environment: DirectImage.prepared("fake-starter"),
-      });
-
-      await expect(operation.wait()).rejects.toMatchObject({ name: "OutcomeUnknownError" });
-      const state = await fixture.fakeControl("/_test/state");
-      expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
-    } finally {
-      await client.close();
     }
   }, 30_000);
 });

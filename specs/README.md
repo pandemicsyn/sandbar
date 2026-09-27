@@ -11,7 +11,7 @@ Public usage documentation lives in [apps/docs](../apps/docs/README.md). Impleme
 
 - [Public API contract and executable schema sources](api-spec.md)
 - [Architecture and selected stack](design.md)
-- [Direct and remote TypeScript SDK constraints](direct-typescript-sdk.md)
+- [Direct SDK and optional service-client constraints](direct-typescript-sdk.md)
 - [Measured runtime and package qualification](sdk-runtime-qualification.md)
 - [Validation boundaries](validation-and-contracts.md)
 
@@ -24,6 +24,7 @@ These documents mix accepted behavioral requirements with resource/features beyo
 - [Observability, usage and accounting](observability-and-accounting.md)
 - [Management UI scope](management-ui.md)
 - [Provider research and design targets](provider-drivers.md)
+- [First-class custom adapter DX](custom-adapters.md) — approved implementation direction in progress on its implementation branch.
 
 ## Historical material
 

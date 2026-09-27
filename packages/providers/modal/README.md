@@ -3,36 +3,26 @@
 Status: **implemented safe subset; deterministic fixtures only; live unverified**. This package uses the official `modal@0.10.1` JavaScript SDK. It does not require Python, Hono, SQL, or a Sandbar service in direct mode.
 
 ```ts
-import { Sandbar, Image } from "@sandbar/sdk/direct";
-import { modalProvider } from "@sandbar/provider-modal";
+import { Sandbar, Image } from "sandbar-sdk";
+import { modalAdapter } from "@sandbar/provider-modal";
 
-const provider = await modalProvider({
-  tokenId: process.env.MODAL_TOKEN_ID!,
-  tokenSecret: process.env.MODAL_TOKEN_SECRET!,
-  appName: "my-existing-app",
-  environment: "main",
-  region: "us-east-1",
-  timeoutSeconds: 300,
-});
-const client = Sandbar.direct({ provider });
-const box = await client.sandboxes.create({
-  environment: Image.prepared("im-existing-modal-image-id"),
-  networkPolicy: "blocked",
-  region: "us-east-1",
+const client = await Sandbar.connect({
+  adapter: modalAdapter,
+  config: { appName: "my-existing-app", environment: "main", region: "us-east-1", timeoutSeconds: 300 },
+  credentials: { tokenId: process.env.MODAL_TOKEN_ID!, tokenSecret: process.env.MODAL_TOKEN_SECRET! },
 });
 try {
-  console.log(await box.inspect());
-  // Binary file reads work, up to 1 MiB.
-  console.log(await box.readFile("/tmp/result.bin"));
-} finally {
-  await box.destroy();
-  await client.close();
-}
+  const box = await client.sandboxes.create({
+    environment: Image.prepared("im-existing-modal-image-id"), networkPolicy: "blocked",
+  });
+  try { console.log(await box.readFile("/tmp/result.bin")); }
+  finally { await box.destroy(); }
+} finally { await client.close(); }
 ```
 
-The provider factory returns an owned lease. `client.close()` releases it and stops Sandbar waits; neither action destroys a provider sandbox. In Modal 0.10.1, `ModalClient.close()` does not actively close its gRPC channels or abort calls already in flight, so it is not a remote cancellation guarantee.
+The adapter verifies the existing Modal App and registers an owned close hook. `client.close()` releases local resources and stops Sandbar waits; it does not destroy provider compute. Modal's transport cannot guarantee cancellation of an already submitted native call.
 
-For service registration, `modalRegistration` accepts encrypted connection credentials `{tokenId,tokenSecret}` and explicit native configuration `{appName,environment,region?,timeoutSeconds?}`. `timeoutSeconds` is a decimal string in the service map. The service supplies its stored connection ID; the returned scope pins that ID to the verified native App, environment and endpoint. The registration factory contains no service-runtime imports.
+The standalone service installs `modalAdapter` by default. It keeps encrypted credentials and project binding; the adapter's verified scope pins the native App, environment, region, and fixed endpoint.
 
 The deployed Modal App and prepared image must already exist. `modalProvider` looks up the App without `createIfMissing`. The server returned App ID, configured environment and official endpoint bind the native scope. The SDK does not expose a verified workspace ID, so this adapter makes no workspace identity claim. Region is explicit when configured. The SDK's `endpoint` constructor option is unused in 0.10.1; custom endpoints and profile endpoint overrides fail closed. Credential strings are never placed in resource or recovery references.
 

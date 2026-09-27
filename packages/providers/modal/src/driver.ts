@@ -8,7 +8,7 @@ import {
   type InvocationIdentity,
   type ProviderDriver,
 } from "@sandbar/provider-spi";
-import type { ExecCommand } from "@sandbar/contracts";
+import type { ExecCommand } from "sandbar-adapter/portable";
 import { z } from "zod";
 import type { ModalSandboxRecord, ModalTransport } from "./transport";
 

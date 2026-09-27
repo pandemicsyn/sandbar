@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
-import type { ExecCommand } from "@sandbar/contracts";
-import { daytonaProvider, daytonaRegistration } from "./index";
-import { NonzeroExitError, Sandbar } from "@sandbar/sdk/direct";
+import type { ExecCommand } from "sandbar-adapter/portable";
+import { daytonaProvider, daytonaRegistration, createDaytonaAdapter } from "./index";
+import { NonzeroExitError, Sandbar } from "sandbar-sdk";
 import { ProviderReadError } from "@sandbar/provider-spi";
 
 function fixtureFetch(
@@ -419,7 +419,12 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
   const provider = await daytonaProvider({ apiKey: "private-key", target: "us", fetch: fetchImpl });
   expect(provider.scope.accountId).toBe("org-1");
   expect(provider.scope.endpoint).toBe(apiUrl);
-  const client = Sandbar.direct({ provider });
+
+  const client = await Sandbar.connect({
+    adapter: createDaytonaAdapter(fetchImpl),
+    config: { target: "us" },
+    credentials: { apiKey: "private-key" },
+  });
 
   const sandbox = await client.sandboxes.create({
     environment: { kind: "prepared", value: "snap-1" },
@@ -791,7 +796,13 @@ test("unsupported OCI and no-overwrite reject before mutation", async () => {
       })
     ).supported,
   ).toBe(false);
-  const client = Sandbar.direct({ provider });
+
+  const client = await Sandbar.connect({
+    adapter: createDaytonaAdapter(fetchImpl),
+    config: { target: "us" },
+    credentials: { apiKey: "key" },
+  });
+
   await expect(
     client.sandboxes.create({ environment: { kind: "oci", value: "alpine:latest" } }),
   ).rejects.toThrow();
@@ -806,7 +817,12 @@ test("unsupported OCI and no-overwrite reject before mutation", async () => {
   });
 
   expect(write.status).toBe("rejected");
-  expect(calls).toEqual(["GET /api/api-keys/current", "GET /api/regions"]);
+  expect(calls).toEqual([
+    "GET /api/api-keys/current",
+    "GET /api/regions",
+    "GET /api/api-keys/current",
+    "GET /api/regions",
+  ]);
 });
 
 test("lost exec and upload responses remain unknown after one submission each", async () => {

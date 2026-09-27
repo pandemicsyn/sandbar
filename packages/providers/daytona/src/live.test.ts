@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { daytonaProvider } from "./index";
-import { Image, Sandbar } from "@sandbar/sdk/direct";
+import { createDaytonaAdapter } from "./index";
+import { Image, Sandbar } from "sandbar-sdk";
 
 const enabled = process.env.SANDBAR_DAYTONA_LIVE === "1";
 
@@ -15,8 +15,13 @@ const enabled = process.env.SANDBAR_DAYTONA_LIVE === "1";
       throw new Error(
         "Live credentials, target, existing snapshot ID and budget acknowledgement required",
       );
-    const provider = await daytonaProvider({ apiKey, target, ttlMinutes: 15 });
-    const client = Sandbar.direct({ provider });
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(),
+      config: { target, ttlMinutes: 15 },
+      credentials: { apiKey },
+    });
+
     let sandbox: Awaited<ReturnType<typeof client.sandboxes.create>> | undefined;
 
     try {

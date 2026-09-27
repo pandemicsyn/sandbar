@@ -1,5 +1,4 @@
 import { readFileSync, statSync } from "node:fs";
-import { z } from "zod";
 import { createApp } from "./app";
 import { registerDomainRoutes } from "./routes/domain";
 import {
@@ -13,12 +12,12 @@ import {
   DurableRunner,
   ProviderRegistry,
   SecretBox,
-  type ProviderRegistration,
+  type InstalledAdapter,
 } from "@sandbar/service-runtime";
-import { FakeProviderDriver } from "@sandbar/provider-fake";
-import { daytonaRegistration, type DaytonaEndpointPair } from "@sandbar/provider-daytona";
+import { createFakeAdapter } from "@sandbar/provider-fake";
+import { createDaytonaAdapter, type DaytonaEndpointPair } from "@sandbar/provider-daytona";
 import {
-  createModalRegistration,
+  createModalAdapter,
   type ModalProviderOptions,
   type ModalTransport,
 } from "@sandbar/provider-modal";
@@ -29,11 +28,12 @@ export interface RuntimeConfig {
   setupTokenFile: string;
   fakeProviderUrl?: string;
   fakeProviderToken?: string;
-  providerRegistrations?: ProviderRegistration[];
+  adapters?: readonly InstalledAdapter[];
   daytonaFetch?: typeof fetch;
   daytonaTrustedEndpoints?: DaytonaEndpointPair[];
   modalTransportFactory?: (options: ModalProviderOptions) => ModalTransport;
   publicOrigin?: string;
+  webDist?: string;
   startRunner?: boolean;
 }
 
@@ -90,55 +90,22 @@ export async function openDomainRuntime(config: RuntimeConfig) {
       throw new Error("Setup token file must contain at least 24 characters");
     const store = new ControlStore(backend);
 
-    const driver =
+    const fakeAdapter =
       config.fakeProviderUrl && config.fakeProviderToken
-        ? new FakeProviderDriver({
-            baseUrl: config.fakeProviderUrl,
-            token: config.fakeProviderToken,
-          })
+        ? createFakeAdapter({ url: config.fakeProviderUrl, token: config.fakeProviderToken })
         : undefined;
 
-    const fakeRegistration: ProviderRegistration[] = driver
-      ? [
-          {
-            provider: "fake",
-            validate(input) {
-              if (Object.keys(input.credentials).length || Object.keys(input.configuration).length)
-                throw new z.ZodError([
-                  {
-                    code: "custom",
-                    path: ["credentials"],
-                    message: "Fake connection has no native credentials or configuration",
-                  },
-                ]);
-
-              return input;
-            },
-            async connect(input) {
-              return {
-                driver,
-                scope: {
-                  provider: "fake",
-                  connectionId: input.connectionId,
-                  accountId: "fake-local",
-                  region: "local",
-                },
-              };
-            },
-          },
-        ]
-      : [];
-
     const registry = new ProviderRegistry(store, secrets, [
-      daytonaRegistration(config.daytonaFetch, config.daytonaTrustedEndpoints),
-      createModalRegistration(config.modalTransportFactory),
-      ...fakeRegistration,
-      ...(config.providerRegistrations ?? []),
+      createDaytonaAdapter(config.daytonaFetch, config.daytonaTrustedEndpoints),
+      createModalAdapter(config.modalTransportFactory),
+      ...(fakeAdapter ? [fakeAdapter] : []),
+      ...(config.adapters ?? []),
     ]);
 
     const runner = new DurableRunner({ store, registry, secrets });
 
     const app = createApp({
+      webDist: config.webDist,
       registerRoutes: (app) =>
         registerDomainRoutes(app, {
           store,
@@ -155,7 +122,6 @@ export async function openDomainRuntime(config: RuntimeConfig) {
     return {
       app,
       store,
-      driver,
       registry,
       runner,
       close: async () => {

@@ -1,0 +1,28 @@
+{
+  "name": "sandbar-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build": "bun run --cwd ../../apps/web build && rm -rf dist && bun build src/index.ts src/client.ts --target bun --format esm --outdir dist --external sandbar-sdk --external sandbar-adapter --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun flatten-declarations.mjs && cp -R ../store/migrations dist/migrations && cp -R ../../apps/web/dist dist/web"
+  },
+  "dependencies": {
+    "sandbar-adapter": "workspace:*",
+    "sandbar-sdk": "workspace:*",
+    "zod": "4.6.5"
+  }
+}

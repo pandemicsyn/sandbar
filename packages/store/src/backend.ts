@@ -396,67 +396,76 @@ export async function openMysqlBackend(url: string): Promise<Backend> {
   };
 }
 
-/** Apply committed SQL migration files. Startup must own the SQLite lock or the MySQL migration lock. */
+/** Apply committed SQL migrations in order. Existing version checksums are preserved. */
 export async function migrate(backend: Backend, migrationSql: string): Promise<void> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(migrationSql));
-  const checksum = Buffer.from(digest).toString("hex");
-  const version = "0001_control";
+  const migrations = [{ version: "0001_control", source: migrationSql }];
 
-  if (backend.dialect === "sqlite") {
-    await backend.transaction(async (tx) => {
-      await tx.run(
+  for (const migration of migrations) {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(migration.source),
+    );
+
+    const checksum = Buffer.from(digest).toString("hex");
+
+    if (backend.dialect === "sqlite") {
+      await backend.transaction(async (tx) => {
+        await tx.run(
+          sql.raw(
+            "CREATE TABLE IF NOT EXISTS _sandbar_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL)",
+          ),
+        );
+
+        const prior = await tx.row<{ checksum: string }>(
+          sql`SELECT checksum FROM _sandbar_migrations WHERE version=${migration.version}`,
+        );
+
+        if (prior) {
+          if (prior.checksum !== checksum)
+            throw new Error(
+              `Development schema changed at ${migration.version}; use a fresh database. Existing data was not modified`,
+            );
+
+          return;
+        }
+
+        for (const statement of migration.source
+          .split(";")
+          .map((part) => part.trim())
+          .filter(Boolean))
+          await tx.run(sql.raw(statement));
+        await tx.run(
+          sql`INSERT INTO _sandbar_migrations (version,checksum) VALUES (${migration.version},${checksum})`,
+        );
+      });
+    } else {
+      await backend.run(
         sql.raw(
-          "CREATE TABLE IF NOT EXISTS _sandbar_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL)",
+          "CREATE TABLE IF NOT EXISTS _sandbar_migrations (version varchar(128) COLLATE utf8mb4_bin PRIMARY KEY, checksum char(64) COLLATE utf8mb4_bin NOT NULL) ENGINE=InnoDB",
         ),
       );
 
-      const prior = await tx.row<{ checksum: string }>(
-        sql`SELECT checksum FROM _sandbar_migrations WHERE version=${version}`,
+      const prior = await backend.row<{ checksum: string }>(
+        sql`SELECT checksum FROM _sandbar_migrations WHERE version=${migration.version}`,
       );
 
       if (prior) {
         if (prior.checksum !== checksum)
-          throw new Error("Committed SQLite migration checksum differs from applied version");
-
-        return;
+          throw new Error(
+            `Development schema changed at ${migration.version}; use a fresh database. Existing data was not modified`,
+          );
+        continue;
       }
 
-      for (const statement of migrationSql
+      for (const statement of migration.source
         .split(";")
-        .map((s) => s.trim())
+        .map((part) => part.trim())
         .filter(Boolean))
-        await tx.run(sql.raw(statement));
-      await tx.run(
-        sql`INSERT INTO _sandbar_migrations (version,checksum) VALUES (${version},${checksum})`,
+        await backend.run(sql.raw(statement));
+      await backend.run(
+        sql`INSERT INTO _sandbar_migrations (version,checksum) VALUES (${migration.version},${checksum})`,
       );
-    });
-  } else {
-    // DDL auto-commits in MySQL. An exclusive service startup lock must guard this path.
-    await backend.run(
-      sql.raw(
-        "CREATE TABLE IF NOT EXISTS _sandbar_migrations (version varchar(128) COLLATE utf8mb4_bin PRIMARY KEY, checksum char(64) COLLATE utf8mb4_bin NOT NULL) ENGINE=InnoDB",
-      ),
-    );
-
-    const prior = await backend.row<{ checksum: string }>(
-      sql`SELECT checksum FROM _sandbar_migrations WHERE version=${version}`,
-    );
-
-    if (prior) {
-      if (prior.checksum !== checksum)
-        throw new Error("Committed MySQL migration checksum differs from applied version");
-
-      return;
     }
-
-    for (const statement of migrationSql
-      .split(";")
-      .map((s) => s.trim())
-      .filter(Boolean))
-      await backend.run(sql.raw(statement));
-    await backend.run(
-      sql`INSERT INTO _sandbar_migrations (version,checksum) VALUES (${version},${checksum})`,
-    );
   }
 }
 

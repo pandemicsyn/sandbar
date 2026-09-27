@@ -17,6 +17,7 @@ import {
   ProjectPage,
   ProviderConnection,
   ProviderConnectionPage,
+  ProviderCatalog,
   Sandbox,
   SandboxPage,
   SandboxListQuery,
@@ -25,7 +26,7 @@ import {
   SessionResponse,
   SetupRequest,
   StreamFrame,
-} from "./index";
+} from "./http-contracts";
 
 const schemas = {
   AcceptedExecution,
@@ -44,6 +45,7 @@ const schemas = {
   ProjectPage,
   ProviderConnection,
   ProviderConnectionPage,
+  ProviderCatalog,
   Sandbox,
   SandboxPage,
   SandboxListQuery,
@@ -269,6 +271,12 @@ export const openApiDocument = {
           "201": response("Created", "Project"),
           default: response("Structured error", "ErrorResponse"),
         },
+      },
+    },
+    "/v1/providers": {
+      get: {
+        operationId: "listRegisteredProviders",
+        responses: ordinary("ProviderCatalog"),
       },
     },
     "/v1/projects/{projectId}/provider-connections": {

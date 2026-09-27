@@ -1,3 +1,4 @@
+import { AdapterError } from "sandbar-adapter";
 import { timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
@@ -19,6 +20,7 @@ import {
   ProjectPage,
   ProviderConnection,
   ProviderConnectionPage,
+  ProviderCatalog,
   Sandbox,
   SandboxListQuery,
   SandboxPage,
@@ -26,14 +28,8 @@ import {
   SessionResponse,
   SetupRequest,
   intentSha256,
-} from "@sandbar/contracts";
-import {
-  ProviderReadError,
-  type ProviderDriver,
-  type ProviderLease,
-  type NativeScope,
-  type SandboxRef,
-} from "@sandbar/provider-spi";
+} from "../http-contracts";
+import { ProviderReadError, type NativeScope, type SandboxRef } from "@sandbar/provider-spi";
 import {
   ControlStore,
   StoreError,
@@ -47,6 +43,7 @@ import {
   DurableRunner,
   SecretBox,
   ProviderRegistry,
+  type AdapterProviderLease,
   ProviderConfigurationError,
   storedScope,
   publicScope,
@@ -54,8 +51,7 @@ import {
 
 export interface DomainDependencies {
   store: ControlStore;
-  driver?: ProviderDriver;
-  registry?: ProviderRegistry;
+  registry: ProviderRegistry;
   secrets: SecretBox;
   setupToken: string;
   runner?: DurableRunner;
@@ -77,6 +73,14 @@ function safeError(code: string, message: string, effect: "none" | "possible" = 
 }
 
 function errorResponse(c: Context, error: Error | z.ZodError): Response {
+  if (error instanceof AdapterError)
+    return c.json(
+      ErrorResponse.parse({
+        error: safeError(error.code, "Adapter input or connection is invalid"),
+      }),
+      error.code === "UNAUTHENTICATED" ? 401 : error.code === "UNSUPPORTED" ? 422 : 400,
+    );
+
   if (error instanceof ProviderConfigurationError)
     return c.json(
       ErrorResponse.parse({ error: safeError("INVALID_ARGUMENT", "Invalid request") }),
@@ -397,45 +401,23 @@ function nativeRef(box: SandboxRow, scope: NativeScope): SandboxRef {
 }
 
 function providerAvailable(deps: DomainDependencies, provider: string): boolean {
-  return deps.registry ? deps.registry.has(provider) : deps.driver?.name === provider;
-}
-
-async function providerFor(
-  deps: DomainDependencies,
-  connection: ConnectionRow,
-): Promise<ProviderLease> {
-  if (deps.registry) return deps.registry.connect(connection);
-
-  if (!deps.driver || deps.driver.name !== connection.provider || !connection.scope)
-    throw new StoreError("CONFLICT", "Provider connection unavailable");
-
-  return {
-    driver: deps.driver,
-    scope: {
-      provider: connection.provider,
-      connectionId: connection.id,
-      accountId: connection.scope,
-      region: "local",
-    },
-  };
+  return deps.registry.has(provider);
 }
 
 async function withProvider<T>(
   deps: DomainDependencies,
   connection: ConnectionRow,
-  use: (lease: ProviderLease) => Promise<T>,
+  use: (lease: AdapterProviderLease) => Promise<T>,
 ): Promise<T> {
-  const lease = await providerFor(deps, connection);
+  const lease = await deps.registry.connect(connection);
 
   try {
     return await use(lease);
   } finally {
-    if (lease.ownership === "owned") {
-      try {
-        await lease.release();
-      } catch {
-        console.error("Provider transport release failed");
-      }
+    try {
+      await lease.release();
+    } catch {
+      console.error("Provider transport release failed");
     }
   }
 }
@@ -627,6 +609,12 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       c.json(ProjectPage.parse({ items: await deps.store.listProjects() })),
     ),
   );
+  app.get(
+    "/v1/providers",
+    protect(deps, false, async (c) =>
+      c.json(ProviderCatalog.parse({ items: deps.registry?.catalog() ?? [] })),
+    ),
+  );
   app.post(
     "/v1/projects/:projectId/provider-connections",
     protect(deps, true, async (c) => {
@@ -635,21 +623,20 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       const id = `conn_${crypto.randomUUID().replaceAll("-", "")}`;
 
-      if (deps.registry)
-        deps.registry.validate(body.provider, {
-          credentials: body.credentials ?? {},
-          configuration: body.configuration ?? {},
-        });
-      else if (body.provider !== "fake" || body.credentials || body.configuration)
+      const raw = structuredClone({
+        credentials: body.credentials === undefined ? {} : body.credentials,
+        configuration: body.configuration === undefined ? {} : body.configuration,
+      });
+
+      deps.registry?.validate(body.provider, structuredClone(raw));
+
+      if (!deps.registry && (body.provider !== "fake" || body.credentials || body.configuration))
         throw new SyntaxError("Provider is not configured");
 
       const encryptedCredentials = await deps.secrets.seal(
         "provider-connection",
         id,
-        JSON.stringify({
-          credentials: body.credentials ?? {},
-          configuration: body.configuration ?? {},
-        }),
+        JSON.stringify(raw),
       );
 
       const row = await deps.store.createConnection({
@@ -684,7 +671,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       if (!row) throw new StoreError("NOT_FOUND", "Connection not found");
 
       return withProvider(deps, row, async ({ driver, scope }) => {
-        const capabilities = await driver.capabilities(scope);
+        const capabilities = await driver.capabilities();
 
         if (capabilities.provider !== row.provider)
           throw new StoreError("CONFLICT", "Provider identity mismatch");

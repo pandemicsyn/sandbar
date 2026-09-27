@@ -10,7 +10,7 @@ import {
   type SandboxRef,
   type ProviderDriver,
 } from "@sandbar/provider-spi";
-import { ExecRequest, type ExecCommand } from "@sandbar/contracts";
+import { ExecRequest, type ExecCommand } from "sandbar-adapter/portable";
 
 // Daytona API and toolbox OpenAPI v0.218; see README for the pinned sources.
 const CurrentKey = z.object({ organizationId: z.string().min(1) });
@@ -945,6 +945,14 @@ export function daytonaRegistration(
 ) {
   return {
     provider: "daytona" as const,
+    catalog: {
+      displayName: "Daytona",
+      configurationSchema: z.toJSONSchema(Input.shape.configuration, {
+        io: "input",
+        unrepresentable: "any",
+      }),
+      credentialsSchema: z.toJSONSchema(Input.shape.credentials),
+    },
     validate(input: {
       credentials: Record<string, string>;
       configuration: Record<string, string>;
@@ -1066,3 +1074,5 @@ export async function daytonaProvider(input: DaytonaInput) {
     connectionId,
   });
 }
+
+export { daytonaAdapter, createDaytonaAdapter } from "./adapter";

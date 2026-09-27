@@ -3,11 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json && bun src/generate-openapi.ts --check",
+    "openapi:generate": "bun src/generate-openapi.ts",
     "build": "bun build src/index.ts --target bun --outdir dist && bun build-assets.ts"
   },
   "dependencies": {
-    "@sandbar/contracts": "workspace:*",
+    "sandbar-adapter": "workspace:*",
     "@sandbar/core": "workspace:*",
     "@sandbar/provider-spi": "workspace:*",
     "@sandbar/provider-fake": "workspace:*",
@@ -17,5 +18,12 @@
     "@sandbar/store": "workspace:*",
     "hono": "4.13.9",
     "zod": "4.6.5"
+  },
+  "exports": {
+    "./runtime": "./src/runtime.ts"
+  },
+  "devDependencies": {
+    "drizzle-orm": "1.0.0-beta.22",
+    "oxfmt": "0.70.0"
   }
 }

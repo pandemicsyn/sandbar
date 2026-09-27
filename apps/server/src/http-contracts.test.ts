@@ -9,7 +9,7 @@ import {
   Sandbox,
   StreamFrame,
   intentSha256,
-} from "./index";
+} from "./http-contracts";
 import { openApiDocument } from "./openapi";
 
 describe("public contract", () => {
