@@ -25,6 +25,7 @@ import {
   sealedReference,
   throwIfAborted,
   validateCreate,
+  validateExec,
   validateFilePath,
   validateReference,
   waitDelay,
@@ -170,6 +171,8 @@ class RemoteSandbox implements SandboxHandle {
     options: { signal?: AbortSignal } = {},
   ): Promise<OperationHandle<ExecOutput>> {
     throwIfAborted(options.signal);
+
+    input = validateExec(input);
 
     const body = ExecRequest.parse({
       command: input.command,

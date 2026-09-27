@@ -223,19 +223,22 @@ export function validateCreate(input: CreateInput): CreateInput {
 export function validateExec(
   input: ExecInput,
 ): Required<Pick<ExecInput, "command" | "deadlineSeconds" | "maxOutputBytes">> & ExecInput {
-  const parsed = ExecRequest.parse({
-    command: input.command,
-    cwd: input.cwd,
-    env: input.env,
-    deadlineSeconds: input.deadlineSeconds,
-    output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 },
+  const parsed = ExecRequest.safeParse({
+    command: input?.command,
+    cwd: input?.cwd,
+    env: input?.env,
+    deadlineSeconds: input?.deadlineSeconds,
+    output: { capture: "bounded", maxBytes: input?.maxOutputBytes ?? 1_048_576 },
   });
 
+  if (!parsed.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid execution request");
+
   return {
-    ...input,
-    command: parsed.command,
-    deadlineSeconds: parsed.deadlineSeconds ?? 300,
-    maxOutputBytes: parsed.output?.maxBytes ?? 1_048_576,
+    command: parsed.data.command,
+    cwd: parsed.data.cwd,
+    env: parsed.data.env,
+    deadlineSeconds: parsed.data.deadlineSeconds ?? 300,
+    maxOutputBytes: parsed.data.output?.maxBytes ?? 1_048_576,
   };
 }
 

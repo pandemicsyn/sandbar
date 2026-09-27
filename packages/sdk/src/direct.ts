@@ -10,7 +10,6 @@ import {
 } from "@sandbar/provider-spi";
 import {
   normalizeCreate,
-  normalizeExec,
   correlateDriverResult,
   sameNativeScope,
   sameNativeRef,
@@ -30,6 +29,7 @@ import {
   sealedReference,
   throwIfAborted,
   validateCreate,
+  validateExec,
   validateFilePath,
   waitDelay,
   type CreateInput,
@@ -246,13 +246,7 @@ class DirectSandbox implements SandboxHandle {
     throwIfAborted(options.signal);
     this.client.ensureOpen();
 
-    const request = normalizeExec({
-      command: input.command,
-      cwd: input.cwd,
-      env: input.env,
-      deadlineSeconds: input.deadlineSeconds,
-      output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 },
-    });
+    const request = validateExec(input);
 
     const invocation = identity();
 

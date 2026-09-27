@@ -93,6 +93,27 @@ test("direct resource flow preserves binary files and nonzero output", async () 
     ),
   ).rejects.toBe(preAborted.signal.reason);
   expect((await control("/_test/state")).invocations.length).toBe(before);
+
+  for (const invalid of [
+    { command: { kind: "argv", argv: [] } },
+    { command: { kind: "argv", argv: ["echo"] }, env: { "BAD=KEY": "value" } },
+    { command: { kind: "argv", argv: ["echo"] }, deadlineSeconds: 0 },
+  ]) {
+    await expect(box.submitExec(JSON.parse(JSON.stringify(invalid)))).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+  }
+
+  // Simulate a deserialized JavaScript call with a missing execution request.
+  const missingExecInput = JSON.parse("null") ?? undefined;
+
+  await expect(box.submitExec(missingExecInput)).rejects.toMatchObject({
+    code: "INVALID_ARGUMENT",
+    effect: "none",
+  });
+
+  expect((await control("/_test/state")).invocations.length).toBe(before);
   const file = Uint8Array.of(0, 255, 128, 42);
   await box.writeFile("/binary", file);
   expect(await box.readFile("/binary")).toEqual(file);
@@ -918,7 +939,26 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
       { signal: preAborted.signal },
     ),
   ).rejects.toBe(preAborted.signal.reason);
-  await expect(box.submitExec({ command: { kind: "argv", argv: [] } })).rejects.toThrow();
+
+  for (const invalid of [
+    { command: { kind: "argv", argv: [] } },
+    { command: { kind: "argv", argv: ["echo"] }, env: { "BAD=KEY": "value" } },
+    { command: { kind: "argv", argv: ["echo"] }, deadlineSeconds: 0 },
+  ]) {
+    await expect(box.submitExec(JSON.parse(JSON.stringify(invalid)))).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+  }
+
+  // Simulate a deserialized JavaScript call with a missing execution request.
+  const missingExecInput = JSON.parse("null") ?? undefined;
+
+  await expect(box.submitExec(missingExecInput)).rejects.toMatchObject({
+    code: "INVALID_ARGUMENT",
+    effect: "none",
+  });
+
   await expect(box.readFile("/a/./b")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   await expect(box.writeFile("/too-large", new Uint8Array(1_048_577))).rejects.toMatchObject({
     code: "OUTPUT_CAPACITY",
