@@ -11,6 +11,7 @@ import {
   ProviderReadError,
   SandboxRef,
   type DriverResult,
+  type DriverCapabilities,
   type InvocationIdentity,
   type NativeRef,
   type ProviderDriver,
@@ -108,6 +109,7 @@ export class EffectCreateClient {
   private readonly closeController = new AbortController();
   private readonly runtime: ManagedRuntime.ManagedRuntime<Provider, never>;
   private readonly decoder: DirectClient;
+  private verifiedCapabilities?: DriverCapabilities;
   private readonly completed = new Map<
     string,
     { result: DriverResult; owner: WeakRef<PrototypeSandbox>; token: object }
@@ -150,7 +152,12 @@ export class EffectCreateClient {
 
     const driver: ProviderDriver = {
       name: source.name,
-      capabilities: (scope) => source.capabilities(scope),
+      // The prototype already verified these capabilities before returning a
+      // CREATE handle. Baseline handle methods do not re-check them.
+      capabilities: (scope) =>
+        this.verifiedCapabilities && sameNativeScope(scope, this.scope)
+          ? Promise.resolve(this.verifiedCapabilities)
+          : source.capabilities(scope),
       prepare: (input) => source.prepare(input),
       create: (input) => source.create(input),
       inspect: (ref) => source.inspect(ref),
@@ -265,6 +272,8 @@ export class EffectCreateClient {
           new SandbarError("INVALID_RESPONSE", "Provider capability identity mismatch"),
         );
 
+      this.verifiedCapabilities = caps;
+
       const prep = yield* preflightDriver(() =>
         driver.prepare({
           scope: this.scope,
@@ -351,6 +360,8 @@ export class EffectCreateClient {
 
     if (caps.provider !== this.scope.provider)
       throw new SandbarError("INVALID_RESPONSE", "Provider capability identity mismatch");
+
+    this.verifiedCapabilities = caps;
 
     return new EffectCreateOperation(this, checked);
   }

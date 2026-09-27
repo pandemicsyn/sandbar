@@ -333,12 +333,15 @@ for (const [name, make] of Object.entries(variants)) {
     await client.close();
   });
 
-  test(`${name}: transient lazy-handle preflight failure does not strand completed CREATE`, async () => {
+  test(`${name}: completed handle use needs no new capability preflight`, async () => {
     const { provider, control } = await fixture();
     const originalCapabilities = provider.driver.capabilities.bind(provider.driver);
     let failNext = false;
+    let capabilityCalls = 0;
 
     provider.driver.capabilities = async (scope) => {
+      capabilityCalls++;
+
       if (failNext) {
         failNext = false;
         throw new ProviderReadError("INVALID_RESPONSE", "transient capability read");
@@ -349,12 +352,12 @@ for (const [name, make] of Object.entries(variants)) {
 
     const client = make(provider);
     const box = await client.sandboxes.create(input);
+    const callsAfterCreate = capabilityCalls;
     failNext = true;
 
-    if (name === "effect")
-      await expect(box.inspect()).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
-
     expect((await box.inspect()).state).toBe("running");
+    expect(capabilityCalls).toBe(callsAfterCreate);
+    expect(failNext).toBe(true);
     expect(createCount(await control("/_test/state"))).toBe(1);
     await client.close();
   });
