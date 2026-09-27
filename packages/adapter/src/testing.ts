@@ -48,6 +48,14 @@ function identity() {
   return { operationId: id(), submissionId: id(), invocationKey: id() };
 }
 
+function canonicalScope(scope: Scope): string {
+  return JSON.stringify([
+    scope.authority.kind,
+    scope.authority.id,
+    Object.entries(scope.partition).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  ]);
+}
+
 export async function adapterSuite<
   C extends z.ZodType,
   K extends z.ZodType,
@@ -91,7 +99,7 @@ export async function adapterSuite<
 
     try {
       requireCondition(
-        JSON.stringify(connection.scope) !== JSON.stringify(alternate.scope),
+        canonicalScope(connection.scope) !== canonicalScope(alternate.scope),
         "alternate verified authority or endpoint must produce another scope",
       );
       scenarios.push("independent verified scopes");

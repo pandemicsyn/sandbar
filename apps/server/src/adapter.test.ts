@@ -21,6 +21,7 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
   let submissions = 0;
   let observations = 0;
   let destroys = 0;
+  let endpoint = "cluster-a";
 
   const adapter = defineAdapter({
     name: "example.custom",
@@ -35,7 +36,7 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
       return {
         scope: {
           authority: { kind: "account", id: "account-1" },
-          partition: { region: config.region, endpoint: "https://example.invalid" },
+          partition: { region: config.region, endpoint },
         },
         supports: { images: ["prepared"], network: ["blocked"] },
         create: {
@@ -62,6 +63,15 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
       };
     },
   });
+
+  const direct = await Sandbar.connect({
+    adapter,
+    config: { region: "us", flags: { privateOnly: true } },
+    credentials: { token: "secret-credential" },
+  });
+
+  expect(direct.scope.partition.endpoint).toBe("cluster-a");
+  await direct.close();
 
   const config = { databaseUrl, keyFile, setupTokenFile, startRunner: false, adapters: [adapter] };
   let runtime = await openDomainRuntime(config);
@@ -188,6 +198,15 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
 
     expect(foreign.status).not.toBe(202);
     expect(submissions).toBe(1);
+
+    endpoint = "cluster-b";
+    const changedEndpoint = await runtime.store.getConnection(projectId, connectionId);
+
+    await expect(runtime.registry.connect(changedEndpoint!)).rejects.toThrow(
+      "Verified native scope or endpoint changed",
+    );
+    expect(submissions).toBe(1);
+    endpoint = "cluster-a";
 
     await runtime.store.backend.run(
       sql`UPDATE provider_connections SET adapter_contract_version=99 WHERE id=${connectionId}`,

@@ -12,7 +12,6 @@ export function adapterNativeScope(
     connectionId,
     accountId: `${scope.authority.kind}:${scope.authority.id}`,
     region: scope.partition.region,
-    endpoint: scope.partition.endpoint,
     adapterScope: scope,
   });
 }

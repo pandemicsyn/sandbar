@@ -79,3 +79,58 @@ test("public conformance suite runs the required managed adapter scenarios", asy
   expect(report.scenarios).toContain("lost response unknown and observation without replay");
   expect(report.counters).toEqual({ create: 3, destroy: 1, release: 2 });
 });
+
+test("conformance rejects reordered but equal Unicode partition scopes before mutation", async () => {
+  const effects = { create: 0, destroy: 0, release: 0 };
+  const composed = "é";
+  const decomposed = "e\u0301";
+
+  const adapter = defineAdapter({
+    name: "fixture.reordered-scope",
+    config: z.strictObject({ reverse: z.boolean() }),
+    credentials: z.strictObject({}),
+    async connect({ config, host }) {
+      host.onClose(() => {
+        effects.release++;
+      });
+
+      return {
+        scope: {
+          authority: { kind: "account", id: "same" },
+          partition: config.reverse
+            ? { [decomposed]: "same", [composed]: "same" }
+            : { [composed]: "same", [decomposed]: "same" },
+        },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          effects.create++;
+
+          return { id: "box", state: "running" as const };
+        },
+        async destroy() {
+          effects.destroy++;
+
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  await expect(
+    adapterSuite({
+      adapter,
+      fixture: {
+        config: { reverse: false },
+        credentials: {},
+        alternate: { config: { reverse: true }, credentials: {} },
+        createInput: { image: { kind: "prepared", value: "image" }, networkPolicy: "blocked" },
+        counters: () => ({ ...effects }),
+        loseNextCreateResponse() {},
+        holdNextCreateResponse() {},
+        releaseHeldCreateResponse() {},
+        assertNativeRetriesDisabled() {},
+      },
+    }),
+  ).rejects.toThrow("alternate verified authority or endpoint must produce another scope");
+  expect(effects).toEqual({ create: 0, destroy: 0, release: 2 });
+});
