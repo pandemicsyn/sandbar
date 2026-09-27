@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 import { AdapterError, defineAdapter } from "sandbar-adapter";
 import { createSdkTransport, MODAL_ENDPOINT, type ModalTransport } from "./transport";
 
@@ -32,9 +33,9 @@ const DestroyToken = z.strictObject({ id: z.string().min(1).max(128) });
 type RecordValue = z.output<typeof RecordSchema>;
 
 export function modalWriteScript(overwrite: boolean): string {
-  const prefix = 'umask 077; mkdir -p -- "${1%/*}" && ';
+  const prefix = 'umask 077; mkdir -p -- "$1" && ';
 
-  return prefix + (overwrite ? "" : "set -C && ") + 'cat > "$1" && wc -c < "$1"';
+  return prefix + (overwrite ? "" : "set -C && ") + 'cat > "$2" && wc -c < "$2"';
 }
 
 function modalExecId(submissionId: string): string {
@@ -397,7 +398,14 @@ export function createModalAdapter(
                   {
                     sandboxId: input.sandbox.id,
                     execId: modalExecId(ctx.submissionId),
-                    command: ["/bin/sh", "-c", script, "sandbar-write", input.path],
+                    command: [
+                      "/bin/sh",
+                      "-c",
+                      script,
+                      "sandbar-write",
+                      posix.dirname(input.path),
+                      input.path,
+                    ],
                     timeoutSeconds: 300,
                   },
                   ctx.signal,

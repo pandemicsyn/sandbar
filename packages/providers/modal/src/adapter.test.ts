@@ -6,7 +6,7 @@ import { Image, Sandbar } from "sandbar-sdk";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 test("Modal public adapter passes required managed-compute scenarios", async () => {
   const effects = { create: 0, destroy: 0, release: 0 };
@@ -113,9 +113,13 @@ test("write command uses atomic noclobber and preserves binary bytes", async () 
   const path = join(directory, "nested", "binary");
 
   const invoke = (overwrite: boolean, bytes: Uint8Array) =>
-    spawnSync("/bin/sh", ["-c", modalWriteScript(overwrite), "sandbar-write", path], {
-      input: Buffer.from(bytes),
-    });
+    spawnSync(
+      "/bin/sh",
+      ["-c", modalWriteScript(overwrite), "sandbar-write", posix.dirname(path), path],
+      {
+        input: Buffer.from(bytes),
+      },
+    );
 
   try {
     expect(invoke(false, Uint8Array.from([0, 255, 129])).status).toBe(0);
@@ -339,13 +343,16 @@ test("Modal direct exec and write recover by execution ID after one uncertain su
   expect(await roundtripBox.readFile("/tmp/binary")).toEqual(Uint8Array.from([1, 2]));
   expect(starts[2]?.command[2]).not.toContain("set -C");
 
+  await roundtripBox.writeFile("/root-level", Uint8Array.from([9]), { overwrite: false });
+  expect(starts[3]?.command.slice(-2)).toEqual(["/", "/root-level"]);
+
   const shell = await roundtripBox.exec({
     command: { kind: "shell", script: "printf shell" },
     deadlineSeconds: 5,
   });
 
   expect(shell).toMatchObject({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() });
-  expect(starts[3]?.command).toEqual(["/bin/sh", "-c", "printf shell"]);
+  expect(starts[4]?.command).toEqual(["/bin/sh", "-c", "printf shell"]);
   await client.close();
 });
 
