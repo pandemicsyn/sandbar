@@ -392,6 +392,19 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("button", { name: "Create sandbox" }).waitFor();
   expect(page.url()).toBe(fleetUrl);
   await page.unroute(connectionListRoute);
+  await page
+    .getByLabel("Label key (optional)")
+    .evaluate((input) => input.removeAttribute("maxlength"));
+  await page.getByLabel("Label key (optional)").fill("x".repeat(65));
+  await page.getByLabel("Label value").fill("e2e");
+  await page.getByRole("button", { name: "Create sandbox" }).click();
+  await page.getByRole("alert").waitFor();
+  expect(await page.getByRole("button", { name: "Start new create attempt" }).count()).toBe(0);
+  expect(
+    (await control("GET", "/_test/state")).ledger.filter(
+      (entry: { action: string }) => entry.action === "create",
+    ),
+  ).toHaveLength(0);
   await page.getByLabel("Label key (optional)").fill("team");
   await page.getByLabel("Label value").fill("e2e");
 
@@ -654,6 +667,16 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByText("Temporary sandbox refresh failure").waitFor({ state: "hidden" });
   expect(sandboxRefreshReads).toBe(4);
   await page.unroute(sandboxReadRoute);
+  await page.getByLabel("Shell script").fill("x".repeat(65_537));
+  await page.getByRole("button", { name: "Run command" }).click();
+  await page.getByRole("alert").waitFor();
+  expect(await page.getByRole("button", { name: "Start new exec attempt" }).count()).toBe(0);
+  expect(
+    (await control("GET", "/_test/state")).ledger.filter(
+      (entry: { action: string }) => entry.action === "exec",
+    ),
+  ).toHaveLength(0);
+  await page.getByLabel("Shell script").fill("echo hello");
 
   const stderrBytes = Buffer.concat([Buffer.from("fixture stderr\n"), Buffer.from([0xff])]);
 

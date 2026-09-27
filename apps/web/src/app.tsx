@@ -10,7 +10,8 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import {
-  type CreateSandboxRequest,
+  CreateSandboxRequest,
+  ExecRequest,
   SandboxListQuery,
   type Operation,
   type Sandbox,
@@ -593,13 +594,15 @@ function FleetPage() {
     setError(undefined);
 
     try {
-      const input: CreateSandboxRequest = {
+      const candidate: CreateSandboxRequest = {
         environment: { kind: "prepared" as const, imageId: "fake-starter" },
         network: { policy: "blocked" as const },
         connectionId: connectionId || available[0]?.id,
       };
 
-      if (labelKey.trim()) input.labels = { [labelKey.trim()]: labelValue.trim() };
+      if (labelKey.trim()) candidate.labels = { [labelKey.trim()]: labelValue.trim() };
+
+      const input = CreateSandboxRequest.parse(candidate);
 
       const accepted = await withInvocation(createScope, input, (key) =>
         api.createSandbox(projectId, input, key),
@@ -915,10 +918,10 @@ function SandboxPage() {
     setError(undefined);
 
     try {
-      const input = {
+      const input = ExecRequest.parse({
         command: { kind: "shell" as const, script: command },
         output: { capture: "bounded" as const, maxBytes: 65536 },
-      };
+      });
 
       const accepted = await withInvocation(execScope, input, (key) =>
         api.execute(projectId, sandboxId, input, key),
