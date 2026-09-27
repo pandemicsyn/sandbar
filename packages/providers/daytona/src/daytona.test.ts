@@ -468,6 +468,80 @@ test.each(["stopped", "paused", "archived"])(
   },
 );
 
+test.each(["stopped", "paused", "archived", "starting"])(
+  "%s sandbox rejects direct exec and write before toolbox mutation but allows cleanup",
+  async (state) => {
+    let toolboxPosts = 0;
+    let deletes = 0;
+    let detailReads = 0;
+
+    const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/sandbox/native-1" && init?.method === "DELETE") {
+        deletes++;
+
+        return Response.json(native("existing", "destroyed"));
+      }
+
+      if (url.pathname === "/api/sandbox/native-1") {
+        detailReads++;
+
+        return Response.json(native("existing", state));
+      }
+
+      if (init?.method === "POST") toolboxPosts++;
+
+      throw new Error(`Unexpected ${url.pathname}`);
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+
+    const execution = await provider.driver.exec({
+      sandbox,
+      identity: identity(`blocked-exec-${state}`),
+      command: { kind: "shell", script: "true" },
+      deadlineSeconds: 10,
+      maxOutputBytes: 16,
+    });
+
+    const write = await provider.driver.writeFile({
+      sandbox,
+      identity: identity(`blocked-write-${state}`),
+      path: "/file",
+      bytes: new Uint8Array([1]),
+      overwrite: true,
+    });
+
+    for (const result of [execution, write]) {
+      expect(result.status).toBe("rejected");
+      expect(result.effect).toBe("none");
+
+      if (result.status === "rejected") {
+        expect(result.error.code).toBe("unavailable");
+        expect(result.error.retry).toBe("never");
+      }
+    }
+
+    expect(detailReads).toBe(2);
+    expect(toolboxPosts).toBe(0);
+
+    const cleanup = await provider.driver.destroy({
+      sandbox,
+      identity: identity(`cleanup-${state}`),
+    });
+
+    expect(cleanup.status).toBe("completed");
+    expect(deletes).toBe(1);
+  },
+);
+
 test("lost create response is observed by stable name without replay; scope rotation fails", async () => {
   let posts = 0;
   let name = "";

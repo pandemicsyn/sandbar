@@ -332,12 +332,15 @@ export class DaytonaDriver implements ProviderDriver {
 
     return sandbox;
   }
-  private async toolbox(sandbox: SandboxRef): Promise<Sandbox> {
+  private async toolbox(sandbox: SandboxRef, requireStarted = false): Promise<Sandbox> {
     this.sameScope(sandbox);
     const value = await this.sandbox(sandbox.nativeId);
 
     if (!value || !value.toolboxProxyUrl)
       throw new ProviderReadError("NOT_FOUND", "Daytona sandbox or toolbox unavailable");
+
+    if (requireStarted && value.state !== "started")
+      throw new ProviderReadError("INVALID_RESPONSE", "Daytona sandbox is not started");
 
     return value;
   }
@@ -644,7 +647,7 @@ export class DaytonaDriver implements ProviderDriver {
     let native: Sandbox;
 
     try {
-      native = await this.toolbox(input.sandbox);
+      native = await this.toolbox(input.sandbox, true);
     } catch (error) {
       return {
         status: "rejected",
@@ -826,7 +829,7 @@ export class DaytonaDriver implements ProviderDriver {
     let native: Sandbox;
 
     try {
-      native = await this.toolbox(input.sandbox);
+      native = await this.toolbox(input.sandbox, true);
     } catch (error) {
       return {
         status: "rejected",
