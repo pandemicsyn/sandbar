@@ -7,3 +7,5 @@ node_modules/
 *.sqlite
 *.sqlite-*
 coverage/
+**/.astro/
+**/.wrangler/

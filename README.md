@@ -24,6 +24,8 @@ bun run build
 
 Lint also runs the [vendored anti-slop Oxlint rules](tools/oxlint/anti-slop/UPSTREAM.md), including Effect rules for future Effect code. The plugin source and licenses live in `tools/oxlint/anti-slop/` as repository-owned tooling.
 
+The [public documentation source](apps/docs/README.md) lives in `apps/docs`. It builds a static Astro/Starlight site for `https://sandbarsdk.dev`, with a landing page and task-oriented guides. This development site is not deployed by this branch. Run `bun run docs:check` to validate its content, generated HTTP reference, static output and fake-backed examples.
+
 ## Design documents
 
 - [V1 contract recommendations and review decisions](docs/contract-recommendations.md)
@@ -37,6 +39,7 @@ Lint also runs the [vendored anti-slop Oxlint rules](tools/oxlint/anti-slop/UPST
 - [Implementation plan](docs/implementation-plan.md)
 - [Direct and service-backed TypeScript SDK](docs/direct-typescript-sdk.md)
 - [SDK runtime and package qualification](docs/sdk-runtime-qualification.md)
+- [Public documentation site plan](docs/documentation-site.md)
 
 The new strategy documents refine the earlier drafts; recommendations are marked as proposals, with provider guarantees pending live conformance. The current documents supersede the [original design and TypeScript sketches](docs/archive/README.md). Proposed API names and routes remain subject to contract review.
 
