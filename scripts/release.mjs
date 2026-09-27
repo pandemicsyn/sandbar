@@ -322,6 +322,31 @@ if (!real) {
   process.exit(0);
 }
 
+const existingRelease = spawnSync(
+  "gh",
+  ["release", "view", `v${plan.version}`, "--json", "body,isDraft,isPrerelease"],
+  {
+    cwd: root,
+    encoding: "utf8",
+  },
+);
+
+const releaseExists = existingRelease.status === 0;
+
+if (releaseExists) {
+  const release = JSON.parse(existingRelease.stdout);
+
+  if (release.body?.trim?.() !== releaseNotes.trim())
+    throw new Error("GitHub release exists with different notes; inspect it manually");
+
+  if (release.isDraft !== false || release.isPrerelease !== prerelease)
+    throw new Error("GitHub release draft or prerelease state does not match the version");
+} else if (existingRelease.status !== 1 || existingRelease.stderr?.trim() !== "release not found") {
+  throw new Error(
+    `Cannot inspect GitHub release state: ${existingRelease.error?.message ?? existingRelease.stderr?.trim() ?? "unknown GitHub CLI failure"}`,
+  );
+}
+
 const state = packed.map((item) => ({
   item,
   existing: registryIntegrity(item.manifest.name, plan.version),
@@ -358,24 +383,7 @@ for (const { item, existing } of state) {
   await verifyRegistry(item, plan.version, tag);
 }
 
-const existingRelease = spawnSync(
-  "gh",
-  ["release", "view", `v${plan.version}`, "--json", "body,isDraft,isPrerelease"],
-  {
-    cwd: root,
-    encoding: "utf8",
-  },
-);
-
-if (existingRelease.status === 0) {
-  const release = JSON.parse(existingRelease.stdout);
-
-  if (release.body?.trim?.() !== releaseNotes.trim())
-    throw new Error("GitHub release exists with different notes; inspect it manually");
-
-  if (release.isDraft !== false || release.isPrerelease !== prerelease)
-    throw new Error("GitHub release draft or prerelease state does not match the version");
-} else {
+if (!releaseExists) {
   const args = [
     "release",
     "create",

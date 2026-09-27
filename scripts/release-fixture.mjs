@@ -221,7 +221,8 @@ import fs from "node:fs";
 const args = process.argv.slice(2);
 if (args[0] !== "release") process.exit(3);
 if (args[1] === "view") {
-  if (!fs.existsSync(process.env.FAKE_RELEASE_FILE)) process.exit(1);
+  if (process.env.FAKE_GH_VIEW_ERROR === "true") { console.error("transport unavailable"); process.exit(1); }
+  if (!fs.existsSync(process.env.FAKE_RELEASE_FILE)) { console.error("release not found"); process.exit(1); }
   console.log(fs.readFileSync(process.env.FAKE_RELEASE_FILE, "utf8"));
 } else if (args[1] === "create") {
   const file = args[args.indexOf("--notes-file") + 1];
@@ -243,6 +244,47 @@ if (args[1] === "view") {
     FAKE_RELEASE_FILE: releaseFile,
   };
 
+  const unpublishedRegistry = readFileSync(registryFile, "utf8");
+  const fixtureNotes = readFileSync(join(stableArtifacts, "RELEASE_NOTES.md"), "utf8");
+
+  for (const wrongState of [
+    { body: fixtureNotes, isDraft: true, isPrerelease: false },
+    { body: fixtureNotes, isDraft: false, isPrerelease: true },
+  ]) {
+    writeFileSync(releaseFile, JSON.stringify(wrongState));
+    rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
+
+    const rejected = spawnSync("bun", ["scripts/release.mjs", "publish"], {
+      cwd: temporary,
+      env: { ...process.env, ...publishEnv },
+      encoding: "utf8",
+    });
+
+    if (
+      rejected.status === 0 ||
+      !rejected.stderr.includes("GitHub release draft or prerelease state does not match") ||
+      readFileSync(registryFile, "utf8") !== unpublishedRegistry
+    )
+      throw new Error(`Invalid GitHub release state allowed npm publication: ${rejected.stderr}`);
+  }
+
+  rmSync(releaseFile);
+  rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
+
+  const ghFailure = spawnSync("bun", ["scripts/release.mjs", "publish"], {
+    cwd: temporary,
+    env: { ...process.env, ...publishEnv, FAKE_GH_VIEW_ERROR: "true" },
+    encoding: "utf8",
+  });
+
+  if (
+    ghFailure.status === 0 ||
+    !ghFailure.stderr.includes("Cannot inspect GitHub release state: transport unavailable") ||
+    readFileSync(registryFile, "utf8") !== unpublishedRegistry
+  )
+    throw new Error("GitHub inspection failure allowed npm publication");
+
+  rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
   run("bun", ["scripts/release.mjs", "publish"], temporary, publishEnv);
   const published = JSON.parse(readFileSync(registryFile, "utf8"));
 
