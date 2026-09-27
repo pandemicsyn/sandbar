@@ -91,8 +91,11 @@ void flow;
 }
 
 const directSource = `
-import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { OutcomeUnknownError as RootUnknown } from "@sandbar/sdk";
+import { Sandbar, Image, OutcomeUnknownError as DirectUnknown } from "@sandbar/sdk/direct";
+import { OutcomeUnknownError as RemoteUnknown } from "@sandbar/sdk/remote";
 import { fakeProvider } from "@sandbar/provider-fake/client";
+if (RootUnknown !== DirectUnknown || RootUnknown !== RemoteUnknown) throw new Error("SDK entry points disagree on error identity");
 const client = Sandbar.direct({ provider: await fakeProvider({ url: process.env.FAKE_URL, token: process.env.FAKE_TOKEN }) });
 try {
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
@@ -108,7 +111,9 @@ try {
 } finally { await client.close(); }
 `;
 const remoteSource = `
-import { Sandbar, Image } from "@sandbar/sdk/remote";
+import { OutcomeUnknownError as RootUnknown } from "@sandbar/sdk";
+import { Sandbar, Image, OutcomeUnknownError as RemoteUnknown } from "@sandbar/sdk/remote";
+if (RootUnknown !== RemoteUnknown) throw new Error("Remote-only SDK entry point disagrees on error identity");
 if (typeof Sandbar.connect !== "function" || Image.prepared("fake-starter").kind !== "prepared") throw new Error("Remote-only export unavailable");
 process.stdout.write("packed remote import passed\\n");
 `;
