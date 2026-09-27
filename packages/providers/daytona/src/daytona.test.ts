@@ -253,6 +253,68 @@ test("unexpected public create response remains unknown without replay", async (
   expect(creates).toBe(1);
 });
 
+test.each(["stopped", "paused", "archived"])(
+  "existing %s sandbox completes create and recovery with unknown readiness",
+  async (state) => {
+    let creates = 0;
+    const name = "sandbar-settled-create";
+
+    const labels = {
+      "sandbar.submission": "settled-create",
+      "sandbar.operation": "op_settled-create",
+    };
+
+    const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/sandbox" && init?.method === "POST") {
+        creates++;
+
+        return Response.json({ ...native(name, state), labels });
+      }
+
+      if (url.pathname === "/api/sandbox")
+        return Response.json({ items: [{ ...listed(name), state, labels }], nextCursor: null });
+
+      if (url.pathname === "/api/sandbox/native-1")
+        return Response.json({ ...native(name, state), labels });
+
+      throw new Error(`Unexpected ${url.pathname}`);
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+    const created = await provider.driver.create({
+      scope: provider.scope,
+      identity: identity("settled-create"),
+      image: "snap-1",
+      networkPolicy: "blocked",
+    });
+
+    const recovered = await provider.driver.observe({
+      scope: provider.scope,
+      submissionId: "settled-create",
+      operationId: "op_settled-create",
+    });
+
+    for (const result of [created, recovered]) {
+      expect(result?.status).toBe("completed");
+
+      if (result?.status === "completed" && result.value.kind === "sandbox") {
+        expect(result.value.observation.state).toBe("unknown");
+        expect(result.value.observation.ref.nativeId).toBe("native-1");
+      }
+    }
+
+    expect(creates).toBe(1);
+  },
+);
+
 test("lost create response is observed by stable name without replay; scope rotation fails", async () => {
   let posts = 0;
   let name = "";

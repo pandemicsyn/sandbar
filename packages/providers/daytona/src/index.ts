@@ -463,6 +463,14 @@ export class DaytonaDriver implements ProviderDriver {
       if (["destroyed", "error", "build_failed"].includes(value.state))
         return unknown(input.identity.submissionId, "Daytona sandbox did not reach running state");
 
+      if (["stopped", "paused", "archived"].includes(value.state))
+        return {
+          status: "completed",
+          effect: "applied",
+          submissionId: input.identity.submissionId,
+          value: { kind: "sandbox", observation },
+        };
+
       if (observation.state !== "running")
         return {
           status: "pending",
@@ -565,6 +573,14 @@ export class DaytonaDriver implements ProviderDriver {
 
     if (["destroyed", "error", "build_failed"].includes(detail.state))
       return unknown(input.submissionId, "Daytona sandbox did not reach running state");
+
+    if (["stopped", "paused", "archived"].includes(detail.state))
+      return {
+        status: "completed",
+        effect: "applied",
+        submissionId: input.submissionId,
+        value: { kind: "sandbox", observation },
+      };
 
     if (observation.state !== "running")
       return {

@@ -35,6 +35,8 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     creates = 0,
     snapshotReads = 0;
 
+  let createdState = "started";
+
   const calls: string[] = [];
 
   const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -51,7 +53,8 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     if (url.pathname === "/api/snapshots/snap-1") {
       snapshotReads++;
 
-      if (snapshotReads > 1) throw new Error("snapshot was checked after durable submission");
+      if (snapshotReads > creates + 1)
+        throw new Error("snapshot was checked after durable submission");
 
       return Response.json({
         id: "snap-1",
@@ -73,11 +76,11 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
       expect(body.snapshot).toBe("snap-1");
 
       return Response.json({
-        id: "native-1",
+        id: `native-${creates}`,
         name: body.name,
         organizationId: account,
         target: "us",
-        state: "started",
+        state: createdState,
         networkBlockAll: true,
         public: false,
       });
@@ -215,6 +218,40 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     expect(creates).toBe(1);
     expect(snapshotReads).toBe(1);
 
+    createdState = "stopped";
+
+    const stoppedAdmission = await request(
+      `/v1/projects/${project.id}/sandboxes`,
+      "POST",
+      { environment: { kind: "prepared", imageId: "snap-1" }, connectionId: connection.id },
+      token,
+      Bun.randomUUIDv7(),
+    );
+
+    expect(stoppedAdmission.response.status).toBe(202);
+
+    const stopped = z
+      .object({ operation: z.object({ id: z.string(), sandboxId: z.string() }) })
+      .parse(stoppedAdmission.value).operation;
+
+    expect(await runtime.runner.tick()).toBe(true);
+    expect((await runtime.store.getOperation(project.id, stopped.id))?.status).toBe("succeeded");
+    const stoppedRow = await runtime.store.getSandbox(project.id, stopped.sandboxId);
+    expect(stoppedRow?.native_id).toBe("native-2");
+    expect(stoppedRow?.observed_state).toBe("unknown");
+    expect(creates).toBe(2);
+    expect(snapshotReads).toBe(2);
+
+    const blockedExec = await request(
+      `/v1/projects/${project.id}/sandboxes/${stopped.sandboxId}/executions`,
+      "POST",
+      { command: { kind: "shell", script: "true" } },
+      token,
+      Bun.randomUUIDv7(),
+    );
+
+    expect(blockedExec.response.status).toBe(409);
+
     for (const unavailable of ["draining", "missing scope"] as const) {
       const queued = await request(
         `/v1/projects/${project.id}/sandboxes`,
@@ -246,7 +283,7 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
       expect(await runtime.runner.tick()).toBe(true);
       expect(calls).toHaveLength(before);
       expect((await runtime.store.getOperation(project.id, queuedId))?.submission_possible).toBe(0);
-      expect(creates).toBe(1);
+      expect(creates).toBe(2);
 
       if (unavailable === "draining") {
         const control = new Database(join(directory, "control.sqlite"));
@@ -260,6 +297,16 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
         }
       }
     }
+
+    const cleanup = await request(
+      `/v1/projects/${project.id}/sandboxes/${stopped.sandboxId}`,
+      "DELETE",
+      undefined,
+      token,
+      Bun.randomUUIDv7(),
+    );
+
+    expect(cleanup.response.status).toBe(202);
 
     account = "org-2";
 
