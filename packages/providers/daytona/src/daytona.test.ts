@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { rmSync } from "node:fs";
 import { z } from "zod";
 import type { ExecCommand } from "sandbar-adapter/portable";
 import { daytonaProvider, daytonaRegistration, createDaytonaAdapter } from "./index";
@@ -365,6 +366,7 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
   const calls: string[] = [];
   let createdName = "";
   let snapshotReads = 0;
+  const files = new Map<string, Uint8Array>([["/file", new Uint8Array([0, 255])]]);
 
   const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -403,16 +405,46 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
 
     if (url.pathname === "/api/sandbox/native-1") return json(native(createdName));
 
-    if (url.pathname.endsWith("/process/execute"))
+    if (url.pathname.endsWith("/process/execute")) {
+      const command = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("cat ")) {
+        const match = /^cat '([^']+)' > '([^']+)'/.exec(command);
+
+        if (!match) throw new Error("Invalid Daytona write command");
+        files.set(match[2]!, files.get(match[1]!)!);
+        files.delete(match[1]!);
+
+        return json({ exitCode: 0, result: "" });
+      }
+
       return json({
         exitCode: 0,
         result: "SANDBAR-EXEC-V1\n7\n2\n1\n 00 ff\nSANDBAR-STDERR\n 7f\nSANDBAR-END\n",
       });
+    }
 
-    if (url.pathname.endsWith("/files/upload-v2"))
-      return json({ name: "file", path: "/file", type: "file" });
+    if (url.pathname.endsWith("/files/upload-v2")) {
+      const path = url.searchParams.get("path")!;
+      const form = init?.body;
 
-    if (url.pathname.endsWith("/files/download")) return new Response(new Uint8Array([0, 255]));
+      if (!(form instanceof FormData)) throw new Error("Expected multipart upload");
+      const file = form.get("file");
+
+      if (!(file instanceof Blob)) throw new Error("Expected uploaded Blob");
+      files.set(path, new Uint8Array(await file.arrayBuffer()));
+
+      return json({ name: "file", path, type: "file" });
+    }
+
+    if (url.pathname.endsWith("/files/download")) {
+      const data = files.get(url.searchParams.get("path")!);
+
+      return data ? new Response(new Uint8Array(data)) : new Response(null, { status: 404 });
+    }
+
     throw new Error(`Unexpected ${url.pathname}`);
   });
 
@@ -447,7 +479,7 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
   await sandbox.destroy();
   expect(calls.filter((value) => value === "POST /api/sandbox")).toHaveLength(1);
   expect(snapshotReads).toBe(1);
-  expect(calls.filter((value) => value.endsWith("/process/execute"))).toHaveLength(1);
+  expect(calls.filter((value) => value.endsWith("/process/execute"))).toHaveLength(2);
   expect(calls.filter((value) => value.endsWith("/files/upload-v2"))).toHaveLength(1);
   await client.close();
 });
@@ -775,7 +807,7 @@ test("lost create response is observed by stable name without replay; scope rota
   expect(rotated.scope.accountId).not.toBe(provider.scope.accountId);
 });
 
-test("unsupported OCI and no-overwrite reject before mutation", async () => {
+test("mutable OCI tags reject before mutation", async () => {
   const calls: string[] = [];
 
   const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -808,21 +840,338 @@ test("unsupported OCI and no-overwrite reject before mutation", async () => {
   ).rejects.toThrow();
   await client.close();
 
-  const write = await provider.driver.writeFile({
-    sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
-    identity: identity("write-1"),
-    path: "/file",
-    bytes: new Uint8Array([1]),
-    overwrite: false,
-  });
-
-  expect(write.status).toBe("rejected");
   expect(calls).toEqual([
     "GET /api/api-keys/current",
     "GET /api/regions",
     "GET /api/api-keys/current",
     "GET /api/regions",
   ]);
+});
+
+test("OCI snapshot build occurs inside submission and feeds one sandbox create", async () => {
+  const mutations: { path: string; body: Record<string, FixtureJson> }[] = [];
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
+
+    if (url.pathname === "/api/snapshots/sandbar-image-oci-1")
+      return new Response(null, { status: 404 });
+
+    if (url.pathname === "/api/snapshots" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      mutations.push({ path: url.pathname, body });
+
+      return Response.json({
+        id: "built-snapshot",
+        name: body.name,
+        imageName: body.imageName,
+        organizationId: "org-1",
+        state: "active",
+        regionIds: ["us"],
+        sandboxClass: "container",
+      });
+    }
+
+    if (url.pathname === "/api/sandbox" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      mutations.push({ path: url.pathname, body });
+
+      return Response.json({ ...native(body.name), snapshot: body.snapshot, labels: body.labels });
+    }
+
+    throw new Error(`Unexpected fixture route ${url.pathname}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+  const prepared = await provider.driver.prepare({
+    scope: provider.scope,
+    image: { kind: "oci", value: "alpine:3.21" },
+    networkPolicy: "blocked",
+  });
+
+  expect(prepared).toEqual({ supported: true, effectiveImage: "alpine:3.21" });
+  expect(mutations).toHaveLength(0);
+
+  const result = await provider.driver.create({
+    scope: provider.scope,
+    identity: identity("oci-1"),
+    image: "alpine:3.21",
+    imageKind: "oci",
+    networkPolicy: "blocked",
+  });
+
+  expect(result.status).toBe("completed");
+  expect(mutations).toHaveLength(2);
+  expect(mutations[0]).toEqual({
+    path: "/api/snapshots",
+    body: {
+      name: "sandbar-image-oci-1",
+      imageName: "alpine:3.21",
+      regionId: "us",
+      sandboxClass: "container",
+    },
+  });
+  expect(mutations[1]!.body.snapshot).toBe("built-snapshot");
+});
+
+test("lost OCI build response remains unknown with no sandbox submission", async () => {
+  let builds = 0;
+  let creates = 0;
+  let built = false;
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const path = new URL(String(input)).pathname;
+
+    if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (path === "/api/regions") return Response.json([region()]);
+
+    if (path === "/api/snapshots/sandbar-image-oci-lost")
+      return built
+        ? Response.json({
+            id: "built-lost",
+            name: "sandbar-image-oci-lost",
+            imageName: "alpine:3.21",
+            organizationId: "org-1",
+            state: "active",
+            regionIds: ["us"],
+            sandboxClass: "container",
+          })
+        : new Response(null, { status: 404 });
+
+    if (path === "/api/snapshots" && init?.method === "POST") {
+      builds++;
+      built = true;
+      throw new Error("response lost after snapshot build");
+    }
+
+    if (path === "/api/sandbox" && init?.method !== "POST")
+      return Response.json({ items: [], nextCursor: null });
+
+    if (path === "/api/sandbox" && init?.method === "POST") creates++;
+    throw new Error(`Unexpected fixture route ${path}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+  const result = await provider.driver.create({
+    scope: provider.scope,
+    identity: identity("oci-lost"),
+    image: "alpine:3.21",
+    imageKind: "oci",
+    networkPolicy: "blocked",
+  });
+
+  expect(result.status).toBe("unknown");
+
+  const observed = await provider.driver.observe({
+    scope: provider.scope,
+    submissionId: "oci-lost",
+    operationId: "op_oci-lost",
+  });
+
+  expect(observed?.status).toBe("unknown");
+
+  if (observed?.status === "unknown")
+    expect(observed.reason).toContain("daytona:snapshot:built-lost");
+
+  expect(builds).toBe(1);
+  expect(creates).toBe(0);
+});
+
+test("generic 404 after a lost delete does not certify compute termination", async () => {
+  let deletes = 0;
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const path = new URL(String(input)).pathname;
+
+    if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (path === "/api/regions") return Response.json([region()]);
+
+    if (path === "/api/sandbox/native-1" && init?.method === "DELETE") {
+      deletes++;
+      throw new Error("delete response lost");
+    }
+
+    if (path === "/api/sandbox/native-1") return new Response(null, { status: 404 });
+    throw new Error(`Unexpected fixture route ${path}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const box = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+  expect(
+    (await provider.driver.destroy({ sandbox: box, identity: identity("lost-delete") })).status,
+  ).toBe("unknown");
+  expect(await provider.driver.observeDestroy(box, "lost-delete")).toBeNull();
+  expect(deletes).toBe(1);
+});
+
+test.each(["absent", "file", "directory", "symlink"] as const)(
+  "atomic no-clobber preserves destination: %s",
+  async (existing) => {
+    const files = new Map<string, Uint8Array>();
+
+    if (existing === "file") files.set("/target", new Uint8Array([9]));
+    let links = 0;
+    let uploads = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+      if (url.pathname.endsWith("/files/upload-v2")) {
+        uploads++;
+        const path = url.searchParams.get("path")!;
+        const data = init?.body;
+
+        if (!(data instanceof FormData)) throw new Error("Expected multipart upload");
+        const file = data.get("file");
+
+        if (!(file instanceof Blob)) throw new Error("Expected uploaded Blob");
+        files.set(path, new Uint8Array(await file.arrayBuffer()));
+
+        return Response.json({ path, name: "blob", type: "file" });
+      }
+
+      if (url.pathname.endsWith("/files/download")) {
+        const bytes = files.get(url.searchParams.get("path")!);
+
+        return bytes ? new Response(new Uint8Array(bytes)) : new Response(null, { status: 404 });
+      }
+
+      if (url.pathname.endsWith("/process/execute")) {
+        links++;
+
+        const command = z
+          .object({ command: z.string() })
+          .parse(JSON.parse(String(init?.body))).command;
+
+        const match = /^ln -T -- '([^']+)' '([^']+)'/.exec(command);
+        expect(match).not.toBeNull();
+        const source = match![1]!;
+        const target = match![2]!;
+        expect(command).toContain(`rm -f '${source}'`);
+        const conflict = existing !== "absent";
+
+        if (!conflict) files.set(target, files.get(source)!);
+        files.delete(source);
+
+        return Response.json({ result: "", exitCode: conflict ? 1 : 0 });
+      }
+
+      throw new Error(`Unexpected fixture route ${url.pathname}`);
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+    const result = await provider.driver.writeFile({
+      sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+      identity: identity(`no-clobber-${existing}`),
+      path: "/target",
+      bytes: new Uint8Array([0, 255]),
+      overwrite: false,
+    });
+
+    const expectedStatus = (
+      {
+        absent: "completed",
+        file: "rejected",
+        directory: "unknown",
+        symlink: "unknown",
+      } as const
+    )[existing];
+
+    expect(result.status).toBe(expectedStatus);
+
+    if (existing === "absent" || existing === "file")
+      expect(Array.from(files.get("/target")!)).toEqual(existing === "file" ? [9] : [0, 255]);
+    else expect(files.has("/target")).toBe(false);
+
+    expect(uploads).toBe(1);
+    expect(links).toBe(1);
+    expect([...files.keys()]).toEqual(
+      existing === "file" || existing === "absent" ? ["/target"] : [],
+    );
+  },
+);
+
+test("lost staging upload response is read back and committed without another upload", async () => {
+  const files = new Map<string, Uint8Array>();
+  let uploads = 0;
+  let commits = 0;
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
+
+    if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+    if (url.pathname.endsWith("/files/upload-v2")) {
+      uploads++;
+      const form = init?.body;
+
+      if (!(form instanceof FormData)) throw new Error("Expected multipart upload");
+      const file = form.get("file");
+
+      if (!(file instanceof Blob)) throw new Error("Expected uploaded Blob");
+      files.set(url.searchParams.get("path")!, new Uint8Array(await file.arrayBuffer()));
+      throw new Error("response lost after native staging upload");
+    }
+
+    if (url.pathname.endsWith("/files/download")) {
+      const bytes = files.get(url.searchParams.get("path")!);
+
+      return bytes ? new Response(new Uint8Array(bytes)) : new Response(null, { status: 404 });
+    }
+
+    if (url.pathname.endsWith("/process/execute")) {
+      commits++;
+
+      const command = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      const link = /^ln -T -- '([^']+)' '([^']+)'/.exec(command);
+
+      if (!link) throw new Error("Expected atomic link");
+      files.set(link[2]!, files.get(link[1]!)!);
+      files.delete(link[1]!);
+
+      return Response.json({ result: "", exitCode: 0 });
+    }
+
+    throw new Error(`Unexpected fixture route ${url.pathname}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+  const result = await provider.driver.writeFile({
+    sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+    identity: identity("lost-stage"),
+    path: "/out",
+    bytes: new Uint8Array([0, 255]),
+    overwrite: false,
+  });
+
+  expect(result.status).toBe("completed");
+  expect(Array.from(files.get("/out")!)).toEqual([0, 255]);
+  expect(uploads).toBe(1);
+  expect(commits).toBe(1);
 });
 
 test("lost exec and upload responses remain unknown after one submission each", async () => {
@@ -1016,6 +1365,9 @@ test("POSIX capture wrapper drains a noisy command while retaining only bounded 
       });
 
       expect(command.error).toBeUndefined();
+      const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(script)?.[1];
+
+      if (receipt) rmSync(receipt, { force: true });
 
       return Response.json({ exitCode: command.status, result: command.stdout });
     }
@@ -1067,6 +1419,9 @@ test("generated capture wrapper isolates utilities from requested PATH and prese
       });
 
       expect(execution.error).toBeUndefined();
+      const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(body.command)?.[1];
+
+      if (receipt) rmSync(receipt, { force: true });
 
       return Response.json({ exitCode: execution.status, result: execution.stdout });
     }
@@ -1257,6 +1612,9 @@ test("local capture utility failure leaves an incomplete frame that stays unknow
       });
 
       expect(execution.error).toBeUndefined();
+      const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(failedCapture)?.[1];
+
+      if (receipt) rmSync(receipt, { force: true });
       expect(execution.status).toBe(0);
 
       return Response.json({ exitCode: execution.status, result: execution.stdout });

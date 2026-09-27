@@ -29,6 +29,8 @@ const Region = z.object({
 
 const Snapshot = z.object({
   id: z.string().min(1),
+  name: z.string().optional(),
+  imageName: z.string().optional(),
   organizationId: z.string().min(1),
   state: z.string(),
   regionIds: z.array(z.string()).optional(),
@@ -58,6 +60,14 @@ const ListResponse = z.object({
 const CommandResponse = z.object({ result: z.string(), exitCode: z.number().int().optional() });
 
 const UploadResponse = z.object({ path: z.string(), name: z.string(), type: z.string() });
+
+const WriteReceipt = z.strictObject({
+  v: z.literal(1),
+  submissionId: z.string().min(1).max(128),
+  path: z.string().min(1).max(4096),
+  digest: z.string().regex(/^[0-9a-f]{64}$/),
+  bytesWritten: z.number().int().nonnegative().max(1_048_576),
+});
 
 const Input = z.strictObject({
   credentials: z.strictObject({ apiKey: z.string().min(1) }),
@@ -166,6 +176,12 @@ function validate(input: {
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+async function receiptPath(kind: "exec" | "write", submissionId: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(submissionId));
+
+  return `/tmp/.sandbar-${kind}-${Buffer.from(digest).toString("hex")}`;
 }
 
 function validPath(path: string): void {
@@ -420,18 +436,28 @@ export class DaytonaDriver implements ProviderDriver {
         reason: "Daytona connection target differs from requested region",
       };
 
-    if (input.image.kind !== "prepared")
-      return {
-        supported: false,
-        reason:
-          "OCI source would trigger a paid implicit Daytona snapshot build; use an existing snapshot ID",
-      };
-
     if (!(await this.supportsBlockedEgress()))
       return {
         supported: false,
         reason: "Verified Daytona organization does not support strict blocked egress",
       };
+
+    if (input.image.kind === "oci") {
+      const image = input.image.value;
+      const digest = /@sha256:[0-9a-fA-F]{64}$/.test(image);
+      const tagged = /:[A-Za-z0-9._-]+$/.test(image) && !image.includes("@");
+
+      if (
+        image.length > 512 ||
+        !/^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/.test(image) ||
+        (!digest && !tagged) ||
+        /:(latest|lts|stable)$/i.test(image)
+      )
+        return { supported: false, reason: "OCI image needs a fixed tag or digest" };
+
+      // Building a snapshot is a paid mutation and belongs to submit, never prepare.
+      return { supported: true, effectiveImage: image };
+    }
 
     const response = await this.request(
       "GET",
@@ -466,8 +492,10 @@ export class DaytonaDriver implements ProviderDriver {
     scope: NativeScope;
     identity: InvocationIdentity;
     image: string;
+    imageKind?: "prepared" | "oci";
     networkPolicy: string;
     labels?: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<DriverResult> {
     this.sameScope(input.scope);
 
@@ -483,28 +511,110 @@ export class DaytonaDriver implements ProviderDriver {
         },
       };
 
-    // The caller prepares this effective snapshot before recording submission.
+    // A stable name lets an unknown OCI build be found without repeating the build.
     const name = `sandbar-${input.identity.submissionId}`;
+    let snapshotId = input.image;
+
+    if (input.imageKind === "oci") {
+      const snapshotName = `sandbar-image-${input.identity.submissionId}`;
+
+      try {
+        const prior = await this.request("GET", `/snapshots/${encodeURIComponent(snapshotName)}`);
+
+        if (prior.status !== 404)
+          return unknown(
+            input.identity.submissionId,
+            "Daytona snapshot name was present or could not be checked before build",
+          );
+
+        if (input.signal?.aborted)
+          return unknown(input.identity.submissionId, "Daytona creation wait was aborted");
+
+        const snapshot = await this.json("POST", "/snapshots", Snapshot, {
+          name: snapshotName,
+          imageName: input.image,
+          regionId: this.scope.region,
+          sandboxClass: "container",
+        });
+
+        if (
+          snapshot.name !== snapshotName ||
+          snapshot.imageName !== input.image ||
+          snapshot.organizationId !== this.scope.accountId
+        )
+          return unknown(input.identity.submissionId, "Daytona snapshot build response mismatched");
+
+        snapshotId = snapshot.id;
+        const deadline = Date.now() + 600_000;
+        let current = snapshot;
+
+        while (current.state !== "active") {
+          if (["error", "build_failed", "removing", "inactive"].includes(current.state))
+            return unknown(input.identity.submissionId, "Daytona snapshot build did not activate");
+
+          if (Date.now() >= deadline || input.signal?.aborted)
+            return unknown(input.identity.submissionId, "Daytona snapshot build outcome pending");
+          await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+
+          const response = await this.request(
+            "GET",
+            `/snapshots/${encodeURIComponent(snapshotId)}`,
+          );
+
+          if (!response.ok)
+            return unknown(input.identity.submissionId, "Daytona snapshot build unreadable");
+          current = await boundedJson(response, Snapshot);
+
+          if (
+            current.id !== snapshotId ||
+            current.organizationId !== this.scope.accountId ||
+            current.imageName !== input.image
+          )
+            return unknown(
+              input.identity.submissionId,
+              "Daytona snapshot build identity mismatched",
+            );
+        }
+
+        if (!current.regionIds?.includes(this.scope.region!))
+          return unknown(
+            input.identity.submissionId,
+            "Daytona snapshot unavailable in target region",
+          );
+      } catch {
+        return unknown(
+          input.identity.submissionId,
+          "Daytona snapshot build response unavailable; do not replay",
+        );
+      }
+    }
+
+    const labels = {
+      ...input.labels,
+      "sandbar.submission": input.identity.submissionId,
+      "sandbar.operation": input.identity.operationId,
+    };
+
+    if (input.imageKind === "oci") Object.assign(labels, { "sandbar.imageSnapshot": snapshotId });
+
+    if (input.signal?.aborted)
+      return unknown(input.identity.submissionId, "Daytona creation wait was aborted");
 
     try {
       const value = await this.json("POST", "/sandbox", NativeSandbox, {
         name,
-        snapshot: input.image,
+        snapshot: snapshotId,
         target: this.scope.region,
         networkBlockAll: true,
         public: false,
-        labels: {
-          ...input.labels,
-          "sandbar.submission": input.identity.submissionId,
-          "sandbar.operation": input.identity.operationId,
-        },
+        labels,
         ttlMinutes: this.config.configuration.ttlMinutes,
       });
 
       if (value.name !== name)
         return unknown(input.identity.submissionId, "Daytona returned a different sandbox name");
 
-      if (value.snapshot && value.snapshot !== input.image)
+      if (value.snapshot && value.snapshot !== snapshotId)
         return unknown(input.identity.submissionId, "Daytona returned a different snapshot");
       const observation = observed(this.scope, value);
 
@@ -600,7 +710,39 @@ export class DaytonaDriver implements ProviderDriver {
         (!input.operationId || value.labels["sandbar.operation"] === input.operationId),
     );
 
-    if (matches.length !== 1) return null;
+    if (matches.length !== 1) {
+      // An OCI build may have materialized before its response was lost. This
+      // is evidence of a scoped image candidate, never authority to create a sandbox.
+      try {
+        const imageName = `sandbar-image-${input.submissionId}`;
+        const response = await this.request("GET", `/snapshots/${encodeURIComponent(imageName)}`);
+
+        if (response.status === 404) return null;
+
+        if (!response.ok) return null;
+        const image = await boundedJson(response, Snapshot);
+
+        if (image.name !== imageName || image.organizationId !== this.scope.accountId) return null;
+
+        const reference = /^[a-zA-Z0-9._:-]{1,128}$/.test(image.id)
+          ? `daytona:snapshot:${image.id}`
+          : imageName;
+
+        const state = ["active", "building", "pending", "error", "build_failed"].includes(
+          image.state,
+        )
+          ? image.state
+          : "unverified";
+
+        return unknown(
+          input.submissionId,
+          `Scoped Daytona snapshot candidate ${reference} is ${state}; no sandbox creation is confirmed`,
+        );
+      } catch {
+        return null;
+      }
+    }
+
     let detail: Sandbox | null;
 
     try {
@@ -653,6 +795,7 @@ export class DaytonaDriver implements ProviderDriver {
     env?: Record<string, string>;
     deadlineSeconds: number;
     maxOutputBytes: number;
+    signal?: AbortSignal;
   }): Promise<DriverResult> {
     let native: Sandbox;
 
@@ -698,7 +841,12 @@ export class DaytonaDriver implements ProviderDriver {
         : `exec ${input.command.argv.map(quote).join(" ")}`;
 
     const max = Math.min(input.maxOutputBytes, 1_048_576);
-    const script = `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PATH; d=$(mktemp -d) || exit 125; trap 'rm -rf "$d"' EXIT; mkfifo "$d/fo" "$d/fe" || exit 125; (exec 3<"$d/fo"; head -c ${max + 1} <&3 >"$d/o"; cat <&3 >/dev/null) & p1=$!; (exec 3<"$d/fe"; head -c ${max + 1} <&3 >"$d/e"; cat <&3 >/dev/null) & p2=$!; (${exports} ${command}) >"$d/fo" 2>"$d/fe"; rc=$?; wait "$p1"; wait "$p2"; o=$(wc -c <"$d/o"); e=$(wc -c <"$d/e"); o=$((o)); e=$((e)); a=$((o<${max}?o:${max})); b=$((e<${max}-a?e:${max}-a)); printf 'SANDBAR-EXEC-V1\\n%s\\n%s\\n%s\\n' "$rc" "$o" "$e"; if [ "$a" -gt 0 ]; then head -c "$a" "$d/o" | od -An -tx1 -v; fi; printf 'SANDBAR-STDERR\\n'; if [ "$b" -gt 0 ]; then head -c "$b" "$d/e" | od -An -tx1 -v; fi; printf 'SANDBAR-END\\n'`;
+    const capture = `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PATH; d=$(mktemp -d) || exit 125; trap 'rm -rf "$d"' EXIT; mkfifo "$d/fo" "$d/fe" || exit 125; (exec 3<"$d/fo"; head -c ${max + 1} <&3 >"$d/o"; cat <&3 >/dev/null) & p1=$!; (exec 3<"$d/fe"; head -c ${max + 1} <&3 >"$d/e"; cat <&3 >/dev/null) & p2=$!; (${exports} ${command}) >"$d/fo" 2>"$d/fe"; rc=$?; wait "$p1"; wait "$p2"; o=$(wc -c <"$d/o"); e=$(wc -c <"$d/e"); o=$((o)); e=$((e)); a=$((o<${max}?o:${max})); b=$((e<${max}-a?e:${max}-a)); printf 'SANDBAR-EXEC-V1\\n%s\\n%s\\n%s\\n' "$rc" "$o" "$e"; if [ "$a" -gt 0 ]; then head -c "$a" "$d/o" | od -An -tx1 -v; fi; printf 'SANDBAR-STDERR\\n'; if [ "$b" -gt 0 ]; then head -c "$b" "$d/e" | od -An -tx1 -v; fi; printf 'SANDBAR-END\\n'`;
+    const framePath = await receiptPath("exec", input.identity.submissionId);
+    const script = `{ ${capture}; } > ${quote(framePath)}; cat ${quote(framePath)}`;
+
+    if (input.signal?.aborted)
+      return unknown(input.identity.submissionId, "Daytona execution wait was aborted");
 
     try {
       const response = await this.json(
@@ -713,69 +861,118 @@ export class DaytonaDriver implements ProviderDriver {
       if (response.exitCode !== 0)
         return unknown(input.identity.submissionId, "Daytona capture wrapper failed");
 
-      const match =
-        /^SANDBAR-EXEC-V1\n(-?\d+)\n(\d+)\n(\d+)\n([\da-f\s]*)SANDBAR-STDERR\n([\da-f\s]*)SANDBAR-END\n?$/.exec(
-          response.result,
-        );
-
-      if (!match) return unknown(input.identity.submissionId, "Daytona command response malformed");
-
-      const decode = (hex: string): Uint8Array | null => {
-        const trimmed = hex.trim();
-        const tokens = trimmed ? trimmed.split(/\s+/) : [];
-
-        if (tokens.some((token) => !/^[0-9a-f]{2}$/.test(token))) return null;
-
-        return Uint8Array.from(tokens.map((token) => Number.parseInt(token, 16)));
-      };
-
-      const stdout = decode(match[4]!),
-        stderr = decode(match[5]!);
-
-      const stdoutCount = Number(match[2]),
-        stderrCount = Number(match[3]);
-
-      if (
-        !stdout ||
-        !stderr ||
-        !Number.isSafeInteger(stdoutCount) ||
-        !Number.isSafeInteger(stderrCount) ||
-        stdoutCount < 0 ||
-        stderrCount < 0 ||
-        stdoutCount > max + 1 ||
-        stderrCount > max + 1 ||
-        stdout.length !== Math.min(stdoutCount, max) ||
-        stderr.length !== Math.min(stderrCount, max - stdout.length) ||
-        stdout.length + stderr.length > max
-      )
-        return unknown(input.identity.submissionId, "Daytona capture output inconsistent");
-
-      const observation = {
-        ref: {
-          scope: this.scope,
-          nativeId: input.identity.submissionId,
-          kind: "execution" as const,
-        },
-        sandbox: input.sandbox,
-        completed: true,
-        exitCode: Number(match[1]),
-        stdoutBase64: Buffer.from(stdout).toString("base64"),
-        stderrBase64: Buffer.from(stderr).toString("base64"),
-        truncated: stdoutCount + stderrCount > stdout.length + stderr.length,
-        observedAt: new Date().toISOString(),
-      };
-
-      return DriverResult.parse({
-        status: "completed",
-        effect: "applied",
-        submissionId: input.identity.submissionId,
-        value: { kind: "execution", observation },
-      });
+      return this.parseExecFrame(input.sandbox, input.identity.submissionId, max, response.result);
     } catch {
       return unknown(
         input.identity.submissionId,
         "Daytona execution response unavailable; do not replay",
       );
+    }
+  }
+  private parseExecFrame(
+    sandbox: SandboxRef,
+    submissionId: string,
+    max: number | undefined,
+    result: string,
+  ): DriverResult {
+    const match =
+      /^SANDBAR-EXEC-V1\n(-?\d+)\n(\d+)\n(\d+)\n([\da-f\s]*)SANDBAR-STDERR\n([\da-f\s]*)SANDBAR-END\n?$/.exec(
+        result,
+      );
+
+    if (!match) return unknown(submissionId, "Daytona command response malformed");
+
+    const decode = (hex: string): Uint8Array | null => {
+      const trimmed = hex.trim();
+      const tokens = trimmed ? trimmed.split(/\s+/) : [];
+
+      if (tokens.some((token) => !/^[0-9a-f]{2}$/.test(token))) return null;
+
+      return Uint8Array.from(tokens.map((token) => Number.parseInt(token, 16)));
+    };
+
+    const stdout = decode(match[4]!),
+      stderr = decode(match[5]!);
+
+    if (!stdout || !stderr) return unknown(submissionId, "Daytona capture output inconsistent");
+
+    const stdoutCount = Number(match[2]),
+      stderrCount = Number(match[3]);
+
+    const bound = max ?? stdout.length + stderr.length;
+
+    if (
+      !stdout ||
+      !stderr ||
+      !Number.isSafeInteger(stdoutCount) ||
+      !Number.isSafeInteger(stderrCount) ||
+      stdoutCount < 0 ||
+      stderrCount < 0 ||
+      stdoutCount > bound + 1 ||
+      stderrCount > bound + 1 ||
+      stdout.length !== Math.min(stdoutCount, bound) ||
+      stderr.length !== Math.min(stderrCount, bound - stdout.length) ||
+      stdout.length + stderr.length > bound ||
+      bound > 1_048_576
+    )
+      return unknown(submissionId, "Daytona capture output inconsistent");
+
+    const observation = {
+      ref: {
+        scope: this.scope,
+        nativeId: submissionId,
+        kind: "execution" as const,
+      },
+      sandbox: sandbox,
+      completed: true,
+      exitCode: Number(match[1]),
+      stdoutBase64: Buffer.from(stdout).toString("base64"),
+      stderrBase64: Buffer.from(stderr).toString("base64"),
+      truncated: stdoutCount + stderrCount > stdout.length + stderr.length,
+      observedAt: new Date().toISOString(),
+    };
+
+    return DriverResult.parse({
+      status: "completed",
+      effect: "applied",
+      submissionId: submissionId,
+      value: { kind: "execution", observation },
+    });
+  }
+  async observeExec(input: {
+    sandbox: SandboxRef;
+    submissionId: string;
+    maxOutputBytes?: number;
+  }): Promise<DriverResult | null> {
+    this.sameScope(input.sandbox);
+    const native = await this.toolbox(input.sandbox);
+    const path = await receiptPath("exec", input.submissionId);
+
+    const response = await this.request(
+      "GET",
+      `/files/download?path=${encodeURIComponent(path)}`,
+      undefined,
+      undefined,
+      native,
+    );
+
+    if (response.status === 404) return null;
+
+    if (!response.ok) return null;
+
+    try {
+      const frame = new TextDecoder("utf-8", { fatal: true }).decode(
+        await boundedBytes(response, 4_194_304),
+      );
+
+      return this.parseExecFrame(
+        input.sandbox,
+        input.submissionId,
+        input.maxOutputBytes === undefined ? undefined : Math.min(input.maxOutputBytes, 1_048_576),
+        frame,
+      );
+    } catch {
+      return null;
     }
   }
   async readFile(input: { sandbox: SandboxRef; path: string }): Promise<Uint8Array> {
@@ -810,6 +1007,7 @@ export class DaytonaDriver implements ProviderDriver {
     path: string;
     bytes: Uint8Array;
     overwrite: boolean;
+    signal?: AbortSignal;
   }): Promise<DriverResult> {
     validPath(input.path);
 
@@ -825,17 +1023,6 @@ export class DaytonaDriver implements ProviderDriver {
         },
       };
 
-    if (!input.overwrite)
-      return {
-        status: "rejected",
-        effect: "none",
-        error: {
-          code: "unsupported",
-          message: "Daytona upload cannot guarantee no-overwrite",
-          effect: "none",
-          retry: "never",
-        },
-      };
     let native: Sandbox;
 
     try {
@@ -856,31 +1043,131 @@ export class DaytonaDriver implements ProviderDriver {
       };
     }
 
+    const temporaryPath = `${input.path.slice(0, input.path.lastIndexOf("/") + 1)}.sandbar-${Buffer.from(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.identity.submissionId)),
+    )
+      .toString("hex")
+      .slice(0, 32)}`;
+
+    if (temporaryPath.length > 4096)
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code: "invalid",
+          message: "Daytona staging path exceeds limit",
+          effect: "none",
+          retry: "never",
+        },
+      };
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(input.bytes)]), "blob");
 
+    if (input.signal?.aborted)
+      return unknown(input.identity.submissionId, "Daytona file write wait was aborted");
+
     try {
-      const response = await this.request(
-        "POST",
-        `/files/upload-v2?path=${encodeURIComponent(input.path)}`,
-        form,
-        undefined,
-        native,
-      );
+      let response: Response | null = null;
 
-      if (!response.ok)
+      try {
+        response = await this.request(
+          "POST",
+          `/files/upload-v2?path=${encodeURIComponent(temporaryPath)}`,
+          form,
+          undefined,
+          native,
+        );
+      } catch {
+        // A lost upload response may still have written the unique stage.
+        // The subsequent read, never another upload, decides whether to commit.
+      }
+
+      if (response && !response.ok)
         return unknown(input.identity.submissionId, "Daytona upload response unavailable");
-      const receipt = await boundedJson(response, UploadResponse, 16_384);
 
-      if (receipt.path !== input.path)
-        return unknown(input.identity.submissionId, "Daytona upload path mismatch");
-      const actual = await this.readFile({ sandbox: input.sandbox, path: input.path });
+      if (response) {
+        const receipt = await boundedJson(response, UploadResponse, 16_384);
+
+        if (receipt.path !== temporaryPath)
+          return unknown(input.identity.submissionId, "Daytona upload path mismatch");
+      }
+
+      const actual = await this.readFile({ sandbox: input.sandbox, path: temporaryPath });
 
       if (
         actual.length !== input.bytes.length ||
         !actual.every((byte, i) => byte === input.bytes[i])
       )
         return unknown(input.identity.submissionId, "Daytona upload bytes could not be verified");
+
+      if (input.signal?.aborted)
+        return unknown(input.identity.submissionId, "Daytona file write wait was aborted");
+
+      // The stage and destination share a directory. POSIX link(2) is atomic
+      // create-if-absent; overwrite uses a shell copy and verifies final bytes.
+      const action = input.overwrite
+        ? `cat ${quote(temporaryPath)} > ${quote(input.path)}`
+        : `ln -T -- ${quote(temporaryPath)} ${quote(input.path)}`;
+
+      const digest = Buffer.from(
+        await crypto.subtle.digest("SHA-256", new Uint8Array(input.bytes)),
+      ).toString("hex");
+
+      const marker = JSON.stringify({
+        v: 1,
+        submissionId: input.identity.submissionId,
+        path: input.path,
+        digest,
+        bytesWritten: input.bytes.length,
+      });
+
+      const markerPath = await receiptPath("write", input.identity.submissionId);
+      const command = `${action}; rc=$?; if [ "$rc" -eq 0 ]; then printf '%s' ${quote(marker)} > ${quote(markerPath)} || rc=125; fi; rm -f ${quote(temporaryPath)} || rc=125; exit "$rc"`;
+
+      const committed = await this.json(
+        "POST",
+        "/process/execute",
+        CommandResponse,
+        { command, timeout: 30 },
+        native,
+      );
+
+      if (committed.exitCode !== 0) {
+        if (!input.overwrite && committed.exitCode !== 125) {
+          try {
+            await this.readFile({ sandbox: input.sandbox, path: input.path });
+
+            return {
+              status: "rejected",
+              effect: "none",
+              error: {
+                code: "conflict",
+                message: "Daytona destination already exists",
+                effect: "none",
+                retry: "never",
+              },
+            };
+          } catch {
+            return unknown(
+              input.identity.submissionId,
+              "Daytona atomic link failed without a confirmed conflict",
+            );
+          }
+        }
+
+        return unknown(input.identity.submissionId, "Daytona file commit failed");
+      }
+
+      const finalBytes = await this.readFile({ sandbox: input.sandbox, path: input.path });
+
+      if (
+        finalBytes.length !== input.bytes.length ||
+        !finalBytes.every((byte, i) => byte === input.bytes[i])
+      )
+        return unknown(
+          input.identity.submissionId,
+          "Daytona file commit bytes could not be verified",
+        );
 
       return {
         status: "completed",
@@ -891,7 +1178,7 @@ export class DaytonaDriver implements ProviderDriver {
           observation: {
             sandbox: input.sandbox,
             path: input.path,
-            bytesWritten: actual.length,
+            bytesWritten: finalBytes.length,
             complete: true,
           },
         },
@@ -900,11 +1187,78 @@ export class DaytonaDriver implements ProviderDriver {
       return unknown(input.identity.submissionId, "Daytona upload outcome unknown; do not replay");
     }
   }
+  async observeWrite(input: {
+    sandbox: SandboxRef;
+    submissionId: string;
+    path?: string;
+    digest?: string;
+  }): Promise<DriverResult | null> {
+    this.sameScope(input.sandbox);
+    const native = await this.toolbox(input.sandbox);
+    const markerPath = await receiptPath("write", input.submissionId);
+
+    const response = await this.request(
+      "GET",
+      `/files/download?path=${encodeURIComponent(markerPath)}`,
+      undefined,
+      undefined,
+      native,
+    );
+
+    if (response.status === 404) return null;
+
+    if (!response.ok) return null;
+    let receipt: z.infer<typeof WriteReceipt>;
+
+    try {
+      receipt = WriteReceipt.parse(
+        JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(await boundedBytes(response, 16_384)),
+        ),
+      );
+    } catch {
+      return null;
+    }
+
+    if (
+      receipt.submissionId !== input.submissionId ||
+      (input.path && receipt.path !== input.path) ||
+      (input.digest && receipt.digest !== input.digest)
+    )
+      return null;
+    const actual = await this.readFile({ sandbox: input.sandbox, path: receipt.path });
+
+    const digest = Buffer.from(
+      await crypto.subtle.digest("SHA-256", new Uint8Array(actual)),
+    ).toString("hex");
+
+    if (actual.length !== receipt.bytesWritten || digest !== receipt.digest)
+      return unknown(input.submissionId, "Daytona write receipt and file disagree");
+
+    return {
+      status: "completed",
+      effect: "applied",
+      submissionId: input.submissionId,
+      value: {
+        kind: "file_write",
+        observation: {
+          sandbox: input.sandbox,
+          path: receipt.path,
+          bytesWritten: actual.length,
+          complete: true,
+        },
+      },
+    };
+  }
   async destroy(input: {
     sandbox: SandboxRef;
     identity: InvocationIdentity;
+    signal?: AbortSignal;
   }): Promise<DriverResult> {
     this.sameScope(input.sandbox);
+
+    if (input.signal?.aborted)
+      return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
 
     try {
       const value = await this.json(
@@ -927,7 +1281,13 @@ export class DaytonaDriver implements ProviderDriver {
         submissionId: input.identity.submissionId,
         value: {
           kind: "destroy",
-          observation: { sandbox: input.sandbox, computeStopped: true, retainedResources: [] },
+          observation: {
+            sandbox: input.sandbox,
+            computeStopped: true,
+            retainedResources: value.labels?.["sandbar.imageSnapshot"]
+              ? [`daytona:snapshot:${value.labels["sandbar.imageSnapshot"]}`]
+              : [],
+          },
         },
       };
     } catch {
@@ -936,6 +1296,28 @@ export class DaytonaDriver implements ProviderDriver {
         "Daytona deletion outcome unknown; do not replay",
       );
     }
+  }
+  async observeDestroy(sandbox: SandboxRef, submissionId: string): Promise<DriverResult | null> {
+    this.sameScope(sandbox);
+    const value = await this.sandbox(sandbox.nativeId);
+
+    if (!value || value.state !== "destroyed") return null;
+
+    return {
+      status: "completed",
+      effect: "applied",
+      submissionId,
+      value: {
+        kind: "destroy",
+        observation: {
+          sandbox,
+          computeStopped: true,
+          retainedResources: value.labels?.["sandbar.imageSnapshot"]
+            ? [`daytona:snapshot:${value.labels["sandbar.imageSnapshot"]}`]
+            : [],
+        },
+      },
+    };
   }
 }
 

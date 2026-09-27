@@ -559,6 +559,259 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
   }
 });
 
+test("Daytona service reconnects and observes lost exec, write and delete without replay", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-daytona-recovery-"));
+  const keyFile = join(directory, "key");
+  const setupTokenFile = join(directory, "setup");
+  const databaseUrl = join(directory, "control.sqlite");
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)));
+  await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "long-daytona-recovery-setup-token");
+  await chmod(setupTokenFile, 0o600);
+  const files = new Map<string, Uint8Array>();
+  const mutations = { create: 0, exec: 0, upload: 0, write: 0, destroy: 0 };
+  let state = "started";
+  let name = "";
+  let labels: Record<string, string> = {};
+
+  const box = () => ({
+    id: "native-1",
+    name,
+    organizationId: "org-1",
+    target: "us",
+    state,
+    networkBlockAll: true,
+    public: false,
+    toolboxProxyUrl: "https://proxy.app.daytona.io/toolbox",
+    labels,
+  });
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const url = new URL(String(input));
+    const path = url.pathname;
+
+    if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (path === "/api/regions")
+      return Response.json([
+        { id: "us", name: "US", regionType: "shared", organizationId: "org-1" },
+      ]);
+
+    if (path === "/api/organizations/org-1")
+      return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+    if (path === "/api/snapshots/snap-1")
+      return Response.json({
+        id: "snap-1",
+        organizationId: "org-1",
+        state: "active",
+        regionIds: ["us"],
+        sandboxClass: "container",
+      });
+
+    if (path === "/api/sandbox" && init?.method === "POST") {
+      mutations.create++;
+      const body = JSON.parse(String(init.body));
+      name = body.name;
+      labels = body.labels;
+
+      return Response.json(box());
+    }
+
+    if (path === "/api/sandbox/native-1") {
+      if (init?.method === "DELETE") {
+        mutations.destroy++;
+        state = "destroyed";
+        throw new Error("Daytona delete response lost");
+      }
+
+      return Response.json(box());
+    }
+
+    if (path.endsWith("/files/upload-v2")) {
+      mutations.upload++;
+      const destination = url.searchParams.get("path")!;
+      const form = init?.body;
+
+      if (!(form instanceof FormData)) throw new Error("Expected multipart upload");
+      const file = form.get("file");
+
+      if (!(file instanceof Blob)) throw new Error("Expected uploaded Blob");
+      files.set(destination, new Uint8Array(await file.arrayBuffer()));
+
+      return Response.json({ path: destination, name: "blob", type: "file" });
+    }
+
+    if (path.endsWith("/files/download")) {
+      const bytes = files.get(url.searchParams.get("path")!);
+
+      return bytes ? new Response(new Uint8Array(bytes)) : new Response(null, { status: 404 });
+    }
+
+    if (path.endsWith("/process/execute")) {
+      const command = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("{ ")) {
+        mutations.exec++;
+        const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(command)?.[1];
+        expect(receipt).toBeDefined();
+        files.set(
+          receipt!,
+          new TextEncoder().encode(
+            "SANDBAR-EXEC-V1\n0\n2\n0\n 00 ff\nSANDBAR-STDERR\nSANDBAR-END\n",
+          ),
+        );
+        throw new Error("Daytona exec response lost");
+      }
+
+      mutations.write++;
+      const link = /^ln -T -- '([^']+)' '([^']+)'/.exec(command);
+      expect(link).not.toBeNull();
+      files.set(link![2]!, files.get(link![1]!)!);
+      files.delete(link![1]!);
+      const marker = /printf '%s' '([^']+)' > '([^']+)'/.exec(command);
+      expect(marker).not.toBeNull();
+      files.set(marker![2]!, new TextEncoder().encode(marker![1]!));
+      throw new Error("Daytona write response lost");
+    }
+
+    throw new Error(`Unexpected Daytona fixture route ${path}`);
+  });
+
+  const config = {
+    databaseUrl,
+    keyFile,
+    setupTokenFile,
+    startRunner: false,
+    daytonaFetch: fetchImpl,
+  };
+
+  let runtime = await openDomainRuntime(config);
+  let bearer = "";
+
+  const request = async (path: string, method = "GET", body?: FixtureJson, key?: string) => {
+    const headers: Record<string, string> = {};
+
+    if (bearer) headers.Authorization = `Bearer ${bearer}`;
+
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+
+    if (key) headers["Idempotency-Key"] = key;
+
+    const response = await runtime.app.request(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    return { status: response.status, value: await response.json() };
+  };
+
+  const id = (value: FixtureJson) =>
+    z
+      .object({ operation: z.object({ id: z.string(), sandboxId: z.string().optional() }) })
+      .parse(value).operation;
+
+  try {
+    bearer = z
+      .object({ token: z.string() })
+      .parse(
+        (await request("/v1/setup", "POST", { setupToken: "long-daytona-recovery-setup-token" }))
+          .value,
+      ).token;
+
+    const projectId = z
+      .object({ id: z.string() })
+      .parse((await request("/v1/projects", "POST", { name: "Daytona recovery" })).value).id;
+
+    const base = `/v1/projects/${projectId}`;
+
+    const connectionId = z.object({ id: z.string() }).parse(
+      (
+        await request(`${base}/provider-connections`, "POST", {
+          provider: "daytona",
+          name: "Daytona fixture",
+          credentials: { apiKey: "fixture-key" },
+          configuration: { target: "us", ttlMinutes: 15 },
+        })
+      ).value,
+    ).id;
+
+    expect(
+      (await request(`${base}/provider-connections/${connectionId}/verify`, "POST")).status,
+    ).toBe(200);
+
+    const create = id(
+      (
+        await request(
+          `${base}/sandboxes`,
+          "POST",
+          {
+            connectionId,
+            environment: { kind: "prepared", imageId: "snap-1" },
+          },
+          Bun.randomUUIDv7(),
+        )
+      ).value,
+    );
+
+    await runtime.runner.tick();
+    expect((await runtime.store.getOperation(projectId, create.id))?.status).toBe("succeeded");
+    const boxId = create.sandboxId!;
+
+    const exec = id(
+      (
+        await request(
+          `${base}/sandboxes/${boxId}/executions`,
+          "POST",
+          { command: { kind: "shell", script: "printf '\\000\\377'" } },
+          Bun.randomUUIDv7(),
+        )
+      ).value,
+    );
+
+    await runtime.runner.tick();
+    expect((await runtime.store.getOperation(projectId, exec.id))?.status).not.toBe("succeeded");
+    await runtime.close();
+    runtime = await openDomainRuntime(config);
+    await request(`${base}/operations/${exec.id}/reconcile`, "POST", {});
+    await runtime.runner.tick();
+    expect((await runtime.store.getOperation(projectId, exec.id))?.status).toBe("succeeded");
+    const data = new Uint8Array([0, 255]);
+
+    const write = await runtime.app.request(`${base}/sandboxes/${boxId}/files?path=%2Fout`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${bearer}`, "Idempotency-Key": Bun.randomUUIDv7() },
+      body: data,
+    });
+
+    expect(write.status).toBe(202);
+    const writeId = id(await write.json()).id;
+    await runtime.close();
+    runtime = await openDomainRuntime(config);
+    await request(`${base}/operations/${writeId}/reconcile`, "POST", {});
+    await runtime.runner.tick();
+    expect((await runtime.store.getOperation(projectId, writeId))?.status).toBe("succeeded");
+
+    const destroy = id(
+      (await request(`${base}/sandboxes/${boxId}`, "DELETE", undefined, Bun.randomUUIDv7())).value,
+    );
+
+    await runtime.runner.tick();
+    await runtime.close();
+    runtime = await openDomainRuntime(config);
+    await request(`${base}/operations/${destroy.id}/reconcile`, "POST", {});
+    await runtime.runner.tick();
+    expect((await runtime.store.getOperation(projectId, destroy.id))?.status).toBe("succeeded");
+    expect(mutations).toEqual({ create: 1, exec: 1, upload: 1, write: 1, destroy: 1 });
+  } finally {
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("stored Daytona endpoint trust removal terminates fresh work before provider I/O", async () => {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-daytona-trust-restart-"));
   const keyFile = join(directory, "key");

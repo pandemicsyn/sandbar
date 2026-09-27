@@ -19,6 +19,18 @@ const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
 const Token = z.strictObject({ submissionId: z.string().min(1).max(128) });
 
+const ExecToken = z.strictObject({
+  submissionId: z.string().min(1).max(128),
+  maxOutputBytes: z.number().int().nonnegative().max(1_048_576),
+});
+
+const WriteToken = z.strictObject({
+  submissionId: z.string().min(1).max(128),
+  digest: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+const DestroyToken = z.strictObject({ sandboxId: z.string().min(1).max(512) });
+
 const errorCodes = {
   invalid: "INVALID_ARGUMENT",
   unsupported: "UNSUPPORTED",
@@ -72,11 +84,46 @@ function observedCreate(result: DriverResult, ctx: ObserveContext, submissionId:
   if (result.status === "pending")
     return ctx.pending({ submissionId }, { pollAfterMs: result.observeAfterMs });
 
-  return ctx.unknown("Daytona discovery has no confirmed completion");
+  return ctx.unknown(
+    result.status === "unknown" ? result.reason : "Daytona discovery has no confirmed completion",
+  );
 }
 
 function bytes(base64?: string) {
   return Uint8Array.from(Buffer.from(base64 ?? "", "base64"));
+}
+
+function executionValue(result: DriverResult) {
+  if (result.status !== "completed" || result.value.kind !== "execution") return null;
+
+  if (!result.value.observation.completed) return null;
+  const output = result.value.observation;
+
+  return {
+    exitCode: output.exitCode ?? null,
+    stdout: bytes(output.stdoutBase64),
+    stderr: bytes(output.stderrBase64),
+    truncated: output.truncated ?? false,
+  };
+}
+
+function fileWriteValue(result: DriverResult) {
+  if (result.status !== "completed" || result.value.kind !== "file_write") return null;
+
+  if (!result.value.observation.complete) return null;
+
+  return { bytesWritten: result.value.observation.bytesWritten };
+}
+
+function destroyValue(result: DriverResult) {
+  if (result.status !== "completed" || result.value.kind !== "destroy") return null;
+
+  if (!result.value.observation.computeStopped) return null;
+
+  return {
+    computeStopped: true,
+    retainedResources: result.value.observation.retainedResources,
+  };
 }
 
 /** Daytona's public adapter uses the pinned single-attempt native HTTP boundary. */
@@ -141,10 +188,10 @@ export function createDaytonaAdapter(
           },
         },
         supports: {
-          images: ["prepared"],
+          images: ["prepared", "oci"],
           network: caps.networkPolicies,
           exec: { commands: ["argv", "shell"], maxOutputBytes: caps.maxOutputBytes },
-          fileWrite: { overwrite: true, noClobber: false },
+          fileWrite: { overwrite: true, noClobber: true },
         },
         create: {
           recovery: { version: 1, token: Token },
@@ -164,6 +211,7 @@ export function createDaytonaAdapter(
 
             return {
               image: result.effectiveImage,
+              imageKind: input.image.kind,
               networkPolicy: input.networkPolicy,
               labels: input.labels,
             };
@@ -174,8 +222,10 @@ export function createDaytonaAdapter(
                 scope,
                 identity: identity(ctx),
                 image: input.image,
+                imageKind: input.imageKind,
                 networkPolicy: input.networkPolicy,
                 labels: input.labels,
+                signal: ctx.signal,
               }),
               ctx,
             );
@@ -190,20 +240,37 @@ export function createDaytonaAdapter(
             return result ? observedCreate(result, ctx, attempt.submissionId) : null;
           },
         },
-        async destroy(box, ctx) {
-          const result = await driver.destroy({ sandbox: native(box.id), identity: identity(ctx) });
+        destroy: {
+          recovery: { version: 1, token: DestroyToken },
+          async submit(box, ctx) {
+            const result = await driver.destroy({
+              sandbox: native(box.id),
+              identity: identity(ctx),
+              signal: ctx.signal,
+            });
 
-          if (result.status === "completed") {
-            if (result.value.kind !== "destroy" || !result.value.observation.computeStopped)
-              return ctx.unknown("Daytona deletion was not confirmed");
+            const value = destroyValue(result);
 
-            return {
-              computeStopped: true,
-              retainedResources: result.value.observation.retainedResources,
-            };
-          }
+            return value ?? ctx.pending({ sandboxId: box.id }, { pollAfterMs: 500 });
+          },
+          async observe(attempt, ctx) {
+            const token = attempt.token ? DestroyToken.safeParse(attempt.token) : null;
 
-          return failure(result, ctx);
+            if (
+              !attempt.sandbox ||
+              (token && (!token.success || token.data.sandboxId !== attempt.sandbox.id))
+            )
+              return null;
+
+            const result = await driver.observeDestroy(
+              native(attempt.sandbox.id),
+              attempt.submissionId,
+            );
+
+            if (!result) return null;
+
+            return destroyValue(result) ?? ctx.unknown("Daytona deletion is unconfirmed");
+          },
         },
         async inspect(box) {
           const result = await driver.inspect(native(box.id));
@@ -218,54 +285,101 @@ export function createDaytonaAdapter(
             nextCursor: page.nextCursor,
           };
         },
-        async exec(input, ctx) {
-          const result = await driver.exec({
-            sandbox: native(input.sandbox.id),
-            identity: identity(ctx),
-            command: input.command,
-            cwd: input.cwd,
-            env: input.env,
-            deadlineSeconds: input.deadlineSeconds,
-            maxOutputBytes: input.maxOutputBytes,
-          });
+        exec: {
+          recovery: { version: 1, token: ExecToken },
+          async submit(input, ctx) {
+            const result = await driver.exec({
+              sandbox: native(input.sandbox.id),
+              identity: identity(ctx),
+              command: input.command,
+              cwd: input.cwd,
+              env: input.env,
+              deadlineSeconds: input.deadlineSeconds,
+              maxOutputBytes: input.maxOutputBytes,
+              signal: ctx.signal,
+            });
 
-          if (result.status === "completed") {
-            if (result.value.kind !== "execution" || !result.value.observation.completed)
-              return ctx.unknown("Daytona execution did not complete");
-            const output = result.value.observation;
+            const value = executionValue(result);
 
-            return {
-              exitCode: output.exitCode ?? null,
-              stdout: bytes(output.stdoutBase64),
-              stderr: bytes(output.stderrBase64),
-              truncated: output.truncated ?? false,
-            };
-          }
+            if (value) return value;
 
-          return failure(result, ctx);
+            if (result.status === "rejected") return failure(result, ctx);
+
+            return ctx.pending(
+              { submissionId: ctx.submissionId, maxOutputBytes: input.maxOutputBytes },
+              { pollAfterMs: 500 },
+            );
+          },
+          async observe(attempt, ctx) {
+            const token = attempt.token ? ExecToken.safeParse(attempt.token) : null;
+
+            if (
+              !attempt.sandbox ||
+              (token && (!token.success || token.data.submissionId !== attempt.submissionId))
+            )
+              return null;
+
+            const result = await driver.observeExec({
+              sandbox: native(attempt.sandbox.id),
+              submissionId: attempt.submissionId,
+              maxOutputBytes: token?.success ? token.data.maxOutputBytes : undefined,
+            });
+
+            if (!result) return null;
+            const value = executionValue(result);
+
+            return value ?? ctx.unknown("Daytona execution receipt is incomplete");
+          },
         },
         files: {
           maxBytes: caps.maxFileBytes,
           async read(input) {
             return driver.readFile({ sandbox: native(input.sandbox.id), path: input.path });
           },
-          async write(input, ctx) {
-            const result = await driver.writeFile({
-              sandbox: native(input.sandbox.id),
-              identity: identity(ctx),
-              path: input.path,
-              bytes: input.bytes,
-              overwrite: input.overwrite,
-            });
+          write: {
+            recovery: { version: 1, token: WriteToken },
+            async submit(input, ctx) {
+              const result = await driver.writeFile({
+                sandbox: native(input.sandbox.id),
+                identity: identity(ctx),
+                path: input.path,
+                bytes: input.bytes,
+                overwrite: input.overwrite,
+                signal: ctx.signal,
+              });
 
-            if (result.status === "completed") {
-              if (result.value.kind !== "file_write" || !result.value.observation.complete)
-                return ctx.unknown("Daytona upload was not confirmed");
+              const value = fileWriteValue(result);
 
-              return { bytesWritten: result.value.observation.bytesWritten };
-            }
+              if (value) return value;
 
-            return failure(result, ctx);
+              if (result.status === "rejected") return failure(result, ctx);
+
+              const digest = Buffer.from(
+                await crypto.subtle.digest("SHA-256", new Uint8Array(input.bytes)),
+              ).toString("hex");
+
+              return ctx.pending({ submissionId: ctx.submissionId, digest }, { pollAfterMs: 500 });
+            },
+            async observe(attempt, ctx) {
+              const token = attempt.token ? WriteToken.safeParse(attempt.token) : null;
+
+              if (
+                !attempt.sandbox ||
+                (token && (!token.success || token.data.submissionId !== attempt.submissionId))
+              )
+                return null;
+
+              const result = await driver.observeWrite({
+                sandbox: native(attempt.sandbox.id),
+                submissionId: attempt.submissionId,
+                digest: token?.success ? token.data.digest : undefined,
+              });
+
+              if (!result) return null;
+              const value = fileWriteValue(result);
+
+              return value ?? ctx.unknown("Daytona write receipt is incomplete");
+            },
           },
         },
       };

@@ -158,7 +158,7 @@ void flow;
 import { Sandbar, Image } from "sandbar-sdk";
 import { daytona } from "sandbar-sdk/daytona";
 async function flow() {
-  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture" }));
+  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15 }));
   const box = await client.sandboxes.create({ environment: Image.prepared("snap-1") });
   const result = await box.exec({ command: { kind: "shell", script: "printf ready" } });
   const text = result.stdoutText();
@@ -304,6 +304,7 @@ const daytonaSource = `
 import { Sandbar, Image } from "sandbar-sdk";
 import { createDaytonaAdapter } from "@sandbar/provider-daytona";
 let name = "", mutations = 0;
+const files = new Map([["/file", Uint8Array.from([0,255])]]);
 const origin = "https://proxy.app.daytona.io/toolbox";
 const native = (state = "started") => ({ id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
 const mock = async (input, init = {}) => {
@@ -316,9 +317,28 @@ const mock = async (input, init = {}) => {
   if (url.pathname === "/api/sandbox" && init.method === "POST") { mutations++; name = JSON.parse(init.body).name; return json(native()); }
   if (url.pathname === "/api/sandbox/native-1" && init.method === "DELETE") { mutations++; return json(native("destroyed")); }
   if (url.pathname === "/api/sandbox/native-1") return json(native());
-  if (url.pathname.endsWith("/process/execute")) { mutations++; return json({ exitCode: 0, result: "SANDBAR-EXEC-V1\\n0\\n2\\n1\\n 00 ff\\nSANDBAR-STDERR\\n 7f\\nSANDBAR-END\\n" }); }
-  if (url.pathname.endsWith("/files/upload-v2")) { mutations++; return json({ name: "file", path: "/file", type: "file" }); }
-  if (url.pathname.endsWith("/files/download")) return new Response(Uint8Array.from([0,255]));
+  if (url.pathname.endsWith("/process/execute")) {
+    mutations++;
+    const command = JSON.parse(init.body).command;
+    if (command.startsWith("cat ")) {
+      const match = /^cat '([^']+)' > '([^']+)'/.exec(command);
+      if (!match) throw Error("Invalid packed Daytona write command");
+      files.set(match[2], files.get(match[1]));
+      files.delete(match[1]);
+      return json({ exitCode: 0, result: "" });
+    }
+    return json({ exitCode: 0, result: "SANDBAR-EXEC-V1\\n0\\n2\\n1\\n 00 ff\\nSANDBAR-STDERR\\n 7f\\nSANDBAR-END\\n" });
+  }
+  if (url.pathname.endsWith("/files/upload-v2")) {
+    mutations++;
+    const path = url.searchParams.get("path");
+    files.set(path, new Uint8Array(await init.body.get("file").arrayBuffer()));
+    return json({ name: "file", path, type: "file" });
+  }
+  if (url.pathname.endsWith("/files/download")) {
+    const bytes = files.get(url.searchParams.get("path"));
+    return bytes ? new Response(bytes) : new Response(null, { status: 404 });
+  }
   throw new Error("Unexpected fixture request: " + url.pathname);
 };
 const client = await Sandbar.connect({ adapter: createDaytonaAdapter(mock), config: { target: "us" }, credentials: { apiKey: "fixture-only" } });
@@ -330,7 +350,7 @@ try {
   const bytes = await box.readFile("/file");
   if (bytes[0] !== 0 || bytes[1] !== 255) throw new Error("Binary file mismatch");
   await box.destroy();
-  if (mutations !== 4) throw new Error("Mutation replay in packed consumer: " + mutations);
+  if (mutations !== 5) throw new Error("Mutation replay in packed consumer: " + mutations);
   process.stdout.write("packed Daytona fixture flow passed\\n");
 } finally { await client.close(); }
 `;
@@ -433,7 +453,7 @@ import { e2b } from "sandbar-sdk/e2b";
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw Error("Factory construction performed provider I/O"); };
 try {
-  const daytonaAdapter = daytona({ apiKey: "fixture", target: "us" });
+  const daytonaAdapter = daytona({ apiKey: "fixture", target: "us", ttlMinutes: 15 });
   const modalAdapter = modal({ tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main" });
   const e2bAdapter = e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" });
   if (daytonaAdapter.name !== "daytona" || modalAdapter.name !== "modal" || e2bAdapter.name !== "e2b") throw Error("Built-in factory identity mismatch");
