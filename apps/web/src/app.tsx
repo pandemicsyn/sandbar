@@ -53,8 +53,18 @@ function age(timestamp?: string): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+function capturedBytes(base64: string): Uint8Array {
+  return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+}
+
+function capturedText(base64?: string): string {
+  if (base64 === undefined) return "(empty)";
+
+  return new TextDecoder("utf-8").decode(capturedBytes(base64)) || "(empty)";
+}
+
 function downloadCapturedBytes(base64: string, name: string) {
-  const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+  const bytes = capturedBytes(base64);
 
   const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)]));
   const anchor = document.createElement("a");
@@ -1364,7 +1374,7 @@ function OperationPage() {
                     Text is shown as UTF-8. Download the captured bytes for exact output.
                   </p>
                   <h3 className="section-title">Stdout</h3>
-                  <pre className="output">{execution.stdout || "(empty)"}</pre>
+                  <pre className="output">{capturedText(execution.stdoutBase64)}</pre>
                   {execution.stdoutBase64 !== undefined && (
                     <Button
                       onClick={() =>
@@ -1375,7 +1385,7 @@ function OperationPage() {
                     </Button>
                   )}
                   <h3 className="section-title">Stderr</h3>
-                  <pre className="output">{execution.stderr || "(empty)"}</pre>
+                  <pre className="output">{capturedText(execution.stderrBase64)}</pre>
                   {execution.stderrBase64 !== undefined && (
                     <Button
                       onClick={() =>

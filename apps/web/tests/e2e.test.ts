@@ -429,10 +429,11 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("link", { name: sandboxId }).click();
   await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).waitFor();
 
+  const stderrBytes = Buffer.concat([Buffer.from("fixture stderr\n"), Buffer.from([0xff])]);
   const fixture = {
     exitCode: 7,
     stdoutBase64: Buffer.from("fixture stdout\n").toString("base64"),
-    stderrBase64: Buffer.from("fixture stderr\n").toString("base64"),
+    stderrBase64: stderrBytes.toString("base64"),
   };
 
   await seed("exec", "normal", fixture);
@@ -496,6 +497,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   expect(executed.executionId).toBeTruthy();
   await page.getByText("fixture stdout").waitFor();
   await page.getByText("fixture stderr").waitFor();
+  expect(await page.locator("pre.output").nth(1).textContent()).toBe("fixture stderr\n�");
   expect(await page.getByText("7", { exact: true }).isVisible()).toBe(true);
   const outputDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download stdout bytes" }).click();
@@ -503,6 +505,12 @@ test("browser and public HTTP recover fake effects across service restarts witho
   const stdoutPath = join(temp, "downloaded-stdout.bin");
   await stdoutDownload.saveAs(stdoutPath);
   expect(await readFile(stdoutPath)).toEqual(Buffer.from("fixture stdout\n"));
+  const stderrDownloadEvent = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download stderr bytes" }).click();
+  const stderrDownload = await stderrDownloadEvent;
+  const stderrPath = join(temp, "downloaded-stderr.bin");
+  await stderrDownload.saveAs(stderrPath);
+  expect(await readFile(stderrPath)).toEqual(stderrBytes);
 
   await page.getByRole("link", { name: sandboxId }).click();
   await page.getByLabel("Local file").setInputFiles({
