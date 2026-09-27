@@ -1,0 +1,17 @@
+{
+  "name": "@sandbar/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build": "bun build src/index.ts --target bun --outdir dist"
+  },
+  "dependencies": {
+    "@sandbar/contracts": "workspace:*",
+    "@sandbar/core": "workspace:*",
+    "@sandbar/provider-spi": "workspace:*",
+    "@sandbar/provider-fake": "workspace:*",
+    "@sandbar/store": "workspace:*",
+    "hono": "4.13.9"
+  }
+}
