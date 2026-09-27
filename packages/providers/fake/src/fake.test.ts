@@ -8,20 +8,33 @@ import { startFakeProviderServer } from "./server";
 import { ProviderReadError } from "@sandbar/provider-spi";
 
 const token = "local-test-token-12345";
+
 const scope = {
   provider: "fake",
   connectionId: "conn_1",
   accountId: "fake-local",
   region: "local",
 };
+
 const identity = (submissionId: string) => ({
   projectId: "project_1",
   operationId: submissionId,
   invocationKey: `key_${submissionId}`,
   submissionId,
 });
+
 const command = { kind: "argv" as const, argv: ["fixture", "hello"] };
+
+type FileReadPayload = { bytesBase64: string | number | null; extra?: boolean };
+
+type InventoryPayload = { items: never[] | string; nextCursor?: string | number; extra?: boolean };
+
+const fetchStub = (
+  handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+): typeof fetch => Object.assign(handler, { preconnect: fetch.preconnect });
+
 let server: Awaited<ReturnType<typeof startFakeProviderServer>> | undefined;
+
 let directory: string | undefined;
 
 async function setup(statePath?: string) {
@@ -35,20 +48,26 @@ async function setup(statePath?: string) {
   });
   const baseUrl = server.url.toString();
   const driver = new FakeProviderDriver({ baseUrl, token });
-  const control = async (path: string, body?: unknown) => {
+
+  const control = async <T>(path: string, body?: T) => {
     const response = await fetch(new URL(path, baseUrl), {
       method: body === undefined ? "GET" : "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+
     expect(response.ok).toBe(true);
+
     return response.json();
   };
+
   return { driver, control, statePath: statePath ?? join(directory, "provider.json") };
 }
+
 afterEach(async () => {
   server?.stop(true);
   server = undefined;
+
   if (directory) await rm(directory, { recursive: true, force: true });
   directory = undefined;
 });
@@ -61,18 +80,21 @@ describe("independent fake provider", () => {
       action: "create",
       behavior: "lost_after_effect",
     });
+
     const first = await driver.create({
       scope,
       identity: identity("create_1"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     expect(first.status).toBe("unknown");
     server?.stop(true);
     server = undefined;
     const restarted = await setup(statePath);
     const recovered = await restarted.driver.observe({ scope, submissionId: "create_1" });
     expect(recovered?.status).toBe("completed");
+
     if (recovered?.status !== "completed" || recovered.value.kind !== "sandbox")
       throw new Error("No sandbox observation");
     const sandbox = recovered.value.observation.ref;
@@ -86,6 +108,7 @@ describe("independent fake provider", () => {
         stdoutBase64: Buffer.from("fixture output").toString("base64"),
       },
     });
+
     const execution = await restarted.driver.exec({
       sandbox,
       identity: identity("exec_1"),
@@ -93,9 +116,11 @@ describe("independent fake provider", () => {
       deadlineSeconds: 30,
       maxOutputBytes: 1024,
     });
+
     expect(execution.status).toBe("unknown");
     const observedExec = await restarted.driver.observe({ scope, submissionId: "exec_1" });
     expect(observedExec?.status).toBe("completed");
+
     if (observedExec?.status !== "completed" || observedExec.value.kind !== "execution")
       throw new Error("No execution observation");
     expect(observedExec.value.observation.exitCode).toBe(7);
@@ -150,15 +175,18 @@ describe("independent fake provider", () => {
 
   test("explicit command fixtures, binary files, and definitive rejection have honest effects", async () => {
     const { driver, control } = await setup();
+
     const created = await driver.create({
       scope,
       identity: identity("create_3"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     if (created.status !== "completed" || created.value.kind !== "sandbox")
       throw new Error("Create failed");
     const sandbox = created.value.observation.ref;
+
     const unsupported = await driver.exec({
       sandbox,
       identity: identity("exec_unsupported"),
@@ -166,9 +194,11 @@ describe("independent fake provider", () => {
       deadlineSeconds: 30,
       maxOutputBytes: 1024,
     });
+
     expect(unsupported.status).toBe("rejected");
     expect(unsupported.effect).toBe("none");
     const data = Uint8Array.from([0, 255, 1]);
+
     const written = await driver.writeFile({
       sandbox,
       identity: identity("write_1"),
@@ -176,6 +206,7 @@ describe("independent fake provider", () => {
       bytes: data,
       overwrite: false,
     });
+
     expect(written.status).toBe("completed");
     expect(await driver.readFile({ sandbox, path: "/data/blob" })).toEqual(data);
     await control("/_test/seed", {
@@ -196,12 +227,14 @@ describe("independent fake provider", () => {
       action: "create",
       delayObservations: 2,
     });
+
     const submitted = await driver.create({
       scope,
       identity: identity("create_delayed"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     expect(submitted.status).toBe("pending");
     expect((await driver.observe({ scope, submissionId: "create_delayed" }))?.status).toBe(
       "pending",
@@ -210,6 +243,7 @@ describe("independent fake provider", () => {
       "pending",
     );
     const completed = await driver.observe({ scope, submissionId: "create_delayed" });
+
     if (completed?.status !== "completed" || completed.value.kind !== "sandbox")
       throw new Error("Missing delayed create");
     const ref = completed.value.observation.ref;
@@ -236,14 +270,17 @@ describe("independent fake provider", () => {
       token,
       testMode: false,
     });
+
     const response = await fetch(new URL("/_test/state", server.url), {
       headers: { Authorization: `Bearer ${token}` },
     });
+
     expect(response.status).toBe(404);
   });
 
   test("exported fake server refuses non-loopback binds at runtime", async () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+    // SAFETY: This test deliberately passes a disallowed hostname to verify the runtime guard rejects it before binding a socket.
     await expect(
       startFakeProviderServer({
         hostname: "0.0.0.0" as "127.0.0.1",
@@ -257,10 +294,12 @@ describe("independent fake provider", () => {
 
   test("fake driver refuses remote destinations before sending its transport token", () => {
     let calls = 0;
-    const transport = (async () => {
+
+    const transport = fetchStub(async () => {
       calls++;
       throw new Error("must not be called");
-    }) as unknown as typeof fetch;
+    });
+
     expect(
       () => new FakeProviderDriver({ baseUrl: "https://example.com", token, fetch: transport }),
     ).toThrow("loopback");
@@ -269,11 +308,13 @@ describe("independent fake provider", () => {
 
   test("fake driver retains the validated endpoint, token, and transport after options mutate", async () => {
     const requests: Array<{ url: string; authorization: string | null }> = [];
-    const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+
+    const transport = fetchStub(async (input: RequestInfo | URL, init?: RequestInit) => {
       requests.push({
         url: String(input),
         authorization: new Headers(init?.headers).get("Authorization"),
       });
+
       return Response.json({
         provider: "fake",
         nativeIdempotency: { create: true, exec: true, destroy: true, writeFile: true },
@@ -283,16 +324,17 @@ describe("independent fake provider", () => {
         maxOutputBytes: 1048576,
         networkPolicies: ["blocked"],
       });
-    }) as typeof fetch;
+    });
+
     let changedTransportCalls = 0;
     const options = { baseUrl: "http://127.0.0.1:8789", token, fetch: transport };
     const driver = new FakeProviderDriver(options);
     options.baseUrl = "https://example.com";
     options.token = "changed-token";
-    options.fetch = (async () => {
+    options.fetch = fetchStub(async () => {
       changedTransportCalls++;
       throw new Error("changed transport called");
-    }) as unknown as typeof fetch;
+    });
     expect((await driver.capabilities(scope)).provider).toBe("fake");
     expect(requests).toEqual([
       { url: "http://127.0.0.1:8789/v1/action", authorization: `Bearer ${token}` },
@@ -301,17 +343,20 @@ describe("independent fake provider", () => {
   });
 
   test("fake driver rejects malformed file read envelopes before decoding", async () => {
-    let payload: unknown = { bytesBase64: "not-base64" };
-    const transport = (async () => Response.json(payload)) as unknown as typeof fetch;
+    let payload: FileReadPayload = { bytesBase64: "not-base64" };
+    const transport = fetchStub(async () => Response.json(payload));
+
     const driver = new FakeProviderDriver({
       baseUrl: "http://127.0.0.1:8789",
       token,
       fetch: transport,
     });
+
     const input = {
       sandbox: { scope, nativeId: "fake_sandbox_1", kind: "sandbox" as const },
       path: "/blob",
     };
+
     for (payload of [
       { bytesBase64: "not-base64" },
       { bytesBase64: 4 },
@@ -323,6 +368,7 @@ describe("independent fake provider", () => {
         name: "ProviderReadError",
       });
     }
+
     payload = { bytesBase64: null };
     await expect(driver.readFile(input)).rejects.toBeInstanceOf(ProviderReadError);
     await expect(driver.readFile(input)).rejects.toMatchObject({ code: "NOT_FOUND" });
@@ -331,14 +377,17 @@ describe("independent fake provider", () => {
   });
 
   test("fake driver validates the complete inventory response envelope", async () => {
-    let payload: unknown = { items: [], nextCursor: 4 };
-    const transport = (async () => Response.json(payload)) as unknown as typeof fetch;
+    let payload: InventoryPayload = { items: [], nextCursor: 4 };
+    const transport = fetchStub(async () => Response.json(payload));
+
     const driver = new FakeProviderDriver({
       baseUrl: "http://127.0.0.1:8789",
       token,
       fetch: transport,
     });
+
     const input = { scope, limit: 10 };
+
     for (payload of [
       { items: [], nextCursor: 4 },
       { items: "invalid" },
@@ -346,20 +395,24 @@ describe("independent fake provider", () => {
     ]) {
       await expect(driver.inventory(input)).rejects.toThrow();
     }
+
     payload = { items: [], nextCursor: "10" };
     expect(await driver.inventory(input)).toEqual({ items: [], nextCursor: "10" });
   });
 
   test("fake driver does not forward mutation bodies across redirects", async () => {
     let forwarded = 0;
+
     const capture = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch() {
         forwarded++;
+
         return Response.json({ ok: true });
       },
     });
+
     const redirect = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -367,14 +420,17 @@ describe("independent fake provider", () => {
         return Response.redirect(capture.url.toString(), 307);
       },
     });
+
     try {
       const driver = new FakeProviderDriver({ baseUrl: redirect.url.toString(), token });
+
       const result = await driver.create({
         scope,
         identity: identity("redirect_1"),
         image: "fake-starter",
         networkPolicy: "blocked",
       });
+
       expect(result.status).toBe("unknown");
       expect(forwarded).toBe(0);
     } finally {
@@ -385,22 +441,26 @@ describe("independent fake provider", () => {
 
   test("fake server rejects foreign provider scope before mutation or read", async () => {
     const { driver, control } = await setup();
+
     const created = await driver.create({
       scope,
       identity: identity("scope_parent"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     if (created.status !== "completed" || created.value.kind !== "sandbox")
       throw new Error("Create failed");
     const foreignScope = { ...scope, provider: "other" };
     const foreignRef = { ...created.value.observation.ref, scope: foreignScope };
+
     const foreignCreate = await driver.create({
       scope: foreignScope,
       identity: identity("foreign_create"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     const foreignExec = await driver.exec({
       sandbox: foreignRef,
       identity: identity("foreign_exec"),
@@ -408,6 +468,7 @@ describe("independent fake provider", () => {
       deadlineSeconds: 30,
       maxOutputBytes: 0,
     });
+
     const foreignWrite = await driver.writeFile({
       sandbox: foreignRef,
       identity: identity("foreign_write"),
@@ -415,14 +476,17 @@ describe("independent fake provider", () => {
       bytes: Uint8Array.of(1),
       overwrite: true,
     });
+
     const foreignDestroy = await driver.destroy({
       sandbox: foreignRef,
       identity: identity("foreign_destroy"),
     });
+
     for (const outcome of [foreignCreate, foreignExec, foreignWrite, foreignDestroy]) {
       expect(outcome.status).toBe("rejected");
       expect(outcome.effect).toBe("none");
     }
+
     await expect(driver.inspect(foreignRef)).rejects.toThrow("400");
     await expect(driver.inventory({ scope: foreignScope, limit: 10 })).rejects.toThrow("400");
     await expect(driver.readFile({ sandbox: foreignRef, path: "/blob" })).rejects.toThrow("400");
@@ -480,15 +544,18 @@ describe("independent fake provider", () => {
 
   test("exec translates cwd, environment, deadline and rejects cross-action submission reuse", async () => {
     const { driver, control } = await setup();
+
     const created = await driver.create({
       scope,
       identity: identity("shared_sub"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     if (created.status !== "completed" || created.value.kind !== "sandbox")
       throw new Error("Create failed");
     const sandbox = created.value.observation.ref;
+
     const collision = await driver.exec({
       sandbox,
       identity: identity("shared_sub"),
@@ -496,6 +563,7 @@ describe("independent fake provider", () => {
       deadlineSeconds: 30,
       maxOutputBytes: 32,
     });
+
     expect(collision.status).toBe("rejected");
     expect(collision.effect).toBe("none");
     await control("/_test/seed", {
@@ -503,6 +571,7 @@ describe("independent fake provider", () => {
       action: "exec",
       command: { command, cwd: "/workspace", env: { LANG: "C" }, deadlineSeconds: 30, exitCode: 0 },
     });
+
     const wrong = await driver.exec({
       sandbox,
       identity: identity("exec_scoped"),
@@ -512,7 +581,9 @@ describe("independent fake provider", () => {
       deadlineSeconds: 30,
       maxOutputBytes: 32,
     });
+
     expect(wrong.status).toBe("rejected");
+
     const correct = await driver.exec({
       sandbox,
       identity: identity("exec_scoped"),
@@ -522,12 +593,14 @@ describe("independent fake provider", () => {
       deadlineSeconds: 30,
       maxOutputBytes: 32,
     });
+
     expect(correct.status).toBe("completed");
     await control("/_test/seed", {
       submissionId: "exec_default_fields",
       action: "exec",
       command: { command, exitCode: 0 },
     });
+
     const nondefault = await driver.exec({
       sandbox,
       identity: identity("exec_default_fields"),
@@ -536,7 +609,9 @@ describe("independent fake provider", () => {
       deadlineSeconds: 30,
       maxOutputBytes: 32,
     });
+
     expect(nondefault.status).toBe("rejected");
+
     const defaultFields = await driver.exec({
       sandbox,
       identity: identity("exec_default_fields"),
@@ -544,6 +619,7 @@ describe("independent fake provider", () => {
       deadlineSeconds: 30,
       maxOutputBytes: 32,
     });
+
     expect(defaultFields.status).toBe("completed");
     expect(
       (await control("/_test/state")).ledger.filter((x: { action: string }) => x.action === "exec"),
@@ -552,16 +628,19 @@ describe("independent fake provider", () => {
 
   test("authentication rejection before dispatch is definitive", async () => {
     const { control } = await setup();
+
     const wrongTokenDriver = new FakeProviderDriver({
       baseUrl: server!.url.toString(),
       token: "wrong-token-123456",
     });
+
     const result = await wrongTokenDriver.create({
       scope,
       identity: identity("unauthorized_1"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     expect(result.status).toBe("rejected");
     expect(result.effect).toBe("none");
     expect((await control("/_test/state")).invocations).toHaveLength(0);
@@ -569,12 +648,14 @@ describe("independent fake provider", () => {
 
   test("lost file-write response is recovered through the independent effect ledger", async () => {
     const { driver, control } = await setup();
+
     const created = await driver.create({
       scope,
       identity: identity("file_parent"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     if (created.status !== "completed" || created.value.kind !== "sandbox")
       throw new Error("Create failed");
     const sandbox = created.value.observation.ref;
@@ -607,12 +688,14 @@ describe("independent fake provider", () => {
 
   test("destroy removes virtual files and reports no retained resources", async () => {
     const { driver, control } = await setup();
+
     const created = await driver.create({
       scope,
       identity: identity("destroy_files_parent"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     if (created.status !== "completed" || created.value.kind !== "sandbox")
       throw new Error("Create failed");
     const sandbox = created.value.observation.ref;
@@ -625,6 +708,7 @@ describe("independent fake provider", () => {
     });
     const destroyed = await driver.destroy({ sandbox, identity: identity("destroy_files") });
     expect(destroyed.status).toBe("completed");
+
     if (destroyed.status !== "completed" || destroyed.value.kind !== "destroy")
       throw new Error("Destroy failed");
     expect(destroyed.value.observation.retainedResources).toEqual([]);
@@ -635,24 +719,30 @@ describe("independent fake provider", () => {
 
   test("same-action submission reuse with different operation or payload is rejected without replay", async () => {
     const { driver, control } = await setup();
+
     const created = await driver.create({
       scope,
       identity: identity("create_fingerprint"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     expect(created.status).toBe("completed");
+
     const conflicting = await driver.create({
       scope,
       identity: { ...identity("create_fingerprint"), operationId: "another_operation" },
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     expect(conflicting.status).toBe("rejected");
     expect(conflicting.effect).toBe("none");
+
     if (created.status !== "completed" || created.value.kind !== "sandbox")
       throw new Error("Create failed");
     const sandbox = created.value.observation.ref;
+
     const original = await driver.writeFile({
       sandbox,
       identity: identity("write_fingerprint"),
@@ -660,7 +750,9 @@ describe("independent fake provider", () => {
       bytes: Uint8Array.from([1]),
       overwrite: true,
     });
+
     expect(original.status).toBe("completed");
+
     const changed = await driver.writeFile({
       sandbox,
       identity: identity("write_fingerprint"),
@@ -668,6 +760,7 @@ describe("independent fake provider", () => {
       bytes: Uint8Array.from([2]),
       overwrite: true,
     });
+
     expect(changed.status).toBe("rejected");
     expect(await driver.readFile({ sandbox, path: "/blob" })).toEqual(Uint8Array.from([1]));
     expect((await control("/_test/state")).invocations).toHaveLength(2);
@@ -678,6 +771,7 @@ describe("independent fake provider", () => {
     const engine = new FakeProviderEngine(join(directory, "provider.json"), true);
     await engine.load();
     const missing = { scope, kind: "sandbox" as const, nativeId: "missing" };
+
     for (let index = 0; index < 520; index++) {
       const result = await engine.exec({
         sandbox: missing,
@@ -686,8 +780,10 @@ describe("independent fake provider", () => {
         deadlineSeconds: 30,
         maxOutputBytes: 0,
       });
+
       expect(result.result.status).toBe("rejected");
     }
+
     expect(engine.snapshot().invocations).toHaveLength(512);
     const reloaded = new FakeProviderEngine(join(directory, "provider.json"), true);
     await reloaded.load();
@@ -717,6 +813,7 @@ describe("independent fake provider", () => {
     await recovered.load();
     expect(recovered.snapshot().ledger).toHaveLength(1);
     const source = JSON.parse(valid);
+
     for (const damaged of [
       { ...source, version: 2 },
       {
@@ -752,6 +849,7 @@ describe("independent fake provider", () => {
       );
       expect(await readFile(statePath, "utf8")).toBe(serialized);
     }
+
     await writeFile(statePath, "{");
     await expect(new FakeProviderEngine(statePath, true).load()).rejects.toThrow(
       "Invalid fake provider state JSON",
@@ -762,15 +860,18 @@ describe("independent fake provider", () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
     const engine = new FakeProviderEngine(join(directory, "provider.json"), true);
     await engine.load();
+
     const created = await engine.create({
       scope,
       identity: identity("ledger_create"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     if (created.result.status !== "completed" || created.result.value.kind !== "sandbox")
       throw new Error("Create failed");
     const sandbox = created.result.value.observation.ref;
+
     for (let index = 0; index < 511; index++) {
       const result = await engine.writeFile({
         sandbox,
@@ -779,9 +880,12 @@ describe("independent fake provider", () => {
         bytesBase64: Buffer.from(String(index)).toString("base64"),
         overwrite: true,
       });
+
       expect(result.result.status).toBe("completed");
     }
+
     expect(engine.snapshot().ledger).toHaveLength(512);
+
     const overflow = await engine.writeFile({
       sandbox,
       identity: identity("ledger_write_511"),
@@ -789,9 +893,11 @@ describe("independent fake provider", () => {
       bytesBase64: Buffer.from("overflow").toString("base64"),
       overwrite: true,
     });
+
     expect(overflow.result.status).toBe("rejected");
     expect(overflow.result.effect).toBe("none");
     expect(Buffer.from(engine.readFile(sandbox, "/blob") ?? "", "base64").toString()).toBe("510");
+
     const replay = await engine.writeFile({
       sandbox,
       identity: identity("ledger_write_0"),
@@ -799,6 +905,7 @@ describe("independent fake provider", () => {
       bytesBase64: Buffer.from("0").toString("base64"),
       overwrite: true,
     });
+
     expect(replay.result.status).toBe("completed");
     expect(engine.snapshot().ledger).toHaveLength(512);
   });
@@ -807,12 +914,14 @@ describe("independent fake provider", () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
     const engine = new FakeProviderEngine(join(directory, "provider.json"), true);
     await engine.load();
+
     const created = await engine.create({
       scope,
       identity: identity("large_parent"),
       image: "fake-starter",
       networkPolicy: "blocked",
     });
+
     if (created.result.status !== "completed" || created.result.value.kind !== "sandbox")
       throw new Error("Create failed");
     const sandbox = created.result.value.observation.ref;
@@ -826,8 +935,10 @@ describe("independent fake provider", () => {
       command: { command, exitCode: 0, stdoutBase64: Buffer.alloc(700000, 65).toString("base64") },
     });
     let rejected = false;
+
     for (let index = 0; index < 12; index++) {
       const before = engine.snapshot();
+
       const result = await engine.exec({
         sandbox,
         identity: identity("large_exec"),
@@ -835,6 +946,7 @@ describe("independent fake provider", () => {
         deadlineSeconds: 30,
         maxOutputBytes: 700000,
       });
+
       if (result.result.status === "rejected") {
         expect(result.result.error.code).toBe("capacity");
         expect(result.result.effect).toBe("none");
@@ -843,8 +955,10 @@ describe("independent fake provider", () => {
         rejected = true;
         break;
       }
+
       expect(result.result.status).toBe("completed");
     }
+
     expect(rejected).toBe(true);
   });
 });

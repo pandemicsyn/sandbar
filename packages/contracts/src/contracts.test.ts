@@ -15,6 +15,7 @@ describe("public contract", () => {
       environment: { kind: "prepared" as const, imageId: "fake-starter" },
       network: { policy: "blocked" },
     };
+
     expect(CreateSandboxRequest.safeParse({ ...valid, netwrok: { policy: "open" } }).success).toBe(
       false,
     );
@@ -22,6 +23,7 @@ describe("public contract", () => {
     expect(
       ExecRequest.safeParse({ command: { kind: "argv", argv: ["echo"] }, shel: true }).success,
     ).toBe(false);
+
     const operation = {
       id: "op_1",
       projectId: "p_1",
@@ -34,6 +36,7 @@ describe("public contract", () => {
       recovery: ["check_again"],
       futureField: "safe",
     };
+
     expect(Operation.parse(operation)).not.toHaveProperty("futureField");
     expect(
       Operation.parse({
@@ -93,12 +96,14 @@ describe("public contract", () => {
   });
   test("every accepted operation response documents its polling Location header", () => {
     const paths = openApiDocument.paths;
+
     const accepted = [
       paths["/v1/projects/{projectId}/sandboxes"].post.responses["202"],
       paths["/v1/projects/{projectId}/sandboxes/{sandboxId}"].delete.responses["202"],
       paths["/v1/projects/{projectId}/sandboxes/{sandboxId}/executions"].post.responses["202"],
       paths["/v1/projects/{projectId}/sandboxes/{sandboxId}/files"].put.responses["202"],
     ];
+
     for (const response of accepted) {
       expect(response.headers.Location.required).toBe(true);
       expect(response.headers.Location.schema).toEqual({ type: "string", format: "uri-reference" });

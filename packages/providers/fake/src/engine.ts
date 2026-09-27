@@ -17,6 +17,7 @@ const CommandFixture = z.strictObject({
   stdoutBase64: z.base64().default(""),
   stderrBase64: z.base64().default(""),
 });
+
 export const FakeScenario = z.strictObject({
   submissionId: z.string().min(1),
   action: z.enum(["create", "exec", "destroy", "file_write"]),
@@ -27,7 +28,9 @@ export const FakeScenario = z.strictObject({
   rejectCode: z.enum(["capacity", "unsupported", "conflict"]).default("capacity"),
   command: CommandFixture.optional(),
 });
+
 export type FakeScenario = z.infer<typeof FakeScenario>;
+
 export const FakeProfile = z.strictObject({
   nativeIdempotency: z.strictObject({
     create: z.boolean(),
@@ -37,6 +40,7 @@ export const FakeProfile = z.strictObject({
   }),
   discoveryBySubmission: z.boolean(),
 });
+
 export const FakeEvent = z.strictObject({
   eventId: z.string().min(1),
   ref: z.object({
@@ -53,15 +57,18 @@ export const FakeEvent = z.strictObject({
   state: z.enum(["running", "destroyed"]),
   occurredAt: z.iso.datetime({ offset: true }),
 });
+
 const MAX_RESOURCES = 128,
   MAX_LEDGER = 512,
   MAX_INVOCATIONS = 512,
   MAX_FILE_BYTES = 1024 * 1024,
   MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+
 export const FakeFileBytesBase64 = z
   .base64()
   .max(1_398_104)
   .refine((value) => Buffer.from(value, "base64").length <= MAX_FILE_BYTES, "File exceeds 1 MiB");
+
 const ResourceSchema = z.strictObject({
   ref: NativeRef,
   state: z.enum(["running", "destroyed"]),
@@ -71,6 +78,7 @@ const ResourceSchema = z.strictObject({
   files: z.record(z.string(), FakeFileBytesBase64),
   sequence: z.number().int().nonnegative(),
 });
+
 const LedgerEntrySchema = z
   .strictObject({
     submissionId: z.string().min(1),
@@ -88,14 +96,17 @@ const LedgerEntrySchema = z
   .superRefine((entry, context) => {
     if (entry.result.status !== "completed") return;
     const value = entry.result.value;
+
     const expectedKind = {
       create: "sandbox",
       exec: "execution",
       destroy: "destroy",
       file_write: "file_write",
     }[entry.action];
+
     const effectScope =
       value.kind === "sandbox" ? value.observation.ref.scope : value.observation.sandbox.scope;
+
     if (value.kind !== expectedKind || scopeKey(effectScope) !== scopeKey(entry.scope)) {
       context.addIssue({
         code: "custom",
@@ -103,6 +114,7 @@ const LedgerEntrySchema = z
       });
     }
   });
+
 const StateSchema = z.strictObject({
   version: z.literal(1),
   nextId: z.number().int().min(1),
@@ -122,8 +134,11 @@ const StateSchema = z.strictObject({
     )
     .max(MAX_INVOCATIONS),
 });
+
 type State = z.infer<typeof StateSchema>;
+
 type Resource = z.infer<typeof ResourceSchema>;
+
 const empty = (): State => ({
   version: 1,
   nextId: 1,
@@ -138,11 +153,16 @@ const empty = (): State => ({
   events: [],
   invocations: [],
 });
+
 const scopeKey = (scope: NativeScope) =>
   `${scope.provider}\0${scope.connectionId}\0${scope.accountId}\0${scope.region ?? ""}`;
+
 const sameScope = (a: NativeScope, b: NativeScope) => scopeKey(a) === scopeKey(b);
+
 const iso = (tick: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, tick)).toISOString();
+
 const bytesLength = (b64: string) => Buffer.from(b64, "base64").length;
+
 class FakeCapacityError extends Error {}
 
 export class FakeProviderEngine {
@@ -158,16 +178,19 @@ export class FakeProviderEngine {
       if ((await stat(this.statePath)).size > MAX_TOTAL_BYTES)
         throw new Error("Invalid fake provider state size");
       const parsed = StateSchema.safeParse(JSON.parse(await readFile(this.statePath, "utf8")));
+
       if (!parsed.success) throw new Error("Invalid fake provider state version or shape");
       this.state = parsed.data;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+
       if (error instanceof SyntaxError) throw new Error("Invalid fake provider state JSON");
       throw error;
     }
   }
   private async save(): Promise<void> {
     const json = JSON.stringify(this.state);
+
     if (Buffer.byteLength(json) > MAX_TOTAL_BYTES)
       throw new FakeCapacityError("Fake provider state limit reached");
     const temp = `${this.statePath}.tmp`;
@@ -177,28 +200,37 @@ export class FakeProviderEngine {
   private async mutate<T>(fn: () => T, capacityResult?: () => T): Promise<T> {
     const work = this.pending.then(async () => {
       const previous = structuredClone(this.state);
+
       try {
         const value = fn();
         await this.save();
+
         return value;
       } catch (error) {
         this.state = previous;
+
         if (error instanceof FakeCapacityError && capacityResult) return capacityResult();
         throw error;
       }
     });
+
     this.pending = work.catch(() => undefined);
+
     return work;
   }
   private scenario(submissionId: string, action: FakeScenario["action"]): FakeScenario {
     const exact = this.state.scenarios.find(
       (x) => x.submissionId === submissionId && x.action === action,
     );
+
     if (exact) return exact;
+
     const queued = this.state.scenarios.findIndex(
       (x) => x.submissionId === "*" && x.action === action,
     );
+
     if (queued >= 0) return { ...this.state.scenarios.splice(queued, 1)[0]!, submissionId };
+
     return FakeScenario.parse({ submissionId, action });
   }
   private ref(scope: NativeScope, kind: "sandbox" | "execution"): NativeRef {
@@ -210,6 +242,7 @@ export class FakeProviderEngine {
     action: FakeScenario["action"],
   ) {
     this.state.invocations.push({ submissionId, projectId, action });
+
     if (this.state.invocations.length > MAX_INVOCATIONS) this.state.invocations.shift();
   }
   private find(ref: NativeRef): Resource | undefined {
@@ -233,11 +266,12 @@ export class FakeProviderEngine {
       this.state = empty();
     });
   }
-  async seed(scenario: unknown): Promise<void> {
+  async seed(scenario: z.input<typeof FakeScenario>): Promise<void> {
     if (!this.testMode) throw new Error("Test mode required");
     const parsed = FakeScenario.parse(scenario);
     await this.mutate(() => {
       if (this.state.scenarios.length >= 512) throw new Error("Fake scenario limit reached");
+
       if (parsed.submissionId !== "*")
         this.state.scenarios = this.state.scenarios.filter(
           (x) => !(x.submissionId === parsed.submissionId && x.action === parsed.action),
@@ -245,14 +279,14 @@ export class FakeProviderEngine {
       this.state.scenarios.push(parsed);
     });
   }
-  async setProfile(profile: unknown): Promise<void> {
+  async setProfile(profile: z.input<typeof FakeProfile>): Promise<void> {
     if (!this.testMode) throw new Error("Test mode required");
     const parsed = FakeProfile.parse(profile);
     await this.mutate(() => {
       this.state.profile = parsed;
     });
   }
-  async seedEvents(events: unknown): Promise<void> {
+  async seedEvents(events: z.input<typeof FakeEvent>[]): Promise<void> {
     if (!this.testMode) throw new Error("Test mode required");
     const parsed = z.array(FakeEvent).max(512).parse(events);
     await this.mutate(() => {
@@ -268,6 +302,7 @@ export class FakeProviderEngine {
   snapshot(): Omit<State, "scenarios"> {
     if (!this.testMode) throw new Error("Test mode required");
     const { scenarios: _scenarios, ...rest } = this.state;
+
     return structuredClone(rest);
   }
   async create(input: {
@@ -278,27 +313,35 @@ export class FakeProviderEngine {
     labels?: Record<string, string>;
   }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
+
     return this.mutate(
       () => {
         const { submissionId } = input.identity;
+
         const prior = this.state.ledger.find(
           (x) =>
             x.submissionId === submissionId &&
             x.projectId === input.identity.projectId &&
             sameScope(x.scope, input.scope),
         );
+
         if (prior?.action !== undefined && prior.action !== "create")
           return { result: this.rejection("conflict"), loseResponse: false };
+
         if (prior && prior.requestHash !== requestHash)
           return { result: this.rejection("conflict"), loseResponse: false };
+
         if (prior && this.state.profile.nativeIdempotency.create)
           return { result: prior.result, loseResponse: false };
+
         if (this.state.ledger.length >= MAX_LEDGER)
           return { result: this.rejection("capacity"), loseResponse: false };
         const scenario = this.scenario(submissionId, "create");
         this.recordInvocation(submissionId, input.identity.projectId, "create");
+
         if (scenario.behavior === "reject")
           return { result: this.rejection(scenario.rejectCode), loseResponse: false };
+
         if (scenario.behavior === "ambiguous_before_effect")
           return {
             result: {
@@ -309,6 +352,7 @@ export class FakeProviderEngine {
             } as const,
             loseResponse: true,
           };
+
         if (this.state.resources.length >= MAX_RESOURCES)
           return { result: this.rejection("capacity"), loseResponse: false };
         const ref = this.ref(input.scope, "sandbox");
@@ -321,6 +365,7 @@ export class FakeProviderEngine {
           files: {},
           sequence: 1,
         });
+
         const result: z.infer<typeof DriverResult> = {
           status: "completed",
           effect: "applied",
@@ -334,6 +379,7 @@ export class FakeProviderEngine {
             },
           },
         };
+
         this.state.ledger.push({
           submissionId,
           projectId: input.identity.projectId,
@@ -344,6 +390,7 @@ export class FakeProviderEngine {
           remaining: scenario.delayObservations,
           discoverable: this.state.profile.discoveryBySubmission,
         });
+
         return {
           result: scenario.delayObservations
             ? ({ status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const)
@@ -364,27 +411,35 @@ export class FakeProviderEngine {
     maxOutputBytes: number;
   }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
+
     return this.mutate(
       () => {
         const { submissionId } = input.identity;
+
         const prior = this.state.ledger.find(
           (x) =>
             x.submissionId === submissionId &&
             x.projectId === input.identity.projectId &&
             sameScope(x.scope, input.sandbox.scope),
         );
+
         if (prior?.action !== undefined && prior.action !== "exec")
           return { result: this.rejection("conflict"), loseResponse: false };
+
         if (prior && prior.requestHash !== requestHash)
           return { result: this.rejection("conflict"), loseResponse: false };
+
         if (prior && this.state.profile.nativeIdempotency.exec)
           return { result: prior.result, loseResponse: false };
+
         if (this.state.ledger.length >= MAX_LEDGER)
           return { result: this.rejection("capacity"), loseResponse: false };
         const scenario = this.scenario(submissionId, "exec");
         this.recordInvocation(submissionId, input.identity.projectId, "exec");
+
         if (scenario.behavior === "reject")
           return { result: this.rejection(scenario.rejectCode), loseResponse: false };
+
         if (scenario.behavior === "ambiguous_before_effect")
           return {
             result: {
@@ -396,6 +451,7 @@ export class FakeProviderEngine {
             loseResponse: true,
           };
         const resource = this.find(input.sandbox);
+
         if (!resource || resource.state !== "running")
           return {
             result: {
@@ -411,6 +467,7 @@ export class FakeProviderEngine {
             loseResponse: false,
           };
         const fixture = scenario.command;
+
         if (
           !fixture ||
           canonicalJson(fixture.command) !== canonicalJson(input.command) ||
@@ -420,12 +477,17 @@ export class FakeProviderEngine {
             fixture.deadlineSeconds !== input.deadlineSeconds)
         )
           return { result: this.rejection("unsupported"), loseResponse: false };
+
         const stdout = Buffer.from(fixture.stdoutBase64, "base64"),
           stderr = Buffer.from(fixture.stderrBase64, "base64");
+
         const cap = Math.min(input.maxOutputBytes, 1048576);
+
         const stdoutKept = stdout.subarray(0, cap),
           stderrKept = stderr.subarray(0, Math.max(0, cap - stdoutKept.length));
+
         const ref = this.ref(input.sandbox.scope, "execution");
+
         const result: z.infer<typeof DriverResult> = {
           status: "completed",
           effect: "applied",
@@ -443,6 +505,7 @@ export class FakeProviderEngine {
             },
           },
         };
+
         this.state.ledger.push({
           submissionId,
           projectId: input.identity.projectId,
@@ -453,6 +516,7 @@ export class FakeProviderEngine {
           remaining: scenario.delayObservations,
           discoverable: this.state.profile.discoveryBySubmission,
         });
+
         return {
           result: scenario.delayObservations
             ? ({ status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const)
@@ -468,27 +532,35 @@ export class FakeProviderEngine {
     identity: InvocationIdentity;
   }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
+
     return this.mutate(
       () => {
         const { submissionId } = input.identity;
+
         const prior = this.state.ledger.find(
           (x) =>
             x.submissionId === submissionId &&
             x.projectId === input.identity.projectId &&
             sameScope(x.scope, input.sandbox.scope),
         );
+
         if (prior?.action !== undefined && prior.action !== "destroy")
           return { result: this.rejection("conflict"), loseResponse: false };
+
         if (prior && prior.requestHash !== requestHash)
           return { result: this.rejection("conflict"), loseResponse: false };
+
         if (prior && this.state.profile.nativeIdempotency.destroy)
           return { result: prior.result, loseResponse: false };
+
         if (this.state.ledger.length >= MAX_LEDGER)
           return { result: this.rejection("capacity"), loseResponse: false };
         const scenario = this.scenario(submissionId, "destroy");
         this.recordInvocation(submissionId, input.identity.projectId, "destroy");
+
         if (scenario.behavior === "reject")
           return { result: this.rejection(scenario.rejectCode), loseResponse: false };
+
         if (scenario.behavior === "ambiguous_before_effect")
           return {
             result: {
@@ -500,6 +572,7 @@ export class FakeProviderEngine {
             loseResponse: true,
           };
         const resource = this.find(input.sandbox);
+
         if (!resource)
           return {
             result: {
@@ -517,6 +590,7 @@ export class FakeProviderEngine {
         resource.state = "destroyed";
         resource.files = {};
         resource.sequence++;
+
         const result: z.infer<typeof DriverResult> = {
           status: "completed",
           effect: "applied",
@@ -525,6 +599,7 @@ export class FakeProviderEngine {
             observation: { sandbox: input.sandbox, computeStopped: true, retainedResources: [] },
           },
         };
+
         this.state.ledger.push({
           submissionId,
           projectId: input.identity.projectId,
@@ -535,6 +610,7 @@ export class FakeProviderEngine {
           remaining: scenario.delayObservations,
           discoverable: this.state.profile.discoveryBySubmission,
         });
+
         return {
           result: scenario.delayObservations
             ? ({ status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const)
@@ -553,7 +629,9 @@ export class FakeProviderEngine {
       const entry = this.state.ledger.find(
         (x) => x.submissionId === submissionId && x.discoverable && sameScope(x.scope, scope),
       );
+
       if (!entry) return null;
+
       const ref =
         entry.result.status === "completed"
           ? entry.result.value.kind === "sandbox"
@@ -562,16 +640,21 @@ export class FakeProviderEngine {
               ? entry.result.value.observation.sandbox
               : entry.result.value.observation.sandbox
           : undefined;
+
       if (!ref || !sameScope(ref.scope, scope)) return null;
+
       if (entry.remaining > 0) {
         entry.remaining--;
+
         return { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const;
       }
+
       return entry.result;
     });
   }
   inspect(ref: NativeRef) {
     const r = this.find(ref);
+
     return r
       ? { ref: r.ref, state: r.state, observedAt: iso(this.state.tick), sourceSequence: r.sequence }
       : null;
@@ -579,12 +662,14 @@ export class FakeProviderEngine {
   inventory(scope: NativeScope, cursor: string | undefined, limit: number) {
     const start = cursor ? Number(cursor) : 0;
     const resources = this.state.resources.filter((x) => sameScope(x.ref.scope, scope));
+
     const items = resources.slice(start, start + limit).map((x) => ({
       ref: x.ref,
       state: x.state,
       observedAt: iso(this.state.tick),
       sourceSequence: x.sequence,
     }));
+
     return {
       items,
       nextCursor: start + limit < resources.length ? String(start + limit) : undefined,
@@ -592,6 +677,7 @@ export class FakeProviderEngine {
   }
   readFile(ref: NativeRef, path: string): string | null {
     const resource = this.find(ref);
+
     return resource?.state === "running" ? (resource.files[path] ?? null) : null;
   }
   async writeFile(input: {
@@ -602,28 +688,36 @@ export class FakeProviderEngine {
     overwrite: boolean;
   }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
+
     return this.mutate(
       () => {
         const { sandbox, identity, path, bytesBase64, overwrite } = input;
         const { submissionId } = identity;
+
         const prior = this.state.ledger.find(
           (x) =>
             x.submissionId === submissionId &&
             x.projectId === identity.projectId &&
             sameScope(x.scope, sandbox.scope),
         );
+
         if (prior?.action !== undefined && prior.action !== "file_write")
           return { result: this.rejection("conflict"), loseResponse: false };
+
         if (prior && prior.requestHash !== requestHash)
           return { result: this.rejection("conflict"), loseResponse: false };
+
         if (prior && this.state.profile.nativeIdempotency.writeFile)
           return { result: prior.result, loseResponse: false };
+
         if (this.state.ledger.length >= MAX_LEDGER)
           return { result: this.rejection("capacity"), loseResponse: false };
         const scenario = this.scenario(submissionId, "file_write");
         this.recordInvocation(submissionId, identity.projectId, "file_write");
+
         if (scenario.behavior === "reject")
           return { result: this.rejection(scenario.rejectCode), loseResponse: false };
+
         if (scenario.behavior === "ambiguous_before_effect")
           return {
             result: {
@@ -635,6 +729,7 @@ export class FakeProviderEngine {
             loseResponse: true,
           };
         const resource = this.find(sandbox);
+
         if (!resource || resource.state !== "running")
           return {
             result: {
@@ -649,11 +744,14 @@ export class FakeProviderEngine {
             } as const,
             loseResponse: false,
           };
+
         if (!overwrite && path in resource.files)
           return { result: this.rejection("conflict"), loseResponse: false };
+
         if (bytesLength(bytesBase64) > MAX_FILE_BYTES)
           return { result: this.rejection("capacity"), loseResponse: false };
         resource.files[path] = bytesBase64;
+
         const result: z.infer<typeof DriverResult> = {
           status: "completed",
           effect: "applied",
@@ -662,6 +760,7 @@ export class FakeProviderEngine {
             observation: { sandbox, path, bytesWritten: bytesLength(bytesBase64), complete: true },
           },
         };
+
         this.state.ledger.push({
           submissionId,
           projectId: identity.projectId,
@@ -672,6 +771,7 @@ export class FakeProviderEngine {
           remaining: scenario.delayObservations,
           discoverable: this.state.profile.discoveryBySubmission,
         });
+
         return {
           result: scenario.delayObservations
             ? ({ status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const)

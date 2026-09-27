@@ -50,6 +50,7 @@ export const FakeAction = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("events"), scope: NativeScope }),
 ]);
+
 export type FakeAction = z.infer<typeof FakeAction>;
 
 export function validFakePath(path: string): boolean {

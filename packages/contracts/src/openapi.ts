@@ -52,14 +52,18 @@ const schemas = {
   SetupRequest,
   StreamFrame,
 };
+
 const component = (name: keyof typeof schemas) => ({ $ref: `#/components/schemas/${name}` });
+
 const json = (name: keyof typeof schemas) => ({
   content: { "application/json": { schema: component(name) } },
 });
+
 const response = (description: string, name: keyof typeof schemas) => ({
   description,
   ...json(name),
 });
+
 const acceptedResponse = (description: string, name: keyof typeof schemas) => ({
   ...response(description, name),
   headers: {
@@ -70,28 +74,35 @@ const acceptedResponse = (description: string, name: keyof typeof schemas) => ({
     },
   },
 });
+
 const accepted = (name: keyof typeof schemas) => ({
   "202": acceptedResponse("Durably accepted", name),
   default: response("Structured error", "ErrorResponse"),
 });
+
 const ordinary = (name: keyof typeof schemas) => ({
   "200": response("Success", name),
   default: response("Structured error", "ErrorResponse"),
 });
+
 const projectParameter = { name: "projectId", in: "path", required: true, schema: component("Id") };
+
 const sandboxParameter = { name: "sandboxId", in: "path", required: true, schema: component("Id") };
+
 const operationParameter = {
   name: "operationId",
   in: "path",
   required: true,
   schema: component("Id"),
 };
+
 const connectionParameter = {
   name: "connectionId",
   in: "path",
   required: true,
   schema: component("Id"),
 };
+
 const invocationHeader = {
   name: "Idempotency-Key",
   in: "header",
@@ -99,6 +110,7 @@ const invocationHeader = {
   schema: component("InvocationKey"),
   description: "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent.",
 };
+
 const sandboxListParameters = [
   { name: "cursor", in: "query", required: false, schema: { type: "string", maxLength: 256 } },
   {

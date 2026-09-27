@@ -7,17 +7,24 @@ export const Id = z
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/);
+
 export const Rfc3339 = z.iso.datetime({ offset: true });
+
 export const InvocationKey = z.uuidv7();
+
 export const ProjectPath = z.strictObject({ projectId: Id });
+
 export const SandboxPath = ProjectPath.extend({ sandboxId: Id });
+
 export const OperationPath = ProjectPath.extend({ operationId: Id });
 
 export const ImageSource = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("prepared"), imageId: Id }),
   z.strictObject({ kind: z.literal("oci"), reference: z.string().min(1).max(1024) }),
 ]);
+
 export const NetworkSelection = z.strictObject({ policy: z.string().min(1).max(128) });
+
 export const CreateSandboxRequest = z.strictObject({
   environment: ImageSource,
   connectionId: Id.optional(),
@@ -25,10 +32,12 @@ export const CreateSandboxRequest = z.strictObject({
   network: NetworkSelection.optional(),
   labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
 });
+
 export const ExecCommand = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("argv"), argv: z.array(z.string().max(8192)).min(1).max(128) }),
   z.strictObject({ kind: z.literal("shell"), script: z.string().min(1).max(65536) }),
 ]);
+
 export const ExecRequest = z.strictObject({
   command: ExecCommand,
   cwd: z.string().min(1).max(4096).optional(),
@@ -41,7 +50,9 @@ export const ExecRequest = z.strictObject({
     })
     .optional(),
 });
+
 export const Effect = z.enum(["none", "applied", "partial", "possible", "unknown"]);
+
 export const ErrorCode = z.enum([
   "INVALID_ARGUMENT",
   "UNSUPPORTED",
@@ -58,6 +69,7 @@ export const ErrorCode = z.enum([
   "OUTCOME_UNKNOWN",
   "INTERNAL",
 ]);
+
 export const SafeError = z.object({
   code: ErrorCode,
   message: z.string().max(1024),
@@ -65,14 +77,18 @@ export const SafeError = z.object({
   retry: z.enum(["never", "same_invocation", "observe_only", "new_invocation_with_risk"]),
   retryAfterSeconds: z.number().int().nonnegative().optional(),
 });
+
 export const ErrorResponse = z.object({ error: SafeError });
+
 export const OperationStatus = z.enum(["queued", "running", "succeeded", "failed", "unknown"]);
+
 export const FileReceipt = z.object({
   path: z.string(),
   bytesWritten: z.number().int().nonnegative(),
   complete: z.boolean(),
   effect: Effect,
 });
+
 export const OperationResult = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("create"), sandboxId: Id }),
   z.object({ kind: z.literal("exec"), executionId: Id }),
@@ -83,6 +99,7 @@ export const OperationResult = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("file_write"), receipt: FileReceipt }),
 ]);
+
 export const Operation = z.object({
   id: Id,
   projectId: Id,
@@ -98,7 +115,9 @@ export const Operation = z.object({
   result: OperationResult.optional(),
   recovery: z.array(z.enum(["check_again", "inspect_candidates", "acknowledge", "run_again"])),
 });
+
 export const AcceptedOperation = z.object({ operation: Operation });
+
 export const Sandbox = z.object({
   id: Id,
   projectId: Id,
@@ -119,11 +138,13 @@ export const Sandbox = z.object({
   network: NetworkSelection,
   labels: z.record(z.string(), z.string()),
 });
+
 export const SandboxPage = z.object({
   items: z.array(Sandbox),
   nextCursor: z.string().optional(),
   asOf: Rfc3339,
 });
+
 export const OutputAvailability = z.enum([
   "captured",
   "truncated",
@@ -131,6 +152,7 @@ export const OutputAvailability = z.enum([
   "expired",
   "evicted",
 ]);
+
 export const Execution = z.object({
   id: Id,
   projectId: Id,
@@ -144,26 +166,36 @@ export const Execution = z.object({
   stdout: z.string().optional(),
   stderr: z.string().optional(),
 });
+
 export const AcceptedExecution = z.object({ operation: Operation, execution: Execution });
+
 export const FileReadHeaders = z.object({
   contentType: z.literal("application/octet-stream"),
   contentLength: z.number().int().nonnegative(),
 });
+
 export const SetupRequest = z.strictObject({ setupToken: z.string().min(1).max(512) });
+
 export const SessionRequest = z.strictObject({ token: z.string().min(1).max(512) });
+
 export const SessionResponse = z.object({
   operatorId: Id,
   csrfToken: z.string().min(1),
   token: z.string().optional(),
 });
+
 export const CreateProjectRequest = z.strictObject({ name: z.string().min(1).max(120) });
+
 export const Project = z.object({ id: Id, name: z.string(), createdAt: Rfc3339 });
+
 export const ProjectPage = z.object({ items: z.array(Project) });
+
 export const CreateProviderConnectionRequest = z.strictObject({
   provider: z.literal("fake"),
   name: z.string().min(1).max(120),
   // A fake connection has no vendor secret. URL/token are service configuration, not public API fields.
 });
+
 export const ProviderConnection = z.object({
   id: Id,
   projectId: Id,
@@ -175,7 +207,9 @@ export const ProviderConnection = z.object({
     .object({ create: z.boolean(), exec: z.boolean(), files: z.boolean(), destroy: z.boolean() })
     .optional(),
 });
+
 export const ProviderConnectionPage = z.object({ items: z.array(ProviderConnection) });
+
 export const SandboxListQuery = z.strictObject({
   cursor: z.string().max(256).optional(),
   limit: z.number().int().min(1).max(100).optional(),
@@ -185,6 +219,7 @@ export const SandboxListQuery = z.strictObject({
     .optional(),
   q: z.string().max(64).optional(),
 });
+
 export const StreamFrame = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("stdout"),
@@ -219,24 +254,56 @@ export const StreamFrame = z.discriminatedUnion("kind", [
     signal: z.string().optional(),
   }),
 ]);
+
 export type CreateSandboxRequest = z.infer<typeof CreateSandboxRequest>;
+
 export type ExecRequest = z.infer<typeof ExecRequest>;
+
 export type Operation = z.infer<typeof Operation>;
+
 export type Sandbox = z.infer<typeof Sandbox>;
+
 export type Execution = z.infer<typeof Execution>;
+
 export type SafeError = z.infer<typeof SafeError>;
+
 export type ExecCommand = z.infer<typeof ExecCommand>;
+
 export type Project = z.infer<typeof Project>;
+
 export type ProviderConnection = z.infer<typeof ProviderConnection>;
 
 // Internal JS/Bun intent serialization. The server computes this hash from validated parsed input;
 // clients only repeat the same request and Idempotency-Key. This is not a cross-language wire format.
-export function canonicalJson(value: unknown): string {
+export type CanonicalJsonValue =
+  | null
+  | string
+  | boolean
+  | number
+  | CanonicalJsonValue[]
+  | { [key: string]: CanonicalJsonValue | undefined };
+
+export function canonicalJson(value: CanonicalJsonValue): string {
   if (value === null) return "null";
-  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
-  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
-  if (typeof value !== "object") throw new TypeError("Intent must be JSON-compatible");
+
+  const stringValue = z.string().safeParse(value);
+
+  if (stringValue.success) return JSON.stringify(stringValue.data);
+
+  const booleanValue = z.boolean().safeParse(value);
+
+  if (booleanValue.success) return JSON.stringify(booleanValue.data);
+
+  const numberValue = z.number().safeParse(value);
+
+  if (numberValue.success && Number.isFinite(numberValue.data))
+    return JSON.stringify(numberValue.data);
+
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+
+  if (!z.record(z.string(), z.any()).safeParse(value).success)
+    throw new TypeError("Intent must be JSON-compatible");
+
   return `{${Object.entries(value)
     .filter(([, v]) => v !== undefined)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -244,10 +311,11 @@ export function canonicalJson(value: unknown): string {
     .join(",")}}`;
 }
 
-export async function intentSha256(input: unknown): Promise<string> {
+export async function intentSha256(input: CanonicalJsonValue): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(canonicalJson(input)),
   );
+
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
