@@ -16,12 +16,11 @@ export function createApp(options: AppOptions = {}): Hono {
   app.get("/healthz", (c) => c.json({ status: "ok" }));
   options.registerRoutes?.(app);
 
+  app.all("/v1", (c) => c.json({ error: "not_found" }, 404));
+  app.all("/v1/*", (c) => c.json({ error: "not_found" }, 404));
+
   app.get("*", async (c) => {
     const requestPath = new URL(c.req.url).pathname;
-    if (requestPath.startsWith("/v1/") || requestPath === "/v1") {
-      return c.json({ error: "not_found" }, 404);
-    }
-
     const candidate = resolve(webDist, requestPath === "/" ? "index.html" : `.${requestPath}`);
     if (candidate !== webDist && !candidate.startsWith(webDist + sep)) {
       return c.notFound();
