@@ -1,0 +1,81 @@
+---
+// One-button light/dark toggle. Shares Starlight's `starlight-theme` storage key so
+// the landing page and docs agree. Starlight's ThemeProvider applies it before paint.
+---
+
+<sb-theme-toggle>
+  <button type="button" class="sb-theme-toggle" aria-label="Switch to dark theme">
+    <span aria-hidden="true" class="icon-dark">☾</span>
+    <span aria-hidden="true" class="icon-light">☀</span>
+  </button>
+</sb-theme-toggle>
+
+<script>
+  const storageKey = "starlight-theme";
+
+  function current(): "light" | "dark" {
+    return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  }
+
+  function label(button: HTMLButtonElement) {
+    button.setAttribute(
+      "aria-label",
+      current() === "dark" ? "Switch to light theme" : "Switch to dark theme",
+    );
+  }
+
+  class SandbarThemeToggle extends HTMLElement {
+    connectedCallback() {
+      const button = this.querySelector("button");
+
+      if (!button) return;
+      label(button);
+
+      button.addEventListener("click", () => {
+        const next = current() === "dark" ? "light" : "dark";
+        document.documentElement.dataset.theme = next;
+
+        try {
+          localStorage.setItem(storageKey, next);
+        } catch {
+          // Storage can be unavailable in private windows; the toggle still works for this page.
+        }
+
+        document.querySelectorAll<HTMLButtonElement>("sb-theme-toggle button").forEach(label);
+      });
+    }
+  }
+
+  if (!customElements.get("sb-theme-toggle")) {
+    customElements.define("sb-theme-toggle", SandbarThemeToggle);
+  }
+</script>
+
+<style>
+  .sb-theme-toggle {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--sb-line);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--sb-ink);
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .sb-theme-toggle:hover {
+    border-color: var(--sb-pink);
+  }
+  .icon-light {
+    display: none;
+  }
+  :global(:root[data-theme="dark"]) .icon-light {
+    display: inline;
+  }
+  :global(:root[data-theme="dark"]) .icon-dark {
+    display: none;
+  }
+</style>

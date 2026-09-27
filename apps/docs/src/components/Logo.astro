@@ -1,0 +1,64 @@
+---
+// The Sandbar mark: a half-sun in three bands setting on an aqua bar, beside the skewed wordmark.
+---
+
+<span class="sb-logo">
+  <span class="sb-logo-mark" aria-hidden="true">
+    <span class="sb-logo-sun">
+      <span class="coral"></span>
+      <span class="pink"></span>
+      <span class="lav"></span>
+    </span>
+    <span class="sb-logo-bar"></span>
+  </span>
+  <span class="sb-logo-word" translate="no">sandbar</span>
+</span>
+
+<style>
+  .sb-logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--sb-ink);
+  }
+  .sb-logo-mark {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 28px;
+    flex: none;
+  }
+  .sb-logo-sun {
+    height: 14px;
+    border-radius: 14px 14px 0 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .coral {
+    flex: 4;
+    background: var(--sb-coral);
+  }
+  .pink {
+    flex: 2;
+    background: var(--sb-pink);
+  }
+  .lav {
+    flex: 1.4;
+    background: var(--sb-lav);
+  }
+  .sb-logo-bar {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--sb-aqua);
+  }
+  .sb-logo-word {
+    display: inline-block;
+    font-family: var(--sb-font-display);
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: 0.04em;
+    transform: skewX(-10deg);
+  }
+</style>
