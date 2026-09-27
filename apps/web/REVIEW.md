@@ -158,6 +158,12 @@ The initial PR base was `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed c
 - Validation after fixes: lint, format check, all package typechecks, build, full tests, and diff check passed. Full suite: 82 passed, 5 local MySQL skips, 0 failed, 1,831 assertions; Chromium E2E rebuilt current assets and passed with 46 assertions. A fresh independent complete-diff review of the resulting exact base/HEAD is required before another push.
 - PR CI on the earlier HEAD had one control-owned crash test failure on the first pull-request run; the unchanged-HEAD rerun passed all gates, as did the push event. No backend code was changed.
 
+## Browser test sequencing repair
+
+- On reviewed HEAD bed5cad, push CI passed but pull-request CI failed in the new operation-read regression. The first injected 503 could be consumed by an in-flight poll already active before the test reloaded the operation route, so the test looked for an initial-load Retry button while the UI correctly showed a transient error with retained details.
+- The manager approved a test-only sequencing fix. The browser now leaves Operation detail and waits for Fleet before installing the interceptor, then navigates directly to the operation URL. It still checks the initial-load Retry, a later failed poll with retained details/Refresh, and automatic recovery without reload.
+- Rebuilt Chromium regression, lint, format check, all package typechecks, build, full suite, and diff check pass after the repair: 82 passed, 5 local MySQL skips, 0 failed, 1,831 assertions; Chromium E2E has 46 assertions. No application or backend code changed in this repair. Fresh independent complete-diff review remains required before pushing.
+
 ## Merged-parent review round 1
 
 - Reviewer: independent read-only subagent, `gpt-6-luna`, high reasoning.

@@ -378,6 +378,8 @@ test("browser and public HTTP recover fake effects across service restarts witho
 
   if (!created.sandboxId) throw new Error("Create did not return a sandbox ID");
 
+  await page.getByRole("link", { name: "Fleet" }).click();
+  await page.getByRole("heading", { name: "Fleet" }).waitFor();
   const operationPath = `**/v1/projects/${projectId}/operations/${createId}`;
   let operationReads = 0;
   let releaseRecoveredRead!: () => void;
@@ -419,8 +421,9 @@ test("browser and public HTTP recover fake effects across service restarts witho
     await recoveredRead;
     await route.continue();
   });
-  await page.reload();
+  await page.goto(`${serviceUrl}/projects/${projectId}/operations/${createId}`);
   await page.getByText("Temporary operation read failure").waitFor();
+  await page.getByRole("button", { name: "Retry operation" }).waitFor();
   await page.getByRole("button", { name: "Retry operation" }).click();
   await page.getByRole("heading", { name: `Operation ${createId}` }).waitFor();
   await page.getByText("Temporary operation read failure").waitFor();
