@@ -13,6 +13,12 @@
   "security": [
     {
       "bearerAuth": []
+    },
+    {
+      "localSessionCookie": []
+    },
+    {
+      "secureSessionCookie": []
     }
   ],
   "paths": {
@@ -130,6 +136,27 @@
     "/v1/sessions/logout": {
       "post": {
         "operationId": "logoutSession",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Required for cookie-authenticated mutations; must match the public origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for cookie-authenticated mutations; obtained from GET /v1/session."
+          }
+        ],
         "responses": {
           "204": {
             "description": "Session closed"
@@ -175,6 +202,27 @@
       },
       "post": {
         "operationId": "createProject",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Required for cookie-authenticated mutations; must match the public origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for cookie-authenticated mutations; obtained from GET /v1/session."
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -247,6 +295,27 @@
       },
       "post": {
         "operationId": "createProviderConnection",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Required for cookie-authenticated mutations; must match the public origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for cookie-authenticated mutations; obtained from GET /v1/session."
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -302,6 +371,27 @@
       ],
       "post": {
         "operationId": "verifyProviderConnection",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Required for cookie-authenticated mutations; must match the public origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for cookie-authenticated mutations; obtained from GET /v1/session."
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success",
@@ -427,6 +517,25 @@
               "$ref": "#/components/schemas/InvocationKey"
             },
             "description": "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent."
+          },
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Required for cookie-authenticated mutations; must match the public origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for cookie-authenticated mutations; obtained from GET /v1/session."
           }
         ],
         "requestBody": {
@@ -528,6 +637,25 @@
               "$ref": "#/components/schemas/InvocationKey"
             },
             "description": "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent."
+          },
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Required for cookie-authenticated mutations; must match the public origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for cookie-authenticated mutations; obtained from GET /v1/session."
           }
         ],
         "responses": {
@@ -594,6 +722,25 @@
               "$ref": "#/components/schemas/InvocationKey"
             },
             "description": "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent."
+          },
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Required for cookie-authenticated mutations; must match the public origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for cookie-authenticated mutations; obtained from GET /v1/session."
           }
         ],
         "requestBody": {
@@ -751,6 +898,25 @@
             "description": "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent."
           },
           {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Required for cookie-authenticated mutations; must match the public origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for cookie-authenticated mutations; obtained from GET /v1/session."
+          },
+          {
             "name": "overwrite",
             "in": "query",
             "required": false,
@@ -885,6 +1051,27 @@
       ],
       "post": {
         "operationId": "reconcileOperation",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Required for cookie-authenticated mutations; must match the public origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for cookie-authenticated mutations; obtained from GET /v1/session."
+          }
+        ],
         "description": "Request another read-only provider observation; never resubmit the mutation.",
         "responses": {
           "200": {

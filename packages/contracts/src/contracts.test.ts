@@ -375,6 +375,14 @@ describe("public contract", () => {
     );
   });
   test("OpenAPI session lookup uses the cookie names issued by HTTP and HTTPS", () => {
+    expect(openApiDocument.security).toEqual([
+      { bearerAuth: [] },
+      { localSessionCookie: [] },
+      { secureSessionCookie: [] },
+    ]);
+    expect(openApiDocument.paths["/v1/setup"].post.security).toEqual([]);
+    expect(openApiDocument.paths["/v1/sessions"].post.security).toEqual([]);
+    expect(openApiDocument.paths["/v1/projects"].get).not.toHaveProperty("security");
     expect(openApiDocument.paths["/v1/session"].get.security).toEqual([
       { localSessionCookie: [] },
       { secureSessionCookie: [] },
@@ -389,6 +397,31 @@ describe("public contract", () => {
       in: "cookie",
       name: "__Host-sandbar_session",
     });
+
+    const projectCreateHeaders = openApiDocument.paths["/v1/projects"].post.parameters;
+    const logoutHeaders = openApiDocument.paths["/v1/sessions/logout"].post.parameters;
+
+    const sandboxCreateHeaders =
+      openApiDocument.paths["/v1/projects/{projectId}/sandboxes"].post.parameters;
+
+    for (const parameters of [projectCreateHeaders, logoutHeaders, sandboxCreateHeaders]) {
+      expect(parameters).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "Origin",
+            in: "header",
+            required: false,
+            description: expect.stringContaining("cookie-authenticated"),
+          }),
+          expect.objectContaining({
+            name: "X-CSRF-Token",
+            in: "header",
+            required: false,
+            description: expect.stringContaining("cookie-authenticated"),
+          }),
+        ]),
+      );
+    }
   });
 
   test("OpenAPI retains constrained label keys", () => {

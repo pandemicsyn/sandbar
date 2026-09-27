@@ -183,6 +183,23 @@ const sandboxListParameters = [
   { name: "q", in: "query", required: false, schema: { type: "string", maxLength: 64 } },
 ];
 
+const cookieMutationHeaders = [
+  {
+    name: "Origin",
+    in: "header",
+    required: false,
+    schema: { type: "string", format: "uri" },
+    description: "Required for cookie-authenticated mutations; must match the public origin.",
+  },
+  {
+    name: "X-CSRF-Token",
+    in: "header",
+    required: false,
+    schema: { type: "string" },
+    description: "Required for cookie-authenticated mutations; obtained from GET /v1/session.",
+  },
+];
+
 export const openApiDocument = {
   openapi: "3.1.0",
   info: {
@@ -192,7 +209,7 @@ export const openApiDocument = {
       "Initial fake-provider vertical slice. Binary files and stream frames use separate schemas.",
   },
   servers: [{ url: "/" }],
-  security: [{ bearerAuth: [] }],
+  security: [{ bearerAuth: [] }, { localSessionCookie: [] }, { secureSessionCookie: [] }],
   paths: {
     "/v1/setup": {
       post: {
@@ -226,6 +243,7 @@ export const openApiDocument = {
     "/v1/sessions/logout": {
       post: {
         operationId: "logoutSession",
+        parameters: cookieMutationHeaders,
         responses: {
           "204": { description: "Session closed" },
           default: response("Structured error", "ErrorResponse"),
@@ -236,6 +254,7 @@ export const openApiDocument = {
       get: { operationId: "listProjects", responses: ordinary("ProjectPage") },
       post: {
         operationId: "createProject",
+        parameters: cookieMutationHeaders,
         requestBody: { required: true, ...json("CreateProjectRequest") },
         responses: {
           "201": response("Created", "Project"),
@@ -251,6 +270,7 @@ export const openApiDocument = {
       },
       post: {
         operationId: "createProviderConnection",
+        parameters: cookieMutationHeaders,
         requestBody: { required: true, ...json("CreateProviderConnectionRequest") },
         responses: {
           "201": response("Created", "ProviderConnection"),
@@ -260,7 +280,11 @@ export const openApiDocument = {
     },
     "/v1/projects/{projectId}/provider-connections/{connectionId}/verify": {
       parameters: [projectParameter, connectionParameter],
-      post: { operationId: "verifyProviderConnection", responses: ordinary("ProviderConnection") },
+      post: {
+        operationId: "verifyProviderConnection",
+        parameters: cookieMutationHeaders,
+        responses: ordinary("ProviderConnection"),
+      },
     },
     "/v1/projects/{projectId}/sandboxes": {
       parameters: [projectParameter],
@@ -271,7 +295,7 @@ export const openApiDocument = {
       },
       post: {
         operationId: "submitCreate",
-        parameters: [invocationHeader],
+        parameters: [invocationHeader, ...cookieMutationHeaders],
         requestBody: { required: true, ...json("CreateSandboxRequest") },
         responses: accepted("AcceptedOperation"),
       },
@@ -281,7 +305,7 @@ export const openApiDocument = {
       get: { operationId: "getSandbox", responses: ordinary("Sandbox") },
       delete: {
         operationId: "submitDestroy",
-        parameters: [invocationHeader],
+        parameters: [invocationHeader, ...cookieMutationHeaders],
         responses: accepted("AcceptedOperation"),
       },
     },
@@ -289,7 +313,7 @@ export const openApiDocument = {
       parameters: [projectParameter, sandboxParameter],
       post: {
         operationId: "submitExec",
-        parameters: [invocationHeader],
+        parameters: [invocationHeader, ...cookieMutationHeaders],
         requestBody: { required: true, ...json("ExecRequest") },
         responses: accepted("AcceptedExecution"),
       },
@@ -320,6 +344,7 @@ export const openApiDocument = {
         operationId: "writeFile",
         parameters: [
           invocationHeader,
+          ...cookieMutationHeaders,
           {
             name: "overwrite",
             in: "query",
@@ -349,6 +374,7 @@ export const openApiDocument = {
       parameters: [projectParameter, operationParameter],
       post: {
         operationId: "reconcileOperation",
+        parameters: cookieMutationHeaders,
         description: "Request another read-only provider observation; never resubmit the mutation.",
         responses: ordinary("Operation"),
       },
