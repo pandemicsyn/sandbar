@@ -343,6 +343,162 @@ test("combined binary output caps stdout first and reports truncation", async ()
   });
 });
 
+test("coupled exec streams complete and allocate stdout first across arrival orders", async () => {
+  for (const [stderrFirst, cap] of [
+    [false, 4],
+    [true, 1],
+  ] as const) {
+    let releaseStderr!: () => void;
+
+    const stderrPulled = new Promise<void>((resolve) => {
+      releaseStderr = resolve;
+    });
+
+    const stdout = stderrFirst
+      ? new ReadableStream<Uint8Array>(
+          {
+            async pull(controller) {
+              await stderrPulled;
+              controller.enqueue(Uint8Array.of(65));
+              controller.close();
+            },
+          },
+          { highWaterMark: 0 },
+        )
+      : new ReadableStream<Uint8Array>(
+          {
+            start(controller) {
+              controller.enqueue(Uint8Array.of(65));
+            },
+            async pull(controller) {
+              await stderrPulled;
+              controller.close();
+            },
+          },
+          { highWaterMark: 0 },
+        );
+
+    const stderr = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          releaseStderr();
+          controller.enqueue(Uint8Array.of(66));
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+
+    const session = {
+      scope: { authority: { kind: "account", id: "a" }, partition: {} },
+      supports: {
+        images: ["prepared"] as const,
+        network: ["blocked"],
+        exec: { commands: ["argv"] as const, maxOutputBytes: 4 },
+      },
+      async create() {
+        return { id: "box", state: "running" as const };
+      },
+      async destroy() {
+        return { computeStopped: true, retainedResources: [] };
+      },
+      async exec() {
+        return { exitCode: 0, stdout, stderr, truncated: false };
+      },
+    };
+
+    const prepared = await prepareOperation(
+      session,
+      "exec",
+      {
+        sandbox: { id: "box" },
+        command: { kind: "argv", argv: ["echo"] },
+        deadlineSeconds: 1,
+        maxOutputBytes: cap,
+      },
+      signal,
+    );
+
+    const result = await Promise.race([
+      submitOperation(prepared, identity, signal, cap),
+      Bun.sleep(300).then(() => {
+        throw new Error("coupled streams did not finish");
+      }),
+    ]);
+
+    expect(result).toEqual({
+      kind: "completed",
+      value: {
+        exitCode: 0,
+        stdout: Uint8Array.of(65),
+        stderr: stderrFirst ? new Uint8Array() : Uint8Array.of(66),
+        truncated: stderrFirst,
+      },
+    });
+  }
+});
+
+test("exec stream failure stops sibling read without waiting for cancellation", async () => {
+  let siblingCancels = 0;
+
+  const stdout = new ReadableStream<unknown>({
+    start(controller) {
+      controller.enqueue("invalid");
+    },
+  });
+
+  const stderr = new ReadableStream<Uint8Array>({
+    pull() {
+      return new Promise<void>(() => {});
+    },
+    cancel() {
+      siblingCancels++;
+
+      return Promise.reject(new Error("late cancel failure"));
+    },
+  });
+
+  const session = {
+    scope: { authority: { kind: "account", id: "a" }, partition: {} },
+    supports: {
+      images: ["prepared"] as const,
+      network: ["blocked"],
+      exec: { commands: ["argv"] as const, maxOutputBytes: 4 },
+    },
+    async create() {
+      return { id: "box", state: "running" as const };
+    },
+    async destroy() {
+      return { computeStopped: true, retainedResources: [] };
+    },
+    async exec() {
+      return { exitCode: 0, stdout, stderr, truncated: false };
+    },
+  };
+
+  const prepared = await prepareOperation(
+    session,
+    "exec",
+    {
+      sandbox: { id: "box" },
+      command: { kind: "argv", argv: ["echo"] },
+      deadlineSeconds: 1,
+      maxOutputBytes: 4,
+    },
+    signal,
+  );
+
+  await expect(
+    Promise.race([
+      submitOperation(prepared, identity, signal, 4),
+      Bun.sleep(300).then(() => {
+        throw new Error("sibling read held a stream failure");
+      }),
+    ]),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(siblingCancels).toBe(1);
+});
+
 test("stream collection stops at its byte cap without a probe or blocking cancellation", async () => {
   let stderrReads = 0;
   let stdoutReads = 0;
@@ -445,7 +601,7 @@ test("stream collection stops at its byte cap without a probe or blocking cancel
     },
   });
   expect(stdoutReads).toBe(1);
-  expect(stderrReads).toBe(0);
+  expect(stderrReads).toBe(1);
   expect(cancelRequested).toBe(2);
 });
 

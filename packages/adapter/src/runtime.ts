@@ -162,16 +162,6 @@ function readWithAbort(
   });
 }
 
-function cancelStream(value: Uint8Array | ReadableStream<Uint8Array>): void {
-  if (!(value instanceof ReadableStream)) return;
-
-  try {
-    void value.cancel().catch(() => undefined);
-  } catch {
-    // Cancellation is best effort and must not hold the local result.
-  }
-}
-
 async function collect(
   value: Uint8Array | ReadableStream<Uint8Array>,
   limit: number,
@@ -260,16 +250,76 @@ async function validateValue(
   if (kind === "file_write") return WriteValueSchema.parse(value);
   const parsed = ExecValueSchema.parse(value);
   const limit = Math.min(MAX_OUTPUT, maxOutputBytes);
-  let stdout: Awaited<ReturnType<typeof collect>>;
+  const stdoutStop = new AbortController();
+  const stderrStop = new AbortController();
+  let failure: { reason: unknown } | undefined;
+  let skipStderr = false;
+
+  // Each collector retains at most `limit` bytes in chunks and may assemble one
+  // bounded buffer; the selected final stdout and stderr total at most `limit`.
+  const stdoutTask = collect(
+    parsed.stdout,
+    limit,
+    AbortSignal.any([signal, stdoutStop.signal]),
+  ).then(
+    (value) => ({ kind: "ok" as const, value }),
+    (error) => {
+      failure ??= { reason: error };
+      stderrStop.abort(error);
+
+      return { kind: "error" as const, error };
+    },
+  );
+
+  const stderrTask = collect(
+    parsed.stderr,
+    limit,
+    AbortSignal.any([signal, stderrStop.signal]),
+  ).then(
+    (value) => ({ kind: "ok" as const, value }),
+    (error) => {
+      if (!skipStderr) {
+        failure ??= { reason: error };
+        stdoutStop.abort(error);
+      }
+
+      return { kind: "error" as const, error };
+    },
+  );
+
+  const stdoutResult = await stdoutTask;
+
+  if (stdoutResult.kind === "error") {
+    await stderrTask;
+    throw failure?.reason ?? stdoutResult.error;
+  }
+
+  const stdout = stdoutResult.value;
   let stderr: Awaited<ReturnType<typeof collect>>;
 
-  try {
-    stdout = await collect(parsed.stdout, limit, signal);
-    stderr = await collect(parsed.stderr, limit - stdout.bytes.length, signal);
-  } catch (error) {
-    if (signal.aborted) cancelStream(parsed.stderr);
-    throw error;
+  if (stdout.bytes.length === limit) {
+    skipStderr = true;
+    stderrStop.abort();
+    await stderrTask;
+    stderr = {
+      bytes: new Uint8Array(),
+      truncated:
+        parsed.stderr instanceof ReadableStream ||
+        (parsed.stderr instanceof Uint8Array && parsed.stderr.length > 0),
+    };
+  } else {
+    const stderrResult = await stderrTask;
+
+    if (stderrResult.kind === "error") throw failure?.reason ?? stderrResult.error;
+
+    const remaining = limit - stdout.bytes.length;
+    stderr = {
+      bytes: Uint8Array.from(stderrResult.value.bytes.subarray(0, remaining)),
+      truncated: stderrResult.value.truncated || stderrResult.value.bytes.length > remaining,
+    };
   }
+
+  if (failure) throw failure.reason;
 
   if (signal.aborted) throw abortReason(signal);
 
