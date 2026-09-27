@@ -132,6 +132,7 @@
         "@sandbar/core": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
         "@sandbar/store": "workspace:*",
+        "zod": "4.6.5",
       },
     },
     "packages/store": {

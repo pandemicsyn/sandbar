@@ -376,7 +376,14 @@ export const ProviderConnection = z.object({
   provider: z.enum(["fake", "daytona", "modal"]),
   name: z.string(),
   status: z.enum(["unverified", "verified", "draining"]),
-  nativeScope: z.object({ accountId: z.string().optional(), resourceScope: z.object({ kind: z.literal("app"), id: z.string() }).optional(), region: z.string().optional(), endpoint: z.url().optional() }).optional(),
+  nativeScope: z
+    .object({
+      accountId: z.string().optional(),
+      resourceScope: z.object({ kind: z.literal("app"), id: z.string() }).optional(),
+      region: z.string().optional(),
+      endpoint: z.url().optional(),
+    })
+    .optional(),
   capabilities: z
     .object({ create: z.boolean(), exec: z.boolean(), files: z.boolean(), destroy: z.boolean() })
     .optional(),

@@ -319,7 +319,11 @@ export class FakeProviderDriver implements ProviderDriver {
     return this.mutation({ kind: "destroy", ...input }, input.identity.submissionId);
   }
   async observe(input: { scope: NativeScope; submissionId: string; operationId?: string }) {
-    const value = await this.readCall({ kind: "observe", scope: input.scope, submissionId: input.submissionId });
+    const value = await this.readCall({
+      kind: "observe",
+      scope: input.scope,
+      submissionId: input.submissionId,
+    });
 
     if (value === null) return null;
     const result = DriverResult.parse(value);

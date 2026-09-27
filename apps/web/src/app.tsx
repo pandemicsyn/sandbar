@@ -445,7 +445,17 @@ function ConnectionsPage() {
     setNotice(undefined);
 
     try {
-      await api.createConnection(projectId, provider === "fake" ? { provider, name: name.trim() } : { provider, name: name.trim(), credentials: { apiKey }, configuration: { apiUrl, toolboxOrigin, target, ttlMinutes: "60" } });
+      await api.createConnection(
+        projectId,
+        provider === "fake"
+          ? { provider, name: name.trim() }
+          : {
+              provider,
+              name: name.trim(),
+              credentials: { apiKey },
+              configuration: { apiUrl, toolboxOrigin, target, ttlMinutes: "60" },
+            },
+      );
       setName("");
       setApiKey("");
       setNotice("Connection added. Verify its native scope before creating a sandbox.");
@@ -485,8 +495,14 @@ function ConnectionsPage() {
         <h2 className="section-title">Add provider connection</h2>
         <form className="toolbar" onSubmit={create}>
           <Field label="Provider" htmlFor="connection-provider">
-            <select className="select" id="connection-provider" value={provider} onChange={(e) => setProvider(e.target.value as "fake" | "daytona")}>
-              <option value="fake">Fake test provider</option><option value="daytona">Daytona</option>
+            <select
+              className="select"
+              id="connection-provider"
+              value={provider}
+              onChange={(e) => setProvider(z.enum(["fake", "daytona"]).parse(e.target.value))}
+            >
+              <option value="fake">Fake test provider</option>
+              <option value="daytona">Daytona</option>
             </select>
           </Field>
           <Field label="Connection name" htmlFor="connection-name">
@@ -499,12 +515,50 @@ function ConnectionsPage() {
               onChange={(e) => setName(e.target.value)}
             />
           </Field>
-          {provider === "daytona" && <>
-            <Field label="Daytona API key" htmlFor="connection-api-key"><input className="input" id="connection-api-key" type="password" autoComplete="off" required value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></Field>
-            <Field label="Daytona target" htmlFor="connection-target"><input className="input" id="connection-target" required value={target} onChange={(e) => setTarget(e.target.value)} /></Field>
-            <Field label="Daytona API URL" htmlFor="connection-api-url"><input className="input" id="connection-api-url" type="url" required value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} /></Field>
-            <Field label="Daytona toolbox origin" htmlFor="connection-toolbox-origin"><input className="input" id="connection-toolbox-origin" type="url" required value={toolboxOrigin} onChange={(e) => setToolboxOrigin(e.target.value)} /></Field>
-          </>}
+          {provider === "daytona" && (
+            <>
+              <Field label="Daytona API key" htmlFor="connection-api-key">
+                <input
+                  className="input"
+                  id="connection-api-key"
+                  type="password"
+                  autoComplete="off"
+                  required
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                />
+              </Field>
+              <Field label="Daytona target" htmlFor="connection-target">
+                <input
+                  className="input"
+                  id="connection-target"
+                  required
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                />
+              </Field>
+              <Field label="Daytona API URL" htmlFor="connection-api-url">
+                <input
+                  className="input"
+                  id="connection-api-url"
+                  type="url"
+                  required
+                  value={apiUrl}
+                  onChange={(e) => setApiUrl(e.target.value)}
+                />
+              </Field>
+              <Field label="Daytona toolbox origin" htmlFor="connection-toolbox-origin">
+                <input
+                  className="input"
+                  id="connection-toolbox-origin"
+                  type="url"
+                  required
+                  value={toolboxOrigin}
+                  onChange={(e) => setToolboxOrigin(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
           <Button variant="primary" busy={busy} type="submit">
             Add connection
           </Button>
@@ -613,8 +667,12 @@ function FleetPage() {
 
     try {
       const selected = available.find((item) => item.id === connectionId) ?? available[0];
+
       const candidate: CreateSandboxRequest = {
-        environment: { kind: "prepared" as const, imageId: selected?.provider === "fake" ? "fake-starter" : preparedImageId.trim() },
+        environment: {
+          kind: "prepared" as const,
+          imageId: selected?.provider === "fake" ? "fake-starter" : preparedImageId.trim(),
+        },
         network: { policy: "blocked" as const },
         connectionId: selected?.id,
       };
@@ -695,7 +753,10 @@ function FleetPage() {
           <form className="toolbar" onSubmit={create}>
             <div className="field">
               <span className="field-label">Blocked network</span>
-              <span className="field-hint">Daytona requires an existing active snapshot ID. OCI builds are not enabled in this slice.</span>
+              <span className="field-hint">
+                Daytona requires an existing active snapshot ID. OCI builds are not enabled in this
+                slice.
+              </span>
             </div>
             <Field label="Connection" htmlFor="create-connection">
               <select
@@ -712,7 +773,18 @@ function FleetPage() {
                 ))}
               </select>
             </Field>
-            {(available.find((item) => item.id === connectionId) ?? available[0])?.provider !== "fake" && <Field label="Prepared image ID" htmlFor="create-prepared-image"><input className="input" id="create-prepared-image" required value={preparedImageId} onChange={(e) => setPreparedImageId(e.target.value)} /></Field>}
+            {(available.find((item) => item.id === connectionId) ?? available[0])?.provider !==
+              "fake" && (
+              <Field label="Prepared image ID" htmlFor="create-prepared-image">
+                <input
+                  className="input"
+                  id="create-prepared-image"
+                  required
+                  value={preparedImageId}
+                  onChange={(e) => setPreparedImageId(e.target.value)}
+                />
+              </Field>
+            )}
             <Field label="Label key (optional)" htmlFor="create-label-key">
               <input
                 className="input"

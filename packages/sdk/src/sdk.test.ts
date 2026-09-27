@@ -2738,15 +2738,33 @@ test("remote completed execution without an exit code has a distinct outcome", a
 });
 
 test("direct close releases an owned transport once and leaves borrowed shared transport open", async () => {
+  // SAFETY: This close-only fixture never invokes driver methods; it only verifies lease release ownership.
   const driver = { name: "fake" } as ProviderDriver;
   const scope = { provider: "fake", connectionId: "conn_1", accountId: "native-account" };
   const borrowedA = DirectSandbar.direct({ provider: { driver, scope } });
   const borrowedB = DirectSandbar.direct({ provider: { driver, scope } });
   let releases = 0;
   let finish!: () => void;
-  const pending = new Promise<void>(resolve => { finish = resolve; });
-  const owned = DirectSandbar.direct({ provider: { driver, scope, ownership: "owned", release: async () => { releases++; await pending; } } });
-  const first = owned.close(), second = owned.close();
+
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+
+  const owned = DirectSandbar.direct({
+    provider: {
+      driver,
+      scope,
+      ownership: "owned",
+      release: async () => {
+        releases++;
+        await pending;
+      },
+    },
+  });
+
+  const first = owned.close(),
+    second = owned.close();
+
   expect(first).toBe(second);
   await Promise.resolve();
   expect(releases).toBe(1);

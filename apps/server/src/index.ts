@@ -1,7 +1,9 @@
 import { openDomainRuntime } from "./runtime";
 import { z } from "zod";
 
-const daytonaTrustedEndpoints = z.array(z.object({ apiUrl: z.string(), toolboxOrigin: z.string() })).parse(JSON.parse(Bun.env.SANDBAR_DAYTONA_TRUSTED_ENDPOINTS ?? "[]"));
+const daytonaTrustedEndpoints = z
+  .array(z.object({ apiUrl: z.string(), toolboxOrigin: z.string() }))
+  .parse(JSON.parse(Bun.env.SANDBAR_DAYTONA_TRUSTED_ENDPOINTS ?? "[]"));
 
 const runtime = await openDomainRuntime({
   databaseUrl: Bun.env.SANDBAR_DB_URL ?? "",

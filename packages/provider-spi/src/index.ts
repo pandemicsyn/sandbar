@@ -1,14 +1,19 @@
 import { z } from "zod";
 import { ExecCommand, Effect, Id } from "@sandbar/contracts";
 
-export const NativeScope = z.object({
-  provider: z.string().min(1),
-  connectionId: Id,
-  accountId: z.string().min(1).optional(),
-  resourceScope: z.object({ kind: z.literal("app"), id: z.string().min(1) }).optional(),
-  region: z.string().optional(),
-  endpoint: z.url().optional(),
-}).refine(value => !!value.accountId !== !!value.resourceScope, "Exactly one verified native scope is required");
+export const NativeScope = z
+  .object({
+    provider: z.string().min(1),
+    connectionId: Id,
+    accountId: z.string().min(1).optional(),
+    resourceScope: z.object({ kind: z.literal("app"), id: z.string().min(1) }).optional(),
+    region: z.string().optional(),
+    endpoint: z.url().optional(),
+  })
+  .refine(
+    (value) => !!value.accountId !== !!value.resourceScope,
+    "Exactly one verified native scope is required",
+  );
 
 export const NativeRef = z.object({
   scope: NativeScope,
@@ -209,7 +214,11 @@ export interface ProviderDriver {
   }): Promise<DriverResult>;
   destroy(input: { sandbox: SandboxRef; identity: InvocationIdentity }): Promise<DriverResult>;
   // Observe must not submit a mutation. Null means no evidence, never proof of no effect.
-  observe(input: { scope: NativeScope; submissionId: string; operationId?: string }): Promise<DriverResult | null>;
+  observe(input: {
+    scope: NativeScope;
+    submissionId: string;
+    operationId?: string;
+  }): Promise<DriverResult | null>;
 }
 
 /** Releasing an owned transport never destroys provider compute. */

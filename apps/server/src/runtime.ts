@@ -8,7 +8,12 @@ import {
   openMysqlBackend,
   openSqliteBackend,
 } from "@sandbar/store";
-import { DurableRunner, ProviderRegistry, SecretBox, type ProviderRegistration } from "@sandbar/service-runtime";
+import {
+  DurableRunner,
+  ProviderRegistry,
+  SecretBox,
+  type ProviderRegistration,
+} from "@sandbar/service-runtime";
 import { FakeProviderDriver } from "@sandbar/provider-fake";
 import { daytonaRegistration, type DaytonaEndpointPair } from "@sandbar/provider-daytona";
 
@@ -26,18 +31,23 @@ export interface RuntimeConfig {
 }
 
 export async function openDomainRuntime(config: RuntimeConfig) {
-  if (
-    !config.databaseUrl ||
-    !config.keyFile ||
-    !config.setupTokenFile
-  )
+  if (!config.databaseUrl || !config.keyFile || !config.setupTokenFile)
     throw new Error("Database, key and setup token are required");
+
   if (!!config.fakeProviderUrl !== !!config.fakeProviderToken)
     throw new Error("Fake provider URL and transport token must be configured together");
 
   if (config.fakeProviderUrl) {
     const fakeEndpoint = new URL(config.fakeProviderUrl);
-    if (!(["http:", "https:"].includes(fakeEndpoint.protocol) && ["127.0.0.1", "[::1]"].includes(fakeEndpoint.hostname) && !fakeEndpoint.username && !fakeEndpoint.password))
+
+    if (
+      !(
+        ["http:", "https:"].includes(fakeEndpoint.protocol) &&
+        ["127.0.0.1", "[::1]"].includes(fakeEndpoint.hostname) &&
+        !fakeEndpoint.username &&
+        !fakeEndpoint.password
+      )
+    )
       throw new Error("Fake provider must use a loopback HTTP endpoint");
   }
 
@@ -73,9 +83,45 @@ export async function openDomainRuntime(config: RuntimeConfig) {
       throw new Error("Setup token file must contain at least 24 characters");
     const store = new ControlStore(backend);
 
-    const driver = config.fakeProviderUrl && config.fakeProviderToken ? new FakeProviderDriver({ baseUrl: config.fakeProviderUrl, token: config.fakeProviderToken }) : undefined;
-    const fakeRegistration: ProviderRegistration[] = driver ? [{ provider: "fake", validate(input) { if (Object.keys(input.credentials).length || Object.keys(input.configuration).length) throw new Error("Fake connection has no native credentials"); return input; }, async connect(input) { return { driver, scope: { provider: "fake", connectionId: input.connectionId, accountId: "fake-local", region: "local" } }; } }] : [];
-    const registry = new ProviderRegistry(store, secrets, [daytonaRegistration(config.daytonaFetch, config.daytonaTrustedEndpoints), ...fakeRegistration, ...(config.providerRegistrations ?? [])]);
+    const driver =
+      config.fakeProviderUrl && config.fakeProviderToken
+        ? new FakeProviderDriver({
+            baseUrl: config.fakeProviderUrl,
+            token: config.fakeProviderToken,
+          })
+        : undefined;
+
+    const fakeRegistration: ProviderRegistration[] = driver
+      ? [
+          {
+            provider: "fake",
+            validate(input) {
+              if (Object.keys(input.credentials).length || Object.keys(input.configuration).length)
+                throw new Error("Fake connection has no native credentials");
+
+              return input;
+            },
+            async connect(input) {
+              return {
+                driver,
+                scope: {
+                  provider: "fake",
+                  connectionId: input.connectionId,
+                  accountId: "fake-local",
+                  region: "local",
+                },
+              };
+            },
+          },
+        ]
+      : [];
+
+    const registry = new ProviderRegistry(store, secrets, [
+      daytonaRegistration(config.daytonaFetch, config.daytonaTrustedEndpoints),
+      ...fakeRegistration,
+      ...(config.providerRegistrations ?? []),
+    ]);
+
     const runner = new DurableRunner({ store, registry, secrets });
 
     const app = createApp({

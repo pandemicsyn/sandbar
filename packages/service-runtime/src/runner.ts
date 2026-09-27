@@ -79,7 +79,12 @@ export class DurableRunner {
 
     return {
       driver: this.options.driver,
-      scope: { provider: connection.provider, connectionId: connection.id, accountId: connection.scope, region: "local" },
+      scope: {
+        provider: connection.provider,
+        connectionId: connection.id,
+        accountId: connection.scope,
+        region: "local",
+      },
     };
   }
   private async process(claim: Claimed): Promise<void> {
@@ -91,12 +96,18 @@ export class DurableRunner {
       const connection = await store.getConnection(op.project_id, op.connection_id);
 
       if (!connection) throw new Error("Provider connection vanished");
-      lease = this.options.registry ? await this.options.registry.connect(connection) : await this.connection(connection);
+      lease = this.options.registry
+        ? await this.options.registry.connect(connection)
+        : await this.connection(connection);
       const { driver, scope } = lease;
 
       if (claim.observeOnly) {
         // This path is read only even when the claim follows a process crash.
-        const result = await driver.observe({ scope, submissionId: op.provider_token, operationId: op.id });
+        const result = await driver.observe({
+          scope,
+          submissionId: op.provider_token,
+          operationId: op.id,
+        });
 
         if (result) await this.handleResult(claim, validateDriverResult(result), scope);
         else await store.reschedule(claim, "outcome_unknown", 5_000, "NO_OBSERVATION");
@@ -232,7 +243,11 @@ export class DurableRunner {
       await store.reschedule(claim, "outcome_unknown", 5_000, "DRIVER_ERROR");
     } finally {
       if (lease?.ownership === "owned") {
-        try { await lease.release(); } catch { console.error("Provider transport release failed"); }
+        try {
+          await lease.release();
+        } catch {
+          console.error("Provider transport release failed");
+        }
       }
     }
   }

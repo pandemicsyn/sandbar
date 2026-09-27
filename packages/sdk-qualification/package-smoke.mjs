@@ -107,9 +107,10 @@ async function consumer(directory, dependencies, overrides, source) {
 }
 
 async function checkTypes(directory, mode) {
-  const source =
-    mode === "daytona"
-      ? `
+  let source;
+
+  if (mode === "daytona")
+    source = `
 import { Sandbar, Image } from "@sandbar/sdk/direct";
 import { daytonaProvider } from "@sandbar/provider-daytona";
 async function flow() {
@@ -122,9 +123,9 @@ async function flow() {
   return text;
 }
 void flow;
-`
-      : mode === "direct"
-      ? `
+`;
+  else if (mode === "direct")
+    source = `
 import { Sandbar, Image } from "@sandbar/sdk/direct";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 async function flow() {
@@ -137,8 +138,9 @@ async function flow() {
   return text;
 }
 void flow;
-`
-      : `
+`;
+  else
+    source = `
 import { Sandbar, Image } from "@sandbar/sdk/remote";
 async function flow() {
   const client = Sandbar.connect({ url: "https://sandbar.example", token: "example-token-123456", projectId: "project_1" });
@@ -198,39 +200,6 @@ if (RootUnknown !== RemoteUnknown) throw new Error("Remote-only SDK entry point 
 if (typeof Sandbar.connect !== "function" || Image.prepared("fake-starter").kind !== "prepared") throw new Error("Remote-only export unavailable");
 process.stdout.write("packed remote import passed\\n");
 `;
-const daytonaSource = `
-import { Sandbar, Image } from "@sandbar/sdk/direct";
-import { daytonaProvider } from "@sandbar/provider-daytona";
-let name = "", mutations = 0;
-const origin = "https://proxy.app.daytona.io/toolbox";
-const native = (state = "started") => ({ id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, toolboxProxyUrl: origin });
-const mock = async (input, init = {}) => {
-  const url = new URL(String(input));
-  const json = value => Response.json(value);
-  if (url.pathname === "/api/api-keys/current") return json({ organizationId: "org-1" });
-  if (url.pathname === "/api/snapshots/snap-1") return json({ id: "snap-1", organizationId: "org-1", state: "active", regionIds: ["us"], sandboxClass: "linux-vm" });
-  if (url.pathname === "/api/sandbox" && init.method === "POST") { mutations++; name = JSON.parse(init.body).name; return json(native()); }
-  if (url.pathname === "/api/sandbox/native-1" && init.method === "DELETE") { mutations++; return json(native("destroyed")); }
-  if (url.pathname === "/api/sandbox/native-1") return json(native());
-  if (url.pathname.endsWith("/process/execute")) { mutations++; return json({ exitCode: 0, result: "SANDBAR-EXEC-V1\\n0\\n2\\n1\\n 00 ff\\nSANDBAR-STDERR\\n 7f\\nSANDBAR-END\\n" }); }
-  if (url.pathname.endsWith("/files/upload-v2")) { mutations++; return json({ name: "file", path: "/file", type: "file" }); }
-  if (url.pathname.endsWith("/files/download")) return new Response(Uint8Array.from([0,255]));
-  throw new Error("Unexpected fixture request: " + url.pathname);
-};
-const provider = await daytonaProvider({ apiKey: "fixture-only", target: "us", fetch: mock });
-const client = Sandbar.direct({ provider });
-try {
-  const box = await client.sandboxes.create({ environment: Image.prepared("snap-1") });
-  const result = await box.exec({ command: { kind: "shell", script: "printf test" } });
-  if (result.stdout[0] !== 0 || result.stdout[1] !== 255 || result.stderr[0] !== 127) throw new Error("Binary output mismatch");
-  await box.writeFile("/file", Uint8Array.from([0,255]), { overwrite: true });
-  const bytes = await box.readFile("/file");
-  if (bytes[0] !== 0 || bytes[1] !== 255) throw new Error("Binary file mismatch");
-  await box.destroy();
-  if (mutations !== 4) throw new Error("Mutation replay in packed consumer: " + mutations);
-  process.stdout.write("packed Daytona fixture flow passed\\n");
-} finally { await client.close(); }
-`;
 
 const daytonaSource = `
 import { Sandbar, Image } from "@sandbar/sdk/direct";
@@ -289,7 +258,11 @@ try {
     "@sandbar/provider-fake": archiveOverrides["@sandbar/provider-fake"],
   };
 
-  const daytonaDeps = { ...remoteDeps, "@sandbar/provider-daytona": archiveOverrides["@sandbar/provider-daytona"] };
+  const daytonaDeps = {
+    ...remoteDeps,
+    "@sandbar/provider-daytona": archiveOverrides["@sandbar/provider-daytona"],
+  };
+
   const remote = join(temporary, "remote-consumer");
   const direct = join(temporary, "direct-consumer");
   const daytona = join(temporary, "daytona-consumer");
@@ -310,7 +283,9 @@ try {
   );
 
   for (const runtime of ["node", "bun"]) run(runtime, ["consumer.mjs"], remote);
-  for (const runtime of ["node", "bun"]) console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], daytona)}`);
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], daytona)}`);
   await fixture.startFake();
 
   for (const runtime of ["node", "bun"]) {

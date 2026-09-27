@@ -542,6 +542,7 @@ export class DirectClient implements SandbarClient {
 
     if (this.driver.name !== this.scope.provider)
       throw new SandbarError("INVALID_ARGUMENT", "Provider name and scope mismatch");
+
     if (options.provider.ownership === "owned") this.release = options.provider.release;
   }
   ensureOpen() {
@@ -749,6 +750,7 @@ export class DirectClient implements SandbarClient {
       this.closeController.abort(new SandbarError("CLIENT_CLOSED", "Client is closed"));
       this.closePromise = Promise.resolve().then(() => this.release?.());
     }
+
     return this.closePromise;
   }
 }

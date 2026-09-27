@@ -12,6 +12,7 @@
     "@sandbar/contracts": "workspace:*",
     "@sandbar/core": "workspace:*",
     "@sandbar/provider-spi": "workspace:*",
-    "@sandbar/store": "workspace:*"
+    "@sandbar/store": "workspace:*",
+    "zod": "4.6.5"
   }
 }
