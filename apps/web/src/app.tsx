@@ -1016,8 +1016,12 @@ function SandboxPage() {
 
   if (box.loading) return <LoadingRows />;
 
-  if (box.error || !box.data)
-    return <Notice tone="error">{box.error ?? "Sandbox unavailable"}</Notice>;
+  if (!box.data)
+    return (
+      <Notice tone="error">
+        {box.error ?? "Sandbox unavailable"} <Button onClick={box.refresh}>Retry sandbox</Button>
+      </Notice>
+    );
   const sandbox = box.data;
   const isRunning = sandbox.observedState === "running";
 
@@ -1040,6 +1044,7 @@ function SandboxPage() {
           </div>
         }
       />
+      {box.error && <Notice tone="error">{box.error}</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
       {!busy &&
         (

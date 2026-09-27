@@ -529,6 +529,50 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("heading", { name: "Fleet" }).waitFor();
   await page.getByRole("link", { name: sandboxId }).click();
   await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).waitFor();
+  await page.goto(`${serviceUrl}/projects/${projectId}/sandboxes`);
+  await page.getByRole("heading", { name: "Fleet" }).waitFor();
+  const sandboxReadRoute = `**/v1/projects/${projectId}/sandboxes/${sandboxId}`;
+  let sandboxRefreshReads = 0;
+  await page.route(sandboxReadRoute, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+
+      return;
+    }
+
+    sandboxRefreshReads += 1;
+
+    if (sandboxRefreshReads === 1 || sandboxRefreshReads === 3) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "UNAVAILABLE",
+            message:
+              sandboxRefreshReads === 1
+                ? "Temporary sandbox read failure"
+                : "Temporary sandbox refresh failure",
+          },
+        }),
+      });
+
+      return;
+    }
+
+    await route.continue();
+  });
+  await page.goto(`${serviceUrl}/projects/${projectId}/sandboxes/${sandboxId}`);
+  await page.getByText("Temporary sandbox read failure").waitFor();
+  await page.getByRole("button", { name: "Retry sandbox" }).click();
+  await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).waitFor();
+  await page.getByRole("button", { name: "Refresh state" }).click();
+  await page.getByText("Temporary sandbox refresh failure").waitFor();
+  expect(await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).isVisible()).toBe(true);
+  await page.getByRole("button", { name: "Refresh state" }).click();
+  await page.getByText("Temporary sandbox refresh failure").waitFor({ state: "hidden" });
+  expect(sandboxRefreshReads).toBe(4);
+  await page.unroute(sandboxReadRoute);
 
   const stderrBytes = Buffer.concat([Buffer.from("fixture stderr\n"), Buffer.from([0xff])]);
 
