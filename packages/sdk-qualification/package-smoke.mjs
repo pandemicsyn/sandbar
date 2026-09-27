@@ -448,6 +448,14 @@ const until = async (check) => {
 };
 try {
   await start();
+  const page = await fetch(origin + "/", { headers: { Accept: "text/html" } });
+  const html = await page.text();
+  const assetPath = html.match(/<script[^>]+src="([^"]+)"/)?.[1];
+  if (page.status !== 200 || !assetPath?.startsWith("/assets/"))
+    throw Error("Packed service did not serve the management UI HTML");
+  const asset = await fetch(origin + assetPath);
+  if (asset.status !== 200 || !(await asset.text()))
+    throw Error("Packed service did not serve the management UI asset");
   const setup = await request("/v1/setup", "POST", { setupToken: "long-packed-service-setup-token" });
   bearer = setup.body.token;
   if (setup.status !== 200 && setup.status !== 201) throw Error("Setup failed: " + JSON.stringify(setup));

@@ -18,7 +18,7 @@
   ],
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts src/client.ts --target bun --format esm --outdir dist --external sandbar-sdk --external sandbar-adapter --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun flatten-declarations.mjs && cp -R ../store/migrations dist/migrations && if test -d ../../apps/web/dist; then cp -R ../../apps/web/dist dist/web; fi"
+    "build": "bun run --cwd ../../apps/web build && rm -rf dist && bun build src/index.ts src/client.ts --target bun --format esm --outdir dist --external sandbar-sdk --external sandbar-adapter --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun flatten-declarations.mjs && cp -R ../store/migrations dist/migrations && cp -R ../../apps/web/dist dist/web"
   },
   "dependencies": {
     "sandbar-adapter": "workspace:*",
