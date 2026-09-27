@@ -2,9 +2,12 @@
   "name": "@sandbar/sdk-qualification",
   "private": true,
   "type": "module",
-  "scripts": { "check": "tsc -p tsconfig.json", "package-smoke": "bun package-smoke.mjs" },
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "package-smoke": "bun package-smoke.mjs"
+  },
   "dependencies": {
-    "@sandbar/sdk": "workspace:*",
-    "@sandbar/provider-fake": "workspace:*"
+    "@sandbar/provider-fake": "workspace:*",
+    "@sandbar/sdk": "workspace:*"
   }
 }
