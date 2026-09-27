@@ -125,6 +125,7 @@ class DirectOperation<T> implements OperationHandle<T> {
             this.client.driver.observe({
               scope: this.reference.scope!,
               submissionId: this.reference.submissionId!,
+              operationId: this.reference.operationId,
             }),
             this.client.closedSignal,
           );

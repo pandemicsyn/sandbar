@@ -147,7 +147,7 @@ export class DaytonaDriver implements ProviderDriver {
     if (!preparation.supported) return { status: "rejected", effect: "none", error: { code: "unsupported", message: preparation.reason ?? "Snapshot unsupported", effect: "none", retry: "never" } };
     const name = `sandbar-${input.identity.submissionId}`;
     try {
-      const value = NativeSandbox.parse(await this.json("POST", "/sandbox", { name, snapshot: input.image, target: this.scope.region, networkBlockAll: true, public: false, labels: { ...input.labels, "sandbar.submission": input.identity.submissionId }, ttlMinutes: this.config.configuration.ttlMinutes }));
+      const value = NativeSandbox.parse(await this.json("POST", "/sandbox", { name, snapshot: input.image, target: this.scope.region, networkBlockAll: true, public: false, labels: { ...input.labels, "sandbar.submission": input.identity.submissionId, "sandbar.operation": input.identity.operationId }, ttlMinutes: this.config.configuration.ttlMinutes }));
       if (value.name !== name) return unknown(input.identity.submissionId, "Daytona returned a different sandbox name");
       if (value.snapshot && value.snapshot !== input.image) return unknown(input.identity.submissionId, "Daytona returned a different snapshot");
       const observation = observed(this.scope, value);
@@ -168,11 +168,11 @@ export class DaytonaDriver implements ProviderDriver {
     const page = ListResponse.parse(await this.json("GET", `/sandbox?${query}`));
     return { items: page.items.filter(value => value.labels?.["sandbar.submission"] && value.organizationId === this.scope.accountId && value.target === this.scope.region && value.networkBlockAll).map(value => observed(this.scope, value)), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
   }
-  async observe(input: { scope: NativeScope; submissionId: string }): Promise<DriverResult | null> {
+  async observe(input: { scope: NativeScope; submissionId: string; operationId?: string }): Promise<DriverResult | null> {
     this.sameScope(input.scope);
     const name = `sandbar-${input.submissionId}`;
     const page = ListResponse.parse(await this.json("GET", `/sandbox?name=${encodeURIComponent(name)}&limit=2&includeErroredDeleted=true`));
-    const matches = page.items.filter(value => value.name === name && value.organizationId === this.scope.accountId && value.target === this.scope.region);
+    const matches = page.items.filter(value => value.name === name && value.organizationId === this.scope.accountId && value.target === this.scope.region && value.labels?.["sandbar.submission"] === input.submissionId && (!input.operationId || value.labels["sandbar.operation"] === input.operationId));
     if (matches.length !== 1) return null;
     const observation = observed(this.scope, matches[0]!);
     if (["destroyed", "error", "build_failed"].includes(matches[0]!.state)) return unknown(input.submissionId, "Daytona sandbox did not reach running state");
