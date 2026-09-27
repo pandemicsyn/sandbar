@@ -95,15 +95,11 @@ function inspectGraph(directory, initial) {
   return [...visited];
 }
 
-async function consumer(directory, dependencies, source) {
+async function consumer(directory, dependencies, overrides, source) {
   await mkdir(directory, { recursive: true });
   await writeFile(
     join(directory, "package.json"),
-    JSON.stringify(
-      { private: true, type: "module", dependencies, overrides: dependencies },
-      null,
-      2,
-    ),
+    JSON.stringify({ private: true, type: "module", dependencies, overrides }, null, 2),
   );
   await writeFile(join(directory, "consumer.mjs"), source);
   run("bun", ["install", "--no-save"], directory);
@@ -199,17 +195,24 @@ try {
 
   for (const [name, directory] of packages) packed[name] = await pack(directory);
 
-  const remoteDeps = Object.fromEntries(
-    packages.flatMap(([name]) =>
-      name === "@sandbar/provider-fake" ? [] : [[name, `file:${packed[name]}`]],
-    ),
+  const archiveOverrides = Object.fromEntries(
+    packages.map(([name]) => [name, `file:${packed[name]}`]),
   );
 
-  const directDeps = Object.fromEntries(packages.map(([name]) => [name, `file:${packed[name]}`]));
+  const remoteDeps = { "@sandbar/sdk": archiveOverrides["@sandbar/sdk"] };
+
+  const directDeps = {
+    ...remoteDeps,
+    "@sandbar/provider-fake": archiveOverrides["@sandbar/provider-fake"],
+  };
+
   const remote = join(temporary, "remote-consumer");
   const direct = join(temporary, "direct-consumer");
-  await consumer(remote, remoteDeps, remoteSource);
-  await consumer(direct, directDeps, directSource);
+  await consumer(remote, remoteDeps, archiveOverrides, remoteSource);
+  await consumer(direct, directDeps, archiveOverrides, directSource);
+
+  if ((await readdir(join(remote, "node_modules", "@sandbar"))).includes("provider-fake"))
+    throw new Error("Remote-only consumer installed the fake provider");
   await checkTypes(direct, "direct");
   await checkTypes(remote, "remote");
   inspectGraph(remote, ["@sandbar/sdk"]);
