@@ -74,9 +74,9 @@ Keep narrow domain transaction methods such as `admitMutation`, `beginSubmission
 
 Both dialects are v1 implementation targets; SQLite is the default installation. Support is advertised only after each passes the same transaction/recovery suite. Keep explicit dialect schemas and migration histories behind the domain store; Drizzle does not make locking, decimal/JSON representation, collation, timestamps, upserts or returning behavior identical.
 
-SQLite uses local persistent storage, foreign keys, WAL and a qualified durability configuration. Start with one active service and an enforced process-lifetime lock. Keep synchronous queries short and indexed; large reports must not stall streams and recovery. Network-mounted SQLite databases are outside the supported topology. [SQLite WAL](https://www.sqlite.org/wal.html), [Bun SQLite](https://bun.sh/docs/runtime/sqlite)
+SQLite uses local persistent storage, foreign keys, WAL and a qualified durability configuration. Start with one active service and an enforced process-lifetime lock. The lock resolves symlink aliases to one local file; hard-linked database files and network-mounted databases are outside the supported topology. Keep synchronous queries short and indexed; large reports must not stall streams and recovery. [SQLite WAL](https://www.sqlite.org/wal.html), [Bun SQLite](https://bun.sh/docs/runtime/sqlite)
 
-MySQL uses InnoDB and tested transactions through Drizzle's MySQL adapter. Use row locks for admission/reservations where required. `FOR UPDATE SKIP LOCKED` is appropriate for work claims, not for ordinary authoritative fleet/permission reads. Test deadlock recovery, binary/case-sensitive identity semantics and UTC/decimal mappings. MySQL is an operator storage option; it does not automatically enable multiple active service nodes. [Drizzle MySQL](https://orm.drizzle.team/docs/get-started/mysql-new), [MySQL locking reads](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html)
+MySQL uses InnoDB and tested transactions through Drizzle's MySQL adapter. Use row locks for admission/reservations where required. `FOR UPDATE SKIP LOCKED` is appropriate for work claims, not for ordinary authoritative fleet/permission reads. Test deadlock recovery, binary/case-sensitive identity semantics and UTC/decimal mappings. MySQL is an operator storage option; it does not automatically enable multiple active service nodes. This first wave accepts `mysql://`; that scheme alone makes no TLS guarantee. `mysqls://` is rejected because the pinned driver does not enable TLS from the scheme, and secure MySQL transport has not been qualified for this wave. [Drizzle MySQL](https://orm.drizzle.team/docs/get-started/mysql-new), [MySQL locking reads](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html)
 
 ## Contracts and provider isolation
 
@@ -85,6 +85,8 @@ MySQL uses InnoDB and tested transactions through Drizzle's MySQL adapter. Use r
 Validate every IO boundary as detailed in [validation and contracts](validation-and-contracts.md). DB rows are not public API DTOs. Hono routing does not bind Rust/Python clients to TypeScript RPC inference. Runtime capability checks remain separate from syntactic validation.
 
 Keep a small mandatory provider core plus optional drivers. Drivers never choose fallback providers or write domain state directly. Prefer standard network APIs; vendor SDKs may be used when qualified on Bun. Reconciliation, exact security requirements and mutation uncertainty remain service responsibilities.
+
+The first-wave fake driver gives each HTTP request a 10-second transport deadline spanning response headers and body consumption. This bounds runner stalls; it does not cancel native work or shorten an execution's requested process deadline. A timed-out mutation remains a possible submission and is reconciled by observation without replay.
 
 ## Streaming, secrets and operations
 

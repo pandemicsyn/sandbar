@@ -747,6 +747,82 @@ describe("independent fake provider", () => {
     }
   });
 
+  test("fake driver aborts stalled headers and response bodies within one request deadline", async () => {
+    let headerAborts = 0;
+
+    const hangingHeaders = fetchStub(
+      async (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              headerAborts++;
+              reject(init.signal?.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+
+    const headerDriver = new FakeProviderDriver({
+      baseUrl: "http://127.0.0.1:8789",
+      token,
+      fetch: hangingHeaders,
+      timeoutMs: 20,
+    });
+
+    expect(
+      (
+        await headerDriver.create({
+          scope,
+          identity: identity("header_timeout"),
+          image: "fake-starter",
+          networkPolicy: "blocked",
+        })
+      ).status,
+    ).toBe("unknown");
+    expect(headerAborts).toBe(1);
+
+    let bodyAborts = 0;
+
+    const hangingBody = fetchStub(
+      async (_input, init) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              init?.signal?.addEventListener(
+                "abort",
+                () => {
+                  bodyAborts++;
+                  controller.error(init.signal?.reason);
+                },
+                { once: true },
+              );
+            },
+          }),
+        ),
+    );
+
+    const bodyDriver = new FakeProviderDriver({
+      baseUrl: "http://127.0.0.1:8789",
+      token,
+      fetch: hangingBody,
+      timeoutMs: 20,
+    });
+
+    expect(
+      (
+        await bodyDriver.create({
+          scope,
+          identity: identity("body_timeout"),
+          image: "fake-starter",
+          networkPolicy: "blocked",
+        })
+      ).status,
+    ).toBe("unknown");
+    expect(bodyAborts).toBe(1);
+  });
+
   test("fake server rejects foreign provider scope before mutation or read", async () => {
     const { driver, control } = await setup();
 

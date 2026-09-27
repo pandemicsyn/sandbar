@@ -155,6 +155,13 @@ const invocationHeader = {
   description: "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent.",
 };
 
+const executionParameter = {
+  name: "executionId",
+  in: "path",
+  required: true,
+  schema: component("Id"),
+};
+
 const sandboxListParameters = [
   { name: "cursor", in: "query", required: false, schema: { type: "string", maxLength: 256 } },
   {
@@ -176,6 +183,24 @@ const sandboxListParameters = [
   { name: "q", in: "query", required: false, schema: { type: "string", maxLength: 64 } },
 ];
 
+const cookieMutationHeaders = [
+  {
+    name: "Origin",
+    in: "header",
+    required: false,
+    schema: { type: "string", format: "uri" },
+    description:
+      "For cookie-authenticated mutations, if supplied it must match the public origin; an absent Origin is accepted.",
+  },
+  {
+    name: "X-CSRF-Token",
+    in: "header",
+    required: false,
+    schema: { type: "string" },
+    description: "Required for cookie-authenticated mutations; obtained from GET /v1/session.",
+  },
+];
+
 export const openApiDocument = {
   openapi: "3.1.0",
   info: {
@@ -185,29 +210,60 @@ export const openApiDocument = {
       "Initial fake-provider vertical slice. Binary files and stream frames use separate schemas.",
   },
   servers: [{ url: "/" }],
-  security: [{ bearerAuth: [] }],
+  security: [{ bearerAuth: [] }, { localSessionCookie: [] }, { secureSessionCookie: [] }],
   paths: {
     "/v1/setup": {
       post: {
         operationId: "setupOperator",
         security: [],
-        requestBody: { required: true, ...json("SetupRequest") },
-        responses: ordinary("SessionResponse"),
+        requestBody: {
+          required: true,
+          description: "JSON body limit: 64 KiB. Oversized requests return CAPACITY (409).",
+          ...json("SetupRequest"),
+        },
+        responses: {
+          "201": response("Created", "SessionResponse"),
+          default: response("Structured error", "ErrorResponse"),
+        },
       },
     },
     "/v1/sessions": {
       post: {
         operationId: "createSession",
         security: [],
-        requestBody: { required: true, ...json("SessionRequest") },
+        requestBody: {
+          required: true,
+          description: "JSON body limit: 64 KiB. Oversized requests return CAPACITY (409).",
+          ...json("SessionRequest"),
+        },
+        responses: {
+          "201": response("Created", "SessionResponse"),
+          default: response("Structured error", "ErrorResponse"),
+        },
+      },
+    },
+    "/v1/session": {
+      get: {
+        operationId: "getSession",
+        security: [{ localSessionCookie: [] }, { secureSessionCookie: [] }],
         responses: ordinary("SessionResponse"),
       },
     },
-    "/v1/session": { get: { operationId: "getSession", responses: ordinary("SessionResponse") } },
+    "/v1/sessions/logout": {
+      post: {
+        operationId: "logoutSession",
+        parameters: cookieMutationHeaders,
+        responses: {
+          "204": { description: "Session closed" },
+          default: response("Structured error", "ErrorResponse"),
+        },
+      },
+    },
     "/v1/projects": {
       get: { operationId: "listProjects", responses: ordinary("ProjectPage") },
       post: {
         operationId: "createProject",
+        parameters: cookieMutationHeaders,
         requestBody: { required: true, ...json("CreateProjectRequest") },
         responses: {
           "201": response("Created", "Project"),
@@ -223,6 +279,7 @@ export const openApiDocument = {
       },
       post: {
         operationId: "createProviderConnection",
+        parameters: cookieMutationHeaders,
         requestBody: { required: true, ...json("CreateProviderConnectionRequest") },
         responses: {
           "201": response("Created", "ProviderConnection"),
@@ -232,7 +289,11 @@ export const openApiDocument = {
     },
     "/v1/projects/{projectId}/provider-connections/{connectionId}/verify": {
       parameters: [projectParameter, connectionParameter],
-      post: { operationId: "verifyProviderConnection", responses: ordinary("ProviderConnection") },
+      post: {
+        operationId: "verifyProviderConnection",
+        parameters: cookieMutationHeaders,
+        responses: ordinary("ProviderConnection"),
+      },
     },
     "/v1/projects/{projectId}/sandboxes": {
       parameters: [projectParameter],
@@ -243,7 +304,7 @@ export const openApiDocument = {
       },
       post: {
         operationId: "submitCreate",
-        parameters: [invocationHeader],
+        parameters: [invocationHeader, ...cookieMutationHeaders],
         requestBody: { required: true, ...json("CreateSandboxRequest") },
         responses: accepted("AcceptedOperation"),
       },
@@ -253,7 +314,7 @@ export const openApiDocument = {
       get: { operationId: "getSandbox", responses: ordinary("Sandbox") },
       delete: {
         operationId: "submitDestroy",
-        parameters: [invocationHeader],
+        parameters: [invocationHeader, ...cookieMutationHeaders],
         responses: accepted("AcceptedOperation"),
       },
     },
@@ -261,10 +322,14 @@ export const openApiDocument = {
       parameters: [projectParameter, sandboxParameter],
       post: {
         operationId: "submitExec",
-        parameters: [invocationHeader],
+        parameters: [invocationHeader, ...cookieMutationHeaders],
         requestBody: { required: true, ...json("ExecRequest") },
         responses: accepted("AcceptedExecution"),
       },
+    },
+    "/v1/projects/{projectId}/executions/{executionId}": {
+      parameters: [projectParameter, executionParameter],
+      get: { operationId: "getExecution", responses: ordinary("Execution") },
     },
     "/v1/projects/{projectId}/sandboxes/{sandboxId}/files": {
       parameters: [
@@ -286,7 +351,17 @@ export const openApiDocument = {
       },
       put: {
         operationId: "writeFile",
-        parameters: [invocationHeader],
+        parameters: [
+          invocationHeader,
+          ...cookieMutationHeaders,
+          {
+            name: "overwrite",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["true", "false"] },
+            description: "Whether an existing file may be replaced; defaults to false.",
+          },
+        ],
         requestBody: {
           required: true,
           content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
@@ -304,9 +379,55 @@ export const openApiDocument = {
       parameters: [projectParameter, operationParameter],
       get: { operationId: "getOperation", responses: ordinary("Operation") },
     },
+    "/v1/projects/{projectId}/operations/{operationId}/reconcile": {
+      parameters: [projectParameter, operationParameter],
+      post: {
+        operationId: "reconcileOperation",
+        parameters: cookieMutationHeaders,
+        description: "Request another read-only provider observation; never resubmit the mutation.",
+        responses: ordinary("Operation"),
+      },
+    },
+    "/v1/projects/{projectId}/invocations/{invocationKey}": {
+      parameters: [
+        projectParameter,
+        {
+          name: "invocationKey",
+          in: "path",
+          required: true,
+          schema: { type: "string", format: "uuid" },
+          description: "Original UUIDv7 Idempotency-Key",
+        },
+      ],
+      get: {
+        operationId: "lookupInvocation",
+        description:
+          "Find a previously admitted operation without resubmitting its request. A missing record does not prove replay is safe.",
+        parameters: [
+          {
+            name: "kind",
+            in: "query",
+            required: true,
+            schema: { type: "string", enum: ["create", "exec", "destroy", "file_write"] },
+          },
+          {
+            name: "sandboxId",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Required except for create",
+          },
+        ],
+        responses: ordinary("Operation"),
+      },
+    },
   },
   components: {
-    securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+    securitySchemes: {
+      bearerAuth: { type: "http", scheme: "bearer" },
+      localSessionCookie: { type: "apiKey", in: "cookie", name: "sandbar_session" },
+      secureSessionCookie: { type: "apiKey", in: "cookie", name: "__Host-sandbar_session" },
+    },
     schemas: Object.fromEntries(
       Object.entries(schemas).map(([name, schema]) => [
         name,

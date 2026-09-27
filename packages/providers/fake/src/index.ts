@@ -73,7 +73,13 @@ export class FakeProviderDriver implements ProviderDriver {
   private readonly endpoint: string;
   private readonly token: string;
   private readonly transport: typeof fetch;
-  constructor(options: { baseUrl: string; token: string; fetch?: typeof fetch }) {
+  private readonly timeoutMs: number;
+  constructor(options: {
+    baseUrl: string;
+    token: string;
+    fetch?: typeof fetch;
+    timeoutMs?: number;
+  }) {
     const endpoint = new URL(options.baseUrl);
 
     if (
@@ -88,19 +94,31 @@ export class FakeProviderDriver implements ProviderDriver {
     this.endpoint = new URL("/v1/action", endpoint).href;
     this.token = options.token;
     this.transport = options.fetch ?? fetch;
+    this.timeoutMs = options.timeoutMs ?? 10_000;
+
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0)
+      throw new Error("Fake provider request timeout must be a positive integer in milliseconds");
   }
 
   private async call(action: FakeAction): Promise<z.infer<typeof FakeHttpJson>> {
-    const response = await this.transport(this.endpoint, {
-      method: "POST",
-      redirect: "error",
-      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(action),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
-    if (!response.ok) throw new FakeTransportError(response.status);
+    try {
+      const response = await this.transport(this.endpoint, {
+        method: "POST",
+        redirect: "error",
+        headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(action),
+        signal: controller.signal,
+      });
 
-    return FakeHttpJson.parse(await response.json());
+      if (!response.ok) throw new FakeTransportError(response.status);
+
+      return FakeHttpJson.parse(await response.json());
+    } finally {
+      clearTimeout(timer);
+    }
   }
   private async mutation(action: MutationAction, submissionId: string): Promise<DriverResult> {
     try {
