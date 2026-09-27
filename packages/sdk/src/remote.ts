@@ -469,7 +469,10 @@ export class RemoteClient implements SandbarClient {
     this.endpoint.hash = "";
 
     if (!this.endpoint.pathname.endsWith("/")) this.endpoint.pathname += "/";
-    this.projectId = Id.parse(options.projectId);
+    const projectId = Id.safeParse(options.projectId);
+
+    if (!projectId.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid project ID");
+    this.projectId = projectId.data;
 
     if (!options.token) throw new SandbarError("INVALID_ARGUMENT", "Service token is required");
     this.#token = options.token;

@@ -351,11 +351,13 @@ class DirectSandbox implements SandboxHandle {
 
     if (bytes.length > 1_048_576)
       throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK write limit");
+
+    const payload = Uint8Array.from(bytes);
     const invocation = identity();
 
     const reference = {
       ...this.client.reference("file_write", invocation, this.ref),
-      file: { path, bytes: bytes.length },
+      file: { path, bytes: payload.length },
     };
 
     let first: DriverResult | undefined;
@@ -366,7 +368,7 @@ class DirectSandbox implements SandboxHandle {
           sandbox: this.ref,
           identity: invocation,
           path,
-          bytes,
+          bytes: payload,
           overwrite: options.overwrite ?? false,
         }),
         this.client.closedSignal,
@@ -388,7 +390,7 @@ class DirectSandbox implements SandboxHandle {
           !sameRef(result.value.observation.sandbox, this.ref) ||
           result.value.observation.path !== path ||
           !result.value.observation.complete ||
-          result.value.observation.bytesWritten !== bytes.length
+          result.value.observation.bytesWritten !== payload.length
         )
           throw new OutcomeUnknownError(
             reference,

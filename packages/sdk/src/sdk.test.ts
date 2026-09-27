@@ -10,6 +10,7 @@ import {
   NonzeroExitError,
   NoExitCodeError,
   OutcomeUnknownError,
+  SandbarError,
   WaitAbortedError,
 } from "./direct";
 import type { RecoveryReference } from "./direct";
@@ -192,6 +193,48 @@ test("direct rejects create contract violations before provider preparation", as
 
   expect(preparations).toBe(0);
   expect(dispatches).toBe(0);
+});
+
+test("direct file writes retain caller bytes before asynchronous provider dispatch", async () => {
+  const { client } = await fixture();
+
+  const box = await client.sandboxes.create({
+    environment: DirectImage.prepared("fake-starter"),
+  });
+
+  const write = client.driver.writeFile.bind(client.driver);
+
+  let started = () => {};
+
+  let release = () => {};
+
+  let dispatches = 0;
+
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  client.driver.writeFile = async (input) => {
+    dispatches++;
+    started();
+    await gate;
+
+    return write(input);
+  };
+
+  const bytes = Uint8Array.of(1, 2, 3);
+  const pending = box.writeFile("/snapshot", bytes);
+  await entered;
+  bytes[0] = 9;
+  release();
+  await pending;
+
+  expect(dispatches).toBe(1);
+  expect(await box.readFile("/snapshot")).toEqual(Uint8Array.of(1, 2, 3));
 });
 
 test("direct lost response is recovered by observation without replay; wrong scope is rejected", async () => {
@@ -1821,6 +1864,41 @@ test("remote refuses bearer transport over non-loopback HTTP", () => {
       projectId: "project_1",
     }),
   ).not.toThrow();
+});
+
+test("remote rejects invalid project IDs with public errors before fetch", () => {
+  let fetches = 0;
+
+  const fetcher: typeof fetch = async () => {
+    fetches++;
+
+    throw new Error("Unexpected fetch");
+  };
+
+  for (const projectId of ["invalid id", "x".repeat(129)]) {
+    try {
+      RemoteSandbar.connect({
+        url: "https://sandbar.example/",
+        token: "secret",
+        projectId,
+        fetch: fetcher,
+      });
+      throw new Error("Expected invalid project ID");
+    } catch (error) {
+      if (!(error instanceof SandbarError)) throw error;
+      expect(error).toMatchObject({ code: "INVALID_ARGUMENT", effect: "none" });
+    }
+  }
+
+  const client = RemoteSandbar.connect({
+    url: "https://sandbar.example/",
+    token: "secret",
+    projectId: "valid_project",
+    fetch: fetcher,
+  });
+
+  expect(client.projectId).toBe("valid_project");
+  expect(fetches).toBe(0);
 });
 
 test("remote transport keeps authenticated routes within the configured project", async () => {
