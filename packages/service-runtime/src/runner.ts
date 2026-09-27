@@ -6,11 +6,11 @@ import type {
   DriverResult,
   InvocationIdentity,
 } from "@sandbar/provider-spi";
-import { validateDriverResult } from "@sandbar/provider-spi";
+import { ProviderReadError, validateDriverResult } from "@sandbar/provider-spi";
 import type { ExecRequest } from "@sandbar/contracts";
 import { ControlStore, type Claimed, type SandboxRow, type ConnectionRow } from "@sandbar/store";
 import { SecretBox } from "./crypto";
-import type { ProviderRegistry } from "./registry";
+import { ProviderIdentityMismatchError, type ProviderRegistry } from "./registry";
 import {
   normalizeCreate,
   normalizeExec,
@@ -97,9 +97,30 @@ export class DurableRunner {
 
       if (!connection || connection.status !== "verified" || !connection.scope)
         throw new Error("Provider connection is unavailable");
-      lease = this.options.registry
-        ? await this.options.registry.connect(connection)
-        : await this.connection(connection);
+
+      try {
+        lease = this.options.registry
+          ? await this.options.registry.connect(connection)
+          : await this.connection(connection);
+      } catch (error) {
+        if (
+          !claim.observeOnly &&
+          ((error instanceof ProviderReadError && error.code === "UNAUTHENTICATED") ||
+            error instanceof ProviderIdentityMismatchError)
+        ) {
+          await store.failWithoutEffect(claim, {
+            code: error instanceof ProviderIdentityMismatchError ? "CONFLICT" : "UNAUTHENTICATED",
+            message: "Provider connection verification failed",
+            effect: "none",
+            retry: "never",
+          });
+
+          return;
+        }
+
+        throw error;
+      }
+
       const { driver, scope } = lease;
 
       if (claim.observeOnly) {
@@ -171,7 +192,9 @@ export class DurableRunner {
         }
 
         // SAFETY: admitExec persists this encrypted request envelope before dispatch.
-        const envelope = JSON.parse(op.request_json) as { encryptedRequest: string };
+        const envelope = JSON.parse(op.request_json) as {
+          encryptedRequest: string;
+        };
 
         const plan = normalizeExec(
           JSON.parse(
@@ -236,7 +259,12 @@ export class DurableRunner {
         }
 
         if (!(await store.beginSubmission(claim))) return;
-        const result = await driver.destroy({ sandbox: this.ref(scope, box), identity });
+
+        const result = await driver.destroy({
+          sandbox: this.ref(scope, box),
+          identity,
+        });
+
         await this.handleResult(claim, validateDriverResult(result), scope);
       }
     } catch {
@@ -325,7 +353,10 @@ export class DurableRunner {
     // SAFETY: admission stores the path and byte count used to correlate file receipts.
     const file =
       claim.operation.kind === "file_write"
-        ? (JSON.parse(claim.operation.request_json) as { path: string; bytes: number })
+        ? (JSON.parse(claim.operation.request_json) as {
+            path: string;
+            bytes: number;
+          })
         : undefined;
 
     correlateDriverResult(result, {

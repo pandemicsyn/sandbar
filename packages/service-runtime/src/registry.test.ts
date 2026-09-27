@@ -1,8 +1,13 @@
 import { expect, test } from "bun:test";
-import type { ProviderDriver } from "@sandbar/provider-spi";
+import { ProviderReadError, type ProviderDriver } from "@sandbar/provider-spi";
 import type { ConnectionRow, ControlStore } from "@sandbar/store";
 import { bundledMigration, migrate, openSqliteBackend } from "@sandbar/store";
-import { ProviderRegistry, storedScope, type ProviderRegistration } from "./registry";
+import {
+  ProviderIdentityMismatchError,
+  ProviderRegistry,
+  storedScope,
+  type ProviderRegistration,
+} from "./registry";
 import { SecretBox } from "./crypto";
 import { DurableRunner } from "./runner";
 
@@ -58,11 +63,183 @@ test("registry releases an owned transport on scope mismatch and keeps borrowed 
   await expect(
     registry.connect({
       ...row,
-      scope: storedScope({ ...scope, resourceScope: { kind: "app", id: "app-other" } }),
+      scope: storedScope({
+        ...scope,
+        resourceScope: { kind: "app", id: "app-other" },
+      }),
     }),
-  ).rejects.toThrow("scope");
+  ).rejects.toBeInstanceOf(ProviderIdentityMismatchError);
   expect(releases).toBe(2);
 });
+
+test("definitive connection failures before submission finish without effect; observation stays uncertain", async () => {
+  for (const failure of ["unauthenticated", "scope", "transient"] as const) {
+    const backend = openSqliteBackend(":memory:");
+    await migrate(backend, bundledMigration("sqlite"));
+    const store = new (await import("@sandbar/store")).ControlStore(backend);
+
+    try {
+      const project = await store.createProject(`Connection ${failure}`);
+
+      const scope = {
+        provider: "fake",
+        connectionId: `conn_${failure}`,
+        accountId: "verified-account",
+        region: "local",
+      };
+
+      await store.createConnection({
+        id: scope.connectionId,
+        projectId: project.id,
+        provider: "fake",
+        name: "Verified",
+        encryptedCredentials: "cipher",
+      });
+      await store.verifyConnection(project.id, scope.connectionId, storedScope(scope));
+
+      // SAFETY: Only the read-only connection check uses this secret fixture.
+      const secrets = Object.assign(Object.create(SecretBox.prototype), {
+        open: async () => JSON.stringify({ credentials: {}, configuration: {} }),
+      }) as SecretBox;
+
+      let submissions = 0;
+
+      let releases = 0;
+
+      let connectFailure: typeof failure | null = failure;
+
+      const unsupported = async () => {
+        throw new Error("unexpected provider call");
+      };
+
+      const driver: ProviderDriver = {
+        name: "fake",
+        capabilities: unsupported,
+        prepare: async () => ({
+          supported: true,
+          effectiveImage: "fake-starter",
+        }),
+        create: async (input) => {
+          submissions++;
+
+          return {
+            status: "unknown",
+            effect: "possible",
+            submissionId: input.identity.submissionId,
+            reason: "observation required",
+          };
+        },
+        inspect: unsupported,
+        inventory: unsupported,
+        exec: unsupported,
+        readFile: unsupported,
+        writeFile: unsupported,
+        destroy: unsupported,
+        observe: unsupported,
+      };
+
+      const registration: ProviderRegistration = {
+        provider: "fake",
+        validate: (input) => input,
+        async connect() {
+          if (connectFailure === "unauthenticated")
+            throw new ProviderReadError("UNAUTHENTICATED", "secret credential detail");
+
+          if (connectFailure === "transient") throw new Error("temporary network error");
+
+          return {
+            driver,
+            scope: connectFailure === "scope" ? { ...scope, accountId: "other-account" } : scope,
+            ownership: "owned",
+            release: async () => {
+              releases++;
+            },
+          };
+        },
+      };
+
+      const registry = new ProviderRegistry(store, secrets, [registration]);
+
+      const runner = new DurableRunner({ store, registry, secrets });
+
+      const key = Bun.randomUUIDv7();
+
+      const admitted = await store.admitCreate({
+        projectId: project.id,
+        endpoint: "POST /sandboxes",
+        key,
+        intentHash: `create-${failure}`,
+        request: { environment: { kind: "prepared", imageId: "fake-starter" } },
+        connectionId: scope.connectionId,
+      });
+
+      await runner.tick();
+
+      const afterFailure = (await store.getOperation(project.id, admitted.operation.id))!;
+      expect(submissions).toBe(0);
+      expect(afterFailure.submission_possible).toBe(0);
+
+      if (failure === "transient") {
+        expect(afterFailure.status).toBe("queued");
+        connectFailure = null;
+        await Bun.sleep(5_100);
+        await runner.tick();
+        expect(submissions).toBe(1);
+        expect((await store.getOperation(project.id, admitted.operation.id))?.status).toBe(
+          "unknown",
+        );
+        expect(releases).toBe(1);
+      } else {
+        expect(afterFailure.status).toBe("failed");
+        expect(afterFailure.effect).toBe("none");
+        expect(JSON.stringify(afterFailure.error_json)).not.toContain("secret credential detail");
+
+        const repeated = await store.admitCreate({
+          projectId: project.id,
+          endpoint: "POST /sandboxes",
+          key,
+          intentHash: `create-${failure}`,
+          request: {
+            environment: { kind: "prepared", imageId: "fake-starter" },
+          },
+          connectionId: scope.connectionId,
+        });
+
+        expect(repeated.repeated).toBe(true);
+        expect(repeated.operation.id).toBe(admitted.operation.id);
+        expect(repeated.operation.status).toBe("failed");
+        expect(releases).toBe(failure === "scope" ? 1 : 0);
+      }
+
+      if (failure !== "transient") {
+        const possible = await store.admitCreate({
+          projectId: project.id,
+          endpoint: "POST /sandboxes",
+          key: Bun.randomUUIDv7(),
+          intentHash: `possible-${failure}`,
+          request: {
+            environment: { kind: "prepared", imageId: "fake-starter" },
+          },
+          connectionId: scope.connectionId,
+        });
+
+        const claim = (await store.claimDue("prior-submission", 1_000, project.id))!;
+        expect(claim.operation.id).toBe(possible.operation.id);
+        await store.beginSubmission(claim);
+        await store.reschedule(claim, "outcome_unknown", 0);
+        await runner.tick();
+
+        const uncertain = (await store.getOperation(project.id, possible.operation.id))!;
+        expect(uncertain.status).toBe("unknown");
+        expect(uncertain.effect).toBe("possible");
+        expect(uncertain.submission_possible).toBe(1);
+        expect(submissions).toBe(0);
+      }
+    } finally {
+      await store.close();
+    }
+  }
+}, 15_000);
 
 test("runner releases an owned provider lease after an unknown mutation without replay", async () => {
   const backend = openSqliteBackend(":memory:");
@@ -103,7 +280,10 @@ test("runner releases an owned provider lease after an unknown mutation without 
     const driver: ProviderDriver = {
       name: "fake",
       capabilities: unsupported,
-      prepare: async () => ({ supported: true, effectiveImage: "fake-starter" }),
+      prepare: async () => ({
+        supported: true,
+        effectiveImage: "fake-starter",
+      }),
       create: async (input) => {
         submissions++;
 

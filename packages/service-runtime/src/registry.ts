@@ -35,7 +35,17 @@ export function publicScope(value: string): NativeScope {
     }); // First-wave fake rows.
   const parsed = JSON.parse(value);
 
-  return NativeScope.parse({ provider: "stored", connectionId: "stored", ...parsed });
+  return NativeScope.parse({
+    provider: "stored",
+    connectionId: "stored",
+    ...parsed,
+  });
+}
+
+export class ProviderIdentityMismatchError extends StoreError {
+  constructor(message: string) {
+    super("CONFLICT", message);
+  }
 }
 
 export class ProviderRegistry {
@@ -80,7 +90,11 @@ export class ProviderRegistry {
       .parse(JSON.parse(plaintext));
 
     const config = registration.validate(decoded);
-    const result = await registration.connect({ ...config, connectionId: row.id });
+
+    const result = await registration.connect({
+      ...config,
+      connectionId: row.id,
+    });
 
     try {
       const scope = NativeScope.parse(result.scope);
@@ -90,14 +104,14 @@ export class ProviderRegistry {
         scope.connectionId !== row.id ||
         result.driver.name !== row.provider
       )
-        throw new StoreError("CONFLICT", "Provider identity mismatch");
+        throw new ProviderIdentityMismatchError("Provider identity mismatch");
 
       if (
         row.scope &&
         storedScope(scope) !== row.scope &&
         !(row.provider === "fake" && row.scope === "fake-local" && scope.accountId === "fake-local")
       )
-        throw new StoreError("CONFLICT", "Verified native scope or endpoint changed");
+        throw new ProviderIdentityMismatchError("Verified native scope or endpoint changed");
 
       return { ...result, scope };
     } catch (error) {
