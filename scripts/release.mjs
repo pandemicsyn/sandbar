@@ -360,7 +360,7 @@ for (const { item, existing } of state) {
 
 const existingRelease = spawnSync(
   "gh",
-  ["release", "view", `v${plan.version}`, "--json", "body", "--jq", ".body"],
+  ["release", "view", `v${plan.version}`, "--json", "body,isDraft,isPrerelease"],
   {
     cwd: root,
     encoding: "utf8",
@@ -368,8 +368,13 @@ const existingRelease = spawnSync(
 );
 
 if (existingRelease.status === 0) {
-  if (existingRelease.stdout.trim() !== releaseNotes.trim())
+  const release = JSON.parse(existingRelease.stdout);
+
+  if (release.body?.trim?.() !== releaseNotes.trim())
     throw new Error("GitHub release exists with different notes; inspect it manually");
+
+  if (release.isDraft !== false || release.isPrerelease !== prerelease)
+    throw new Error("GitHub release draft or prerelease state does not match the version");
 } else {
   const args = [
     "release",

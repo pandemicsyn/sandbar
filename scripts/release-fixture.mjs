@@ -222,10 +222,10 @@ const args = process.argv.slice(2);
 if (args[0] !== "release") process.exit(3);
 if (args[1] === "view") {
   if (!fs.existsSync(process.env.FAKE_RELEASE_FILE)) process.exit(1);
-  console.log(JSON.parse(fs.readFileSync(process.env.FAKE_RELEASE_FILE, "utf8")).body);
+  console.log(fs.readFileSync(process.env.FAKE_RELEASE_FILE, "utf8"));
 } else if (args[1] === "create") {
   const file = args[args.indexOf("--notes-file") + 1];
-  fs.writeFileSync(process.env.FAKE_RELEASE_FILE, JSON.stringify({ body: fs.readFileSync(file, "utf8") }));
+  fs.writeFileSync(process.env.FAKE_RELEASE_FILE, JSON.stringify({ body: fs.readFileSync(file, "utf8"), isDraft: false, isPrerelease: args.includes("--prerelease") }));
 } else process.exit(3);
 `,
   );
@@ -256,6 +256,33 @@ if (args[1] === "view") {
 
   rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
   run("bun", ["scripts/release.mjs", "publish"], temporary, publishEnv);
+
+  const publishedRelease = JSON.parse(readFileSync(releaseFile, "utf8"));
+
+  for (const wrongState of [
+    { ...publishedRelease, isDraft: true },
+    { ...publishedRelease, isPrerelease: true },
+  ]) {
+    writeFileSync(releaseFile, JSON.stringify(wrongState));
+    rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
+
+    const badRelease = spawnSync("bun", ["scripts/release.mjs", "publish"], {
+      cwd: temporary,
+      env: { ...process.env, ...publishEnv },
+      encoding: "utf8",
+    });
+
+    if (
+      badRelease.status === 0 ||
+      !badRelease.stderr.includes("GitHub release draft or prerelease state does not match")
+    )
+      throw new Error("Existing GitHub release with wrong draft or prerelease state was accepted");
+  }
+
+  writeFileSync(releaseFile, JSON.stringify(publishedRelease));
+  console.log(
+    "Mock GitHub release: exact rerun accepted; draft and wrong prerelease state rejected",
+  );
 
   const metadataPath = join(stableArtifacts, "release-metadata.json");
   const originalMetadata = readFileSync(metadataPath, "utf8");
