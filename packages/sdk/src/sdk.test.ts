@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 import { startFakeProviderServer } from "@sandbar/provider-fake/server";
+import { ProviderReadError } from "@sandbar/provider-spi";
 import {
   Image as DirectImage,
   Sandbar as DirectSandbar,
@@ -458,6 +459,30 @@ test("closing a direct client releases stalled inspect and file-read waits", asy
   }
 
   expect((await control("/_test/state")).invocations).toHaveLength(2);
+});
+
+test("direct inspect translates provider read errors to public SDK errors", async () => {
+  const { url, control } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const client = DirectSandbar.direct({ provider });
+  const box = await client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
+
+  expect((await box.inspect()).state).toBe("running");
+
+  provider.driver.inspect = async () => {
+    throw new ProviderReadError("INVALID_RESPONSE", "Fake inspect returned another sandbox");
+  };
+
+  const invalid = box.inspect();
+  await expect(invalid).rejects.toBeInstanceOf(SandbarError);
+  await expect(invalid).rejects.toMatchObject({ code: "INVALID_RESPONSE", effect: "unknown" });
+
+  provider.driver.inspect = async () => {
+    throw new ProviderReadError("NOT_FOUND", "Fake sandbox not found");
+  };
+
+  await expect(box.inspect()).rejects.toMatchObject({ code: "NOT_FOUND", effect: "none" });
+  expect((await control("/_test/state")).invocations).toHaveLength(1);
 });
 
 test("direct close during applied create preserves a recovery reference", async () => {

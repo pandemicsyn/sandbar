@@ -221,7 +221,19 @@ class DirectSandbox implements SandboxHandle {
   }
   async inspect() {
     this.client.ensureOpen();
-    const raw = await raceAbort(this.client.driver.inspect(this.ref), this.client.closedSignal);
+    let raw: Awaited<ReturnType<ProviderDriver["inspect"]>>;
+
+    try {
+      raw = await raceAbort(this.client.driver.inspect(this.ref), this.client.closedSignal);
+    } catch (error) {
+      if (error instanceof ProviderReadError)
+        throw new SandbarError(
+          error.code,
+          error.message,
+          error.code === "NOT_FOUND" ? "none" : "unknown",
+        );
+      throw error;
+    }
 
     if (!raw) throw new SandbarError("NOT_FOUND", "Sandbox not found");
     const parsed = SandboxObservation.safeParse(raw);
