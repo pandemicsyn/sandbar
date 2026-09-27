@@ -195,13 +195,31 @@ function registryIntegrity(name, version) {
   throw new Error(`Cannot check registry state for ${name}@${version}: ${result.stderr}`);
 }
 
-async function verifyRegistry(item, version) {
+function registryTags(name) {
+  const result = spawnSync("npm", ["view", name, "dist-tags", "--json"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  if (result.status === 0) return JSON.parse(result.stdout.trim());
+
+  if (/E404/.test(result.stderr)) return {};
+  throw new Error(`Cannot check npm dist-tags for ${name}: ${result.stderr}`);
+}
+
+async function verifyRegistry(item, version, tag) {
   for (let attempt = 0; attempt < 12; attempt++) {
-    if (registryIntegrity(item.manifest.name, version) === item.integrity) return;
+    if (
+      registryIntegrity(item.manifest.name, version) === item.integrity &&
+      registryTags(item.manifest.name)[tag] === version
+    )
+      return;
     await new Promise((done) => setTimeout(done, 5000));
   }
 
-  throw new Error(`${item.manifest.name}@${version} did not appear with the expected integrity`);
+  throw new Error(
+    `${item.manifest.name}@${version} did not appear with the expected integrity and ${tag} dist-tag`,
+  );
 }
 
 function notes(plan) {
@@ -302,10 +320,17 @@ for (const { item, existing } of state) {
 }
 
 for (const { item, existing } of state) {
+  if (existing && registryTags(item.manifest.name)[tag] !== plan.version)
+    throw new Error(
+      `${item.manifest.name}@${plan.version} exists, but npm dist-tag ${tag} does not point to it`,
+    );
+}
+
+for (const { item, existing } of state) {
   if (!existing) run("npm", ["publish", item.archive, "--tag", tag, "--access", "public"]);
   else
     console.log(`${item.manifest.name}@${plan.version} already published with matching integrity`);
-  await verifyRegistry(item, plan.version);
+  await verifyRegistry(item, plan.version, tag);
 }
 
 const existingRelease = spawnSync(
