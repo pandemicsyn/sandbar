@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
+import { z } from "zod";
 import { createApp } from "./app";
 import { registerDomainRoutes } from "./routes/domain";
 import {
@@ -97,7 +98,13 @@ export async function openDomainRuntime(config: RuntimeConfig) {
             provider: "fake",
             validate(input) {
               if (Object.keys(input.credentials).length || Object.keys(input.configuration).length)
-                throw new Error("Fake connection has no native credentials");
+                throw new z.ZodError([
+                  {
+                    code: "custom",
+                    path: ["credentials"],
+                    message: "Fake connection has no native credentials or configuration",
+                  },
+                ]);
 
               return input;
             },

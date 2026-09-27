@@ -134,6 +134,16 @@ test("API persists ambiguous create and exec, then observes each once after rest
     expect(setup.response.headers.get("set-cookie")).toContain("HttpOnly");
     const project = (await json("/v1/projects", "POST", { name: "Demo" }, bearer)).value;
 
+    const invalidFake = await json(
+      `/v1/projects/${project.id}/provider-connections`,
+      "POST",
+      { provider: "fake", name: "Invalid", credentials: { apiKey: "not-a-fake-secret" } },
+      bearer,
+    );
+
+    expect(invalidFake.response.status).toBe(400);
+    expect(invalidFake.value.error.code).toBe("INVALID_ARGUMENT");
+
     for (const query of [
       "limit=NaN",
       "limit=1.5",
