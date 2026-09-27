@@ -7,6 +7,7 @@ import {
   NativeScope,
   type InvocationIdentity,
 } from "@sandbar/provider-spi";
+import { FakeInventoryCursor } from "./protocol";
 
 const CommandFixture = z.strictObject({
   command: ExecCommand,
@@ -679,7 +680,7 @@ export class FakeProviderEngine {
       : null;
   }
   inventory(scope: NativeScope, cursor: string | undefined, limit: number) {
-    const start = cursor ? Number(cursor) : 0;
+    const start = cursor ? Number(FakeInventoryCursor.parse(cursor)) : 0;
     const resources = this.state.resources.filter((x) => sameScope(x.ref.scope, scope));
 
     const items = resources.slice(start, start + limit).map((x) => ({

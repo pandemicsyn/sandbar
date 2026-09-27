@@ -117,4 +117,11 @@ describe("public contract", () => {
       false,
     );
   });
+  test("OpenAPI retains constrained label keys", () => {
+    expect(openApiDocument.components.schemas.CreateSandboxRequest).toMatchObject({
+      properties: {
+        labels: { propertyNames: { type: "string", minLength: 1, maxLength: 64 } },
+      },
+    });
+  });
 });

@@ -272,6 +272,12 @@ export const openApiDocument = {
             if (zodSchema._zod.def.type === "object" && !("catchall" in zodSchema._zod.def)) {
               delete jsonSchema.additionalProperties;
             }
+
+            if (zodSchema instanceof z.ZodRecord) {
+              jsonSchema.propertyNames = z.toJSONSchema(zodSchema.keyType, {
+                target: "openapi-3.1",
+              });
+            }
           },
         }),
       ]),

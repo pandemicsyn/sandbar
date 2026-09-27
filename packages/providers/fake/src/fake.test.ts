@@ -400,6 +400,25 @@ describe("independent fake provider", () => {
     expect(await driver.inventory(input)).toEqual({ items: [], nextCursor: "10" });
   });
 
+  test("fake inventory rejects malformed cursors before paging", async () => {
+    const { driver } = await setup();
+    expect(
+      (
+        await driver.create({
+          scope,
+          identity: identity("inventory_parent"),
+          image: "fake-starter",
+          networkPolicy: "blocked",
+        })
+      ).status,
+    ).toBe("completed");
+    expect((await driver.inventory({ scope, cursor: "0", limit: 10 })).items).toHaveLength(1);
+
+    for (const cursor of ["invalid", "-1", "01", "1e2", "9007199254740992"]) {
+      await expect(driver.inventory({ scope, cursor, limit: 10 })).rejects.toThrow("400");
+    }
+  });
+
   test("fake driver does not forward mutation bodies across redirects", async () => {
     let forwarded = 0;
 

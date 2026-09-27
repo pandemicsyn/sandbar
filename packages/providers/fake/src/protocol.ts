@@ -2,6 +2,11 @@ import { z } from "zod";
 import { ExecCommand } from "@sandbar/contracts";
 import { InvocationIdentity, NativeRef, NativeScope } from "@sandbar/provider-spi";
 
+export const FakeInventoryCursor = z
+  .string()
+  .regex(/^(0|[1-9][0-9]*)$/)
+  .refine((cursor) => Number.isSafeInteger(Number(cursor)), "Cursor must be a safe integer");
+
 export const FakeAction = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("capabilities"), scope: NativeScope }),
   z.strictObject({
@@ -16,7 +21,7 @@ export const FakeAction = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("inventory"),
     scope: NativeScope,
-    cursor: z.string().optional(),
+    cursor: FakeInventoryCursor.optional(),
     limit: z.number().int().min(1).max(100),
   }),
   z.strictObject({
