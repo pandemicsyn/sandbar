@@ -438,11 +438,6 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("heading", { name: "Fleet" }).waitFor();
   const operationPath = `**/v1/projects/${projectId}/operations/${createId}`;
   let operationReads = 0;
-  let releaseRecoveredRead!: () => void;
-
-  const recoveredRead = new Promise<void>((resolve) => {
-    releaseRecoveredRead = resolve;
-  });
 
   await page.route(operationPath, async (route) => {
     operationReads++;
@@ -474,7 +469,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
       return;
     }
 
-    await recoveredRead;
+    await Bun.sleep(1600);
     await route.continue();
   });
   await page.goto(`${serviceUrl}/projects/${projectId}/operations/${createId}`);
@@ -484,8 +479,8 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("heading", { name: `Operation ${createId}` }).waitFor();
   await page.getByText("Temporary operation read failure").waitFor();
   expect(await page.getByRole("button", { name: "Refresh operation" }).isVisible()).toBe(true);
-  releaseRecoveredRead();
   await page.getByText("succeeded", { exact: true }).waitFor();
+  expect(operationReads).toBe(4);
   await page.unroute(operationPath);
 
   const sandboxId = created.sandboxId;
@@ -510,6 +505,31 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await observedTime.waitFor();
   expect(await observedTime.getAttribute("datetime")).toBeTruthy();
   expect(await observedTime.textContent()).toMatch(/\d{4}/);
+  const fleetRefreshRoute = `**/v1/projects/${projectId}/sandboxes?*`;
+  let failFirstFleetRefresh = true;
+  await page.route(fleetRefreshRoute, async (route) => {
+    if (route.request().method() !== "GET" || !failFirstFleetRefresh) {
+      await route.continue();
+
+      return;
+    }
+
+    failFirstFleetRefresh = false;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "UNAVAILABLE", message: "Temporary fleet refresh failure" },
+      }),
+    });
+  });
+  await page.getByRole("button", { name: "Refresh fleet" }).click();
+  await page.getByText("Temporary fleet refresh failure").waitFor();
+  expect(await page.getByRole("link", { name: sandboxId }).isVisible()).toBe(true);
+  await page.getByRole("button", { name: "Try again" }).click();
+  await page.getByText("Temporary fleet refresh failure").waitFor({ state: "hidden" });
+  expect(await page.getByRole("link", { name: sandboxId }).isVisible()).toBe(true);
+  await page.unroute(fleetRefreshRoute);
   await page.getByLabel("Label key (optional)").fill("team");
   await page.getByLabel("Label value").fill("concurrent");
   await page.getByRole("button", { name: "Create sandbox" }).click();

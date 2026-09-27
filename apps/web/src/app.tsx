@@ -66,19 +66,34 @@ function useResource<T>(load: () => Promise<T>, dependency: string) {
     data?: T;
     error?: string;
     loading: boolean;
-  }>({ key: dependency, loading: true });
+    fetching: boolean;
+    settled: number;
+  }>({ key: dependency, loading: true, fetching: true, settled: 0 });
 
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     let alive = true;
     setState((current) =>
       current.key === dependency
-        ? { key: dependency, data: current.data, loading: current.data === undefined }
-        : { key: dependency, loading: true },
+        ? {
+            key: dependency,
+            data: current.data,
+            loading: current.data === undefined,
+            fetching: true,
+            settled: current.settled,
+          }
+        : { key: dependency, loading: true, fetching: true, settled: 0 },
     );
     load()
       .then((value) => {
-        if (alive) setState({ key: dependency, data: value, loading: false });
+        if (alive)
+          setState((current) => ({
+            key: dependency,
+            data: value,
+            loading: false,
+            fetching: false,
+            settled: current.key === dependency ? current.settled + 1 : 1,
+          }));
       })
       .catch((reason) => {
         if (alive)
@@ -87,6 +102,8 @@ function useResource<T>(load: () => Promise<T>, dependency: string) {
             data: current.key === dependency ? current.data : undefined,
             error: ErrorMessage.parse(reason),
             loading: false,
+            fetching: false,
+            settled: current.key === dependency ? current.settled + 1 : 1,
           }));
       });
 
@@ -95,7 +112,10 @@ function useResource<T>(load: () => Promise<T>, dependency: string) {
     };
   }, [dependency, revision]);
 
-  const current = state.key === dependency ? state : { key: dependency, loading: true };
+  const current =
+    state.key === dependency
+      ? state
+      : { key: dependency, loading: true, fetching: true, settled: 0 };
 
   return { ...current, refresh: () => setRevision((n) => n + 1) };
 }
@@ -776,11 +796,19 @@ function FleetPage() {
             </select>
           </Field>
         </div>
-        {sandboxes.loading ? (
-          <LoadingRows />
-        ) : sandboxes.error ? (
+        {sandboxes.error && sandboxes.data && (
           <Notice tone="error">
             {sandboxes.error}{" "}
+            <button className="text-button" onClick={sandboxes.refresh}>
+              Try again
+            </button>
+          </Notice>
+        )}
+        {sandboxes.loading ? (
+          <LoadingRows />
+        ) : !sandboxes.data ? (
+          <Notice tone="error">
+            {sandboxes.error ?? "Fleet unavailable"}{" "}
             <button className="text-button" onClick={sandboxes.refresh}>
               Try again
             </button>
@@ -1254,11 +1282,16 @@ function OperationPage() {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (!operation.data || ["succeeded", "failed"].includes(operation.data.status)) return;
-    const timer = window.setInterval(operation.refresh, 1200);
+    if (
+      !operation.data ||
+      operation.fetching ||
+      ["succeeded", "failed"].includes(operation.data.status)
+    )
+      return;
+    const timer = window.setTimeout(operation.refresh, 1200);
 
-    return () => window.clearInterval(timer);
-  }, [operation.data?.status]);
+    return () => window.clearTimeout(timer);
+  }, [operation.data?.status, operation.fetching, operation.settled]);
   useEffect(() => {
     let alive = true;
     const executionId = operation.data?.executionId;
