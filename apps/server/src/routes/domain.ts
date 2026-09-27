@@ -85,19 +85,17 @@ async function sandboxDto(store: ControlStore, row: SandboxRow) {
   });
 }
 async function executionDto(deps: DomainDependencies, row: ExecutionRow) {
-  let stdout: string | undefined, stderr: string | undefined, stdoutBase64: string | undefined, stderrBase64: string | undefined;
+  let stdoutBase64: string | undefined, stderrBase64: string | undefined;
   if (row.output_ciphertext) {
     const payload = JSON.parse(await deps.secrets.open("execution-output", row.id, row.output_ciphertext)) as { stdoutBase64: string; stderrBase64: string };
     stdoutBase64 = payload.stdoutBase64;
     stderrBase64 = payload.stderrBase64;
-    stdout = Buffer.from(payload.stdoutBase64, "base64").toString("utf8");
-    stderr = Buffer.from(payload.stderrBase64, "base64").toString("utf8");
   }
   return Execution.parse({
     id: row.id, projectId: row.project_id, sandboxId: row.sandbox_id, operationId: row.operation_id,
     status: row.status, ...(row.exit_code !== null ? { exitCode: Number(row.exit_code) } : {}),
     ...(row.signal ? { signal: row.signal } : {}), outputAvailability: row.output_state,
-    capturedBytes: Number(row.output_bytes), ...(stdout !== undefined ? { stdout } : {}), ...(stderr !== undefined ? { stderr } : {}),
+    capturedBytes: Number(row.output_bytes),
     ...(stdoutBase64 !== undefined ? { stdoutBase64 } : {}), ...(stderrBase64 !== undefined ? { stderrBase64 } : {}),
   });
 }

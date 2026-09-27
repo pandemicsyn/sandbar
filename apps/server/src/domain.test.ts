@@ -83,8 +83,8 @@ test("API persists ambiguous create and exec, then observes each once after rest
     await runtime.runner.tick();
     const execution = (await json(`/v1/projects/${project.id}/executions/${exec.value.execution.id}`, "GET", undefined, bearer)).value;
     expect(execution.exitCode).toBe(7);
-    expect(execution.stdout).toBe("hello from fake");
     expect(execution.stdoutBase64).toBe(Buffer.from("hello from fake").toString("base64"));
+    expect(execution.stdout).toBeUndefined();
     const binary = Buffer.from([0xff, 0x00, 0x80]);
     const binaryExec = await json(`/v1/projects/${project.id}/sandboxes/${boxId}/executions`, "POST", { command: { kind: "argv", argv: ["fixture", "binary"] } }, { ...bearer, "Idempotency-Key": Bun.randomUUIDv7() });
     const binaryOp = await runtime.store.getOperation(project.id, binaryExec.value.operation.id);
