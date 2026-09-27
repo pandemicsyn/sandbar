@@ -23,7 +23,7 @@ The [checked-in remote example](https://github.com/pandemicsyn/sandbar/blob/b429
 import { Sandbar, Image } from "@sandbar/sdk/remote";
 
 const sandbar = Sandbar.connect({
-  url: "http://127.0.0.1:8788",
+  url: "http://127.0.0.1:3000",
   token: process.env.SANDBAR_TOKEN!,
   projectId: process.env.SANDBAR_PROJECT_ID!,
 });
