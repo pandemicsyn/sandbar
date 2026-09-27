@@ -109,6 +109,9 @@ export class FakeProviderDriver implements ProviderDriver {
       if (
         ((result.status === "pending" || result.status === "unknown") &&
           result.submissionId !== submissionId) ||
+        (result.status === "completed" &&
+          result.submissionId !== undefined &&
+          result.submissionId !== submissionId) ||
         !completedMatchesAction(action, result)
       ) {
         throw new Error("Fake provider returned a result for a different mutation");

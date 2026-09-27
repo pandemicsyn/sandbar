@@ -471,6 +471,17 @@ describe("independent fake provider", () => {
       },
     };
 
+    const localCompleted = {
+      ...foreignCompleted,
+      value: {
+        ...foreignCompleted.value,
+        observation: {
+          ...foreignCompleted.value.observation,
+          ref: { ...foreignCompleted.value.observation.ref, scope },
+        },
+      },
+    };
+
     const responses = [
       Response.json({
         status: "pending",
@@ -485,16 +496,7 @@ describe("independent fake provider", () => {
         reason: "lost",
       }),
       Response.json(foreignCompleted),
-      Response.json({
-        ...foreignCompleted,
-        value: {
-          ...foreignCompleted.value,
-          observation: {
-            ...foreignCompleted.value.observation,
-            ref: { ...foreignCompleted.value.observation.ref, scope },
-          },
-        },
-      }),
+      Response.json(localCompleted),
       Response.json({
         status: "pending",
         effect: "possible",
@@ -508,6 +510,7 @@ describe("independent fake provider", () => {
         reason: "lost",
       }),
       Response.json(foreignCompleted),
+      Response.json(localCompleted),
     ];
 
     const driver = new FakeProviderDriver({
@@ -523,7 +526,7 @@ describe("independent fake provider", () => {
       networkPolicy: "blocked",
     };
 
-    for (let index = 0; index < 3; index++) {
+    for (let index = 0; index < 4; index++) {
       expect(await driver.create(input)).toMatchObject({
         status: "unknown",
         submissionId: "expected",
