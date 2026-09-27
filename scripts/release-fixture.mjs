@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -121,6 +122,105 @@ try {
   run("bun", ["packages/sdk-qualification/package-smoke.mjs"]);
   console.log(
     "Stable fixture: version, frozen lock, tarballs, npm/pnpm/Bun installs, Node/Bun consumers passed",
+  );
+
+  run("git", ["add", ".changeset", "packages", "package.json", "bun.lock"]);
+  run("git", ["commit", "-m", "version fixture packages"]);
+  run("git", ["update-ref", "refs/remotes/origin/main", run("git", ["rev-parse", "HEAD"])]);
+  run("git", ["tag", "v0.1.1"]);
+  rmSync(stableArtifacts, { recursive: true, force: true });
+  run("bun", ["scripts/release.mjs", "dry-run"], temporary, { RELEASE_ARTIFACTS: stableArtifacts });
+
+  const qualified = JSON.parse(
+    readFileSync(join(stableArtifacts, "release-metadata.json"), "utf8"),
+  );
+
+  const registryFile = join(temporary, "fake-registry.json");
+
+  const releaseFile = join(temporary, "fake-github-release.json");
+
+  const fakeBin = join(temporary, "fake-bin");
+
+  const first = qualified.packages[0];
+
+  mkdirSync(fakeBin);
+  writeFileSync(registryFile, JSON.stringify({ [first.name]: first.integrity }));
+  writeFileSync(
+    join(fakeBin, "npm"),
+    `#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+const state = JSON.parse(fs.readFileSync(process.env.FAKE_REGISTRY_STATE, "utf8"));
+const metadata = JSON.parse(fs.readFileSync(path.join(process.env.RELEASE_QUALIFIED_ARTIFACTS, "release-metadata.json"), "utf8"));
+const args = process.argv.slice(2);
+if (args[0] === "view") {
+  const name = args[1].slice(0, args[1].lastIndexOf("@"));
+  if (!state[name]) { console.error("E404"); process.exit(1); }
+  console.log(JSON.stringify(state[name]));
+} else if (args[0] === "publish") {
+  const item = metadata.packages.find(x => x.archive === path.basename(args[1]));
+  if (!item || state[item.name]) process.exit(2);
+  state[item.name] = item.integrity;
+  fs.writeFileSync(process.env.FAKE_REGISTRY_STATE, JSON.stringify(state));
+} else process.exit(3);
+`,
+  );
+  writeFileSync(
+    join(fakeBin, "gh"),
+    `#!/usr/bin/env node
+import fs from "node:fs";
+const args = process.argv.slice(2);
+if (args[0] !== "release") process.exit(3);
+if (args[1] === "view") {
+  if (!fs.existsSync(process.env.FAKE_RELEASE_FILE)) process.exit(1);
+  console.log(JSON.parse(fs.readFileSync(process.env.FAKE_RELEASE_FILE, "utf8")).body);
+} else if (args[1] === "create") {
+  const file = args[args.indexOf("--notes-file") + 1];
+  fs.writeFileSync(process.env.FAKE_RELEASE_FILE, JSON.stringify({ body: fs.readFileSync(file, "utf8") }));
+} else process.exit(3);
+`,
+  );
+  chmodSync(join(fakeBin, "npm"), 0o755);
+  chmodSync(join(fakeBin, "gh"), 0o755);
+
+  const publishEnv = {
+    PATH: `${fakeBin}:${process.env.PATH}`,
+    RELEASE_ARTIFACTS: join(temporary, "publish-artifacts"),
+    RELEASE_QUALIFIED_ARTIFACTS: stableArtifacts,
+    RELEASE_REF: "v0.1.1",
+    RELEASE_APPROVED: "true",
+    GITHUB_ACTIONS: "true",
+    FAKE_REGISTRY_STATE: registryFile,
+    FAKE_RELEASE_FILE: releaseFile,
+  };
+
+  run("bun", ["scripts/release.mjs", "publish"], temporary, publishEnv);
+  const published = JSON.parse(readFileSync(registryFile, "utf8"));
+
+  if (Object.keys(published).length !== qualified.packages.length || !existsSync(releaseFile))
+    throw new Error(
+      "Partial publish fixture did not complete remaining packages and release notes",
+    );
+
+  rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
+  run("bun", ["scripts/release.mjs", "publish"], temporary, publishEnv);
+  const conflicting = { ...published, [first.name]: "sha512-conflicting-fixture" };
+
+  writeFileSync(registryFile, JSON.stringify(conflicting));
+  rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
+
+  const blocked = spawnSync("bun", ["scripts/release.mjs", "publish"], {
+    cwd: temporary,
+    env: { ...process.env, ...publishEnv },
+    encoding: "utf8",
+  });
+
+  if (blocked.status === 0 || !blocked.stderr.includes("already exists with different bytes"))
+    throw new Error("Conflicting existing registry version was not rejected");
+
+  writeFileSync(registryFile, JSON.stringify(published));
+  console.log(
+    "Mock registry: partial publish completed, exact rerun skipped, conflicting bytes rejected",
   );
 
   const lockPath = join(temporary, "bun.lock");
