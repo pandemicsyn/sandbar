@@ -212,6 +212,50 @@ describe("direct recovery evidence", () => {
     } finally { await client.close(); }
   }, 30_000);
 
+  test("an imported reference cannot retain or forward extra scope credentials", async () => {
+    const { fixture, client, image } = await backend("direct");
+    await fixture.fakeControl("/_test/seed", { submissionId: "*", action: "create", behavior: "lost_after_effect" });
+    try {
+      const operation = await client.sandboxes.submitCreate({ environment: image });
+      const clean = structuredClone(operation.reference);
+      await client.close();
+
+      const registration = await fakeProvider({ url: fixture.fakeUrl!, token: fixture.fakeToken });
+      const observed: unknown[] = [];
+      const driver = new Proxy(registration.driver, {
+        get(target, property) {
+          if (property === "observe") return async (input: Parameters<typeof target.observe>[0]) => {
+            observed.push(structuredClone(input));
+            return target.observe(input);
+          };
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const next = DirectSandbar.direct({ provider: { ...registration, driver } });
+      try {
+        const tainted = structuredClone(clean);
+        Object.assign(tainted.scope!, { credential: "never-forward-this-secret" });
+        const attempt = await next.recover(tainted).then(handle => ({ handle }), error => ({ error }));
+        if ("error" in attempt) {
+          expect(attempt.error).toMatchObject({ code: "INVALID_ARGUMENT" });
+        } else {
+          expect(JSON.stringify(attempt.handle.reference)).not.toContain("never-forward-this-secret");
+          Object.assign(tainted.scope!, { credential: "mutated-after-import" });
+          await attempt.handle.wait();
+          expect(JSON.stringify(attempt.handle.reference)).not.toContain("mutated-after-import");
+        }
+        const box = await (await next.recover(clean)).wait() as SandboxHandle;
+        expect((await box.inspect()).state).toBe("running");
+        expect(JSON.stringify(observed)).not.toContain("never-forward-this-secret");
+        expect(JSON.stringify(observed)).not.toContain("mutated-after-import");
+        const state = await fixture.fakeControl("/_test/state");
+        expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
+        await box.destroy();
+      } finally { await next.close(); }
+    } finally { await client.close(); }
+  }, 30_000);
+
   test("missing native discovery leaves an ambiguous create unknown without replay", async () => {
     const { fixture, client, image } = await backend("direct");
     await fixture.fakeControl("/_test/profile", {
