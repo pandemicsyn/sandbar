@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { ExecCommand, ExecRequest, Id, InvocationKey, type SafeError } from "@sandbar/contracts";
+import {
+  CreateSandboxRequest,
+  ExecCommand,
+  ExecRequest,
+  Id,
+  InvocationKey,
+  type SafeError,
+} from "@sandbar/contracts";
 import {
   NativeRef as NativeRefSchema,
   NativeScope as NativeScopeSchema,
@@ -216,6 +223,18 @@ export function validateCreate(input: CreateInput): CreateInput {
 
   if (!parsed.success || !parsed.data.environment.value.trim())
     throw new SandbarError("INVALID_ARGUMENT", "A prepared or OCI image is required");
+
+  const contract = CreateSandboxRequest.safeParse({
+    environment:
+      parsed.data.environment.kind === "prepared"
+        ? { kind: "prepared", imageId: parsed.data.environment.value }
+        : { kind: "oci", reference: parsed.data.environment.value },
+    network: { policy: parsed.data.networkPolicy ?? "blocked" },
+    region: parsed.data.region,
+    labels: parsed.data.labels,
+  });
+
+  if (!contract.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid create request");
 
   return { ...parsed.data, networkPolicy: parsed.data.networkPolicy ?? "blocked" };
 }

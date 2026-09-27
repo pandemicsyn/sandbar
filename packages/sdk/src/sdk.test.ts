@@ -157,6 +157,43 @@ test("direct resource flow preserves binary files and nonzero output", async () 
   expect(box.inspect()).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
 });
 
+test("direct rejects create contract violations before provider preparation", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const prepare = provider.driver.prepare.bind(provider.driver);
+  const create = provider.driver.create.bind(provider.driver);
+  let preparations = 0;
+  let dispatches = 0;
+
+  provider.driver.prepare = async (input) => {
+    preparations++;
+
+    return prepare(input);
+  };
+
+  provider.driver.create = async (input) => {
+    dispatches++;
+
+    return create(input);
+  };
+
+  const client = DirectSandbar.direct({ provider });
+
+  for (const invalid of [
+    { environment: DirectImage.prepared("invalid id") },
+    { environment: DirectImage.oci("x".repeat(1025)) },
+    { environment: DirectImage.prepared("fake-starter"), labels: { long: "x".repeat(257) } },
+  ]) {
+    await expect(client.sandboxes.submitCreate(invalid)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+  }
+
+  expect(preparations).toBe(0);
+  expect(dispatches).toBe(0);
+});
+
 test("direct lost response is recovered by observation without replay; wrong scope is rejected", async () => {
   const { client, control } = await fixture();
   await control("/_test/seed", {
@@ -917,6 +954,18 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   await expect(client.sandboxes.submitCreate(JSON.parse("{}"))).rejects.toMatchObject({
     code: "INVALID_ARGUMENT",
   });
+
+  for (const invalid of [
+    { environment: RemoteImage.prepared("invalid id") },
+    { environment: RemoteImage.oci("x".repeat(1025)) },
+    { environment: RemoteImage.prepared("fake-starter"), labels: { long: "x".repeat(257) } },
+  ]) {
+    await expect(client.sandboxes.submitCreate(invalid)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+  }
+
   expect(posts).toBe(0);
 
   const operation = await client.sandboxes.submitCreate({
