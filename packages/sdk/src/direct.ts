@@ -1,9 +1,9 @@
 import {
   NativeScope,
   ProviderReadError,
+  SandboxRef,
   SandboxObservation,
   type NativeRef,
-  type SandboxRef,
   type ProviderDriver,
   type DriverResult,
   type InvocationIdentity,
@@ -120,10 +120,13 @@ class DirectOperation<T> implements OperationHandle<T> {
     try {
       raw = initialResponse
         ? first
-        : await this.client.driver.observe({
-            scope: this.reference.scope!,
-            submissionId: this.reference.submissionId!,
-          });
+        : await raceAbort(
+            this.client.driver.observe({
+              scope: this.reference.scope!,
+              submissionId: this.reference.submissionId!,
+            }),
+            this.client.closedSignal,
+          );
     } catch {
       throw new OutcomeUnknownError(
         this.reference,
@@ -213,11 +216,23 @@ class DirectOperation<T> implements OperationHandle<T> {
 
 class DirectSandbox implements SandboxHandle {
   readonly id: string;
+  readonly ref: Readonly<Omit<SandboxRef, "scope"> & { scope: Readonly<NativeScope> }>;
   constructor(
     private readonly client: DirectClient,
-    readonly ref: SandboxRef,
+    ref: SandboxRef,
   ) {
-    this.id = ref.nativeId;
+    const parsed = SandboxRef.safeParse(ref);
+
+    if (!parsed.success)
+      throw new SandbarError(
+        "INVALID_RESPONSE",
+        "Provider returned invalid sandbox ref",
+        "unknown",
+      );
+
+    Object.freeze(parsed.data.scope);
+    this.ref = Object.freeze(parsed.data);
+    this.id = this.ref.nativeId;
   }
   async inspect() {
     this.client.ensureOpen();

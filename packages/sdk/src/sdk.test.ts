@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 import { startFakeProviderServer } from "@sandbar/provider-fake/server";
-import { ProviderReadError } from "@sandbar/provider-spi";
+import { ProviderReadError, type SandboxRef } from "@sandbar/provider-spi";
 import {
   Image as DirectImage,
   Sandbar as DirectSandbar,
@@ -317,6 +317,43 @@ test("direct client scope stays fixed across ambiguous sandbox mutation recovery
   ).toHaveLength(1);
 });
 
+test("direct sandbox reference stays fixed across ambiguous mutation recovery", async () => {
+  const { client, control } = await fixture();
+  const box = await client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
+
+  // SAFETY: Direct mode returns a DirectSandbox with the public native ref under test.
+  const ref = (box as typeof box & { ref: SandboxRef }).ref;
+  const originalId = box.id;
+  const originalAccount = client.scope.accountId;
+
+  expect(() => Object.assign(ref, { nativeId: "foreign" })).toThrow();
+  expect(() => Object.assign(ref.scope, { accountId: "foreign" })).toThrow();
+  expect(ref.nativeId).toBe(originalId);
+  expect(ref.scope.accountId).toBe(originalAccount);
+
+  const command = { kind: "argv" as const, argv: ["fixture", "ok"] };
+
+  await control("/_test/seed", {
+    submissionId: "*",
+    action: "exec",
+    behavior: "lost_after_effect",
+    command: { command, exitCode: 0, stdoutBase64: "" },
+  });
+
+  const operation = await box.submitExec({ command });
+  expect(operation.reference.sandbox?.nativeId).toBe(originalId);
+  expect(operation.reference.sandbox?.scope.accountId).toBe(originalAccount);
+
+  await expect((await client.recover(operation.reference)).wait()).resolves.toMatchObject({
+    exitCode: 0,
+  });
+
+  const state = await control("/_test/state");
+  expect(
+    state.invocations.filter((item: { action: string }) => item.action === "exec"),
+  ).toHaveLength(1);
+});
+
 test("fake provider registration binds recovery to the configured endpoint", async () => {
   const { client } = await fixture();
   expect(JSON.stringify(client)).not.toContain(token);
@@ -403,6 +440,62 @@ test("closing a client interrupts pending direct observation without destroying 
   await expect(waiting).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
   await expect(operation.observe()).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
   expect((await control("/_test/state")).resources).toHaveLength(1);
+});
+
+test("closing a client releases direct public observation waits", async () => {
+  const { client, control } = await fixture();
+  await control("/_test/seed", { submissionId: "*", action: "create", delayObservations: 1 });
+
+  const operation = await client.sandboxes.submitCreate({
+    environment: DirectImage.prepared("fake-starter"),
+  });
+
+  expect(await operation.observe()).toBeNull();
+
+  const observe = client.driver.observe.bind(client.driver);
+  let entered!: () => void, release!: () => void;
+
+  const bothEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  let calls = 0;
+
+  client.driver.observe = async (input) => {
+    const call = ++calls;
+
+    if (call === 2) entered();
+    await gate;
+
+    if (call === 2) throw new Error("late provider read failure");
+
+    return observe(input);
+  };
+
+  const first = operation.observe();
+  const second = operation.observe();
+  await bothEntered;
+
+  try {
+    await client.close();
+    await expect(first).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      reference: operation.reference,
+    });
+    await expect(second).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      reference: operation.reference,
+    });
+  } finally {
+    release();
+  }
+
+  await expect(operation.observe()).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+  expect((await control("/_test/state")).invocations).toHaveLength(1);
 });
 
 test("closing a direct client releases stalled inspect and file-read waits", async () => {
@@ -1310,6 +1403,78 @@ test("remote recovery accepts equivalent service URLs with or without trailing s
     "/api/v1/projects/project_1/sandboxes",
     "/api/v1/projects/project_1/invocations/" + submitted.reference.invocationKey,
   ]);
+});
+
+test("remote reads map malformed successful JSON to a public response error", async () => {
+  const projectId = "project_1";
+
+  const operation = {
+    id: "op_1",
+    projectId,
+    kind: "create",
+    sandboxId: "box_1",
+    status: "succeeded",
+    phase: "done",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    effect: "applied",
+    recovery: [],
+    result: { kind: "create", sandboxId: "box_1" },
+  };
+
+  let malformedSandbox = false;
+  let malformedLookup = false;
+
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname;
+
+    if (init?.method === "POST") return Response.json({ operation }, { status: 202 });
+
+    if (path.includes("/invocations/"))
+      return malformedLookup ? new Response("{", { status: 200 }) : Response.json(operation);
+
+    if (path.endsWith("/sandboxes/box_1"))
+      return malformedSandbox
+        ? new Response("{", { status: 200 })
+        : Response.json({
+            id: "box_1",
+            projectId,
+            connectionId: "conn_1",
+            desiredState: "running",
+            observedState: "running",
+            revision: 1,
+            environment: { kind: "prepared", imageId: "fake-starter" },
+            network: { policy: "blocked" },
+            labels: {},
+          });
+
+    throw new Error(`Unexpected path: ${path}`);
+  };
+
+  const client = RemoteSandbar.connect({
+    url: "https://sandbar.example/",
+    token: "secret",
+    projectId,
+    fetch: fetcher,
+  });
+
+  const submitted = await client.sandboxes.submitCreate({
+    environment: RemoteImage.prepared("fake-starter"),
+  });
+
+  const box = await submitted.wait();
+  malformedSandbox = true;
+  await expect(box.inspect()).rejects.toMatchObject({
+    code: "INVALID_RESPONSE",
+    effect: "unknown",
+  });
+
+  malformedSandbox = false;
+  malformedLookup = true;
+  await expect(client.recover(submitted.reference)).rejects.toMatchObject({
+    code: "INVALID_RESPONSE",
+    effect: "unknown",
+  });
 });
 
 test("remote ambiguous mutation response cancels its body before invocation lookup", async () => {

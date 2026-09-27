@@ -529,7 +529,18 @@ export class RemoteClient implements SandbarClient {
     const response = await this.raw(path, init);
 
     if (!response.ok) await this.throwResponse(response);
-    const raw: unknown = await response.json();
+    let raw: unknown;
+
+    try {
+      raw = await response.json();
+    } catch (error) {
+      this.ensureOpen();
+      throwIfAborted(init.signal ?? undefined);
+
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      throw new SandbarError("INVALID_RESPONSE", "Service returned invalid response", "unknown");
+    }
+
     const parsed = schema.safeParse(raw);
 
     if (!parsed.success)
