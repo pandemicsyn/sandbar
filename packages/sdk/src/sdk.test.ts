@@ -900,6 +900,79 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   await expect(client.recover(malformed)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 });
 
+test("remote recovery accepts equivalent service URLs with or without trailing slash", async () => {
+  const projectId = "project_1";
+
+  const operation = {
+    id: "op_1",
+    projectId,
+    kind: "create",
+    status: "queued",
+    phase: "queued",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    effect: "none",
+    recovery: [],
+  };
+
+  const paths: string[] = [];
+  let posts = 0;
+
+  const fetcher: typeof fetch = async (url, init) => {
+    paths.push(new URL(String(url)).pathname);
+
+    if (init?.method === "POST") {
+      posts++;
+
+      return Response.json({ operation }, { status: 202 });
+    }
+
+    return Response.json(operation);
+  };
+
+  const original = RemoteSandbar.connect({
+    url: "https://sandbar.example/api",
+    token: "secret",
+    projectId,
+    fetch: fetcher,
+  });
+
+  const submitted = await original.sandboxes.submitCreate({
+    environment: RemoteImage.prepared("fake-starter"),
+  });
+
+  expect(submitted.reference.service?.url).toBe("https://sandbar.example/api/");
+
+  const restarted = RemoteSandbar.connect({
+    url: "https://sandbar.example/api/",
+    token: "secret",
+    projectId,
+    fetch: fetcher,
+  });
+
+  const recovered = await restarted.recover(submitted.reference);
+
+  expect(recovered.reference.service?.url).toBe("https://sandbar.example/api/");
+
+  const differentBase = RemoteSandbar.connect({
+    url: "https://sandbar.example/other/",
+    token: "secret",
+    projectId,
+    fetch: fetcher,
+  });
+
+  await expect(differentBase.recover(submitted.reference)).rejects.toMatchObject({
+    code: "FORBIDDEN",
+  });
+
+  expect(posts).toBe(1);
+
+  expect(paths).toEqual([
+    "/api/v1/projects/project_1/sandboxes",
+    "/api/v1/projects/project_1/invocations/" + submitted.reference.invocationKey,
+  ]);
+});
+
 test("remote ambiguous mutation response cancels its body before invocation lookup", async () => {
   const projectId = "project_1";
 

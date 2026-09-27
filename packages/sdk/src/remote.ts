@@ -463,6 +463,10 @@ export class RemoteClient implements SandbarClient {
       this.endpoint.hash
     )
       throw new SandbarError("INVALID_ARGUMENT", "Service URL must use HTTPS or loopback HTTP");
+    this.endpoint.search = "";
+    this.endpoint.hash = "";
+
+    if (!this.endpoint.pathname.endsWith("/")) this.endpoint.pathname += "/";
     this.projectId = Id.parse(options.projectId);
 
     if (!options.token) throw new SandbarError("INVALID_ARGUMENT", "Service token is required");
@@ -473,10 +477,7 @@ export class RemoteClient implements SandbarClient {
     if (this.closed) throw new SandbarError("CLIENT_CLOSED", "Client is closed");
   }
   private url(path: string) {
-    const base = new URL(
-      `v1/projects/${encodeURIComponent(this.projectId)}/`,
-      this.endpoint.href.endsWith("/") ? this.endpoint : `${this.endpoint.href}/`,
-    );
+    const base = new URL(`v1/projects/${encodeURIComponent(this.projectId)}/`, this.endpoint);
 
     const target = new URL(path, base);
 
