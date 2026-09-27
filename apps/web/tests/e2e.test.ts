@@ -290,6 +290,32 @@ test("browser and public HTTP recover fake effects across service restarts witho
   expect(await page.evaluate(() => document.activeElement?.id)).toBe("main-content");
   const projectId = new URL(page.url()).pathname.split("/")[2]!;
   const connectionsUrl = page.url();
+  await page.goto(`${serviceUrl}/projects`);
+  await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
+  const projectListRoute = "**/v1/projects";
+  let failFirstProjectContextRead = true;
+  await page.route(projectListRoute, async (route) => {
+    if (route.request().method() !== "GET" || !failFirstProjectContextRead) {
+      await route.continue();
+
+      return;
+    }
+
+    failFirstProjectContextRead = false;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "UNAVAILABLE", message: "Temporary project context failure" },
+      }),
+    });
+  });
+  await page.goto(connectionsUrl);
+  await page.getByText("Temporary project context failure").waitFor();
+  await page.getByRole("button", { name: "Retry projects" }).click();
+  await page.getByRole("heading", { name: "Provider connections" }).waitFor();
+  expect(page.url()).toBe(connectionsUrl);
+  await page.unroute(projectListRoute);
   await page.goto(`${serviceUrl}/projects/missing-project/connections`);
   await page.getByText("This project is unavailable or you do not have access.").waitFor();
   await page.locator(".skip-link").focus();
@@ -306,6 +332,36 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("button", { name: "Add connection" }).click();
   await page.getByRole("button", { name: "Verify scope" }).click();
   await page.getByText("Connection scope verified.").waitFor();
+  await page.getByText("verified", { exact: true }).first().waitFor();
+  const connectionDetailRoute = `**/v1/projects/${projectId}/provider-connections`;
+  let failFollowUpConnectionRead = true;
+  let connectionMutations = 0;
+  await page.route(connectionDetailRoute, async (route) => {
+    if (route.request().method() === "POST") connectionMutations += 1;
+
+    if (route.request().method() !== "GET" || !failFollowUpConnectionRead) {
+      await route.continue();
+
+      return;
+    }
+
+    failFollowUpConnectionRead = false;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "UNAVAILABLE", message: "Temporary connection refresh failure" },
+      }),
+    });
+  });
+  await page.getByLabel("Connection name").fill("Refresh probe");
+  await page.getByRole("button", { name: "Add connection" }).click();
+  await page.getByText("Temporary connection refresh failure").waitFor();
+  expect(await page.getByText("Fake local", { exact: true }).isVisible()).toBe(true);
+  await page.getByRole("button", { name: "Retry connections" }).click();
+  await page.getByText("Refresh probe", { exact: true }).waitFor();
+  expect(connectionMutations).toBe(1);
+  await page.unroute(connectionDetailRoute);
   const connectionListRoute = "**/v1/projects/*/provider-connections";
   let failFirstConnectionList = true;
   await page.route(connectionListRoute, async (route) => {

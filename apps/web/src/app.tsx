@@ -397,7 +397,9 @@ function ProjectLayout() {
   if (projects.error)
     return (
       <main className="content" id="main-content" tabIndex={-1}>
-        <Notice tone="error">{projects.error}</Notice>
+        <Notice tone="error">
+          {projects.error} <Button onClick={projects.refresh}>Retry projects</Button>
+        </Notice>
       </main>
     );
 
@@ -486,10 +488,18 @@ function ConnectionsPage() {
       </section>
       <section style={{ marginTop: 24 }}>
         <h2 className="section-title">Connections</h2>
+        {connections.error && connections.data && (
+          <Notice tone="error">
+            {connections.error} <Button onClick={connections.refresh}>Retry connections</Button>
+          </Notice>
+        )}
         {connections.loading ? (
           <LoadingRows />
-        ) : connections.error ? (
-          <Notice tone="error">{connections.error}</Notice>
+        ) : !connections.data ? (
+          <Notice tone="error">
+            {connections.error ?? "Connections unavailable"}{" "}
+            <Button onClick={connections.refresh}>Retry connections</Button>
+          </Notice>
         ) : connections.data?.items.length ? (
           <div className="surface table-scroll">
             <table className="data-table">
