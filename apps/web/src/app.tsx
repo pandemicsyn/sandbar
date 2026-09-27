@@ -1432,11 +1432,13 @@ const fleetRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/sandboxes",
   validateSearch: (search) => {
+    const text = z.string().optional().catch(undefined);
+
     const parsed = SandboxListQuery.safeParse({
-      state: search.state || undefined,
-      connectionId: search.connectionId || undefined,
-      q: search.q || undefined,
-      cursor: search.cursor || undefined,
+      state: text.parse(search.state) || undefined,
+      connectionId: text.parse(search.connectionId) || undefined,
+      q: text.parse(search.q) || undefined,
+      cursor: text.parse(search.cursor) || undefined,
     });
 
     return {
