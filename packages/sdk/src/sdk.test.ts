@@ -316,6 +316,25 @@ test("fake provider registration binds recovery to the configured endpoint", asy
   }
 });
 
+test("fake provider recovery accepts equivalent ignored URL components without replay", async () => {
+  const { client, control, url } = await fixture();
+
+  const submitted = await client.sandboxes.submitCreate({
+    environment: DirectImage.prepared("fake-starter"),
+  });
+
+  // SAFETY: The saved value is a JSON round trip of the SDK's RecoveryReference.
+  const saved = JSON.parse(JSON.stringify(submitted.reference)) as RecoveryReference;
+
+  const equivalent = DirectSandbar.direct({
+    provider: await fakeProvider({ url: `${url}ignored/path?variant=1#fragment`, token }),
+  });
+
+  const recovered = await equivalent.recover(saved);
+  expect((await recovered.wait()).id).toBeTruthy();
+  expect((await control("/_test/state")).invocations).toHaveLength(1);
+});
+
 test("direct undiscoverable effect reports unknown without replay", async () => {
   const { client, control } = await fixture();
   await control("/_test/profile", {

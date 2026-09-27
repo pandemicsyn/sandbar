@@ -348,7 +348,8 @@ export async function fakeProvider(options: {
     fetch: options.fetch,
   });
 
-  const canonical = endpoint.href.replace(/\/$/, "");
+  // The driver always sends to /v1/action, so path, query, and fragment are not endpoint identity.
+  const canonical = endpoint.origin;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
   const connectionId = `fake_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 
