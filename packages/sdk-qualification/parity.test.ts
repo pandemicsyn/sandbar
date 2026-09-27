@@ -86,6 +86,63 @@ for (const kind of ["direct", "remote"] as const) {
   });
 }
 
+describe("remote recovery evidence", () => {
+  test("a lost admitted HTTP response remains recoverable, while a tampered imported reference sends no request", async () => {
+    const fixture = new ProcessFixture();
+    fixtures.push(fixture);
+    await fixture.startFake();
+    await fixture.startService();
+    const setup = await post(`${fixture.serviceUrl}/v1/setup`, undefined, { setupToken: fixture.setupToken });
+    const project = await post(`${fixture.serviceUrl}/v1/projects`, setup.token, { name: "SDK recovery" });
+    const connection = await post(`${fixture.serviceUrl}/v1/projects/${project.id}/provider-connections`, setup.token, { provider: "fake", name: "Local fake" });
+    await post(`${fixture.serviceUrl}/v1/projects/${project.id}/provider-connections/${connection.id}/verify`, setup.token, {});
+
+    let lostResponses = 0;
+    let dispatchedKey: string | null = null;
+    const losingFetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const response = await fetch(input, init);
+      const url = input instanceof Request ? input.url : String(input);
+      if (init?.method === "POST" && new URL(url).pathname.endsWith("/sandboxes") && lostResponses++ === 0) {
+        expect(response.ok).toBe(true);
+        dispatchedKey = new Headers(init.headers).get("Idempotency-Key");
+        await response.body?.cancel();
+        throw new TypeError("HTTP response lost after admission");
+      }
+      return response;
+    }) as typeof fetch;
+    const first = RemoteSandbar.connect({ url: fixture.serviceUrl!, token: setup.token, projectId: project.id, fetch: losingFetch });
+    try {
+      const operation = await first.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
+      const imported = JSON.parse(JSON.stringify(operation.reference)) as typeof operation.reference;
+      expect(lostResponses).toBe(1);
+      expect(imported.invocationKey).toBe(String(dispatchedKey));
+      expect(JSON.stringify(imported)).not.toContain(setup.token);
+      await first.close();
+
+      let recoveryRequests = 0;
+      const countingFetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        recoveryRequests++;
+        return fetch(input, init);
+      }) as typeof fetch;
+      const next = RemoteSandbar.connect({ url: fixture.serviceUrl!, token: setup.token, projectId: project.id, fetch: countingFetch });
+      try {
+        const badPath = { ...imported, kind: "file_write" as const, resourceId: "box_1", file: { path: "/data/../escape", bytes: 1 } };
+        await expect(next.recover(badPath)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+        const badKind = { ...imported, file: { path: "/data/safe", bytes: 1 } };
+        await expect(next.recover(badKind)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+        expect(recoveryRequests).toBe(0);
+
+        const box = await (await next.recover(imported)).wait() as SandboxHandle;
+        expect((await box.inspect()).state).toBe("running");
+        const state = await fixture.fakeControl("/_test/state");
+        expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
+        expect(state.invocations.filter((entry: any) => entry.action === "file_write")).toHaveLength(0);
+        await box.destroy();
+      } finally { await next.close(); }
+    } finally { await first.close(); }
+  }, 30_000);
+});
+
 describe("direct recovery evidence", () => {
   test("a separately configured caller observes a lost create without submitting again", async () => {
     const { fixture, client, image } = await backend("direct");
