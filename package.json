@@ -20,9 +20,16 @@
     "docs:check": "bun run build:packages && bun run --cwd apps/docs check && bun run --cwd apps/docs reference:check && bun run --cwd apps/docs build && bun run --cwd apps/docs examples:test",
     "package:smoke": "bun run build:packages && bun packages/sdk-qualification/package-smoke.mjs",
     "dev": "bun run build:packages && bun --watch apps/server/src/index.ts",
-    "start": "bun apps/server/dist/index.js"
+    "start": "bun apps/server/dist/index.js",
+    "changeset": "changeset",
+    "version:packages": "changeset version",
+    "release:check-manifests": "bun scripts/release.mjs check",
+    "release:refresh-lock": "bun scripts/refresh-workspace-lock.mjs",
+    "release:fixture": "bun scripts/release-fixture.mjs"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "1.0.0",
+    "@changesets/cli": "3.0.0",
     "@oxlint/plugins": "1.85.0",
     "@types/bun": "1.4.2",
     "drizzle-kit": "1.0.0-beta.22",

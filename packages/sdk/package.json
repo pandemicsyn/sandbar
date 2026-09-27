@@ -1,10 +1,12 @@
 {
   "name": "sandbar-sdk",
   "version": "0.0.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "exports": {
     ".": {
@@ -37,5 +39,20 @@
     "@sandbar/provider-fake": "workspace:*",
     "@sandbar/provider-daytona": "workspace:*",
     "@sandbar/provider-modal": "workspace:*"
-  }
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pandemicsyn/sandbar.git",
+    "directory": "packages/sdk"
+  },
+  "description": "Sandbar SDK for direct sandbox access with built-in Daytona and Modal adapters.",
+  "homepage": "https://sandbarsdk.dev/docs/direct-quickstart/",
+  "bugs": {
+    "url": "https://github.com/pandemicsyn/sandbar/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "types": "./dist/index.d.ts"
 }

@@ -1,10 +1,12 @@
 {
   "name": "sandbar-adapter",
   "version": "0.0.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "exports": {
     ".": {
@@ -26,5 +28,20 @@
   },
   "dependencies": {
     "zod": "4.6.5"
-  }
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pandemicsyn/sandbar.git",
+    "directory": "packages/adapter"
+  },
+  "description": "Public adapter definitions, validation, and conformance testing for Sandbar.",
+  "homepage": "https://sandbarsdk.dev/docs/guides/write-an-adapter/",
+  "bugs": {
+    "url": "https://github.com/pandemicsyn/sandbar/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "types": "./dist/index.d.ts"
 }

@@ -36,5 +36,13 @@ jobs:
         run: bun run build
       - name: Packed Node and Bun consumers
         run: bun run package:smoke
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.18.3
+          run_install: false
+      - name: Release version and installer fixture
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun scripts/release-fixture.mjs
       - name: Documentation site and examples
         run: bun run docs:check
