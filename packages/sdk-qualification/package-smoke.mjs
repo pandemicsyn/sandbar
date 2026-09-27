@@ -47,6 +47,7 @@ async function pack(directory) {
   const manifest = JSON.parse(await readFile(join(root, directory, "package.json"), "utf8"));
   const before = new Set(await readdir(archives));
   run("bun", ["pm", "pack", "--destination", archives], join(root, directory));
+
   const added = (await readdir(archives)).filter(
     (file) => !before.has(file) && file.endsWith(".tgz"),
   );
@@ -197,11 +198,13 @@ try {
   const packed = {};
 
   for (const [name, directory] of packages) packed[name] = await pack(directory);
+
   const remoteDeps = Object.fromEntries(
     packages.flatMap(([name]) =>
       name === "@sandbar/provider-fake" ? [] : [[name, `file:${packed[name]}`]],
     ),
   );
+
   const directDeps = Object.fromEntries(packages.map(([name]) => [name, `file:${packed[name]}`]));
   const remote = join(temporary, "remote-consumer");
   const direct = join(temporary, "direct-consumer");

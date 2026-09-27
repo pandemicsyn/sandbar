@@ -63,9 +63,11 @@ async function stop(child: ChildProcess | undefined): Promise<void> {
   const exited = new Promise<boolean>((done) => child.once("exit", () => done(true)));
   child.kill("SIGTERM");
   let timer: ReturnType<typeof setTimeout>;
+
   const timedOut = new Promise<boolean>((done) => {
     timer = setTimeout(() => done(false), 3_000);
   });
+
   const graceful = await Promise.race([exited, timedOut]);
   clearTimeout(timer!);
 

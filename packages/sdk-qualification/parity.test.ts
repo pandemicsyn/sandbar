@@ -47,22 +47,27 @@ async function backend(kind: Backend) {
   }
 
   await fixture.startService();
+
   const setup = await post(`${fixture.serviceUrl}/v1/setup`, undefined, {
     setupToken: fixture.setupToken,
   });
+
   const project = await post(`${fixture.serviceUrl}/v1/projects`, setup.token, {
     name: "SDK parity",
   });
+
   const connection = await post(
     `${fixture.serviceUrl}/v1/projects/${project.id}/provider-connections`,
     setup.token,
     { provider: "fake", name: "Local fake" },
   );
+
   await post(
     `${fixture.serviceUrl}/v1/projects/${project.id}/provider-connections/${connection.id}/verify`,
     setup.token,
     {},
   );
+
   const client = RemoteSandbar.connect({
     url: fixture.serviceUrl!,
     token: setup.token,
@@ -153,17 +158,21 @@ describe("remote recovery evidence", () => {
     fixtures.push(fixture);
     await fixture.startFake();
     await fixture.startService();
+
     const setup = await post(`${fixture.serviceUrl}/v1/setup`, undefined, {
       setupToken: fixture.setupToken,
     });
+
     const project = await post(`${fixture.serviceUrl}/v1/projects`, setup.token, {
       name: "SDK recovery",
     });
+
     const connection = await post(
       `${fixture.serviceUrl}/v1/projects/${project.id}/provider-connections`,
       setup.token,
       { provider: "fake", name: "Local fake" },
     );
+
     await post(
       `${fixture.serviceUrl}/v1/projects/${project.id}/provider-connections/${connection.id}/verify`,
       setup.token,
@@ -206,10 +215,12 @@ describe("remote recovery evidence", () => {
       const operation = await first.sandboxes.submitCreate({
         environment: RemoteImage.prepared("fake-starter"),
       });
+
       // SAFETY: The JSON is a round trip of the SDK-issued reference immediately above.
       const imported = JSON.parse(
         JSON.stringify(operation.reference),
       ) as typeof operation.reference;
+
       expect(lostResponses).toBe(1);
       expect(imported.invocationKey).toBe(String(dispatchedKey));
       expect(JSON.stringify(imported)).not.toContain(setup.token);
@@ -241,6 +252,7 @@ describe("remote recovery evidence", () => {
           resourceId: "box_1",
           file: { path: "/data/../escape", bytes: 1 },
         };
+
         await expect(next.recover(badPath)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
         const badKind = { ...imported, file: { path: "/data/safe", bytes: 1 } };
         await expect(next.recover(badKind)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
@@ -268,17 +280,21 @@ describe("remote recovery evidence", () => {
     fixtures.push(fixture);
     await fixture.startFake();
     await fixture.startService();
+
     const setup = await post(`${fixture.serviceUrl}/v1/setup`, undefined, {
       setupToken: fixture.setupToken,
     });
+
     const project = await post(`${fixture.serviceUrl}/v1/projects`, setup.token, {
       name: "SDK read recovery",
     });
+
     const connection = await post(
       `${fixture.serviceUrl}/v1/projects/${project.id}/provider-connections`,
       setup.token,
       { provider: "fake", name: "Local fake" },
     );
+
     await post(
       `${fixture.serviceUrl}/v1/projects/${project.id}/provider-connections/${connection.id}/verify`,
       setup.token,
@@ -314,6 +330,7 @@ describe("remote recovery evidence", () => {
       projectId: project.id,
       fetch: failingFetch,
     });
+
     let reference: RecoveryReference | undefined;
 
     try {
@@ -375,6 +392,7 @@ describe("direct recovery evidence", () => {
       expect(serialized).not.toContain(fixture.fakeToken);
       expect(serialized).not.toContain("fake-starter");
       await client.close();
+
       const next = DirectSandbar.direct({
         provider: await fakeProvider({ url: fixture.fakeUrl!, token: fixture.fakeToken }),
       });
@@ -422,6 +440,7 @@ describe("direct recovery evidence", () => {
       try {
         const tainted = structuredClone(clean);
         Object.assign(tainted.scope!, { credential: "never-forward-this-secret" });
+
         const attempt = await next.recover(tainted).then(
           (handle) => ({ handle }),
           (error) => ({ error }),
@@ -528,10 +547,12 @@ describe("direct recovery evidence", () => {
       const operation = await client.sandboxes.submitCreate({ environment: image });
       const controller = new AbortController();
       const waiting = operation.wait({ signal: controller.signal, pollMs: 1_000 });
+
       const outcome = waiting.then(
         () => ({ completed: true as const }),
         (error) => ({ completed: false as const, error }),
       );
+
       let observed = false;
 
       for (let attempt = 0; attempt < 120; attempt++) {
@@ -593,6 +614,7 @@ describe("direct recovery evidence", () => {
       const operation = await client.sandboxes.submitCreate({
         environment: DirectImage.prepared("fake-starter"),
       });
+
       await expect(operation.wait()).rejects.toMatchObject({ name: "OutcomeUnknownError" });
       const state = await fixture.fakeControl("/_test/state");
       expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
