@@ -7,6 +7,7 @@ import {
   CreateSandboxRequest,
   ExecRequest,
   Execution,
+  FileReadHeaders,
   FileReceipt,
   Operation,
   Project as ProjectSchema,
@@ -242,7 +243,30 @@ export const api = {
       throw new ApiError(`File read failed (${response.status})`, response.status);
     }
 
-    return response.blob();
+    const length = response.headers.get("Content-Length");
+
+    const headers = FileReadHeaders.safeParse({
+      contentType: response.headers.get("Content-Type"),
+      contentLength: length !== null && /^[0-9]+$/.test(length) ? Number(length) : NaN,
+    });
+
+    if (!headers.success)
+      throw new ApiError(
+        "The service returned an unexpected file response.",
+        502,
+        "INVALID_RESPONSE",
+      );
+
+    const blob = await response.blob();
+
+    if (blob.size !== headers.data.contentLength)
+      throw new ApiError(
+        "The service returned an unexpected file response.",
+        502,
+        "INVALID_RESPONSE",
+      );
+
+    return blob;
   },
   writeFile: (
     projectId: string,

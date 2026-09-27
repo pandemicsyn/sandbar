@@ -819,7 +819,15 @@ function FleetPage() {
                       </td>
                       <td>{box.desiredState}</td>
                       <td className="mono">{box.connectionId}</td>
-                      <td title={box.observedAt}>{age(box.observedAt)}</td>
+                      <td>
+                        {box.observedAt ? (
+                          <time dateTime={box.observedAt}>
+                            {new Date(box.observedAt).toLocaleString()}
+                          </time>
+                        ) : (
+                          "No observation yet"
+                        )}
+                      </td>
                       <td>
                         {Object.entries(box.labels)
                           .map(([key, value]) => `${key}: ${value}`)
@@ -1236,6 +1244,7 @@ function OperationPage() {
 
   const executionError = executionState.key === executionKey ? executionState.error : undefined;
 
+  const [executionRevision, setExecutionRevision] = useState(0);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -1262,7 +1271,7 @@ function OperationPage() {
     return () => {
       alive = false;
     };
-  }, [executionKey, operation.data?.updatedAt]);
+  }, [executionKey, operation.data?.updatedAt, executionRevision]);
 
   async function reconcile() {
     setBusy(true);
@@ -1298,7 +1307,14 @@ function OperationPage() {
       />
       {operation.error && <Notice tone="error">{operation.error}</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
-      {executionError && <Notice tone="error">{executionError}</Notice>}
+      {executionError && (
+        <Notice tone="error">
+          {executionError}{" "}
+          <Button onClick={() => setExecutionRevision((revision) => revision + 1)}>
+            Retry execution details
+          </Button>
+        </Notice>
+      )}
       {op.status === "unknown" && (
         <Notice tone="warning">
           The provider may already have applied this action. Check again observes and reconciles; it

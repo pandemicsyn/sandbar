@@ -158,6 +158,13 @@ The initial PR base was `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed c
 - Validation after fixes: lint, format check, all package typechecks, build, full tests, and diff check passed. Full suite: 82 passed, 5 local MySQL skips, 0 failed, 1,831 assertions; Chromium E2E rebuilt current assets and passed with 46 assertions. A fresh independent complete-diff review of the resulting exact base/HEAD is required before another push.
 - PR CI on the earlier HEAD had one control-owned crash test failure on the first pull-request run; the unchanged-HEAD rerun passed all gates, as did the push event. No backend code was changed.
 
+## Further GitHub review follow-up
+
+- GitHub Codex posted three concrete P2 comments against the previous reviewed head: terminal execution detail fetches had no independent retry, Fleet's relative freshness age froze while the page remained idle, and successful file reads accepted unvalidated response headers and bytes.
+- The manager approved three minimal repairs after reviewing the comments and code. Operation detail now offers Retry execution details, which reruns only the read and retains operation identity and the existing cross-route guard. Fleet shows the absolute observed timestamp, with an unknown fallback. File download validates the existing FileReadHeaders contract, rejects missing or malformed length, and compares actual blob size before accepting the file.
+- Chromium E2E fails the first terminal execution read and retries to the original captured output without another mutation; checks the Fleet timestamp element; rejects successful HTML and mismatched-length file responses without a download, then downloads the valid binary response.
+- Validation after fixes: lint, format check, all package typechecks, build, full tests, and diff check passed. Full suite: 82 passed, 5 local MySQL skips, 0 failed, 1,835 assertions; Chromium E2E rebuilt current assets and passed with 50 assertions. A fresh independent complete-diff review is required before another push.
+
 ## Browser test sequencing repair
 
 - On reviewed HEAD bed5cad, push CI passed but pull-request CI failed in the new operation-read regression. The first injected 503 could be consumed by an in-flight poll already active before the test reloaded the operation route, so the test looked for an initial-load Retry button while the UI correctly showed a transient error with retained details.

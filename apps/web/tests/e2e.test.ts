@@ -445,6 +445,15 @@ test("browser and public HTTP recover fake effects across service restarts witho
   expect(filteredRequest.searchParams.has("state")).toBe(false);
   expect(await page.getByLabel("Search").inputValue()).toBe("e2e");
   expect(await page.getByLabel("State").inputValue()).toBe("");
+
+  const observedTime = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("link", { name: sandboxId }) })
+    .locator("time[datetime]");
+
+  await observedTime.waitFor();
+  expect(await observedTime.getAttribute("datetime")).toBeTruthy();
+  expect(await observedTime.textContent()).toMatch(/\d{4}/);
   await page.getByLabel("Label key (optional)").fill("team");
   await page.getByLabel("Label value").fill("concurrent");
   await page.getByRole("button", { name: "Create sandbox" }).click();
@@ -606,6 +615,33 @@ test("browser and public HTTP recover fake effects across service restarts witho
   expect(await readFile(stderrPath)).toEqual(stderrBytes);
 
   await page.getByRole("link", { name: sandboxId }).click();
+  await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).waitFor();
+  const executionReadRoute = `**/v1/projects/${projectId}/executions/${executed.executionId}`;
+  let failFirstExecutionRead = true;
+  await page.route(executionReadRoute, async (route) => {
+    if (!failFirstExecutionRead) {
+      await route.continue();
+
+      return;
+    }
+
+    failFirstExecutionRead = false;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "UNAVAILABLE", message: "Temporary execution read failure" },
+      }),
+    });
+  });
+  await page.goto(`${serviceUrl}/projects/${projectId}/operations/${execId}`);
+  await page.getByText("Temporary execution read failure").waitFor();
+  await page.getByRole("heading", { name: `Operation ${execId}` }).waitFor();
+  await page.getByRole("button", { name: "Retry execution details" }).click();
+  await page.getByText("fixture stdout").waitFor();
+  await page.unroute(executionReadRoute);
+
+  await page.getByRole("link", { name: sandboxId }).click();
   await page.getByLabel("Local file").setInputFiles({
     name: "too-large.bin",
     mimeType: "application/octet-stream",
@@ -634,6 +670,47 @@ test("browser and public HTTP recover fake effects across service restarts witho
 
   expect(fileResponse.ok()).toBe(true);
   expect(await fileResponse.text()).toBe("persisted virtual file");
+  const malformedFileRoute = "**/sandboxes/*/files?*";
+  let malformedReads = 0;
+  await page.route(malformedFileRoute, async (route) => {
+    if (route.request().method() !== "GET" || malformedReads >= 2) {
+      await route.continue();
+
+      return;
+    }
+
+    malformedReads++;
+
+    if (malformedReads === 1)
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: "<html>not a file</html>",
+      });
+    else
+      await route.fulfill({
+        status: 200,
+        headers: { "Content-Type": "application/octet-stream", "Content-Length": "99" },
+        body: "short",
+      });
+  });
+  let malformedDownloads = 0;
+  const countMalformedDownload = () => malformedDownloads++;
+  page.on("download", countMalformedDownload);
+  await page.getByRole("button", { name: "Download path" }).click();
+  await page.getByText("The service returned an unexpected file response.").waitFor();
+  expect(malformedDownloads).toBe(0);
+  await page.getByRole("button", { name: "Download path" }).click();
+  await waitFor("two malformed file reads", async () => malformedReads === 2 || undefined);
+  await waitFor(
+    "malformed file read settled",
+    async () =>
+      (await page.getByRole("button", { name: "Download path" }).isEnabled()) || undefined,
+  );
+  await page.getByText("The service returned an unexpected file response.").waitFor();
+  expect(malformedDownloads).toBe(0);
+  page.off("download", countMalformedDownload);
+  await page.unroute(malformedFileRoute);
   const downloaded = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download path" }).click();
   const download = await downloaded;
