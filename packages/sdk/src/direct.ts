@@ -501,7 +501,10 @@ export class DirectClient implements SandbarClient {
   };
   constructor(options: DirectOptions) {
     this.driver = options.provider.driver;
-    this.scope = NativeScope.parse(options.provider.scope);
+    const scope = NativeScope.safeParse(options.provider.scope);
+
+    if (!scope.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid provider scope");
+    this.scope = scope.data;
 
     if (this.driver.name !== this.scope.provider)
       throw new SandbarError("INVALID_ARGUMENT", "Provider name and scope mismatch");

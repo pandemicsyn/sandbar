@@ -195,6 +195,29 @@ test("direct rejects create contract violations before provider preparation", as
   expect(dispatches).toBe(0);
 });
 
+test("direct rejects malformed provider scope with a public error before driver calls", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const capabilities = provider.driver.capabilities.bind(provider.driver);
+  let calls = 0;
+
+  provider.driver.capabilities = async (scope) => {
+    calls++;
+
+    return capabilities(scope);
+  };
+
+  try {
+    DirectSandbar.direct({ provider: { driver: provider.driver, scope: JSON.parse("{}") } });
+    throw new Error("Expected invalid provider scope");
+  } catch (error) {
+    if (!(error instanceof SandbarError)) throw error;
+    expect(error).toMatchObject({ code: "INVALID_ARGUMENT", effect: "none" });
+  }
+
+  expect(calls).toBe(0);
+});
+
 test("direct file writes retain caller bytes before asynchronous provider dispatch", async () => {
   const { client } = await fixture();
 
@@ -1572,6 +1595,114 @@ test("remote create rejects disagreement between operation and result sandbox ID
   await expect(client.recover(reference!)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
 });
 
+test("remote file receipt retains snapshotted length after caller buffer transfer", async () => {
+  const projectId = "project_1";
+
+  const common = {
+    projectId,
+    sandboxId: "box_1",
+    status: "succeeded",
+    phase: "done",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    effect: "applied",
+    recovery: [],
+  };
+
+  const createOperation = {
+    ...common,
+    id: "op_create",
+    kind: "create",
+    result: { kind: "create", sandboxId: "box_1" },
+  };
+
+  const writeOperation = {
+    ...common,
+    id: "op_write",
+    kind: "file_write",
+    result: {
+      kind: "file_write",
+      receipt: { path: "/snapshot", bytesWritten: 3, complete: true, effect: "applied" },
+    },
+  };
+
+  let started = () => {};
+
+  let release = () => {};
+
+  let writes = 0;
+  let requestBytes = new Uint8Array();
+
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  const fetcher: typeof fetch = async (url, init) => {
+    const target = new URL(String(url));
+    const path = target.pathname;
+
+    if (init?.method === "POST" && path.endsWith("/sandboxes"))
+      return Response.json({ operation: createOperation }, { status: 202 });
+
+    if (init?.method === "PUT" && path.endsWith("/files")) {
+      writes++;
+      requestBytes = new Uint8Array(await new Response(init.body).arrayBuffer());
+      started();
+      await gate;
+
+      return Response.json({ operation: writeOperation }, { status: 202 });
+    }
+
+    if (path.endsWith("/operations/op_create")) return Response.json(createOperation);
+
+    if (path.endsWith("/operations/op_write")) return Response.json(writeOperation);
+
+    if (path.includes("/invocations/"))
+      return Response.json(
+        target.searchParams.get("kind") === "file_write" ? writeOperation : createOperation,
+      );
+
+    if (path.endsWith("/sandboxes/box_1"))
+      return Response.json({
+        id: "box_1",
+        projectId,
+        connectionId: "conn_1",
+        desiredState: "running",
+        observedState: "running",
+        revision: 1,
+        environment: { kind: "prepared", imageId: "fake-starter" },
+        network: { policy: "blocked" },
+        labels: {},
+      });
+
+    throw new Error(`Unexpected path: ${path}`);
+  };
+
+  const client = RemoteSandbar.connect({
+    url: "https://sandbar.example/",
+    token: "secret",
+    projectId,
+    fetch: fetcher,
+  });
+
+  const box = await client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") });
+  const bytes = Uint8Array.of(1, 2, 3);
+  const pending = box.writeFile("/snapshot", bytes);
+  await entered;
+
+  structuredClone(bytes.buffer, { transfer: [bytes.buffer] });
+  expect(bytes.length).toBe(0);
+  release();
+  await pending;
+
+  expect(writes).toBe(1);
+  expect(requestBytes).toEqual(Uint8Array.of(1, 2, 3));
+});
+
 test("remote file reads stop at the SDK limit and cancel the response stream", async () => {
   const projectId = "project_1";
 
@@ -1898,6 +2029,29 @@ test("remote rejects invalid project IDs with public errors before fetch", () =>
   });
 
   expect(client.projectId).toBe("valid_project");
+  expect(fetches).toBe(0);
+});
+
+test("remote rejects malformed service URLs with public errors before fetch", () => {
+  let fetches = 0;
+
+  const fetcher: typeof fetch = async () => {
+    fetches++;
+
+    throw new Error("Unexpected fetch");
+  };
+
+  for (const url of ["not a URL", "https://["]) {
+    try {
+      RemoteSandbar.connect({ url, token: "secret", projectId: "project_1", fetch: fetcher });
+      throw new Error("Expected invalid service URL");
+    } catch (error) {
+      if (!(error instanceof SandbarError)) throw error;
+      expect(error).toMatchObject({ code: "INVALID_ARGUMENT", effect: "none" });
+      expect(error.message).not.toContain(url);
+    }
+  }
+
   expect(fetches).toBe(0);
 });
 

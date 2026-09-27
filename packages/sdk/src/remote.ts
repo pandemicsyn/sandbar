@@ -340,6 +340,9 @@ class RemoteSandbox implements SandboxHandle {
 
     if (bytes.length > 1_048_576)
       throw new SandbarError("OUTPUT_CAPACITY", "File exceeds SDK write limit");
+
+    const payload = Uint8Array.from(bytes);
+    const payloadLength = payload.length;
     const query = new URLSearchParams({ path, overwrite: String(options.overwrite ?? false) });
     const route = `sandboxes/${encodeURIComponent(this.id)}/files?${query}`;
     let dispatched: RecoveryReference | undefined;
@@ -350,9 +353,9 @@ class RemoteSandbox implements SandboxHandle {
         this.id,
         route,
         "PUT",
-        Uint8Array.from(bytes).buffer,
+        payload.buffer,
         undefined,
-        { path, bytes: bytes.length },
+        { path, bytes: payloadLength },
         (value) => {
           dispatched = value;
         },
@@ -371,7 +374,7 @@ class RemoteSandbox implements SandboxHandle {
           current.sandboxId !== this.id ||
           current.result.receipt.path !== path ||
           !current.result.receipt.complete ||
-          current.result.receipt.bytesWritten !== bytes.length
+          current.result.receipt.bytesWritten !== payloadLength
         )
           throw new OutcomeUnknownError(
             reference,
@@ -454,7 +457,12 @@ export class RemoteClient implements SandbarClient {
     return this.closeController.signal;
   }
   constructor(options: RemoteOptions) {
-    this.endpoint = new URL(options.url);
+    try {
+      this.endpoint = new URL(options.url);
+    } catch {
+      throw new SandbarError("INVALID_ARGUMENT", "Invalid service URL");
+    }
+
     const loopback = this.endpoint.hostname === "127.0.0.1" || this.endpoint.hostname === "[::1]";
 
     if (
