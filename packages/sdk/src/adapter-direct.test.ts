@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter } from "sandbar-adapter";
+import { AdapterError, createAttemptContext, defineAdapter } from "sandbar-adapter";
 import { Image } from "./resource";
 import { Sandbar } from "./index";
 
@@ -251,6 +251,80 @@ test("pending observation completes without replay and saved reference reopens",
   expect(submits).toBe(1);
   expect(observations).toBe(1);
   await reopened.close();
+});
+
+test("provider observation failures retain possible effect and permit read-only retry", async () => {
+  for (const failure of ["CONFLICT", "INVALID_ARGUMENT", "rejected"] as const) {
+    let submits = 0;
+    let observations = 0;
+
+    const adapter = defineAdapter({
+      name: `example.observe-failure-${failure.toLowerCase().replaceAll("_", "-")}`,
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          create: {
+            recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
+            async submit(_input, ctx) {
+              submits++;
+
+              return ctx.pending({ jobId: "job-1" });
+            },
+            async observe(_attempt, ctx) {
+              observations++;
+
+              if (observations === 1 || observations === 3) {
+                if (failure === "rejected")
+                  return createAttemptContext({
+                    operationId: "op",
+                    submissionId: "sub",
+                    invocationKey: "key",
+                    signal: ctx.signal,
+                  }).reject("CONFLICT", "late rejection");
+
+                throw new AdapterError(failure, "native observation failed");
+              }
+
+              return { id: "box", state: "running" as const };
+            },
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+    const op = await client.sandboxes.submitCreate({ environment: Image.prepared("image") });
+    expect(await op.observe()).toBeNull();
+    const saved = structuredClone(op.reference);
+
+    await expect(op.observe()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      effect: "possible",
+      reference: saved,
+    });
+    expect(await op.observe()).toMatchObject({ id: "box" });
+    expect(submits).toBe(1);
+
+    const advanced = {
+      scope: client.scope,
+      kind: "create" as const,
+      operationId: saved.operationId,
+      submissionId: saved.submissionId,
+      token: saved.token,
+      tokenVersion: saved.tokenVersion,
+    };
+
+    expect(await client.operations.observe(advanced)).toMatchObject({ kind: "unknown" });
+    expect(await client.operations.observe(advanced)).toMatchObject({ kind: "completed" });
+    expect(submits).toBe(1);
+    await client.close();
+  }
 });
 
 test("reference callback failure prevents provider submission", async () => {

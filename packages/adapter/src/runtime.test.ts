@@ -449,6 +449,123 @@ test("stream collection stops at its byte cap without a probe or blocking cancel
   expect(cancelRequested).toBe(2);
 });
 
+test("abort stops stalled output reads and requests nonblocking stream cancellation", async () => {
+  for (const target of ["stdout", "stderr"] as const) {
+    for (const late of ["resolve", "reject"] as const) {
+      let reads = 0;
+      let cancels = 0;
+      let submissions = 0;
+      let resolveRead!: () => void;
+      let rejectRead!: () => void;
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(Uint8Array.of(1));
+        },
+      });
+
+      const getReader = stream.getReader.bind(stream);
+
+      Object.defineProperty(stream, "getReader", {
+        value: () => {
+          const reader = getReader();
+          const read = reader.read.bind(reader);
+
+          Object.defineProperty(reader, "read", {
+            value: () => {
+              reads++;
+
+              if (reads === 1) return read();
+
+              return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+                resolveRead = () => resolve({ done: false, value: Uint8Array.of(2) });
+                rejectRead = () => reject(new Error("late read failure"));
+              });
+            },
+          });
+
+          reader.cancel = () => {
+            cancels++;
+
+            return late === "resolve"
+              ? new Promise<void>(() => {})
+              : Promise.reject(new Error("cancel failed"));
+          };
+
+          return reader;
+        },
+      });
+
+      const sibling = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancels++;
+
+          return Promise.reject(new Error("sibling cancel failed"));
+        },
+      });
+
+      const session = {
+        scope: { authority: { kind: "account", id: "a" }, partition: {} },
+        supports: {
+          images: ["prepared"] as const,
+          network: ["blocked"],
+          exec: { commands: ["argv"] as const, maxOutputBytes: 4 },
+        },
+        async create() {
+          return { id: "box", state: "running" as const };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        async exec() {
+          submissions++;
+
+          return {
+            exitCode: 0,
+            stdout: target === "stdout" ? stream : Uint8Array.of(0),
+            stderr: target === "stderr" ? stream : sibling,
+            truncated: false,
+          };
+        },
+      };
+
+      const controller = new AbortController();
+
+      const prepared = await prepareOperation(
+        session,
+        "exec",
+        {
+          sandbox: { id: "box" },
+          command: { kind: "argv", argv: ["echo"] },
+          deadlineSeconds: 1,
+          maxOutputBytes: 4,
+        },
+        controller.signal,
+      );
+
+      const pending = submitOperation(prepared, identity, controller.signal, 4);
+
+      while (reads < 2) await Bun.sleep(1);
+      controller.abort("stop");
+      await expect(
+        Promise.race([
+          pending,
+          Bun.sleep(300).then(() => {
+            throw new Error("stalled output did not stop waiting");
+          }),
+        ]),
+      ).rejects.toBe("stop");
+      expect(cancels).toBe(target === "stdout" ? 2 : 1);
+      expect(submissions).toBe(1);
+
+      if (late === "resolve") resolveRead();
+      else rejectRead();
+      await Bun.sleep(1);
+      expect(submissions).toBe(1);
+    }
+  }
+});
+
 test("stream and byte-buffer truncation distinguish EOF below cap from conservative cap", async () => {
   const output = async (stdout: Uint8Array | ReadableStream<Uint8Array>, truncated = false) => {
     const session = {

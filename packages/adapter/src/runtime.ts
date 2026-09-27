@@ -124,10 +124,54 @@ const ExecValueSchema = z.strictObject({
 
 const MAX_OUTPUT = 1_048_576;
 
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- AbortSignal.reason is caller-owned and must propagate unchanged through cancellation.
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("Aborted", "AbortError");
+}
+
+function readWithAbort(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]> {
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(abortReason(signal));
+    };
+
+    signal.addEventListener("abort", abort, { once: true });
+    reader.read().then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function cancelStream(value: Uint8Array | ReadableStream<Uint8Array>): void {
+  if (!(value instanceof ReadableStream)) return;
+
+  try {
+    void value.cancel().catch(() => undefined);
+  } catch {
+    // Cancellation is best effort and must not hold the local result.
+  }
+}
+
 async function collect(
   value: Uint8Array | ReadableStream<Uint8Array>,
   limit: number,
+  signal: AbortSignal,
 ): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+  if (signal.aborted) throw abortReason(signal);
+
   if (value instanceof Uint8Array) {
     return {
       bytes: Uint8Array.from(value.subarray(0, limit)),
@@ -146,7 +190,7 @@ async function collect(
       truncated = true;
     } else {
       while (true) {
-        const next = await reader.read();
+        const next = await readWithAbort(reader, signal);
 
         if (next.done) break;
 
@@ -180,6 +224,8 @@ async function collect(
     }
   }
 
+  if (signal.aborted) throw abortReason(signal);
+
   const bytes = new Uint8Array(total);
   let offset = 0;
 
@@ -196,7 +242,10 @@ async function validateValue(
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native operation results cross the provider boundary and are parsed by kind below.
   value: unknown,
   maxOutputBytes: number,
+  signal: AbortSignal,
 ): Promise<OperationResult> {
+  if (signal.aborted) throw abortReason(signal);
+
   if (kind === "create") return CreateValueSchema.parse(value);
 
   if (kind === "destroy") return DestroyValueSchema.parse(value);
@@ -204,8 +253,18 @@ async function validateValue(
   if (kind === "file_write") return WriteValueSchema.parse(value);
   const parsed = ExecValueSchema.parse(value);
   const limit = Math.min(MAX_OUTPUT, maxOutputBytes);
-  const stdout = await collect(parsed.stdout, limit);
-  const stderr = await collect(parsed.stderr, limit - stdout.bytes.length);
+  let stdout: Awaited<ReturnType<typeof collect>>;
+  let stderr: Awaited<ReturnType<typeof collect>>;
+
+  try {
+    stdout = await collect(parsed.stdout, limit, signal);
+    stderr = await collect(parsed.stderr, limit - stdout.bytes.length, signal);
+  } catch (error) {
+    if (signal.aborted) cancelStream(parsed.stderr);
+    throw error;
+  }
+
+  if (signal.aborted) throw abortReason(signal);
 
   return {
     exitCode: parsed.exitCode,
@@ -433,7 +492,10 @@ export async function submitOperation(
 
   if (isOutcome(value)) return normalizeSpecial(value, prepared.operation);
 
-  return { kind: "completed", value: await validateValue(prepared.kind, value, maxOutputBytes) };
+  return {
+    kind: "completed",
+    value: await validateValue(prepared.kind, value, maxOutputBytes, signal),
+  };
 }
 
 export async function observeOperation(
@@ -448,6 +510,7 @@ export async function observeOperation(
   },
   signal: AbortSignal,
   maxOutputBytes = MAX_OUTPUT,
+  onValidated?: () => void,
 ): Promise<RuntimeResult | null> {
   const operation = select(session, kind);
   const parts = operationParts(operation);
@@ -468,6 +531,8 @@ export async function observeOperation(
     token = context.pending(token).token;
   }
 
+  onValidated?.();
+
   const value = await parts.observe({ ...attempt, token, sandbox: attempt.sandbox }, context);
 
   if (value === null) return null;
@@ -479,5 +544,5 @@ export async function observeOperation(
     return normalizeSpecial(value, operation);
   }
 
-  return { kind: "completed", value: await validateValue(kind, value, maxOutputBytes) };
+  return { kind: "completed", value: await validateValue(kind, value, maxOutputBytes, signal) };
 }

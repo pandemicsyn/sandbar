@@ -188,6 +188,8 @@ export class AdapterOperation<T> {
     }
 
     if (!result) {
+      let locallyValidated = false;
+
       const observed = await raceAbort(
         observeOperation(
           this.client.session,
@@ -201,12 +203,16 @@ export class AdapterOperation<T> {
           },
           signal,
           this.reference.maxOutputBytes,
+          () => {
+            locallyValidated = true;
+          },
         ),
         signal,
       ).catch((error) => {
         if (signal.aborted) abortWaiting(this.reference, signal.reason);
 
         if (
+          !locallyValidated &&
           error instanceof AdapterError &&
           (error.code === "CONFLICT" || error.code === "INVALID_ARGUMENT")
         )
@@ -705,6 +711,8 @@ export class AdapterDirectClient {
         )
           throw new SandbarError("INVALID_ARGUMENT", "Observation sandbox binding is invalid");
 
+        let locallyValidated = false;
+
         try {
           return await raceAbort(
             observeOperation(
@@ -718,6 +726,10 @@ export class AdapterDirectClient {
                 version: checked.tokenVersion,
               },
               signal,
+              undefined,
+              () => {
+                locallyValidated = true;
+              },
             ),
             signal,
           );
@@ -726,6 +738,12 @@ export class AdapterDirectClient {
             return {
               kind: "unknown",
               reason: "Provider observation outcome is unknown after cancellation",
+            };
+
+          if (locallyValidated)
+            return {
+              kind: "unknown",
+              reason: "Provider observation failed; submission outcome remains unknown",
             };
           throw error;
         }
