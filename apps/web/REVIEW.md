@@ -128,3 +128,9 @@ The initial PR base was `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed c
 - Base: `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b`; reviewed HEAD: `8e885ad456f197c03900d7d1ad4e4ef3f33dcc25`.
 - Complete diff: `/private/tmp/sandbar-web-pr4-repair-preparent.diff` (3,553 lines).
 - Finding: zero remaining actionable findings at this checkpoint. Reviewer inspected the UI, API client, invocation recovery, styles, CI changes, and browser E2E. The final parent rebase and final review are still required before updating PR #4.
+
+## Final foundation tooling preparation
+
+- Foundation's reviewed `b4ca229` adds repository-wide Oxlint anti-slop rules and Oxfmt. A disposable copy of that commit with the current web files overlaid identified the web-owned violations without rebasing onto an intermediate control commit.
+- Repair commit `7337da4` applies the formatter, accepts typed invocation and fake-seed inputs, parses saved invocation records and caught errors with Zod, parses Fleet search inputs with the shared query schema, and replaces conditional empty spreads and filter/map chains. The existing accepted-upload DOM reset remains intact.
+- Validation at this checkpoint: disposable overlay `bun run lint` and `bun run format:check` pass; actual web branch TypeScript check and standalone Chromium E2E pass (1 test, 36 assertions); `git diff --check` passes. Final stacked rebase, full checks, and independent review remain pending.
