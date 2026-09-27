@@ -9,8 +9,11 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const entries = JSON.parse(readFileSync(join(root, "scripts/release-packages.json"), "utf8"));
 
-const versionPattern =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+const prereleaseIdentifier = "(?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)";
+
+const versionPattern = new RegExp(
+  `^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-${prereleaseIdentifier}(?:\\.${prereleaseIdentifier})*)?$`,
+);
 
 function run(command, args, cwd = root, options = {}) {
   const result = spawnSync(command, args, {
