@@ -253,8 +253,6 @@ test("close stops waiting after dispatch with a recovery reference", async () =>
 });
 
 test("close wakes an operation waiting on a long polling interval", async () => {
-  let observeStarted = false;
-
   const adapter = defineAdapter({
     name: "example.poll-close",
     config: z.strictObject({}),
@@ -269,8 +267,6 @@ test("close wakes an operation waiting on a long polling interval", async () => 
             return ctx.pending({ jobId: "job-1" });
           },
           async observe(_attempt, ctx) {
-            observeStarted = true;
-
             return ctx.pending({ jobId: "job-1" });
           },
         },
@@ -286,7 +282,6 @@ test("close wakes an operation waiting on a long polling interval", async () => 
   expect(await op.observe()).toBeNull();
   const waiting = op.wait({ pollMs: 60_000 });
 
-  while (!observeStarted) await Bun.sleep(1);
   await Bun.sleep(10);
   await client.close();
   await expect(
@@ -297,6 +292,165 @@ test("close wakes an operation waiting on a long polling interval", async () => 
       }),
     ]),
   ).rejects.toMatchObject({ code: "WAIT_ABORTED" });
+});
+
+test("automatic waits honor first and subsequent provider polling hints", async () => {
+  for (const [hint, pollMs] of [
+    [200, 50],
+    [50, 200],
+  ] as const) {
+    let observations = 0;
+    const observedAt: number[] = [];
+
+    const adapter = defineAdapter({
+      name: `example.poll-hint-${hint}-${pollMs}`,
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          create: {
+            recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
+            async submit(_input, ctx) {
+              return ctx.pending({ jobId: "job-1" }, { pollAfterMs: hint });
+            },
+            async observe(_attempt, ctx) {
+              observations++;
+              observedAt.push(Date.now());
+
+              return observations === 1
+                ? ctx.pending({ jobId: "job-1" }, { pollAfterMs: hint })
+                : { id: "box", state: "running" as const };
+            },
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+    const op = await client.sandboxes.submitCreate({ environment: Image.prepared("image") });
+
+    // Consuming pending manually must retain its next automatic observation time.
+    expect(await op.observe()).toBeNull();
+    const startedAt = Date.now();
+    const waiting = op.wait({ pollMs });
+
+    await Bun.sleep(80);
+    expect(observations).toBe(0);
+    expect(await waiting).toMatchObject({ id: "box" });
+    expect(observations).toBe(2);
+    expect(observedAt[0]! - startedAt).toBeGreaterThanOrEqual(180);
+    expect(observedAt[1]! - observedAt[0]!).toBeGreaterThanOrEqual(180);
+    expect(
+      await Promise.race([
+        op.wait({ pollMs: 60_000 }),
+        Bun.sleep(100).then(() => {
+          throw new Error("terminal result was delayed");
+        }),
+      ]),
+    ).toMatchObject({ id: "box" });
+    await client.close();
+  }
+});
+
+test("close and caller abort stop stalled preparation without dispatch", async () => {
+  for (const mode of ["close", "caller"] as const) {
+    let preparations = 0;
+    let submissions = 0;
+    let references = 0;
+    let release!: () => void;
+
+    const stalled = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    let stall = true;
+
+    const adapter = defineAdapter({
+      name: `example.prepare-abort-${mode}`,
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          create: {
+            async prepare(input) {
+              preparations++;
+
+              if (stall) await stalled;
+
+              return input;
+            },
+            async submit() {
+              submissions++;
+
+              return { id: "box", state: "running" as const };
+            },
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({
+      adapter,
+      config: {},
+      credentials: {},
+      async onReference() {
+        references++;
+      },
+    });
+
+    const controller = new AbortController();
+
+    const pending =
+      mode === "close"
+        ? client.sandboxes.create({ environment: Image.prepared("image") })
+        : client.operations.prepare(
+            "create",
+            {
+              image: { kind: "prepared", value: "image" },
+              networkPolicy: "blocked",
+            },
+            { signal: controller.signal },
+          );
+
+    while (!preparations) await Bun.sleep(1);
+
+    if (mode === "close") await client.close();
+    else controller.abort("stop");
+
+    await expect(
+      Promise.race([
+        pending,
+        Bun.sleep(500).then(() => {
+          throw new Error("prepare did not stop waiting");
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: mode === "close" ? "CLIENT_CLOSED" : "WAIT_ABORTED" });
+    release();
+    await Bun.sleep(1);
+    expect(submissions).toBe(0);
+    expect(references).toBe(0);
+
+    stall = false;
+
+    const usable =
+      mode === "close" ? await Sandbar.connect({ adapter, config: {}, credentials: {} }) : client;
+
+    expect(await usable.sandboxes.create({ environment: Image.prepared("image") })).toMatchObject({
+      id: "box",
+    });
+    expect(submissions).toBe(1);
+    await usable.close();
+  }
 });
 
 test("advanced submit cancellation leaves an unknown outcome and original identity", async () => {

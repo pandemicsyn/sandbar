@@ -27,4 +27,6 @@ create: {
 
 Persist the initial reference before native submission. When `observe()` returns pending, persist the updated `operation.reference` containing the accepted token before a process can restart. Reopen the same verified scope and call `recover(savedReference)`; recovery never calls `submit`. The [runnable restart test](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/async-adapter.test.ts) exercises this flow.
 
+`wait()` respects each pending result's `pollAfterMs` as the earliest automatic next read. Its `pollMs` option can slow polling further but cannot shorten the adapter's delay. A manual `observe()` remains an explicit read; if it returns pending, a later `wait()` still respects the new delay.
+
 If a response is lost and the provider offers no correlated discovery, the operation remains unknown. Do not reinterpret a timeout, abort, or thrown error as a provider rejection. For a durable application ledger, the optional `client.operations` lifecycle lets the application commit its submission marker in `beforeSubmit` and persist pending-token updates; ordinary sandbox calls use the same SDK execution path.

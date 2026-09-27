@@ -137,6 +137,8 @@ export class AdapterOperation<T> {
   readonly durability = "process" as const;
   private first: RuntimeResult | undefined;
   private terminal?: { value: T } | { error: Error };
+  private pendingAt: number | null = null;
+  private nextPollAt = 0;
   constructor(
     private readonly client: AdapterDirectClient,
     public reference: AdapterRecoveryReference,
@@ -162,6 +164,8 @@ export class AdapterOperation<T> {
     this.first = undefined;
 
     if (result?.kind === "pending") {
+      this.pendingAt = Date.now();
+      this.nextPollAt = this.pendingAt + result.pollAfterMs;
       this.reference = sealedReference({
         ...this.reference,
         token: result.token,
@@ -207,6 +211,8 @@ export class AdapterOperation<T> {
     if (signal.aborted) abortWaiting(this.reference, signal.reason);
 
     if (result.kind === "pending") {
+      this.pendingAt = Date.now();
+      this.nextPollAt = this.pendingAt + result.pollAfterMs;
       this.reference = sealedReference({
         ...this.reference,
         token: result.token,
@@ -217,6 +223,9 @@ export class AdapterOperation<T> {
     }
 
     if (result.kind === "unknown") throw asUnknown(this.reference, result.reason);
+
+    this.pendingAt = null;
+    this.nextPollAt = 0;
 
     if (result.kind === "rejected") {
       // Only a submission response may certify no effect.
@@ -256,10 +265,18 @@ export class AdapterOperation<T> {
       if (this.client.isClosed()) abortWaiting(this.reference, this.client.signal.reason);
 
       if (options.signal?.aborted) abortWaiting(this.reference, options.signal.reason);
+
+      if (this.pendingAt !== null) {
+        const eligibleAt = Math.max(this.nextPollAt, this.pendingAt + pollMs);
+        const delay = Math.max(0, eligibleAt - Date.now());
+
+        if (delay > 0)
+          await waitDelay(delay, signal).catch((error) => abortWaiting(this.reference, error));
+      }
+
       const value = await this.observeWithSignal(signal);
 
       if (value !== null) return value;
-      await waitDelay(pollMs, signal).catch((error) => abortWaiting(this.reference, error));
     }
   }
 }
@@ -606,14 +623,18 @@ export class AdapterDirectClient {
         let prepared: PreparedOperation;
 
         try {
-          prepared = await prepareOperation(this.session, kind, input, signal);
+          prepared = await raceAbort(prepareOperation(this.session, kind, input, signal), signal);
         } catch (error) {
+          this.ensureOpen();
+          assertSignal(options.signal);
+
           if (error instanceof AdapterError && error.code === "INVALID_ARGUMENT")
             throw new SandbarError(error.code, error.message);
           throw error;
         }
 
         this.ensureOpen();
+        assertSignal(options.signal);
 
         return new PreparedAdapterAttempt(this, prepared, kind, options.maxOutputBytes);
       },
