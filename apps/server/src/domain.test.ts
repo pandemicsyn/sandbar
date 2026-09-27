@@ -1028,13 +1028,49 @@ test("hard process kill after submission marker never replays create", async () 
   );
 
   const exitCode = await child.exited;
-  expect(exitCode).not.toBe(0);
+  const childStderr = await new Response(child.stderr).text();
+
+  if (child.signalCode !== "SIGKILL")
+    throw new Error(
+      `Crash fixture exited before the deliberate hard kill: code=${exitCode}, signal=${child.signalCode}, stderr=${childStderr}`,
+    );
+
+  const markerDatabase = new Database(databaseUrl, { readonly: true });
+
+  let marker:
+    | { status: string; phase: string; effect: string; submission_possible: number }
+    | undefined;
+
+  try {
+    // SAFETY: The fixture's operations table has these fixed marker columns for one ID.
+    marker = markerDatabase
+      .query("SELECT status, phase, effect, submission_possible FROM operations WHERE id = ?")
+      .get(operationId!) as
+      | { status: string; phase: string; effect: string; submission_possible: number }
+      | undefined;
+
+    expect(marker).toMatchObject({
+      status: "running",
+      phase: "submitted",
+      effect: "possible",
+      submission_possible: 1,
+    });
+  } finally {
+    markerDatabase.close();
+  }
+
   runtime = await openDomainRuntime(config);
 
   try {
     expect(await runtime.runner.tick()).toBe(true);
     const op = await runtime.store.getOperation(projectId!, operationId!);
-    expect(op?.status).toBe("unknown");
+
+    if (op?.status !== "unknown")
+      throw new Error(
+        `Expected observation-only unknown after hard kill: ${JSON.stringify({ exitCode, signal: child.signalCode, childStderr, marker, postTickStatus: op?.status })}`,
+      );
+
+    expect(op.status).toBe("unknown");
 
     const stateResponse = await fetch(new URL("/_test/state", server.url), {
       headers: { Authorization: `Bearer ${transportToken}` },
