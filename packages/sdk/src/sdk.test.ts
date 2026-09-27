@@ -404,6 +404,62 @@ test("closing a client interrupts pending direct observation without destroying 
   expect((await control("/_test/state")).resources).toHaveLength(1);
 });
 
+test("closing a direct client releases stalled inspect and file-read waits", async () => {
+  const { url, control } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const client = DirectSandbar.direct({ provider });
+  const box = await client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
+  await box.writeFile("/sample", Uint8Array.of(1, 2, 3));
+
+  const inspect = provider.driver.inspect.bind(provider.driver);
+  const readFile = provider.driver.readFile.bind(provider.driver);
+  let entered!: () => void, release!: () => void;
+
+  const bothEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  let started = 0;
+
+  const markEntered = () => {
+    started++;
+
+    if (started === 2) entered();
+  };
+
+  provider.driver.inspect = async (ref) => {
+    markEntered();
+    await gate;
+
+    return inspect(ref);
+  };
+
+  provider.driver.readFile = async (input) => {
+    markEntered();
+    await gate;
+
+    return readFile(input);
+  };
+
+  const waitingInspect = box.inspect();
+  const waitingRead = box.readFile("/sample");
+  await bothEntered;
+
+  try {
+    await client.close();
+    await expect(waitingInspect).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+    await expect(waitingRead).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+  } finally {
+    release();
+  }
+
+  expect((await control("/_test/state")).invocations).toHaveLength(2);
+});
+
 test("direct close during applied create preserves a recovery reference", async () => {
   const { url, control } = await fixture();
   const provider = await fakeProvider({ url, token });

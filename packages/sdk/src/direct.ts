@@ -221,7 +221,7 @@ class DirectSandbox implements SandboxHandle {
   }
   async inspect() {
     this.client.ensureOpen();
-    const raw = await this.client.driver.inspect(this.ref);
+    const raw = await raceAbort(this.client.driver.inspect(this.ref), this.client.closedSignal);
 
     if (!raw) throw new SandbarError("NOT_FOUND", "Sandbox not found");
     const parsed = SandboxObservation.safeParse(raw);
@@ -318,7 +318,10 @@ class DirectSandbox implements SandboxHandle {
     let bytes: Uint8Array;
 
     try {
-      bytes = await this.client.driver.readFile({ sandbox: this.ref, path });
+      bytes = await raceAbort(
+        this.client.driver.readFile({ sandbox: this.ref, path }),
+        this.client.closedSignal,
+      );
     } catch (error) {
       if (error instanceof ProviderReadError)
         throw new SandbarError(
