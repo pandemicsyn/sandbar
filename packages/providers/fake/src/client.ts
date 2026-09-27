@@ -70,7 +70,7 @@ const completedMatchesScope = (scope: NativeScope, result: DriverResult) => {
 export class FakeProviderDriver implements ProviderDriver {
   readonly name = "fake";
   private readonly endpoint: string;
-  private readonly token: string;
+  readonly #token: string;
   private readonly transport: typeof fetch;
   private readonly timeoutMs: number;
   constructor(options: {
@@ -91,7 +91,7 @@ export class FakeProviderDriver implements ProviderDriver {
     }
 
     this.endpoint = new URL("/v1/action", endpoint).href;
-    this.token = options.token;
+    this.#token = options.token;
     this.transport = options.fetch ?? fetch;
     this.timeoutMs = options.timeoutMs ?? 10_000;
 
@@ -107,7 +107,7 @@ export class FakeProviderDriver implements ProviderDriver {
       const response = await this.transport(this.endpoint, {
         method: "POST",
         redirect: "error",
-        headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${this.#token}`, "Content-Type": "application/json" },
         body: JSON.stringify(action),
         signal: controller.signal,
       });

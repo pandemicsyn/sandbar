@@ -53,7 +53,7 @@ class DirectOperation<T> implements OperationHandle<T> {
       this.settled = { value };
       return value;
     } catch (error) {
-      this.settled = { error };
+      if (!(error instanceof OutcomeUnknownError)) this.settled = { error };
       throw error;
     }
   }
@@ -97,7 +97,7 @@ class DirectSandbox implements SandboxHandle {
       if (result.status !== "completed" || result.value.kind !== "execution") throw new OutcomeUnknownError(reference);
       const observation = result.value.observation;
       if (!observation.completed || observation.exitCode === undefined) throw new OutcomeUnknownError(reference, "Execution has no completed outcome");
-      const bounded = captureBoundedOutput(observation.stdoutBase64, observation.stderrBase64, request.maxOutputBytes);
+      const bounded = boundedDriverOutput(observation.stdoutBase64, observation.stderrBase64, request.maxOutputBytes);
       return checkExec(execOutput(observation.exitCode, decodeBase64(bounded.payload.stdoutBase64), decodeBase64(bounded.payload.stderrBase64), (observation.truncated ?? false) || bounded.truncated));
     }, first);
   }
@@ -151,6 +151,13 @@ function decodeBase64(value?: string): Uint8Array {
   if (!value) return new Uint8Array();
   const binary = atob(value);
   return Uint8Array.from(binary, ch => ch.charCodeAt(0));
+}
+
+function boundedDriverOutput(stdoutBase64: string | undefined, stderrBase64: string | undefined, maxBytes: number) {
+  const byteLength = (value: string | undefined) => value ? (value.length / 4) * 3 - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0) : 0;
+  const maxChars = Math.ceil(maxBytes / 3) * 4;
+  const bounded = captureBoundedOutput(stdoutBase64?.slice(0, maxChars), stderrBase64?.slice(0, maxChars), maxBytes);
+  return { ...bounded, truncated: bounded.truncated || byteLength(stdoutBase64) + byteLength(stderrBase64) > maxBytes };
 }
 
 export class DirectClient implements SandbarClient {
@@ -217,7 +224,7 @@ export class DirectClient implements SandbarClient {
       if (result.value.kind === "execution") {
         const value = result.value.observation;
         if (!value.completed || value.exitCode === undefined) throw new OutcomeUnknownError(reference);
-        const bounded = captureBoundedOutput(value.stdoutBase64, value.stderrBase64, reference.maxOutputBytes ?? 1_048_576);
+        const bounded = boundedDriverOutput(value.stdoutBase64, value.stderrBase64, reference.maxOutputBytes ?? 1_048_576);
         return checkExec(execOutput(value.exitCode, decodeBase64(bounded.payload.stdoutBase64), decodeBase64(bounded.payload.stderrBase64), (value.truncated ?? false) || bounded.truncated));
       }
       if (result.value.kind === "destroy" && !result.value.observation.computeStopped) throw new OutcomeUnknownError(reference, "Compute stop has not been confirmed");

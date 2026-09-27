@@ -86,6 +86,7 @@ test("direct lost response is recovered by observation without replay; wrong sco
 
 test("fake provider registration binds recovery to the configured endpoint", async () => {
   const { client } = await fixture();
+  expect(JSON.stringify(client)).not.toContain(token);
   const op = await client.sandboxes.submitCreate({ environment: DirectImage.prepared("fake-starter") });
   const otherDirectory = await mkdtemp(join(tmpdir(), "sandbar-sdk-other-"));
   const other = await startFakeProviderServer({ hostname: "127.0.0.1", port: 0, statePath: join(otherDirectory, "fake.json"), token, testMode: true });
@@ -316,6 +317,50 @@ test("direct observation failure retains its recovery reference", async () => {
   });
 });
 
+test("direct execution bounds provider output before decoding", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const sandbox = { scope: provider.scope, nativeId: "fake_sandbox_1", kind: "sandbox" as const };
+  provider.driver.observe = async () => ({
+    status: "completed", submissionId: "sid_1", effect: "applied",
+    value: { kind: "execution", observation: {
+      ref: { scope: provider.scope, nativeId: "fake_execution_1", kind: "execution" as const },
+      sandbox, completed: true, exitCode: 0,
+      stdoutBase64: "AAAA".repeat(1_000_000), stderrBase64: "", observedAt: "2026-01-01T00:00:00Z",
+    } },
+  });
+  const client = DirectSandbar.direct({ provider });
+  const operation = await client.recover({
+    version: 1, mode: "direct", kind: "exec", invocationKey: "0199f92e-1234-7000-8000-000000000001",
+    operationId: "op_1", submissionId: "sid_1", scope: provider.scope, sandbox, maxOutputBytes: 2,
+  });
+  await expect(operation.observe()).resolves.toMatchObject({ stdout: Uint8Array.of(0, 0), truncated: true });
+});
+
+test("direct operation can observe a later complete execution after incomplete evidence", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const sandbox = { scope: provider.scope, nativeId: "fake_sandbox_1", kind: "sandbox" as const };
+  let observations = 0;
+  provider.driver.observe = async () => ({
+    status: "completed", submissionId: "sid_1", effect: "applied",
+    value: { kind: "execution", observation: {
+      ref: { scope: provider.scope, nativeId: "fake_execution_1", kind: "execution" as const },
+      sandbox, completed: ++observations > 1,
+      ...(observations > 1 ? { exitCode: 0, stdoutBase64: "YQ==" } : {}),
+      observedAt: "2026-01-01T00:00:00Z",
+    } },
+  });
+  const client = DirectSandbar.direct({ provider });
+  const operation = await client.recover({
+    version: 1, mode: "direct", kind: "exec", invocationKey: "0199f92e-1234-7000-8000-000000000001",
+    operationId: "op_1", submissionId: "sid_1", scope: provider.scope, sandbox,
+  });
+  await expect(operation.observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  await expect(operation.observe()).resolves.toMatchObject({ stdout: Uint8Array.of(97), exitCode: 0 });
+  expect(observations).toBe(2);
+});
+
 test("remote lost acceptance is resolved by invocation lookup under one key", async () => {
   let posts = 0;
   let key = "";
@@ -354,6 +399,30 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   expect((await recovered.wait() as { id: string }).id).toBe("box_1");
   expect(recovered.reference.service?.projectId).toBe(projectId);
   await expect(client.recover({ ...operation.reference, service: { ...operation.reference.service!, secret: "hidden" } } as never)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+});
+
+test("remote ambiguous mutation response cancels its body before invocation lookup", async () => {
+  const projectId = "project_1";
+  const operation = { id: "op_1", projectId, kind: "create", status: "queued", phase: "queued", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "none", recovery: [] };
+  let cancelled = 0;
+  let lookupAfterCancel = false;
+  let posts = 0;
+  let lookups = 0;
+  const fetcher: typeof fetch = async (_url, init) => {
+    if (init?.method === "POST") {
+      posts++;
+      return new Response(new ReadableStream({ cancel() { cancelled++; } }), { status: 503 });
+    }
+    lookups++;
+    lookupAfterCancel = cancelled === 1;
+    return Response.json(operation);
+  };
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  await client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
+  expect(cancelled).toBe(1);
+  expect(lookupAfterCancel).toBe(true);
+  expect(posts).toBe(1);
+  expect(lookups).toBe(1);
 });
 
 test("remote create carries its recovery reference through post-admission read failures", async () => {
@@ -512,6 +581,15 @@ test("remote abort after admission retains its invocation reference and cause", 
 test("remote refuses bearer transport over non-loopback HTTP", () => {
   expect(() => RemoteSandbar.connect({ url: "http://sandbar.example/", token: "secret", projectId: "project_1" })).toThrow();
   expect(() => RemoteSandbar.connect({ url: "http://127.0.0.1:8788/", token: "secret", projectId: "project_1" })).not.toThrow();
+});
+
+test("remote transport keeps authenticated routes within the configured project", async () => {
+  let calls = 0;
+  const fetcher: typeof fetch = async () => { calls++; return Response.json({}); };
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId: "project_1", fetch: fetcher });
+  expect(JSON.stringify(client)).not.toContain("secret");
+  await expect(client.raw("../../../../v1/projects/project_2/sandboxes", { method: "GET" })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(calls).toBe(0);
 });
 
 test("remote recovery rejects an incomplete execution observation", async () => {

@@ -147,7 +147,7 @@ export class RemoteClient implements SandbarClient {
   readonly projectId: string;
   readonly sandboxes = { create: (input: CreateInput, options: { signal?: AbortSignal } = {}) => this.create(input, options), submitCreate: (input: CreateInput, options: { signal?: AbortSignal } = {}) => this.submitCreate(input, options) };
   private readonly endpoint: URL;
-  private readonly token: string;
+  readonly #token: string;
   private readonly fetcher: typeof fetch;
   private closed = false;
   private readonly closeController = new AbortController();
@@ -158,15 +158,20 @@ export class RemoteClient implements SandbarClient {
     if ((this.endpoint.protocol !== "https:" && !(this.endpoint.protocol === "http:" && loopback)) || this.endpoint.username || this.endpoint.password || this.endpoint.search || this.endpoint.hash) throw new SandbarError("INVALID_ARGUMENT", "Service URL must use HTTPS or loopback HTTP");
     this.projectId = Id.parse(options.projectId);
     if (!options.token) throw new SandbarError("INVALID_ARGUMENT", "Service token is required");
-    this.token = options.token;
+    this.#token = options.token;
     this.fetcher = options.fetch ?? fetch;
   }
   private ensureOpen() { if (this.closed) throw new SandbarError("CLIENT_CLOSED", "Client is closed"); }
-  private url(path: string) { return new URL(`v1/projects/${encodeURIComponent(this.projectId)}/${path}`, this.endpoint.href.endsWith("/") ? this.endpoint : `${this.endpoint.href}/`); }
+  private url(path: string) {
+    const base = new URL(`v1/projects/${encodeURIComponent(this.projectId)}/`, this.endpoint.href.endsWith("/") ? this.endpoint : `${this.endpoint.href}/`);
+    const target = new URL(path, base);
+    if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname)) throw new SandbarError("INVALID_ARGUMENT", "Service route must remain inside the configured project");
+    return target;
+  }
   async raw(path: string, init: RequestInit): Promise<Response> {
     this.ensureOpen();
     const headers = new Headers(init.headers);
-    headers.set("Authorization", `Bearer ${this.token}`);
+    headers.set("Authorization", `Bearer ${this.#token}`);
     return this.fetcher(this.url(path), { ...init, headers, redirect: "error" });
   }
   async throwResponse(response: Response): Promise<never> {
@@ -214,6 +219,8 @@ export class RemoteClient implements SandbarClient {
         }
       } else if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 409 && response.status !== 429) {
         await this.throwResponse(response);
+      } else {
+        await response.body?.cancel().catch(() => undefined);
       }
     } catch (error) {
       if (error instanceof SandbarError && error.effect === "none") throw error;
