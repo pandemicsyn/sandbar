@@ -33,7 +33,7 @@ test("operator setup rolls back when its first session cannot be stored", async 
   }
 });
 
-test("SQLite retains captured-output capacity across restart", async () => {
+test("SQLite evicts retained output after restart when capacity is needed", async () => {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-output-quota-"));
   const path = join(directory, "control.sqlite");
   let store = new ControlStore(openSqliteBackend(path));
@@ -92,17 +92,27 @@ test("SQLite retains captured-output capacity across restart", async () => {
     );
     await store.close();
     store = new ControlStore(openSqliteBackend(path));
-    await expect(
-      store.admitExec({
-        projectId: project.id,
-        sandboxId,
-        endpoint: "POST /executions",
-        key: Bun.randomUUIDv7(),
-        intentHash: "overflow",
-        encryptedRequest: "sealed",
-        captureBytes: 1,
-      }),
-    ).rejects.toMatchObject({ code: "CAPACITY" });
+    expect((await store.getExecution(project.id, admitted.execution!.id))?.output_ciphertext).toBe(
+      "sealed-output",
+    );
+
+    const refill = await store.admitExec({
+      projectId: project.id,
+      sandboxId,
+      endpoint: "POST /executions",
+      key: Bun.randomUUIDv7(),
+      intentHash: "refill",
+      encryptedRequest: "sealed",
+      captureBytes: 1,
+    });
+
+    expect(refill.operation.status).toBe("queued");
+    expect((await store.getExecution(project.id, admitted.execution!.id))?.output_state).toBe(
+      "evicted",
+    );
+    expect(
+      (await store.getExecution(project.id, admitted.execution!.id))?.output_ciphertext,
+    ).toBeNull();
   } finally {
     await store.close();
     await rm(directory, { recursive: true, force: true });
@@ -189,32 +199,97 @@ for (const dialect of dialects)
           expect(
             (await store.getExecution(project.id, admitted.execution!.id))?.output_ciphertext,
           ).toBe("sealed-output");
+
+          return admitted.execution!.id;
         }
 
         const first = await runningSandbox();
+        const oldestSandboxCapture = await capture(first, 16 * mebibyte);
 
-        for (let index = 0; index < 16; index++) await capture(first, mebibyte);
-        await expect(
-          store.admitExec({
-            projectId: project.id,
-            sandboxId: first,
-            endpoint: "POST /executions",
-            key: Bun.randomUUIDv7(),
-            intentHash: "overflow",
-            encryptedRequest: "sealed",
-            captureBytes: 1,
-          }),
-        ).rejects.toMatchObject({ code: "CAPACITY" });
+        const refill = await store.admitExec({
+          projectId: project.id,
+          sandboxId: first,
+          endpoint: "POST /executions",
+          key: Bun.randomUUIDv7(),
+          intentHash: "refill",
+          encryptedRequest: "sealed",
+          captureBytes: mebibyte,
+        });
+
+        expect(refill.operation.status).toBe("queued");
+        expect((await store.getExecution(project.id, oldestSandboxCapture))?.output_state).toBe(
+          "evicted",
+        );
+        expect(
+          (await store.getExecution(project.id, oldestSandboxCapture))?.output_ciphertext,
+        ).toBeNull();
+        expect((await store.getExecution(project.id, oldestSandboxCapture))?.exit_code).toBe(0);
+        const refillClaim = (await store.claimDue("refill", 1000, project.id))!;
+
+        expect(refillClaim.operation.id).toBe(refill.operation.id);
+        await store.beginSubmission(refillClaim);
+        await store.complete(refillClaim, {
+          effect: "applied",
+          value: { kind: "execution", observation: { completed: true, exitCode: 0 } },
+          encryptedOutput: "sealed-output",
+          outputBytes: mebibyte,
+        });
+
+        // Keep the refill older than later captures in millisecond SQL ordering.
+        await Bun.sleep(2);
+
+        const oldestProjectCapture = await capture(await runningSandbox(), 16 * mebibyte);
 
         for (let index = 0; index < 14; index++)
           await capture(await runningSandbox(), 16 * mebibyte);
-        const last = await runningSandbox();
-        await capture(last, 15 * mebibyte);
+        const projectRefillSandbox = await runningSandbox();
+
+        const projectRefill = await store.admitExec({
+          projectId: project.id,
+          sandboxId: projectRefillSandbox,
+          endpoint: "POST /executions",
+          key: Bun.randomUUIDv7(),
+          intentHash: "project-refill",
+          encryptedRequest: "sealed",
+          captureBytes: 16 * mebibyte,
+        });
+
+        expect(projectRefill.operation.status).toBe("queued");
+        expect((await store.getExecution(project.id, refill.execution!.id))?.output_state).toBe(
+          "evicted",
+        );
+        expect((await store.getExecution(project.id, oldestProjectCapture))?.output_state).toBe(
+          "captured",
+        );
+        const projectRefillClaim = (await store.claimDue("project-refill", 1000, project.id))!;
+
+        expect(projectRefillClaim.operation.id).toBe(projectRefill.operation.id);
+        await store.beginSubmission(projectRefillClaim);
+        await store.complete(projectRefillClaim, {
+          effect: "applied",
+          value: { kind: "execution", observation: { completed: true, exitCode: 0 } },
+          encryptedOutput: "sealed-output",
+          outputBytes: 16 * mebibyte,
+        });
+
+        const activeSandbox = await runningSandbox();
+
+        const active = await store.admitExec({
+          projectId: project.id,
+          sandboxId: activeSandbox,
+          endpoint: "POST /executions",
+          key: Bun.randomUUIDv7(),
+          intentHash: "active",
+          encryptedRequest: "sealed",
+          captureBytes: 15 * mebibyte,
+        });
+
+        expect(active.operation.status).toBe("queued");
 
         const admission = () =>
           store.admitExec({
             projectId: project.id,
-            sandboxId: last,
+            sandboxId: activeSandbox,
             endpoint: "POST /executions",
             key: Bun.randomUUIDv7(),
             intentHash: "race",
@@ -230,7 +305,7 @@ for (const dialect of dialects)
           (result): result is PromiseRejectedResult => result.status === "rejected",
         );
 
-        expect(rejected?.reason.code).toBe("CAPACITY");
+        expect(rejected?.reason.code).toBe("OUTPUT_CAPACITY");
       } finally {
         await store.close();
       }
@@ -572,6 +647,68 @@ for (const dialect of dialects)
         );
         expect((await store.getSandbox(project.id, sandboxId))?.observed_state).toBe("unknown");
         expect((await store.getSandbox(project.id, sandboxId))?.desired_state).toBe("running");
+      } finally {
+        await store.close();
+      }
+    });
+
+    test("destroy rejection keeps a create observation committed after deletion admission", async () => {
+      const { store, project } = await fixture(dialect);
+
+      try {
+        const created = await store.admitCreate({
+          projectId: project.id,
+          endpoint: "POST /sandboxes",
+          key: Bun.randomUUIDv7(),
+          intentHash: "create",
+          request: { environment: { kind: "prepared", imageId: "fake-starter" } },
+        });
+
+        const createClaim = (await store.claimDue("create", 1000, project.id))!;
+        await store.beginSubmission(createClaim);
+
+        const destroy = await store.admitDestroy({
+          projectId: project.id,
+          sandboxId: created.sandbox.id,
+          endpoint: `DELETE /sandboxes/${created.sandbox.id}`,
+          key: Bun.randomUUIDv7(),
+          intentHash: "destroy",
+        });
+
+        expect(JSON.parse(destroy.operation.request_json).previousObservedState).toBe("resolving");
+        await store.complete(createClaim, {
+          effect: "applied",
+          value: {
+            kind: "sandbox",
+            observation: { ref: { nativeId: "native_late" }, state: "running" },
+          },
+        });
+        const destroyClaim = (await store.claimDue("destroy", 1000, project.id))!;
+
+        await store.beginSubmission(destroyClaim);
+        await store.failWithoutEffect(
+          destroyClaim,
+          { code: "UNAVAILABLE", message: "Rejected", effect: "none", retry: "never" },
+          true,
+        );
+        expect((await store.getSandbox(project.id, created.sandbox.id))?.observed_state).toBe(
+          "running",
+        );
+        expect((await store.getSandbox(project.id, created.sandbox.id))?.desired_state).toBe(
+          "running",
+        );
+
+        const execution = await store.admitExec({
+          projectId: project.id,
+          sandboxId: created.sandbox.id,
+          endpoint: `POST /sandboxes/${created.sandbox.id}/executions`,
+          key: Bun.randomUUIDv7(),
+          intentHash: "usable-after-rejection",
+          encryptedRequest: "sealed",
+          captureBytes: 0,
+        });
+
+        expect(execution.operation.status).toBe("queued");
       } finally {
         await store.close();
       }

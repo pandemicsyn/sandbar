@@ -76,6 +76,7 @@ function errorResponse(c: Context, error: Error): Response {
       NOT_FOUND: 404,
       CONFLICT: 409,
       CAPACITY: 409,
+      OUTPUT_CAPACITY: 409,
       INVOCATION_EXPIRED: 410,
       UNAUTHENTICATED: 401,
     }[error.code] as 401 | 404 | 409 | 410;

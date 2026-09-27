@@ -3,7 +3,13 @@ import type { Backend, QueryConnection } from "./backend";
 
 export class StoreError extends Error {
   constructor(
-    readonly code: "NOT_FOUND" | "CONFLICT" | "CAPACITY" | "INVOCATION_EXPIRED" | "UNAUTHENTICATED",
+    readonly code:
+      | "NOT_FOUND"
+      | "CONFLICT"
+      | "CAPACITY"
+      | "OUTPUT_CAPACITY"
+      | "INVOCATION_EXPIRED"
+      | "UNAUTHENTICATED",
     message: string,
   ) {
     super(message);
@@ -430,11 +436,51 @@ export class ControlStore {
         sql`SELECT COALESCE(SUM(amount),0) AS project_bytes, COALESCE(SUM(CASE WHEN sandbox_id=${box.id} THEN amount ELSE 0 END),0) AS sandbox_bytes FROM reservations WHERE project_id=${input.projectId} AND kind='output' AND state='active'`,
       );
 
+      let projectBytes = Number(totals?.project_bytes ?? 0),
+        sandboxBytes = Number(totals?.sandbox_bytes ?? 0);
+
+      const evict = async (sandboxId?: string) => {
+        const scope = sandboxId ? sql`AND r.sandbox_id=${sandboxId}` : sql``;
+
+        const candidates = await tx.rows<{
+          reservation_id: string;
+          execution_id: string;
+          sandbox_id: string;
+          amount: number;
+        }>(
+          sql`SELECT r.id AS reservation_id,e.id AS execution_id,r.sandbox_id,r.amount FROM reservations r JOIN executions e ON e.operation_id=r.operation_id JOIN operations o ON o.id=r.operation_id WHERE r.project_id=${input.projectId} AND r.kind='output' AND r.state='active' AND r.amount>0 AND e.status='completed' AND e.output_ciphertext IS NOT NULL AND o.status='succeeded' ${scope} ORDER BY e.completed_at,e.id`,
+        );
+
+        for (const candidate of candidates) {
+          if (
+            sandboxId
+              ? sandboxBytes + input.captureBytes <= 16 * 1024 * 1024
+              : projectBytes + input.captureBytes <= 256 * 1024 * 1024
+          )
+            break;
+          const time = now();
+
+          await tx.run(
+            sql`UPDATE executions SET output_state='evicted',output_ciphertext=NULL WHERE id=${candidate.execution_id}`,
+          );
+          await tx.run(
+            sql`UPDATE reservations SET state='released',released_at=${time} WHERE id=${candidate.reservation_id}`,
+          );
+          projectBytes -= Number(candidate.amount);
+
+          if (candidate.sandbox_id === box.id) sandboxBytes -= Number(candidate.amount);
+        }
+      };
+
+      if (sandboxBytes + input.captureBytes > 16 * 1024 * 1024) await evict(box.id);
+
+      if (projectBytes + input.captureBytes > 256 * 1024 * 1024) await evict();
+
       if (
-        Number(totals?.project_bytes ?? 0) + input.captureBytes > 256 * 1024 * 1024 ||
-        Number(totals?.sandbox_bytes ?? 0) + input.captureBytes > 16 * 1024 * 1024
+        projectBytes + input.captureBytes > 256 * 1024 * 1024 ||
+        sandboxBytes + input.captureBytes > 16 * 1024 * 1024
       )
-        throw new StoreError("CAPACITY", "Output reservation capacity exceeded");
+        throw new StoreError("OUTPUT_CAPACITY", "Output reservation capacity exceeded");
 
       const operationId = id("op"),
         executionId = id("ex"),
@@ -531,7 +577,7 @@ export class ControlStore {
         : null;
 
       await tx.run(
-        sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'destroy',${box.id},NULL,${box.connection_id},${localOnly ? "succeeded" : "queued"},${localOnly ? "completed" : "accepted"},'none',${JSON.stringify({ previousObservedState: box.observed_state })},${resultJson},NULL,${submissionId},0,NULL,0,NULL,${localOnly ? null : time},${localOnly ? time : null},${time},${time})`,
+        sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'destroy',${box.id},NULL,${box.connection_id},${localOnly ? "succeeded" : "queued"},${localOnly ? "completed" : "accepted"},'none',${JSON.stringify({ previousObservedState: box.observed_state, previousRevision: Number(box.revision) })},${resultJson},NULL,${submissionId},0,NULL,0,NULL,${localOnly ? null : time},${localOnly ? time : null},${time},${time})`,
       );
       await tx.run(
         sql`INSERT INTO invocation_keys (project_id,endpoint,${sql.raw("`key`")},intent_hash,operation_id,accepted_at) VALUES (${input.projectId},${input.endpoint},${input.key},${input.intentHash},${operationId},${time})`,
@@ -1050,12 +1096,28 @@ export class ControlStore {
         );
 
       if (op.kind === "destroy") {
-        const prior =
-          parseJson<{ previousObservedState?: string }>(op.request_json).previousObservedState ??
-          "unknown";
+        const request = parseJson<{
+          previousObservedState?: string;
+          previousRevision?: number;
+        }>(op.request_json);
+
+        const box = await tx.row<SandboxRow>(
+          sql`SELECT * FROM sandboxes WHERE project_id=${op.project_id} AND id=${op.sandbox_id}`,
+        );
+
+        if (!box) throw new StoreError("NOT_FOUND", "Sandbox not found");
+
+        const newerObservation =
+          request.previousRevision === undefined
+            ? !!box.native_id
+            : Number(box.revision) > request.previousRevision + 1;
+
+        const observedState = newerObservation
+          ? box.observed_state
+          : (request.previousObservedState ?? "unknown");
 
         await tx.run(
-          sql`UPDATE sandboxes SET desired_state='running',observed_state=${prior},observation_error=${String(error.code ?? "DESTROY_REJECTED")},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`,
+          sql`UPDATE sandboxes SET desired_state='running',observed_state=${observedState},observation_error=${String(error.code ?? "DESTROY_REJECTED")},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`,
         );
       }
 

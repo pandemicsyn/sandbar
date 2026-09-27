@@ -641,6 +641,130 @@ test("HTTPS logout deletes the host-prefixed cookie with Secure", async () => {
   }
 });
 
+test("output reservation failure uses the public output capacity code", async () => {
+  directory = await mkdtemp(join(tmpdir(), "sandbar-output-capacity-"));
+
+  const keyFile = join(directory, "key"),
+    setupTokenFile = join(directory, "setup");
+
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)));
+  await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "long-output-capacity-setup-token");
+  await chmod(setupTokenFile, 0o600);
+
+  const runtime = await openDomainRuntime({
+    databaseUrl: join(directory, "control.sqlite"),
+    keyFile,
+    setupTokenFile,
+    fakeProviderUrl: "http://127.0.0.1:8789",
+    fakeProviderToken: transportToken,
+    startRunner: false,
+  });
+
+  try {
+    const setup = await runtime.app.request("http://localhost/v1/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+      body: JSON.stringify({ setupToken: "long-output-capacity-setup-token" }),
+    });
+
+    // SAFETY: Successful setup returns the bearer token for this API fixture.
+    const token = ((await setup.json()) as { token: string }).token;
+    const project = await runtime.store.createProject("capacity");
+
+    const connection = await runtime.store.createConnection({
+      id: "conn_capacity",
+      projectId: project.id,
+      provider: "fake",
+      name: "Fake",
+      encryptedCredentials: "ciphertext",
+    });
+
+    await runtime.store.verifyConnection(project.id, connection.id, "fake-local");
+
+    const create = await runtime.store.admitCreate({
+      projectId: project.id,
+      endpoint: "POST /sandboxes",
+      key: Bun.randomUUIDv7(),
+      intentHash: "create",
+      request: { environment: { kind: "prepared", imageId: "fake-starter" } },
+      connectionId: connection.id,
+    });
+
+    const createClaim = (await runtime.store.claimDue("setup", 1000, project.id))!;
+    await runtime.store.complete(createClaim, {
+      effect: "applied",
+      value: {
+        kind: "sandbox",
+        observation: { ref: { nativeId: "native_capacity" }, state: "running" },
+      },
+    });
+
+    const captured = await runtime.store.admitExec({
+      projectId: project.id,
+      sandboxId: create.sandbox.id,
+      endpoint: `POST /sandboxes/${create.sandbox.id}/executions`,
+      key: Bun.randomUUIDv7(),
+      intentHash: "terminal-output",
+      encryptedRequest: "sealed",
+      captureBytes: 1024 * 1024,
+    });
+
+    const capturedClaim = (await runtime.store.claimDue("capture", 1000, project.id))!;
+    await runtime.store.complete(capturedClaim, {
+      effect: "applied",
+      value: { kind: "execution", observation: { completed: true, exitCode: 7 } },
+      encryptedOutput: "sealed-output",
+      outputBytes: 1024 * 1024,
+    });
+    await runtime.store.admitExec({
+      projectId: project.id,
+      sandboxId: create.sandbox.id,
+      endpoint: `POST /sandboxes/${create.sandbox.id}/executions`,
+      key: Bun.randomUUIDv7(),
+      intentHash: "active-output",
+      encryptedRequest: "sealed",
+      captureBytes: 15 * 1024 * 1024,
+    });
+
+    const admit = () =>
+      runtime.app.request(
+        `http://localhost/v1/projects/${project.id}/sandboxes/${create.sandbox.id}/executions`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": Bun.randomUUIDv7(),
+          },
+          body: JSON.stringify({ command: { kind: "argv", argv: ["fixture"] } }),
+        },
+      );
+
+    expect((await admit()).status).toBe(202);
+
+    const evicted = await runtime.app.request(
+      `http://localhost/v1/projects/${project.id}/executions/${captured.execution!.id}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(evicted.status).toBe(200);
+    // SAFETY: The execution endpoint returns the public execution DTO after eviction.
+    expect(await evicted.json()).toMatchObject({
+      outputAvailability: "evicted",
+      capturedBytes: 1024 * 1024,
+      exitCode: 7,
+    });
+    const response = await admit();
+
+    expect(response.status).toBe(409);
+    // SAFETY: This is the public ErrorResponse at the admission boundary.
+    expect(((await response.json()) as any).error.code).toBe("OUTPUT_CAPACITY");
+  } finally {
+    await runtime.close();
+  }
+});
+
 test("hard process kill after submission marker never replays create", async () => {
   directory = await mkdtemp(join(tmpdir(), "sandbar-crash-"));
 
