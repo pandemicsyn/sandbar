@@ -64,7 +64,8 @@ const MAX_RESOURCES = 128,
   MAX_LEDGER = 512,
   MAX_INVOCATIONS = 512,
   MAX_FILE_BYTES = 1024 * 1024,
-  MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+  MAX_TOTAL_BYTES = 8 * 1024 * 1024,
+  MAX_TICK = (Date.UTC(10_000, 0, 1) - Date.UTC(2026, 0, 1)) / 1000 - 1;
 
 export const FakeFileBytesBase64 = z
   .base64()
@@ -144,7 +145,7 @@ const StateSchema = z
       .int()
       .min(1)
       .max(Number.MAX_SAFE_INTEGER - 1),
-    tick: z.number().int().nonnegative(),
+    tick: z.number().int().min(0).max(MAX_TICK),
     profile: FakeProfile,
     resources: z.array(ResourceSchema).max(MAX_RESOURCES),
     ledger: z.array(LedgerEntrySchema).max(MAX_LEDGER),
@@ -383,6 +384,8 @@ export class FakeProviderEngine {
   private ref(scope: NativeScope, kind: "sandbox"): SandboxRef;
   private ref(scope: NativeScope, kind: "execution"): NativeRef & { kind: "execution" };
   private ref(scope: NativeScope, kind: "sandbox" | "execution"): NativeRef {
+    if (this.state.tick >= MAX_TICK) throw new FakeCapacityError("Fake timestamp space exhausted");
+
     if (this.state.nextId >= Number.MAX_SAFE_INTEGER - 1)
       throw new FakeCapacityError("Fake provider native ID space exhausted");
 

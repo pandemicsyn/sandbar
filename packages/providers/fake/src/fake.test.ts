@@ -964,6 +964,8 @@ describe("independent fake provider", () => {
       { ...source, version: 2 },
       { ...source, nextId: 1 },
       { ...source, nextId: Number.MAX_SAFE_INTEGER },
+      { ...source, tick: Number.MAX_SAFE_INTEGER },
+      { ...source, tick: 251_635_075_200 },
       { ...source, resources: [source.resources[0], source.resources[0]] },
       { ...source, resources: [] },
       { ...source, ledger: [source.ledger[0], source.ledger[0]] },
@@ -1011,6 +1013,21 @@ describe("independent fake provider", () => {
       );
       expect(await readFile(statePath, "utf8")).toBe(serialized);
     }
+
+    await writeFile(statePath, JSON.stringify({ ...source, tick: 251_635_075_199 }));
+    const exhausted = new FakeProviderEngine(statePath, true);
+    await exhausted.load();
+    expect(exhausted.inspect(source.resources[0].ref)?.observedAt).toBe("9999-12-31T23:59:59.000Z");
+    expect(
+      (
+        await exhausted.create({
+          scope,
+          identity: identity("after_final_tick"),
+          image: "fake-starter",
+          networkPolicy: "blocked",
+        })
+      ).result,
+    ).toMatchObject({ status: "rejected", error: { code: "capacity" } });
 
     await writeFile(statePath, "{");
     await expect(new FakeProviderEngine(statePath, true).load()).rejects.toThrow(
