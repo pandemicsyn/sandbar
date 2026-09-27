@@ -9,6 +9,7 @@ test("health and API route composition", async () => {
       routes.post("/v1/ping", (c) => c.json({ created: true }, 201));
     },
   });
+
   expect(await (await app.request("http://localhost/healthz")).json()).toEqual({ status: "ok" });
   expect(await (await app.request("http://localhost/v1/ping")).json()).toEqual({ pong: true });
   const registeredPost = await app.request("http://localhost/v1/ping", { method: "POST" });
@@ -27,13 +28,16 @@ test("health and API route composition", async () => {
 
 test("serves a prebuilt UI and preserves SPA routes", async () => {
   const directory = await import("node:fs/promises").then((fs) => fs.mkdtemp("/tmp/sandbar-web-"));
+
   try {
     const fs = await import("node:fs/promises");
     await fs.writeFile(`${directory}/index.html`, "<main>Sandbar</main>");
     const app = createApp({ webDist: directory });
+
     const response = await app.request("http://localhost/projects/example", {
       headers: { accept: "text/html" },
     });
+
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("Sandbar");
     const root = await app.request("http://localhost/");

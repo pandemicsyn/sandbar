@@ -22,19 +22,27 @@ export function createApp(options: AppOptions = {}): Hono {
   app.get("*", async (c) => {
     const requestPath = new URL(c.req.url).pathname;
     const candidate = resolve(webDist, requestPath === "/" ? "index.html" : `.${requestPath}`);
+
     if (candidate !== webDist && !candidate.startsWith(webDist + sep)) {
       return c.notFound();
     }
+
     const asset = Bun.file(candidate);
+
     if (await asset.exists()) {
       return new Response(asset, { headers: { "Content-Type": asset.type } });
     }
+
     if (!c.req.header("accept")?.includes("text/html")) {
       return c.notFound();
     }
+
     const index = Bun.file(resolve(webDist, "index.html"));
+
     if (!(await index.exists())) return c.notFound();
+
     return new Response(index, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   });
+
   return app;
 }

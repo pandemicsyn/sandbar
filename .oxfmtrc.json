@@ -11,6 +11,18 @@
     "docs/**",
     "README.md",
     "packages/contracts/openapi.json",
-    "apps/docs/src/content/docs/docs/reference/http.md"
+    "apps/docs/src/content/docs/docs/reference/http.md",
+    ".agent/**",
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".continue/**",
+    ".cursor/**",
+    ".gemini/**",
+    ".opencode/**",
+    ".pi/**",
+    ".roo/**",
+    ".windsurf/**",
+    "tools/oxlint/anti-slop/**"
   ]
 }
