@@ -454,6 +454,34 @@ describe("independent fake provider", () => {
     expect((await driver.inventory({ scope, limit: 10 })).items).toHaveLength(1);
   });
 
+  test("fake driver rejects events outside the requested scope", async () => {
+    const event = {
+      eventId: "event_1",
+      ref: {
+        scope: { ...scope, accountId: "foreign" },
+        nativeId: "fake_sandbox_1",
+        kind: "sandbox" as const,
+      },
+      sequence: 1,
+      state: "running" as const,
+      occurredAt: "2026-01-01T00:00:00Z",
+    };
+
+    const responses = [
+      Response.json([event]),
+      Response.json([{ ...event, ref: { ...event.ref, scope } }]),
+    ];
+
+    const driver = new FakeProviderDriver({
+      baseUrl: "http://127.0.0.1:8789",
+      token,
+      fetch: fetchStub(async () => responses.shift()!),
+    });
+
+    await expect(driver.events(scope)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    expect((await driver.events(scope)).map((item) => item.eventId)).toEqual(["event_1"]);
+  });
+
   test("fake driver correlates mutation and observation replies to submitted identity", async () => {
     const foreignScope = { ...scope, accountId: "foreign" };
 
@@ -1219,6 +1247,38 @@ describe("independent fake provider", () => {
     await writeFile(statePath, "{");
     await expect(new FakeProviderEngine(statePath, true).load()).rejects.toThrow(
       "Invalid fake provider state JSON",
+    );
+  });
+
+  test("fake state recovery rejects destroy evidence for a running sandbox", async () => {
+    directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+    const statePath = join(directory, "provider.json");
+    const engine = new FakeProviderEngine(statePath, true);
+    await engine.load();
+
+    const created = await engine.create({
+      scope,
+      identity: identity("destroy_recovery_parent"),
+      image: "fake-starter",
+      networkPolicy: "blocked",
+    });
+
+    if (created.result.status !== "completed" || created.result.value.kind !== "sandbox")
+      throw new Error("Create failed");
+    const sandbox = created.result.value.observation.ref;
+    expect(
+      (await engine.destroy({ sandbox, identity: identity("destroy_recovery") })).result.status,
+    ).toBe("completed");
+
+    const recovered = new FakeProviderEngine(statePath, true);
+    await recovered.load();
+    expect(recovered.inspect(sandbox)?.state).toBe("destroyed");
+
+    const damaged = JSON.parse(await readFile(statePath, "utf8"));
+    damaged.resources[0].state = "running";
+    await writeFile(statePath, JSON.stringify(damaged));
+    await expect(new FakeProviderEngine(statePath, true).load()).rejects.toThrow(
+      "Invalid fake provider state",
     );
   });
 

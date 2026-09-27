@@ -163,13 +163,13 @@ const StateSchema = z
   })
   .superRefine((state, context) => {
     const submissions = new Map<string, z.infer<typeof LedgerEntrySchema>>();
-    const resourceRefs = new Map<string, z.infer<typeof NativeRef>>();
+    const resourcesById = new Map<string, z.infer<typeof ResourceSchema>>();
     const createdResourceIds = new Set<string>();
     const executionIds = new Set<string>();
     const allRefs: z.infer<typeof NativeRef>[] = [];
 
     for (const resource of state.resources) {
-      if (resourceRefs.has(resource.ref.nativeId)) {
+      if (resourcesById.has(resource.ref.nativeId)) {
         context.addIssue({
           code: "custom",
           path: ["resources"],
@@ -177,7 +177,7 @@ const StateSchema = z
         });
       }
 
-      resourceRefs.set(resource.ref.nativeId, resource.ref);
+      resourcesById.set(resource.ref.nativeId, resource);
       allRefs.push(resource.ref);
     }
 
@@ -238,13 +238,19 @@ const StateSchema = z
             ? value.observation.sandbox
             : value.observation.sandbox;
 
-      const resourceRef = resourceRefs.get(sandboxRef.nativeId);
+      const resource = resourcesById.get(sandboxRef.nativeId);
 
-      if (!resourceRef || !sameScope(resourceRef.scope, sandboxRef.scope)) {
+      if (!resource || !sameScope(resource.ref.scope, sandboxRef.scope)) {
         context.addIssue({
           code: "custom",
           path: ["ledger"],
           message: "Ledger effect references an unknown sandbox",
+        });
+      } else if (value.kind === "destroy" && resource.state !== "destroyed") {
+        context.addIssue({
+          code: "custom",
+          path: ["ledger"],
+          message: "Completed destroy effect contradicts sandbox state",
         });
       }
 

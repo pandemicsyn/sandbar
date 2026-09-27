@@ -292,8 +292,13 @@ export class FakeProviderDriver implements ProviderDriver {
   }
   async events(scope: NativeScope) {
     const value = await this.call({ kind: "events", scope });
+    const events = FakeEvent.array().parse(value);
 
-    return FakeEvent.array().parse(value);
+    if (events.some((event) => !sameScope(event.ref.scope, scope))) {
+      throw new ProviderReadError("INVALID_RESPONSE", "Fake events returned a foreign scope");
+    }
+
+    return events;
   }
 }
 
