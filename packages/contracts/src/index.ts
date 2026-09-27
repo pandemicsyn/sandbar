@@ -2,7 +2,11 @@ import { z } from "zod";
 
 // Inputs are strict so a misspelled security or lifecycle setting cannot be ignored.
 // Outputs intentionally strip additive fields when decoded by older clients.
-export const Id = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+export const Id = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/);
 export const Rfc3339 = z.iso.datetime({ offset: true });
 export const InvocationKey = z.uuidv7();
 export const ProjectPath = z.strictObject({ projectId: Id });
@@ -30,13 +34,29 @@ export const ExecRequest = z.strictObject({
   cwd: z.string().min(1).max(4096).optional(),
   env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(8192)).optional(),
   deadlineSeconds: z.number().int().min(1).max(3600).optional(),
-  output: z.strictObject({ capture: z.enum(["bounded", "none"]), maxBytes: z.number().int().min(0).max(1048576).optional() }).optional(),
+  output: z
+    .strictObject({
+      capture: z.enum(["bounded", "none"]),
+      maxBytes: z.number().int().min(0).max(1048576).optional(),
+    })
+    .optional(),
 });
 export const Effect = z.enum(["none", "applied", "partial", "possible", "unknown"]);
 export const ErrorCode = z.enum([
-  "INVALID_ARGUMENT", "UNSUPPORTED", "UNAUTHENTICATED", "FORBIDDEN", "NOT_FOUND",
-  "CONFLICT", "CAPACITY", "RATE_LIMIT", "INVOCATION_EXPIRED", "UNAVAILABLE",
-  "TIMEOUT", "OUTPUT_CAPACITY", "OUTCOME_UNKNOWN", "INTERNAL",
+  "INVALID_ARGUMENT",
+  "UNSUPPORTED",
+  "UNAUTHENTICATED",
+  "FORBIDDEN",
+  "NOT_FOUND",
+  "CONFLICT",
+  "CAPACITY",
+  "RATE_LIMIT",
+  "INVOCATION_EXPIRED",
+  "UNAVAILABLE",
+  "TIMEOUT",
+  "OUTPUT_CAPACITY",
+  "OUTCOME_UNKNOWN",
+  "INTERNAL",
 ]);
 export const SafeError = z.object({
   code: ErrorCode,
@@ -47,71 +67,157 @@ export const SafeError = z.object({
 });
 export const ErrorResponse = z.object({ error: SafeError });
 export const OperationStatus = z.enum(["queued", "running", "succeeded", "failed", "unknown"]);
-export const FileReceipt = z.object({ path: z.string(), bytesWritten: z.number().int().nonnegative(), complete: z.boolean(), effect: Effect });
+export const FileReceipt = z.object({
+  path: z.string(),
+  bytesWritten: z.number().int().nonnegative(),
+  complete: z.boolean(),
+  effect: Effect,
+});
 export const OperationResult = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("create"), sandboxId: Id }),
   z.object({ kind: z.literal("exec"), executionId: Id }),
-  z.object({ kind: z.literal("destroy"), computeStopped: z.boolean(), retainedResources: z.array(z.string()) }),
+  z.object({
+    kind: z.literal("destroy"),
+    computeStopped: z.boolean(),
+    retainedResources: z.array(z.string()),
+  }),
   z.object({ kind: z.literal("file_write"), receipt: FileReceipt }),
 ]);
 export const Operation = z.object({
-  id: Id, projectId: Id, kind: z.enum(["create", "exec", "destroy", "file_write"]),
-  sandboxId: Id.optional(), executionId: Id.optional(), status: OperationStatus,
-  phase: z.string().max(128), createdAt: Rfc3339, updatedAt: Rfc3339,
-  effect: Effect, error: SafeError.optional(), result: OperationResult.optional(),
+  id: Id,
+  projectId: Id,
+  kind: z.enum(["create", "exec", "destroy", "file_write"]),
+  sandboxId: Id.optional(),
+  executionId: Id.optional(),
+  status: OperationStatus,
+  phase: z.string().max(128),
+  createdAt: Rfc3339,
+  updatedAt: Rfc3339,
+  effect: Effect,
+  error: SafeError.optional(),
+  result: OperationResult.optional(),
   recovery: z.array(z.enum(["check_again", "inspect_candidates", "acknowledge", "run_again"])),
 });
 export const AcceptedOperation = z.object({ operation: Operation });
 export const Sandbox = z.object({
-  id: Id, projectId: Id, connectionId: Id,
+  id: Id,
+  projectId: Id,
+  connectionId: Id,
   desiredState: z.enum(["running", "destroyed"]),
-  observedState: z.enum(["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"]),
-  observedAt: Rfc3339.optional(), revision: z.number().int().nonnegative(),
+  observedState: z.enum([
+    "resolving",
+    "provisioning",
+    "running",
+    "destroying",
+    "destroyed",
+    "unknown",
+  ]),
+  observedAt: Rfc3339.optional(),
+  revision: z.number().int().nonnegative(),
   currentOperationId: Id.optional(),
-  environment: ImageSource, network: NetworkSelection,
+  environment: ImageSource,
+  network: NetworkSelection,
   labels: z.record(z.string(), z.string()),
 });
-export const SandboxPage = z.object({ items: z.array(Sandbox), nextCursor: z.string().optional(), asOf: Rfc3339 });
-export const OutputAvailability = z.enum(["captured", "truncated", "not_captured", "expired", "evicted"]);
+export const SandboxPage = z.object({
+  items: z.array(Sandbox),
+  nextCursor: z.string().optional(),
+  asOf: Rfc3339,
+});
+export const OutputAvailability = z.enum([
+  "captured",
+  "truncated",
+  "not_captured",
+  "expired",
+  "evicted",
+]);
 export const Execution = z.object({
-  id: Id, projectId: Id, sandboxId: Id, operationId: Id,
+  id: Id,
+  projectId: Id,
+  sandboxId: Id,
+  operationId: Id,
   status: z.enum(["queued", "running", "completed", "unknown"]),
-  exitCode: z.number().int().nullable().optional(), signal: z.string().optional(),
+  exitCode: z.number().int().nullable().optional(),
+  signal: z.string().optional(),
   outputAvailability: OutputAvailability,
   capturedBytes: z.number().int().nonnegative(),
-  stdout: z.string().optional(), stderr: z.string().optional(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
 });
 export const AcceptedExecution = z.object({ operation: Operation, execution: Execution });
-export const FileReadHeaders = z.object({ contentType: z.literal("application/octet-stream"), contentLength: z.number().int().nonnegative() });
+export const FileReadHeaders = z.object({
+  contentType: z.literal("application/octet-stream"),
+  contentLength: z.number().int().nonnegative(),
+});
 export const SetupRequest = z.strictObject({ setupToken: z.string().min(1).max(512) });
 export const SessionRequest = z.strictObject({ token: z.string().min(1).max(512) });
-export const SessionResponse = z.object({ operatorId: Id, csrfToken: z.string().min(1), token: z.string().optional() });
+export const SessionResponse = z.object({
+  operatorId: Id,
+  csrfToken: z.string().min(1),
+  token: z.string().optional(),
+});
 export const CreateProjectRequest = z.strictObject({ name: z.string().min(1).max(120) });
 export const Project = z.object({ id: Id, name: z.string(), createdAt: Rfc3339 });
 export const ProjectPage = z.object({ items: z.array(Project) });
 export const CreateProviderConnectionRequest = z.strictObject({
-  provider: z.literal("fake"), name: z.string().min(1).max(120),
+  provider: z.literal("fake"),
+  name: z.string().min(1).max(120),
   // A fake connection has no vendor secret. URL/token are service configuration, not public API fields.
 });
 export const ProviderConnection = z.object({
-  id: Id, projectId: Id, provider: z.literal("fake"), name: z.string(),
+  id: Id,
+  projectId: Id,
+  provider: z.literal("fake"),
+  name: z.string(),
   status: z.enum(["unverified", "verified", "draining"]),
   nativeScope: z.object({ accountId: z.string(), region: z.string().optional() }).optional(),
-  capabilities: z.object({ create: z.boolean(), exec: z.boolean(), files: z.boolean(), destroy: z.boolean() }).optional(),
+  capabilities: z
+    .object({ create: z.boolean(), exec: z.boolean(), files: z.boolean(), destroy: z.boolean() })
+    .optional(),
 });
 export const ProviderConnectionPage = z.object({ items: z.array(ProviderConnection) });
 export const SandboxListQuery = z.strictObject({
-  cursor: z.string().max(256).optional(), limit: z.number().int().min(1).max(100).optional(),
-  connectionId: Id.optional(), state: z.enum(["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"]).optional(),
+  cursor: z.string().max(256).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+  connectionId: Id.optional(),
+  state: z
+    .enum(["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"])
+    .optional(),
   q: z.string().max(64).optional(),
 });
 export const StreamFrame = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("stdout"), executionId: Id, sequence: z.number().int().nonnegative(), bytesBase64: z.base64() }),
-  z.object({ kind: z.literal("stderr"), executionId: Id, sequence: z.number().int().nonnegative(), bytesBase64: z.base64() }),
-  z.object({ kind: z.literal("gap"), executionId: Id, fromSequence: z.number().int().nonnegative(), toSequence: z.number().int().nonnegative() })
-    .refine(frame => frame.fromSequence <= frame.toSequence, { path: ["toSequence"], message: "Gap end must not precede start" })
-    .describe("Missing inclusive sequence range; fromSequence must be less than or equal to toSequence."),
-  z.object({ kind: z.literal("exit"), executionId: Id, exitCode: z.number().int().nullable(), signal: z.string().optional() }),
+  z.object({
+    kind: z.literal("stdout"),
+    executionId: Id,
+    sequence: z.number().int().nonnegative(),
+    bytesBase64: z.base64(),
+  }),
+  z.object({
+    kind: z.literal("stderr"),
+    executionId: Id,
+    sequence: z.number().int().nonnegative(),
+    bytesBase64: z.base64(),
+  }),
+  z
+    .object({
+      kind: z.literal("gap"),
+      executionId: Id,
+      fromSequence: z.number().int().nonnegative(),
+      toSequence: z.number().int().nonnegative(),
+    })
+    .refine((frame) => frame.fromSequence <= frame.toSequence, {
+      path: ["toSequence"],
+      message: "Gap end must not precede start",
+    })
+    .describe(
+      "Missing inclusive sequence range; fromSequence must be less than or equal to toSequence.",
+    ),
+  z.object({
+    kind: z.literal("exit"),
+    executionId: Id,
+    exitCode: z.number().int().nullable(),
+    signal: z.string().optional(),
+  }),
 ]);
 export type CreateSandboxRequest = z.infer<typeof CreateSandboxRequest>;
 export type ExecRequest = z.infer<typeof ExecRequest>;
@@ -130,10 +236,17 @@ export function canonicalJson(value: unknown): string {
   if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
   if (typeof value !== "object") throw new TypeError("Intent must be JSON-compatible");
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  return `{${Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+  return `{${Object.entries(value)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`)
+    .join(",")}}`;
 }
 
 export async function intentSha256(input: unknown): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalJson(input)));
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(canonicalJson(input)),
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
