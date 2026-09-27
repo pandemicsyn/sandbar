@@ -134,3 +134,10 @@ The initial PR base was `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed c
 - Foundation's reviewed `b4ca229` adds repository-wide Oxlint anti-slop rules and Oxfmt. A disposable copy of that commit with the current web files overlaid identified the web-owned violations without rebasing onto an intermediate control commit.
 - Repair commit `7337da4` applies the formatter, accepts typed invocation and fake-seed inputs, parses saved invocation records and caught errors with Zod, parses Fleet search inputs with the shared query schema, and replaces conditional empty spreads and filter/map chains. The existing accepted-upload DOM reset remains intact.
 - Validation at this checkpoint: disposable overlay `bun run lint` and `bun run format:check` pass; actual web branch TypeScript check and standalone Chromium E2E pass (1 test, 36 assertions); `git diff --check` passes. Final stacked rebase, full checks, and independent review remain pending.
+
+## Tooling checkpoint review
+
+- Reviewer: independent read-only subagent, `gpt-6-luna`, high reasoning.
+- Base: `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b`; reviewed HEAD: `d9027fa80efced248e0e8ada03900f4938112b0f`.
+- Complete diff: `/private/tmp/sandbar-web-pr4-tooling-preparent.diff` (3,565 lines).
+- Finding: zero remaining actionable findings in the web implementation and tests, including lint adaptation, Fleet search parsing, file-input reset, and fresh-build E2E. Final parent rebase and final independent review remain required.
