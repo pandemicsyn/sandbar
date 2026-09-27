@@ -1,11 +1,13 @@
 import { DriverCapabilities, DriverResult, NativeRef, NativeScope, ProviderReadError, SandboxObservation, type InvocationIdentity, type ProviderDriver } from "@sandbar/provider-spi";
 import type { ExecCommand } from "@sandbar/contracts";
+import { z } from "zod";
 import type { ModalSandboxRecord, ModalTransport } from "./transport";
 
 const TAG_SUBMISSION = "sandbar_submission";
 const TAG_OPERATION = "sandbar_operation";
 const MAX_FILE_BYTES = 1_048_576;
 const MAX_OUTPUT_BYTES = 1_048_576;
+const ModalRecord = z.object({ id: z.string().min(1).max(128), tags: z.record(z.string(), z.string()), running: z.boolean() });
 
 type ModalAppScope = NativeScope & { resourceScope: { kind: "app"; id: string } };
 
@@ -14,14 +16,15 @@ function modalAppId(scope: NativeScope): string {
   if (!value || value.kind !== "app" || !/^ap-[A-Za-z0-9_-]+$/.test(value.id)) throw new Error("Modal requires a verified native app scope");
   return value.id;
 }
-function rejected(code: "unsupported" | "invalid" | "not_found", message: string): DriverResult {
+function rejected(code: "unsupported" | "invalid" | "not_found" | "unavailable", message: string): DriverResult {
   return { status: "rejected", effect: "none", error: { code, message, effect: "none", retry: "never" } };
 }
 function unknown(submissionId: string, reason: string): DriverResult {
   return { status: "unknown", effect: "possible", submissionId, reason };
 }
 function observation(scope: NativeScope, record: ModalSandboxRecord): SandboxObservation {
-  return SandboxObservation.parse({ ref: { scope, nativeId: record.id, kind: "sandbox" }, state: record.running ? "running" : "unknown", observedAt: new Date().toISOString() });
+  const parsed = ModalRecord.parse(record);
+  return SandboxObservation.parse({ ref: { scope, nativeId: parsed.id, kind: "sandbox" }, state: parsed.running ? "running" : "unknown", observedAt: new Date().toISOString() });
 }
 function isOwned(record: ModalSandboxRecord, identity: InvocationIdentity): boolean {
   return record.tags[TAG_SUBMISSION] === identity.submissionId && record.tags[TAG_OPERATION] === identity.operationId;
@@ -78,15 +81,17 @@ export class ModalProviderDriver implements ProviderDriver {
   }
   async create(input: { scope: NativeScope; identity: InvocationIdentity; image: string; networkPolicy: string; labels?: Record<string, string> }): Promise<DriverResult> {
     if (!this.matches(input.scope) || input.networkPolicy !== "blocked" || !/^im-[A-Za-z0-9_-]+$/.test(input.image)) return rejected("unsupported", "Modal create scope, network policy or prepared image is unsupported");
+    if (input.identity.submissionId.length >= 64) return rejected("invalid", "Modal sandbox name exceeds native limit");
     const labels = input.labels ?? {};
     if (Object.keys(labels).some(key => key.startsWith("sandbar_"))) return rejected("invalid", "Reserved Modal tag prefix");
     try { await this.verify(); }
     catch { return rejected("invalid", "Modal native app scope could not be verified before create"); }
-    if (!(await this.transport.imageExists(input.image))) return rejected("not_found", "Modal image was not found before create");
+    try { if (!(await this.transport.imageExists(input.image))) return rejected("not_found", "Modal image was not found before create"); }
+    catch { return rejected("unavailable", "Modal image could not be verified before create"); }
     const tags = { ...labels, [TAG_SUBMISSION]: input.identity.submissionId, [TAG_OPERATION]: input.identity.operationId };
     try {
       const id = await this.transport.create({ appId: modalAppId(this.scope), imageId: input.image, name: input.identity.submissionId, tags, timeoutMs: this.timeoutMs, ...(this.scope.region ? { regions: [this.scope.region] } : {}) });
-      if (!id || !/^sb-[A-Za-z0-9_-]+$/.test(id)) return unknown(input.identity.submissionId, "Modal create response lacked a valid sandbox ID");
+      if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return unknown(input.identity.submissionId, "Modal create response lacked a valid sandbox ID");
       const record = await this.transport.findByName(this.appName, this.environment, input.identity.submissionId);
       if (!record || record.id !== id || !isOwned(record, input.identity)) return unknown(input.identity.submissionId, "Modal create identity could not be correlated");
       return DriverResult.parse({ status: "completed", effect: "applied", submissionId: input.identity.submissionId, value: { kind: "sandbox", observation: observation(this.scope, record) } });
