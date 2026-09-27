@@ -53,6 +53,9 @@ describe("public contract", () => {
   });
   test("intent canonicalization preserves omission and is key-order independent", async () => {
     expect(canonicalJson({ b: 2, a: 1 })).toBe(canonicalJson({ a: 1, b: 2 }));
+    expect(canonicalJson({ "\uE000": 1, "😀": 2, tiny: 1e-7, minusZero: -0 })).toBe(
+      '{"minusZero":0,"tiny":1e-7,"😀":2,"":1}',
+    );
     expect(await intentSha256({ a: 1 })).not.toBe(await intentSha256({ a: 1, b: null }));
     expect(() => canonicalJson({ a: Number.NaN })).toThrow();
   });

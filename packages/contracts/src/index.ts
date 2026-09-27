@@ -229,7 +229,8 @@ export type ExecCommand = z.infer<typeof ExecCommand>;
 export type Project = z.infer<typeof Project>;
 export type ProviderConnection = z.infer<typeof ProviderConnection>;
 
-// Stable cross-language intent serialization. Omitted keys stay omitted; explicit nulls stay explicit.
+// Internal JS/Bun intent serialization. The server computes this hash from validated parsed input;
+// clients only repeat the same request and Idempotency-Key. This is not a cross-language wire format.
 export function canonicalJson(value: unknown): string {
   if (value === null) return "null";
   if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
