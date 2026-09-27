@@ -527,6 +527,84 @@ test("close and caller abort stop stalled preparation without dispatch", async (
   }
 });
 
+test("preparation deadline settles ordinary and advanced calls without submission", async () => {
+  let preparations = 0;
+  let submissions = 0;
+  let references = 0;
+  const complete: Array<() => void> = [];
+  const fail: Array<() => void> = [];
+  const readSignals: AbortSignal[] = [];
+
+  const adapter = defineAdapter({
+    name: "example.prepare-deadline",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          async prepare(input, context) {
+            preparations++;
+            readSignals.push(context.signal);
+
+            return new Promise<typeof input>((resolve, reject) => {
+              complete.push(() => resolve(input));
+              fail.push(() => reject(new Error("late read failure")));
+            });
+          },
+          async submit() {
+            submissions++;
+
+            return { id: "box", state: "running" as const };
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {},
+    credentials: {},
+    async onReference() {
+      references++;
+    },
+  });
+
+  const ordinary = client.sandboxes.create({ environment: Image.prepared("image") });
+
+  const advanced = client.operations.prepare("create", {
+    image: { kind: "prepared", value: "image" },
+    networkPolicy: "blocked",
+  });
+
+  const outcomes = await Promise.allSettled([ordinary, advanced]);
+
+  expect(preparations).toBe(2);
+
+  for (const outcome of outcomes) {
+    expect(outcome.status).toBe("rejected");
+
+    if (outcome.status === "rejected")
+      expect(outcome.reason).toMatchObject({ code: "TIMEOUT", effect: "none" });
+  }
+
+  expect(readSignals.every((readSignal) => readSignal.aborted)).toBe(true);
+  expect(submissions).toBe(0);
+  expect(references).toBe(0);
+
+  complete[0]!();
+  fail[1]!();
+  await Bun.sleep(1);
+  expect(submissions).toBe(0);
+  expect(references).toBe(0);
+  await client.close();
+}, 40_000);
+
 test("advanced submit cancellation leaves an unknown outcome and original identity", async () => {
   for (const mode of ["caller", "close"] as const) {
     let submitted = 0;

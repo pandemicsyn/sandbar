@@ -326,10 +326,62 @@ export async function prepareOperation(
   const parts = operationParts(operation);
 
   const prepared = parts.prepare
-    ? await parts.prepare(structuredClone(checkedInput), { signal, deadline: Date.now() + 30_000 })
+    ? await prepareBeforeDeadline(parts.prepare, structuredClone(checkedInput), signal)
     : structuredClone(checkedInput);
 
   return { kind, input: prepared, operation };
+}
+
+function prepareBeforeDeadline<I, P>(
+  prepare: (input: I, context: { signal: AbortSignal; deadline: number }) => Promise<P>,
+  input: I,
+  signal: AbortSignal,
+): Promise<P> {
+  const controller = new AbortController();
+  const combined = AbortSignal.any([signal, controller.signal]);
+  const deadline = Date.now() + 30_000;
+
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+
+      return;
+    }
+
+    let settled = false;
+
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      action();
+    };
+
+    const onAbort = () =>
+      finish(() => reject(signal.reason ?? new DOMException("Aborted", "AbortError")));
+
+    const timer = setTimeout(
+      () => {
+        const error = new AdapterError("TIMEOUT", "Adapter preparation deadline exceeded");
+        controller.abort(error);
+        finish(() => reject(error));
+      },
+      Math.max(0, deadline - Date.now()),
+    );
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve()
+      .then(() => {
+        if (combined.aborted) throw combined.reason ?? new DOMException("Aborted", "AbortError");
+
+        return prepare(input, { signal: combined, deadline });
+      })
+      .then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      );
+  });
 }
 
 function normalizeSpecial(

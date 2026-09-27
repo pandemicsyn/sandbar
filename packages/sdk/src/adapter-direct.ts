@@ -660,7 +660,10 @@ export class AdapterDirectClient {
           this.ensureOpen();
           assertSignal(options.signal);
 
-          if (error instanceof AdapterError && error.code === "INVALID_ARGUMENT")
+          if (
+            error instanceof AdapterError &&
+            (error.code === "INVALID_ARGUMENT" || error.code === "TIMEOUT")
+          )
             throw new SandbarError(error.code, error.message);
           throw error;
         }
