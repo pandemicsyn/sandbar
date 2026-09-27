@@ -193,19 +193,65 @@ export const OutputAvailability = z.enum([
   "evicted",
 ]);
 
-export const Execution = z.object({
-  id: Id,
-  projectId: Id,
-  sandboxId: Id,
-  operationId: Id,
-  status: z.enum(["queued", "running", "completed", "unknown"]),
-  exitCode: z.number().int().nullable().optional(),
-  signal: z.string().optional(),
-  outputAvailability: OutputAvailability,
-  capturedBytes: z.number().int().nonnegative(),
-  stdoutBase64: z.base64().optional(),
-  stderrBase64: z.base64().optional(),
-});
+const MAX_CAPTURED_BYTES = 1024 * 1024;
+
+const MAX_BASE64_CAPTURE_LENGTH = 4 * Math.ceil(MAX_CAPTURED_BYTES / 3);
+
+const decodedBase64Length = (value: string) =>
+  (value.length / 4) * 3 - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0);
+
+export const Execution = z
+  .object({
+    id: Id,
+    projectId: Id,
+    sandboxId: Id,
+    operationId: Id,
+    status: z.enum(["queued", "running", "completed", "unknown"]),
+    exitCode: z.number().int().nullable().optional(),
+    signal: z.string().optional(),
+    outputAvailability: OutputAvailability,
+    capturedBytes: z.number().int().min(0).max(MAX_CAPTURED_BYTES),
+    stdoutBase64: z.base64().max(MAX_BASE64_CAPTURE_LENGTH).optional(),
+    stderrBase64: z.base64().max(MAX_BASE64_CAPTURE_LENGTH).optional(),
+  })
+  .superRefine((execution, context) => {
+    const outputBytes =
+      decodedBase64Length(execution.stdoutBase64 ?? "") +
+      decodedBase64Length(execution.stderrBase64 ?? "");
+
+    if (outputBytes > MAX_CAPTURED_BYTES) {
+      context.addIssue({
+        code: "custom",
+        path: ["capturedBytes"],
+        message: "Output exceeds 1 MiB",
+      });
+    }
+
+    if (
+      execution.outputAvailability === "captured" ||
+      execution.outputAvailability === "truncated"
+    ) {
+      if (execution.capturedBytes !== outputBytes) {
+        context.addIssue({
+          code: "custom",
+          path: ["capturedBytes"],
+          message: "Captured byte count must equal the decoded output length",
+        });
+      }
+    } else if (
+      outputBytes !== 0 ||
+      (execution.outputAvailability === "not_captured" && execution.capturedBytes !== 0)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["outputAvailability"],
+        message: "Unavailable output cannot contain captured bytes",
+      });
+    }
+  })
+  .describe(
+    "Captured stdoutBase64 and stderrBase64 decode to at most 1 MiB combined. For captured or truncated output, capturedBytes equals their decoded total. Not-captured, expired, and evicted output has no byte fields; not-captured output has capturedBytes 0.",
+  );
 
 export const AcceptedExecution = z
   .object({ operation: ExecOperation, execution: Execution })

@@ -94,6 +94,25 @@ describe("public contract", () => {
 
     expect(Execution.parse(execution).stdoutBase64).toBe("/wA=");
     expect(Execution.safeParse({ ...execution, stdoutBase64: "not-base64" }).success).toBe(false);
+    expect(Execution.safeParse({ ...execution, capturedBytes: 0 }).success).toBe(false);
+    expect(Execution.safeParse({ ...execution, outputAvailability: "not_captured" }).success).toBe(
+      false,
+    );
+    expect(
+      Execution.safeParse({
+        ...execution,
+        stdoutBase64: "A".repeat(1_398_104),
+        stderrBase64: "AA==",
+        capturedBytes: 1_048_576,
+      }).success,
+    ).toBe(false);
+    expect(
+      Execution.safeParse({
+        ...execution,
+        outputAvailability: "expired",
+        stdoutBase64: undefined,
+      }).success,
+    ).toBe(true);
     expect(AcceptedExecution.safeParse({ operation, execution }).success).toBe(false);
 
     const execOperation = {
@@ -203,6 +222,14 @@ describe("public contract", () => {
     expect(openApiDocument.components.schemas.Execution).toHaveProperty(
       "properties.stdoutBase64.contentEncoding",
       "base64",
+    );
+    expect(openApiDocument.components.schemas.Execution).toHaveProperty(
+      "properties.stdoutBase64.maxLength",
+      1_398_104,
+    );
+    expect(openApiDocument.components.schemas.Execution).toHaveProperty(
+      "properties.capturedBytes.maximum",
+      1_048_576,
     );
     expect(openApiDocument.components.schemas.Operation).toMatchObject({
       oneOf: [

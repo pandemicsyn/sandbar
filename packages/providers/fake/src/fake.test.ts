@@ -839,6 +839,38 @@ describe("independent fake provider", () => {
     expect(reloaded.snapshot().invocations).toHaveLength(512);
   });
 
+  test("a submission ID cannot apply an effect for another project in the same native scope", async () => {
+    directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+    const statePath = join(directory, "provider.json");
+    const engine = new FakeProviderEngine(statePath, true);
+    await engine.load();
+
+    const first = await engine.create({
+      scope,
+      identity: identity("shared_submission"),
+      image: "fake-starter",
+      networkPolicy: "blocked",
+    });
+
+    expect(first.result.status).toBe("completed");
+
+    const second = await engine.create({
+      scope,
+      identity: { ...identity("shared_submission"), projectId: "project_2" },
+      image: "fake-starter",
+      networkPolicy: "blocked",
+    });
+
+    expect(second.result).toMatchObject({ status: "rejected", error: { code: "conflict" } });
+    expect(engine.snapshot().resources).toHaveLength(1);
+    expect(engine.snapshot().ledger).toHaveLength(1);
+    expect((await engine.observe(scope, "shared_submission"))?.status).toBe("completed");
+
+    const reloaded = new FakeProviderEngine(statePath, true);
+    await reloaded.load();
+    expect(reloaded.snapshot().ledger).toHaveLength(1);
+  });
+
   test("fake state recovery rejects malformed or unknown-version evidence without rewriting it", async () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
     const statePath = join(directory, "provider.json");
@@ -883,6 +915,10 @@ describe("independent fake provider", () => {
       },
       { ...source, ledger: [{ ...source.ledger[0], action: "destroy" }] },
       { ...source, ledger: [{ ...source.ledger[0], remaining: -1 }] },
+      {
+        ...source,
+        ledger: [source.ledger[0], { ...source.ledger[0], projectId: "project_2" }],
+      },
       { ...source, ledger: [wrongLedgerRef] },
       {
         ...source,

@@ -135,25 +135,44 @@ const LedgerEntrySchema = z
     }
   });
 
-const StateSchema = z.strictObject({
-  version: z.literal(1),
-  nextId: z.number().int().min(1),
-  tick: z.number().int().nonnegative(),
-  profile: FakeProfile,
-  resources: z.array(ResourceSchema).max(MAX_RESOURCES),
-  ledger: z.array(LedgerEntrySchema).max(MAX_LEDGER),
-  scenarios: z.array(FakeScenario).max(512),
-  events: z.array(FakeEvent).max(512),
-  invocations: z
-    .array(
-      z.strictObject({
-        submissionId: z.string().min(1),
-        projectId: z.string().min(1),
-        action: FakeScenario.shape.action,
-      }),
-    )
-    .max(MAX_INVOCATIONS),
-});
+const StateSchema = z
+  .strictObject({
+    version: z.literal(1),
+    nextId: z.number().int().min(1),
+    tick: z.number().int().nonnegative(),
+    profile: FakeProfile,
+    resources: z.array(ResourceSchema).max(MAX_RESOURCES),
+    ledger: z.array(LedgerEntrySchema).max(MAX_LEDGER),
+    scenarios: z.array(FakeScenario).max(512),
+    events: z.array(FakeEvent).max(512),
+    invocations: z
+      .array(
+        z.strictObject({
+          submissionId: z.string().min(1),
+          projectId: z.string().min(1),
+          action: FakeScenario.shape.action,
+        }),
+      )
+      .max(MAX_INVOCATIONS),
+  })
+  .superRefine((state, context) => {
+    const projects = new Map<string, string>();
+
+    for (const entry of state.ledger) {
+      const key = JSON.stringify([scopeKey(entry.scope), entry.submissionId]);
+      const projectId = projects.get(key);
+
+      if (projectId !== undefined && projectId !== entry.projectId) {
+        context.addIssue({
+          code: "custom",
+          path: ["ledger"],
+          message: "A submission ID cannot be shared across projects in one native scope",
+        });
+      }
+
+      projects.set(key, entry.projectId);
+    }
+  });
 
 type State = z.infer<typeof StateSchema>;
 
@@ -339,11 +358,11 @@ export class FakeProviderEngine {
         const { submissionId } = input.identity;
 
         const prior = this.state.ledger.find(
-          (x) =>
-            x.submissionId === submissionId &&
-            x.projectId === input.identity.projectId &&
-            sameScope(x.scope, input.scope),
+          (x) => x.submissionId === submissionId && sameScope(x.scope, input.scope),
         );
+
+        if (prior && prior.projectId !== input.identity.projectId)
+          return { result: this.rejection("conflict"), loseResponse: false };
 
         if (prior?.action !== undefined && prior.action !== "create")
           return { result: this.rejection("conflict"), loseResponse: false };
@@ -437,11 +456,11 @@ export class FakeProviderEngine {
         const { submissionId } = input.identity;
 
         const prior = this.state.ledger.find(
-          (x) =>
-            x.submissionId === submissionId &&
-            x.projectId === input.identity.projectId &&
-            sameScope(x.scope, input.sandbox.scope),
+          (x) => x.submissionId === submissionId && sameScope(x.scope, input.sandbox.scope),
         );
+
+        if (prior && prior.projectId !== input.identity.projectId)
+          return { result: this.rejection("conflict"), loseResponse: false };
 
         if (prior?.action !== undefined && prior.action !== "exec")
           return { result: this.rejection("conflict"), loseResponse: false };
@@ -558,11 +577,11 @@ export class FakeProviderEngine {
         const { submissionId } = input.identity;
 
         const prior = this.state.ledger.find(
-          (x) =>
-            x.submissionId === submissionId &&
-            x.projectId === input.identity.projectId &&
-            sameScope(x.scope, input.sandbox.scope),
+          (x) => x.submissionId === submissionId && sameScope(x.scope, input.sandbox.scope),
         );
+
+        if (prior && prior.projectId !== input.identity.projectId)
+          return { result: this.rejection("conflict"), loseResponse: false };
 
         if (prior?.action !== undefined && prior.action !== "destroy")
           return { result: this.rejection("conflict"), loseResponse: false };
@@ -715,11 +734,11 @@ export class FakeProviderEngine {
         const { submissionId } = identity;
 
         const prior = this.state.ledger.find(
-          (x) =>
-            x.submissionId === submissionId &&
-            x.projectId === identity.projectId &&
-            sameScope(x.scope, sandbox.scope),
+          (x) => x.submissionId === submissionId && sameScope(x.scope, sandbox.scope),
         );
+
+        if (prior && prior.projectId !== identity.projectId)
+          return { result: this.rejection("conflict"), loseResponse: false };
 
         if (prior?.action !== undefined && prior.action !== "file_write")
           return { result: this.rejection("conflict"), loseResponse: false };

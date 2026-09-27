@@ -1021,16 +1021,18 @@
               "capturedBytes": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 9007199254740991
+                "maximum": 1048576
               },
               "stdoutBase64": {
                 "type": "string",
+                "maxLength": 1398104,
                 "format": "base64",
                 "contentEncoding": "base64",
                 "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
               },
               "stderrBase64": {
                 "type": "string",
+                "maxLength": 1398104,
                 "format": "base64",
                 "contentEncoding": "base64",
                 "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
@@ -1044,7 +1046,8 @@
               "status",
               "outputAvailability",
               "capturedBytes"
-            ]
+            ],
+            "description": "Captured stdoutBase64 and stderrBase64 decode to at most 1 MiB combined. For captured or truncated output, capturedBytes equals their decoded total. Not-captured, expired, and evicted output has no byte fields; not-captured output has capturedBytes 0."
           }
         },
         "required": [
@@ -2026,16 +2029,18 @@
           "capturedBytes": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 1048576
           },
           "stdoutBase64": {
             "type": "string",
+            "maxLength": 1398104,
             "format": "base64",
             "contentEncoding": "base64",
             "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
           },
           "stderrBase64": {
             "type": "string",
+            "maxLength": 1398104,
             "format": "base64",
             "contentEncoding": "base64",
             "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
@@ -2049,7 +2054,8 @@
           "status",
           "outputAvailability",
           "capturedBytes"
-        ]
+        ],
+        "description": "Captured stdoutBase64 and stderrBase64 decode to at most 1 MiB combined. For captured or truncated output, capturedBytes equals their decoded total. Not-captured, expired, and evicted output has no byte fields; not-captured output has capturedBytes 0."
       },
       "ExecRequest": {
         "type": "object",
