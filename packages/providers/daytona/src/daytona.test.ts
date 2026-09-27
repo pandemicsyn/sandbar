@@ -66,18 +66,26 @@ test("lost create response is observed by stable name without replay; scope rota
   let posts = 0;
   let name = "";
   let account = "org-1";
+  let labels: Record<string, string> = { "sandbar.submission": "submit-1", "sandbar.operation": "op_submit-1" };
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: account });
     if (url.pathname === "/api/snapshots/snap-1") return Response.json({ id: "snap-1", organizationId: account, state: "active", regionIds: ["us"], sandboxClass: "linux-vm" });
     if (url.pathname === "/api/sandbox" && init?.method === "POST") { posts++; name = (JSON.parse(String(init.body)) as { name: string }).name; throw new Error("response lost"); }
-    if (url.pathname === "/api/sandbox") return Response.json({ items: [{ ...native(name), labels: { "sandbar.submission": "submit-1", "sandbar.operation": "op_submit-1" } }], nextCursor: null });
+    if (url.pathname === "/api/sandbox") return Response.json({ items: [{ ...native(name), labels }], nextCursor: null });
     throw new Error("Unexpected request");
   }) as typeof fetch;
   const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
   const result = await provider.driver.create({ scope: provider.scope, identity: identity("submit-1"), image: "snap-1", networkPolicy: "blocked" });
   expect(result.status).toBe("unknown");
   expect(await provider.driver.observe({ scope: provider.scope, submissionId: "submit-1", operationId: "wrong-operation" })).toBeNull();
+  labels = { "sandbar.submission": "submit-1" };
+  expect(await provider.driver.observe({ scope: provider.scope, submissionId: "submit-1", operationId: "op_submit-1" })).toBeNull();
+  labels = { "sandbar.submission": "forged-submission", "sandbar.operation": "op_submit-1" };
+  expect(await provider.driver.observe({ scope: provider.scope, submissionId: "submit-1", operationId: "op_submit-1" })).toBeNull();
+  labels = { "sandbar.operation": "op_submit-1" };
+  expect(await provider.driver.observe({ scope: provider.scope, submissionId: "submit-1", operationId: "op_submit-1" })).toBeNull();
+  labels = { "sandbar.submission": "submit-1", "sandbar.operation": "op_submit-1" };
   const observed = await provider.driver.observe({ scope: provider.scope, submissionId: "submit-1", operationId: "op_submit-1" });
   expect(observed?.status).toBe("completed");
   expect(posts).toBe(1);
