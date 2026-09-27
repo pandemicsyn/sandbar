@@ -28,5 +28,5 @@ try {
   console.log(JSON.stringify({ sandboxId: box.id, observation }));
 } finally {
   try { if (box) await box.destroy(); }
-  finally { await client.close(); provider.driver.close(); }
+  finally { await client.close(); }
 }

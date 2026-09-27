@@ -91,8 +91,9 @@ test("lost create response is observed by submission name after a fresh provider
   expect(fixture.creates).toBe(1);
   const restarted = await modalProvider(options, fixture);
   expect(restarted.scope).toEqual(first.scope);
-  const observed = await restarted.driver.observe({ scope: restarted.scope, submissionId: identity.submissionId });
+  const observed = await restarted.driver.observe({ scope: restarted.scope, submissionId: identity.submissionId, operationId: identity.operationId });
   expect(observed?.status).toBe("completed");
+  expect(await restarted.driver.observe({ scope: restarted.scope, submissionId: identity.submissionId, operationId: "op_other" })).toBeNull();
   expect(fixture.creates).toBe(1);
 });
 

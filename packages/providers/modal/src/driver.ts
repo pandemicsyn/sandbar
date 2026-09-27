@@ -140,11 +140,11 @@ export class ModalProviderDriver implements ProviderDriver {
       return DriverResult.parse({ status: "completed", effect: "applied", submissionId: input.identity.submissionId, value: { kind: "destroy", observation: { sandbox: input.sandbox, computeStopped: true, retainedResources: [] } } });
     } catch { return unknown(input.identity.submissionId, "Modal termination response unavailable; do not replay"); }
   }
-  async observe(input: { scope: NativeScope; submissionId: string }): Promise<DriverResult | null> {
+  async observe(input: { scope: NativeScope; submissionId: string; operationId?: string }): Promise<DriverResult | null> {
     if (!this.matches(input.scope)) throw new ProviderReadError("INVALID_RESPONSE", "Modal observation scope mismatch");
     await this.verify();
     const record = await this.transport.findByName(this.appName, this.environment, input.submissionId);
-    if (!record || record.tags[TAG_SUBMISSION] !== input.submissionId || !record.tags[TAG_OPERATION]) return null;
+    if (!record || record.tags[TAG_SUBMISSION] !== input.submissionId || !record.tags[TAG_OPERATION] || (input.operationId !== undefined && record.tags[TAG_OPERATION] !== input.operationId)) return null;
     return DriverResult.parse({ status: "completed", effect: "applied", submissionId: input.submissionId, value: { kind: "sandbox", observation: observation(this.scope, record) } });
   }
   close() { this.transport.close(); }
