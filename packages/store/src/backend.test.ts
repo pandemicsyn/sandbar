@@ -12,12 +12,53 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sql } from "drizzle-orm";
 import { openMysqlBackend, openSqliteBackend } from "./backend";
 
 test("direct MySQL backend rejects mysqls before connecting", async () => {
   await expect(openMysqlBackend("mysqls://operator:secret@127.0.0.1:1/control")).rejects.toThrow(
     "mysqls:// is unsupported",
   );
+});
+
+test("SQLite finalizes statements after queries and errors before closing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-sqlite-statements-"));
+  const path = join(directory, "control.sqlite");
+  const backend = openSqliteBackend(path);
+  const bytes = new Uint8Array([0, 128, 255]);
+
+  try {
+    await backend.run(sql`CREATE TABLE payloads (id INTEGER PRIMARY KEY, data BLOB NOT NULL)`);
+    await backend.run(sql`INSERT INTO payloads (id, data) VALUES (${7}, ${bytes})`);
+
+    expect(
+      await backend.row<{ id: number; data: Uint8Array }>(
+        sql`SELECT * FROM payloads WHERE id=${7}`,
+      ),
+    ).toEqual({ id: 7, data: bytes });
+    expect(await backend.rows<{ id: number }>(sql`SELECT id FROM payloads WHERE id=${7}`)).toEqual([
+      { id: 7 },
+    ]);
+    expect(await backend.row(sql`SELECT id FROM payloads WHERE id=${8}`)).toBeUndefined();
+    await expect(
+      backend.run(sql`INSERT INTO payloads (id, data) VALUES (${7}, ${bytes})`),
+    ).rejects.toThrow();
+  } finally {
+    await backend.close();
+  }
+
+  expect(await readdir(`${path}.sandbar.locks`)).toEqual([]);
+
+  const reopened = openSqliteBackend(path);
+
+  try {
+    expect(await reopened.row<{ id: number }>(sql`SELECT id FROM payloads WHERE id=${7}`)).toEqual({
+      id: 7,
+    });
+  } finally {
+    await reopened.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("SQLite owner records exclude a contender and ignore dead owners", async () => {

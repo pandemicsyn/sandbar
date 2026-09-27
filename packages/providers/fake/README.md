@@ -11,7 +11,7 @@ SANDBAR_ENABLE_FAKE_PROVIDER=1 \
 SANDBAR_FAKE_TEST_MODE=1 \
 SANDBAR_FAKE_STATE_PATH=/tmp/sandbar-fake-provider.json \
 SANDBAR_FAKE_TOKEN=local-test-token-12345 \
-bun packages/providers/fake/src/server.ts
+bun packages/providers/fake/src/cli.ts
 ```
 
 Use a unique state path per test. The default port is 8789; `SANDBAR_FAKE_PORT` overrides it. The Sandbar driver is `new FakeProviderDriver({ baseUrl: "http://127.0.0.1:8789", token })`. A fake connection uses native scope `{ provider: "fake", connectionId, accountId: "fake-local", region: "local" }` and supports only the `fake-starter` prepared image with a `blocked` network selection. That is a declared simulation profile, not evidence that a real provider enforces blocked egress.

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
 import {
   readFileSync,
   existsSync,
@@ -14,9 +14,9 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-import { drizzle as drizzleSqlite } from "drizzle-orm/bun-sqlite";
 import { drizzle as drizzleMysql } from "drizzle-orm/mysql2";
-import { sql, type SQL } from "drizzle-orm";
+import { fillPlaceholders, sql, type SQL } from "drizzle-orm";
+import { SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
 import mysql from "mysql2/promise";
 import { z } from "zod";
 
@@ -180,16 +180,14 @@ export function openSqliteBackend(path: string): Backend {
     throw error;
   }
 
-  try {
-    const native = new Database(canonicalPath, { create: true });
+  let native: Database | undefined;
 
-    try {
-      return sqliteBackend(native, ownPath);
-    } catch (error) {
-      native.close();
-      throw error;
-    }
+  try {
+    native = new Database(canonicalPath, { create: true });
+
+    return sqliteBackend(native, ownPath);
   } catch (error) {
+    native?.close(true);
     unlinkSync(ownPath);
     throw error;
   }
@@ -197,17 +195,49 @@ export function openSqliteBackend(path: string): Backend {
 
 function sqliteBackend(native: Database, ownLockPath?: string): Backend {
   native.exec("PRAGMA foreign_keys = ON");
+  native.exec("PRAGMA busy_timeout = 5000");
   native.exec("PRAGMA journal_mode = WAL");
   native.exec("PRAGMA synchronous = FULL");
-  native.exec("PRAGMA busy_timeout = 5000");
-  const db = drizzleSqlite({ client: native });
+  const dialect = new SQLiteSyncDialect();
   let tail: Promise<unknown> = Promise.resolve();
 
+  const bindings = (params: unknown[]): SQLQueryBindings[] => {
+    // SAFETY: Drizzle's SQLite dialect has mapped SQL parameters to native SQLite values.
+    return fillPlaceholders(params, {}) as SQLQueryBindings[];
+  };
+
   const direct: QueryConnection = {
-    rows: async <T>(query: SQL) => db.all<T>(query),
-    row: async <T>(query: SQL) => db.get<T>(query),
+    rows: async <T>(query: SQL) => {
+      const compiled = dialect.sqlToQuery(query);
+      const statement = native.prepare(compiled.sql);
+
+      try {
+        // SAFETY: QueryConnection callers supply T for the selected raw row shape.
+        return statement.all(...bindings(compiled.params)) as T[];
+      } finally {
+        statement.finalize();
+      }
+    },
+    row: async <T>(query: SQL) => {
+      const compiled = dialect.sqlToQuery(query);
+      const statement = native.prepare(compiled.sql);
+
+      try {
+        // SAFETY: QueryConnection callers supply T for the selected raw row shape.
+        return (statement.get(...bindings(compiled.params)) ?? undefined) as T | undefined;
+      } finally {
+        statement.finalize();
+      }
+    },
     run: async (query: SQL) => {
-      db.run(query);
+      const compiled = dialect.sqlToQuery(query);
+      const statement = native.prepare(compiled.sql);
+
+      try {
+        statement.run(...bindings(compiled.params));
+      } finally {
+        statement.finalize();
+      }
     },
   };
 
@@ -251,7 +281,7 @@ function sqliteBackend(native: Database, ownLockPath?: string): Backend {
       }),
     close: () =>
       exclusive(async () => {
-        native.close();
+        native.close(true);
 
         if (ownLockPath) unlinkSync(ownLockPath);
       }),

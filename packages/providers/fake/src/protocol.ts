@@ -58,6 +58,23 @@ export const FakeAction = z.discriminatedUnion("kind", [
 
 export type FakeAction = z.infer<typeof FakeAction>;
 
+export const FakeEvent = z.strictObject({
+  eventId: z.string().min(1),
+  ref: z.object({
+    scope: z.object({
+      provider: z.string(),
+      connectionId: z.string(),
+      accountId: z.string(),
+      region: z.string().optional(),
+    }),
+    nativeId: z.string(),
+    kind: z.literal("sandbox"),
+  }),
+  sequence: z.number().int().nonnegative(),
+  state: z.enum(["running", "destroyed"]),
+  occurredAt: z.iso.datetime({ offset: true }),
+});
+
 export function validFakePath(path: string): boolean {
   return (
     path.startsWith("/") &&
@@ -66,3 +83,9 @@ export function validFakePath(path: string): boolean {
     path.length <= 4096
   );
 }
+
+/** Bound fake file payloads before decoding in the client. */
+export const FakeFileBytesBase64 = z
+  .base64()
+  .max(1_398_104)
+  .refine((value) => Buffer.from(value, "base64").length <= 1024 * 1024, "File exceeds 1 MiB");

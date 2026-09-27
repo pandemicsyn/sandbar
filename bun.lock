@@ -53,6 +53,7 @@
     },
     "packages/core": {
       "name": "@sandbar/core",
+      "version": "0.0.0",
       "dependencies": {
         "@sandbar/contracts": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
@@ -73,6 +74,19 @@
         "@sandbar/contracts": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
         "zod": "4.6.5",
+      },
+    },
+    "packages/sdk": {
+      "name": "@sandbar/sdk",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sandbar/contracts": "workspace:*",
+        "@sandbar/core": "workspace:*",
+        "@sandbar/provider-spi": "workspace:*",
+        "zod": "4.6.5",
+      },
+      "devDependencies": {
+        "@sandbar/provider-fake": "workspace:*",
       },
     },
     "packages/service-runtime": {
@@ -279,6 +293,8 @@
     "@sandbar/provider-fake": ["@sandbar/provider-fake@workspace:packages/providers/fake"],
 
     "@sandbar/provider-spi": ["@sandbar/provider-spi@workspace:packages/provider-spi"],
+
+    "@sandbar/sdk": ["@sandbar/sdk@workspace:packages/sdk"],
 
     "@sandbar/server": ["@sandbar/server@workspace:apps/server"],
 

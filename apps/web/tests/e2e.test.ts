@@ -95,7 +95,7 @@ async function stop(child?: Process): Promise<void> {
 }
 
 function launchFake(): Process {
-  return Bun.spawn(["bun", "packages/providers/fake/src/server.ts"], {
+  return Bun.spawn(["bun", "packages/providers/fake/src/cli.ts"], {
     cwd: root,
     env: {
       ...process.env,
