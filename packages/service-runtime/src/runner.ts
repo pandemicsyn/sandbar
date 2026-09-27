@@ -10,7 +10,11 @@ import { ProviderReadError, validateDriverResult } from "@sandbar/provider-spi";
 import type { ExecRequest } from "@sandbar/contracts";
 import { ControlStore, type Claimed, type SandboxRow, type ConnectionRow } from "@sandbar/store";
 import { SecretBox } from "./crypto";
-import { ProviderIdentityMismatchError, type ProviderRegistry } from "./registry";
+import {
+  ProviderConfigurationError,
+  ProviderIdentityMismatchError,
+  type ProviderRegistry,
+} from "./registry";
 import {
   normalizeCreate,
   normalizeExec,
@@ -106,10 +110,16 @@ export class DurableRunner {
         if (
           !claim.observeOnly &&
           ((error instanceof ProviderReadError && error.code === "UNAUTHENTICATED") ||
-            error instanceof ProviderIdentityMismatchError)
+            error instanceof ProviderIdentityMismatchError ||
+            error instanceof ProviderConfigurationError)
         ) {
           await store.failWithoutEffect(claim, {
-            code: error instanceof ProviderIdentityMismatchError ? "CONFLICT" : "UNAUTHENTICATED",
+            code:
+              error instanceof ProviderIdentityMismatchError
+                ? "CONFLICT"
+                : error instanceof ProviderConfigurationError
+                  ? "INVALID_ARGUMENT"
+                  : "UNAUTHENTICATED",
             message: "Provider connection verification failed",
             effect: "none",
             retry: "never",

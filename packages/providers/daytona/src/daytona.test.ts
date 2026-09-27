@@ -118,6 +118,32 @@ test("endpoint pairs must be explicitly trusted before forwarding an API key", a
   expect(calls).toBe(2);
 });
 
+test.each([
+  ["HTTP", { apiUrl: "http://example.com/api" }],
+  ["credentials", { apiUrl: "https://user:pass@app.daytona.io/api" }],
+  ["query", { apiUrl: "https://app.daytona.io/api?private=1" }],
+  ["fragment", { apiUrl: "https://app.daytona.io/api#private" }],
+  ["toolbox path", { toolboxOrigin: "https://proxy.app.daytona.io/path" }],
+] as const)("%s endpoint shape is a configuration error before I/O", (_case, override) => {
+  let calls = 0;
+
+  const registration = daytonaRegistration(
+    fixtureFetch(async () => {
+      calls++;
+
+      throw new Error("provider fetch must not run");
+    }),
+  );
+
+  expect(() =>
+    registration.validate({
+      credentials: { apiKey: "secret" },
+      configuration: { target: "us", ...override },
+    }),
+  ).toThrow(z.ZodError);
+  expect(calls).toBe(0);
+});
+
 test.each([401, 403])(
   "credential verification %i is sanitized and cancels its response body",
   async (status) => {
@@ -150,6 +176,43 @@ test.each([401, 403])(
     } satisfies Partial<ProviderReadError>);
     expect(cancelled).toBe(true);
     expect(calls).toBe(1);
+  },
+);
+
+test.each([401, 403])(
+  "region authorization %i is a sanitized credential failure before mutation",
+  async (status) => {
+    let cancelled = false;
+    const calls: string[] = [];
+
+    const fetchImpl = fixtureFetch(async (input: RequestInfo | URL) => {
+      const pathname = new URL(String(input)).pathname;
+      calls.push(pathname);
+
+      if (pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.enqueue(new TextEncoder().encode("private region response"));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { status },
+      );
+    });
+
+    await expect(
+      daytonaProvider({ apiKey: "secret", target: "us", fetch: fetchImpl }),
+    ).rejects.toMatchObject({
+      name: "ProviderReadError",
+      code: "UNAUTHENTICATED",
+      message: "Daytona credential verification failed",
+    } satisfies Partial<ProviderReadError>);
+    expect(cancelled).toBe(true);
+    expect(calls).toEqual(["/api/api-keys/current", "/api/regions"]);
   },
 );
 

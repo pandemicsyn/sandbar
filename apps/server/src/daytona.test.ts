@@ -36,6 +36,7 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     snapshotReads = 0,
     limitedNetworkEgress = false,
     credentialStatus = 200,
+    regionStatus = 200,
     regionType: "shared" | "dedicated" = "shared",
     regionOwner = "org-1";
 
@@ -56,9 +57,11 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
       return Response.json({ id: account, sandboxLimitedNetworkEgress: limitedNetworkEgress });
 
     if (url.pathname === "/api/regions")
-      return Response.json([
-        { id: "us", name: "United States", regionType, organizationId: regionOwner },
-      ]);
+      return regionStatus === 200
+        ? Response.json([
+            { id: "us", name: "United States", regionType, organizationId: regionOwner },
+          ])
+        : new Response("private region detail", { status: regionStatus });
 
     if (url.pathname === "/api/snapshots/snap-1") {
       snapshotReads++;
@@ -161,6 +164,39 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     expect(untrusted.response.status).toBe(400);
     expect(calls).toHaveLength(0);
 
+    const invalidConfigurations: Record<string, string>[] = [
+      { apiUrl: "http://example.com/api", target: "us" },
+      { apiUrl: "https://user:pass@app.daytona.io/api", target: "us" },
+      { apiUrl: "https://app.daytona.io/api?private=1", target: "us" },
+      { apiUrl: "https://app.daytona.io/api#private", target: "us" },
+      { toolboxOrigin: "https://proxy.app.daytona.io/path", target: "us" },
+    ];
+
+    for (const configuration of invalidConfigurations) {
+      const invalid = await request(
+        `/v1/projects/${project.id}/provider-connections`,
+        "POST",
+        {
+          provider: "daytona",
+          name: "Invalid endpoint shape",
+          credentials: { apiKey: "private-key" },
+          configuration,
+        },
+        token,
+      );
+
+      expect(invalid.response.status).toBe(400);
+      expect(invalid.value).toEqual({
+        error: {
+          code: "INVALID_ARGUMENT",
+          message: "Invalid request",
+          effect: "none",
+          retry: "never",
+        },
+      });
+      expect(calls).toHaveLength(0);
+    }
+
     for (const [caseName, target] of [
       ["missing", "not-a-region"],
       ["foreign-dedicated", "us"],
@@ -262,6 +298,35 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
     credentialStatus = 200;
 
+    for (const status of [401, 403]) {
+      regionStatus = status;
+      const callsBeforeVerify = calls.length;
+
+      const rejected = await request(
+        `/v1/projects/${project.id}/provider-connections/${connection.id}/verify`,
+        "POST",
+        {},
+        token,
+      );
+
+      expect(rejected.response.status).toBe(401);
+      expect(rejected.value).toEqual({
+        error: {
+          code: "UNAUTHENTICATED",
+          message: "Provider credential rejected",
+          effect: "none",
+          retry: "never",
+        },
+      });
+      expect(calls.slice(callsBeforeVerify)).toEqual([
+        "GET /api/api-keys/current",
+        "GET /api/regions",
+      ]);
+      expect(creates).toBe(0);
+    }
+
+    regionStatus = 200;
+
     const verified = await request(
       `/v1/projects/${project.id}/provider-connections/${connection.id}/verify`,
       "POST",
@@ -306,6 +371,55 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     ).toContainEqual(expect.objectContaining({ id: connection.id }));
     expect(JSON.stringify(restrictedList.value)).not.toContain('"create":true');
     limitedNetworkEgress = false;
+
+    const rejectedKey = Bun.randomUUIDv7();
+
+    const rejectedAdmission = await request(
+      `/v1/projects/${project.id}/sandboxes`,
+      "POST",
+      { environment: { kind: "prepared", imageId: "snap-1" }, connectionId: connection.id },
+      token,
+      rejectedKey,
+    );
+
+    expect(rejectedAdmission.response.status).toBe(202);
+
+    const rejectedOperationId = z
+      .object({ operation: z.object({ id: z.string() }) })
+      .parse(rejectedAdmission.value).operation.id;
+
+    regionStatus = 401;
+    await runtime.runner.tick();
+
+    const rejectedOperation = await request(
+      `/v1/projects/${project.id}/operations/${rejectedOperationId}`,
+      "GET",
+      undefined,
+      token,
+    );
+
+    expect(rejectedOperation.value).toMatchObject({
+      status: "failed",
+      effect: "none",
+      error: { code: "UNAUTHENTICATED", effect: "none", retry: "never" },
+    });
+    expect(creates).toBe(0);
+    expect(snapshotReads).toBe(0);
+
+    const repeatedRejected = await request(
+      `/v1/projects/${project.id}/sandboxes`,
+      "POST",
+      { environment: { kind: "prepared", imageId: "snap-1" }, connectionId: connection.id },
+      token,
+      rejectedKey,
+    );
+
+    expect(repeatedRejected.response.status).toBe(202);
+    expect(
+      z.object({ operation: z.object({ id: z.string() }) }).parse(repeatedRejected.value).operation
+        .id,
+    ).toBe(rejectedOperationId);
+    regionStatus = 200;
 
     const admission = await request(
       `/v1/projects/${project.id}/sandboxes`,
@@ -434,6 +548,176 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
     expect(file.status).not.toBe(200);
     expect(calls.filter((call) => call.startsWith("GET /toolbox"))).toHaveLength(0);
+  } finally {
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stored Daytona endpoint trust removal terminates fresh work before provider I/O", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-daytona-trust-restart-"));
+  const keyFile = join(directory, "key");
+  const setupTokenFile = join(directory, "setup");
+  const databaseUrl = join(directory, "control.sqlite");
+
+  const pair = {
+    apiUrl: "https://private.daytona.example/api",
+    toolboxOrigin: "https://toolbox.private.daytona.example",
+  };
+
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)));
+  await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "daytona-trust-restart-setup-token");
+  await chmod(setupTokenFile, 0o600);
+
+  const calls: string[] = [];
+
+  const fetchImpl = fixtureFetch(async (input: RequestInfo | URL) => {
+    const pathname = new URL(String(input)).pathname;
+    calls.push(pathname);
+
+    if (pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (pathname === "/api/regions")
+      return Response.json([
+        { id: "us", name: "United States", regionType: "shared", organizationId: "org-1" },
+      ]);
+
+    throw new Error(`Unexpected provider request ${pathname}`);
+  });
+
+  let runtime = await openDomainRuntime({
+    databaseUrl,
+    keyFile,
+    setupTokenFile,
+    daytonaFetch: fetchImpl,
+    daytonaTrustedEndpoints: [pair],
+    startRunner: false,
+  });
+
+  const request = async (
+    path: string,
+    method: string,
+    token?: string,
+    body?: FixtureJson,
+    key?: string,
+  ) => {
+    const headers: Record<string, string> = {};
+
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    if (key) headers["Idempotency-Key"] = key;
+
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+
+    const response = await runtime.app.request(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    return { status: response.status, value: await response.json() };
+  };
+
+  try {
+    const setup = await request("/v1/setup", "POST", undefined, {
+      setupToken: "daytona-trust-restart-setup-token",
+    });
+
+    const token = z.object({ token: z.string() }).parse(setup.value).token;
+    const project = await request("/v1/projects", "POST", token, { name: "Trust restart" });
+
+    const projectId = z.object({ id: z.string() }).parse(project.value).id;
+
+    const connection = await request(
+      `/v1/projects/${projectId}/provider-connections`,
+      "POST",
+      token,
+      {
+        provider: "daytona",
+        name: "Previously trusted",
+        credentials: { apiKey: "private-key" },
+        configuration: { ...pair, target: "us" },
+      },
+    );
+
+    const connectionId = z.object({ id: z.string() }).parse(connection.value).id;
+
+    const verified = await request(
+      `/v1/projects/${projectId}/provider-connections/${connectionId}/verify`,
+      "POST",
+      token,
+      {},
+    );
+
+    expect(verified.status).toBe(200);
+    expect(calls).toEqual([
+      "/api/api-keys/current",
+      "/api/regions",
+      "/api/organizations/org-1",
+    ]);
+    await runtime.close();
+    runtime = await openDomainRuntime({
+      databaseUrl,
+      keyFile,
+      setupTokenFile,
+      daytonaFetch: fetchImpl,
+      startRunner: false,
+    });
+
+    const key = Bun.randomUUIDv7();
+
+    const body = {
+      environment: { kind: "prepared", imageId: "snapshot-1" },
+      connectionId,
+    };
+
+    const admitted = await request(`/v1/projects/${projectId}/sandboxes`, "POST", token, body, key);
+
+    expect(admitted.status).toBe(202);
+
+    const operationId = z.object({ operation: z.object({ id: z.string() }) }).parse(admitted.value)
+      .operation.id;
+
+    await runtime.runner.tick();
+
+    const operation = await request(
+      `/v1/projects/${projectId}/operations/${operationId}`,
+      "GET",
+      token,
+    );
+
+    expect(operation.value).toMatchObject({
+      status: "failed",
+      effect: "none",
+      error: { code: "INVALID_ARGUMENT", effect: "none", retry: "never" },
+    });
+    expect(JSON.stringify(operation.value)).not.toContain("private-key");
+    expect(calls).toEqual([
+      "/api/api-keys/current",
+      "/api/regions",
+      "/api/organizations/org-1",
+    ]);
+
+    const repeated = await request(`/v1/projects/${projectId}/sandboxes`, "POST", token, body, key);
+
+    expect(repeated.status).toBe(202);
+    expect(
+      z.object({ operation: z.object({ id: z.string() }) }).parse(repeated.value).operation.id,
+    ).toBe(operationId);
+
+    const db = new Database(databaseUrl, { readonly: true });
+
+    try {
+      // SAFETY: This fixture's query selects only the reservation state column.
+      const reservation = db
+        .query("SELECT state FROM reservations WHERE operation_id = ?")
+        .get(operationId) as { state: string } | null;
+
+      expect(reservation?.state).toBe("released");
+    } finally {
+      db.close();
+    }
   } finally {
     await runtime.close();
     await rm(directory, { recursive: true, force: true });

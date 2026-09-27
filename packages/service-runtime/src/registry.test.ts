@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { ProviderReadError, type ProviderDriver } from "@sandbar/provider-spi";
+import { z } from "zod";
 import type { ConnectionRow, ControlStore } from "@sandbar/store";
 import { bundledMigration, migrate, openSqliteBackend } from "@sandbar/store";
 import {
@@ -73,7 +74,13 @@ test("registry releases an owned transport on scope mismatch and keeps borrowed 
 });
 
 test("definitive connection failures before submission finish without effect; observation stays uncertain", async () => {
-  for (const failure of ["unauthenticated", "scope", "transient"] as const) {
+  for (const failure of [
+    "unauthenticated",
+    "scope",
+    "configuration",
+    "response",
+    "transient",
+  ] as const) {
     const backend = openSqliteBackend(":memory:");
     await migrate(backend, bundledMigration("sqlite"));
     const store = new (await import("@sandbar/store")).ControlStore(backend);
@@ -140,12 +147,22 @@ test("definitive connection failures before submission finish without effect; ob
 
       const registration: ProviderRegistration = {
         provider: "fake",
-        validate: (input) => input,
+        validate: (input) => {
+          if (connectFailure === "configuration")
+            throw new z.ZodError([
+              { code: "custom", path: ["configuration"], message: "private configuration" },
+            ]);
+
+          return input;
+        },
         async connect() {
           if (connectFailure === "unauthenticated")
             throw new ProviderReadError("UNAUTHENTICATED", "secret credential detail");
 
           if (connectFailure === "transient") throw new Error("temporary network error");
+
+          if (connectFailure === "response")
+            throw new z.ZodError([{ code: "custom", path: [], message: "private response" }]);
 
           return {
             driver,
@@ -179,7 +196,7 @@ test("definitive connection failures before submission finish without effect; ob
       expect(submissions).toBe(0);
       expect(afterFailure.submission_possible).toBe(0);
 
-      if (failure === "transient") {
+      if (failure === "transient" || failure === "response") {
         expect(afterFailure.status).toBe("queued");
         connectFailure = null;
         await Bun.sleep(5_100);
@@ -211,7 +228,7 @@ test("definitive connection failures before submission finish without effect; ob
         expect(releases).toBe(failure === "scope" ? 1 : 0);
       }
 
-      if (failure !== "transient") {
+      if (failure !== "transient" && failure !== "response") {
         const possible = await store.admitCreate({
           projectId: project.id,
           endpoint: "POST /sandboxes",
@@ -239,7 +256,7 @@ test("definitive connection failures before submission finish without effect; ob
       await store.close();
     }
   }
-}, 15_000);
+}, 25_000);
 
 test("runner releases an owned provider lease after an unknown mutation without replay", async () => {
   const backend = openSqliteBackend(":memory:");

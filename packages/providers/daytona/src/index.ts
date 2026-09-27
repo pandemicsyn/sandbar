@@ -87,7 +87,17 @@ type Sandbox = z.infer<typeof NativeSandbox>;
 
 type DaytonaInventoryPage = Awaited<ReturnType<ProviderDriver["inventory"]>>;
 
-function canonicalUrl(value: string): string {
+function endpointConfigurationError(field: "apiUrl" | "toolboxOrigin"): z.ZodError {
+  return new z.ZodError([
+    {
+      code: "custom",
+      path: ["configuration", field],
+      message: "Invalid Daytona endpoint configuration",
+    },
+  ]);
+}
+
+function canonicalUrl(value: string, field?: "apiUrl" | "toolboxOrigin"): string {
   const url = new URL(value);
 
   if (
@@ -97,20 +107,20 @@ function canonicalUrl(value: string): string {
     url.hash ||
     !["https:", "http:"].includes(url.protocol)
   )
-    throw new Error("Invalid Daytona endpoint");
+    throw field ? endpointConfigurationError(field) : new Error("Invalid Daytona endpoint");
 
   if (url.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
-    throw new Error("Daytona endpoint must use HTTPS");
+    throw field ? endpointConfigurationError(field) : new Error("Daytona endpoint must use HTTPS");
 
   return url.href.replace(/\/$/, "");
 }
 
 function trustedPair(pair: DaytonaEndpointPair): DaytonaEndpointPair {
-  const apiUrl = canonicalUrl(pair.apiUrl);
-  const toolboxOrigin = canonicalUrl(pair.toolboxOrigin);
+  const apiUrl = canonicalUrl(pair.apiUrl, "apiUrl");
+  const toolboxOrigin = canonicalUrl(pair.toolboxOrigin, "toolboxOrigin");
 
   if (new URL(toolboxOrigin).origin !== toolboxOrigin)
-    throw new Error("Daytona toolbox endpoint must be an origin");
+    throw endpointConfigurationError("toolboxOrigin");
 
   return { apiUrl, toolboxOrigin };
 }
@@ -148,8 +158,8 @@ function validate(input: {
     credentials: parsed.credentials,
     configuration: {
       ...parsed.configuration,
-      apiUrl: canonicalUrl(parsed.configuration.apiUrl),
-      toolboxOrigin: canonicalUrl(parsed.configuration.toolboxOrigin),
+      apiUrl: canonicalUrl(parsed.configuration.apiUrl, "apiUrl"),
+      toolboxOrigin: canonicalUrl(parsed.configuration.toolboxOrigin, "toolboxOrigin"),
     },
   };
 }
@@ -985,6 +995,12 @@ export function daytonaRegistration(
         redirect: "error",
         signal: AbortSignal.timeout(15_000),
       });
+
+      if (regionsResponse.status === 401 || regionsResponse.status === 403) {
+        await regionsResponse.body?.cancel().catch(() => undefined);
+
+        throw new ProviderReadError("UNAUTHENTICATED", "Daytona credential verification failed");
+      }
 
       if (!regionsResponse.ok) throw new Error("Daytona target verification failed");
       let regions: z.infer<typeof Region>[];

@@ -48,6 +48,12 @@ export class ProviderIdentityMismatchError extends StoreError {
   }
 }
 
+export class ProviderConfigurationError extends Error {
+  constructor() {
+    super("Stored provider configuration is no longer valid");
+  }
+}
+
 export class ProviderRegistry {
   private readonly registrations = new Map<string, ProviderRegistration>();
   constructor(
@@ -89,7 +95,15 @@ export class ProviderRegistry {
       })
       .parse(JSON.parse(plaintext));
 
-    const config = registration.validate(decoded);
+    let config: ProviderConfiguration;
+
+    try {
+      config = registration.validate(decoded);
+    } catch (error) {
+      if (error instanceof z.ZodError) throw new ProviderConfigurationError();
+
+      throw error;
+    }
 
     const result = await registration.connect({
       ...config,
