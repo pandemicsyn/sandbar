@@ -12,20 +12,29 @@ const Options = z.strictObject({
   timeoutSeconds: z.number().int().min(60).max(3600).default(300),
   endpoint: z.literal(MODAL_ENDPOINT).optional(),
 });
+
 const Credentials = z.strictObject({ tokenId: z.string().min(1), tokenSecret: z.string().min(1) });
+
 const Configuration = z.strictObject({
   appName: z.string().min(1).max(128),
   environment: z.string().min(1).max(128),
   region: z.string().min(1).max(128).optional(),
-  timeoutSeconds: z.string().regex(/^[0-9]+$/).optional(),
+  timeoutSeconds: z
+    .string()
+    .regex(/^[0-9]+$/)
+    .optional(),
 });
 
 export type ModalProviderOptions = z.input<typeof Options>;
 
 async function connectionId(appId: string, environment: string, region?: string): Promise<string> {
   const input = `${MODAL_ENDPOINT}\n${appId}\n${environment}\n${region ?? ""}`;
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input)));
-  return `modal_${Array.from(hash, x => x.toString(16).padStart(2, "0")).join("")}`;
+
+  const hash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input)),
+  );
+
+  return `modal_${Array.from(hash, (x) => x.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /**
@@ -33,18 +42,42 @@ async function connectionId(appId: string, environment: string, region?: string)
  * The SDK has no public authoritative workspace-ID reader, so this adapter
  * claims only the verified App, environment and fixed control endpoint.
  */
-async function connect(options: ModalProviderOptions, transportFactory?: () => ModalTransport, suppliedConnectionId?: string): Promise<{ driver: ModalProviderDriver; scope: NativeScope; ownership: "owned"; release: () => void }> {
+async function connect(
+  options: ModalProviderOptions,
+  transportFactory?: () => ModalTransport,
+  suppliedConnectionId?: string,
+): Promise<{
+  driver: ModalProviderDriver;
+  scope: NativeScope;
+  ownership: "owned";
+  release: () => void;
+}> {
   const parsed = Options.parse(options);
   const transport = transportFactory?.() ?? createSdkTransport(parsed);
+
   try {
     const appId = await transport.lookupApp(parsed.appName, parsed.environment);
-    if (!/^ap-[A-Za-z0-9_-]+$/.test(appId)) throw new Error("Modal app lookup returned an invalid native ID");
+
+    if (!/^ap-[A-Za-z0-9_-]+$/.test(appId))
+      throw new Error("Modal app lookup returned an invalid native ID");
+
     const scope = NativeScope.parse({
-      provider: "modal", connectionId: suppliedConnectionId ?? await connectionId(appId, parsed.environment, parsed.region),
+      provider: "modal",
+      connectionId:
+        suppliedConnectionId ?? (await connectionId(appId, parsed.environment, parsed.region)),
       resourceScope: { kind: "app", id: appId },
-      endpoint: MODAL_ENDPOINT, region: parsed.region,
+      endpoint: MODAL_ENDPOINT,
+      region: parsed.region,
     });
-    const driver = new ModalProviderDriver(scope as NativeScope & { resourceScope: { kind: "app"; id: string } }, parsed.appName, parsed.environment, parsed.timeoutSeconds * 1000, transport);
+
+    const driver = new ModalProviderDriver(
+      scope,
+      parsed.appName,
+      parsed.environment,
+      parsed.timeoutSeconds * 1000,
+      transport,
+    );
+
     return { driver, scope, ownership: "owned", release: () => driver.close() };
   } catch (error) {
     transport.close();
@@ -52,27 +85,54 @@ async function connect(options: ModalProviderOptions, transportFactory?: () => M
   }
 }
 
-export async function modalProvider(options: ModalProviderOptions, injectedTransport?: ModalTransport) {
+export async function modalProvider(
+  options: ModalProviderOptions,
+  injectedTransport?: ModalTransport,
+) {
   return connect(options, injectedTransport ? () => injectedTransport : undefined);
 }
 
 /** Structural registry factory: the portable package does not import service-runtime. */
-export function createModalRegistration(transportFactory?: (options: ModalProviderOptions) => ModalTransport) {
-  const validate = (input: { credentials: Record<string, string>; configuration: Record<string, string> }) => ({
-    credentials: Credentials.parse(input.credentials), configuration: Configuration.parse(input.configuration),
+export function createModalRegistration(
+  transportFactory?: (options: ModalProviderOptions) => ModalTransport,
+) {
+  const validate = (input: {
+    credentials: Record<string, string>;
+    configuration: Record<string, string>;
+  }) => ({
+    credentials: Credentials.parse(input.credentials),
+    configuration: Configuration.parse(input.configuration),
   });
+
   return {
     provider: "modal" as const,
     validate,
-    async connect(input: { connectionId: string; credentials: Record<string, string>; configuration: Record<string, string> }) {
+    async connect(input: {
+      connectionId: string;
+      credentials: Record<string, string>;
+      configuration: Record<string, string>;
+    }) {
       const validated = validate(input);
       const { timeoutSeconds, ...configuration } = validated.configuration;
-      const options = { ...validated.credentials, ...configuration, ...(timeoutSeconds === undefined ? {} : { timeoutSeconds: Number(timeoutSeconds) }) };
-      return connect(options, transportFactory ? () => transportFactory(options) : undefined, input.connectionId);
+
+      const options: ModalProviderOptions = {
+        ...validated.credentials,
+        ...configuration,
+      };
+
+      if (timeoutSeconds !== undefined) options.timeoutSeconds = Number(timeoutSeconds);
+
+      return connect(
+        options,
+        transportFactory ? () => transportFactory(options) : undefined,
+        input.connectionId,
+      );
     },
   };
 }
+
 export const modalRegistration = createModalRegistration();
 
 export { ModalProviderDriver } from "./driver";
+
 export { MODAL_ENDPOINT, type ModalTransport } from "./transport";

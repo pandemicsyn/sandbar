@@ -28,16 +28,23 @@ export interface ModalTransport {
     timeoutMs: number;
     regions?: string[];
   }): Promise<string>;
-  findByName(appName: string, environment: string, name: string): Promise<ModalSandboxRecord | null>;
+  findByName(
+    appName: string,
+    environment: string,
+    name: string,
+  ): Promise<ModalSandboxRecord | null>;
   list(appId: string): AsyncIterable<ModalSandboxRecord>;
   terminate(sandboxId: string): Promise<boolean>;
   readBytes(sandboxId: string, path: string, maxBytes: number): Promise<Uint8Array>;
   close(): void;
 }
 
-export const noRetryGrpcMiddleware: NonNullable<ModalClientParams["grpcMiddleware"]>[number] = async function* (call, options) {
-  return yield* call.next(call.request, { ...options, retries: 0 } as typeof options);
-};
+export const noRetryGrpcMiddleware: NonNullable<ModalClientParams["grpcMiddleware"]>[number] =
+  async function* (call, options) {
+    // SAFETY: the SDK middleware accepts an internal retries override at runtime;
+    // its public type omits that field, and the loopback fixture verifies one attempt.
+    return yield* call.next(call.request, { ...options, retries: 0 } as typeof options);
+  };
 
 /**
  * Modal 0.10.1's public grpcMiddleware is outside its built-in retry middleware.
@@ -57,66 +64,114 @@ export function createSdkTransport(input: {
     maxThrottleWaitSecs: 0,
     grpcMiddleware: [noRetryGrpcMiddleware],
   });
+
   if (client.version() !== "0.10.1" || client.profile.serverUrl !== MODAL_ENDPOINT) {
     client.close();
     throw new Error("Modal SDK version or endpoint differs from the audited 0.10.1 transport");
   }
 
   const apps = new Map<string, App>();
+
   async function appFor(appId: string): Promise<App> {
     const app = apps.get(appId);
+
     if (!app) throw new Error("Modal app was not verified by this transport");
+
     return app;
   }
+
   async function record(sandbox: Sandbox): Promise<ModalSandboxRecord> {
-    return { id: sandbox.sandboxId, tags: await sandbox.getTags(), running: (await sandbox.poll()) === null };
+    return {
+      id: sandbox.sandboxId,
+      tags: await sandbox.getTags(),
+      running: (await sandbox.poll()) === null,
+    };
   }
 
   return {
     async lookupApp(appName, environment) {
       const app = await client.apps.fromName(appName, { environment, createIfMissing: false });
-      if (!app.appId || app.name !== appName || app.environmentName !== environment) throw new Error("Modal app lookup returned mismatched identity");
+
+      if (!app.appId || app.name !== appName || app.environmentName !== environment)
+        throw new Error("Modal app lookup returned mismatched identity");
       apps.set(app.appId, app);
+
       return app.appId;
     },
     async imageExists(imageId) {
-      try { const image = await client.images.fromId(imageId); return image.imageId === imageId; }
-      catch (error) { if (error instanceof NotFoundError) return false; throw error; }
+      try {
+        const image = await client.images.fromId(imageId);
+
+        return image.imageId === imageId;
+      } catch (error) {
+        if (error instanceof NotFoundError) return false;
+        throw error;
+      }
     },
     async create({ appId, imageId, name, tags, timeoutMs, regions }) {
       const image = await client.images.fromId(imageId);
+
       if (image.imageId !== imageId) throw new Error("Modal image identity mismatch");
+
       const sandbox = await client.sandboxes.experimentalCreate(await appFor(appId), image, {
-        name, tags, timeoutMs, regions, blockNetwork: true,
+        name,
+        tags,
+        timeoutMs,
+        regions,
+        blockNetwork: true,
       });
+
       if (!sandbox.sandboxId) throw new Error("Modal create returned no sandbox ID");
+
       return sandbox.sandboxId;
     },
     async findByName(appName, environment, name) {
-      try { return await record(await client.sandboxes.experimentalFromName(appName, name, { environment })); }
-      catch (error) { if (error instanceof NotFoundError) return null; throw error; }
+      try {
+        return await record(
+          await client.sandboxes.experimentalFromName(appName, name, { environment }),
+        );
+      } catch (error) {
+        if (error instanceof NotFoundError) return null;
+        throw error;
+      }
     },
     async *list(appId) {
-      for await (const sandbox of client.sandboxes.experimentalList({ appId })) yield await record(sandbox);
+      for await (const sandbox of client.sandboxes.experimentalList({ appId }))
+        yield await record(sandbox);
     },
     async terminate(sandboxId) {
       const sandbox = await client.sandboxes.fromId(sandboxId);
       await sandbox.terminate({ wait: true });
+
       return (await sandbox.poll()) !== null;
     },
     async readBytes(sandboxId, path, maxBytes) {
       const sandbox = await client.sandboxes.fromId(sandboxId);
+
       try {
         const info = await sandbox.filesystem.stat(path);
-        if (info.type !== "file" || !Number.isSafeInteger(info.size) || info.size < 0 || info.size > maxBytes) throw new Error("Modal file is not a bounded regular file");
+
+        if (
+          info.type !== "file" ||
+          !Number.isSafeInteger(info.size) ||
+          info.size < 0 ||
+          info.size > maxBytes
+        )
+          throw new Error("Modal file is not a bounded regular file");
         const bytes = await sandbox.filesystem.readBytes(path);
-        if (!(bytes instanceof Uint8Array) || bytes.length > maxBytes) throw new Error("Modal file exceeded bounded read size");
+
+        if (!(bytes instanceof Uint8Array) || bytes.length > maxBytes)
+          throw new Error("Modal file exceeded bounded read size");
+
         return bytes;
       } catch (error) {
-        if (error instanceof SandboxFilesystemNotFoundError) throw new ProviderReadError("NOT_FOUND", "Modal file not found");
+        if (error instanceof SandboxFilesystemNotFoundError)
+          throw new ProviderReadError("NOT_FOUND", "Modal file not found");
         throw error;
       }
     },
-    close() { client.close(); },
+    close() {
+      client.close();
+    },
   };
 }

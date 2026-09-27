@@ -2,10 +2,16 @@
   "name": "@sandbar/provider-modal",
   "version": "0.0.0",
   "private": true,
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "type": "module",
-  "files": ["dist", "README.md"],
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
