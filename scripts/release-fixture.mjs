@@ -162,6 +162,7 @@ try {
   run("git", ["tag", "v0.1.1"]);
   rmSync(stableArtifacts, { recursive: true, force: true });
   run("bun", ["scripts/release.mjs", "dry-run"], temporary, { RELEASE_ARTIFACTS: stableArtifacts });
+  run("bun", ["run", "build:packages"]);
 
   const qualified = JSON.parse(
     readFileSync(join(stableArtifacts, "release-metadata.json"), "utf8"),
