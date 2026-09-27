@@ -12,7 +12,7 @@ For a locally authorized Modal run, use a borrowed, existing prepared `im-*` ima
 SANDBAR_QUAL_PROVIDER=modal \
 SANDBAR_QUAL_LIVE_AUTHORIZED=yes \
 SANDBAR_QUAL_LEDGER_DIR=/absolute/stable/private/qualification-ledgers \
-SANDBAR_QUAL_EVIDENCE_REF=specs/provider-evidence/modal-run-1.md \
+SANDBAR_QUAL_EVIDENCE_REF=https://github.com/pandemicsyn/sandbar/blob/main/specs/provider-evidence/modal-run-1.md \
 SANDBAR_MODAL_APP=existing-app \
 SANDBAR_MODAL_ENVIRONMENT=main \
 SANDBAR_MODAL_REGION=chosen-region \
