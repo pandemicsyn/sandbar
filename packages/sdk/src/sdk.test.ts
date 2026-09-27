@@ -300,6 +300,22 @@ test("direct imported recovery strips nested secrets and ignores later caller ch
   expect(recovered.reference.sandbox?.scope).toEqual(provider.scope);
 });
 
+test("direct observation failure retains its recovery reference", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  provider.driver.observe = async () => { throw new TypeError("provider response lost"); };
+  const client = DirectSandbar.direct({ provider });
+  const reference: RecoveryReference = {
+    version: 1, mode: "direct", kind: "create",
+    invocationKey: "0199f92e-1234-7000-8000-000000000001",
+    operationId: "op_1", submissionId: "sid_1", scope: provider.scope,
+  };
+  const operation = await client.recover(reference);
+  await expect(operation.observe()).rejects.toMatchObject({
+    code: "OUTCOME_UNKNOWN", reference: operation.reference,
+  });
+});
+
 test("remote lost acceptance is resolved by invocation lookup under one key", async () => {
   let posts = 0;
   let key = "";

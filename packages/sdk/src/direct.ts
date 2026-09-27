@@ -27,7 +27,12 @@ class DirectOperation<T> implements OperationHandle<T> {
       return this.settled.value;
     }
     const initialResponse = this.first !== undefined;
-    const raw = this.first ?? await this.client.driver.observe({ scope: this.reference.scope!, submissionId: this.reference.submissionId! });
+    let raw: DriverResult | null;
+    try {
+      raw = this.first ?? await this.client.driver.observe({ scope: this.reference.scope!, submissionId: this.reference.submissionId! });
+    } catch {
+      throw new OutcomeUnknownError(this.reference, "Provider observation failed after submission; observe without replay");
+    }
     this.client.ensureOpen();
     this.first = undefined;
     if (!raw) throw new OutcomeUnknownError(this.reference, "Provider has no observation for this submission; resubmission is unsafe");
