@@ -92,6 +92,7 @@ test("endpoint pairs must be explicitly trusted before forwarding an API key", a
 test("verified direct scope, read-only preparation, one create, exact binary execution and files", async () => {
   const calls: string[] = [];
   let createdName = "";
+  let snapshotReads = 0;
 
   const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -100,7 +101,11 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
 
     if (url.pathname === "/api/api-keys/current") return json({ organizationId: "org-1" });
 
-    if (url.pathname === "/api/snapshots/snap-1")
+    if (url.pathname === "/api/snapshots/snap-1") {
+      snapshotReads++;
+
+      if (snapshotReads > 1) throw new Error("snapshot was checked after submission");
+
       return json({
         id: "snap-1",
         organizationId: "org-1",
@@ -108,6 +113,7 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
         regionIds: ["us"],
         sandboxClass: "linux-vm",
       });
+    }
 
     if (url.pathname === "/api/sandbox" && init?.method === "POST") {
       createdName = z.object({ name: z.string() }).parse(JSON.parse(String(init.body))).name;
@@ -161,6 +167,7 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
   await sandbox.writeFile("/file", new Uint8Array([0, 255]), { overwrite: true });
   await sandbox.destroy();
   expect(calls.filter((value) => value === "POST /api/sandbox")).toHaveLength(1);
+  expect(snapshotReads).toBe(1);
   expect(calls.filter((value) => value.endsWith("/process/execute"))).toHaveLength(1);
   expect(calls.filter((value) => value.endsWith("/files/upload-v2"))).toHaveLength(1);
   await client.close();
@@ -276,6 +283,11 @@ test("unsupported OCI and no-overwrite reject before mutation", async () => {
       })
     ).supported,
   ).toBe(false);
+  const client = Sandbar.direct({ provider });
+  await expect(
+    client.sandboxes.create({ environment: { kind: "oci", value: "alpine:latest" } }),
+  ).rejects.toThrow();
+  await client.close();
 
   const write = await provider.driver.writeFile({
     sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },

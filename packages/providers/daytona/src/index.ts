@@ -422,23 +422,7 @@ export class DaytonaDriver implements ProviderDriver {
         },
       };
 
-    const preparation = await this.prepare({
-      scope: input.scope,
-      image: { kind: "prepared", value: input.image },
-      networkPolicy: input.networkPolicy,
-    });
-
-    if (!preparation.supported)
-      return {
-        status: "rejected",
-        effect: "none",
-        error: {
-          code: "unsupported",
-          message: preparation.reason ?? "Snapshot unsupported",
-          effect: "none",
-          retry: "never",
-        },
-      };
+    // The caller prepares this effective snapshot before recording submission.
     const name = `sandbar-${input.identity.submissionId}`;
 
     try {

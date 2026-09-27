@@ -31,7 +31,8 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
   await chmod(setupTokenFile, 0o600);
 
   let account = "org-1",
-    creates = 0;
+    creates = 0,
+    snapshotReads = 0;
 
   const calls: string[] = [];
 
@@ -41,7 +42,11 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: account });
 
-    if (url.pathname === "/api/snapshots/snap-1")
+    if (url.pathname === "/api/snapshots/snap-1") {
+      snapshotReads++;
+
+      if (snapshotReads > 1) throw new Error("snapshot was checked after durable submission");
+
       return Response.json({
         id: "snap-1",
         organizationId: account,
@@ -49,6 +54,7 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
         regionIds: ["us"],
         sandboxClass: "linux-vm",
       });
+    }
 
     if (url.pathname === "/api/sandbox" && init?.method === "POST") {
       creates++;
@@ -200,6 +206,7 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
     expect(z.object({ status: z.string() }).parse(operation).status).toBe("succeeded");
     expect(creates).toBe(1);
+    expect(snapshotReads).toBe(1);
     account = "org-2";
 
     const file = await runtime.app.request(
