@@ -76,6 +76,12 @@ function safeError(code: string, message: string, effect: "none" | "possible" = 
 }
 
 function errorResponse(c: Context, error: Error | z.ZodError): Response {
+  if (error instanceof ProviderReadError && error.code === "UNAUTHENTICATED")
+    return c.json(
+      ErrorResponse.parse({ error: safeError("UNAUTHENTICATED", "Provider credential rejected") }),
+      401,
+    );
+
   if (error instanceof ProviderReadError && error.code === "NOT_FOUND")
     return c.json(
       ErrorResponse.parse({ error: safeError("NOT_FOUND", "Provider file not found") }),

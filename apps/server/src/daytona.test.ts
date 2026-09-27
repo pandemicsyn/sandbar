@@ -34,7 +34,8 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
   let account = "org-1",
     creates = 0,
     snapshotReads = 0,
-    limitedNetworkEgress = false;
+    limitedNetworkEgress = false,
+    credentialStatus = 200;
 
   let createdState = "started";
 
@@ -44,7 +45,10 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     const url = new URL(String(input));
     calls.push(`${init?.method ?? "GET"} ${url.pathname}`);
 
-    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: account });
+    if (url.pathname === "/api/api-keys/current")
+      return credentialStatus === 200
+        ? Response.json({ organizationId: account })
+        : new Response("private-key sensitive provider detail", { status: credentialStatus });
 
     if (url.pathname === `/api/organizations/${account}`)
       return Response.json({ id: account, sandboxLimitedNetworkEgress: limitedNetworkEgress });
@@ -177,6 +181,36 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     const connection = z.object({ id: z.string() }).parse(created.value);
     const row = await runtime.store.getConnection(project.id, connection.id);
     expect(row?.encrypted_credentials).not.toContain("private-key");
+
+    for (const status of [401, 403]) {
+      credentialStatus = status;
+      const callsBeforeVerify = calls.length;
+
+      const rejected = await request(
+        `/v1/projects/${project.id}/provider-connections/${connection.id}/verify`,
+        "POST",
+        {},
+        token,
+      );
+
+      expect(rejected.response.status).toBe(401);
+      expect(rejected.value).toEqual({
+        error: {
+          code: "UNAUTHENTICATED",
+          message: "Provider credential rejected",
+          effect: "none",
+          retry: "never",
+        },
+      });
+      expect(JSON.stringify(rejected.value)).not.toContain("private-key");
+      expect((await runtime.store.getConnection(project.id, connection.id))?.status).toBe(
+        "unverified",
+      );
+      expect(calls.slice(callsBeforeVerify)).toEqual(["GET /api/api-keys/current"]);
+      expect(creates).toBe(0);
+    }
+
+    credentialStatus = 200;
 
     const verified = await request(
       `/v1/projects/${project.id}/provider-connections/${connection.id}/verify`,

@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
+import type { ExecCommand } from "@sandbar/contracts";
 import { daytonaProvider, daytonaRegistration } from "./index";
 import { NonzeroExitError, Sandbar } from "@sandbar/sdk/direct";
+import { ProviderReadError } from "@sandbar/provider-spi";
 
 function fixtureFetch(
   handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
@@ -115,6 +117,41 @@ test("endpoint pairs must be explicitly trusted before forwarding an API key", a
   ).rejects.toThrow("not trusted");
   expect(calls).toBe(2);
 });
+
+test.each([401, 403])(
+  "credential verification %i is sanitized and cancels its response body",
+  async (status) => {
+    let cancelled = false;
+    let calls = 0;
+
+    const fetchImpl = fixtureFetch(async (input: RequestInfo | URL) => {
+      calls++;
+      expect(new URL(String(input)).pathname).toBe("/api/api-keys/current");
+
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.enqueue(new TextEncoder().encode("sensitive provider body"));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { status },
+      );
+    });
+
+    await expect(
+      daytonaProvider({ apiKey: "secret", target: "us", fetch: fetchImpl }),
+    ).rejects.toMatchObject({
+      name: "ProviderReadError",
+      code: "UNAUTHENTICATED",
+      message: "Daytona credential verification failed",
+    } satisfies Partial<ProviderReadError>);
+    expect(cancelled).toBe(true);
+    expect(calls).toBe(1);
+  },
+);
 
 test.each([
   ["name only", "United States", [region()], 200],
@@ -838,4 +875,100 @@ test("POSIX capture wrapper drains a noisy command while retaining only bounded 
     expect(Buffer.from(result.value.observation.stdoutBase64!, "base64").length).toBe(16);
     expect(result.value.observation.truncated).toBe(true);
   }
+});
+
+test("generated capture wrapper isolates utilities from requested PATH and preserves command environment", async () => {
+  let posts = 0;
+
+  const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
+
+    if (url.pathname === "/api/sandbox/native-1") return Response.json(native("sandbar-existing"));
+
+    if (url.pathname.endsWith("/process/execute")) {
+      posts++;
+
+      const body = z
+        .object({ command: z.string(), envs: z.never().optional() })
+        .parse(JSON.parse(String(init?.body)));
+
+      const execution = spawnSync("sh", ["-c", body.command], {
+        encoding: "utf8",
+        timeout: 10_000,
+        maxBuffer: 8192,
+      });
+
+      expect(execution.error).toBeUndefined();
+
+      return Response.json({ exitCode: execution.status, result: execution.stdout });
+    }
+
+    throw new Error(`Unexpected ${url.pathname}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+
+  const cases: {
+    command: ExecCommand;
+    env: Record<string, string>;
+    expected: Buffer;
+    exitCode: number;
+  }[] = [
+    {
+      command: { kind: "shell" as const, script: "/usr/bin/printf '%s\\000\\377' \"$VALUE\"" },
+      env: { PATH: "", VALUE: "a'b;$(printf injected)" },
+      expected: Buffer.concat([Buffer.from("a'b;$(printf injected)"), Buffer.from([0, 255])]),
+      exitCode: 0,
+    },
+    {
+      command: { kind: "argv" as const, argv: ["/usr/bin/printf", "%s", "a'b;$(printf injected)"] },
+      env: { PATH: "" },
+      expected: Buffer.from("a'b;$(printf injected)"),
+      exitCode: 0,
+    },
+    {
+      command: { kind: "argv" as const, argv: ["printf", "%s", "custom-path"] },
+      env: { PATH: "/usr/bin:/bin" },
+      expected: Buffer.from("custom-path"),
+      exitCode: 0,
+    },
+    {
+      command: { kind: "argv" as const, argv: ["printf", "%s", "must-not-run"] },
+      env: { PATH: "/no/such/directory" },
+      expected: Buffer.alloc(0),
+      exitCode: 127,
+    },
+  ];
+
+  for (const [index, scenario] of cases.entries()) {
+    const result = await provider.driver.exec({
+      sandbox,
+      identity: identity(`path-${index}`),
+      command: scenario.command,
+      env: scenario.env,
+      deadlineSeconds: 10,
+      maxOutputBytes: 1024,
+    });
+
+    expect(result.status).toBe("completed");
+
+    if (result.status === "completed" && result.value.kind === "execution") {
+      if (result.value.observation.exitCode !== scenario.exitCode)
+        throw new Error(
+          `Case ${index}: ${Buffer.from(result.value.observation.stderrBase64 ?? "", "base64").toString()}`,
+        );
+
+      expect(result.value.observation.exitCode).toBe(scenario.exitCode);
+      expect(
+        Array.from(Buffer.from(result.value.observation.stdoutBase64 ?? "", "base64")),
+      ).toEqual(Array.from(scenario.expected));
+    }
+  }
+
+  expect(posts).toBe(cases.length);
 });

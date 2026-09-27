@@ -10,7 +10,7 @@ import {
   type SandboxRef,
   type ProviderDriver,
 } from "@sandbar/provider-spi";
-import type { ExecCommand } from "@sandbar/contracts";
+import { ExecRequest, type ExecCommand } from "@sandbar/contracts";
 
 // Daytona API and toolbox OpenAPI v0.218; see README for the pinned sources.
 const CurrentKey = z.object({ organizationId: z.string().min(1) });
@@ -661,20 +661,38 @@ export class DaytonaDriver implements ProviderDriver {
       };
     }
 
+    const requestedEnv = ExecRequest.shape.env.parse(input.env) ?? {};
+
+    if (Object.values(requestedEnv).some((value) => value.includes("\0")))
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code: "invalid",
+          message: "Daytona command environment contains an unsupported NUL byte",
+          effect: "none",
+          retry: "never",
+        },
+      };
+
+    const exports = Object.entries(requestedEnv)
+      .map(([name, value]) => `${name}=${quote(value)}; export ${name};`)
+      .join(" ");
+
     const command =
       input.command.kind === "shell"
-        ? `sh -c ${quote(input.command.script)}`
+        ? `/bin/sh -c ${quote(input.command.script)}`
         : `exec ${input.command.argv.map(quote).join(" ")}`;
 
     const max = Math.min(input.maxOutputBytes, 1_048_576);
-    const script = `d=$(mktemp -d) || exit 125; trap 'rm -rf "$d"' EXIT; mkfifo "$d/fo" "$d/fe" || exit 125; (exec 3<"$d/fo"; head -c ${max + 1} <&3 >"$d/o"; cat <&3 >/dev/null) & p1=$!; (exec 3<"$d/fe"; head -c ${max + 1} <&3 >"$d/e"; cat <&3 >/dev/null) & p2=$!; (${command}) >"$d/fo" 2>"$d/fe"; rc=$?; wait "$p1"; wait "$p2"; o=$(wc -c <"$d/o"); e=$(wc -c <"$d/e"); o=$((o)); e=$((e)); a=$((o<${max}?o:${max})); b=$((e<${max}-a?e:${max}-a)); printf 'SANDBAR-EXEC-V1\\n%s\\n%s\\n%s\\n' "$rc" "$o" "$e"; if [ "$a" -gt 0 ]; then head -c "$a" "$d/o" | od -An -tx1 -v; fi; printf 'SANDBAR-STDERR\\n'; if [ "$b" -gt 0 ]; then head -c "$b" "$d/e" | od -An -tx1 -v; fi; printf 'SANDBAR-END\\n'`;
+    const script = `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PATH; d=$(mktemp -d) || exit 125; trap 'rm -rf "$d"' EXIT; mkfifo "$d/fo" "$d/fe" || exit 125; (exec 3<"$d/fo"; head -c ${max + 1} <&3 >"$d/o"; cat <&3 >/dev/null) & p1=$!; (exec 3<"$d/fe"; head -c ${max + 1} <&3 >"$d/e"; cat <&3 >/dev/null) & p2=$!; (${exports} ${command}) >"$d/fo" 2>"$d/fe"; rc=$?; wait "$p1"; wait "$p2"; o=$(wc -c <"$d/o"); e=$(wc -c <"$d/e"); o=$((o)); e=$((e)); a=$((o<${max}?o:${max})); b=$((e<${max}-a?e:${max}-a)); printf 'SANDBAR-EXEC-V1\\n%s\\n%s\\n%s\\n' "$rc" "$o" "$e"; if [ "$a" -gt 0 ]; then head -c "$a" "$d/o" | od -An -tx1 -v; fi; printf 'SANDBAR-STDERR\\n'; if [ "$b" -gt 0 ]; then head -c "$b" "$d/e" | od -An -tx1 -v; fi; printf 'SANDBAR-END\\n'`;
 
     try {
       const response = await this.json(
         "POST",
         `/process/execute`,
         CommandResponse,
-        { command: script, cwd: input.cwd, envs: input.env, timeout: input.deadlineSeconds },
+        { command: script, cwd: input.cwd, timeout: input.deadlineSeconds },
         native,
         (input.deadlineSeconds + 10) * 1000,
       );
@@ -934,6 +952,12 @@ export function daytonaRegistration(
           signal: AbortSignal.timeout(15_000),
         },
       );
+
+      if (response.status === 401 || response.status === 403) {
+        await response.body?.cancel().catch(() => undefined);
+
+        throw new ProviderReadError("UNAUTHENTICATED", "Daytona credential verification failed");
+      }
 
       if (!response.ok) throw new Error("Daytona credential verification failed");
       const key = await boundedJson(response, CurrentKey, 16_384);
