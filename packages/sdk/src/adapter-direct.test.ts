@@ -253,6 +253,68 @@ test("pending observation completes without replay and saved reference reopens",
   await reopened.close();
 });
 
+test("recovery accepts reordered distinct Unicode partition keys without resubmission", async () => {
+  let submissions = 0;
+  const composed = "é";
+  const decomposed = "e\u0301";
+
+  const adapter = defineAdapter({
+    name: "example.unicode-scope",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: {
+          authority: { kind: "account", id: "one" },
+          partition: { [composed]: "same", [decomposed]: "same" },
+        },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
+          async submit(_input, ctx) {
+            submissions++;
+
+            return ctx.pending({ jobId: "job-1" });
+          },
+          async observe() {
+            return { id: "box-1", state: "running" };
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const operation = await client.sandboxes.submitCreate({ environment: Image.prepared("image") });
+  const reference = structuredClone(operation.reference);
+
+  const reordered = {
+    ...reference,
+    scope: {
+      ...reference.scope,
+      partition: Object.fromEntries(Object.entries(reference.scope.partition).reverse()),
+    },
+  };
+
+  expect((await client.recover(reordered)).reference.scope.partition).toEqual(
+    reordered.scope.partition,
+  );
+  expect(submissions).toBe(1);
+  await expect(
+    client.recover({
+      ...reordered,
+      scope: {
+        ...reordered.scope,
+        partition: { ...reordered.scope.partition, [composed]: "other" },
+      },
+    }),
+  ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await client.close();
+});
+
 test("provider observation failures retain possible effect and permit read-only retry", async () => {
   for (const failure of ["CONFLICT", "INVALID_ARGUMENT", "rejected"] as const) {
     let submits = 0;

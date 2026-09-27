@@ -70,7 +70,7 @@ function canonicalScope(scope: Scope): string {
   return JSON.stringify({
     authority: scope.authority,
     partition: Object.fromEntries(
-      Object.entries(scope.partition).sort(([a], [b]) => a.localeCompare(b)),
+      Object.entries(scope.partition).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
     ),
   });
 }

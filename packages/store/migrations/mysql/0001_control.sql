@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS sandboxes (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
   project_id varchar(128) COLLATE utf8mb4_bin NOT NULL,
   connection_id varchar(128) COLLATE utf8mb4_bin NOT NULL,
-  native_id varchar(255) COLLATE utf8mb4_bin,
+  native_id varchar(512) COLLATE utf8mb4_bin,
   desired_state varchar(32) NOT NULL,
   observed_state varchar(32) NOT NULL,
   observed_at bigint,

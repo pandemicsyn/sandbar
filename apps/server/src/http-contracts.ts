@@ -324,8 +324,8 @@ export const ProviderName = z
 export const CreateProviderConnectionRequest = z.strictObject({
   provider: ProviderName,
   name: z.string().min(1).max(120),
-  credentials: z.record(z.string(), z.json()).optional(),
-  configuration: z.record(z.string(), z.json()).optional(),
+  credentials: z.json().optional(),
+  configuration: z.json().optional(),
 });
 
 export const ProviderConnection = z.object({

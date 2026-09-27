@@ -333,3 +333,119 @@ test("transformed adapter inputs remain raw in encrypted service connections", a
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("service accepts scalar, array, and explicit null adapter inputs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-json-connection-"));
+  const keyFile = join(directory, "key");
+  const setupTokenFile = join(directory, "setup");
+  const databaseUrl = join(directory, "control.sqlite");
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)));
+  await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "long-json-connection-setup-token");
+  await chmod(setupTokenFile, 0o600);
+
+  const seen: [string | string[] | null, string | string[] | null][] = [];
+
+  const values: [string | string[] | null, string | string[] | null][] = [
+    ["us", "secret"],
+    [["us"], ["secret"]],
+    [null, null],
+  ];
+
+  const inputSchema = z.union([z.string(), z.array(z.string()), z.null()]);
+
+  const adapter = defineAdapter({
+    name: "example.json-values",
+    config: inputSchema,
+    credentials: inputSchema,
+    async connect({ config, credentials }) {
+      seen.push([config, credentials]);
+
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          return { id: "box", state: "running" as const };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  for (const [config, credentials] of values) {
+    const client = await Sandbar.connect({ adapter, config, credentials });
+
+    await client.close();
+  }
+
+  expect(seen).toEqual(values);
+
+  const options = { databaseUrl, keyFile, setupTokenFile, startRunner: false, adapters: [adapter] };
+  let runtime = await openDomainRuntime(options);
+  let bearer = "";
+
+  const request = async (path: string, body: z.infer<ReturnType<typeof z.json>>) => {
+    const headers = new Headers({ "Content-Type": "application/json" });
+
+    if (bearer) headers.set("Authorization", `Bearer ${bearer}`);
+
+    const response = await runtime.app.request(path, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    return { status: response.status, body: await response.json() };
+  };
+
+  try {
+    const setup = await request("/v1/setup", { setupToken: "long-json-connection-setup-token" });
+
+    bearer = setup.body.token;
+
+    const project = await request("/v1/projects", { name: "JSON Values" });
+    const projectId = String(project.body.id);
+    const connectionIds: string[] = [];
+
+    for (const [configuration, credentials] of values) {
+      const created = await request(`/v1/projects/${projectId}/provider-connections`, {
+        provider: "example.json-values",
+        name: "JSON Values",
+        configuration,
+        credentials,
+      });
+
+      expect(created.status).toBe(201);
+      connectionIds.push(String(created.body.id));
+    }
+
+    const invalid = await request(`/v1/projects/${projectId}/provider-connections`, {
+      provider: "example.json-values",
+      name: "Invalid",
+      configuration: 42,
+      credentials: "secret",
+    });
+
+    expect(invalid.status).toBe(400);
+    expect(seen).toHaveLength(3);
+
+    await runtime.close();
+    runtime = await openDomainRuntime(options);
+
+    for (const connectionId of connectionIds) {
+      const verified = await request(
+        `/v1/projects/${projectId}/provider-connections/${connectionId}/verify`,
+        {},
+      );
+
+      expect(verified.status).toBe(200);
+    }
+
+    expect(seen.slice(3)).toEqual(values);
+  } finally {
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

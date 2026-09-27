@@ -38,7 +38,9 @@ export function storedScope(scope: NativeScope): string {
     adapterScope: scope.adapterScope && {
       authority: scope.adapterScope.authority,
       partition: Object.fromEntries(
-        Object.entries(scope.adapterScope.partition).sort(([a], [b]) => a.localeCompare(b)),
+        Object.entries(scope.adapterScope.partition).sort(([a], [b]) =>
+          a < b ? -1 : a > b ? 1 : 0,
+        ),
       ),
     },
   });

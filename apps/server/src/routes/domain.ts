@@ -624,8 +624,8 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       const id = `conn_${crypto.randomUUID().replaceAll("-", "")}`;
 
       const raw = structuredClone({
-        credentials: body.credentials ?? {},
-        configuration: body.configuration ?? {},
+        credentials: body.credentials === undefined ? {} : body.credentials,
+        configuration: body.configuration === undefined ? {} : body.configuration,
       });
 
       deps.registry?.validate(body.provider, structuredClone(raw));

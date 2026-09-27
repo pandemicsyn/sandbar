@@ -60,7 +60,7 @@ export function formObject(
   if (!fields) {
     const parsed: unknown = JSON.parse(fallback);
 
-    return z.record(z.string(), z.json()).parse(parsed);
+    return z.json().parse(parsed);
   }
 
   const result: JsonObject = {};
@@ -113,8 +113,8 @@ export function SchemaFields({
         label={secret ? "Credentials JSON" : "Configuration JSON"}
         hint={
           secret
-            ? "Paste a JSON object. This field is masked and cleared after submission."
-            : "This provider uses a complex schema. Enter a JSON object."
+            ? "Paste a JSON value. This field is masked and cleared after submission."
+            : "This provider uses a complex schema. Enter a JSON value."
         }
         htmlFor={`${prefix}-json`}
       >

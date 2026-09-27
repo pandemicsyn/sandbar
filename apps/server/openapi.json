@@ -2610,22 +2610,10 @@
             "maxLength": 120
           },
           "credentials": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/definitions/__schema0"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
+            "$ref": "#/definitions/__schema0"
           },
           "configuration": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/definitions/__schema1"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
+            "$ref": "#/definitions/__schema1"
           }
         },
         "required": ["provider", "name"],

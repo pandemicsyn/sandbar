@@ -74,7 +74,7 @@ export const sandboxes = mysqlTable(
     connectionId: id("connection_id")
       .notNull()
       .references(() => providerConnections.id),
-    nativeId: varchar("native_id", { length: 255 }),
+    nativeId: varchar("native_id", { length: 512 }),
     desiredState: varchar("desired_state", { length: 32 }).notNull(),
     observedState: varchar("observed_state", { length: 32 }).notNull(),
     observedAt: ms("observed_at"),
