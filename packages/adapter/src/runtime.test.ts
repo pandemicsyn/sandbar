@@ -6,6 +6,8 @@ import {
   observeOperation,
   prepareOperation,
   submitOperation,
+  type ExecInput,
+  type FileWriteInput,
 } from "./index";
 
 const signal = new AbortController().signal;
@@ -48,6 +50,7 @@ test("unsupported create fails before preparation or provider mutation", async (
 
 test("advanced preparation validates portable limits before provider hooks", async () => {
   let preparations = 0;
+
   const session = {
     scope: { authority: { kind: "account", id: "a" }, partition: {} },
     supports: {
@@ -59,6 +62,7 @@ test("advanced preparation validates portable limits before provider hooks", asy
     create: {
       async prepare(input: { image: { kind: "prepared"; value: string } }) {
         preparations++;
+
         return input;
       },
       async submit() {
@@ -69,8 +73,9 @@ test("advanced preparation validates portable limits before provider hooks", asy
       return { computeStopped: true, retainedResources: [] };
     },
     exec: {
-      async prepare(input: unknown) {
+      async prepare(input: ExecInput) {
         preparations++;
+
         return input;
       },
       async submit() {
@@ -85,8 +90,9 @@ test("advanced preparation validates portable limits before provider hooks", asy
     files: {
       maxBytes: 1024,
       write: {
-        async prepare(input: unknown) {
+        async prepare(input: FileWriteInput) {
           preparations++;
+
           return input;
         },
         async submit() {
@@ -138,6 +144,7 @@ test("advanced preparation validates portable limits before provider hooks", asy
 
 test("unsupported atomic no-clobber is rejected before adapter preparation", async () => {
   let preparations = 0;
+
   const session = {
     scope: { authority: { kind: "account", id: "a" }, partition: {} },
     supports: {
@@ -154,8 +161,9 @@ test("unsupported atomic no-clobber is rejected before adapter preparation", asy
     files: {
       maxBytes: 1024,
       write: {
-        async prepare(input: unknown) {
+        async prepare(input: FileWriteInput) {
           preparations++;
+
           return input;
         },
         async submit() {

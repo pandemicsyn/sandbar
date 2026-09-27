@@ -303,7 +303,16 @@ export async function prepareOperation(
   signal: AbortSignal,
 ): Promise<PreparedOperation> {
   const operation = select(session, kind);
-  const checkedInput = checkCapability(session, kind, input);
+  let checkedInput: CreateInput | ExecInput | FileWriteInput | Sandbox;
+
+  try {
+    checkedInput = checkCapability(session, kind, input);
+  } catch (error) {
+    if (error instanceof z.ZodError)
+      throw new AdapterError("INVALID_ARGUMENT", `Invalid ${kind} request`);
+    throw error;
+  }
+
   const parts = operationParts(operation);
 
   const prepared = parts.prepare

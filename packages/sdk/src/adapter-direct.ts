@@ -146,7 +146,10 @@ export class AdapterOperation<T> {
     this.first = first;
   }
   async observe(): Promise<T | null> {
-    if (this.client.isClosed()) abortWaiting(this.reference, this.client.signal.reason);
+    return this.observeWithSignal(this.client.signal);
+  }
+  private async observeWithSignal(signal: AbortSignal): Promise<T | null> {
+    if (signal.aborted) abortWaiting(this.reference, signal.reason);
 
     if (this.terminal) {
       if ("error" in this.terminal) throw this.terminal.error;
@@ -169,19 +172,24 @@ export class AdapterOperation<T> {
     }
 
     if (!result) {
-      const observed = await observeOperation(
-        this.client.session,
-        this.reference.kind,
-        {
-          operationId: this.reference.operationId,
-          submissionId: this.reference.submissionId,
-          sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
-          token: this.reference.token,
-          version: this.reference.tokenVersion,
-        },
-        this.client.signal,
-        this.reference.maxOutputBytes,
+      const observed = await raceAbort(
+        observeOperation(
+          this.client.session,
+          this.reference.kind,
+          {
+            operationId: this.reference.operationId,
+            submissionId: this.reference.submissionId,
+            sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+            token: this.reference.token,
+            version: this.reference.tokenVersion,
+          },
+          signal,
+          this.reference.maxOutputBytes,
+        ),
+        signal,
       ).catch((error) => {
+        if (signal.aborted) abortWaiting(this.reference, signal.reason);
+
         if (
           error instanceof AdapterError &&
           (error.code === "CONFLICT" || error.code === "INVALID_ARGUMENT")
@@ -195,6 +203,8 @@ export class AdapterOperation<T> {
         throw asUnknown(this.reference, "No correlated provider observation is available");
       result = observed;
     }
+
+    if (signal.aborted) abortWaiting(this.reference, signal.reason);
 
     if (result.kind === "pending") {
       this.reference = sealedReference({
@@ -234,6 +244,7 @@ export class AdapterOperation<T> {
   }
   async wait(options: { signal?: AbortSignal; pollMs?: number } = {}): Promise<T> {
     const pollMs = options.pollMs ?? 500;
+
     const signal = options.signal
       ? AbortSignal.any([this.client.signal, options.signal])
       : this.client.signal;
@@ -245,7 +256,7 @@ export class AdapterOperation<T> {
       if (this.client.isClosed()) abortWaiting(this.reference, this.client.signal.reason);
 
       if (options.signal?.aborted) abortWaiting(this.reference, options.signal.reason);
-      const value = await this.observe();
+      const value = await this.observeWithSignal(signal);
 
       if (value !== null) return value;
       await waitDelay(pollMs, signal).catch((error) => abortWaiting(this.reference, error));
@@ -495,12 +506,24 @@ export class PreparedAdapterAttempt {
       ? AbortSignal.any([this.client.signal, options.signal])
       : this.client.signal;
 
-    return submitOperation(
-      this.prepared,
-      checked,
-      signal,
-      this.kind === "exec" ? this.maxOutputBytes : undefined,
-    );
+    try {
+      return await raceAbort(
+        submitOperation(
+          this.prepared,
+          checked,
+          signal,
+          this.kind === "exec" ? this.maxOutputBytes : undefined,
+        ),
+        signal,
+      );
+    } catch (error) {
+      if (signal.aborted)
+        return {
+          kind: "unknown",
+          reason: "Provider submission outcome is unknown after cancellation",
+        };
+      throw error;
+    }
   }
 }
 
@@ -580,7 +603,16 @@ export class AdapterDirectClient {
           ? AbortSignal.any([this.signal, options.signal])
           : this.signal;
 
-        const prepared = await prepareOperation(this.session, kind, input, signal);
+        let prepared: PreparedOperation;
+
+        try {
+          prepared = await prepareOperation(this.session, kind, input, signal);
+        } catch (error) {
+          if (error instanceof AdapterError && error.code === "INVALID_ARGUMENT")
+            throw new SandbarError(error.code, error.message);
+          throw error;
+        }
+
         this.ensureOpen();
 
         return new PreparedAdapterAttempt(this, prepared, kind, options.maxOutputBytes);
@@ -617,18 +649,30 @@ export class AdapterDirectClient {
         )
           throw new SandbarError("INVALID_ARGUMENT", "Observation sandbox binding is invalid");
 
-        return observeOperation(
-          this.session,
-          checked.kind,
-          {
-            operationId: checked.operationId,
-            submissionId: checked.submissionId,
-            sandbox: checked.sandboxId ? { id: checked.sandboxId } : undefined,
-            token: checked.token,
-            version: checked.tokenVersion,
-          },
-          signal,
-        );
+        try {
+          return await raceAbort(
+            observeOperation(
+              this.session,
+              checked.kind,
+              {
+                operationId: checked.operationId,
+                submissionId: checked.submissionId,
+                sandbox: checked.sandboxId ? { id: checked.sandboxId } : undefined,
+                token: checked.token,
+                version: checked.tokenVersion,
+              },
+              signal,
+            ),
+            signal,
+          );
+        } catch (error) {
+          if (signal.aborted)
+            return {
+              kind: "unknown",
+              reason: "Provider observation outcome is unknown after cancellation",
+            };
+          throw error;
+        }
       },
     };
     this.sandboxes = {

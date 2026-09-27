@@ -254,6 +254,7 @@ test("close stops waiting after dispatch with a recovery reference", async () =>
 
 test("close wakes an operation waiting on a long polling interval", async () => {
   let observeStarted = false;
+
   const adapter = defineAdapter({
     name: "example.poll-close",
     config: z.strictObject({}),
@@ -269,6 +270,7 @@ test("close wakes an operation waiting on a long polling interval", async () => 
           },
           async observe(_attempt, ctx) {
             observeStarted = true;
+
             return ctx.pending({ jobId: "job-1" });
           },
         },
@@ -283,7 +285,9 @@ test("close wakes an operation waiting on a long polling interval", async () => 
   const op = await client.sandboxes.submitCreate({ environment: Image.prepared("image") });
   expect(await op.observe()).toBeNull();
   const waiting = op.wait({ pollMs: 60_000 });
+
   while (!observeStarted) await Bun.sleep(1);
+  await Bun.sleep(10);
   await client.close();
   await expect(
     Promise.race([
@@ -293,6 +297,287 @@ test("close wakes an operation waiting on a long polling interval", async () => 
       }),
     ]),
   ).rejects.toMatchObject({ code: "WAIT_ABORTED" });
+});
+
+test("advanced submit cancellation leaves an unknown outcome and original identity", async () => {
+  for (const mode of ["caller", "close"] as const) {
+    let submitted = 0;
+    let finish!: (value: { id: string; state: "running" }) => void;
+    let fail!: (error: Error) => void;
+
+    const stalled = new Promise<{ id: string; state: "running" }>((resolve, reject) => {
+      finish = resolve;
+      fail = reject;
+    });
+
+    const adapter = defineAdapter({
+      name: `example.advanced-abort-${mode}`,
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          create: {
+            async submit() {
+              submitted++;
+
+              return stalled;
+            },
+            async observe() {
+              return { id: "recovered", state: "running" as const };
+            },
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+    const prepared = await client.operations.prepare("create", {
+      image: { kind: "prepared", value: "image" },
+      networkPolicy: "blocked",
+    });
+
+    const identity = {
+      operationId: `op-${mode}`,
+      submissionId: `sub-${mode}`,
+      invocationKey: `key-${mode}`,
+    };
+
+    const controller = new AbortController();
+
+    const result = prepared.submit(identity, {
+      beforeSubmit: async () => true,
+      signal: controller.signal,
+    });
+
+    while (!submitted) await Bun.sleep(1);
+
+    if (mode === "caller") controller.abort("stop");
+    else await client.close();
+    await expect(
+      Promise.race([
+        result,
+        Bun.sleep(500).then(() => {
+          throw new Error("submit did not stop waiting");
+        }),
+      ]),
+    ).resolves.toMatchObject({ kind: "unknown" });
+
+    if (mode === "caller") finish({ id: "late", state: "running" });
+    else fail(new Error("late rejection"));
+    await Bun.sleep(1);
+
+    const observer =
+      mode === "caller" ? client : await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+    expect(
+      await observer.operations.observe({
+        scope: observer.scope,
+        kind: "create",
+        operationId: identity.operationId,
+        submissionId: identity.submissionId,
+      }),
+    ).toMatchObject({ kind: "completed", value: { id: "recovered" } });
+    expect(submitted).toBe(1);
+    await observer.close();
+  }
+});
+
+test("in-flight observation stops on caller abort and preserves recovery", async () => {
+  let observing = false;
+  let finish!: (value: { id: string; state: "running" }) => void;
+
+  const stalled = new Promise<{ id: string; state: "running" }>((resolve) => {
+    finish = resolve;
+  });
+
+  let observations = 0;
+
+  const adapter = defineAdapter({
+    name: "example.observe-abort",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
+          async submit(_input, ctx) {
+            return ctx.pending({ jobId: "job-1" });
+          },
+          async observe() {
+            observations++;
+
+            if (observations === 1) {
+              observing = true;
+
+              return stalled;
+            }
+
+            return { id: "recovered", state: "running" as const };
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const op = await client.sandboxes.submitCreate({ environment: Image.prepared("image") });
+  expect(await op.observe()).toBeNull();
+  const controller = new AbortController();
+  const waiting = op.wait({ signal: controller.signal });
+
+  while (!observing) await Bun.sleep(1);
+  const reference = structuredClone(op.reference);
+  controller.abort("stop");
+  await expect(
+    Promise.race([
+      waiting,
+      Bun.sleep(500).then(() => {
+        throw new Error("observe did not stop waiting");
+      }),
+    ]),
+  ).rejects.toMatchObject({ code: "WAIT_ABORTED", reference });
+  finish({ id: "late", state: "running" });
+  await Bun.sleep(1);
+  const recovered = await client.recover(reference);
+  expect(await recovered.observe()).toMatchObject({ id: "recovered" });
+  await client.close();
+});
+
+test("client close stops an in-flight observation without late completion", async () => {
+  let started = false;
+  let fail!: (error: Error) => void;
+
+  const stalled = new Promise<{ id: string; state: "running" }>((_resolve, reject) => {
+    fail = reject;
+  });
+
+  const adapter = defineAdapter({
+    name: "example.observe-close",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
+          async submit(_input, ctx) {
+            return ctx.pending({ jobId: "job-1" });
+          },
+          async observe() {
+            started = true;
+
+            return stalled;
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const op = await client.sandboxes.submitCreate({ environment: Image.prepared("image") });
+  expect(await op.observe()).toBeNull();
+  const reference = structuredClone(op.reference);
+  const waiting = op.observe();
+
+  while (!started) await Bun.sleep(1);
+  await client.close();
+  await expect(
+    Promise.race([
+      waiting,
+      Bun.sleep(500).then(() => {
+        throw new Error("observe did not stop on close");
+      }),
+    ]),
+  ).rejects.toMatchObject({ code: "WAIT_ABORTED", reference });
+  fail(new Error("late observation rejection"));
+  await Bun.sleep(1);
+});
+
+test("advanced observation cancellation returns unknown and permits read-only retry", async () => {
+  let started = false;
+  let finish!: (value: { id: string; state: "running" }) => void;
+
+  const stalled = new Promise<{ id: string; state: "running" }>((resolve) => {
+    finish = resolve;
+  });
+
+  let observations = 0;
+
+  const adapter = defineAdapter({
+    name: "example.advanced-observe-abort",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          async submit() {
+            return { id: "box", state: "running" as const };
+          },
+          async observe() {
+            observations++;
+
+            if (observations === 1) {
+              started = true;
+
+              return stalled;
+            }
+
+            return { id: "recovered", state: "running" as const };
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+  const identity = {
+    scope: client.scope,
+    kind: "create" as const,
+    operationId: "op",
+    submissionId: "sub",
+  };
+
+  const controller = new AbortController();
+  const waiting = client.operations.observe(identity, { signal: controller.signal });
+
+  while (!started) await Bun.sleep(1);
+  controller.abort("stop");
+  await expect(
+    Promise.race([
+      waiting,
+      Bun.sleep(500).then(() => {
+        throw new Error("advanced observe did not stop");
+      }),
+    ]),
+  ).resolves.toMatchObject({ kind: "unknown" });
+  finish({ id: "late", state: "running" });
+  await Bun.sleep(1);
+  expect(await client.operations.observe(identity)).toMatchObject({
+    kind: "completed",
+    value: { id: "recovered" },
+  });
+  await client.close();
 });
 
 test("advanced lifecycle commits a marker once and cannot replay a prepared attempt", async () => {
@@ -356,6 +641,45 @@ test("advanced lifecycle commits a marker once and cannot replay a prepared atte
     }),
   ).rejects.toThrow("Submission barrier failed");
   expect(submits).toBe(1);
+  await client.close();
+});
+
+test("advanced preparation reports invalid arguments before provider preparation", async () => {
+  let preparations = 0;
+
+  const adapter = defineAdapter({
+    name: "example.advanced-validation",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          async prepare(input: { image: { kind: "prepared"; value: string } }) {
+            preparations++;
+
+            return input;
+          },
+          async submit() {
+            return { id: "box", state: "running" as const };
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  await expect(
+    client.operations.prepare("create", {
+      image: { kind: "prepared", value: "bad/image" },
+      networkPolicy: "blocked",
+    }),
+  ).rejects.toMatchObject({ name: "SandbarError", code: "INVALID_ARGUMENT" });
+  expect(preparations).toBe(0);
   await client.close();
 });
 
