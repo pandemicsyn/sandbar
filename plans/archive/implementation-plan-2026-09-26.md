@@ -17,11 +17,7 @@ The iterative specialist review of security, storage, snapshots, images and obse
 
 Recommendations and numeric defaults remain proposals. Provider documentation informs the model; live tests establish supported guarantees.
 
-## Current provider wave: Daytona and Modal
-
-Modal and Daytona are the first real adapters selected September 26, 2026. Daytona is implemented in this stack for direct TypeScript and the service through explicit provider registration, encrypted service connection credentials, and verified native scope; Modal follows in a separate child stack. Daytona has fixture and packed Node/Bun coverage, with live conformance requiring separate authorization. Tensorlake and E2B follow later. Existing snapshot/native-image inputs are the first supported materialization subset; unsupported OCI builds fail before paid side effects rather than hiding creation in capability checks. Snapshots, volumes, accounting and deployment remain later slices.
-
-## Previous wave: direct TypeScript SDK
+## Immediate next wave: direct TypeScript SDK
 
 Make the service optional for TypeScript callers by implementing the accepted [direct SDK design](../../specs/direct-typescript-sdk.md) before expanding real-provider integrations. Preserve reviewed PRs #1–#4 and stack three focused changes after #4: portable semantic-core extraction, ergonomic direct/HTTP SDK backends, then Node/Bun package and parity qualification. The first integration uses the existing independent fake provider. All new PRs retain the mandatory independent Luna/high review-to-zero gate.
 
