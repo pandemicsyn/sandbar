@@ -378,9 +378,70 @@ test("browser and public HTTP recover fake effects across service restarts witho
 
   if (!created.sandboxId) throw new Error("Create did not return a sandbox ID");
 
+  const operationPath = `**/v1/projects/${projectId}/operations/${createId}`;
+  let operationReads = 0;
+  let releaseRecoveredRead!: () => void;
+
+  const recoveredRead = new Promise<void>((resolve) => {
+    releaseRecoveredRead = resolve;
+  });
+
+  await page.route(operationPath, async (route) => {
+    operationReads++;
+
+    if (operationReads === 1 || operationReads === 3) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { code: "UNAVAILABLE", message: "Temporary operation read failure" },
+        }),
+      });
+
+      return;
+    }
+
+    if (operationReads === 2) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...created,
+          status: "running",
+          phase: "waiting for fake provider",
+          result: undefined,
+        }),
+      });
+
+      return;
+    }
+
+    await recoveredRead;
+    await route.continue();
+  });
+  await page.reload();
+  await page.getByText("Temporary operation read failure").waitFor();
+  await page.getByRole("button", { name: "Retry operation" }).click();
+  await page.getByRole("heading", { name: `Operation ${createId}` }).waitFor();
+  await page.getByText("Temporary operation read failure").waitFor();
+  expect(await page.getByRole("button", { name: "Refresh operation" }).isVisible()).toBe(true);
+  releaseRecoveredRead();
+  await page.getByText("succeeded", { exact: true }).waitFor();
+  await page.unroute(operationPath);
+
   const sandboxId = created.sandboxId;
   expect(sandboxId).toMatch(/^sb_/);
-  await page.getByRole("link", { name: "Fleet" }).click();
+
+  const fleetListRequest = page.waitForRequest((request) =>
+    request.url().includes(`/v1/projects/${projectId}/sandboxes?`),
+  );
+
+  await page.goto(`${serviceUrl}/projects/${projectId}/sandboxes?q=e2e&state=invalid`);
+  const filteredRequest = new URL((await fleetListRequest).url());
+  expect(filteredRequest.searchParams.get("q")).toBe("e2e");
+  expect(filteredRequest.searchParams.has("state")).toBe(false);
+  expect(await page.getByLabel("Search").inputValue()).toBe("e2e");
+  expect(await page.getByLabel("State").inputValue()).toBe("");
   await page.getByLabel("Label key (optional)").fill("team");
   await page.getByLabel("Label value").fill("concurrent");
   await page.getByRole("button", { name: "Create sandbox" }).click();

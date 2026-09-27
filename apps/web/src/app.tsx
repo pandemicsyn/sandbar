@@ -85,18 +85,23 @@ function useResource<T>(load: () => Promise<T>, dependency: string) {
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     let alive = true;
-    setState({ key: dependency, loading: true });
+    setState((current) =>
+      current.key === dependency
+        ? { key: dependency, data: current.data, loading: current.data === undefined }
+        : { key: dependency, loading: true },
+    );
     load()
       .then((value) => {
         if (alive) setState({ key: dependency, data: value, loading: false });
       })
       .catch((reason) => {
         if (alive)
-          setState({
+          setState((current) => ({
             key: dependency,
+            data: current.key === dependency ? current.data : undefined,
             error: ErrorMessage.parse(reason),
             loading: false,
-          });
+          }));
       });
 
     return () => {
@@ -1275,8 +1280,13 @@ function OperationPage() {
 
   if (operation.loading && !operation.data) return <LoadingRows />;
 
-  if (operation.error || !operation.data)
-    return <Notice tone="error">{operation.error ?? "Operation unavailable"}</Notice>;
+  if (!operation.data)
+    return (
+      <Notice tone="error">
+        {operation.error ?? "Operation unavailable"}{" "}
+        <Button onClick={operation.refresh}>Retry operation</Button>
+      </Notice>
+    );
   const op: Operation = operation.data;
 
   return (
@@ -1286,6 +1296,7 @@ function OperationPage() {
         subtitle="This page observes a durable operation. Reloading it does not start another provider action."
         action={<Button onClick={operation.refresh}>Refresh operation</Button>}
       />
+      {operation.error && <Notice tone="error">{operation.error}</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
       {executionError && <Notice tone="error">{executionError}</Notice>}
       {op.status === "unknown" && (
@@ -1448,23 +1459,13 @@ const connectionsRoute = createRoute({
 const fleetRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/sandboxes",
-  validateSearch: (search) => {
-    const text = z.string().optional().catch(undefined);
-
-    const parsed = SandboxListQuery.safeParse({
-      state: text.parse(search.state) || undefined,
-      connectionId: text.parse(search.connectionId) || undefined,
-      q: text.parse(search.q) || undefined,
-      cursor: text.parse(search.cursor) || undefined,
-    });
-
-    return {
-      state: parsed.success ? (parsed.data.state ?? "") : "",
-      connectionId: parsed.success ? (parsed.data.connectionId ?? "") : "",
-      q: parsed.success ? (parsed.data.q ?? "") : "",
-      cursor: parsed.success ? (parsed.data.cursor ?? "") : "",
-    };
-  },
+  validateSearch: (search) => ({
+    state: SandboxListQuery.shape.state.catch(undefined).parse(search.state) ?? "",
+    connectionId:
+      SandboxListQuery.shape.connectionId.catch(undefined).parse(search.connectionId) ?? "",
+    q: SandboxListQuery.shape.q.catch(undefined).parse(search.q) ?? "",
+    cursor: SandboxListQuery.shape.cursor.catch(undefined).parse(search.cursor) ?? "",
+  }),
   component: FleetPage,
 });
 

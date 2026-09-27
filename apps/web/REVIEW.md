@@ -149,6 +149,15 @@ The initial PR base was `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed c
 - Validation: `bun install --frozen-lockfile`, `bun run lint:fix`, `bun run format`, `bun run lint`, `bun run format:check`, `bun run check`, `bun run build`, `bun run test`, and `git diff --check` pass. Full test result: 82 passed, 5 MySQL tests skipped without a local MySQL test URL, 0 failed, 1,823 assertions. Chromium E2E rebuilt the current web assets and passed with 38 assertions.
 - A fresh read-only independent review of the complete `main...HEAD` diff is required before PR #4 is updated. The final exact base/HEAD review record is kept locally alongside the PR provenance.
 
+## Current-head GitHub review follow-up
+
+- A second independent read-only gpt-6-luna/high complete-diff review reported zero actionable findings on merged main 1e1acd832f6c9b8dd075bc78ea95c672e75467a2 to web HEAD 61fc8cfb363fdf4aaf65fe96f44e30add3e8227d. The branch was pushed and PR #4 retargeted to main.
+- Both original GitHub review threads were answered with fix/test evidence and resolved. The current-head GitHub Codex review then found two supported-path issues: an operation polling refresh discarded same-key loaded data and stopped polling after a transient failure, and Fleet's combined URL-filter validation cleared valid search text when state was invalid.
+- The manager approved narrow fixes after reviewing concrete paths and impact. Same-key resource refreshes now retain loaded data; Operation detail keeps its Refresh action and shows transient errors while polling continues, and an initial failed load offers Retry. Route-key changes still hide previous-key data. Fleet validates each existing URL filter independently through its contract field schema.
+- Chromium E2E injects an initial operation GET failure, retries into an in-progress view, injects one failed poll, then observes completion without reload. It also opens a shared Fleet URL with valid q and invalid state, checking that the API request retains q and omits state.
+- Validation after fixes: lint, format check, all package typechecks, build, full tests, and diff check passed. Full suite: 82 passed, 5 local MySQL skips, 0 failed, 1,831 assertions; Chromium E2E rebuilt current assets and passed with 46 assertions. A fresh independent complete-diff review of the resulting exact base/HEAD is required before another push.
+- PR CI on the earlier HEAD had one control-owned crash test failure on the first pull-request run; the unchanged-HEAD rerun passed all gates, as did the push event. No backend code was changed.
+
 ## Merged-parent review round 1
 
 - Reviewer: independent read-only subagent, `gpt-6-luna`, high reasoning.
