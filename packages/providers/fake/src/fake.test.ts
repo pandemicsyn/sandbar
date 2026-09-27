@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FakeProviderDriver } from "./index";
+import { FakeProviderDriver, fakeProvider } from "./index";
 import { FakeProviderEngine } from "./engine";
 import { startFakeProviderServer } from "./server";
 import { ProviderReadError } from "@sandbar/provider-spi";
@@ -1085,6 +1085,34 @@ describe("independent fake provider", () => {
 
     expect(result.status).toBe("rejected");
     expect(result.effect).toBe("none");
+    expect((await control("/_test/state")).invocations).toHaveLength(0);
+  });
+
+  test("fake setup and reads expose authentication failures through the public SPI error", async () => {
+    const { control } = await setup();
+    const url = server!.url.toString();
+    await expect(fakeProvider({ url, token: "wrong-token-123456" })).rejects.toMatchObject({
+      name: "ProviderReadError",
+      code: "UNAUTHENTICATED",
+    });
+
+    const driver = new FakeProviderDriver({ baseUrl: url, token: "wrong-token-123456" });
+    const sandbox = { scope, nativeId: "fake_sandbox_1", kind: "sandbox" as const };
+
+    for (const read of [
+      () => driver.capabilities(scope),
+      () => driver.inspect(sandbox),
+      () => driver.inventory({ scope, limit: 1 }),
+      () => driver.readFile({ sandbox, path: "/file" }),
+      () => driver.observe({ scope, submissionId: "submission_1" }),
+      () => driver.events(scope),
+    ]) {
+      await expect(read()).rejects.toMatchObject({
+        name: "ProviderReadError",
+        code: "UNAUTHENTICATED",
+      });
+    }
+
     expect((await control("/_test/state")).invocations).toHaveLength(0);
   });
 

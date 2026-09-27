@@ -562,7 +562,15 @@ export class DirectClient implements SandbarClient {
     return reference;
   }
   private async verified() {
-    const caps = await this.driver.capabilities(this.scope);
+    let caps: Awaited<ReturnType<ProviderDriver["capabilities"]>>;
+
+    try {
+      caps = await this.driver.capabilities(this.scope);
+    } catch (error) {
+      if (error instanceof ProviderReadError)
+        throw new SandbarError(error.code, error.message, "none");
+      throw error;
+    }
 
     if (caps.provider !== this.scope.provider)
       throw new SandbarError("INVALID_RESPONSE", "Provider capability identity mismatch");
@@ -597,17 +605,25 @@ export class DirectClient implements SandbarClient {
       labels: input.labels,
     });
 
-    const preparation = await awaitSubmission(
-      this.driver.prepare({
-        scope: this.scope,
-        image: request.image,
-        networkPolicy: request.networkPolicy,
-        region: request.region,
-      }),
-      this.closedSignal,
-      signal,
-      () => undefined,
-    );
+    let preparation: Awaited<ReturnType<ProviderDriver["prepare"]>>;
+
+    try {
+      preparation = await awaitSubmission(
+        this.driver.prepare({
+          scope: this.scope,
+          image: request.image,
+          networkPolicy: request.networkPolicy,
+          region: request.region,
+        }),
+        this.closedSignal,
+        signal,
+        () => undefined,
+      );
+    } catch (error) {
+      if (error instanceof ProviderReadError)
+        throw new SandbarError(error.code, error.message, "none");
+      throw error;
+    }
 
     this.ensureOpen();
     throwIfAborted(signal);

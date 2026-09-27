@@ -1103,6 +1103,107 @@ test("direct definitive provider rejections use the service error vocabulary", a
   expect(dispatches).toBe(expected.length);
 });
 
+test("direct fake authentication failures are public before dispatch and during reads", async () => {
+  const { url, control } = await fixture();
+  let revoked = false;
+  let creates = 0;
+
+  const provider = await fakeProvider({
+    url,
+    token,
+    fetch: async (request, init) => {
+      if (JSON.parse(String(init?.body)).kind === "create") creates++;
+
+      if (revoked) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      return fetch(request, init);
+    },
+  });
+
+  const client = DirectSandbar.direct({ provider });
+  revoked = true;
+
+  await expect(
+    client.sandboxes.submitCreate({ environment: DirectImage.prepared("fake-starter") }),
+  ).rejects.toMatchObject({ name: "SandbarError", code: "UNAUTHENTICATED", effect: "none" });
+  expect(creates).toBe(0);
+  expect((await control("/_test/state")).invocations).toHaveLength(0);
+
+  revoked = false;
+  const box = await client.sandboxes.create({ environment: DirectImage.prepared("fake-starter") });
+  revoked = true;
+  await expect(box.inspect()).rejects.toMatchObject({
+    name: "SandbarError",
+    code: "UNAUTHENTICATED",
+    effect: "unknown",
+  });
+  await expect(box.readFile("/file")).rejects.toMatchObject({
+    name: "SandbarError",
+    code: "UNAUTHENTICATED",
+    effect: "unknown",
+  });
+  expect(creates).toBe(1);
+});
+
+test("direct preparation authentication failure remains pre-dispatch", async () => {
+  const { url, control } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  let creates = 0;
+  provider.driver.prepare = async () => {
+    throw new ProviderReadError("UNAUTHENTICATED", "Fake provider authentication failed");
+  };
+
+  Reflect.set(provider.driver, "create", async () => {
+    creates++;
+    throw new Error("Must not dispatch");
+  });
+  const client = DirectSandbar.direct({ provider });
+
+  await expect(
+    client.sandboxes.submitCreate({ environment: DirectImage.prepared("fake-starter") }),
+  ).rejects.toMatchObject({ name: "SandbarError", code: "UNAUTHENTICATED", effect: "none" });
+  expect(creates).toBe(0);
+  expect((await control("/_test/state")).invocations).toHaveLength(0);
+});
+
+test("direct post-submission authentication failure keeps the recovery reference", async () => {
+  const { url, control } = await fixture();
+  let revoked = false;
+  let creates = 0;
+
+  const provider = await fakeProvider({
+    url,
+    token,
+    fetch: async (request, init) => {
+      if (JSON.parse(String(init?.body)).kind === "create") creates++;
+
+      if (revoked) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      return fetch(request, init);
+    },
+  });
+
+  await control("/_test/seed", {
+    submissionId: "*",
+    action: "create",
+    behavior: "lost_after_effect",
+  });
+  const client = DirectSandbar.direct({ provider });
+
+  const operation = await client.sandboxes.submitCreate({
+    environment: DirectImage.prepared("fake-starter"),
+  });
+
+  revoked = true;
+
+  await expect(operation.observe()).rejects.toMatchObject({
+    code: "OUTCOME_UNKNOWN",
+    reference: operation.reference,
+  });
+  expect(creates).toBe(1);
+  expect((await control("/_test/state")).invocations).toHaveLength(1);
+});
+
 test("direct execution bounds provider output before decoding", async () => {
   const { url } = await fixture();
   const provider = await fakeProvider({ url, token });

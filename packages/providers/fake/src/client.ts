@@ -122,6 +122,15 @@ export class FakeProviderDriver implements ProviderDriver {
       clearTimeout(timer);
     }
   }
+  private async readCall(action: FakeAction): Promise<z.infer<typeof FakeHttpJson>> {
+    try {
+      return await this.call(action);
+    } catch (error) {
+      if (error instanceof FakeTransportError && (error.status === 401 || error.status === 403))
+        throw new ProviderReadError("UNAUTHENTICATED", "Fake provider authentication failed");
+      throw error;
+    }
+  }
   private async mutation(action: MutationAction, submissionId: string): Promise<DriverResult> {
     try {
       const result = DriverResult.parse(await this.call(action));
@@ -170,7 +179,9 @@ export class FakeProviderDriver implements ProviderDriver {
     }
   }
   async capabilities(scope: NativeScope) {
-    const capabilities = DriverCapabilities.parse(await this.call({ kind: "capabilities", scope }));
+    const capabilities = DriverCapabilities.parse(
+      await this.readCall({ kind: "capabilities", scope }),
+    );
 
     if (capabilities.provider !== this.name) {
       throw new ProviderReadError("INVALID_RESPONSE", "Fake capabilities named another provider");
@@ -221,7 +232,7 @@ export class FakeProviderDriver implements ProviderDriver {
     );
   }
   async inspect(ref: SandboxRef) {
-    const value = await this.call({ kind: "inspect", ref });
+    const value = await this.readCall({ kind: "inspect", ref });
 
     if (value === null) return null;
     const observation = SandboxObservation.parse(value);
@@ -233,7 +244,9 @@ export class FakeProviderDriver implements ProviderDriver {
     return observation;
   }
   async inventory(input: { scope: NativeScope; cursor?: string; limit: number }) {
-    const parsed = InventoryResponse.safeParse(await this.call({ kind: "inventory", ...input }));
+    const parsed = InventoryResponse.safeParse(
+      await this.readCall({ kind: "inventory", ...input }),
+    );
 
     if (!parsed.success) {
       throw new ProviderReadError("INVALID_RESPONSE", "Fake inventory response is invalid");
@@ -273,7 +286,7 @@ export class FakeProviderDriver implements ProviderDriver {
   async readFile(input: { sandbox: SandboxRef; path: string }): Promise<Uint8Array> {
     const parsed = z
       .strictObject({ bytesBase64: FakeFileBytesBase64.nullable() })
-      .safeParse(await this.call({ kind: "readFile", ...input }));
+      .safeParse(await this.readCall({ kind: "readFile", ...input }));
 
     if (!parsed.success)
       throw new ProviderReadError("INVALID_RESPONSE", "Fake provider returned invalid file data");
@@ -306,7 +319,7 @@ export class FakeProviderDriver implements ProviderDriver {
     return this.mutation({ kind: "destroy", ...input }, input.identity.submissionId);
   }
   async observe(input: { scope: NativeScope; submissionId: string }) {
-    const value = await this.call({ kind: "observe", ...input });
+    const value = await this.readCall({ kind: "observe", ...input });
 
     if (value === null) return null;
     const result = DriverResult.parse(value);
@@ -323,7 +336,7 @@ export class FakeProviderDriver implements ProviderDriver {
     return result;
   }
   async events(scope: NativeScope) {
-    const value = await this.call({ kind: "events", scope });
+    const value = await this.readCall({ kind: "events", scope });
     const events = FakeEvent.array().parse(value);
 
     if (events.some((event) => !sameScope(event.ref.scope, scope))) {

@@ -155,7 +155,7 @@ export type SandboxObservation = z.infer<typeof SandboxObservation>;
 
 export class ProviderReadError extends Error {
   constructor(
-    readonly code: "NOT_FOUND" | "INVALID_RESPONSE",
+    readonly code: "NOT_FOUND" | "INVALID_RESPONSE" | "UNAUTHENTICATED",
     message: string,
   ) {
     super(message);
