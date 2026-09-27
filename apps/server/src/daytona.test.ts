@@ -45,6 +45,9 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: account });
 
+    if (url.pathname === `/api/organizations/${account}`)
+      return Response.json({ id: account, sandboxLimitedNetworkEgress: false });
+
     if (url.pathname === "/api/regions")
       return Response.json([
         { id: "us", name: "United States", regionType: "shared", organizationId: account },

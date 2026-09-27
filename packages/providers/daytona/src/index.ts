@@ -15,6 +15,11 @@ import type { ExecCommand } from "@sandbar/contracts";
 // Daytona API and toolbox OpenAPI v0.218; see README for the pinned sources.
 const CurrentKey = z.object({ organizationId: z.string().min(1) });
 
+const Organization = z.object({
+  id: z.string().min(1),
+  sandboxLimitedNetworkEgress: z.boolean(),
+});
+
 const Region = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -348,8 +353,32 @@ export class DaytonaDriver implements ProviderDriver {
     )
       throw new Error("Daytona scope mismatch");
   }
+  private async supportsBlockedEgress(): Promise<boolean> {
+    const accountId = this.scope.accountId;
+
+    if (!accountId) return false;
+
+    try {
+      const response = await this.request(
+        "GET",
+        `/organizations/${encodeURIComponent(accountId)}`,
+        undefined,
+        undefined,
+        undefined,
+        15_000,
+      );
+
+      if (!response.ok) return false;
+      const organization = await boundedJson(response, Organization, 16_384);
+
+      return organization.id === accountId && organization.sandboxLimitedNetworkEgress === false;
+    } catch {
+      return false;
+    }
+  }
   async capabilities(scope: NativeScope) {
     this.sameScope(scope);
+    const blockedEgress = await this.supportsBlockedEgress();
 
     return DriverCapabilities.parse({
       provider: "daytona",
@@ -358,7 +387,7 @@ export class DaytonaDriver implements ProviderDriver {
       supports: { argv: true, shell: true, fileBytes: true, inventory: true },
       maxFileBytes: 1_048_576,
       maxOutputBytes: 1_048_576,
-      networkPolicies: ["blocked"],
+      networkPolicies: blockedEgress ? ["blocked"] : [],
     });
   }
   async prepare(input: {
@@ -383,6 +412,12 @@ export class DaytonaDriver implements ProviderDriver {
         supported: false,
         reason:
           "OCI source would trigger a paid implicit Daytona snapshot build; use an existing snapshot ID",
+      };
+
+    if (!(await this.supportsBlockedEgress()))
+      return {
+        supported: false,
+        reason: "Verified Daytona organization does not support strict blocked egress",
       };
 
     const response = await this.request(

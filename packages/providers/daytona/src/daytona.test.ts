@@ -6,8 +6,19 @@ import { NonzeroExitError, Sandbar } from "@sandbar/sdk/direct";
 
 function fixtureFetch(
   handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+  organization?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
 ): typeof fetch {
-  return Object.assign(handler, { preconnect: fetch.preconnect });
+  return Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input)).pathname.startsWith("/api/organizations/"))
+        return organization
+          ? organization(input, init)
+          : Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+      return handler(input, init);
+    },
+    { preconnect: fetch.preconnect },
+  );
 }
 
 const apiUrl = "https://app.daytona.io/api";
@@ -133,6 +144,111 @@ test.each([
     expect(calls).toEqual(["GET /api/api-keys/current", "GET /api/regions"]);
   },
 );
+
+test.each([
+  ["restricted", { id: "org-1", sandboxLimitedNetworkEgress: true }, 200],
+  ["missing flag", { id: "org-1" }, 200],
+  ["malformed flag", { id: "org-1", sandboxLimitedNetworkEgress: "false" }, 200],
+  ["wrong organization", { id: "org-other", sandboxLimitedNetworkEgress: false }, 200],
+  ["unreadable", { error: "unavailable" }, 503],
+] as const)(
+  "%s organization cannot create blocked sandbox but can clean up",
+  async (_case, value, status) => {
+    let creates = 0;
+    let deletes = 0;
+    let snapshotReads = 0;
+
+    const fetchImpl = fixtureFetch(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+
+        if (url.pathname === "/api/api-keys/current")
+          return Response.json({ organizationId: "org-1" });
+
+        if (url.pathname === "/api/regions") return Response.json([region()]);
+
+        if (url.pathname === "/api/snapshots/snap-1") {
+          snapshotReads++;
+          throw new Error("snapshot should not be checked without strict egress support");
+        }
+
+        if (url.pathname === "/api/sandbox" && init?.method === "POST") creates++;
+
+        if (url.pathname === "/api/sandbox/native-1" && init?.method === "DELETE") {
+          deletes++;
+
+          return Response.json(native("existing", "destroyed"));
+        }
+
+        throw new Error(`Unexpected ${url.pathname}`);
+      },
+      async () => Response.json(value, { status }),
+    );
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const capabilities = await provider.driver.capabilities(provider.scope);
+    expect(capabilities.networkPolicies).toEqual([]);
+    expect(capabilities.supports.inventory).toBe(true);
+    expect(
+      (
+        await provider.driver.prepare({
+          scope: provider.scope,
+          image: { kind: "prepared", value: "snap-1" },
+          networkPolicy: "blocked",
+        })
+      ).supported,
+    ).toBe(false);
+
+    const cleanup = await provider.driver.destroy({
+      sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+      identity: identity("cleanup"),
+    });
+
+    expect(cleanup.status).toBe("completed");
+    expect(creates).toBe(0);
+    expect(snapshotReads).toBe(0);
+    expect(deletes).toBe(1);
+  },
+);
+
+test("blocked egress eligibility is rechecked by prepare before submission", async () => {
+  let limited = true;
+  let creates = 0;
+  let snapshotReads = 0;
+
+  const fetchImpl = fixtureFetch(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/snapshots/snap-1") snapshotReads++;
+
+      if (url.pathname === "/api/sandbox" && init?.method === "POST") creates++;
+
+      throw new Error(`Unexpected ${url.pathname}`);
+    },
+    async () => Response.json({ id: "org-1", sandboxLimitedNetworkEgress: limited }),
+  );
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  limited = false;
+  expect((await provider.driver.capabilities(provider.scope)).networkPolicies).toEqual(["blocked"]);
+  limited = true;
+
+  const preparation = await provider.driver.prepare({
+    scope: provider.scope,
+    image: { kind: "prepared", value: "snap-1" },
+    networkPolicy: "blocked",
+  });
+
+  expect(preparation.supported).toBe(false);
+  expect(snapshotReads).toBe(0);
+  expect(creates).toBe(0);
+});
 
 test("verified direct scope, read-only preparation, one create, exact binary execution and files", async () => {
   const calls: string[] = [];
