@@ -264,6 +264,29 @@ test("direct recovery never treats incomplete destroy or file receipts as succes
   await expect((await client.recover({ ...common, kind: "exec", maxOutputBytes: 1024 })).observe()).rejects.toBeInstanceOf(NoExitCodeError);
 });
 
+test("direct imported recovery strips nested secrets and ignores later caller changes", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const client = DirectSandbar.direct({ provider });
+  const sandbox = { scope: provider.scope, nativeId: "fake_sandbox_1", kind: "sandbox" as const };
+  const imported = JSON.parse(JSON.stringify({ version: 1, mode: "direct", kind: "destroy", invocationKey: "0199f92e-1234-7000-8000-000000000001", operationId: "op_1", submissionId: "sid_1", scope: provider.scope, sandbox }));
+  imported.scope.secret = "scope-secret";
+  imported.sandbox.scope.token = "sandbox-secret";
+  let observedScope: unknown;
+  provider.driver.observe = async input => {
+    observedScope = input.scope;
+    return { status: "rejected", effect: "none", error: { code: "not_found", message: "missing", effect: "none", retry: "never" } };
+  };
+  const recovered = await client.recover(imported);
+  expect(JSON.stringify(recovered.reference)).not.toContain("secret");
+  imported.scope.connectionId = "changed";
+  imported.sandbox.scope.connectionId = "changed";
+  try { recovered.reference.scope!.connectionId = "changed"; } catch { /* frozen references reject caller mutation */ }
+  await expect(recovered.observe()).rejects.toMatchObject({ code: "NOT_FOUND" });
+  expect(observedScope).toEqual(provider.scope);
+  expect(recovered.reference.sandbox?.scope).toEqual(provider.scope);
+});
+
 test("remote lost acceptance is resolved by invocation lookup under one key", async () => {
   let posts = 0;
   let key = "";
@@ -295,6 +318,76 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   expect(JSON.stringify(operation.reference)).not.toContain("secret");
   await expect(client.recover({ ...operation.reference, operationId: "op_other" })).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
   await expect(RemoteSandbar.connect({ url: "https://other.example/", token: "secret", projectId, fetch: fetcher }).recover(operation.reference)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  const imported = structuredClone(operation.reference);
+  const recovered = await client.recover(imported);
+  imported.service!.projectId = "other";
+  try { recovered.reference.service!.projectId = "other"; } catch { /* frozen references reject caller mutation */ }
+  expect((await recovered.wait() as { id: string }).id).toBe("box_1");
+  expect(recovered.reference.service?.projectId).toBe(projectId);
+  await expect(client.recover({ ...operation.reference, service: { ...operation.reference.service!, secret: "hidden" } } as never)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+});
+
+test("remote create carries its recovery reference through post-admission read failures", async () => {
+  for (const failure of ["poll", "sandbox"] as const) {
+    const projectId = "project_1";
+    const operation = { id: "op_1", projectId, kind: "create", sandboxId: "box_1", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "create", sandboxId: "box_1" } };
+    const box = { id: "box_1", projectId, connectionId: "conn_1", desiredState: "running", observedState: "running", revision: 1, environment: { kind: "prepared", imageId: "fake-starter" }, network: { policy: "blocked" }, labels: {} };
+    let posts = 0;
+    let failOnce = true;
+    const fetcher: typeof fetch = async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (init?.method === "POST") { posts++; return Response.json({ operation }, { status: 202 }); }
+      if (path.includes("/invocations/")) {
+        if (failure === "poll" && failOnce) { failOnce = false; throw new TypeError("poll disconnected"); }
+        return Response.json(operation);
+      }
+      if (path.endsWith("/sandboxes/box_1")) {
+        if (failure === "sandbox" && failOnce) { failOnce = false; throw new TypeError("sandbox read disconnected"); }
+        return Response.json(box);
+      }
+      throw new Error(`Unexpected path: ${path}`);
+    };
+    const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+    let reference: OutcomeUnknownError["reference"] | undefined;
+    try { await client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") }); }
+    catch (error) { expect(error).toBeInstanceOf(OutcomeUnknownError); reference = (error as OutcomeUnknownError).reference; }
+    expect(reference?.operationId).toBe("op_1");
+    const recovered = await client.recover(reference!);
+    expect((await recovered.wait() as { id: string }).id).toBe("box_1");
+    expect(posts).toBe(1);
+  }
+});
+
+test("remote exec carries its recovery reference through a failed execution read", async () => {
+  const projectId = "project_1";
+  const common = { projectId, status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [] };
+  const createOperation = { ...common, id: "op_create", kind: "create", sandboxId: "box_1", result: { kind: "create", sandboxId: "box_1" } };
+  const execOperation = { ...common, id: "op_exec", kind: "exec", sandboxId: "box_1", executionId: "exec_1", result: { kind: "exec", executionId: "exec_1" } };
+  const execution = { id: "exec_1", projectId, sandboxId: "box_1", operationId: "op_exec", status: "completed", exitCode: 0, outputAvailability: "captured", capturedBytes: 0, stdoutBase64: "", stderrBase64: "" };
+  let creates = 0, execs = 0, failRead = true;
+  const fetcher: typeof fetch = async (url, init) => {
+    const target = new URL(String(url));
+    const path = target.pathname;
+    if (init?.method === "POST" && path.endsWith("/sandboxes")) { creates++; return Response.json({ operation: createOperation }, { status: 202 }); }
+    if (init?.method === "POST" && path.endsWith("/executions")) { execs++; return Response.json({ operation: execOperation, execution }, { status: 202 }); }
+    if (path.includes("/invocations/")) return Response.json(target.searchParams.get("kind") === "exec" ? execOperation : createOperation);
+    if (path.endsWith("/sandboxes/box_1")) return Response.json({ id: "box_1", projectId, connectionId: "conn_1", desiredState: "running", observedState: "running", revision: 1, environment: { kind: "prepared", imageId: "fake-starter" }, network: { policy: "blocked" }, labels: {} });
+    if (path.endsWith("/executions/exec_1")) {
+      if (failRead) { failRead = false; throw new TypeError("execution read disconnected"); }
+      return Response.json(execution);
+    }
+    throw new Error(`Unexpected path: ${path}`);
+  };
+  const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
+  const box = await client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") });
+  let reference: OutcomeUnknownError["reference"] | undefined;
+  try { await box.exec({ command: { kind: "argv", argv: ["echo", "ok"] } }); }
+  catch (error) { expect(error).toBeInstanceOf(OutcomeUnknownError); reference = (error as OutcomeUnknownError).reference; }
+  expect(reference?.operationId).toBe("op_exec");
+  const recovered = await client.recover(reference!);
+  expect((await recovered.wait() as { exitCode: number }).exitCode).toBe(0);
+  expect(creates).toBe(1);
+  expect(execs).toBe(1);
 });
 
 test("remote create rejects disagreement between operation and result sandbox IDs", async () => {

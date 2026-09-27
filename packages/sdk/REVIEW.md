@@ -180,3 +180,10 @@ Final independent complete-diff review of this resulting HEAD remains pending.
 - Validation after fix: `bun run check` passed; full `bun run test` passed 66 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Round 18 is **not** a zero-finding clearance.
 
 Final independent complete-diff review of this resulting HEAD remains pending.
+
+## PR #6 GitHub feedback repair (pre-integration)
+
+- GitHub P1 `discussion_r4112470318`: remote operation observation and result decoding could lose the recovery reference after service admission. Post-admission poll and follow-up read failures now raise `OutcomeUnknownError` with the sealed operation reference. Confirmed failed operations, nonzero/unknown exit status, and applied output-unavailable outcomes retain their semantic errors. Regressions cover a failed poll, a succeeded create followed by a failed sandbox fetch, and a succeeded exec followed by a failed execution fetch; recovery uses reads only and mutation counts remain one.
+- GitHub P2 `discussion_r4112470323`: imported direct references could retain or forward nested extras stripped by validation. Both backends now use detached validated references, and operation handles seal nested reference data against later caller changes. Regressions verify nested secrets are absent from serialization and provider observation, remote scope mutation cannot redirect recovery, and strict remote service fields reject extras.
+- Pre-integration validation: focused SDK tests 26/26 passed; `bun run check` passed; full `bun run test` passed 69 tests with one MySQL 8.4 skip and zero failures, including browser E2E.
+- Final parent rebase and independent complete-diff zero-finding review are pending before PR #6 is updated.

@@ -1,6 +1,6 @@
 import { NativeScope, ProviderReadError, SandboxObservation, type NativeRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
 import { normalizeCreate, normalizeExec, correlateDriverResult, sameNativeScope, sameNativeRef, captureBoundedOutput } from "@sandbar/core";
-import { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, throwIfAborted, validateCreate, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
+import { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, sealedReference, throwIfAborted, validateCreate, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
 export { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
@@ -16,9 +16,10 @@ function identity(): InvocationIdentity {
 
 class DirectOperation<T> implements OperationHandle<T> {
   readonly durability = "process" as const;
+  readonly reference: RecoveryReference;
   private first?: DriverResult;
   private settled?: { value: T } | { error: unknown };
-  constructor(readonly reference: RecoveryReference, private readonly client: DirectClient, private readonly decode: (result: DriverResult) => T, first?: DriverResult) { this.first = first; }
+  constructor(reference: RecoveryReference, private readonly client: DirectClient, private readonly decode: (result: DriverResult) => T, first?: DriverResult) { this.reference = sealedReference(reference); this.first = first; }
   async observe(): Promise<T | null> {
     this.client.ensureOpen();
     if (this.settled) {
@@ -197,7 +198,7 @@ export class DirectClient implements SandbarClient {
   }
   async recover(reference: RecoveryReference): Promise<OperationHandle<unknown>> {
     this.ensureOpen();
-    validateReference(reference);
+    reference = sealedReference(reference);
     if (reference.mode !== "direct" || !sameNativeScope(reference.scope!, this.scope)) throw new SandbarError("FORBIDDEN", "Recovery scope does not match configured provider");
     await this.verified();
     return new DirectOperation(reference, this, result => {

@@ -1,6 +1,6 @@
 import { AcceptedExecution, AcceptedOperation, CreateSandboxRequest, ErrorResponse, ExecRequest, Execution, FileReceipt, Id, Operation, Sandbox } from "@sandbar/contracts";
 import type { z } from "zod";
-import { Image, SandbarError, OutcomeUnknownError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, throwIfAborted, validateCreate, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
+import { Image, SandbarError, OutcomeUnknownError, NoExitCodeError, NonzeroExitError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sealedReference, throwIfAborted, validateCreate, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
 export { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, NonzeroExitError, NoExitCodeError, outputText } from "./resource";
 export type { CreateInput, ExecInput, ExecOutput, OperationHandle, RecoveryReference, SandboxHandle } from "./resource";
@@ -18,13 +18,20 @@ function base64Bytes(value?: string, maxBytes = 1_048_576): Uint8Array {
 
 class RemoteOperation<T> implements OperationHandle<T> {
   readonly durability = "service" as const;
-  constructor(readonly reference: RecoveryReference, private readonly client: RemoteClient, private readonly decode: (op: z.infer<typeof Operation>) => Promise<T>) {}
+  readonly reference: RecoveryReference;
+  constructor(reference: RecoveryReference, private readonly client: RemoteClient, private readonly decode: (op: z.infer<typeof Operation>) => Promise<T>) { this.reference = sealedReference(reference); }
   async observe(): Promise<T | null> {
-    const operation = await this.client.operationFor(this.reference);
+    let operation: z.infer<typeof Operation>;
+    try { operation = await this.client.operationFor(this.reference); }
+    catch { throw new OutcomeUnknownError(this.reference, "Service operation observation failed after admission; recover with this reference"); }
     if (operation.status === "unknown") throw new OutcomeUnknownError(this.reference, "Service recorded an unknown provider outcome; use service reconciliation");
     if (operation.status === "failed") throw new SandbarError(operation.error?.code ?? "OPERATION_FAILED", operation.error?.message ?? "Operation failed", operation.effect);
     if (operation.status !== "succeeded") return null;
-    return this.decode(operation);
+    try { return await this.decode(operation); }
+    catch (error) {
+      if (error instanceof NonzeroExitError || error instanceof NoExitCodeError || (error instanceof SandbarError && error.code === "OUTPUT_UNAVAILABLE" && error.effect === "applied")) throw error;
+      throw new OutcomeUnknownError(this.reference, "Service result read failed after admission; recover with this reference");
+    }
   }
   async wait(options: { signal?: AbortSignal; pollMs?: number } = {}): Promise<T> {
     const pollMs = options.pollMs ?? 500;
@@ -177,7 +184,7 @@ export class RemoteClient implements SandbarClient {
   }
   private reference(kind: Kind, key: string, resourceId?: string): RecoveryReference { return { version: 1, mode: "remote", kind, invocationKey: key, resourceId, service: { url: this.endpoint.href, projectId: this.projectId } }; }
   async operationFor(reference: RecoveryReference): Promise<z.infer<typeof Operation>> {
-    validateReference(reference);
+    reference = validateReference(reference);
     if (reference.mode !== "remote") throw new SandbarError("INVALID_ARGUMENT", "Expected remote recovery reference");
     if (reference.service?.url !== this.endpoint.href || reference.service.projectId !== this.projectId) throw new SandbarError("FORBIDDEN", "Recovery service scope does not match configured client");
     const op = await this.request(`invocations/${encodeURIComponent(reference.invocationKey)}?${new URLSearchParams({ kind: reference.kind, ...(reference.resourceId ? { sandboxId: reference.resourceId } : {}) })}`, Operation);
@@ -237,7 +244,7 @@ export class RemoteClient implements SandbarClient {
   }
   async recover(reference: RecoveryReference): Promise<OperationHandle<unknown>> {
     this.ensureOpen();
-    validateReference(reference);
+    reference = sealedReference(reference);
     if (reference.mode !== "remote") throw new SandbarError("INVALID_ARGUMENT", "Expected remote reference");
     await this.operationFor(reference);
     return new RemoteOperation(reference, this, async op => {

@@ -126,7 +126,15 @@ export function validateReference(value: RecoveryReference): RecoveryReference {
   } else if (!ref.service || ref.scope || ref.sandbox || ref.submissionId || ref.maxOutputBytes || (ref.kind === "create" ? !!ref.resourceId : !ref.resourceId)) {
     throw new SandbarError("INVALID_ARGUMENT", "Incomplete remote recovery reference");
   }
-  return ref;
+  return structuredClone(ref);
+}
+export function sealedReference(value: RecoveryReference): RecoveryReference {
+  const ref = validateReference(value);
+  if (ref.scope) Object.freeze(ref.scope);
+  if (ref.sandbox) { Object.freeze(ref.sandbox.scope); Object.freeze(ref.sandbox); }
+  if (ref.file) Object.freeze(ref.file);
+  if (ref.service) Object.freeze(ref.service);
+  return Object.freeze(ref);
 }
 export function sameScope(a: NativeScope, b: NativeScope): boolean { return a.provider === b.provider && a.connectionId === b.connectionId && a.accountId === b.accountId && a.region === b.region; }
 export function sameRef(a: NativeRef, b: NativeRef): boolean { return a.kind === b.kind && a.nativeId === b.nativeId && sameScope(a.scope, b.scope); }
