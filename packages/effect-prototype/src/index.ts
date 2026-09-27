@@ -557,6 +557,7 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
   private observing?: Promise<SandboxHandle | null>;
   private reading?: Promise<SandboxHandle | null>;
   private activeWaits = 0;
+  private activeObserves = 0;
   constructor(
     private readonly client: EffectCreateClient,
     reference: RecoveryReference,
@@ -566,6 +567,17 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
     this.first = first;
   }
   async observe(): Promise<SandboxHandle | null> {
+    this.activeObserves++;
+
+    try {
+      return await this.observeShared();
+    } finally {
+      this.activeObserves--;
+
+      if (this.activeObserves === 0 && this.activeWaits === 0) this.reading = undefined;
+    }
+  }
+  private async observeShared(): Promise<SandboxHandle | null> {
     this.client.ensureOpen();
 
     if (this.settled) {
@@ -575,6 +587,8 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
     }
 
     if (this.observing) return this.observing;
+
+    if (this.first === undefined && this.reading) return this.reading;
 
     const first = this.first;
     this.first = undefined;
@@ -603,9 +617,15 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
         throw error;
       });
 
-    // Only the local submission response is single-use. Read-only discovery may
-    // hang after a caller aborts, so later observations must be able to retry.
-    if (first === undefined) return observation;
+    if (first === undefined) {
+      const reading = observation.finally(() => {
+        if (this.reading === reading) this.reading = undefined;
+      });
+
+      this.reading = reading;
+
+      return reading;
+    }
 
     this.observing = observation.finally(() => {
       this.observing = undefined;
@@ -614,17 +634,7 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
     return this.observing;
   }
   private readForWait(): Promise<SandboxHandle | null> {
-    if (this.first !== undefined || this.observing || this.settled) return this.observe();
-
-    if (this.reading) return this.reading;
-
-    const reading = this.observe().finally(() => {
-      if (this.reading === reading) this.reading = undefined;
-    });
-
-    this.reading = reading;
-
-    return reading;
+    return this.observeShared();
   }
   async wait(options: { signal?: AbortSignal; pollMs?: number } = {}): Promise<SandboxHandle> {
     this.client.ensureOpen();
@@ -653,7 +663,7 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
 
       // A detached transport Promise may never settle. New callers must be able
       // to start a fresh read once every waiter has stopped awaiting that read.
-      if (this.activeWaits === 0) this.reading = undefined;
+      if (this.activeWaits === 0 && this.activeObserves === 0) this.reading = undefined;
     };
 
     options.signal?.addEventListener("abort", release, { once: true });

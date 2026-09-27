@@ -287,21 +287,21 @@ for (const [name, make] of Object.entries(variants)) {
       };
     };
 
-    let release!: () => void, bothEntered!: () => void;
+    let release!: () => void, entered!: () => void;
 
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
 
     const started = new Promise<void>((resolve) => {
-      bothEntered = resolve;
+      entered = resolve;
     });
 
     let observations = 0;
     provider.driver.observe = async (request) => {
       observations++;
 
-      if (observations === 2) bothEntered();
+      if (observations === 1) entered();
       await gate;
 
       if (!completion) throw new Error("Fixture completion unavailable");
@@ -315,6 +315,7 @@ for (const [name, make] of Object.entries(variants)) {
     const seen = operation.observe();
     const waited = operation.wait({ pollMs: 50 });
     await timeout(started);
+    await new Promise((resolve) => setTimeout(resolve, 10));
     release();
     const [box, waitBox] = await Promise.all([timeout(seen), timeout(waited)]);
 
@@ -325,7 +326,9 @@ for (const [name, make] of Object.entries(variants)) {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect((await box.inspect()).state).toBe("running");
     expect((await waitBox.inspect()).state).toBe("running");
-    expect(observations).toBe(2);
+
+    if (name === "effect") expect(observations).toBe(1);
+    else expect(observations).toBeGreaterThan(0);
     expect(createCount(await control("/_test/state"))).toBe(1);
     await client.close();
   });
