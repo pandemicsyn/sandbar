@@ -576,3 +576,167 @@ test("lost OCI build response observes the retained template without submitting 
     await connection.close();
   }
 });
+
+test("uncertain writes and destroy reconcile after reconnect without replay", async () => {
+  const files = new Map<string, Uint8Array>();
+  const bytes = Uint8Array.of(0, 255, 42);
+
+  let record: E2BRecord | null = {
+    id: "sandbox_1",
+    templateId: "built_template",
+    metadata: {
+      sandbar_scope: "team_one:template_1",
+      sandbar_template: "built_template",
+      sandbar_build: "sandbar-build",
+    },
+    state: "running",
+  };
+
+  let writes = 0;
+  let links = 0;
+  let kills = 0;
+
+  const adapter = createE2BAdapter((): E2BTransport => ({
+    async verifyTeam() {},
+    async verifyTemplate() {},
+    async buildImage() {
+      throw new Error("not used");
+    },
+    async findBuild() {
+      return null;
+    },
+    async create() {
+      throw new Error("not used");
+    },
+    async get(id) {
+      return record?.id === id ? record : null;
+    },
+    async list() {
+      return { items: record ? [record] : [] };
+    },
+    async kill() {
+      kills++;
+      record = null;
+      throw new Error("kill response lost after effect");
+    },
+    async run(_id, script) {
+      if (script.includes("ln -T --")) {
+        links++;
+        files.set("/tmp/no.bin", files.get("/tmp/.sandbar-write-sub_no")!);
+        throw new Error("link response lost after effect");
+      }
+
+      if (script.includes(" -ef "))
+        return files.get("/tmp/no.bin") === files.get("/tmp/.sandbar-write-sub_no")
+          ? "SAME"
+          : "DIFFERENT";
+
+      throw new Error("unexpected command");
+    },
+    async read(_id, path, maxBytes) {
+      const value = files.get(path);
+
+      if (!value) throw new Error("file absent");
+
+      return { bytes: value.slice(0, maxBytes), truncated: value.length > maxBytes };
+    },
+    async write(_id, path, value) {
+      writes++;
+      files.set(path, value);
+
+      if (path === "/tmp/overwrite.bin") throw new Error("write response lost after effect");
+    },
+    async remove(_id, path) {
+      files.delete(path);
+    },
+    close() {},
+  }));
+
+  const connect = () =>
+    connectAdapter(adapter, {
+      config: { teamId: "team_one", templateId: "template_1" },
+      credentials: { apiKey: "secret" },
+    });
+
+  const signal = new AbortController().signal;
+  let connection = await connect();
+
+  try {
+    for (const [path, overwrite, submissionId] of [
+      ["/tmp/overwrite.bin", true, "sub_overwrite"],
+      ["/tmp/no.bin", false, "sub_no"],
+    ] as const) {
+      const identity = {
+        operationId: `op_${submissionId}`,
+        submissionId,
+        invocationKey: `inv_${submissionId}`,
+        sandbox: { id: "sandbox_1" },
+      };
+
+      const prepared = await prepareOperation(
+        connection.session,
+        "file_write",
+        { sandbox: identity.sandbox, path, bytes, overwrite },
+        signal,
+      );
+
+      const result = await submitOperation(prepared, identity, signal);
+      expect(result.kind).toBe("pending");
+
+      if (result.kind !== "pending") throw new Error("missing recovery token");
+
+      await connection.close();
+      connection = await connect();
+
+      const observed = await observeOperation(
+        connection.session,
+        "file_write",
+        { ...identity, token: result.token, version: result.version },
+        signal,
+      );
+
+      expect(observed).toEqual({ kind: "completed", value: { bytesWritten: bytes.length } });
+    }
+
+    expect(writes).toBe(2);
+    expect(links).toBe(1);
+    expect(files.has("/tmp/.sandbar-write-sub_no")).toBe(true);
+
+    const identity = {
+      operationId: "op_destroy",
+      submissionId: "sub_destroy",
+      invocationKey: "inv_destroy",
+      sandbox: { id: "sandbox_1" },
+    };
+
+    const prepared = await prepareOperation(
+      connection.session,
+      "destroy",
+      identity.sandbox,
+      signal,
+    );
+
+    const result = await submitOperation(prepared, identity, signal);
+    expect(result.kind).toBe("pending");
+
+    if (result.kind !== "pending") throw new Error("missing destroy recovery token");
+
+    await connection.close();
+    connection = await connect();
+
+    const observed = await observeOperation(
+      connection.session,
+      "destroy",
+      { ...identity, token: result.token, version: result.version },
+      signal,
+    );
+
+    expect(observed).toEqual({
+      kind: "completed",
+      value: { computeStopped: true, retainedResources: ["e2b-template:built_template"] },
+    });
+    expect(kills).toBe(1);
+  } finally {
+    await connection.close();
+  }
+});

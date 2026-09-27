@@ -28,6 +28,17 @@ const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
 const ExecToken = z.strictObject({ maxOutputBytes: z.number().int().min(0).max(MAX_BYTES) });
 
+const WriteToken = z.strictObject({
+  path: z.string().max(4096),
+  staged: z.string().max(4096).optional(),
+  bytesWritten: z.number().int().min(0).max(MAX_BYTES),
+  digest: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+type WriteTokenData = z.infer<typeof WriteToken>;
+
+const DestroyToken = z.strictObject({ retainedTemplateId: z.string().max(128).optional() });
+
 const nativeId = /^[A-Za-z0-9_-]{1,128}$/;
 
 const ownerKeys = [
@@ -273,25 +284,63 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             };
           },
         },
-        async destroy(box, ctx) {
-          const record = await find(box.id);
+        destroy: {
+          recovery: { version: 1, token: DestroyToken },
+          async prepare(box) {
+            const record = await find(box.id);
 
-          if (!record) return ctx.reject("NOT_FOUND", "E2B sandbox is outside the verified scope");
+            if (!record)
+              throw new AdapterError("NOT_FOUND", "E2B sandbox is outside the verified scope");
 
-          try {
-            await transport.kill(box.id);
+            return box;
+          },
+          async submit(box, ctx) {
+            const record = await find(box.id);
 
-            return (await transport.get(box.id)) === null
-              ? {
+            if (!record)
+              return ctx.reject("NOT_FOUND", "E2B sandbox is outside the verified scope");
+
+            const token: Record<string, string> = {};
+
+            if (record.metadata.sandbar_build) token.retainedTemplateId = record.templateId;
+
+            try {
+              await transport.kill(box.id);
+
+              if ((await transport.get(box.id)) === null)
+                return {
                   computeStopped: true,
-                  retainedResources: record.metadata.sandbar_build
-                    ? [`e2b-template:${record.templateId}`]
+                  retainedResources: token.retainedTemplateId
+                    ? [`e2b-template:${token.retainedTemplateId}`]
                     : [],
-                }
-              : ctx.unknown("E2B termination was not confirmed");
-          } catch {
-            return ctx.unknown("E2B termination response unavailable; do not replay");
-          }
+                };
+            } catch {
+              // An absent sandbox may still be confirmed by read-only observation.
+            }
+
+            return ctx.pending(token, { pollAfterMs: 1000 });
+          },
+          async observe(attempt, ctx) {
+            if (!attempt.sandbox) return null;
+            const token = DestroyToken.safeParse(attempt.token);
+
+            if (!token.success) return ctx.unknown("E2B destroy lacks retained-resource evidence");
+            await transport.verifyTeam(config.teamId);
+            const record = await transport.get(attempt.sandbox.id);
+
+            if (record) {
+              if (!owned(record)) return ctx.unknown("E2B destroy scope no longer matches");
+
+              return ctx.pending(token.data, { pollAfterMs: 1000 });
+            }
+
+            return {
+              computeStopped: true,
+              retainedResources: token.data.retainedTemplateId
+                ? [`e2b-template:${token.data.retainedTemplateId}`]
+                : [],
+            };
+          },
         },
         async inspect(box) {
           const record = await find(box.id);
@@ -395,6 +444,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             return result.bytes;
           },
           write: {
+            recovery: { version: 1, token: WriteToken },
             async prepare(input) {
               requirePath(input.path);
               await requireRunning(input.sandbox.id);
@@ -408,32 +458,95 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               if (!nativeId.test(ctx.submissionId))
                 return ctx.reject("INVALID_ARGUMENT", "Invalid E2B write submission ID");
 
+              const parent = input.path.slice(0, input.path.lastIndexOf("/")) || "/";
+
+              const staged = input.overwrite
+                ? undefined
+                : `${parent}/.sandbar-write-${ctx.submissionId}`;
+
+              if (staged === input.path)
+                return ctx.reject(
+                  "INVALID_ARGUMENT",
+                  "E2B destination conflicts with write staging",
+                );
+
+              const token: WriteTokenData = {
+                path: input.path,
+                bytesWritten: input.bytes.length,
+                digest: createHash("sha256").update(input.bytes).digest("hex"),
+              };
+
+              if (staged) token.staged = staged;
+
               try {
                 if (input.overwrite) {
                   await transport.write(input.sandbox.id, input.path, input.bytes);
                 } else {
-                  const parent = input.path.slice(0, input.path.lastIndexOf("/")) || "/";
-                  const staged = `${parent}/.sandbar-write-${ctx.submissionId}`;
-                  await transport.write(input.sandbox.id, staged, input.bytes);
+                  await transport.write(input.sandbox.id, staged!, input.bytes);
 
                   const answer = await transport.run(
                     input.sandbox.id,
-                    `if ln -T -- ${shellQuote(staged)} ${shellQuote(input.path)} 2>/dev/null; then printf 'CREATED'; elif test -e ${shellQuote(input.path)}; then printf 'EXISTS'; else printf 'FAILED'; fi`,
+                    `if ln -T -- ${shellQuote(staged!)} ${shellQuote(input.path)} 2>/dev/null; then printf 'CREATED'; elif test -e ${shellQuote(input.path)}; then printf 'EXISTS'; else printf 'FAILED'; fi`,
                     { timeoutMs: 30_000 },
                   );
 
-                  await transport.remove(input.sandbox.id, staged).catch(() => {});
+                  if (answer === "EXISTS") {
+                    await transport.remove(input.sandbox.id, staged!).catch(() => {});
 
-                  if (answer === "EXISTS") return ctx.reject("CONFLICT", "E2B file already exists");
+                    return ctx.reject("CONFLICT", "E2B file already exists");
+                  }
 
-                  if (answer !== "CREATED")
-                    return ctx.unknown("E2B no-clobber write could not be confirmed");
+                  if (answer !== "CREATED") return ctx.pending(token, { pollAfterMs: 1000 });
+
+                  await transport.remove(input.sandbox.id, staged!).catch(() => {});
                 }
 
                 return { bytesWritten: input.bytes.length };
               } catch {
-                return ctx.unknown("E2B file write response unavailable; do not replay");
+                return ctx.pending(token, { pollAfterMs: 1000 });
               }
+            },
+            async observe(attempt, ctx) {
+              if (!attempt.sandbox) return null;
+              const token = WriteToken.safeParse(attempt.token);
+
+              if (!token.success) return ctx.unknown("E2B file write lacks recovery evidence");
+              await requireRunning(attempt.sandbox.id);
+              const { path, staged, bytesWritten, digest } = token.data;
+              requirePath(path);
+
+              if (staged) {
+                const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+
+                if (staged !== `${parent}/.sandbar-write-${attempt.submissionId}`)
+                  return ctx.unknown("E2B no-clobber stage does not match the submission");
+
+                const same = await transport.run(
+                  attempt.sandbox.id,
+                  `if test ${shellQuote(staged)} -ef ${shellQuote(path)}; then printf 'SAME'; else printf 'DIFFERENT'; fi`,
+                  { timeoutMs: 30_000 },
+                );
+
+                if (same !== "SAME")
+                  return ctx.unknown("E2B no-clobber write has no matching native inode");
+              }
+
+              let result: { bytes: Uint8Array; truncated: boolean };
+
+              try {
+                result = await transport.read(attempt.sandbox.id, path, MAX_BYTES);
+              } catch {
+                return ctx.unknown("E2B written file could not be confirmed");
+              }
+
+              if (
+                result.truncated ||
+                result.bytes.length !== bytesWritten ||
+                createHash("sha256").update(result.bytes).digest("hex") !== digest
+              )
+                return ctx.unknown("E2B written bytes differ from the submitted content");
+
+              return { bytesWritten };
             },
           },
         },
