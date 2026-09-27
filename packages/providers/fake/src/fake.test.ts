@@ -688,6 +688,9 @@ describe("independent fake provider", () => {
         })
       ).result.status,
     ).toBe("completed");
+    expect((await engine.observe(scope, "saved_create"))?.status).toBe("completed");
+    expect((await engine.observe(scope, "saved_create"))?.status).toBe("completed");
+    expect(engine.snapshot().ledger[0]?.remaining).toBe(0);
     const valid = await readFile(statePath, "utf8");
     const recovered = new FakeProviderEngine(statePath, true);
     await recovered.load();
@@ -710,6 +713,7 @@ describe("independent fake provider", () => {
         ],
       },
       { ...source, ledger: [{ ...source.ledger[0], action: "destroy" }] },
+      { ...source, ledger: [{ ...source.ledger[0], remaining: -1 }] },
       {
         ...source,
         ledger: [{ ...source.ledger[0], scope: { ...scope, connectionId: "foreign" } }],

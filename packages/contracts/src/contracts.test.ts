@@ -97,6 +97,7 @@ describe("public contract", () => {
       paths["/v1/projects/{projectId}/sandboxes/{sandboxId}/files"].put.responses["202"],
     ];
     for (const response of accepted) {
+      expect(response.headers.Location.required).toBe(true);
       expect(response.headers.Location.schema).toEqual({ type: "string", format: "uri-reference" });
     }
   });

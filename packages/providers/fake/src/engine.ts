@@ -78,7 +78,7 @@ const LedgerEntrySchema = z
       (value) => value.status === "completed",
       "Persisted effect must be completed",
     ),
-    remaining: z.number().int(),
+    remaining: z.number().int().nonnegative(),
     discoverable: z.boolean(),
   })
   .superRefine((entry, context) => {
@@ -559,8 +559,10 @@ export class FakeProviderEngine {
               : entry.result.value.observation.sandbox
           : undefined;
       if (!ref || !sameScope(ref.scope, scope)) return null;
-      if (entry.remaining-- > 0)
+      if (entry.remaining > 0) {
+        entry.remaining--;
         return { status: "pending", effect: "possible", submissionId, observeAfterMs: 0 } as const;
+      }
       return entry.result;
     });
   }

@@ -65,6 +65,7 @@ const acceptedResponse = (description: string, name: keyof typeof schemas) => ({
   headers: {
     Location: {
       description: "Stable operation resource URL for polling",
+      required: true,
       schema: { type: "string", format: "uri-reference" },
     },
   },
