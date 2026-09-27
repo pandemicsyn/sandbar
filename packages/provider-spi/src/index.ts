@@ -54,6 +54,10 @@ export type DriverCapabilities = z.infer<typeof DriverCapabilities>;
 export type DriverResult = z.infer<typeof DriverResult>;
 export type SandboxObservation = z.infer<typeof SandboxObservation>;
 
+export class ProviderReadError extends Error {
+  constructor(readonly code: "NOT_FOUND" | "INVALID_RESPONSE", message: string) { super(message); this.name = "ProviderReadError"; }
+}
+
 export interface ProviderDriver {
   readonly name: string;
   capabilities(scope: NativeScope): Promise<DriverCapabilities>;

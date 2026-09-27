@@ -15,7 +15,11 @@ const schemas = {
 const component = (name: keyof typeof schemas) => ({ $ref: `#/components/schemas/${name}` });
 const json = (name: keyof typeof schemas) => ({ content: { "application/json": { schema: component(name) } } });
 const response = (description: string, name: keyof typeof schemas) => ({ description, ...json(name) });
-const accepted = (name: keyof typeof schemas) => ({ "202": response("Durably accepted", name), default: response("Structured error", "ErrorResponse") });
+const acceptedResponse = (description: string, name: keyof typeof schemas) => ({
+  ...response(description, name),
+  headers: { Location: { description: "Stable operation resource URL for polling", schema: { type: "string", format: "uri-reference" } } },
+});
+const accepted = (name: keyof typeof schemas) => ({ "202": acceptedResponse("Durably accepted", name), default: response("Structured error", "ErrorResponse") });
 const ordinary = (name: keyof typeof schemas) => ({ "200": response("Success", name), default: response("Structured error", "ErrorResponse") });
 const projectParameter = { name: "projectId", in: "path", required: true, schema: component("Id") };
 const sandboxParameter = { name: "sandboxId", in: "path", required: true, schema: component("Id") };
@@ -60,7 +64,7 @@ export const openApiDocument = {
     "/v1/projects/{projectId}/sandboxes/{sandboxId}/files": {
       parameters: [projectParameter, sandboxParameter, { name: "path", in: "query", required: true, schema: { type: "string" } }],
       get: { operationId: "readFile", responses: { "200": { description: "Raw binary file", content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } }, default: response("Structured error", "ErrorResponse") } },
-      put: { operationId: "writeFile", parameters: [invocationHeader], requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } }, responses: { ...ordinary("FileReceipt"), "202": response("Durably accepted but transfer effect pending or unknown", "AcceptedOperation") } },
+      put: { operationId: "writeFile", parameters: [invocationHeader], requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } }, responses: { ...ordinary("FileReceipt"), "202": acceptedResponse("Durably accepted but transfer effect pending or unknown", "AcceptedOperation") } },
     },
     "/v1/projects/{projectId}/operations/{operationId}": { parameters: [projectParameter, operationParameter], get: { operationId: "getOperation", responses: ordinary("Operation") } },
   },

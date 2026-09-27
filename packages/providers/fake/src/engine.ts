@@ -1,7 +1,7 @@
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { ExecCommand, canonicalJson, intentSha256 } from "@sandbar/contracts";
-import { DriverResult, type NativeRef, type NativeScope, type InvocationIdentity } from "@sandbar/provider-spi";
+import { DriverResult, NativeRef, NativeScope, type InvocationIdentity } from "@sandbar/provider-spi";
 
 const CommandFixture = z.strictObject({ command: ExecCommand, cwd: z.string().optional(), env: z.record(z.string(), z.string()).optional(), deadlineSeconds: z.number().int().min(1).max(3600).optional(), exitCode: z.number().int(), stdoutBase64: z.base64().default(""), stderrBase64: z.base64().default("") });
 export const FakeScenario = z.strictObject({
@@ -12,13 +12,38 @@ export const FakeScenario = z.strictObject({
   command: CommandFixture.optional(),
 });
 export type FakeScenario = z.infer<typeof FakeScenario>;
-type Resource = { ref: NativeRef; state: "running" | "destroyed"; image: string; networkPolicy: string; labels: Record<string, string>; files: Record<string, string>; sequence: number };
-type LedgerEntry = { submissionId: string; projectId: string; scope: NativeScope; action: FakeScenario["action"]; requestHash: string; result: z.infer<typeof DriverResult>; remaining: number; discoverable: boolean };
 export const FakeProfile = z.strictObject({ nativeIdempotency: z.strictObject({ create: z.boolean(), exec: z.boolean(), destroy: z.boolean(), writeFile: z.boolean().default(true) }), discoveryBySubmission: z.boolean() });
 export const FakeEvent = z.strictObject({ eventId: z.string().min(1), ref: z.object({ scope: z.object({ provider: z.string(), connectionId: z.string(), accountId: z.string(), region: z.string().optional() }), nativeId: z.string(), kind: z.literal("sandbox") }), sequence: z.number().int().nonnegative(), state: z.enum(["running", "destroyed"]), occurredAt: z.iso.datetime({ offset: true }) });
-type State = { version: 1; nextId: number; tick: number; profile: z.infer<typeof FakeProfile>; resources: Resource[]; ledger: LedgerEntry[]; scenarios: FakeScenario[]; events: z.infer<typeof FakeEvent>[]; invocations: { submissionId: string; projectId: string; action: string }[] };
-const empty = (): State => ({ version: 1, nextId: 1, tick: 0, profile: { nativeIdempotency: { create: true, exec: true, destroy: true, writeFile: true }, discoveryBySubmission: true }, resources: [], ledger: [], scenarios: [], events: [], invocations: [] });
 const MAX_RESOURCES = 128, MAX_LEDGER = 512, MAX_INVOCATIONS = 512, MAX_FILE_BYTES = 1024 * 1024, MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+const ResourceSchema = z.strictObject({
+  ref: NativeRef, state: z.enum(["running", "destroyed"]), image: z.string(), networkPolicy: z.string(),
+  labels: z.record(z.string(), z.string()), files: z.record(z.string(), z.base64().max(1_398_104)),
+  sequence: z.number().int().nonnegative(),
+});
+const LedgerEntrySchema = z.strictObject({
+  submissionId: z.string().min(1), projectId: z.string().min(1), scope: NativeScope,
+  action: FakeScenario.shape.action, requestHash: z.string().regex(/^[0-9a-f]{64}$/),
+  result: DriverResult.refine(value => value.status === "completed", "Persisted effect must be completed"),
+  remaining: z.number().int(), discoverable: z.boolean(),
+}).superRefine((entry, context) => {
+  if (entry.result.status !== "completed") return;
+  const value = entry.result.value;
+  const expectedKind = { create: "sandbox", exec: "execution", destroy: "destroy", file_write: "file_write" }[entry.action];
+  const effectScope = value.kind === "sandbox" ? value.observation.ref.scope : value.observation.sandbox.scope;
+  if (value.kind !== expectedKind || scopeKey(effectScope) !== scopeKey(entry.scope)) {
+    context.addIssue({ code: "custom", message: "Persisted effect does not match its action or scope" });
+  }
+});
+const StateSchema = z.strictObject({
+  version: z.literal(1), nextId: z.number().int().min(1), tick: z.number().int().nonnegative(),
+  profile: FakeProfile, resources: z.array(ResourceSchema).max(MAX_RESOURCES),
+  ledger: z.array(LedgerEntrySchema).max(MAX_LEDGER), scenarios: z.array(FakeScenario).max(512),
+  events: z.array(FakeEvent).max(512),
+  invocations: z.array(z.strictObject({ submissionId: z.string().min(1), projectId: z.string().min(1), action: FakeScenario.shape.action })).max(MAX_INVOCATIONS),
+});
+type State = z.infer<typeof StateSchema>;
+type Resource = z.infer<typeof ResourceSchema>;
+const empty = (): State => ({ version: 1, nextId: 1, tick: 0, profile: { nativeIdempotency: { create: true, exec: true, destroy: true, writeFile: true }, discoveryBySubmission: true }, resources: [], ledger: [], scenarios: [], events: [], invocations: [] });
 const scopeKey = (scope: NativeScope) => `${scope.provider}\0${scope.connectionId}\0${scope.accountId}\0${scope.region ?? ""}`;
 const sameScope = (a: NativeScope, b: NativeScope) => scopeKey(a) === scopeKey(b);
 const iso = (tick: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, tick)).toISOString();
@@ -31,9 +56,16 @@ export class FakeProviderEngine {
   constructor(readonly statePath: string, readonly testMode: boolean) {}
 
   async load(): Promise<void> {
-    try { this.state = JSON.parse(await readFile(this.statePath, "utf8")) as State; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    if (this.state.version !== 1) throw new Error("Unsupported fake provider state version");
+    try {
+      if ((await stat(this.statePath)).size > MAX_TOTAL_BYTES) throw new Error("Invalid fake provider state size");
+      const parsed = StateSchema.safeParse(JSON.parse(await readFile(this.statePath, "utf8")));
+      if (!parsed.success) throw new Error("Invalid fake provider state version or shape");
+      this.state = parsed.data;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (error instanceof SyntaxError) throw new Error("Invalid fake provider state JSON");
+      throw error;
+    }
   }
   private async save(): Promise<void> {
     const json = JSON.stringify(this.state);
@@ -57,7 +89,7 @@ export class FakeProviderEngine {
   private ref(scope: NativeScope, kind: "sandbox" | "execution"): NativeRef {
     return { scope, kind, nativeId: `fake_${kind}_${this.state.nextId++}` };
   }
-  private recordInvocation(submissionId: string, projectId: string, action: string) {
+  private recordInvocation(submissionId: string, projectId: string, action: FakeScenario["action"]) {
     this.state.invocations.push({ submissionId, projectId, action });
     if (this.state.invocations.length > MAX_INVOCATIONS) this.state.invocations.shift();
   }

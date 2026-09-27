@@ -30,4 +30,16 @@ describe("public contract", () => {
     expect(openApiDocument.components.schemas.SandboxListQuery).toBeDefined();
     expect(openApiDocument.paths["/v1/projects/{projectId}/sandboxes"].get.parameters.map(p => p.name)).toEqual(["cursor", "limit", "connectionId", "state", "q"]);
   });
+  test("every accepted operation response documents its polling Location header", () => {
+    const paths = openApiDocument.paths;
+    const accepted = [
+      paths["/v1/projects/{projectId}/sandboxes"].post.responses["202"],
+      paths["/v1/projects/{projectId}/sandboxes/{sandboxId}"].delete.responses["202"],
+      paths["/v1/projects/{projectId}/sandboxes/{sandboxId}/executions"].post.responses["202"],
+      paths["/v1/projects/{projectId}/sandboxes/{sandboxId}/files"].put.responses["202"],
+    ];
+    for (const response of accepted) {
+      expect(response.headers.Location.schema).toEqual({ type: "string", format: "uri-reference" });
+    }
+  });
 });

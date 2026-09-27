@@ -420,6 +420,15 @@
                   "$ref": "#/components/schemas/AcceptedOperation"
                 }
               }
+            },
+            "headers": {
+              "Location": {
+                "description": "Stable operation resource URL for polling",
+                "schema": {
+                  "type": "string",
+                  "format": "uri-reference"
+                }
+              }
             }
           },
           "default": {
@@ -501,6 +510,15 @@
                   "$ref": "#/components/schemas/AcceptedOperation"
                 }
               }
+            },
+            "headers": {
+              "Location": {
+                "description": "Stable operation resource URL for polling",
+                "schema": {
+                  "type": "string",
+                  "format": "uri-reference"
+                }
+              }
             }
           },
           "default": {
@@ -565,6 +583,15 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AcceptedExecution"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "Stable operation resource URL for polling",
+                "schema": {
+                  "type": "string",
+                  "format": "uri-reference"
                 }
               }
             }
@@ -676,6 +703,15 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AcceptedOperation"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "Stable operation resource URL for polling",
+                "schema": {
+                  "type": "string",
+                  "format": "uri-reference"
                 }
               }
             }

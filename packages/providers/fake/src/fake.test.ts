@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProviderDriver } from "./index";
 import { FakeProviderEngine } from "./engine";
 import { startFakeProviderServer } from "./server";
+import { ProviderReadError } from "@sandbar/provider-spi";
 
 const token = "local-test-token-12345";
 const scope = { provider: "fake", connectionId: "conn_1", accountId: "fake-local", region: "local" };
@@ -124,6 +125,38 @@ describe("independent fake provider", () => {
     const transport = (async () => { calls++; throw new Error("must not be called"); }) as unknown as typeof fetch;
     expect(() => new FakeProviderDriver({ baseUrl: "https://example.com", token, fetch: transport })).toThrow("loopback");
     expect(calls).toBe(0);
+  });
+
+  test("fake driver retains the validated endpoint, token, and transport after options mutate", async () => {
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+    const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), authorization: new Headers(init?.headers).get("Authorization") });
+      return Response.json({ provider: "fake", nativeIdempotency: { create: true, exec: true, destroy: true, writeFile: true }, discoveryBySubmission: true, supports: { argv: true, shell: true, fileBytes: true, inventory: true }, maxFileBytes: 1048576, maxOutputBytes: 1048576, networkPolicies: ["blocked"] });
+    }) as typeof fetch;
+    let changedTransportCalls = 0;
+    const options = { baseUrl: "http://127.0.0.1:8789", token, fetch: transport };
+    const driver = new FakeProviderDriver(options);
+    options.baseUrl = "https://example.com";
+    options.token = "changed-token";
+    options.fetch = (async () => { changedTransportCalls++; throw new Error("changed transport called"); }) as unknown as typeof fetch;
+    expect((await driver.capabilities(scope)).provider).toBe("fake");
+    expect(requests).toEqual([{ url: "http://127.0.0.1:8789/v1/action", authorization: `Bearer ${token}` }]);
+    expect(changedTransportCalls).toBe(0);
+  });
+
+  test("fake driver rejects malformed file read envelopes before decoding", async () => {
+    let payload: unknown = { bytesBase64: "not-base64" };
+    const transport = (async () => Response.json(payload)) as unknown as typeof fetch;
+    const driver = new FakeProviderDriver({ baseUrl: "http://127.0.0.1:8789", token, fetch: transport });
+    const input = { sandbox: { scope, nativeId: "fake_sandbox_1", kind: "sandbox" as const }, path: "/blob" };
+    for (payload of [{ bytesBase64: "not-base64" }, { bytesBase64: 4 }, { bytesBase64: "AA==", extra: true }]) {
+      await expect(driver.readFile(input)).rejects.toMatchObject({ code: "INVALID_RESPONSE", name: "ProviderReadError" });
+    }
+    payload = { bytesBase64: null };
+    await expect(driver.readFile(input)).rejects.toBeInstanceOf(ProviderReadError);
+    await expect(driver.readFile(input)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    payload = { bytesBase64: "AP8B" };
+    expect(await driver.readFile(input)).toEqual(Uint8Array.from([0, 255, 1]));
   });
 
   test("fake driver does not forward mutation bodies across redirects", async () => {
@@ -255,6 +288,33 @@ describe("independent fake provider", () => {
     const reloaded = new FakeProviderEngine(join(directory, "provider.json"), true);
     await reloaded.load();
     expect(reloaded.snapshot().invocations).toHaveLength(512);
+  });
+
+  test("fake state recovery rejects malformed or unknown-version evidence without rewriting it", async () => {
+    directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+    const statePath = join(directory, "provider.json");
+    const engine = new FakeProviderEngine(statePath, true);
+    await engine.load();
+    expect((await engine.create({ scope, identity: identity("saved_create"), image: "fake-starter", networkPolicy: "blocked" })).result.status).toBe("completed");
+    const valid = await readFile(statePath, "utf8");
+    const recovered = new FakeProviderEngine(statePath, true);
+    await recovered.load();
+    expect(recovered.snapshot().ledger).toHaveLength(1);
+    const source = JSON.parse(valid);
+    for (const damaged of [
+      { ...source, version: 2 },
+      { ...source, ledger: [{ ...source.ledger[0], result: { status: "unknown", effect: "possible", submissionId: "saved_create", reason: "lost" } }] },
+      { ...source, ledger: [{ ...source.ledger[0], action: "destroy" }] },
+      { ...source, ledger: [{ ...source.ledger[0], scope: { ...scope, connectionId: "foreign" } }] },
+      { ...source, resources: [{ ...source.resources[0], files: { "/blob": "not-base64" } }] },
+    ]) {
+      const serialized = JSON.stringify(damaged);
+      await writeFile(statePath, serialized);
+      await expect(new FakeProviderEngine(statePath, true).load()).rejects.toThrow("Invalid fake provider state");
+      expect(await readFile(statePath, "utf8")).toBe(serialized);
+    }
+    await writeFile(statePath, "{");
+    await expect(new FakeProviderEngine(statePath, true).load()).rejects.toThrow("Invalid fake provider state JSON");
   });
 
   test("full effect ledger rejects the 513th mutation before changing provider state while preserving replay evidence", async () => {

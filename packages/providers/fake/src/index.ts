@@ -1,19 +1,26 @@
-import { DriverCapabilities, DriverResult, SandboxObservation, NativeScope, type ProviderDriver, type NativeRef, type InvocationIdentity } from "@sandbar/provider-spi";
+import { DriverCapabilities, DriverResult, SandboxObservation, NativeScope, ProviderReadError, type ProviderDriver, type NativeRef, type InvocationIdentity } from "@sandbar/provider-spi";
 import type { ExecCommand } from "@sandbar/contracts";
+import { z } from "zod";
 import { FakeAction } from "./protocol";
 import { FakeEvent } from "./engine";
 
 export class FakeProviderDriver implements ProviderDriver {
   readonly name = "fake";
-  constructor(private readonly options: { baseUrl: string; token: string; fetch?: typeof fetch }) {
+  private readonly endpoint: string;
+  private readonly token: string;
+  private readonly transport: typeof fetch;
+  constructor(options: { baseUrl: string; token: string; fetch?: typeof fetch }) {
     const endpoint = new URL(options.baseUrl);
     if ((endpoint.protocol !== "http:" && endpoint.protocol !== "https:") || (endpoint.hostname !== "127.0.0.1" && endpoint.hostname !== "[::1]") || endpoint.username || endpoint.password) {
       throw new Error("Fake provider driver requires a loopback HTTP endpoint");
     }
+    this.endpoint = new URL("/v1/action", endpoint).href;
+    this.token = options.token;
+    this.transport = options.fetch ?? fetch;
   }
 
   private async call(action: FakeAction): Promise<unknown> {
-    const response = await (this.options.fetch ?? fetch)(new URL("/v1/action", this.options.baseUrl), { method: "POST", redirect: "error", headers: { Authorization: `Bearer ${this.options.token}`, "Content-Type": "application/json" }, body: JSON.stringify(action) });
+    const response = await this.transport(this.endpoint, { method: "POST", redirect: "error", headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" }, body: JSON.stringify(action) });
     if (!response.ok) throw new FakeTransportError(response.status);
     return response.json();
   }
@@ -45,9 +52,10 @@ export class FakeProviderDriver implements ProviderDriver {
     return this.mutation({ kind: "exec", sandbox: input.sandbox, identity: input.identity, command: input.command, cwd: input.cwd, env: input.env, deadlineSeconds: input.deadlineSeconds, maxOutputBytes: input.maxOutputBytes }, input.identity.submissionId);
   }
   async readFile(input: { sandbox: NativeRef; path: string }): Promise<Uint8Array> {
-    const value = await this.call({ kind: "readFile", ...input }) as { bytesBase64: string | null };
-    if (value.bytesBase64 === null) throw new Error("Fake file not found");
-    return Uint8Array.from(Buffer.from(value.bytesBase64, "base64"));
+    const parsed = z.strictObject({ bytesBase64: z.base64().max(1_398_104).nullable() }).safeParse(await this.call({ kind: "readFile", ...input }));
+    if (!parsed.success) throw new ProviderReadError("INVALID_RESPONSE", "Fake provider returned invalid file data");
+    if (parsed.data.bytesBase64 === null) throw new ProviderReadError("NOT_FOUND", "Fake file not found");
+    return Uint8Array.from(Buffer.from(parsed.data.bytesBase64, "base64"));
   }
   async writeFile(input: { sandbox: NativeRef; identity: InvocationIdentity; path: string; bytes: Uint8Array; overwrite: boolean }): Promise<DriverResult> {
     return this.mutation({ kind: "writeFile", sandbox: input.sandbox, identity: input.identity, path: input.path, bytesBase64: Buffer.from(input.bytes).toString("base64"), overwrite: input.overwrite }, input.identity.submissionId);
