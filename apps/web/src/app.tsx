@@ -39,20 +39,6 @@ const ErrorMessage = z
   .transform((error) => error.message)
   .catch("An unexpected error occurred.");
 
-function age(timestamp?: string): string {
-  if (!timestamp) return "No observation yet";
-
-  const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(timestamp)) / 1000));
-
-  if (seconds < 60) return `${seconds}s ago`;
-
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-
-  return `${Math.floor(seconds / 86400)}d ago`;
-}
-
 function capturedBytes(base64: string): Uint8Array {
   return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
 }
@@ -1131,8 +1117,13 @@ function SandboxPage() {
               <dd>{sandbox.desiredState}</dd>
               <dt>Observed</dt>
               <dd>
-                {age(sandbox.observedAt)}
-                {sandbox.observedAt && ` (${new Date(sandbox.observedAt).toLocaleString()})`}
+                {sandbox.observedAt ? (
+                  <time dateTime={sandbox.observedAt}>
+                    {new Date(sandbox.observedAt).toLocaleString()}
+                  </time>
+                ) : (
+                  "No observation yet"
+                )}
               </dd>
               <dt>Revision</dt>
               <dd>{sandbox.revision}</dd>

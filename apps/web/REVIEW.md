@@ -179,3 +179,15 @@ The initial PR base was `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed c
 - Finding: a 500 response from Fleet's provider-connection list was presented as an empty verified-connection list, hiding the fetch error and blocking creation without a retry path. The manager approved a narrow fix after the concrete supported-path reproduction was reported.
 - Fix: Fleet now renders the connection error and a retry action before the successful-empty warning; loading also keeps the create form gated. Chromium E2E fails the first list request after a verified connection exists, checks the error and absence of the misleading warning, then retries and sees creation available without navigation.
 - Validation after fix: `bun run lint`, `bun run format:check`, `bun run check`, `bun run build`, `bun run test`, and `git diff --check` pass; 82 tests passed, 5 local MySQL skips, 0 failed, 1,826 assertions. Chromium E2E passed with 41 assertions after rebuilding current assets. Another independent complete-diff review is required before the PR update.
+
+## Later review checkpoints
+
+The pending-review statements above describe their historical checkpoints. Each later repair was reviewed against merged `main` base `1e1acd832f6c9b8dd075bc78ea95c672e75467a2` by an independent read-only `gpt-6-luna` subagent at high reasoning effort. The current PR body records the final exact-HEAD clearance after this source file is committed; the detailed local report is `/private/tmp/sandbar-web-pr4-final-review.md`.
+
+- Round 2 reviewed `61fc8cf`: zero actionable findings after fixing the Fleet provider-connection fetch error and retry.
+- GitHub review then found operation polling lost retained data after a transient failure and Fleet URL parsing erased a valid filter when another field was invalid. The manager approved both narrow fixes. Round 3 reviewed `bed5cad`: zero actionable findings.
+- CI exposed a browser test interceptor race, so the manager approved a test-only sequencing repair. Round 4 reviewed `4924309`: zero actionable findings.
+- GitHub review then found missing terminal execution-detail retry, frozen Fleet relative freshness, and unvalidated successful file-read responses. The manager approved narrow fixes. Round 5 reviewed `dcb7b0b`: zero actionable findings.
+- GitHub review found that Sandbox detail hid retained data and Refresh state after a transient GET failure. The manager approved the repair. Round 6 reviewed `4c4843c`: zero actionable findings.
+- GitHub review found that Connections hid retained rows after a transient follow-up GET failure and ProjectLayout offered no retry after a failed project-context GET. The manager approved both repairs. Round 7 reviewed `aa030d0`: zero actionable findings.
+- A subsequent GitHub review identified a frozen relative freshness label in Sandbox detail and this tracked report ending at the historical round 1 pending state. The manager approved absolute time display and this provenance update. The final review of the complete changed diff is recorded in the PR body and local report with exact base and HEAD after this commit.

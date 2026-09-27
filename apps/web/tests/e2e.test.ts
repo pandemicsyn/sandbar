@@ -585,6 +585,11 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("heading", { name: "Fleet" }).waitFor();
   await page.getByRole("link", { name: sandboxId }).click();
   await page.getByRole("heading", { name: `Sandbox ${sandboxId}` }).waitFor();
+  const sandboxObservedTime = page.locator("time[datetime]");
+  expect(await sandboxObservedTime.count()).toBe(1);
+  expect(Number.isNaN(Date.parse((await sandboxObservedTime.getAttribute("datetime"))!))).toBe(
+    false,
+  );
   await page.goto(`${serviceUrl}/projects/${projectId}/sandboxes`);
   await page.getByRole("heading", { name: "Fleet" }).waitFor();
   const sandboxReadRoute = `**/v1/projects/${projectId}/sandboxes/${sandboxId}`;
