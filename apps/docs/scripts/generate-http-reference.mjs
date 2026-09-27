@@ -16,7 +16,7 @@ const lines = [
   "",
   `OpenAPI **${openApiDocument.openapi}** · contract version **${openApiDocument.info.version}**. [Download the complete JSON contract](https://github.com/pandemicsyn/sandbar/blob/af06bb6/packages/contracts/openapi.json). Responses and schemas below describe the current development API.`,
   "",
-  "Protected service operations accept a Bearer token or a session cookie unless an operation overrides security. `GET /v1/session` is cookie-only; setup and session creation require no authentication. Cookie-authenticated mutations require `X-CSRF-Token` from `GET /v1/session`. `Origin` is optional and, when supplied, must match the configured public origin; an absent `Origin` is accepted. Project IDs appear in project-scoped paths. Sandbox create, destroy, execution and file-write requests declare an `Idempotency-Key` header; consult the full OpenAPI JSON for schema constraints and status-specific responses.",
+  "Protected service operations accept a Bearer token or a session cookie unless an operation overrides security. `GET /v1/session` is cookie-only. Setup and session creation declare no HTTP security scheme but require credentials in their request bodies (`setupToken` and `token`, respectively). Cookie-authenticated mutations require `X-CSRF-Token` from `GET /v1/session`. `Origin` is optional and, when supplied, must match the configured public origin; an absent `Origin` is accepted. Project IDs appear in project-scoped paths. Sandbox create, destroy, execution and file-write requests declare an `Idempotency-Key` header; consult the full OpenAPI JSON for schema constraints and status-specific responses.",
   "",
   "## Endpoints",
   "",
