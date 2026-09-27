@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { z } from "zod";
 import {
   createRootRoute,
   createRoute,
@@ -9,17 +10,12 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import {
+  type CreateSandboxRequest,
   SandboxListQuery,
   type Operation,
   type Sandbox,
 } from "@sandbar/contracts";
-import {
-  api,
-  ApiError,
-  setCsrfToken,
-  type Connection,
-  type Project,
-} from "./api";
+import { api, ApiError, setCsrfToken, type Connection, type Project } from "./api";
 import {
   AppShell,
   Button,
@@ -38,27 +34,28 @@ import {
   withInvocation,
 } from "./invocations";
 
-function errorText(error: unknown): string {
-  return error instanceof Error
-    ? error.message
-    : "An unexpected error occurred.";
-}
+const ErrorMessage = z
+  .instanceof(Error)
+  .transform((error) => error.message)
+  .catch("An unexpected error occurred.");
+
 function age(timestamp?: string): string {
   if (!timestamp) return "No observation yet";
-  const seconds = Math.max(
-    0,
-    Math.floor((Date.now() - Date.parse(timestamp)) / 1000),
-  );
+
+  const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(timestamp)) / 1000));
+
   if (seconds < 60) return `${seconds}s ago`;
+
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
 function downloadCapturedBytes(base64: string, name: string) {
-  const bytes = Uint8Array.from(atob(base64), (character) =>
-    character.charCodeAt(0),
-  );
+  const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+
   const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)]));
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -74,6 +71,7 @@ function useResource<T>(load: () => Promise<T>, dependency: string) {
     error?: string;
     loading: boolean;
   }>({ key: dependency, loading: true });
+
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     let alive = true;
@@ -86,23 +84,26 @@ function useResource<T>(load: () => Promise<T>, dependency: string) {
         if (alive)
           setState({
             key: dependency,
-            error: errorText(reason),
+            error: ErrorMessage.parse(reason),
             loading: false,
           });
       });
+
     return () => {
       alive = false;
     };
   }, [dependency, revision]);
-  const current =
-    state.key === dependency ? state : { key: dependency, loading: true };
+
+  const current = state.key === dependency ? state : { key: dependency, loading: true };
+
   return { ...current, refresh: () => setRevision((n) => n + 1) };
 }
 
 function AuthGate() {
-  const [state, setState] = useState<
-    "loading" | "authenticated" | "anonymous" | "error"
-  >("loading");
+  const [state, setState] = useState<"loading" | "authenticated" | "anonymous" | "error">(
+    "loading",
+  );
+
   const [mode, setMode] = useState<"login" | "setup">("login");
   const [secret, setSecret] = useState("");
   const [oneTimeToken, setOneTimeToken] = useState<string>();
@@ -112,11 +113,13 @@ function AuthGate() {
   const [authRevision, setAuthRevision] = useState(0);
   useEffect(() => {
     let alive = true;
+
     const expired = () => {
       setCsrfToken(undefined);
       setOneTimeToken(undefined);
       setState("anonymous");
     };
+
     window.addEventListener("sandbar:session-expired", expired);
     api
       .session()
@@ -128,22 +131,25 @@ function AuthGate() {
       })
       .catch((reason) => {
         if (!alive) return;
-        if (reason instanceof ApiError && reason.status === 401)
-          setState("anonymous");
+
+        if (reason instanceof ApiError && reason.status === 401) setState("anonymous");
         else {
-          setSessionError(errorText(reason));
+          setSessionError(ErrorMessage.parse(reason));
           setState("error");
         }
       });
+
     return () => {
       alive = false;
       window.removeEventListener("sandbar:session-expired", expired);
     };
   }, [authRevision]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
+
     try {
       if (mode === "setup") {
         const result = await api.setup(secret);
@@ -153,20 +159,23 @@ function AuthGate() {
         const result = await api.login(secret);
         setCsrfToken(result.csrfToken);
       }
+
       setSecret("");
       setState("authenticated");
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   if (state === "loading")
     return (
       <div className="auth-wrap">
         <LoadingRows />
       </div>
     );
+
   if (state === "error")
     return (
       <div className="auth-wrap">
@@ -184,6 +193,7 @@ function AuthGate() {
         </div>
       </div>
     );
+
   if (state === "authenticated")
     return (
       <>
@@ -206,13 +216,11 @@ function AuthGate() {
         <Outlet />
       </>
     );
+
   return (
     <div className="auth-wrap">
       <div className="surface auth-panel">
-        <div
-          className="brand"
-          style={{ color: "inherit", padding: 0, marginBottom: 26 }}
-        >
+        <div className="brand" style={{ color: "inherit", padding: 0, marginBottom: 26 }}>
           <span className="brand-mark" aria-hidden="true">
             S
           </span>
@@ -225,10 +233,7 @@ function AuthGate() {
             : "Enter your Sandbar operator token. It is exchanged for a secure browser session and is not saved in this browser."}
         </p>
         <form onSubmit={submit} className="form-stack">
-          <Field
-            label={mode === "setup" ? "Setup secret" : "Operator token"}
-            htmlFor="auth-secret"
-          >
+          <Field label={mode === "setup" ? "Setup secret" : "Operator token"} htmlFor="auth-secret">
             <input
               className="input"
               id="auth-secret"
@@ -253,9 +258,7 @@ function AuthGate() {
             setSecret("");
           }}
         >
-          {mode === "login"
-            ? "First time? Set up an operator"
-            : "Already set up? Sign in"}
+          {mode === "login" ? "First time? Set up an operator" : "Already set up? Sign in"}
         </button>
       </div>
     </div>
@@ -268,10 +271,12 @@ function ProjectsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const navigate = useNavigate();
+
   async function create(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
+
     try {
       const project = await api.createProject(name.trim());
       await navigate({
@@ -279,11 +284,12 @@ function ProjectsPage() {
         params: { projectId: project.id },
       });
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   return (
     <main className="content project-picker" id="main-content" tabIndex={-1}>
       <PageHead
@@ -332,14 +338,10 @@ function ProjectsPage() {
         </div>
       ) : (
         <EmptyState title="No projects yet">
-          Create a project to keep connections and sandboxes within one
-          authorization boundary.
+          Create a project to keep connections and sandboxes within one authorization boundary.
         </EmptyState>
       )}
-      <section
-        className="surface panel"
-        style={{ maxWidth: 520, marginTop: 24 }}
-      >
+      <section className="surface panel" style={{ maxWidth: 520, marginTop: 24 }}>
         <h2 className="section-title">Create a project</h2>
         <form className="form-stack" onSubmit={create}>
           <Field label="Project name" htmlFor="project-name">
@@ -369,27 +371,29 @@ function ProjectLayout() {
   const { projectId } = projectRoute.useParams();
   const projects = useResource(api.projects, "project-context");
   const project = projects.data?.items.find((item) => item.id === projectId);
+
   if (projects.loading)
     return (
       <main className="content" id="main-content" tabIndex={-1}>
         <LoadingRows />
       </main>
     );
+
   if (projects.error)
     return (
       <main className="content" id="main-content" tabIndex={-1}>
         <Notice tone="error">{projects.error}</Notice>
       </main>
     );
+
   if (!project)
     return (
       <main className="content" id="main-content" tabIndex={-1}>
-        <Notice tone="error">
-          This project is unavailable or you do not have access.
-        </Notice>
+        <Notice tone="error">This project is unavailable or you do not have access.</Notice>
         <Link to="/projects">Choose another project</Link>
       </main>
     );
+
   return (
     <AppShell projectId={projectId} projectName={project.name}>
       <Outlet />
@@ -404,38 +408,41 @@ function ConnectionsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
+
   async function create(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
     setNotice(undefined);
+
     try {
       await api.createConnection(projectId, name.trim());
       setName("");
-      setNotice(
-        "Fake connection added. Verify its scope before creating a sandbox.",
-      );
+      setNotice("Fake connection added. Verify its scope before creating a sandbox.");
       connections.refresh();
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   async function verify(id: string) {
     setBusy(true);
     setError(undefined);
     setNotice(undefined);
+
     try {
       await api.verifyConnection(projectId, id);
       setNotice("Connection scope verified.");
       connections.refresh();
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   return (
     <>
       <PageHead
@@ -492,9 +499,7 @@ function ConnectionsPage() {
                     <td>
                       <StatusBadge status={connection.status} />
                     </td>
-                    <td>
-                      {connection.nativeScope?.accountId ?? "Not verified"}
-                    </td>
+                    <td>{connection.nativeScope?.accountId ?? "Not verified"}</td>
                     <td>
                       {connection.capabilities
                         ? Object.entries(connection.capabilities)
@@ -528,14 +533,17 @@ function ConnectionsPage() {
 }
 
 const fleetSearch = { state: "", connectionId: "", q: "", cursor: "" };
+
 function FleetPage() {
   const { projectId } = projectRoute.useParams();
   const search = fleetRoute.useSearch();
   const navigate = useNavigate();
+
   const sandboxes = useResource(
     () => api.sandboxes(projectId, search),
     `${projectId}:${JSON.stringify(search)}`,
   );
+
   const connections = useResource(() => api.connections(projectId), projectId);
   const [connectionId, setConnectionId] = useState("");
   const [labelKey, setLabelKey] = useState("");
@@ -545,52 +553,59 @@ function FleetPage() {
   const [, refreshInvocations] = useState(0);
   const createScope = `create:${projectId}`;
   const createStatus = invocationStatus(createScope);
-  const available =
-    connections.data?.items.filter((c) => c.status === "verified") ?? [];
+
+  const available = connections.data?.items.filter((c) => c.status === "verified") ?? [];
+
   async function create(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
+
     try {
-      const input = {
+      const input: CreateSandboxRequest = {
         environment: { kind: "prepared" as const, imageId: "fake-starter" },
         network: { policy: "blocked" as const },
         connectionId: connectionId || available[0]?.id,
-        ...(labelKey.trim()
-          ? { labels: { [labelKey.trim()]: labelValue.trim() } }
-          : {}),
       };
+
+      if (labelKey.trim()) input.labels = { [labelKey.trim()]: labelValue.trim() };
+
       const accepted = await withInvocation(createScope, input, (key) =>
         api.createSandbox(projectId, input, key),
       );
+
       await navigate({
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.operation.id },
       });
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   async function findCreate() {
     setBusy(true);
     setError(undefined);
+
     try {
       const accepted = await recoverInvocation(createScope, (key) =>
         api.invocation(projectId, key, "create"),
       );
+
       if (!accepted) return;
       await navigate({
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.id },
       });
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   function updateSearch(patch: Partial<typeof fleetSearch>) {
     void navigate({
       to: fleetRoute.fullPath,
@@ -599,6 +614,7 @@ function FleetPage() {
       replace: true,
     });
   }
+
   return (
     <>
       <PageHead
@@ -619,9 +635,7 @@ function FleetPage() {
           <form className="toolbar" onSubmit={create}>
             <div className="field">
               <span className="field-label">Simulation profile</span>
-              <span className="field-hint">
-                fake-starter image, blocked network
-              </span>
+              <span className="field-hint">fake-starter image, blocked network</span>
             </div>
             <Field label="Connection" htmlFor="create-connection">
               <select
@@ -685,7 +699,7 @@ function FleetPage() {
                     setError(undefined);
                     refreshInvocations((revision) => revision + 1);
                   } catch (reason) {
-                    setError(errorText(reason));
+                    setError(ErrorMessage.parse(reason));
                   }
                 }
               }}
@@ -719,18 +733,13 @@ function FleetPage() {
               onChange={(e) => updateSearch({ state: e.target.value })}
             >
               <option value="">All states</option>
-              {[
-                "resolving",
-                "provisioning",
-                "running",
-                "destroying",
-                "destroyed",
-                "unknown",
-              ].map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
+              {["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"].map(
+                (s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ),
+              )}
             </select>
           </Field>
           <Field label="Connection" htmlFor="fleet-connection">
@@ -830,10 +839,9 @@ function FleetPage() {
 
 function SandboxPage() {
   const { projectId, sandboxId } = sandboxRoute.useParams();
-  const box = useResource(
-    () => api.sandbox(projectId, sandboxId),
-    `${projectId}:${sandboxId}`,
-  );
+
+  const box = useResource(() => api.sandbox(projectId, sandboxId), `${projectId}:${sandboxId}`);
+
   const navigate = useNavigate();
   const [command, setCommand] = useState("echo hello");
   const [path, setPath] = useState("/work/example.txt");
@@ -846,71 +854,83 @@ function SandboxPage() {
   const execScope = `exec:${projectId}:${sandboxId}`;
   const destroyScope = `destroy:${projectId}:${sandboxId}`;
   const fileScope = `file_write:${projectId}:${sandboxId}`;
+
   async function run(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
+
     try {
       const input = {
         command: { kind: "shell" as const, script: command },
         output: { capture: "bounded" as const, maxBytes: 65536 },
       };
+
       const accepted = await withInvocation(execScope, input, (key) =>
         api.execute(projectId, sandboxId, input, key),
       );
+
       await navigate({
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.operation.id },
       });
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   async function destroy() {
     if (
-      !window.confirm(
-        "Destroy this sandbox's compute? This submits a durable cleanup operation.",
-      )
+      !window.confirm("Destroy this sandbox's compute? This submits a durable cleanup operation.")
     )
       return;
     setBusy(true);
     setError(undefined);
+
     try {
-      const accepted = await withInvocation(
-        destroyScope,
-        { projectId, sandboxId },
-        (key) => api.destroySandbox(projectId, sandboxId, key),
+      const accepted = await withInvocation(destroyScope, { projectId, sandboxId }, (key) =>
+        api.destroySandbox(projectId, sandboxId, key),
       );
+
       await navigate({
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.operation.id },
       });
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   async function upload(event: FormEvent) {
     event.preventDefault();
+
     if (!file) return;
+
     if (file.size > 1_048_576) {
       setError("Choose a file of 1 MiB or less.");
+
       return;
     }
+
     setBusy(true);
     setError(undefined);
     setNotice(undefined);
+
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const intent = await fileIntent(path, bytes);
+
       const result = await withInvocation(fileScope, intent, (key) =>
         api.writeFile(projectId, sandboxId, path, bytes, key),
       );
+
       if (fileInput.current) fileInput.current.value = "";
       setFile(undefined);
+
       if ("operation" in result)
         await navigate({
           to: "/projects/$projectId/operations/$operationId",
@@ -918,14 +938,16 @@ function SandboxPage() {
         });
       else setNotice(`Wrote ${result.bytesWritten} bytes to ${result.path}.`);
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   async function download() {
     setBusy(true);
     setError(undefined);
+
     try {
       const blob = await api.readFile(projectId, sandboxId, path);
       const url = URL.createObjectURL(blob);
@@ -935,37 +957,40 @@ function SandboxPage() {
       anchor.click();
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
-  async function findAction(
-    scope: string,
-    kind: "exec" | "destroy" | "file_write",
-  ) {
+
+  async function findAction(scope: string, kind: "exec" | "destroy" | "file_write") {
     setBusy(true);
     setError(undefined);
+
     try {
       const accepted = await recoverInvocation(scope, (key) =>
         api.invocation(projectId, key, kind, sandboxId),
       );
+
       if (!accepted) return;
       await navigate({
         to: "/projects/$projectId/operations/$operationId",
         params: { projectId, operationId: accepted.id },
       });
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   if (box.loading) return <LoadingRows />;
+
   if (box.error || !box.data)
     return <Notice tone="error">{box.error ?? "Sandbox unavailable"}</Notice>;
   const sandbox = box.data;
   const isRunning = sandbox.observedState === "running";
+
   return (
     <>
       <PageHead
@@ -993,46 +1018,48 @@ function SandboxPage() {
             { scope: destroyScope, kind: "destroy" as const },
             { scope: fileScope, kind: "file_write" as const },
           ] as const
-        )
-          .filter(({ scope }) => Boolean(invocationStatus(scope)))
-          .map(({ scope, kind }) => (
-            <div className="actions" key={scope} style={{ marginTop: 12 }}>
-              <span className="field-hint">
-                {invocationStatus(scope) === "pending"
-                  ? `${kind}: retry the same inputs or find the accepted operation.`
-                  : `${kind}: the previous request was accepted. Same inputs reopen its operation.`}
-              </span>
-              <Button onClick={() => void findAction(scope, kind)}>
-                Find accepted operation
-              </Button>
-              <Button
-                onClick={async () => {
-                  if (
-                    window.confirm(
-                      invocationStatus(scope) === "pending"
-                        ? "A prior request may have taken effect. Starting a new attempt can duplicate it. Continue?"
-                        : "The previous request was accepted. Starting a new attempt can create another effect. Continue?",
-                    )
-                  ) {
-                    try {
-                      await clearPendingInvocation(scope);
-                      setError(undefined);
-                      refreshInvocations((revision) => revision + 1);
-                    } catch (reason) {
-                      setError(errorText(reason));
-                    }
-                  }
-                }}
-              >
-                Start new {kind} attempt
-              </Button>
-            </div>
-          ))}
+        ).flatMap(({ scope, kind }) =>
+          invocationStatus(scope)
+            ? [
+                <div className="actions" key={scope} style={{ marginTop: 12 }}>
+                  <span className="field-hint">
+                    {invocationStatus(scope) === "pending"
+                      ? `${kind}: retry the same inputs or find the accepted operation.`
+                      : `${kind}: the previous request was accepted. Same inputs reopen its operation.`}
+                  </span>
+                  <Button onClick={() => void findAction(scope, kind)}>
+                    Find accepted operation
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      if (
+                        window.confirm(
+                          invocationStatus(scope) === "pending"
+                            ? "A prior request may have taken effect. Starting a new attempt can duplicate it. Continue?"
+                            : "The previous request was accepted. Starting a new attempt can create another effect. Continue?",
+                        )
+                      ) {
+                        try {
+                          await clearPendingInvocation(scope);
+                          setError(undefined);
+                          refreshInvocations((revision) => revision + 1);
+                        } catch (reason) {
+                          setError(ErrorMessage.parse(reason));
+                        }
+                      }
+                    }}
+                  >
+                    Start new {kind} attempt
+                  </Button>
+                </div>,
+              ]
+            : [],
+        )}
       {notice && <Notice>{notice}</Notice>}
       {sandbox.observedState === "unknown" && (
         <Notice tone="warning">
-          The provider outcome is uncertain. Check the related operation before
-          requesting another effect.
+          The provider outcome is uncertain. Check the related operation before requesting another
+          effect.
         </Notice>
       )}
       {sandbox.currentOperationId && (
@@ -1060,8 +1087,7 @@ function SandboxPage() {
               <dt>Observed</dt>
               <dd>
                 {age(sandbox.observedAt)}
-                {sandbox.observedAt &&
-                  ` (${new Date(sandbox.observedAt).toLocaleString()})`}
+                {sandbox.observedAt && ` (${new Date(sandbox.observedAt).toLocaleString()})`}
               </dd>
               <dt>Revision</dt>
               <dd>{sandbox.revision}</dd>
@@ -1094,12 +1120,7 @@ function SandboxPage() {
                 />
               </Field>
               <div>
-                <Button
-                  variant="primary"
-                  type="submit"
-                  busy={busy}
-                  disabled={!isRunning}
-                >
+                <Button variant="primary" type="submit" busy={busy} disabled={!isRunning}>
                   Run command
                 </Button>
               </div>
@@ -1122,11 +1143,7 @@ function SandboxPage() {
                   onChange={(e) => setPath(e.target.value)}
                 />
               </Field>
-              <Field
-                label="Local file"
-                hint="Maximum 1 MiB."
-                htmlFor="file-upload"
-              >
+              <Field label="Local file" hint="Maximum 1 MiB." htmlFor="file-upload">
                 <input
                   id="file-upload"
                   type="file"
@@ -1135,20 +1152,10 @@ function SandboxPage() {
                 />
               </Field>
               <div className="actions">
-                <Button
-                  variant="primary"
-                  type="submit"
-                  busy={busy}
-                  disabled={!isRunning || !file}
-                >
+                <Button variant="primary" type="submit" busy={busy} disabled={!isRunning || !file}>
                   Upload file
                 </Button>
-                <Button
-                  type="button"
-                  onClick={download}
-                  busy={busy}
-                  disabled={!isRunning}
-                >
+                <Button type="button" onClick={download} busy={busy} disabled={!isRunning}>
                   Download path
                 </Button>
               </div>
@@ -1169,8 +1176,8 @@ function SandboxPage() {
             )}
           </section>
           <Notice>
-            State can become stale while provider work continues. Use Refresh
-            state to read the latest Sandbar observation.
+            State can become stale while provider work continues. Use Refresh state to read the
+            latest Sandbar observation.
           </Notice>
         </aside>
       </div>
@@ -1189,67 +1196,72 @@ function FragmentPair({ label, value }: { label: string; value: string }) {
 
 function OperationPage() {
   const { projectId, operationId } = operationRoute.useParams();
+
   const operation = useResource(
     () => api.operation(projectId, operationId),
     `${projectId}:${operationId}`,
   );
+
   const executionKey = `${projectId}:${operationId}:${operation.data?.executionId ?? ""}`;
+
   const [executionState, setExecutionState] = useState<{
     key: string;
     data?: Awaited<ReturnType<typeof api.execution>>;
     error?: string;
   }>({ key: executionKey });
-  const execution =
-    executionState.key === executionKey ? executionState.data : undefined;
-  const executionError =
-    executionState.key === executionKey ? executionState.error : undefined;
+
+  const execution = executionState.key === executionKey ? executionState.data : undefined;
+
+  const executionError = executionState.key === executionKey ? executionState.error : undefined;
+
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (
-      !operation.data ||
-      ["succeeded", "failed"].includes(operation.data.status)
-    )
-      return;
+    if (!operation.data || ["succeeded", "failed"].includes(operation.data.status)) return;
     const timer = window.setInterval(operation.refresh, 1200);
+
     return () => window.clearInterval(timer);
   }, [operation.data?.status]);
   useEffect(() => {
     let alive = true;
     const executionId = operation.data?.executionId;
     setExecutionState({ key: executionKey });
+
     if (executionId)
       api.execution(projectId, executionId).then(
         (data) => {
           if (alive) setExecutionState({ key: executionKey, data });
         },
         (reason) => {
-          if (alive)
-            setExecutionState({ key: executionKey, error: errorText(reason) });
+          if (alive) setExecutionState({ key: executionKey, error: ErrorMessage.parse(reason) });
         },
       );
+
     return () => {
       alive = false;
     };
   }, [executionKey, operation.data?.updatedAt]);
+
   async function reconcile() {
     setBusy(true);
     setError(undefined);
+
     try {
       await api.reconcile(projectId, operationId);
       operation.refresh();
     } catch (reason) {
-      setError(errorText(reason));
+      setError(ErrorMessage.parse(reason));
     } finally {
       setBusy(false);
     }
   }
+
   if (operation.loading && !operation.data) return <LoadingRows />;
+
   if (operation.error || !operation.data)
-    return (
-      <Notice tone="error">{operation.error ?? "Operation unavailable"}</Notice>
-    );
+    return <Notice tone="error">{operation.error ?? "Operation unavailable"}</Notice>;
   const op: Operation = operation.data;
+
   return (
     <>
       <PageHead
@@ -1261,8 +1273,8 @@ function OperationPage() {
       {executionError && <Notice tone="error">{executionError}</Notice>}
       {op.status === "unknown" && (
         <Notice tone="warning">
-          The provider may already have applied this action. Check again
-          observes and reconciles; it does not resubmit the action.
+          The provider may already have applied this action. Check again observes and reconciles; it
+          does not resubmit the action.
         </Notice>
       )}
       <div className="detail-grid">
@@ -1302,25 +1314,18 @@ function OperationPage() {
             </Notice>
           )}
           <div className="actions" style={{ marginTop: 20 }}>
-            <Button
-              onClick={reconcile}
-              busy={busy}
-              disabled={!op.recovery.includes("check_again")}
-            >
+            <Button onClick={reconcile} busy={busy} disabled={!op.recovery.includes("check_again")}>
               Check again
             </Button>
           </div>
           {!op.recovery.includes("check_again") && op.status === "unknown" && (
-            <p className="field-hint">
-              No observe-only recovery action is currently available.
-            </p>
+            <p className="field-hint">No observe-only recovery action is currently available.</p>
           )}
         </section>
         <section className="surface panel">
           <h2 className="section-title">Evidence</h2>
           <p className="field-hint">
-            Operation ID and timestamps remain available even if command output
-            expires.
+            Operation ID and timestamps remain available even if command output expires.
           </p>
           <dl className="facts">
             <dt>Created</dt>
@@ -1340,37 +1345,30 @@ function OperationPage() {
                 <dd>{execution.exitCode ?? "Pending"}</dd>
                 <dt>Output</dt>
                 <dd>
-                  <StatusBadge status={execution.outputAvailability} />{" "}
-                  {execution.capturedBytes} bytes captured
+                  <StatusBadge status={execution.outputAvailability} /> {execution.capturedBytes}{" "}
+                  bytes captured
                 </dd>
               </dl>
               {execution.outputAvailability === "not_captured" ? (
                 <p>Output was not captured.</p>
               ) : execution.outputAvailability === "expired" ? (
-                <p>
-                  Output expired under the retention policy. Exit status remains
-                  available.
-                </p>
+                <p>Output expired under the retention policy. Exit status remains available.</p>
               ) : execution.outputAvailability === "evicted" ? (
                 <p>
-                  Output was evicted before its retention period ended. Exit
-                  status remains available.
+                  Output was evicted before its retention period ended. Exit status remains
+                  available.
                 </p>
               ) : (
                 <>
                   <p className="field-hint">
-                    Text is shown as UTF-8. Download the captured bytes for
-                    exact output.
+                    Text is shown as UTF-8. Download the captured bytes for exact output.
                   </p>
                   <h3 className="section-title">Stdout</h3>
                   <pre className="output">{execution.stdout || "(empty)"}</pre>
                   {execution.stdoutBase64 !== undefined && (
                     <Button
                       onClick={() =>
-                        downloadCapturedBytes(
-                          execution.stdoutBase64!,
-                          `${op.id}-stdout.bin`,
-                        )
+                        downloadCapturedBytes(execution.stdoutBase64!, `${op.id}-stdout.bin`)
                       }
                     >
                       Download stdout bytes
@@ -1381,10 +1379,7 @@ function OperationPage() {
                   {execution.stderrBase64 !== undefined && (
                     <Button
                       onClick={() =>
-                        downloadCapturedBytes(
-                          execution.stderrBase64!,
-                          `${op.id}-stderr.bin`,
-                        )
+                        downloadCapturedBytes(execution.stderrBase64!, `${op.id}-stderr.bin`)
                       }
                     >
                       Download stderr bytes
@@ -1399,9 +1394,7 @@ function OperationPage() {
               )}
             </>
           ) : (
-            <p className="field-hint">
-              Execution details are loading or not yet available.
-            </p>
+            <p className="field-hint">Execution details are loading or not yet available.</p>
           )}
         </section>
       )}
@@ -1410,36 +1403,42 @@ function OperationPage() {
 }
 
 const rootRoute = createRootRoute({ component: AuthGate });
+
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: () => <Navigate to="/projects" />,
 });
+
 const projectsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/projects",
   component: ProjectsPage,
 });
+
 const projectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/projects/$projectId",
   component: ProjectLayout,
 });
+
 const connectionsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/connections",
   component: ConnectionsPage,
 });
+
 const fleetRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/sandboxes",
-  validateSearch: (search: Record<string, unknown>) => {
-    const candidate = Object.fromEntries(
-      ["state", "connectionId", "q", "cursor"]
-        .filter((key) => typeof search[key] === "string" && search[key] !== "")
-        .map((key) => [key, search[key]]),
-    );
-    const parsed = SandboxListQuery.safeParse(candidate);
+  validateSearch: (search) => {
+    const parsed = SandboxListQuery.safeParse({
+      state: search.state || undefined,
+      connectionId: search.connectionId || undefined,
+      q: search.q || undefined,
+      cursor: search.cursor || undefined,
+    });
+
     return {
       state: parsed.success ? (parsed.data.state ?? "") : "",
       connectionId: parsed.success ? (parsed.data.connectionId ?? "") : "",
@@ -1449,37 +1448,36 @@ const fleetRoute = createRoute({
   },
   component: FleetPage,
 });
+
 const sandboxRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/sandboxes/$sandboxId",
   component: SandboxPage,
 });
+
 const operationRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/operations/$operationId",
   component: OperationPage,
 });
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   projectsRoute,
-  projectRoute.addChildren([
-    connectionsRoute,
-    fleetRoute,
-    sandboxRoute,
-    operationRoute,
-  ]),
+  projectRoute.addChildren([connectionsRoute, fleetRoute, sandboxRoute, operationRoute]),
 ]);
+
 export const router = createRouter({
   routeTree,
   defaultNotFoundComponent: () => (
     <main className="content" id="main-content" tabIndex={-1}>
       <EmptyState title="Page not found">
-        The route may have changed. <Link to="/projects">Choose a project</Link>
-        .
+        The route may have changed. <Link to="/projects">Choose a project</Link>.
       </EmptyState>
     </main>
   ),
 });
+
 declare module "@tanstack/react-router" {
   interface Register {
     router: typeof router;

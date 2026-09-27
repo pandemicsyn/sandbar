@@ -3,6 +3,4 @@ import { RouterProvider } from "@tanstack/react-router";
 import { router } from "./app";
 import "./styles.css";
 
-createRoot(document.getElementById("root")!).render(
-  <RouterProvider router={router} />,
-);
+createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);

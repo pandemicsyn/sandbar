@@ -2,26 +2,46 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import {
-  chromium,
-  type Browser,
-  type BrowserContext,
-  type Page,
-} from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
 const root = resolve(import.meta.dir, "../../..");
+
 const fakeToken = "fake-test-token-only-123456789";
+
 const setupToken = "setup-test-token-only-123456789";
+
 type Process = ReturnType<typeof Bun.spawn>;
+
+type FakeSeedRequest = {
+  submissionId: string;
+  action: "create" | "exec" | "destroy";
+  behavior: "normal" | "lost_after_effect";
+  command?: {
+    command: { kind: "shell"; script: string };
+    exitCode: number;
+    stdoutBase64: string;
+    stderrBase64: string;
+  };
+};
+
 let temp: string;
+
 let fake: Process;
+
 let server: Process;
+
 let browser: Browser;
+
 let context: BrowserContext;
+
 let page: Page;
+
 let fakeUrl: string;
+
 let serviceUrl: string;
+
 let fakePort: number;
+
 let servicePort: number;
 
 async function freePort(): Promise<number> {
@@ -30,9 +50,12 @@ async function freePort(): Promise<number> {
     port: 0,
     fetch: () => new Response("reserved"),
   });
+
   const port = listener.port;
   listener.stop(true);
+
   if (!port) throw new Error("Failed to reserve a local port");
+
   return port;
 }
 
@@ -43,27 +66,28 @@ async function waitFor<T>(
 ): Promise<T> {
   const end = Date.now() + timeoutMs;
   let last: unknown;
+
   while (Date.now() < end) {
     try {
       const result = await attempt();
+
       if (result !== undefined) return result;
     } catch (error) {
       last = error;
     }
+
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(
-    `Timed out waiting for ${label}${last ? `: ${String(last)}` : ""}`,
-  );
+
+  throw new Error(`Timed out waiting for ${label}${last ? `: ${String(last)}` : ""}`);
 }
 
 async function stop(child?: Process): Promise<void> {
   if (!child) return;
+
   if (child.exitCode === null) child.kill("SIGTERM");
-  await Promise.race([
-    child.exited,
-    new Promise((resolve) => setTimeout(resolve, 3_000)),
-  ]);
+  await Promise.race([child.exited, new Promise((resolve) => setTimeout(resolve, 3_000))]);
+
   if (child.exitCode === null) {
     child.kill("SIGKILL");
     await child.exited;
@@ -103,33 +127,28 @@ function launchService(): Process {
   });
 }
 
-async function ready(
-  url: string,
-  headers?: Record<string, string>,
-): Promise<void> {
+async function ready(url: string, headers?: Record<string, string>): Promise<void> {
   await waitFor(url, async () => {
     const response = await fetch(url, { headers });
+
     return response.ok ? true : undefined;
   });
 }
 
-async function control(
-  method: "GET" | "POST",
-  path: string,
-  body?: unknown,
-): Promise<any> {
-  const response = await fetch(`${fakeUrl}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${fakeToken}`,
-      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+async function control(method: "GET" | "POST", path: string, body?: FakeSeedRequest): Promise<any> {
+  const headers = new Headers({ Authorization: `Bearer ${fakeToken}` });
+  const init: RequestInit = { method, headers };
+
+  if (body !== undefined) {
+    headers.set("Content-Type", "application/json");
+    init.body = JSON.stringify(body);
+  }
+
+  const response = await fetch(`${fakeUrl}${path}`, init);
+
   if (!response.ok)
-    throw new Error(
-      `Fake control ${path}: ${response.status} ${await response.text()}`,
-    );
+    throw new Error(`Fake control ${path}: ${response.status} ${await response.text()}`);
+
   return response.json();
 }
 
@@ -138,41 +157,40 @@ async function seed(
   behavior: "normal" | "lost_after_effect",
   command?: { exitCode: number; stdoutBase64: string; stderrBase64: string },
 ) {
-  await control("POST", "/_test/seed", {
+  const payload: FakeSeedRequest = {
     submissionId: "*",
     action,
     behavior,
-    ...(command
-      ? {
-          command: {
-            command: { kind: "shell", script: "echo hello" },
-            ...command,
-          },
-        }
-      : {}),
-  });
+  };
+
+  if (command)
+    payload.command = {
+      command: { kind: "shell", script: "echo hello" },
+      ...command,
+    };
+
+  await control("POST", "/_test/seed", payload);
 }
 
 async function operation(projectId: string, operationId: string): Promise<any> {
   const response = await context.request.get(
     `${serviceUrl}/v1/projects/${projectId}/operations/${operationId}`,
   );
-  if (!response.ok())
-    throw new Error(`Operation fetch failed ${response.status()}`);
+
+  if (!response.ok()) throw new Error(`Operation fetch failed ${response.status()}`);
+
   return response.json();
 }
 
-async function waitForOperation(
-  projectId: string,
-  operationId: string,
-  status: string,
-) {
+async function waitForOperation(projectId: string, operationId: string, status: string) {
   return waitFor(
     `operation ${operationId} ${status}`,
     async () => {
       const result = await operation(projectId, operationId);
+
       if (result.status === "failed")
         throw new Error(`Operation failed: ${JSON.stringify(result.error)}`);
+
       return result.status === status ? result : undefined;
     },
     20_000,
@@ -182,19 +200,21 @@ async function waitForOperation(
 async function waitForEffect(action: string, count: number): Promise<void> {
   await waitFor(`${count} ${action} effects`, async () => {
     const state = await control("GET", "/_test/state");
-    return state.ledger.filter(
-      (entry: { action: string }) => entry.action === action,
-    ).length >= count
+
+    return state.ledger.filter((entry: { action: string }) => entry.action === action).length >=
+      count
       ? true
       : undefined;
   });
 }
 
 beforeAll(async () => {
-  const build = Bun.spawnSync(
-    ["bun", "run", "--filter", "@sandbar/web", "build"],
-    { cwd: root, stdout: "inherit", stderr: "inherit" },
-  );
+  const build = Bun.spawnSync(["bun", "run", "--filter", "@sandbar/web", "build"], {
+    cwd: root,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+
   if (build.exitCode !== 0) throw new Error("Web build failed before E2E");
   temp = await mkdtemp(join(tmpdir(), "sandbar-e2e-"));
   await writeFile(
@@ -229,39 +249,37 @@ afterAll(async () => {
   } catch {
     /* Continue process cleanup. */
   }
+
   try {
     await browser?.close();
   } catch {
     /* Continue process cleanup. */
   }
+
   await Promise.allSettled([stop(server), stop(fake)]);
+
   if (temp) await rm(temp, { recursive: true, force: true });
 });
 
 test("browser and public HTTP recover fake effects across service restarts without duplicate dispatch", async () => {
   await page.goto(serviceUrl);
-  await page
-    .getByRole("button", { name: "First time? Set up an operator" })
-    .click();
+  await page.getByRole("button", { name: "First time? Set up an operator" }).click();
   await page.getByLabel("Setup secret").fill(setupToken);
   await page.getByLabel("Setup secret").press("Enter");
   await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
   await page.locator(".skip-link").focus();
   await page.locator(".skip-link").press("Enter");
-  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
-    "main-content",
-  );
-  const operatorToken = (await page
-    .locator(".one-time-token code")
-    .textContent())!;
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe("main-content");
+
+  const operatorToken = (await page.locator(".one-time-token code").textContent())!;
+
   await page.getByRole("heading", { name: "No projects yet" }).waitFor();
-  expect(await page.getByText("Save your API token now.").isVisible()).toBe(
-    true,
-  );
-  const deniedWithoutCsrf = await context.request.post(
-    `${serviceUrl}/v1/projects`,
-    { data: { name: "denied" } },
-  );
+  expect(await page.getByText("Save your API token now.").isVisible()).toBe(true);
+
+  const deniedWithoutCsrf = await context.request.post(`${serviceUrl}/v1/projects`, {
+    data: { name: "denied" },
+  });
+
   expect(deniedWithoutCsrf.status()).toBe(403);
   await page.getByRole("button", { name: "I saved it" }).click();
   await page.getByLabel("Project name").fill("E2E project");
@@ -269,27 +287,19 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("heading", { name: "Provider connections" }).waitFor();
   await page.locator(".skip-link").focus();
   await page.locator(".skip-link").press("Enter");
-  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
-    "main-content",
-  );
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe("main-content");
   const projectId = new URL(page.url()).pathname.split("/")[2]!;
   const connectionsUrl = page.url();
   await page.goto(`${serviceUrl}/projects/missing-project/connections`);
-  await page
-    .getByText("This project is unavailable or you do not have access.")
-    .waitFor();
+  await page.getByText("This project is unavailable or you do not have access.").waitFor();
   await page.locator(".skip-link").focus();
   await page.locator(".skip-link").press("Enter");
-  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
-    "main-content",
-  );
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe("main-content");
   await page.goto(`${serviceUrl}/unmatched-route`);
   await page.getByRole("heading", { name: "Page not found" }).waitFor();
   await page.locator(".skip-link").focus();
   await page.locator(".skip-link").press("Enter");
-  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
-    "main-content",
-  );
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe("main-content");
   await page.goto(connectionsUrl);
   await page.getByRole("heading", { name: "Provider connections" }).waitFor();
   await page.getByLabel("Connection name").fill("Fake local");
@@ -306,32 +316,28 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.route("**/v1/projects/*/sandboxes", async (route) => {
     if (route.request().method() !== "POST" || !dropFirstCreateResponse) {
       await route.continue();
+
       return;
     }
+
     dropFirstCreateResponse = false;
     const accepted = await route.fetch();
     firstCreateOperationId = (await accepted.json()).operation.id;
     await route.abort("failed");
   });
   await page.getByRole("button", { name: "Create sandbox" }).click();
-  await page
-    .getByText("Retry the same inputs to recover this request.")
-    .waitFor();
+  await page.getByText("Retry the same inputs to recover this request.").waitFor();
   await waitForEffect("create", 1);
   await page.getByLabel("Label value").fill("changed");
   await page.getByRole("button", { name: "Create sandbox" }).click();
-  await page
-    .getByText("An earlier request may have been accepted.", { exact: false })
-    .waitFor();
+  await page.getByText("An earlier request may have been accepted.", { exact: false }).waitFor();
   expect(
     (await control("GET", "/_test/state")).ledger.filter(
       (entry: { action: string }) => entry.action === "create",
     ),
   ).toHaveLength(1);
   await page.reload();
-  await page
-    .getByText("Retry the same inputs to recover this request.")
-    .waitFor();
+  await page.getByText("Retry the same inputs to recover this request.").waitFor();
   await page.getByRole("link", { name: "Connections" }).click();
   await page.getByRole("link", { name: "Fleet" }).click();
   await page.getByLabel("Label key (optional)").fill("team");
@@ -341,7 +347,10 @@ test("browser and public HTTP recover fake effects across service restarts witho
   const createId = new URL(page.url()).pathname.split("/").at(-1)!;
   expect(createId).toBe(firstCreateOperationId!);
   const created = await waitForOperation(projectId, createId, "succeeded");
-  const sandboxId = created.sandboxId as string;
+
+  if (!created.sandboxId) throw new Error("Create did not return a sandbox ID");
+
+  const sandboxId = created.sandboxId;
   expect(sandboxId).toMatch(/^sb_/);
   await page.getByRole("link", { name: "Fleet" }).click();
   await page.getByLabel("Label key (optional)").fill("team");
@@ -362,48 +371,51 @@ test("browser and public HTTP recover fake effects across service restarts witho
 
   const secondTab = await context.newPage();
   await secondTab.goto(page.url());
+
   for (const tab of [page, secondTab]) {
     await tab.getByLabel("Label key (optional)").fill("team");
     await tab.getByLabel("Label value").fill("concurrent");
   }
+
   let releaseHeldResponse!: () => void;
+
   const heldResponse = new Promise<void>((resolve) => {
     releaseHeldResponse = resolve;
   });
+
   let concurrentOperationId: string | undefined;
   let holdConcurrentResponse = true;
   await page.route("**/v1/projects/*/sandboxes", async (route) => {
     if (route.request().method() !== "POST" || !holdConcurrentResponse) {
       await route.continue();
+
       return;
     }
+
     holdConcurrentResponse = false;
     const accepted = await route.fetch();
     const body = await accepted.json();
+
     if (!body.operation)
-      throw new Error(
-        `Concurrent admission ${accepted.status()}: ${JSON.stringify(body)}`,
-      );
+      throw new Error(`Concurrent admission ${accepted.status()}: ${JSON.stringify(body)}`);
     concurrentOperationId = body.operation.id;
     await heldResponse;
     await route.abort("failed");
   });
-  const firstConcurrentClick = page
-    .getByRole("button", { name: "Create sandbox" })
-    .click();
+
+  const firstConcurrentClick = page.getByRole("button", { name: "Create sandbox" }).click();
+
   await waitFor("held create response", async () => concurrentOperationId);
-  const secondConcurrentClick = secondTab
-    .getByRole("button", { name: "Create sandbox" })
-    .click();
+
+  const secondConcurrentClick = secondTab.getByRole("button", { name: "Create sandbox" }).click();
+
   await secondTab.waitForTimeout(150);
   expect(new URL(secondTab.url()).pathname).toContain("/sandboxes");
   await waitForEffect("create", 2);
   releaseHeldResponse();
   await Promise.all([firstConcurrentClick, secondConcurrentClick]);
   await secondTab.waitForURL(/\/operations\//);
-  expect(new URL(secondTab.url()).pathname.split("/").at(-1)!).toBe(
-    concurrentOperationId!,
-  );
+  expect(new URL(secondTab.url()).pathname.split("/").at(-1)!).toBe(concurrentOperationId!);
   await secondTab.close();
 
   await page.getByLabel("State").selectOption("running");
@@ -422,14 +434,17 @@ test("browser and public HTTP recover fake effects across service restarts witho
     stdoutBase64: Buffer.from("fixture stdout\n").toString("base64"),
     stderrBase64: Buffer.from("fixture stderr\n").toString("base64"),
   };
+
   await seed("exec", "normal", fixture);
   let firstExecOperationId: string | undefined;
   let dropFirstExecResponse = true;
   await page.route("**/sandboxes/*/executions", async (route) => {
     if (route.request().method() !== "POST" || !dropFirstExecResponse) {
       await route.continue();
+
       return;
     }
+
     dropFirstExecResponse = false;
     const accepted = await route.fetch();
     firstExecOperationId = (await accepted.json()).operation.id;
@@ -442,30 +457,31 @@ test("browser and public HTTP recover fake effects across service restarts witho
   const recoveryTab = await context.newPage();
   await recoveryTab.goto(page.url());
   let releaseLookup!: () => void;
+
   const heldLookup = new Promise<void>((resolve) => {
     releaseLookup = resolve;
   });
+
   let lookupAccepted = false;
   await page.route("**/invocations/*?*", async (route) => {
     if (lookupAccepted) {
       await route.continue();
+
       return;
     }
+
     lookupAccepted = true;
     const response = await route.fetch();
     await heldLookup;
     await route.fulfill({ response });
   });
-  const lookupClick = page
-    .getByRole("button", { name: "Find accepted operation" })
-    .click();
-  await waitFor(
-    "held invocation lookup",
-    async () => lookupAccepted || undefined,
-  );
-  const retryClick = recoveryTab
-    .getByRole("button", { name: "Run command" })
-    .click();
+
+  const lookupClick = page.getByRole("button", { name: "Find accepted operation" }).click();
+
+  await waitFor("held invocation lookup", async () => lookupAccepted || undefined);
+
+  const retryClick = recoveryTab.getByRole("button", { name: "Run command" }).click();
+
   await recoveryTab.waitForTimeout(150);
   expect(new URL(recoveryTab.url()).pathname).toContain("/sandboxes/");
   releaseLookup();
@@ -510,9 +526,11 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("button", { name: "Upload file" }).waitFor();
   await page.getByText("Wrote 22 bytes to /work/example.txt.").waitFor();
   expect(await page.getByLabel("Local file").inputValue()).toBe("");
+
   const fileResponse = await context.request.get(
     `${serviceUrl}/v1/projects/${projectId}/sandboxes/${sandboxId}/files?path=%2Fwork%2Fexample.txt`,
   );
+
   expect(fileResponse.ok()).toBe(true);
   expect(await fileResponse.text()).toBe("persisted virtual file");
   const downloaded = page.waitForEvent("download");
@@ -553,17 +571,13 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.waitForURL(/\/operations\//);
   const lostExecId = new URL(page.url()).pathname.split("/").at(-1)!;
   await waitForEffect("exec", 2);
-  await page
-    .getByText("The provider may already have applied this action.")
-    .waitFor();
+  await page.getByText("The provider may already have applied this action.").waitFor();
   await stop(server);
   expect(fake.exitCode).toBeNull();
   server = launchService();
   await ready(`${serviceUrl}/healthz`);
   await page.reload();
-  await page
-    .getByRole("heading", { name: `Operation ${lostExecId}` })
-    .waitFor();
+  await page.getByRole("heading", { name: `Operation ${lostExecId}` }).waitFor();
   await page.getByRole("button", { name: "Check again" }).click();
   await waitForOperation(projectId, lostExecId, "succeeded");
 
@@ -575,41 +589,37 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.waitForURL(/\/operations\//);
   const lostCreateId = new URL(page.url()).pathname.split("/").at(-1)!;
   await waitForEffect("create", 3);
-  await page
-    .getByText("The provider may already have applied this action.")
-    .waitFor();
+  await page.getByText("The provider may already have applied this action.").waitFor();
   await stop(server);
   expect(fake.exitCode).toBeNull();
   server = launchService();
   await ready(`${serviceUrl}/healthz`);
   await page.reload();
-  await page
-    .getByRole("heading", { name: `Operation ${lostCreateId}` })
-    .waitFor();
+  await page.getByRole("heading", { name: `Operation ${lostCreateId}` }).waitFor();
   await page.getByRole("button", { name: "Check again" }).click();
   await waitForOperation(projectId, lostCreateId, "succeeded");
 
   const state = await control("GET", "/_test/state");
+
   const createEntries = state.ledger.filter(
     (entry: { action: string }) => entry.action === "create",
   );
-  const execEntries = state.ledger.filter(
-    (entry: { action: string }) => entry.action === "exec",
-  );
+
+  const execEntries = state.ledger.filter((entry: { action: string }) => entry.action === "exec");
+
   expect(createEntries).toHaveLength(3);
   expect(execEntries).toHaveLength(2);
+
   for (const entry of [...createEntries, ...execEntries]) {
     expect(
       state.invocations.filter(
-        (invocation: { submissionId: string }) =>
-          invocation.submissionId === entry.submissionId,
+        (invocation: { submissionId: string }) => invocation.submissionId === entry.submissionId,
       ),
     ).toHaveLength(1);
   }
+
   expect(
-    state.resources.filter(
-      (resource: { state: string }) => resource.state === "running",
-    ),
+    state.resources.filter((resource: { state: string }) => resource.state === "running"),
   ).toHaveLength(3);
 
   await page.getByRole("link", { name: "Fleet" }).click();
@@ -621,9 +631,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await waitForOperation(projectId, destroyId, "succeeded");
   const finalState = await control("GET", "/_test/state");
   expect(
-    finalState.ledger.filter(
-      (entry: { action: string }) => entry.action === "destroy",
-    ),
+    finalState.ledger.filter((entry: { action: string }) => entry.action === "destroy"),
   ).toHaveLength(1);
   await page.route("**/v1/sessions/logout", (route) =>
     route.fulfill({ status: 401, contentType: "application/json", body: "{}" }),

@@ -56,11 +56,7 @@ export function Notice({
   role?: "alert" | "status";
 }>) {
   return (
-    <div
-      className="notice"
-      data-tone={tone}
-      role={role ?? (tone === "error" ? "alert" : "status")}
-    >
+    <div className="notice" data-tone={tone} role={role ?? (tone === "error" ? "alert" : "status")}>
       {children}
     </div>
   );
@@ -82,11 +78,7 @@ export function EmptyState({
 
 export function LoadingRows({ count = 4 }: { count?: number }) {
   return (
-    <div
-      className="surface panel stack"
-      role="status"
-      aria-label="Loading data"
-    >
+    <div className="surface panel stack" role="status" aria-label="Loading data">
       {Array.from({ length: count }, (_, i) => (
         <div key={i} className="skeleton" style={{ width: `${82 - i * 9}%` }} />
       ))}
@@ -97,13 +89,12 @@ export function LoadingRows({ count = 4 }: { count?: number }) {
 export function StatusBadge({ status }: { status: string }) {
   const tone = ["running", "succeeded", "verified", "healthy"].includes(status)
     ? "success"
-    : ["unknown", "queued", "pending", "provisioning", "draining"].includes(
-          status,
-        )
+    : ["unknown", "queued", "pending", "provisioning", "draining"].includes(status)
       ? "warning"
       : ["failed", "error"].includes(status)
         ? "danger"
         : undefined;
+
   return (
     <span className="badge" data-tone={tone}>
       {status.replaceAll("_", " ")}
@@ -191,11 +182,7 @@ export function AppShell({
                   .logout()
                   .then(() => window.location.assign("/"))
                   .catch((error) =>
-                    window.alert(
-                      error instanceof Error
-                        ? error.message
-                        : "Sign out failed",
-                    ),
+                    window.alert(error instanceof Error ? error.message : "Sign out failed"),
                   );
               }}
             >
