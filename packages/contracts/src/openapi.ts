@@ -10,6 +10,7 @@ import {
   ErrorResponse,
   Execution,
   ExecRequest,
+  Effect,
   FileReceipt,
   Operation,
   Project,
@@ -66,6 +67,34 @@ const terminalOperationConstraints = [
     if: { properties: { status: { const: "failed" } }, required: ["status"] },
     [consequentKeyword]: { required: ["error"], not: { required: ["result"] } },
   },
+];
+
+const operationConstraints: z.core.JSONSchema.JSONSchema[] = [
+  ...terminalOperationConstraints,
+  ...Effect.options.flatMap((effect): z.core.JSONSchema.JSONSchema[] => [
+    {
+      if: { properties: { effect: { const: effect } }, required: ["effect", "error"] },
+      [consequentKeyword]: {
+        properties: { error: { properties: { effect: { const: effect } }, required: ["effect"] } },
+      },
+    },
+    {
+      if: {
+        properties: { kind: { const: "file_write" }, effect: { const: effect } },
+        required: ["kind", "effect", "result"],
+      },
+      [consequentKeyword]: {
+        properties: {
+          result: {
+            properties: {
+              receipt: { properties: { effect: { const: effect } }, required: ["effect"] },
+            },
+            required: ["receipt"],
+          },
+        },
+      },
+    },
+  ]),
 ];
 
 const component = (name: keyof typeof schemas) => ({ $ref: `#/components/schemas/${name}` });
@@ -294,13 +323,13 @@ export const openApiDocument = {
               });
             }
 
-            if (zodSchema === Operation) jsonSchema.allOf = terminalOperationConstraints;
+            if (zodSchema === Operation) jsonSchema.allOf = operationConstraints;
 
             if (zodSchema === AcceptedExecution && jsonSchema.properties) {
               const operation = jsonSchema.properties.operation;
 
               if (operation && operation !== true) {
-                operation.allOf = terminalOperationConstraints;
+                operation.allOf = operationConstraints;
               }
             }
           },

@@ -173,6 +173,26 @@ export const Operation = z
       });
     }
 
+    if (operation.error && operation.effect !== operation.error.effect) {
+      context.addIssue({
+        code: "custom",
+        path: ["error", "effect"],
+        message: "Error effect must match the operation effect",
+      });
+    }
+
+    if (
+      operation.kind === "file_write" &&
+      operation.result &&
+      operation.effect !== operation.result.receipt.effect
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["result", "receipt", "effect"],
+        message: "File receipt effect must match the operation effect",
+      });
+    }
+
     if (
       operation.kind === "create" &&
       operation.result &&
@@ -200,7 +220,7 @@ export const Operation = z
     }
   })
   .describe(
-    "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads. When present, a create result sandboxId or exec result executionId matches the corresponding operation ID field.",
+    "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads. When present, an error effect or file-write receipt effect matches the operation effect; a create result sandboxId or exec result executionId matches the corresponding operation ID field.",
   );
 
 export const AcceptedOperation = z.object({ operation: Operation });

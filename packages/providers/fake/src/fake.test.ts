@@ -370,6 +370,33 @@ describe("independent fake provider", () => {
     expect(changedTransportCalls).toBe(0);
   });
 
+  test("fake driver rejects capabilities for another provider", async () => {
+    const driver = new FakeProviderDriver({
+      baseUrl: "http://127.0.0.1:8789",
+      token,
+      fetch: fetchStub(async () =>
+        Response.json({
+          provider: "foreign",
+          nativeIdempotency: { create: true, exec: true, destroy: true, writeFile: true },
+          discoveryBySubmission: true,
+          supports: { argv: true, shell: true, fileBytes: true, inventory: true },
+          maxFileBytes: 1048576,
+          maxOutputBytes: 1048576,
+          networkPolicies: ["blocked"],
+        }),
+      ),
+    });
+
+    await expect(driver.capabilities(scope)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    await expect(
+      driver.prepare({
+        scope,
+        image: { kind: "prepared", value: "fake-starter" },
+        networkPolicy: "blocked",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+
   test("fake driver rejects malformed file read envelopes before decoding", async () => {
     let payload: FileReadPayload = { bytesBase64: "not-base64" };
     const transport = fetchStub(async () => Response.json(payload));
@@ -418,10 +445,13 @@ describe("independent fake provider", () => {
 
     for (payload of [
       { items: [], nextCursor: 4 },
+      { items: [], nextCursor: "invalid" },
+      { items: [], nextCursor: "01" },
+      { items: [], nextCursor: "9007199254740992" },
       { items: "invalid" },
       { items: [], extra: true },
     ]) {
-      await expect(driver.inventory(input)).rejects.toThrow();
+      await expect(driver.inventory(input)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
     }
 
     payload = { items: [], nextCursor: "10" };

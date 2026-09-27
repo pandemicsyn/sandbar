@@ -54,6 +54,7 @@ describe("public contract", () => {
       Operation.safeParse({
         ...operation,
         status: "failed",
+        effect: "none",
         error: {
           code: "CAPACITY",
           message: "Unavailable",
@@ -62,6 +63,13 @@ describe("public contract", () => {
         },
       }).success,
     ).toBe(true);
+    expect(
+      Operation.safeParse({
+        ...operation,
+        status: "failed",
+        error: { code: "CAPACITY", message: "Unavailable", effect: "none", retry: "never" },
+      }).success,
+    ).toBe(false);
     expect(
       Operation.safeParse({
         ...operation,
@@ -91,6 +99,18 @@ describe("public contract", () => {
       kind: "file_write",
       receipt: { path: "/blob", bytesWritten: 3, complete: true, effect: "applied" },
     });
+    expect(
+      Operation.safeParse({
+        ...operation,
+        kind: "file_write",
+        status: "succeeded",
+        effect: "partial",
+        result: {
+          kind: "file_write",
+          receipt: { path: "/blob", bytesWritten: 3, complete: true, effect: "applied" },
+        },
+      }).success,
+    ).toBe(false);
 
     const sandbox = {
       id: "sb_1",
@@ -322,6 +342,18 @@ describe("public contract", () => {
     expect(openApiDocument.components.schemas.Operation).toHaveProperty("allOf.1.then.required", [
       "error",
     ]);
+    expect(openApiDocument.components.schemas.Operation).toHaveProperty(
+      "allOf.2.if.properties.effect.const",
+      "none",
+    );
+    expect(openApiDocument.components.schemas.Operation).toHaveProperty(
+      "allOf.2.then.properties.error.properties.effect.const",
+      "none",
+    );
+    expect(openApiDocument.components.schemas.Operation).toHaveProperty(
+      "allOf.3.then.properties.result.properties.receipt.properties.effect.const",
+      "none",
+    );
     expect(openApiDocument.components.schemas.AcceptedExecution).toMatchObject({
       properties: {
         operation: {
@@ -332,6 +364,10 @@ describe("public contract", () => {
     expect(openApiDocument.components.schemas.AcceptedExecution).toHaveProperty(
       "properties.operation.allOf.0.then.required",
       ["result"],
+    );
+    expect(openApiDocument.components.schemas.AcceptedExecution).toHaveProperty(
+      "properties.operation.allOf.2.then.properties.error.properties.effect.const",
+      "none",
     );
     expect(openApiDocument.components.schemas.AcceptedExecution).toHaveProperty(
       "description",

@@ -1000,6 +1000,331 @@
                     ]
                   }
                 }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "effect": {
+                      "const": "none"
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "effect": {
+                          "const": "none"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "file_write"
+                    },
+                    "effect": {
+                      "const": "none"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "effect",
+                    "result"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "receipt": {
+                          "properties": {
+                            "effect": {
+                              "const": "none"
+                            }
+                          },
+                          "required": [
+                            "effect"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "effect": {
+                      "const": "applied"
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "effect": {
+                          "const": "applied"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "file_write"
+                    },
+                    "effect": {
+                      "const": "applied"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "effect",
+                    "result"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "receipt": {
+                          "properties": {
+                            "effect": {
+                              "const": "applied"
+                            }
+                          },
+                          "required": [
+                            "effect"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "effect": {
+                      "const": "partial"
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "effect": {
+                          "const": "partial"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "file_write"
+                    },
+                    "effect": {
+                      "const": "partial"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "effect",
+                    "result"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "receipt": {
+                          "properties": {
+                            "effect": {
+                              "const": "partial"
+                            }
+                          },
+                          "required": [
+                            "effect"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "effect": {
+                      "const": "possible"
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "effect": {
+                          "const": "possible"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "file_write"
+                    },
+                    "effect": {
+                      "const": "possible"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "effect",
+                    "result"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "receipt": {
+                          "properties": {
+                            "effect": {
+                              "const": "possible"
+                            }
+                          },
+                          "required": [
+                            "effect"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "effect": {
+                      "const": "unknown"
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "effect": {
+                          "const": "unknown"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "file_write"
+                    },
+                    "effect": {
+                      "const": "unknown"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "effect",
+                    "result"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "receipt": {
+                          "properties": {
+                            "effect": {
+                              "const": "unknown"
+                            }
+                          },
+                          "required": [
+                            "effect"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt"
+                      ]
+                    }
+                  }
+                }
               }
             ]
           },
@@ -1806,7 +2131,7 @@
                 ]
               }
             ],
-            "description": "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads. When present, a create result sandboxId or exec result executionId matches the corresponding operation ID field.",
+            "description": "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads. When present, an error effect or file-write receipt effect matches the operation effect; a create result sandboxId or exec result executionId matches the corresponding operation ID field.",
             "allOf": [
               {
                 "if": {
@@ -1849,6 +2174,331 @@
                     "required": [
                       "result"
                     ]
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "effect": {
+                      "const": "none"
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "effect": {
+                          "const": "none"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "file_write"
+                    },
+                    "effect": {
+                      "const": "none"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "effect",
+                    "result"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "receipt": {
+                          "properties": {
+                            "effect": {
+                              "const": "none"
+                            }
+                          },
+                          "required": [
+                            "effect"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "effect": {
+                      "const": "applied"
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "effect": {
+                          "const": "applied"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "file_write"
+                    },
+                    "effect": {
+                      "const": "applied"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "effect",
+                    "result"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "receipt": {
+                          "properties": {
+                            "effect": {
+                              "const": "applied"
+                            }
+                          },
+                          "required": [
+                            "effect"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "effect": {
+                      "const": "partial"
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "effect": {
+                          "const": "partial"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "file_write"
+                    },
+                    "effect": {
+                      "const": "partial"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "effect",
+                    "result"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "receipt": {
+                          "properties": {
+                            "effect": {
+                              "const": "partial"
+                            }
+                          },
+                          "required": [
+                            "effect"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "effect": {
+                      "const": "possible"
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "effect": {
+                          "const": "possible"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "file_write"
+                    },
+                    "effect": {
+                      "const": "possible"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "effect",
+                    "result"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "receipt": {
+                          "properties": {
+                            "effect": {
+                              "const": "possible"
+                            }
+                          },
+                          "required": [
+                            "effect"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "effect": {
+                      "const": "unknown"
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "effect": {
+                          "const": "unknown"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "file_write"
+                    },
+                    "effect": {
+                      "const": "unknown"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "effect",
+                    "result"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "receipt": {
+                          "properties": {
+                            "effect": {
+                              "const": "unknown"
+                            }
+                          },
+                          "required": [
+                            "effect"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt"
+                      ]
+                    }
                   }
                 }
               }
@@ -2980,7 +3630,7 @@
             ]
           }
         ],
-        "description": "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads. When present, a create result sandboxId or exec result executionId matches the corresponding operation ID field.",
+        "description": "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads. When present, an error effect or file-write receipt effect matches the operation effect; a create result sandboxId or exec result executionId matches the corresponding operation ID field.",
         "allOf": [
           {
             "if": {
@@ -3023,6 +3673,331 @@
                 "required": [
                   "result"
                 ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "effect": {
+                  "const": "none"
+                }
+              },
+              "required": [
+                "effect",
+                "error"
+              ]
+            },
+            "then": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "effect": {
+                      "const": "none"
+                    }
+                  },
+                  "required": [
+                    "effect"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "file_write"
+                },
+                "effect": {
+                  "const": "none"
+                }
+              },
+              "required": [
+                "kind",
+                "effect",
+                "result"
+              ]
+            },
+            "then": {
+              "properties": {
+                "result": {
+                  "properties": {
+                    "receipt": {
+                      "properties": {
+                        "effect": {
+                          "const": "none"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "receipt"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "effect": {
+                  "const": "applied"
+                }
+              },
+              "required": [
+                "effect",
+                "error"
+              ]
+            },
+            "then": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "effect": {
+                      "const": "applied"
+                    }
+                  },
+                  "required": [
+                    "effect"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "file_write"
+                },
+                "effect": {
+                  "const": "applied"
+                }
+              },
+              "required": [
+                "kind",
+                "effect",
+                "result"
+              ]
+            },
+            "then": {
+              "properties": {
+                "result": {
+                  "properties": {
+                    "receipt": {
+                      "properties": {
+                        "effect": {
+                          "const": "applied"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "receipt"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "effect": {
+                  "const": "partial"
+                }
+              },
+              "required": [
+                "effect",
+                "error"
+              ]
+            },
+            "then": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "effect": {
+                      "const": "partial"
+                    }
+                  },
+                  "required": [
+                    "effect"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "file_write"
+                },
+                "effect": {
+                  "const": "partial"
+                }
+              },
+              "required": [
+                "kind",
+                "effect",
+                "result"
+              ]
+            },
+            "then": {
+              "properties": {
+                "result": {
+                  "properties": {
+                    "receipt": {
+                      "properties": {
+                        "effect": {
+                          "const": "partial"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "receipt"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "effect": {
+                  "const": "possible"
+                }
+              },
+              "required": [
+                "effect",
+                "error"
+              ]
+            },
+            "then": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "effect": {
+                      "const": "possible"
+                    }
+                  },
+                  "required": [
+                    "effect"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "file_write"
+                },
+                "effect": {
+                  "const": "possible"
+                }
+              },
+              "required": [
+                "kind",
+                "effect",
+                "result"
+              ]
+            },
+            "then": {
+              "properties": {
+                "result": {
+                  "properties": {
+                    "receipt": {
+                      "properties": {
+                        "effect": {
+                          "const": "possible"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "receipt"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "effect": {
+                  "const": "unknown"
+                }
+              },
+              "required": [
+                "effect",
+                "error"
+              ]
+            },
+            "then": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "effect": {
+                      "const": "unknown"
+                    }
+                  },
+                  "required": [
+                    "effect"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "file_write"
+                },
+                "effect": {
+                  "const": "unknown"
+                }
+              },
+              "required": [
+                "kind",
+                "effect",
+                "result"
+              ]
+            },
+            "then": {
+              "properties": {
+                "result": {
+                  "properties": {
+                    "receipt": {
+                      "properties": {
+                        "effect": {
+                          "const": "unknown"
+                        }
+                      },
+                      "required": [
+                        "effect"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "receipt"
+                  ]
+                }
               }
             }
           }

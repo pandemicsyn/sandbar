@@ -10,12 +10,12 @@ import {
 } from "@sandbar/provider-spi";
 import type { ExecCommand } from "@sandbar/contracts";
 import { z } from "zod";
-import { FakeAction } from "./protocol";
+import { FakeAction, FakeInventoryCursor } from "./protocol";
 import { FakeEvent, FakeFileBytesBase64 } from "./engine";
 
 const InventoryResponse = z.strictObject({
   items: z.array(SandboxObservation),
-  nextCursor: z.string().optional(),
+  nextCursor: FakeInventoryCursor.optional(),
 });
 
 const FakeHttpJson = z.json();
@@ -150,7 +150,13 @@ export class FakeProviderDriver implements ProviderDriver {
     }
   }
   async capabilities(scope: NativeScope) {
-    return DriverCapabilities.parse(await this.call({ kind: "capabilities", scope }));
+    const capabilities = DriverCapabilities.parse(await this.call({ kind: "capabilities", scope }));
+
+    if (capabilities.provider !== this.name) {
+      throw new ProviderReadError("INVALID_RESPONSE", "Fake capabilities named another provider");
+    }
+
+    return capabilities;
   }
   async prepare(input: {
     scope: NativeScope;
@@ -207,7 +213,13 @@ export class FakeProviderDriver implements ProviderDriver {
     return observation;
   }
   async inventory(input: { scope: NativeScope; cursor?: string; limit: number }) {
-    const response = InventoryResponse.parse(await this.call({ kind: "inventory", ...input }));
+    const parsed = InventoryResponse.safeParse(await this.call({ kind: "inventory", ...input }));
+
+    if (!parsed.success) {
+      throw new ProviderReadError("INVALID_RESPONSE", "Fake inventory response is invalid");
+    }
+
+    const response = parsed.data;
 
     if (response.items.some((item) => !sameScope(item.ref.scope, input.scope))) {
       throw new ProviderReadError("INVALID_RESPONSE", "Fake inventory returned a foreign scope");
