@@ -20,7 +20,7 @@ bun run test
 bun run build
 ```
 
-`check` typechecks the workspace packages. To apply safe lint fixes, run `bun run lint:fix`; to format supported source and configuration files, run `bun run format`. Historical material in `docs/archive` is excluded from linting. The root README, `docs/` prose, and generated OpenAPI and HTTP reference files are excluded from Oxfmt; their generators check the generated files for drift.
+`check` typechecks the workspace packages. To apply safe lint fixes, run `bun run lint:fix`; to format supported source and configuration files, run `bun run format`. Historical material in `docs/archive` is excluded from linting. The root README, `docs/` prose, and generated OpenAPI and HTTP reference files are excluded from Oxfmt.
 
 ## Design documents
 
