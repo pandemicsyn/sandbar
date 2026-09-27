@@ -5,7 +5,7 @@ import {
   NativeScope,
   ProviderReadError,
   type ProviderDriver,
-  type NativeRef,
+  type SandboxRef,
   type InvocationIdentity,
 } from "@sandbar/provider-spi";
 import type { ExecCommand } from "@sandbar/contracts";
@@ -133,7 +133,7 @@ export class FakeProviderDriver implements ProviderDriver {
       input.identity.submissionId,
     );
   }
-  async inspect(ref: NativeRef) {
+  async inspect(ref: SandboxRef) {
     const value = await this.call({ kind: "inspect", ref });
 
     return value === null ? null : SandboxObservation.parse(value);
@@ -142,7 +142,7 @@ export class FakeProviderDriver implements ProviderDriver {
     return InventoryResponse.parse(await this.call({ kind: "inventory", ...input }));
   }
   async exec(input: {
-    sandbox: NativeRef;
+    sandbox: SandboxRef;
     identity: InvocationIdentity;
     command: ExecCommand;
     cwd?: string;
@@ -164,7 +164,7 @@ export class FakeProviderDriver implements ProviderDriver {
       input.identity.submissionId,
     );
   }
-  async readFile(input: { sandbox: NativeRef; path: string }): Promise<Uint8Array> {
+  async readFile(input: { sandbox: SandboxRef; path: string }): Promise<Uint8Array> {
     const parsed = z
       .strictObject({ bytesBase64: FakeFileBytesBase64.nullable() })
       .safeParse(await this.call({ kind: "readFile", ...input }));
@@ -178,7 +178,7 @@ export class FakeProviderDriver implements ProviderDriver {
     return Uint8Array.from(Buffer.from(parsed.data.bytesBase64, "base64"));
   }
   async writeFile(input: {
-    sandbox: NativeRef;
+    sandbox: SandboxRef;
     identity: InvocationIdentity;
     path: string;
     bytes: Uint8Array;
@@ -196,7 +196,7 @@ export class FakeProviderDriver implements ProviderDriver {
       input.identity.submissionId,
     );
   }
-  async destroy(input: { sandbox: NativeRef; identity: InvocationIdentity }) {
+  async destroy(input: { sandbox: SandboxRef; identity: InvocationIdentity }) {
     return this.mutation({ kind: "destroy", ...input }, input.identity.submissionId);
   }
   async observe(input: { scope: NativeScope; submissionId: string }) {

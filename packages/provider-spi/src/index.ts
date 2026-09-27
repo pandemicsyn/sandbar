@@ -14,13 +14,9 @@ export const NativeRef = z.object({
   kind: z.enum(["sandbox", "execution"]),
 });
 
-const SandboxRef = NativeRef.refine((ref) => ref.kind === "sandbox", {
-  message: "Expected a sandbox reference",
-});
+export const SandboxRef = NativeRef.extend({ kind: z.literal("sandbox") });
 
-const ExecutionRef = NativeRef.refine((ref) => ref.kind === "execution", {
-  message: "Expected an execution reference",
-});
+const ExecutionRef = NativeRef.extend({ kind: z.literal("execution") });
 
 const sameScope = (left: z.infer<typeof NativeScope>, right: z.infer<typeof NativeScope>) =>
   left.provider === right.provider &&
@@ -145,6 +141,8 @@ export type NativeScope = z.infer<typeof NativeScope>;
 
 export type NativeRef = z.infer<typeof NativeRef>;
 
+export type SandboxRef = z.infer<typeof SandboxRef>;
+
 export type InvocationIdentity = z.infer<typeof InvocationIdentity>;
 
 export type DriverCapabilities = z.infer<typeof DriverCapabilities>;
@@ -179,14 +177,14 @@ export interface ProviderDriver {
     networkPolicy: string;
     labels?: Record<string, string>;
   }): Promise<DriverResult>;
-  inspect(ref: NativeRef): Promise<SandboxObservation | null>;
+  inspect(ref: SandboxRef): Promise<SandboxObservation | null>;
   inventory(input: {
     scope: NativeScope;
     cursor?: string;
     limit: number;
   }): Promise<{ items: SandboxObservation[]; nextCursor?: string }>;
   exec(input: {
-    sandbox: NativeRef;
+    sandbox: SandboxRef;
     identity: InvocationIdentity;
     command: z.infer<typeof ExecCommand>;
     cwd?: string;
@@ -194,15 +192,15 @@ export interface ProviderDriver {
     deadlineSeconds: number;
     maxOutputBytes: number;
   }): Promise<DriverResult>;
-  readFile(input: { sandbox: NativeRef; path: string }): Promise<Uint8Array>;
+  readFile(input: { sandbox: SandboxRef; path: string }): Promise<Uint8Array>;
   writeFile(input: {
-    sandbox: NativeRef;
+    sandbox: SandboxRef;
     identity: InvocationIdentity;
     path: string;
     bytes: Uint8Array;
     overwrite: boolean;
   }): Promise<DriverResult>;
-  destroy(input: { sandbox: NativeRef; identity: InvocationIdentity }): Promise<DriverResult>;
+  destroy(input: { sandbox: SandboxRef; identity: InvocationIdentity }): Promise<DriverResult>;
   // Observe must not submit a mutation. Null means no evidence, never proof of no effect.
   observe(input: { scope: NativeScope; submissionId: string }): Promise<DriverResult | null>;
 }

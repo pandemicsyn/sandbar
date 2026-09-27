@@ -5,6 +5,7 @@ import {
   DriverResult,
   NativeRef,
   NativeScope,
+  SandboxRef,
   type InvocationIdentity,
 } from "@sandbar/provider-spi";
 import { FakeInventoryCursor } from "./protocol";
@@ -71,7 +72,7 @@ export const FakeFileBytesBase64 = z
   .refine((value) => Buffer.from(value, "base64").length <= MAX_FILE_BYTES, "File exceeds 1 MiB");
 
 const ResourceSchema = z.strictObject({
-  ref: NativeRef.refine((ref) => ref.kind === "sandbox", "Resource reference must be a sandbox"),
+  ref: SandboxRef,
   state: z.enum(["running", "destroyed"]),
   image: z.string(),
   networkPolicy: z.string(),
@@ -138,7 +139,11 @@ const LedgerEntrySchema = z
 const StateSchema = z
   .strictObject({
     version: z.literal(1),
-    nextId: z.number().int().min(1),
+    nextId: z
+      .number()
+      .int()
+      .min(1)
+      .max(Number.MAX_SAFE_INTEGER - 1),
     tick: z.number().int().nonnegative(),
     profile: FakeProfile,
     resources: z.array(ResourceSchema).max(MAX_RESOURCES),
@@ -156,7 +161,7 @@ const StateSchema = z
       .max(MAX_INVOCATIONS),
   })
   .superRefine((state, context) => {
-    const projects = new Map<string, string>();
+    const submissions = new Map<string, z.infer<typeof LedgerEntrySchema>>();
     const resourceRefs = new Map<string, z.infer<typeof NativeRef>>();
     const executionIds = new Set<string>();
     const allRefs: z.infer<typeof NativeRef>[] = [];
@@ -176,17 +181,36 @@ const StateSchema = z
 
     for (const entry of state.ledger) {
       const key = JSON.stringify([scopeKey(entry.scope), entry.submissionId]);
-      const projectId = projects.get(key);
+      const prior = submissions.get(key);
 
-      if (projectId !== undefined && projectId !== entry.projectId) {
+      if (prior && prior.projectId !== entry.projectId) {
         context.addIssue({
           code: "custom",
           path: ["ledger"],
           message: "A submission ID cannot be shared across projects in one native scope",
         });
+      } else if (prior) {
+        const idempotent = {
+          create: state.profile.nativeIdempotency.create,
+          exec: state.profile.nativeIdempotency.exec,
+          destroy: state.profile.nativeIdempotency.destroy,
+          file_write: state.profile.nativeIdempotency.writeFile,
+        }[entry.action];
+
+        if (
+          idempotent ||
+          prior.action !== entry.action ||
+          prior.requestHash !== entry.requestHash
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["ledger"],
+            message: "Duplicate submission evidence conflicts with its native profile or intent",
+          });
+        }
       }
 
-      projects.set(key, entry.projectId);
+      submissions.set(key, entry);
 
       if (entry.result.status !== "completed") continue;
       const value = entry.result.value;
@@ -311,6 +335,7 @@ export class FakeProviderEngine {
     }
   }
   private async save(): Promise<void> {
+    StateSchema.parse(this.state);
     const json = JSON.stringify(this.state);
 
     if (Buffer.byteLength(json) > MAX_TOTAL_BYTES)
@@ -355,7 +380,12 @@ export class FakeProviderEngine {
 
     return FakeScenario.parse({ submissionId, action });
   }
+  private ref(scope: NativeScope, kind: "sandbox"): SandboxRef;
+  private ref(scope: NativeScope, kind: "execution"): NativeRef & { kind: "execution" };
   private ref(scope: NativeScope, kind: "sandbox" | "execution"): NativeRef {
+    if (this.state.nextId >= Number.MAX_SAFE_INTEGER - 1)
+      throw new FakeCapacityError("Fake provider native ID space exhausted");
+
     return { scope, kind, nativeId: `fake_${kind}_${this.state.nextId++}` };
   }
   private recordInvocation(
@@ -367,7 +397,7 @@ export class FakeProviderEngine {
 
     if (this.state.invocations.length > MAX_INVOCATIONS) this.state.invocations.shift();
   }
-  private find(ref: NativeRef): Resource | undefined {
+  private find(ref: SandboxRef): Resource | undefined {
     return this.state.resources.find(
       (x) =>
         sameScope(x.ref.scope, ref.scope) &&
@@ -524,7 +554,7 @@ export class FakeProviderEngine {
     );
   }
   async exec(input: {
-    sandbox: NativeRef;
+    sandbox: SandboxRef;
     identity: InvocationIdentity;
     command: z.infer<typeof ExecCommand>;
     cwd?: string;
@@ -650,7 +680,7 @@ export class FakeProviderEngine {
     );
   }
   async destroy(input: {
-    sandbox: NativeRef;
+    sandbox: SandboxRef;
     identity: InvocationIdentity;
   }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
@@ -748,11 +778,14 @@ export class FakeProviderEngine {
     submissionId: string,
   ): Promise<z.infer<typeof DriverResult> | null> {
     return this.mutate(() => {
-      const entry = this.state.ledger.find(
-        (x) => x.submissionId === submissionId && x.discoverable && sameScope(x.scope, scope),
+      const matches = this.state.ledger.filter(
+        (x) => x.submissionId === submissionId && sameScope(x.scope, scope),
       );
 
-      if (!entry) return null;
+      if (matches.length !== 1) return null;
+      const entry = matches[0]!;
+
+      if (!entry.discoverable) return null;
 
       const ref =
         entry.result.status === "completed"
@@ -774,7 +807,7 @@ export class FakeProviderEngine {
       return entry.result;
     });
   }
-  inspect(ref: NativeRef) {
+  inspect(ref: SandboxRef) {
     const r = this.find(ref);
 
     return r
@@ -797,13 +830,13 @@ export class FakeProviderEngine {
       nextCursor: start + limit < resources.length ? String(start + limit) : undefined,
     };
   }
-  readFile(ref: NativeRef, path: string): string | null {
+  readFile(ref: SandboxRef, path: string): string | null {
     const resource = this.find(ref);
 
     return resource?.state === "running" ? (resource.files[path] ?? null) : null;
   }
   async writeFile(input: {
-    sandbox: NativeRef;
+    sandbox: SandboxRef;
     identity: InvocationIdentity;
     path: string;
     bytesBase64: string;

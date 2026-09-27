@@ -1100,7 +1100,7 @@
           "operation",
           "execution"
         ],
-        "description": "The operation must have kind exec and satisfy terminal status payload rules; operation.id equals execution.operationId, operation.executionId equals execution.id, and their projectId and sandboxId values match."
+        "description": "The operation must have kind exec and satisfy terminal status payload rules; operation.id equals execution.operationId, operation.executionId and any result.executionId equal execution.id, and their projectId and sandboxId values match."
       },
       "AcceptedOperation": {
         "type": "object",
@@ -1806,7 +1806,7 @@
                 ]
               }
             ],
-            "description": "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads.",
+            "description": "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads. When present, a create result sandboxId or exec result executionId matches the corresponding operation ID field.",
             "allOf": [
               {
                 "if": {
@@ -2980,7 +2980,7 @@
             ]
           }
         ],
-        "description": "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads.",
+        "description": "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads. When present, a create result sandboxId or exec result executionId matches the corresponding operation ID field.",
         "allOf": [
           {
             "if": {

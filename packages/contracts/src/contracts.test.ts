@@ -65,6 +65,14 @@ describe("public contract", () => {
     expect(
       Operation.safeParse({
         ...operation,
+        sandboxId: "sb_1",
+        status: "succeeded",
+        result: { kind: "create", sandboxId: "sb_2" },
+      }).success,
+    ).toBe(false);
+    expect(
+      Operation.safeParse({
+        ...operation,
         result: { kind: "destroy", computeStopped: true, retainedResources: [] },
       }).success,
     ).toBe(false);
@@ -147,6 +155,16 @@ describe("public contract", () => {
     expect(
       AcceptedExecution.safeParse({
         operation: { ...execOperation, status: "succeeded" },
+        execution,
+      }).success,
+    ).toBe(false);
+    expect(
+      AcceptedExecution.safeParse({
+        operation: {
+          ...execOperation,
+          status: "succeeded",
+          result: { kind: "exec", executionId: "exec_2" },
+        },
         execution,
       }).success,
     ).toBe(false);
@@ -317,7 +335,7 @@ describe("public contract", () => {
     );
     expect(openApiDocument.components.schemas.AcceptedExecution).toHaveProperty(
       "description",
-      expect.stringContaining("operation.executionId equals execution.id"),
+      expect.stringContaining("result.executionId equal execution.id"),
     );
   });
   test("OpenAPI retains constrained label keys", () => {

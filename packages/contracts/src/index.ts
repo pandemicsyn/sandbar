@@ -172,9 +172,35 @@ export const Operation = z
         message: "Failed operations require an error and cannot carry a result",
       });
     }
+
+    if (
+      operation.kind === "create" &&
+      operation.result &&
+      operation.sandboxId !== undefined &&
+      operation.result.sandboxId !== operation.sandboxId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["result", "sandboxId"],
+        message: "Create result sandbox ID must match the operation",
+      });
+    }
+
+    if (
+      operation.kind === "exec" &&
+      operation.result &&
+      operation.executionId !== undefined &&
+      operation.result.executionId !== operation.executionId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["result", "executionId"],
+        message: "Exec result execution ID must match the operation",
+      });
+    }
   })
   .describe(
-    "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads.",
+    "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads. When present, a create result sandboxId or exec result executionId matches the corresponding operation ID field.",
   );
 
 export const AcceptedOperation = z.object({ operation: Operation });
@@ -288,7 +314,7 @@ export const AcceptedExecution = z
     },
   )
   .describe(
-    "The operation must have kind exec and satisfy terminal status payload rules; operation.id equals execution.operationId, operation.executionId equals execution.id, and their projectId and sandboxId values match.",
+    "The operation must have kind exec and satisfy terminal status payload rules; operation.id equals execution.operationId, operation.executionId and any result.executionId equal execution.id, and their projectId and sandboxId values match.",
   );
 
 export const FileReadHeaders = z.object({

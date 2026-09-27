@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ExecCommand } from "@sandbar/contracts";
-import { InvocationIdentity, NativeRef, NativeScope } from "@sandbar/provider-spi";
+import { InvocationIdentity, NativeScope, SandboxRef } from "@sandbar/provider-spi";
 
 export const FakeInventoryCursor = z
   .string()
@@ -17,7 +17,7 @@ export const FakeAction = z.discriminatedUnion("kind", [
     networkPolicy: z.string().min(1),
     labels: z.record(z.string(), z.string()).optional(),
   }),
-  z.strictObject({ kind: z.literal("inspect"), ref: NativeRef }),
+  z.strictObject({ kind: z.literal("inspect"), ref: SandboxRef }),
   z.strictObject({
     kind: z.literal("inventory"),
     scope: NativeScope,
@@ -26,7 +26,7 @@ export const FakeAction = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("exec"),
-    sandbox: NativeRef,
+    sandbox: SandboxRef,
     identity: InvocationIdentity,
     command: ExecCommand,
     cwd: z.string().optional(),
@@ -36,18 +36,18 @@ export const FakeAction = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("readFile"),
-    sandbox: NativeRef,
+    sandbox: SandboxRef,
     path: z.string().min(1).max(4096),
   }),
   z.strictObject({
     kind: z.literal("writeFile"),
-    sandbox: NativeRef,
+    sandbox: SandboxRef,
     identity: InvocationIdentity,
     path: z.string().min(1).max(4096),
     bytesBase64: z.base64(),
     overwrite: z.boolean(),
   }),
-  z.strictObject({ kind: z.literal("destroy"), sandbox: NativeRef, identity: InvocationIdentity }),
+  z.strictObject({ kind: z.literal("destroy"), sandbox: SandboxRef, identity: InvocationIdentity }),
   z.strictObject({
     kind: z.literal("observe"),
     scope: NativeScope,

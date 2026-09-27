@@ -6,6 +6,7 @@ import { FakeProviderDriver } from "./index";
 import { FakeProviderEngine } from "./engine";
 import { startFakeProviderServer } from "./server";
 import { ProviderReadError } from "@sandbar/provider-spi";
+import { FakeAction } from "./protocol";
 
 const token = "local-test-token-12345";
 
@@ -73,6 +74,33 @@ afterEach(async () => {
 });
 
 describe("independent fake provider", () => {
+  test("sandbox actions reject execution references at the HTTP boundary", () => {
+    const execution = { scope, nativeId: "fake_execution_1", kind: "execution" };
+
+    for (const action of [
+      { kind: "inspect", ref: execution },
+      {
+        kind: "exec",
+        sandbox: execution,
+        identity: identity("exec_ref"),
+        command,
+        deadlineSeconds: 30,
+        maxOutputBytes: 0,
+      },
+      { kind: "readFile", sandbox: execution, path: "/x" },
+      {
+        kind: "writeFile",
+        sandbox: execution,
+        identity: identity("write_ref"),
+        path: "/x",
+        bytesBase64: "AA==",
+        overwrite: true,
+      },
+      { kind: "destroy", sandbox: execution, identity: identity("destroy_ref") },
+    ]) {
+      expect(FakeAction.safeParse(action).success).toBe(false);
+    }
+  });
   test("lost create and exec responses remain observable across Sandbar-facing restart without duplicate effects", async () => {
     const { driver, control, statePath } = await setup();
     await control("/_test/seed", {
@@ -871,6 +899,41 @@ describe("independent fake provider", () => {
     expect(reloaded.snapshot().ledger).toHaveLength(1);
   });
 
+  test("non-idempotent duplicate effects remain durable but cannot be observed as one result", async () => {
+    directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+    const statePath = join(directory, "provider.json");
+    const engine = new FakeProviderEngine(statePath, true);
+    await engine.load();
+    await engine.setProfile({
+      nativeIdempotency: { create: false, exec: true, destroy: true, writeFile: true },
+      discoveryBySubmission: true,
+    });
+
+    const input = {
+      scope,
+      identity: identity("duplicate_effect"),
+      image: "fake-starter",
+      networkPolicy: "blocked",
+    };
+
+    expect((await engine.create(input)).result.status).toBe("completed");
+    expect((await engine.create(input)).result.status).toBe("completed");
+    expect(engine.snapshot().ledger).toHaveLength(2);
+    expect(engine.snapshot().resources).toHaveLength(2);
+    expect(await engine.observe(scope, "duplicate_effect")).toBeNull();
+
+    const reloaded = new FakeProviderEngine(statePath, true);
+    await reloaded.load();
+    expect(reloaded.snapshot().ledger).toHaveLength(2);
+    expect(await reloaded.observe(scope, "duplicate_effect")).toBeNull();
+    await expect(
+      reloaded.setProfile({
+        nativeIdempotency: { create: true, exec: true, destroy: true, writeFile: true },
+        discoveryBySubmission: true,
+      }),
+    ).rejects.toThrow();
+  });
+
   test("fake state recovery rejects malformed or unknown-version evidence without rewriting it", async () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
     const statePath = join(directory, "provider.json");
@@ -900,8 +963,10 @@ describe("independent fake provider", () => {
     for (const damaged of [
       { ...source, version: 2 },
       { ...source, nextId: 1 },
+      { ...source, nextId: Number.MAX_SAFE_INTEGER },
       { ...source, resources: [source.resources[0], source.resources[0]] },
       { ...source, resources: [] },
+      { ...source, ledger: [source.ledger[0], source.ledger[0]] },
       {
         ...source,
         ledger: [
