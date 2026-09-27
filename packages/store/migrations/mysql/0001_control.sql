@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS provider_connections (
   project_id varchar(128) COLLATE utf8mb4_bin NOT NULL,
   provider varchar(128) NOT NULL,
   name varchar(255) NOT NULL,
-  scope varchar(512),
+  scope longtext,
   encrypted_credentials longtext NOT NULL,
   adapter_contract_version int NOT NULL DEFAULT 1,
   credential_revision int NOT NULL DEFAULT 1,

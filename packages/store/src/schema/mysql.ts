@@ -50,7 +50,7 @@ export const providerConnections = mysqlTable(
       .references(() => projects.id),
     provider: varchar("provider", { length: 128 }).notNull(),
     name: varchar("name", { length: 255 }).notNull(),
-    scope: varchar("scope", { length: 512 }),
+    scope: longtext("scope"),
     encryptedCredentials: longtext("encrypted_credentials").notNull(),
     adapterContractVersion: int("adapter_contract_version").notNull().default(1),
     credentialRevision: int("credential_revision").notNull().default(1),
