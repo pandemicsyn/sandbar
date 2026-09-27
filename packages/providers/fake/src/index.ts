@@ -11,7 +11,12 @@ import {
 import type { ExecCommand } from "@sandbar/contracts";
 import { z } from "zod";
 import { FakeAction } from "./protocol";
-import { FakeEvent } from "./engine";
+import { FakeEvent, FakeFileBytesBase64 } from "./engine";
+
+const InventoryResponse = z.strictObject({
+  items: z.array(SandboxObservation),
+  nextCursor: z.string().optional(),
+});
 
 export class FakeProviderDriver implements ProviderDriver {
   readonly name = "fake";
@@ -123,14 +128,7 @@ export class FakeProviderDriver implements ProviderDriver {
     return value === null ? null : SandboxObservation.parse(value);
   }
   async inventory(input: { scope: NativeScope; cursor?: string; limit: number }) {
-    const value = (await this.call({ kind: "inventory", ...input })) as {
-      items: unknown[];
-      nextCursor?: string;
-    };
-    return {
-      items: value.items.map((x) => SandboxObservation.parse(x)),
-      nextCursor: value.nextCursor,
-    };
+    return InventoryResponse.parse(await this.call({ kind: "inventory", ...input }));
   }
   async exec(input: {
     sandbox: NativeRef;
@@ -157,7 +155,7 @@ export class FakeProviderDriver implements ProviderDriver {
   }
   async readFile(input: { sandbox: NativeRef; path: string }): Promise<Uint8Array> {
     const parsed = z
-      .strictObject({ bytesBase64: z.base64().max(1_398_104).nullable() })
+      .strictObject({ bytesBase64: FakeFileBytesBase64.nullable() })
       .safeParse(await this.call({ kind: "readFile", ...input }));
     if (!parsed.success)
       throw new ProviderReadError("INVALID_RESPONSE", "Fake provider returned invalid file data");

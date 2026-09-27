@@ -58,13 +58,17 @@ const MAX_RESOURCES = 128,
   MAX_INVOCATIONS = 512,
   MAX_FILE_BYTES = 1024 * 1024,
   MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+export const FakeFileBytesBase64 = z
+  .base64()
+  .max(1_398_104)
+  .refine((value) => Buffer.from(value, "base64").length <= MAX_FILE_BYTES, "File exceeds 1 MiB");
 const ResourceSchema = z.strictObject({
   ref: NativeRef,
   state: z.enum(["running", "destroyed"]),
   image: z.string(),
   networkPolicy: z.string(),
   labels: z.record(z.string(), z.string()),
-  files: z.record(z.string(), z.base64().max(1_398_104)),
+  files: z.record(z.string(), FakeFileBytesBase64),
   sequence: z.number().int().nonnegative(),
 });
 const LedgerEntrySchema = z

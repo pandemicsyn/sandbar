@@ -316,6 +316,7 @@ describe("independent fake provider", () => {
       { bytesBase64: "not-base64" },
       { bytesBase64: 4 },
       { bytesBase64: "AA==", extra: true },
+      { bytesBase64: "A".repeat(1_398_104) },
     ]) {
       await expect(driver.readFile(input)).rejects.toMatchObject({
         code: "INVALID_RESPONSE",
@@ -327,6 +328,26 @@ describe("independent fake provider", () => {
     await expect(driver.readFile(input)).rejects.toMatchObject({ code: "NOT_FOUND" });
     payload = { bytesBase64: "AP8B" };
     expect(await driver.readFile(input)).toEqual(Uint8Array.from([0, 255, 1]));
+  });
+
+  test("fake driver validates the complete inventory response envelope", async () => {
+    let payload: unknown = { items: [], nextCursor: 4 };
+    const transport = (async () => Response.json(payload)) as unknown as typeof fetch;
+    const driver = new FakeProviderDriver({
+      baseUrl: "http://127.0.0.1:8789",
+      token,
+      fetch: transport,
+    });
+    const input = { scope, limit: 10 };
+    for (payload of [
+      { items: [], nextCursor: 4 },
+      { items: "invalid" },
+      { items: [], extra: true },
+    ]) {
+      await expect(driver.inventory(input)).rejects.toThrow();
+    }
+    payload = { items: [], nextCursor: "10" };
+    expect(await driver.inventory(input)).toEqual({ items: [], nextCursor: "10" });
   });
 
   test("fake driver does not forward mutation bodies across redirects", async () => {
@@ -719,6 +740,10 @@ describe("independent fake provider", () => {
         ledger: [{ ...source.ledger[0], scope: { ...scope, connectionId: "foreign" } }],
       },
       { ...source, resources: [{ ...source.resources[0], files: { "/blob": "not-base64" } }] },
+      {
+        ...source,
+        resources: [{ ...source.resources[0], files: { "/blob": "A".repeat(1_398_104) } }],
+      },
     ]) {
       const serialized = JSON.stringify(damaged);
       await writeFile(statePath, serialized);
