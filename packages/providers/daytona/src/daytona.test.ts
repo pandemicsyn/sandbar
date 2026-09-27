@@ -24,6 +24,13 @@ const native = (name: string, state = "started") => ({
   toolboxProxyUrl: `${toolboxOrigin}/toolbox`,
 });
 
+const region = (organizationId = "org-1") => ({
+  id: "us",
+  name: "United States",
+  regionType: "shared",
+  organizationId,
+});
+
 const identity = (submissionId: string) => ({
   projectId: "direct",
   operationId: `op_${submissionId}`,
@@ -46,6 +53,8 @@ test("endpoint pairs must be explicitly trusted before forwarding an API key", a
 
   const fetchImpl = fixtureFetch(async (_input: RequestInfo | URL) => {
     calls++;
+
+    if (new URL(String(_input)).pathname.endsWith("/regions")) return Response.json([region()]);
 
     return Response.json({ organizationId: "org-1" });
   });
@@ -75,7 +84,7 @@ test("endpoint pairs must be explicitly trusted before forwarding an API key", a
   });
 
   expect(provider.scope.endpoint).toBe(custom.apiUrl);
-  expect(calls).toBe(1);
+  expect(calls).toBe(2);
   await expect(
     daytonaProvider({
       apiKey: "secret",
@@ -86,8 +95,37 @@ test("endpoint pairs must be explicitly trusted before forwarding an API key", a
       fetch: fetchImpl,
     }),
   ).rejects.toThrow("not trusted");
-  expect(calls).toBe(1);
+  expect(calls).toBe(2);
 });
+
+test.each([
+  ["name only", "United States", [region()], 200],
+  ["missing", "us", [], 200],
+  ["duplicate", "us", [region(), region()], 200],
+  ["malformed", "us", [{ name: "United States" }], 200],
+  ["foreign dedicated", "us", [{ ...region("org-other"), regionType: "dedicated" }], 200],
+  ["failed listing", "us", null, 503],
+] as const)(
+  "target verification rejects %s before mutation",
+  async (_case, target, regions, status) => {
+    const calls: string[] = [];
+
+    const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      calls.push(`${init?.method ?? "GET"} ${url.pathname}`);
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json(regions, { status });
+
+      throw new Error(`Unexpected ${url.pathname}`);
+    });
+
+    await expect(daytonaProvider({ apiKey: "key", target, fetch: fetchImpl })).rejects.toThrow();
+    expect(calls).toEqual(["GET /api/api-keys/current", "GET /api/regions"]);
+  },
+);
 
 test("verified direct scope, read-only preparation, one create, exact binary execution and files", async () => {
   const calls: string[] = [];
@@ -100,6 +138,8 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
     const json = (value: FixtureJson, status = 200) => Response.json(value, { status });
 
     if (url.pathname === "/api/api-keys/current") return json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return json([region()]);
 
     if (url.pathname === "/api/snapshots/snap-1") {
       snapshotReads++;
@@ -188,6 +228,8 @@ test("lost create response is observed by stable name without replay; scope rota
 
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: account });
 
+    if (url.pathname === "/api/regions") return Response.json([region(account)]);
+
     if (url.pathname === "/api/snapshots/snap-1")
       return Response.json({
         id: "snap-1",
@@ -270,6 +312,8 @@ test("unsupported OCI and no-overwrite reject before mutation", async () => {
   const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push(`${init?.method ?? "GET"} ${new URL(String(input)).pathname}`);
 
+    if (new URL(String(input)).pathname === "/api/regions") return Response.json([region()]);
+
     return Response.json({ organizationId: "org-1" });
   });
 
@@ -298,7 +342,7 @@ test("unsupported OCI and no-overwrite reject before mutation", async () => {
   });
 
   expect(write.status).toBe("rejected");
-  expect(calls).toEqual(["GET /api/api-keys/current"]);
+  expect(calls).toEqual(["GET /api/api-keys/current", "GET /api/regions"]);
 });
 
 test("lost exec and upload responses remain unknown after one submission each", async () => {
@@ -309,6 +353,8 @@ test("lost exec and upload responses remain unknown after one submission each", 
     const url = new URL(String(input));
 
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
 
     if (url.pathname === "/api/sandbox/native-1") return Response.json(native("sandbar-existing"));
 
@@ -354,6 +400,65 @@ test("lost exec and upload responses remain unknown after one submission each", 
   expect(uploads).toBe(1);
 });
 
+test.each(["missing", "read failure"])(
+  "toolbox %s rejects exec and upload before any mutation",
+  async (failure) => {
+    let executes = 0,
+      uploads = 0;
+
+    const fetchImpl = fixtureFetch(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/sandbox/native-1") {
+        if (failure === "missing") return new Response(null, { status: 404 });
+        throw new Error("read failed");
+      }
+
+      if (url.pathname.endsWith("/process/execute")) executes++;
+
+      if (url.pathname.endsWith("/files/upload-v2")) uploads++;
+      throw new Error(`Unexpected ${url.pathname}`);
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+
+    const exec = await provider.driver.exec({
+      sandbox,
+      identity: identity(`exec-${failure}`),
+      command: { kind: "shell", script: "true" },
+      deadlineSeconds: 30,
+      maxOutputBytes: 10,
+    });
+
+    const write = await provider.driver.writeFile({
+      sandbox,
+      identity: identity(`write-${failure}`),
+      path: "/file",
+      bytes: new Uint8Array([1]),
+      overwrite: true,
+    });
+
+    for (const result of [exec, write]) {
+      expect(result.status).toBe("rejected");
+      expect(result.effect).toBe("none");
+
+      if (result.status === "rejected") {
+        expect(result.error.code).toBe(failure === "missing" ? "not_found" : "unavailable");
+        expect(result.error.retry).toBe("never");
+      }
+    }
+
+    expect(executes).toBe(0);
+    expect(uploads).toBe(0);
+  },
+);
+
 test("cross-wired sandbox identity and malformed execution output never complete", async () => {
   let executions = 0;
   let wrongId = true;
@@ -362,6 +467,8 @@ test("cross-wired sandbox identity and malformed execution output never complete
     const url = new URL(String(input));
 
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
 
     if (url.pathname === "/api/sandbox/native-1")
       return Response.json({
@@ -390,7 +497,7 @@ test("cross-wired sandbox identity and malformed execution output never complete
         maxOutputBytes: 10,
       })
     ).status,
-  ).toBe("unknown");
+  ).toBe("rejected");
   expect(executions).toBe(0);
   wrongId = false;
   expect(
@@ -412,6 +519,8 @@ test("POSIX capture wrapper drains a noisy command while retaining only bounded 
     const url = new URL(String(input));
 
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
 
     if (url.pathname === "/api/sandbox/native-1") return Response.json(native("sandbar-existing"));
 

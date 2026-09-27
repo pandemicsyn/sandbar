@@ -42,6 +42,11 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: account });
 
+    if (url.pathname === "/api/regions")
+      return Response.json([
+        { id: "us", name: "United States", regionType: "shared", organizationId: account },
+      ]);
+
     if (url.pathname === "/api/snapshots/snap-1") {
       snapshotReads++;
 

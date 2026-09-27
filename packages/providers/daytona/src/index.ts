@@ -15,6 +15,13 @@ import type { ExecCommand } from "@sandbar/contracts";
 // Daytona API and toolbox OpenAPI v0.218; see README for the pinned sources.
 const CurrentKey = z.object({ organizationId: z.string().min(1) });
 
+const Region = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  regionType: z.enum(["shared", "dedicated", "custom"]),
+  organizationId: z.string().nullable().optional(),
+});
+
 const Snapshot = z.object({
   id: z.string().min(1),
   organizationId: z.string().min(1),
@@ -557,11 +564,20 @@ export class DaytonaDriver implements ProviderDriver {
 
     try {
       native = await this.toolbox(input.sandbox);
-    } catch {
-      return unknown(
-        input.identity.submissionId,
-        "Daytona sandbox inspection failed before execution",
-      );
+    } catch (error) {
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code:
+            error instanceof ProviderReadError && error.code === "NOT_FOUND"
+              ? "not_found"
+              : "unavailable",
+          message: "Daytona sandbox inspection failed before execution",
+          effect: "none",
+          retry: "never",
+        },
+      };
     }
 
     const command =
@@ -697,11 +713,20 @@ export class DaytonaDriver implements ProviderDriver {
 
     try {
       native = await this.toolbox(input.sandbox);
-    } catch {
-      return unknown(
-        input.identity.submissionId,
-        "Daytona sandbox inspection failed before upload",
-      );
+    } catch (error) {
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code:
+            error instanceof ProviderReadError && error.code === "NOT_FOUND"
+              ? "not_found"
+              : "unavailable",
+          message: "Daytona sandbox inspection failed before upload",
+          effect: "none",
+          retry: "never",
+        },
+      };
     }
 
     const form = new FormData();
@@ -831,6 +856,22 @@ export function daytonaRegistration(
 
       if (!response.ok) throw new Error("Daytona credential verification failed");
       const key = await boundedJson(response, CurrentKey, 16_384);
+
+      const regionsResponse = await (fetchImpl ?? fetch)(`${config.configuration.apiUrl}/regions`, {
+        headers: { Authorization: `Bearer ${config.credentials.apiKey}` },
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!regionsResponse.ok) throw new Error("Daytona target verification failed");
+      const regions = await boundedJson(regionsResponse, z.array(Region), 1_048_576);
+      const matches = regions.filter((region) => region.id === config.configuration.target);
+
+      if (
+        matches.length !== 1 ||
+        (matches[0]!.regionType !== "shared" && matches[0]!.organizationId !== key.organizationId)
+      )
+        throw new Error("Daytona target verification failed");
 
       const scope = NativeScope.parse({
         provider: "daytona",

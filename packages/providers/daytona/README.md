@@ -20,7 +20,7 @@ try {
 }
 ```
 
-`daytonaProvider` performs a read-only `GET /api-keys/current` and binds the returned organization ID, configured target and canonical API endpoint to the direct scope. The credential stays in the caller. Direct mode has process-lifetime operation state; save recovery references before relying on them after a restart. A missing native create candidate is an unknown effect, not permission to create again.
+`daytonaProvider` performs read-only `GET /api-keys/current` and `GET /regions` calls. It requires the target to match exactly one available native region ID, then binds that ID, the verified organization ID and canonical API endpoint to the direct scope. The credential stays in the caller. Direct mode has process-lifetime operation state; save recovery references before relying on them after a restart. A missing native create candidate is an unknown effect, not permission to create again. The special `earth` GPU region is not returned by the region listing and is outside this adapter's supported target set.
 
 The official Daytona API and toolbox endpoints are trusted by default. For a private Daytona deployment, pass its exact `{ apiUrl, toolboxOrigin }` pair in `trustedEndpoints` when constructing a direct provider. The service host can allow exact pairs with `SANDBAR_DAYTONA_TRUSTED_ENDPOINTS`, a JSON array of those objects. A connection request cannot send an API key to an arbitrary URL by supplying endpoint fields.
 

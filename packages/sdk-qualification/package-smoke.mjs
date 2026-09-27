@@ -211,6 +211,7 @@ const mock = async (input, init = {}) => {
   const url = new URL(String(input));
   const json = value => Response.json(value);
   if (url.pathname === "/api/api-keys/current") return json({ organizationId: "org-1" });
+  if (url.pathname === "/api/regions") return json([{ id: "us", name: "United States", regionType: "shared", organizationId: "org-1" }]);
   if (url.pathname === "/api/snapshots/snap-1") return json({ id: "snap-1", organizationId: "org-1", state: "active", regionIds: ["us"], sandboxClass: "linux-vm" });
   if (url.pathname === "/api/sandbox" && init.method === "POST") { mutations++; name = JSON.parse(init.body).name; return json(native()); }
   if (url.pathname === "/api/sandbox/native-1" && init.method === "DELETE") { mutations++; return json(native("destroyed")); }
