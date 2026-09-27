@@ -124,7 +124,7 @@ export class ModalProviderDriver implements ProviderDriver {
   async readFile(input: { sandbox: NativeRef; path: string }): Promise<Uint8Array> {
     if (!await this.find(input.sandbox)) throw new ProviderReadError("NOT_FOUND", "Modal sandbox not found in verified app");
     try { return await this.transport.readBytes(input.sandbox.nativeId, input.path, MAX_FILE_BYTES); }
-    catch { throw new ProviderReadError("INVALID_RESPONSE", "Modal file read unavailable or exceeded byte limit"); }
+    catch (error) { if (error instanceof ProviderReadError) throw error; throw new ProviderReadError("INVALID_RESPONSE", "Modal file read unavailable or exceeded byte limit"); }
   }
   async writeFile(_input: { sandbox: NativeRef; identity: InvocationIdentity; path: string; bytes: Uint8Array; overwrite: boolean }): Promise<DriverResult> {
     return rejected("unsupported", "Modal SDK filesystem writes retry uncertain effects and cannot enforce no-clobber");

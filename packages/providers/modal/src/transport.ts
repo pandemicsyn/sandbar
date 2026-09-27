@@ -1,10 +1,12 @@
 import {
   ModalClient,
   NotFoundError,
+  SandboxFilesystemNotFoundError,
   type App,
   type ModalClientParams,
   type Sandbox,
 } from "modal";
+import { ProviderReadError } from "@sandbar/provider-spi";
 
 export const MODAL_ENDPOINT = "https://api.modal.com:443";
 
@@ -104,11 +106,16 @@ export function createSdkTransport(input: {
     },
     async readBytes(sandboxId, path, maxBytes) {
       const sandbox = await client.sandboxes.fromId(sandboxId);
-      const info = await sandbox.filesystem.stat(path);
-      if (info.type !== "file" || !Number.isSafeInteger(info.size) || info.size < 0 || info.size > maxBytes) throw new Error("Modal file is not a bounded regular file");
-      const bytes = await sandbox.filesystem.readBytes(path);
-      if (!(bytes instanceof Uint8Array) || bytes.length > maxBytes) throw new Error("Modal file exceeded bounded read size");
-      return bytes;
+      try {
+        const info = await sandbox.filesystem.stat(path);
+        if (info.type !== "file" || !Number.isSafeInteger(info.size) || info.size < 0 || info.size > maxBytes) throw new Error("Modal file is not a bounded regular file");
+        const bytes = await sandbox.filesystem.readBytes(path);
+        if (!(bytes instanceof Uint8Array) || bytes.length > maxBytes) throw new Error("Modal file exceeded bounded read size");
+        return bytes;
+      } catch (error) {
+        if (error instanceof SandboxFilesystemNotFoundError) throw new ProviderReadError("NOT_FOUND", "Modal file not found");
+        throw error;
+      }
     },
     close() { client.close(); },
   };

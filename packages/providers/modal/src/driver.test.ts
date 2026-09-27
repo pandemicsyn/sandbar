@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Image, Sandbar, OutcomeUnknownError, type RecoveryReference } from "@sandbar/sdk/direct";
 import { createModalRegistration, modalProvider, MODAL_ENDPOINT, type ModalTransport } from "./index";
-import type { NativeRef } from "@sandbar/provider-spi";
+import { ProviderReadError, type NativeRef } from "@sandbar/provider-spi";
 
 const options = { tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main", region: "us-east-1", timeoutSeconds: 300 };
 const identity = { projectId: "direct", operationId: "op_1", invocationKey: "01996553-a795-7a33-8bf1-73305942cdde", submissionId: "sub_1" };
@@ -116,10 +116,22 @@ test("binary reads work; exec and writes reject before provider mutation", async
   if (created.status !== "completed" || created.value.kind !== "sandbox") throw new Error("Fixture create failed");
   const ref = created.value.observation.ref;
   expect(await driver.readFile({ sandbox: ref, path: "/tmp/blob" })).toEqual(fixture.file);
+  fixture.file = Uint8Array.from({ length: 1_048_577 }, () => 1);
+  await expect(driver.readFile({ sandbox: ref, path: "/tmp/blob" })).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  fixture.file = Uint8Array.from([0, 255, 128, 42]);
   expect((await driver.exec({ sandbox: ref, identity, command: { kind: "argv", argv: ["true"] }, deadlineSeconds: 30, maxOutputBytes: 1024 })).status).toBe("rejected");
   expect((await driver.writeFile({ sandbox: ref, identity, path: "/tmp/blob", bytes: fixture.file, overwrite: true })).status).toBe("rejected");
   expect(fixture.writes).toBe(0);
   expect(fixture.terminates).toBe(0);
+});
+
+test("native not-found file evidence is kept distinct from malformed data", async () => {
+  const fixture = new Fixture();
+  fixture.readBytes = async () => { throw new ProviderReadError("NOT_FOUND", "File absent"); };
+  const { driver, scope } = await modalProvider(options, fixture);
+  const created = await driver.create({ scope, identity, image: "im-fixture", networkPolicy: "blocked" });
+  if (created.status !== "completed" || created.value.kind !== "sandbox") throw new Error("Fixture create failed");
+  await expect(driver.readFile({ sandbox: created.value.observation.ref, path: "/tmp/absent" })).rejects.toMatchObject({ code: "NOT_FOUND" });
 });
 
 test("lost termination response stays unknown and is not retried", async () => {
