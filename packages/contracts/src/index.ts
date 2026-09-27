@@ -364,7 +364,7 @@ export const Project = z.object({ id: Id, name: z.string(), createdAt: Rfc3339 }
 export const ProjectPage = z.object({ items: z.array(Project) });
 
 export const CreateProviderConnectionRequest = z.strictObject({
-  provider: z.enum(["fake", "daytona", "modal"]),
+  provider: z.enum(["fake", "daytona"]),
   name: z.string().min(1).max(120),
   credentials: z.record(z.string(), z.string()).optional(),
   configuration: z.record(z.string(), z.string()).optional(),
@@ -373,7 +373,7 @@ export const CreateProviderConnectionRequest = z.strictObject({
 export const ProviderConnection = z.object({
   id: Id,
   projectId: Id,
-  provider: z.enum(["fake", "daytona", "modal"]),
+  provider: z.enum(["fake", "daytona"]),
   name: z.string(),
   status: z.enum(["unverified", "verified", "draining"]),
   nativeScope: z

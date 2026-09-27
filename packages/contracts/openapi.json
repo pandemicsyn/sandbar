@@ -2934,8 +2934,7 @@
             "type": "string",
             "enum": [
               "fake",
-              "daytona",
-              "modal"
+              "daytona"
             ]
           },
           "name": {
@@ -4507,8 +4506,7 @@
             "type": "string",
             "enum": [
               "fake",
-              "daytona",
-              "modal"
+              "daytona"
             ]
           },
           "name": {
@@ -4609,8 +4607,7 @@
                   "type": "string",
                   "enum": [
                     "fake",
-                    "daytona",
-                    "modal"
+                    "daytona"
                   ]
                 },
                 "name": {
