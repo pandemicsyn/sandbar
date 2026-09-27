@@ -185,10 +185,22 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                   return ctx.unknown(
                     `E2B image build name ${name} already exists; no build was resubmitted`,
                   );
+
+                if (ctx.signal.aborted)
+                  return ctx.unknown(
+                    `E2B image build ${name} was not submitted after cancellation`,
+                  );
+
                 const build = await transport.buildImage(input.image.value, name);
 
                 if (!nativeId.test(build.templateId))
                   return ctx.unknown(`E2B image build ${name} returned an invalid template ID`);
+
+                if (ctx.signal.aborted)
+                  return ctx.unknown(
+                    `E2B image build ${name} outcome after cancellation is unknown`,
+                  );
+
                 const observed = await transport.findBuild(config.teamId, name);
 
                 if (
@@ -204,6 +216,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 );
               }
             }
+
+            if (ctx.signal.aborted)
+              return ctx.unknown("E2B sandbox create was not submitted after cancellation");
 
             try {
               const metadata = {
@@ -300,6 +315,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             if (!record)
               return ctx.reject("NOT_FOUND", "E2B sandbox is outside the verified scope");
 
+            if (ctx.signal.aborted)
+              return ctx.unknown("E2B termination was not submitted after cancellation");
+
             const token: Record<string, string> = {};
 
             if (record.metadata.sandbar_build) token.retainedTemplateId = record.templateId;
@@ -395,6 +413,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           async submit(input, ctx) {
             const paths = executionPaths(ctx.submissionId);
 
+            if (ctx.signal.aborted)
+              return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+
             const command =
               input.command.kind === "argv"
                 ? `/bin/bash -c 'exec "$@"' sandbar ${input.command.argv.map(shellQuote).join(" ")}`
@@ -408,10 +429,18 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 env: input.env,
                 timeoutMs: Math.max(1, Math.min(input.deadlineSeconds * 1000, 86_400_000)),
               });
+
+              if (ctx.signal.aborted)
+                return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+
               const result = await readExecution(input.sandbox.id, paths, input.maxOutputBytes);
 
               if (!result)
                 return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+
+              if (ctx.signal.aborted)
+                return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+
               await cleanup(input.sandbox.id, paths);
 
               return result;
@@ -458,6 +487,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               if (!nativeId.test(ctx.submissionId))
                 return ctx.reject("INVALID_ARGUMENT", "Invalid E2B write submission ID");
 
+              if (ctx.signal.aborted)
+                return ctx.unknown("E2B file write was not submitted after cancellation");
+
               const parent = input.path.slice(0, input.path.lastIndexOf("/")) || "/";
 
               const staged = input.overwrite
@@ -484,11 +516,15 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 } else {
                   await transport.write(input.sandbox.id, staged!, input.bytes);
 
+                  if (ctx.signal.aborted) return ctx.pending(token, { pollAfterMs: 1000 });
+
                   const answer = await transport.run(
                     input.sandbox.id,
                     `if ln -T -- ${shellQuote(staged!)} ${shellQuote(input.path)} 2>/dev/null; then printf 'CREATED'; elif test -e ${shellQuote(input.path)}; then printf 'EXISTS'; else printf 'FAILED'; fi`,
                     { timeoutMs: 30_000 },
                   );
+
+                  if (ctx.signal.aborted) return ctx.pending(token, { pollAfterMs: 1000 });
 
                   if (answer === "EXISTS") {
                     await transport.remove(input.sandbox.id, staged!).catch(() => {});

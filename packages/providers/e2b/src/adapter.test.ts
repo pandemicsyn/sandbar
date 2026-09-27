@@ -1,6 +1,19 @@
 import { expect, test } from "bun:test";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Sandbox, Template } from "e2b";
 import { adapterSuite } from "sandbar-adapter/testing";
+import { Image, Sandbar } from "sandbar-sdk";
 import {
   connectAdapter,
   observeOperation,
@@ -236,6 +249,52 @@ test("shell quoting and bounded streams preserve binary bytes", async () => {
   });
 
   expect(await collectBounded(long, 2)).toEqual({ bytes: bytes.slice(0, 2), truncated: true });
+});
+
+test("GNU ln -T creates only an absent exact target and survives stage cleanup", async () => {
+  const command = process.platform === "darwin" ? "gln" : "ln";
+  const probe = Bun.spawnSync({ cmd: [command, "--version"], stdout: "pipe", stderr: "pipe" });
+
+  if (probe.exitCode !== 0) throw new Error("E2B no-clobber fixture requires GNU ln");
+
+  const root = await mkdtemp(join(tmpdir(), "sandbar-e2b-link-"));
+  const stage = join(root, "stage");
+  const directory = join(root, "directory");
+  const directoryLink = join(root, "directory-link");
+  const existing = join(root, "existing");
+  const absent = join(root, "absent");
+
+  try {
+    await writeFile(stage, Uint8Array.of(0, 255));
+    await mkdir(directory);
+    await symlink(directory, directoryLink);
+    await writeFile(existing, Uint8Array.of(42));
+
+    for (const destination of [directory, directoryLink, existing]) {
+      const attempt = Bun.spawnSync({
+        cmd: [command, "-T", "--", stage, destination],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(attempt.exitCode).not.toBe(0);
+      expect(await readdir(directory)).toEqual([]);
+    }
+
+    expect(new Uint8Array(await readFile(existing))).toEqual(Uint8Array.of(42));
+
+    const created = Bun.spawnSync({
+      cmd: [command, "-T", "--", stage, absent],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(created.exitCode).toBe(0);
+    await unlink(stage);
+    expect(new Uint8Array(await readFile(absent))).toEqual(Uint8Array.of(0, 255));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("E2B exec and file operations preserve binary content and no-clobber intent", async () => {
@@ -574,6 +633,185 @@ test("lost OCI build response observes the retained template without submitting 
     expect(creates).toBe(0);
   } finally {
     await connection.close();
+  }
+});
+
+test("SDK abort settles a stalled E2B build and late outcomes never create a sandbox", async () => {
+  for (const late of ["resolve", "reject"] as const) {
+    let started = false;
+    let creates = 0;
+    let finish!: () => void;
+    let fail!: (error: Error) => void;
+
+    const stalled = new Promise<{ templateId: string; buildId: string }>((resolve, reject) => {
+      finish = () => resolve({ templateId: "built_template", buildId: "build_one" });
+      fail = reject;
+    });
+
+    const adapter = createE2BAdapter((): E2BTransport => ({
+      async verifyTeam() {},
+      async verifyTemplate() {},
+      async buildImage() {
+        started = true;
+
+        return stalled;
+      },
+      async findBuild() {
+        return null;
+      },
+      async create() {
+        creates++;
+
+        return "unexpected";
+      },
+      async get() {
+        return null;
+      },
+      async list() {
+        return { items: [] };
+      },
+      async kill() {
+        return false;
+      },
+      async run() {
+        return "";
+      },
+      async read() {
+        return { bytes: new Uint8Array(), truncated: false };
+      },
+      async write() {},
+      async remove() {},
+      close() {},
+    }));
+
+    const client = await Sandbar.connect({
+      adapter,
+      config: { teamId: "team_one", templateId: "template_1" },
+      credentials: { apiKey: "secret" },
+    });
+
+    const controller = new AbortController();
+
+    try {
+      const pending = client.sandboxes.submitCreate(
+        { environment: Image.oci("node:24"), networkPolicy: "blocked" },
+        { signal: controller.signal },
+      );
+
+      while (!started) await Bun.sleep(1);
+
+      controller.abort("stop");
+      await expect(
+        Promise.race([
+          pending,
+          Bun.sleep(500).then(() => {
+            throw new Error("E2B create did not stop waiting after abort");
+          }),
+        ]),
+      ).rejects.toThrow();
+
+      if (late === "resolve") finish();
+      else fail(new Error("late build failure"));
+      await Bun.sleep(1);
+      expect(creates).toBe(0);
+    } finally {
+      await client.close();
+    }
+  }
+});
+
+test("SDK abort settles a stalled E2B exec after one native dispatch", async () => {
+  let record: E2BRecord | null = null;
+  let runs = 0;
+  let reads = 0;
+  let finish!: () => void;
+
+  const stalled = new Promise<string>((resolve) => {
+    finish = () => resolve("");
+  });
+
+  const adapter = createE2BAdapter((): E2BTransport => ({
+    async verifyTeam() {},
+    async verifyTemplate() {},
+    async buildImage() {
+      throw new Error("not used");
+    },
+    async findBuild() {
+      return null;
+    },
+    async create(input) {
+      record = {
+        id: "sandbox_1",
+        templateId: input.templateId,
+        metadata: input.metadata,
+        state: "running",
+      };
+
+      return record.id;
+    },
+    async get(id) {
+      return record?.id === id ? record : null;
+    },
+    async list() {
+      return { items: record ? [record] : [] };
+    },
+    async kill() {
+      record = null;
+
+      return true;
+    },
+    async run() {
+      runs++;
+
+      return stalled;
+    },
+    async read() {
+      reads++;
+
+      return { bytes: new Uint8Array(), truncated: false };
+    },
+    async write() {},
+    async remove() {},
+    close() {},
+  }));
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: { teamId: "team_one", templateId: "template_1" },
+    credentials: { apiKey: "secret" },
+  });
+
+  try {
+    const box = await client.sandboxes.create({
+      environment: Image.prepared("template_1"),
+      networkPolicy: "blocked",
+    });
+
+    const controller = new AbortController();
+
+    const pending = box.exec(
+      { command: { kind: "argv", argv: ["printf", "test"] } },
+      { signal: controller.signal },
+    );
+
+    while (!runs) await Bun.sleep(1);
+
+    controller.abort("stop");
+    await expect(
+      Promise.race([
+        pending,
+        Bun.sleep(500).then(() => {
+          throw new Error("E2B exec did not stop waiting after abort");
+        }),
+      ]),
+    ).rejects.toThrow();
+
+    finish();
+    await Bun.sleep(1);
+    expect(runs).toBe(1);
+    expect(reads).toBe(0);
+  } finally {
+    await client.close();
   }
 });
 
