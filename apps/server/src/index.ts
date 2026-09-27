@@ -8,7 +8,9 @@ const runtime = await openDomainRuntime({
   fakeProviderToken: Bun.env.SANDBAR_FAKE_PROVIDER_TOKEN ?? "",
   publicOrigin: Bun.env.SANDBAR_PUBLIC_ORIGIN,
 });
+
 const app = runtime.app;
+
 const port = Number(Bun.env.PORT ?? 3000);
 
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
@@ -16,5 +18,8 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 }
 
 const hostname = Bun.env.HOST ?? "127.0.0.1";
-if (hostname !== "127.0.0.1" && hostname !== "::1" && !Bun.env.SANDBAR_PUBLIC_ORIGIN) throw new Error("SANDBAR_PUBLIC_ORIGIN is required when binding outside loopback");
+
+if (hostname !== "127.0.0.1" && hostname !== "::1" && !Bun.env.SANDBAR_PUBLIC_ORIGIN)
+  throw new Error("SANDBAR_PUBLIC_ORIGIN is required when binding outside loopback");
+
 export default { hostname, port, fetch: app.fetch };

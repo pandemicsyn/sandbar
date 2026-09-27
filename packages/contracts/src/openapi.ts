@@ -132,6 +132,7 @@ const ordinary = (name: keyof typeof schemas) => ({
 const projectParameter = { name: "projectId", in: "path", required: true, schema: component("Id") };
 
 const sandboxParameter = { name: "sandboxId", in: "path", required: true, schema: component("Id") };
+
 const operationParameter = {
   name: "operationId",
   in: "path",
@@ -154,7 +155,13 @@ const invocationHeader = {
   description: "UUIDv7; project and endpoint scoped. Reuse only for the same caller intent.",
 };
 
-const executionParameter = { name: "executionId", in: "path", required: true, schema: component("Id") };
+const executionParameter = {
+  name: "executionId",
+  in: "path",
+  required: true,
+  schema: component("Id"),
+};
+
 const sandboxListParameters = [
   { name: "cursor", in: "query", required: false, schema: { type: "string", maxLength: 256 } },
   {
@@ -192,7 +199,10 @@ export const openApiDocument = {
         operationId: "setupOperator",
         security: [],
         requestBody: { required: true, ...json("SetupRequest") },
-        responses: { "201": response("Created", "SessionResponse"), default: response("Structured error", "ErrorResponse") },
+        responses: {
+          "201": response("Created", "SessionResponse"),
+          default: response("Structured error", "ErrorResponse"),
+        },
       },
     },
     "/v1/sessions": {
@@ -200,11 +210,22 @@ export const openApiDocument = {
         operationId: "createSession",
         security: [],
         requestBody: { required: true, ...json("SessionRequest") },
-        responses: { "201": response("Created", "SessionResponse"), default: response("Structured error", "ErrorResponse") },
+        responses: {
+          "201": response("Created", "SessionResponse"),
+          default: response("Structured error", "ErrorResponse"),
+        },
       },
     },
     "/v1/session": { get: { operationId: "getSession", responses: ordinary("SessionResponse") } },
-    "/v1/sessions/logout": { post: { operationId: "logoutSession", responses: { "204": { description: "Session closed" }, default: response("Structured error", "ErrorResponse") } } },
+    "/v1/sessions/logout": {
+      post: {
+        operationId: "logoutSession",
+        responses: {
+          "204": { description: "Session closed" },
+          default: response("Structured error", "ErrorResponse"),
+        },
+      },
+    },
     "/v1/projects": {
       get: { operationId: "listProjects", responses: ordinary("ProjectPage") },
       post: {
@@ -267,7 +288,10 @@ export const openApiDocument = {
         responses: accepted("AcceptedExecution"),
       },
     },
-    "/v1/projects/{projectId}/executions/{executionId}": { parameters: [projectParameter, executionParameter], get: { operationId: "getExecution", responses: ordinary("Execution") } },
+    "/v1/projects/{projectId}/executions/{executionId}": {
+      parameters: [projectParameter, executionParameter],
+      get: { operationId: "getExecution", responses: ordinary("Execution") },
+    },
     "/v1/projects/{projectId}/sandboxes/{sandboxId}/files": {
       parameters: [
         projectParameter,
@@ -315,13 +339,46 @@ export const openApiDocument = {
       parameters: [projectParameter, operationParameter],
       get: { operationId: "getOperation", responses: ordinary("Operation") },
     },
-    "/v1/projects/{projectId}/operations/{operationId}/reconcile": { parameters: [projectParameter, operationParameter], post: { operationId: "reconcileOperation", description: "Request another read-only provider observation; never resubmit the mutation.", responses: ordinary("Operation") } },
+    "/v1/projects/{projectId}/operations/{operationId}/reconcile": {
+      parameters: [projectParameter, operationParameter],
+      post: {
+        operationId: "reconcileOperation",
+        description: "Request another read-only provider observation; never resubmit the mutation.",
+        responses: ordinary("Operation"),
+      },
+    },
     "/v1/projects/{projectId}/invocations/{invocationKey}": {
-      parameters: [projectParameter, { name: "invocationKey", in: "path", required: true, schema: { type: "string", format: "uuid" }, description: "Original UUIDv7 Idempotency-Key" }],
-      get: { operationId: "lookupInvocation", description: "Find a previously admitted operation without resubmitting its request. A missing record does not prove replay is safe.", parameters: [
-        { name: "kind", in: "query", required: true, schema: { type: "string", enum: ["create", "exec", "destroy", "file_write"] } },
-        { name: "sandboxId", in: "query", required: false, schema: { type: "string" }, description: "Required except for create" },
-      ], responses: ordinary("Operation") },
+      parameters: [
+        projectParameter,
+        {
+          name: "invocationKey",
+          in: "path",
+          required: true,
+          schema: { type: "string", format: "uuid" },
+          description: "Original UUIDv7 Idempotency-Key",
+        },
+      ],
+      get: {
+        operationId: "lookupInvocation",
+        description:
+          "Find a previously admitted operation without resubmitting its request. A missing record does not prove replay is safe.",
+        parameters: [
+          {
+            name: "kind",
+            in: "query",
+            required: true,
+            schema: { type: "string", enum: ["create", "exec", "destroy", "file_write"] },
+          },
+          {
+            name: "sandboxId",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Required except for create",
+          },
+        ],
+        responses: ordinary("Operation"),
+      },
     },
   },
   components: {

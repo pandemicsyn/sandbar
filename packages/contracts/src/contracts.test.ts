@@ -383,7 +383,14 @@ describe("public contract", () => {
     expect(openApiDocument.paths["/v1/setup"].post.responses["201"]).toBeDefined();
     expect(openApiDocument.paths["/v1/sessions"].post.responses["201"]).toBeDefined();
     expect(openApiDocument.paths["/v1/sessions/logout"].post.responses["204"]).toBeDefined();
-    expect(openApiDocument.paths["/v1/projects/{projectId}/executions/{executionId}"].get.responses["200"]).toBeDefined();
-    expect(openApiDocument.paths["/v1/projects/{projectId}/operations/{operationId}/reconcile"].post.responses["200"]).toBeDefined();
+    expect(
+      openApiDocument.paths["/v1/projects/{projectId}/executions/{executionId}"].get.responses[
+        "200"
+      ],
+    ).toBeDefined();
+    expect(
+      openApiDocument.paths["/v1/projects/{projectId}/operations/{operationId}/reconcile"].post
+        .responses["200"],
+    ).toBeDefined();
   });
 });
