@@ -34,6 +34,9 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     const setup = await request("/v1/setup", "POST", { setupToken: "long-daytona-fixture-setup-token" });
     const token = setup.value.token as string;
     const project = (await request("/v1/projects", "POST", { name: "Daytona" }, token)).value;
+    const untrusted = await request(`/v1/projects/${project.id}/provider-connections`, "POST", { provider: "daytona", name: "Untrusted", credentials: { apiKey: "private-key" }, configuration: { apiUrl: "https://example.com/api", toolboxOrigin: "https://proxy.app.daytona.io", target: "us" } }, token);
+    expect(untrusted.response.status).toBe(400);
+    expect(calls).toHaveLength(0);
     const created = await request(`/v1/projects/${project.id}/provider-connections`, "POST", { provider: "daytona", name: "Native", credentials: { apiKey: "private-key" }, configuration: { apiUrl: "https://app.daytona.io/api", toolboxOrigin: "https://proxy.app.daytona.io", target: "us", ttlMinutes: "60" } }, token);
     expect(created.response.status).toBe(201);
     expect(JSON.stringify(created.value)).not.toContain("private-key");

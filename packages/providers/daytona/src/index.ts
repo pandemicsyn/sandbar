@@ -39,7 +39,7 @@ const officialEndpoints = trustedPair({ apiUrl: "https://app.daytona.io/api", to
 function requireTrustedEndpoints(config: Config, extra: DaytonaEndpointPair[]): void {
   const requested = trustedPair(config.configuration);
   const trusted = [officialEndpoints, ...extra.map(trustedPair)];
-  if (!trusted.some(pair => pair.apiUrl === requested.apiUrl && pair.toolboxOrigin === requested.toolboxOrigin)) throw new Error("Daytona API and toolbox endpoints are not trusted by this host");
+  if (!trusted.some(pair => pair.apiUrl === requested.apiUrl && pair.toolboxOrigin === requested.toolboxOrigin)) throw new z.ZodError([{ code: "custom", path: ["configuration", "apiUrl"], message: "Daytona API and toolbox endpoints are not trusted by this host" }]);
 }
 function validate(input: { credentials: Record<string, string>; configuration: Record<string, string> }): Config {
   const parsed = Input.parse(input);
