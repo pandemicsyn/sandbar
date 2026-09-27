@@ -116,6 +116,8 @@ test("API persists ambiguous create and exec, then observes each once after rest
       "limit=1.5",
       "limit=0",
       "limit=101",
+      "state=running&state=destroyed",
+      "limt=1",
       `cursor=${Buffer.from("{}").toString("base64url")}`,
       `cursor=${Buffer.from(JSON.stringify({ createdAt: 1, id: 3 })).toString("base64url")}`,
     ]) {
@@ -353,6 +355,15 @@ test("API persists ambiguous create and exec, then observes each once after rest
 
     expect(read.status).toBe(200);
     expect(new Uint8Array(await read.arrayBuffer())).toEqual(bytes);
+
+    const missing = await runtime.app.request(
+      `/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/missing`,
+      { headers: bearer },
+    );
+
+    expect(missing.status).toBe(404);
+    // SAFETY: The missing-file response is the public ErrorResponse contract.
+    expect(((await missing.json()) as any).error.code).toBe("NOT_FOUND");
     await control("/_test/seed", {
       submissionId: "*",
       action: "file_write",
@@ -417,6 +428,9 @@ test("API persists ambiguous create and exec, then observes each once after rest
 
     const rejectedBoxId = rejectedCreate.value.operation.sandboxId;
 
+    // Keep the create admission earlier than its queued cleanup in millisecond SQL ordering.
+    await Bun.sleep(2);
+
     const cleanup = await json(
       `/v1/projects/${project.id}/sandboxes/${rejectedBoxId}`,
       "DELETE",
@@ -426,14 +440,16 @@ test("API persists ambiguous create and exec, then observes each once after rest
 
     expect(cleanup.value.operation.status).toBe("queued");
 
-    for (
-      let i = 0;
-      i < 20 &&
+    const cleanupDeadline = Date.now() + 2_000;
+
+    while (
+      Date.now() < cleanupDeadline &&
       (await runtime.store.getOperation(project.id, cleanup.value.operation.id))?.status !==
-        "succeeded";
-      i++
-    )
-      await runtime.runner.tick();
+        "succeeded"
+    ) {
+      if (!(await runtime.runner.tick())) await Bun.sleep(10);
+    }
+
     expect(
       (
         await json(
@@ -541,6 +557,60 @@ test("single-use setup, hashed credentials, session CSRF and logout", async () =
         })
       ).status,
     ).toBe(200);
+  } finally {
+    await runtime.close();
+  }
+});
+
+test("HTTPS logout deletes the host-prefixed cookie with Secure", async () => {
+  directory = await mkdtemp(join(tmpdir(), "sandbar-https-cookie-"));
+
+  const keyFile = join(directory, "key"),
+    setupTokenFile = join(directory, "setup");
+
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)));
+  await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "long-https-setup-token-for-test");
+  await chmod(setupTokenFile, 0o600);
+
+  const runtime = await openDomainRuntime({
+    databaseUrl: join(directory, "control.sqlite"),
+    keyFile,
+    setupTokenFile,
+    fakeProviderUrl: "http://127.0.0.1:8789",
+    fakeProviderToken: transportToken,
+    publicOrigin: "https://sandbar.example",
+    startRunner: false,
+  });
+
+  try {
+    const setup = await runtime.app.request("https://sandbar.example/v1/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://sandbar.example" },
+      body: JSON.stringify({ setupToken: "long-https-setup-token-for-test" }),
+    });
+
+    expect(setup.status).toBe(201);
+    const cookie = setup.headers.get("set-cookie")!;
+
+    expect(cookie).toContain("__Host-sandbar_session=");
+    expect(cookie).toContain("Secure");
+    // SAFETY: A successful setup response contains its browser CSRF token.
+    const csrfToken = ((await setup.json()) as { csrfToken: string }).csrfToken;
+
+    const logout = await runtime.app.request("https://sandbar.example/v1/sessions/logout", {
+      method: "POST",
+      headers: {
+        Cookie: cookie.split(";")[0],
+        Origin: "https://sandbar.example",
+        "X-CSRF-Token": csrfToken,
+      },
+    });
+
+    expect(logout.status).toBe(204);
+    expect(logout.headers.get("set-cookie")).toContain("__Host-sandbar_session=");
+    expect(logout.headers.get("set-cookie")).toContain("Secure");
+    expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
   } finally {
     await runtime.close();
   }

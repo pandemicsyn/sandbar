@@ -19,13 +19,19 @@ import {
   ProviderConnection,
   ProviderConnectionPage,
   Sandbox,
+  SandboxListQuery,
   SandboxPage,
   SessionRequest,
   SessionResponse,
   SetupRequest,
   intentSha256,
 } from "@sandbar/contracts";
-import type { ProviderDriver, NativeScope, SandboxRef } from "@sandbar/provider-spi";
+import {
+  ProviderReadError,
+  type ProviderDriver,
+  type NativeScope,
+  type SandboxRef,
+} from "@sandbar/provider-spi";
 import {
   ControlStore,
   StoreError,
@@ -58,6 +64,12 @@ function safeError(code: string, message: string, effect: "none" | "possible" = 
 }
 
 function errorResponse(c: Context, error: Error): Response {
+  if (error instanceof ProviderReadError && error.code === "NOT_FOUND")
+    return c.json(
+      ErrorResponse.parse({ error: safeError("NOT_FOUND", "Provider file not found") }),
+      404,
+    );
+
   if (error instanceof StoreError) {
     // SAFETY: StoreError.code is limited to the five keys in this status map.
     const status = {
@@ -497,7 +509,10 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
     "/v1/sessions/logout",
     protect(deps, true, async (c, a) => {
       if (a.kind === "session") await deps.store.deleteSession(a.idHash);
-      deleteCookie(c, cookieName(c, deps), { path: "/" });
+      deleteCookie(c, cookieName(c, deps), {
+        path: "/",
+        secure: new URL(deps.publicOrigin ?? c.req.url).protocol === "https:",
+      });
 
       return c.body(null, 204);
     }),
@@ -603,31 +618,24 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       const projectId = idParam(c, "projectId"),
         params = new URL(c.req.url).searchParams;
 
-      const rawLimit = params.get("limit");
+      for (const key of params.keys())
+        if (params.getAll(key).length !== 1) throw new SyntaxError("Duplicate query parameter");
 
-      if (rawLimit !== null && (!/^[1-9][0-9]*$/.test(rawLimit) || Number(rawLimit) > 100))
+      const rawQuery = Object.fromEntries(params);
+
+      if (rawQuery.limit !== undefined && !/^[1-9][0-9]*$/.test(rawQuery.limit))
         throw new SyntaxError("Invalid limit");
-      const limit = rawLimit === null ? 50 : Number(rawLimit);
 
-      const state = params.get("state") ?? undefined,
-        connectionId = params.get("connectionId") ?? undefined,
-        q = params.get("q") ?? undefined;
+      const query = SandboxListQuery.parse({
+        ...rawQuery,
+        limit: rawQuery.limit === undefined ? undefined : Number(rawQuery.limit),
+      });
 
-      if (
-        state &&
-        !["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"].includes(
-          state,
-        )
-      )
-        throw new SyntaxError("Invalid state filter");
-
-      if (connectionId) Id.parse(connectionId);
-
-      if (q && q.length > 64) throw new SyntaxError("Search text too long");
-      const cursor = params.get("cursor");
+      const { state, connectionId, q, cursor } = query;
+      const limit = query.limit ?? 50;
       let before: { createdAt: number; id: string } | undefined;
 
-      if (cursor !== null) {
+      if (cursor !== undefined) {
         try {
           if (cursor.length > 256 || !/^[A-Za-z0-9_-]+$/.test(cursor))
             throw new SyntaxError("Invalid cursor");

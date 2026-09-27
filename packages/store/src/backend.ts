@@ -188,7 +188,25 @@ export async function openMysqlBackend(url: string): Promise<Backend> {
 
   if (!lockConnection || !lockName)
     throw new Error("MySQL control database lock was not initialized");
-  const db = drizzleMysql({ client: pool });
+  const ownedConnection = lockConnection;
+  const db = drizzleMysql({ client: ownedConnection });
+  let tail: Promise<unknown> = Promise.resolve();
+
+  async function exclusive<T>(work: () => Promise<T>): Promise<T> {
+    let release!: () => void;
+    const previous = tail;
+
+    tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+
+    try {
+      return await work();
+    } finally {
+      release();
+    }
+  }
 
   function wrap(source: Pick<typeof db, "execute">): QueryConnection {
     return {
@@ -210,16 +228,26 @@ export async function openMysqlBackend(url: string): Promise<Backend> {
     };
   }
 
+  const direct = wrap(db);
+
   return {
     dialect: "mysql",
-    ...wrap(db),
+    rows: <T>(query: SQL) => exclusive(() => direct.rows<T>(query)),
+    row: <T>(query: SQL) => exclusive(() => direct.row<T>(query)),
+    run: (query: SQL) => exclusive(() => direct.run(query)),
     transaction: <T>(work: (tx: QueryConnection) => Promise<T>) =>
-      db.transaction(async (tx) => work(wrap(tx))),
-    close: async () => {
-      await lockConnection.query("SELECT RELEASE_LOCK(?)", [lockName]);
-      lockConnection.release();
-      await pool.end();
-    },
+      exclusive(() => db.transaction(async (tx) => work(wrap(tx)))),
+    close: () =>
+      exclusive(async () => {
+        try {
+          await ownedConnection.query("SELECT RELEASE_LOCK(?)", [lockName]);
+        } catch {
+          // A dead session has already released its lock; closing the pool still fails it closed.
+        } finally {
+          ownedConnection.release();
+          await pool.end();
+        }
+      }),
   };
 }
 

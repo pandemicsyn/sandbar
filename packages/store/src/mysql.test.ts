@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
+import mysql from "mysql2/promise";
 import { bundledMigration, migrate, openMysqlBackend } from "./backend";
 import { ControlStore } from "./store";
 
@@ -17,6 +19,30 @@ test.skipIf(!url)("MySQL excludes another controller of the same database", asyn
 
   const reopened = await openMysqlBackend(url!);
   await reopened.close();
+});
+
+test.skipIf(!url)("MySQL fails closed when its ownership session is killed", async () => {
+  const first = await openMysqlBackend(url!);
+  const killer = await mysql.createConnection(url!);
+
+  try {
+    const session = await first.row<{ id: number }>(sql`SELECT CONNECTION_ID() AS id`);
+
+    expect(Number.isSafeInteger(Number(session?.id))).toBe(true);
+    await killer.query(`KILL CONNECTION ${Number(session!.id)}`);
+    const second = await openMysqlBackend(url!);
+
+    try {
+      await expect(first.row(sql`SELECT 1 AS value`)).rejects.toThrow();
+      await expect(first.transaction((tx) => tx.row(sql`SELECT 1 AS value`))).rejects.toThrow();
+      expect(await second.row<{ value: number }>(sql`SELECT 1 AS value`)).toEqual({ value: 1 });
+    } finally {
+      await second.close();
+    }
+  } finally {
+    await killer.end();
+    await first.close();
+  }
 });
 
 test.skipIf(!url || !otherUrl)(
