@@ -187,3 +187,10 @@ Final independent complete-diff review of this resulting HEAD remains pending.
 - GitHub P2 `discussion_r4112470323`: imported direct references could retain or forward nested extras stripped by validation. Both backends now use detached validated references, and operation handles seal nested reference data against later caller changes. Regressions verify nested secrets are absent from serialization and provider observation, remote scope mutation cannot redirect recovery, and strict remote service fields reject extras.
 - Pre-integration validation: focused SDK tests 26/26 passed; `bun run check` passed; full `bun run test` passed 69 tests with one MySQL 8.4 skip and zero failures, including browser E2E.
 - Final parent rebase and independent complete-diff zero-finding review are pending before PR #6 is updated.
+
+## PR #6 pre-integration review
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only; reviewed complete `d4a91f395e149f53baf0231e518410deff5eb83f..6b4f7ad164991ad4ac8a9dba2eb8979632d58f2c`.
+- Two actionable findings: separate SDK entrypoint bundles duplicated public error classes, and public `DirectClient.submitCreate` exposed an unawaited dispatch callback. The SDK build now uses ESM splitting so all package entrypoints import one common runtime chunk; Node 26.4.0 and an automated package-scope test confirm shared class identity. Dispatch reference capture moved to a private method and the captured reference is sealed before the internal synchronous callback.
+- Validation after fixes: focused SDK tests 27/27 passed; `bun run check` passed; full `bun run test` passed 70 tests with one MySQL 8.4 skip and zero failures, including browser E2E.
+- Final parent rebase and independent complete-diff zero-finding review remain pending before PR #6 is updated.

@@ -167,23 +167,26 @@ export class DirectClient implements SandbarClient {
     if (caps.provider !== this.scope.provider) throw new SandbarError("INVALID_RESPONSE", "Provider capability identity mismatch");
     return caps;
   }
-  async submitCreate(input: CreateInput, options: { signal?: AbortSignal; onDispatch?: (reference: RecoveryReference) => void } = {}): Promise<OperationHandle<SandboxHandle>> {
+  async submitCreate(input: CreateInput, options: { signal?: AbortSignal } = {}): Promise<OperationHandle<SandboxHandle>> {
+    return this.submitCreateInternal(input, options.signal);
+  }
+  private async submitCreateInternal(input: CreateInput, signal?: AbortSignal, onDispatch?: (reference: RecoveryReference) => void): Promise<OperationHandle<SandboxHandle>> {
     this.ensureOpen();
-    throwIfAborted(options.signal);
+    throwIfAborted(signal);
     input = validateCreate(input);
-    await awaitSubmission(this.verified(), this.closedSignal, options.signal, () => undefined);
+    await awaitSubmission(this.verified(), this.closedSignal, signal, () => undefined);
     this.ensureOpen();
-    throwIfAborted(options.signal);
+    throwIfAborted(signal);
     const request = normalizeCreate({ environment: input.environment.kind === "prepared" ? { kind: "prepared", imageId: input.environment.value } : { kind: "oci", reference: input.environment.value }, region: input.region, network: { policy: input.networkPolicy ?? "blocked" }, labels: input.labels });
-    const preparation = await awaitSubmission(this.driver.prepare({ scope: this.scope, image: request.image, networkPolicy: request.networkPolicy, region: request.region }), this.closedSignal, options.signal, () => undefined);
+    const preparation = await awaitSubmission(this.driver.prepare({ scope: this.scope, image: request.image, networkPolicy: request.networkPolicy, region: request.region }), this.closedSignal, signal, () => undefined);
     this.ensureOpen();
-    throwIfAborted(options.signal);
+    throwIfAborted(signal);
     if (!preparation.supported || !preparation.effectiveImage) throw new SandbarError("UNSUPPORTED", preparation.reason ?? "Provider cannot prepare image");
     const invocation = identity();
-    const reference = this.reference("create", invocation);
-    options.onDispatch?.(reference);
+    const reference = sealedReference(this.reference("create", invocation));
+    onDispatch?.(reference);
     let first: DriverResult | undefined;
-    try { first = await awaitSubmission(this.driver.create({ scope: this.scope, identity: invocation, image: preparation.effectiveImage, networkPolicy: request.networkPolicy, labels: request.labels }), this.closedSignal, options.signal, () => reference); }
+    try { first = await awaitSubmission(this.driver.create({ scope: this.scope, identity: invocation, image: preparation.effectiveImage, networkPolicy: request.networkPolicy, labels: request.labels }), this.closedSignal, signal, () => reference); }
     catch (error) { if (error instanceof WaitAbortedError || error instanceof OutcomeUnknownError) throw error; /* uncertain */ }
     return new DirectOperation(reference, this, result => {
       if (result.status !== "completed" || result.value.kind !== "sandbox") throw new OutcomeUnknownError(reference);
@@ -193,7 +196,7 @@ export class DirectClient implements SandbarClient {
   async create(input: CreateInput, options: { signal?: AbortSignal } = {}) {
     throwIfAborted(options.signal);
     let reference: RecoveryReference | undefined;
-    const operation = await awaitSubmission(this.submitCreate(input, { signal: options.signal, onDispatch: value => { reference = value; } }), this.closedSignal, options.signal, () => reference);
+    const operation = await awaitSubmission(this.submitCreateInternal(input, options.signal, value => { reference = value; }), this.closedSignal, options.signal, () => reference);
     try { return await operation.wait(options); } catch (error) { return rethrowCloseWithReference(error, operation.reference, options.signal); }
   }
   async recover(reference: RecoveryReference): Promise<OperationHandle<unknown>> {

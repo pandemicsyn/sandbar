@@ -6,6 +6,9 @@ import { fakeProvider } from "@sandbar/provider-fake/client";
 import { startFakeProviderServer } from "@sandbar/provider-fake/server";
 import { Image as DirectImage, Sandbar as DirectSandbar, NonzeroExitError, NoExitCodeError, OutcomeUnknownError, WaitAbortedError } from "./direct";
 import { Image as RemoteImage, Sandbar as RemoteSandbar } from "./remote";
+import * as packagedRoot from "@sandbar/sdk";
+import * as packagedDirect from "@sandbar/sdk/direct";
+import * as packagedRemote from "@sandbar/sdk/remote";
 
 let server: Awaited<ReturnType<typeof startFakeProviderServer>> | undefined;
 let directory: string | undefined;
@@ -22,6 +25,15 @@ async function fixture() {
   return { client: DirectSandbar.direct({ provider: await fakeProvider({ url, token }) }), control, url };
 }
 afterEach(async () => { server?.stop(true); server = undefined; if (directory) await rm(directory, { recursive: true, force: true }); directory = undefined; });
+
+test("packaged SDK entry points share error class identity", () => {
+  expect(packagedRoot.SandbarError).toBe(packagedDirect.SandbarError);
+  expect(packagedRoot.SandbarError).toBe(packagedRemote.SandbarError);
+  expect(packagedRoot.OutcomeUnknownError).toBe(packagedDirect.OutcomeUnknownError);
+  expect(packagedRoot.OutcomeUnknownError).toBe(packagedRemote.OutcomeUnknownError);
+  expect(packagedRoot.WaitAbortedError).toBe(packagedDirect.WaitAbortedError);
+  expect(packagedRoot.WaitAbortedError).toBe(packagedRemote.WaitAbortedError);
+});
 
 test("direct resource flow preserves binary files and nonzero output", async () => {
   const { client, control } = await fixture();
