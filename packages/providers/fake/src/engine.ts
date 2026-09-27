@@ -175,7 +175,7 @@ const empty = (): State => ({
 });
 
 const scopeKey = (scope: NativeScope) =>
-  `${scope.provider}\0${scope.connectionId}\0${scope.accountId}\0${scope.region ?? ""}`;
+  JSON.stringify([scope.provider, scope.connectionId, scope.accountId, scope.region ?? null]);
 
 const sameScope = (a: NativeScope, b: NativeScope) => scopeKey(a) === scopeKey(b);
 
