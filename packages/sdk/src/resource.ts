@@ -4,6 +4,7 @@ import {
   CreateSandboxInput,
   ExecCommand,
   ExecRequest,
+  FilePath,
   Id,
   InvocationKey,
   type SafeError,
@@ -170,13 +171,7 @@ export function outputText(bytes: Uint8Array, maxBytes = 16_384): string {
 }
 
 export function validateFilePath(path: string): string {
-  if (
-    !path ||
-    path.length > 4096 ||
-    !path.startsWith("/") ||
-    path.includes("\0") ||
-    path.split("/").some((segment) => segment === "." || segment === "..")
-  )
+  if (!FilePath.safeParse(path).success)
     throw new SandbarError("INVALID_ARGUMENT", "Invalid absolute file path");
 
   return path;

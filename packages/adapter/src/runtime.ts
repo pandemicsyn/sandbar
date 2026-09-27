@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CreateSandboxInput, ExecRequest, FilePath } from "./portable";
 import {
   AdapterError,
   createAttemptContext,
@@ -60,29 +61,39 @@ const SandboxSchema = z.strictObject({ id: Id });
 
 const CreateInputSchema = z.strictObject({
   image: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("prepared"), value: z.string().min(1) }),
-    z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
+    z.strictObject({
+      kind: z.literal("prepared"),
+      value: z
+        .string()
+        .min(1)
+        .max(128)
+        .regex(/^[A-Za-z0-9_-]+$/),
+    }),
+    z.strictObject({ kind: z.literal("oci"), value: z.string().min(1).max(1024) }),
   ]),
-  networkPolicy: z.string().min(1),
-  region: z.string().optional(),
-  labels: z.record(z.string(), z.string()).optional(),
+  networkPolicy: z.string().min(1).max(128),
+  region: z.string().min(1).max(128).optional(),
+  labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
 });
 
 const ExecInputSchema = z.strictObject({
   sandbox: SandboxSchema,
   command: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("argv"), argv: z.array(z.string()).min(1) }),
-    z.strictObject({ kind: z.literal("shell"), script: z.string() }),
+    z.strictObject({
+      kind: z.literal("argv"),
+      argv: z.array(z.string().max(8192)).min(1).max(128),
+    }),
+    z.strictObject({ kind: z.literal("shell"), script: z.string().min(1).max(65536) }),
   ]),
-  cwd: z.string().optional(),
-  env: z.record(z.string(), z.string()).optional(),
-  deadlineSeconds: z.number().positive(),
+  cwd: z.string().min(1).max(4096).optional(),
+  env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(8192)).optional(),
+  deadlineSeconds: z.number().int().min(1).max(3600),
   maxOutputBytes: z.number().int().nonnegative().max(1_048_576),
 });
 
 const FileWriteInputSchema = z.strictObject({
   sandbox: SandboxSchema,
-  path: z.string().min(1),
+  path: FilePath,
   bytes: z.instanceof(Uint8Array),
   overwrite: z.boolean(),
 });
@@ -225,6 +236,15 @@ function checkCapability(
 ): CreateInput | ExecInput | FileWriteInput | Sandbox {
   if (kind === "create") {
     const request = CreateInputSchema.parse(input);
+    CreateSandboxInput.parse({
+      environment:
+        request.image.kind === "prepared"
+          ? { kind: "prepared", imageId: request.image.value }
+          : { kind: "oci", reference: request.image.value },
+      network: { policy: request.networkPolicy },
+      region: request.region,
+      labels: request.labels,
+    });
 
     if (
       !session.supports.images.includes(request.image.kind) ||
@@ -237,6 +257,13 @@ function checkCapability(
 
   if (kind === "exec") {
     const request = ExecInputSchema.parse(input);
+    ExecRequest.parse({
+      command: request.command,
+      cwd: request.cwd,
+      env: request.env,
+      deadlineSeconds: request.deadlineSeconds,
+      output: { capture: "bounded", maxBytes: request.maxOutputBytes },
+    });
     const support = session.supports.exec;
 
     if (
@@ -252,7 +279,12 @@ function checkCapability(
   if (kind === "file_write") {
     const request = FileWriteInputSchema.parse(input);
 
-    if (!session.files?.write || (request.overwrite && !session.supports.fileWrite?.overwrite))
+    if (
+      !session.files?.write ||
+      (request.overwrite
+        ? !session.supports.fileWrite?.overwrite
+        : !session.supports.fileWrite?.noClobber)
+    )
       throw new AdapterError("UNSUPPORTED", "Requested file write is unsupported");
 
     if (request.bytes.length > session.files.maxBytes)

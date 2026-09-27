@@ -144,7 +144,7 @@ export function createDaytonaAdapter(
           images: ["prepared"],
           network: caps.networkPolicies,
           exec: { commands: ["argv", "shell"], maxOutputBytes: caps.maxOutputBytes },
-          fileWrite: { overwrite: true },
+          fileWrite: { overwrite: true, noClobber: false },
         },
         create: {
           recovery: { version: 1, token: Token },

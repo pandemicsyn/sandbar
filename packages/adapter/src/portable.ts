@@ -40,6 +40,17 @@ export const ExecRequest = z.strictObject({
     .optional(),
 });
 
+export const FilePath = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine(
+    (path) =>
+      path.startsWith("/") &&
+      !path.includes("\0") &&
+      !path.split("/").some((segment) => segment === "." || segment === ".."),
+  );
+
 export const Effect = z.enum(["none", "applied", "partial", "possible", "unknown"]);
 
 export const ErrorCode = z.enum([

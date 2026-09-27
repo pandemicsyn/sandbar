@@ -144,7 +144,7 @@ export type Guarantees<C extends Command["kind"] = Command["kind"]> = {
   images: readonly ("prepared" | "oci")[];
   network: readonly string[];
   exec?: { commands: readonly C[]; maxOutputBytes: number };
-  fileWrite?: { overwrite: boolean };
+  fileWrite?: { overwrite: boolean; noClobber: boolean };
 };
 
 export type AdapterSession<

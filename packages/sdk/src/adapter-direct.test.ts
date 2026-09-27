@@ -252,6 +252,49 @@ test("close stops waiting after dispatch with a recovery reference", async () =>
   });
 });
 
+test("close wakes an operation waiting on a long polling interval", async () => {
+  let observeStarted = false;
+  const adapter = defineAdapter({
+    name: "example.poll-close",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
+          async submit(_input, ctx) {
+            return ctx.pending({ jobId: "job-1" });
+          },
+          async observe(_attempt, ctx) {
+            observeStarted = true;
+            return ctx.pending({ jobId: "job-1" });
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const op = await client.sandboxes.submitCreate({ environment: Image.prepared("image") });
+  expect(await op.observe()).toBeNull();
+  const waiting = op.wait({ pollMs: 60_000 });
+  while (!observeStarted) await Bun.sleep(1);
+  await client.close();
+  await expect(
+    Promise.race([
+      waiting,
+      Bun.sleep(500).then(() => {
+        throw new Error("wait did not wake on close");
+      }),
+    ]),
+  ).rejects.toMatchObject({ code: "WAIT_ABORTED" });
+});
+
 test("advanced lifecycle commits a marker once and cannot replay a prepared attempt", async () => {
   let submits = 0;
   let markers = 0;

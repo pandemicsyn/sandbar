@@ -206,7 +206,7 @@ type Mutation<I, V, P = I> =
 // A plain method is shorthand for submit with no preparation or observation.
 // The advanced object infers P from prepare; without prepare, P=I.
 // Session supports declares guarantees, not duplicate method-presence booleans:
-// images/network; exec: { commands, maxOutputBytes }; fileWrite: { overwrite }.
+// images/network; exec: { commands, maxOutputBytes }; fileWrite: { overwrite, noClobber }.
 // AttemptContext adds pending(token, { pollAfterMs? }), reject(code, message),
 // and unknown(reason). ObserveContext has pending/unknown but NEVER reject.
 // Scope/result/ref validation and timestamps are owned by Sandbar in both forms.

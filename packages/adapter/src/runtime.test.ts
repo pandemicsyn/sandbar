@@ -46,6 +46,141 @@ test("unsupported create fails before preparation or provider mutation", async (
   expect(calls).toBe(0);
 });
 
+test("advanced preparation validates portable limits before provider hooks", async () => {
+  let preparations = 0;
+  const session = {
+    scope: { authority: { kind: "account", id: "a" }, partition: {} },
+    supports: {
+      images: ["prepared"] as const,
+      network: ["blocked"],
+      exec: { commands: ["argv"] as const, maxOutputBytes: 1_048_576 },
+      fileWrite: { overwrite: true, noClobber: true },
+    },
+    create: {
+      async prepare(input: { image: { kind: "prepared"; value: string } }) {
+        preparations++;
+        return input;
+      },
+      async submit() {
+        return { id: "box", state: "running" as const };
+      },
+    },
+    async destroy() {
+      return { computeStopped: true, retainedResources: [] };
+    },
+    exec: {
+      async prepare(input: unknown) {
+        preparations++;
+        return input;
+      },
+      async submit() {
+        return {
+          exitCode: 0,
+          stdout: new Uint8Array(),
+          stderr: new Uint8Array(),
+          truncated: false,
+        };
+      },
+    },
+    files: {
+      maxBytes: 1024,
+      write: {
+        async prepare(input: unknown) {
+          preparations++;
+          return input;
+        },
+        async submit() {
+          return { bytesWritten: 0 };
+        },
+      },
+    },
+  };
+
+  await expect(
+    prepareOperation(
+      session,
+      "create",
+      {
+        image: { kind: "prepared", value: "bad/name" },
+        networkPolicy: "blocked",
+      },
+      signal,
+    ),
+  ).rejects.toThrow();
+  await expect(
+    prepareOperation(
+      session,
+      "exec",
+      {
+        sandbox: { id: "box" },
+        command: { kind: "argv", argv: ["echo"] },
+        deadlineSeconds: 3601,
+        maxOutputBytes: 1024,
+      },
+      signal,
+    ),
+  ).rejects.toThrow();
+  await expect(
+    prepareOperation(
+      session,
+      "file_write",
+      {
+        sandbox: { id: "box" },
+        path: "/a/../b",
+        bytes: new Uint8Array(),
+        overwrite: true,
+      },
+      signal,
+    ),
+  ).rejects.toThrow();
+  expect(preparations).toBe(0);
+});
+
+test("unsupported atomic no-clobber is rejected before adapter preparation", async () => {
+  let preparations = 0;
+  const session = {
+    scope: { authority: { kind: "account", id: "a" }, partition: {} },
+    supports: {
+      images: ["prepared"] as const,
+      network: ["blocked"],
+      fileWrite: { overwrite: true, noClobber: false },
+    },
+    async create() {
+      return { id: "box", state: "running" as const };
+    },
+    async destroy() {
+      return { computeStopped: true, retainedResources: [] };
+    },
+    files: {
+      maxBytes: 1024,
+      write: {
+        async prepare(input: unknown) {
+          preparations++;
+          return input;
+        },
+        async submit() {
+          return { bytesWritten: 0 };
+        },
+      },
+    },
+  };
+
+  await expect(
+    prepareOperation(
+      session,
+      "file_write",
+      {
+        sandbox: { id: "box" },
+        path: "/file",
+        bytes: new Uint8Array(),
+        overwrite: false,
+      },
+      signal,
+    ),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  expect(preparations).toBe(0);
+});
+
 test("advanced preparation is read-only and submit is invoked once", async () => {
   let preparations = 0;
   let submissions = 0;

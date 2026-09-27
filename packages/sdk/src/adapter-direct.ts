@@ -234,6 +234,9 @@ export class AdapterOperation<T> {
   }
   async wait(options: { signal?: AbortSignal; pollMs?: number } = {}): Promise<T> {
     const pollMs = options.pollMs ?? 500;
+    const signal = options.signal
+      ? AbortSignal.any([this.client.signal, options.signal])
+      : this.client.signal;
 
     if (!Number.isSafeInteger(pollMs) || pollMs < 50 || pollMs > 60_000)
       throw new SandbarError("INVALID_ARGUMENT", "Invalid polling interval");
@@ -245,7 +248,7 @@ export class AdapterOperation<T> {
       const value = await this.observe();
 
       if (value !== null) return value;
-      await waitDelay(pollMs, options.signal).catch((error) => abortWaiting(this.reference, error));
+      await waitDelay(pollMs, signal).catch((error) => abortWaiting(this.reference, error));
     }
   }
 }
