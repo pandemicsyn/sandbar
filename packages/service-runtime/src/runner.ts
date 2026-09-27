@@ -95,7 +95,8 @@ export class DurableRunner {
     try {
       const connection = await store.getConnection(op.project_id, op.connection_id);
 
-      if (!connection) throw new Error("Provider connection vanished");
+      if (!connection || connection.status !== "verified" || !connection.scope)
+        throw new Error("Provider connection is unavailable");
       lease = this.options.registry
         ? await this.options.registry.connect(connection)
         : await this.connection(connection);

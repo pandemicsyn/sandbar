@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { z } from "zod";
 import { openDomainRuntime } from "./runtime";
 
@@ -212,6 +213,53 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     expect(z.object({ status: z.string() }).parse(operation).status).toBe("succeeded");
     expect(creates).toBe(1);
     expect(snapshotReads).toBe(1);
+
+    for (const unavailable of ["draining", "missing scope"] as const) {
+      const queued = await request(
+        `/v1/projects/${project.id}/sandboxes`,
+        "POST",
+        { environment: { kind: "prepared", imageId: "snap-1" }, connectionId: connection.id },
+        token,
+        Bun.randomUUIDv7(),
+      );
+
+      expect(queued.response.status).toBe(202);
+
+      const queuedId = z.object({ operation: z.object({ id: z.string() }) }).parse(queued.value)
+        .operation.id;
+
+      const control = new Database(join(directory, "control.sqlite"));
+
+      try {
+        if (unavailable === "draining")
+          control
+            .query("UPDATE provider_connections SET status='draining' WHERE id=?")
+            .run(connection.id);
+        else
+          control.query("UPDATE provider_connections SET scope=NULL WHERE id=?").run(connection.id);
+      } finally {
+        control.close();
+      }
+
+      const before = calls.length;
+      expect(await runtime.runner.tick()).toBe(true);
+      expect(calls).toHaveLength(before);
+      expect((await runtime.store.getOperation(project.id, queuedId))?.submission_possible).toBe(0);
+      expect(creates).toBe(1);
+
+      if (unavailable === "draining") {
+        const control = new Database(join(directory, "control.sqlite"));
+
+        try {
+          control
+            .query("UPDATE provider_connections SET status='verified' WHERE id=?")
+            .run(connection.id);
+        } finally {
+          control.close();
+        }
+      }
+    }
+
     account = "org-2";
 
     const file = await runtime.app.request(
