@@ -147,7 +147,10 @@ async function flow() {
   const provider = await fakeProvider({ url: "http://127.0.0.1:1234", token: "example-token-123456" });
   const client = Sandbar.direct({ provider });
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
-  const result = await box.exec({ command: { kind: "argv", argv: ["fixture"] } });
+  const argv = ["fixture"] as const;
+  const result = await box.exec(argv);
+  const operation = await box.submitExec(argv);
+  await operation.wait();
   const text: string = result.stdoutText();
   await client.close();
   return text;
@@ -160,7 +163,10 @@ import { Sandbar, Image } from "@sandbar/sdk/remote";
 async function flow() {
   const client = Sandbar.connect({ url: "https://sandbar.example", token: "example-token-123456", projectId: "project_1" });
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
-  const result = await box.exec({ command: { kind: "argv", argv: ["fixture"] } });
+  const argv = ["fixture"] as const;
+  const result = await box.exec(argv);
+  const operation = await box.submitExec(argv);
+  await operation.wait();
   const text: string = result.stdoutText();
   await client.close();
   return text;
@@ -197,7 +203,7 @@ const client = Sandbar.direct({ provider: await fakeProvider({ url: process.env.
 try {
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
   const command = { kind: "argv", argv: ["fixture", "packed"] };
-  const result = await box.exec({ command });
+  const result = await box.exec(command.argv);
   if (result.exitCode !== 0 || result.stdout.length !== 4 || result.stdout[0] !== 255 || result.stdout[1] !== 0) throw new Error("Binary execution output changed");
   const bytes = Uint8Array.from([0, 255, 129]);
   await box.writeFile("/data/packed", bytes);

@@ -97,6 +97,10 @@ test("direct resource flow preserves binary files and nonzero output", async () 
   expect((await control("/_test/state")).invocations.length).toBe(before);
 
   for (const invalid of [
+    [],
+    ["echo", 42],
+    ["echo", "x".repeat(8193)],
+    Array.from({ length: 129 }, () => "arg"),
     { command: { kind: "argv", argv: [] } },
     { command: { kind: "argv", argv: ["echo"] }, env: { "BAD=KEY": "value" } },
     { command: { kind: "argv", argv: ["echo"] }, deadlineSeconds: 0 },
@@ -144,7 +148,7 @@ test("direct resource flow preserves binary files and nonzero output", async () 
   });
 
   try {
-    await box.exec({ command });
+    await box.exec(command.argv);
     throw new Error("Expected nonzero exit");
   } catch (error) {
     if (!(error instanceof NonzeroExitError)) throw error;
@@ -157,6 +161,55 @@ test("direct resource flow preserves binary files and nonzero output", async () 
   await box.destroy();
   await client.close();
   expect(box.inspect()).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+});
+
+test("direct argv shorthand snapshots literal arguments before asynchronous dispatch", async () => {
+  const { url, control } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const originalExec = provider.driver.exec.bind(provider.driver);
+  let release = () => {};
+
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  const argv = ["fixture", "$HOME", "a b", "; echo nope", ""];
+  const expected = [...argv];
+  provider.driver.exec = async (input) => {
+    await gate;
+    expect(input.command).toEqual({ kind: "argv", argv: expected });
+    expect(input.deadlineSeconds).toBe(300);
+    expect(input.maxOutputBytes).toBe(1_048_576);
+
+    return originalExec(input);
+  };
+
+  const client = DirectSandbar.direct({ provider });
+
+  try {
+    const box = await client.sandboxes.create({
+      environment: DirectImage.prepared("fake-starter"),
+    });
+
+    await control("/_test/seed", {
+      submissionId: "*",
+      action: "exec",
+      command: { command: { kind: "argv", argv: expected }, exitCode: 0, stdoutBase64: "AP8=" },
+    });
+    const submission = box.submitExec(argv);
+    argv[1] = "changed";
+    argv.push("extra");
+    release();
+    const operation = await submission;
+    expect((await operation.wait()).stdout).toEqual(Uint8Array.of(0, 255));
+    const state = await control("/_test/state");
+    expect(
+      state.invocations.filter((item: { action: string }) => item.action === "exec"),
+    ).toHaveLength(1);
+  } finally {
+    release();
+    await client.close();
+  }
 });
 
 test("direct rejects create contract violations before provider preparation", async () => {
@@ -1432,6 +1485,10 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   ).rejects.toBe(preAborted.signal.reason);
 
   for (const invalid of [
+    [],
+    ["echo", 42],
+    ["echo", "x".repeat(8193)],
+    Array.from({ length: 129 }, () => "arg"),
     { command: { kind: "argv", argv: [] } },
     { command: { kind: "argv", argv: ["echo"] }, env: { "BAD=KEY": "value" } },
     { command: { kind: "argv", argv: ["echo"] }, deadlineSeconds: 0 },
@@ -1931,6 +1988,7 @@ test("remote exec uses the submitted output limit after caller input changes", a
   };
 
   let execDispatches = 0;
+  const submittedBodies: string[] = [];
 
   const fetcher: typeof fetch = async (url, init) => {
     const target = new URL(String(url));
@@ -1941,6 +1999,7 @@ test("remote exec uses the submitted output limit after caller input changes", a
 
     if (init?.method === "POST" && path.endsWith("/executions")) {
       execDispatches++;
+      submittedBodies.push(String(init.body));
 
       return Response.json({ operation: execOperation, execution }, { status: 202 });
     }
@@ -1999,6 +2058,28 @@ test("remote exec uses the submitted output limit after caller input changes", a
   await expect(oversized.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
 
   expect(execDispatches).toBe(2);
+  const argv = ["echo", "$HOME", "a b", "; echo nope", ""];
+  const expected = [...argv];
+  const submission = box.submitExec(argv);
+  argv[1] = "changed";
+  const shorthand = await submission;
+  expect((await shorthand.wait()).stdout).toEqual(Uint8Array.of(97, 98));
+  const readonlyArgv = ["echo", "ok"] as const;
+  expect((await box.exec(readonlyArgv)).exitCode).toBe(0);
+  expect(submittedBodies.slice(2).map((body) => JSON.parse(body))).toEqual([
+    {
+      command: { kind: "argv", argv: expected },
+      deadlineSeconds: 300,
+      output: { capture: "bounded", maxBytes: 1_048_576 },
+    },
+    {
+      command: { kind: "argv", argv: ["echo", "ok"] },
+      deadlineSeconds: 300,
+      output: { capture: "bounded", maxBytes: 1_048_576 },
+    },
+  ]);
+  expect(execDispatches).toBe(4);
+  await client.close();
 });
 
 test("remote create rejects disagreement between operation and result sandbox IDs", async () => {
