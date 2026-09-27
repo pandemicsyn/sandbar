@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@sandbar/provider-fake": "workspace:*",
-    "@sandbar/sdk": "workspace:*"
+    "@sandbar/sdk": "workspace:*",
+    "zod": "4.6.5"
   }
 }
