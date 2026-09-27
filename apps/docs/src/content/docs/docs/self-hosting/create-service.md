@@ -3,10 +3,10 @@ title: Register adapters in a service
 summary: Run the optional standalone Bun service with trusted installed adapter packages.
 ---
 
-The SDK works on its own. Install `@sandbar/service` only when you need shared credential custody, project authentication, durable operation tracking, HTTP access, and the management UI. This package requires Bun and SQLite or MySQL. It consumes the public `sandbar-sdk` adapter lifecycle; adapter packages never depend on the service.
+The SDK works on its own. Install `sandbar-service` only when you need shared credential custody, project authentication, durable operation tracking, HTTP access, and the management UI. This package requires Bun and SQLite or MySQL. It consumes the public `sandbar-sdk` adapter lifecycle; adapter packages never depend on the service.
 
 ```ts
-import { createService } from "@sandbar/service";
+import { createService } from "sandbar-service";
 import { acme } from "@acme/sandbar-adapter";
 
 const service = await createService({

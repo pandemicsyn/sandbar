@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineAdapter } from "@sandbar/adapter";
+import { defineAdapter } from "sandbar-adapter";
 import { AcmeClient } from "./acme-native";
 
 /** Copy this shape, then replace AcmeClient with an authenticated provider client. */
@@ -12,6 +12,7 @@ export const acme = defineAdapter({
     const client = new AcmeClient(credentials.token);
     host.onClose(() => client.close());
     const account = await client.whoami();
+
     return {
       scope: {
         authority: { kind: "account", id: account.id },
@@ -27,10 +28,12 @@ export const acme = defineAdapter({
           public: false,
           requestId: ctx.submissionId,
         });
-        return { id: box.id, state: box.ready ? "running" as const : "unknown" as const };
+
+        return { id: box.id, state: box.ready ? ("running" as const) : ("unknown" as const) };
       },
       async destroy(box) {
         await client.deleteAndWait(box.id, account.id, config.region);
+
         return { computeStopped: true, retainedResources: [] };
       },
     };

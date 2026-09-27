@@ -1,3 +1,25 @@
+import { connectDirect } from "./adapter-direct";
+
+export {
+  AdapterDirectClient,
+  AdapterSandbox,
+  AdapterOperation,
+  PreparedAdapterAttempt,
+  ADAPTER_CONTRACT_VERSION,
+} from "./adapter-direct";
+
+export type {
+  AdapterRecoveryReference,
+  AdapterConnectOptions,
+  AdapterCapabilities,
+  AdvancedOperationResult,
+  AdvancedOperationKind,
+  AdvancedIdentity,
+  AdvancedObservation,
+} from "./adapter-direct";
+
+export const Sandbar = { connect: connectDirect };
+
 export {
   Image,
   outputText,

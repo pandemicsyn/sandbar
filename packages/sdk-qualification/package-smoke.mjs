@@ -9,15 +9,14 @@ import { z } from "zod";
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
 const packages = [
-  ["@sandbar/contracts", "packages/contracts"],
-  ["@sandbar/adapter", "packages/adapter"],
+  ["sandbar-adapter", "packages/adapter"],
   ["@sandbar/provider-spi", "packages/provider-spi"],
   ["@sandbar/core", "packages/core"],
   ["@sandbar/provider-fake", "packages/providers/fake"],
   ["@sandbar/provider-daytona", "packages/providers/daytona"],
   ["@sandbar/provider-modal", "packages/providers/modal"],
   ["sandbar-sdk", "packages/sdk"],
-  ["@sandbar/service", "packages/service"],
+  ["sandbar-service", "packages/service"],
 ];
 
 const forbidden = new Set([
@@ -115,7 +114,7 @@ async function checkTypes(directory, mode) {
 
   if (mode === "service")
     source = `
-import { createService, type ServiceHandle } from "@sandbar/service";
+import { createService, type ServiceHandle } from "sandbar-service";
 import { asyncAcme } from "@acme/sandbar-adapter";
 async function flow(): Promise<ServiceHandle> {
   return createService({
@@ -128,7 +127,7 @@ void flow;
 `;
   else if (mode === "custom")
     source = `
-import { Sandbar, Image } from "sandbar-sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk";
 import { acme } from "@acme/sandbar-adapter";
 async function flow() {
   const client = await Sandbar.connect({ adapter: acme, config: { region: "us" }, credentials: { token: "fixture" } });
@@ -142,10 +141,10 @@ void flow;
 `;
   else if (mode === "modal")
     source = `
-import { Sandbar, Image } from "sandbar-sdk/direct";
-import { createModalAdapter } from "@sandbar/provider-modal";
+import { Sandbar, Image } from "sandbar-sdk";
+import { modal } from "sandbar-sdk/modal";
 async function flow() {
-  const client = await Sandbar.connect({ adapter: createModalAdapter(), config: { appName: "existing", environment: "main" }, credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" } });
+  const client = await Sandbar.connect(modal({ appName: "existing", environment: "main", tokenId: "ak-fixture", tokenSecret: "as-fixture" }));
   const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked" });
   const bytes: Uint8Array = await box.readFile("/file");
   await client.close();
@@ -155,10 +154,10 @@ void flow;
 `;
   else if (mode === "daytona")
     source = `
-import { Sandbar, Image } from "sandbar-sdk/direct";
-import { createDaytonaAdapter } from "@sandbar/provider-daytona";
+import { Sandbar, Image } from "sandbar-sdk";
+import { daytona } from "sandbar-sdk/daytona";
 async function flow() {
-  const client = await Sandbar.connect({ adapter: createDaytonaAdapter(), config: { target: "us" }, credentials: { apiKey: "fixture" } });
+  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture" }));
   const box = await client.sandboxes.create({ environment: Image.prepared("snap-1") });
   const result = await box.exec({ command: { kind: "shell", script: "printf ready" } });
   const text = result.stdoutText();
@@ -167,9 +166,26 @@ async function flow() {
 }
 void flow;
 `;
+  else if (mode === "builtins")
+    source = `
+import { Sandbar } from "sandbar-sdk";
+import { daytona } from "sandbar-sdk/daytona";
+import { modal } from "sandbar-sdk/modal";
+async function flow() {
+  const daytonaClient = await Sandbar.connect(daytona({ apiKey: "fixture", target: "us" }));
+  const modalClient = await Sandbar.connect(modal({ tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main" }));
+  await daytonaClient.close();
+  await modalClient.close();
+}
+// @ts-expect-error Daytona requires an API key
+void daytona({ target: "us" });
+// @ts-expect-error Modal requires an App name
+void modal({ tokenId: "ak-fixture", tokenSecret: "as-fixture", environment: "main" });
+void flow;
+`;
   else if (mode === "direct")
     source = `
-import { Sandbar, Image } from "sandbar-sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 async function flow() {
   const client = await Sandbar.connect({ adapter: createFakeAdapter({ url: "http://127.0.0.1:1234", token: "example-token-123456" }), config: {}, credentials: {} });
@@ -186,7 +202,7 @@ void flow;
 `;
   else
     source = `
-import { Sandbar, Image } from "sandbar-sdk/remote";
+import { Sandbar, Image } from "sandbar-service/client";
 async function flow() {
   const client = Sandbar.connect({ url: "https://sandbar.example", token: "example-token-123456", projectId: "project_1" });
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
@@ -222,10 +238,9 @@ void flow;
 
 const directSource = `
 import { OutcomeUnknownError as RootUnknown } from "sandbar-sdk";
-import { Sandbar, Image, OutcomeUnknownError as DirectUnknown } from "sandbar-sdk/direct";
-import { OutcomeUnknownError as RemoteUnknown } from "sandbar-sdk/remote";
+import { Sandbar, Image } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
-if (RootUnknown !== DirectUnknown || RootUnknown !== RemoteUnknown) throw new Error("SDK entry points disagree on error identity");
+if (RootUnknown.name !== "OutcomeUnknownError") throw new Error("SDK error export unavailable");
 const client = await Sandbar.connect({ adapter: createFakeAdapter({ url: process.env.FAKE_URL, token: process.env.FAKE_TOKEN }), config: {}, credentials: {} });
 try {
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
@@ -243,14 +258,19 @@ try {
 
 const remoteSource = `
 import { OutcomeUnknownError as RootUnknown } from "sandbar-sdk";
-import { Sandbar, Image, OutcomeUnknownError as RemoteUnknown } from "sandbar-sdk/remote";
-if (RootUnknown !== RemoteUnknown) throw new Error("Remote-only SDK entry point disagrees on error identity");
-if (typeof Sandbar.connect !== "function" || Image.prepared("fake-starter").kind !== "prepared") throw new Error("Remote-only export unavailable");
-process.stdout.write("packed remote import passed\\n");
+import { Sandbar, Image, OutcomeUnknownError as RemoteUnknown } from "sandbar-service/client";
+if (RootUnknown !== RemoteUnknown) throw new Error("Service client and SDK disagree on error identity");
+const client = Sandbar.connect({ url: process.env.REMOTE_URL, token: process.env.REMOTE_TOKEN, projectId: process.env.REMOTE_PROJECT });
+try {
+  const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
+  if ((await box.inspect()).state !== "running") throw Error("Packed remote inspection failed");
+  await box.destroy();
+  process.stdout.write("packed service client HTTP flow passed\\n");
+} finally { await client.close(); }
 `;
 
 const daytonaSource = `
-import { Sandbar, Image } from "sandbar-sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk";
 import { createDaytonaAdapter } from "@sandbar/provider-daytona";
 let name = "", mutations = 0;
 const origin = "https://proxy.app.daytona.io/toolbox";
@@ -285,7 +305,7 @@ try {
 `;
 
 const modalSource = `
-import { Sandbar, Image } from "sandbar-sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk";
 import { createModalAdapter } from "@sandbar/provider-modal";
 let creates = 0, terminates = 0, closed = 0;
 const records = new Map();
@@ -316,9 +336,23 @@ if (closed !== 1) throw Error("Owned provider was not released");
 process.stdout.write("packed Modal fixture flow passed\\n");
 `;
 
+const builtinsSource = `
+import { daytona } from "sandbar-sdk/daytona";
+import { modal } from "sandbar-sdk/modal";
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async () => { throw Error("Factory construction performed provider I/O"); };
+try {
+  const daytonaAdapter = daytona({ apiKey: "fixture", target: "us" });
+  const modalAdapter = modal({ tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main" });
+  if (daytonaAdapter.name !== "daytona" || modalAdapter.name !== "modal") throw Error("Built-in factory identity mismatch");
+  if (!daytonaAdapter.bound || !modalAdapter.bound) throw Error("Built-in factory did not bind public adapter contract");
+  process.stdout.write("packed built-in SDK subpaths passed\\n");
+} finally { globalThis.fetch = originalFetch; }
+`;
+
 const externalAdapterSource = `
 import { z } from "zod";
-import { defineAdapter } from "@sandbar/adapter";
+import { defineAdapter } from "sandbar-adapter";
 export const metrics = { creates: 0, destroys: 0, closes: 0, observes: 0 };
 export const acme = defineAdapter({
   name: "example.acme",
@@ -368,7 +402,7 @@ export const asyncAcme = defineAdapter({
 `;
 
 const customSource = `
-import { Sandbar, Image } from "sandbar-sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk";
 import { acme, metrics } from "@acme/sandbar-adapter";
 const client = await Sandbar.connect({
   adapter: acme,
@@ -385,7 +419,7 @@ process.stdout.write("packed external adapter flow passed\\n");
 `;
 
 const serviceSource = `
-import { createService } from "@sandbar/service";
+import { createService } from "sandbar-service";
 import { asyncAcme, metrics } from "@acme/sandbar-adapter";
 import { writeFile, chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -462,54 +496,71 @@ try {
 
   const externalDir = join(temporary, "external-adapter");
   await mkdir(join(externalDir, "src"), { recursive: true });
-  await writeFile(join(externalDir, "package.json"), JSON.stringify({
-    name: "@acme/sandbar-adapter",
-    version: "0.0.1",
-    type: "module",
-    files: ["dist"],
-    exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
-    peerDependencies: { "@sandbar/adapter": "0.0.0" },
-    overrides: { "@sandbar/adapter": archiveOverrides["@sandbar/adapter"] },
-    dependencies: {
-      "@sandbar/adapter": archiveOverrides["@sandbar/adapter"],
-      zod: "4.6.5",
-    },
-  }, null, 2));
+  await writeFile(
+    join(externalDir, "package.json"),
+    JSON.stringify(
+      {
+        name: "@acme/sandbar-adapter",
+        version: "0.0.1",
+        type: "module",
+        files: ["dist"],
+        exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
+        peerDependencies: { "sandbar-adapter": "0.0.0" },
+        overrides: { "sandbar-adapter": archiveOverrides["sandbar-adapter"] },
+        dependencies: {
+          "sandbar-adapter": archiveOverrides["sandbar-adapter"],
+          zod: "4.6.5",
+        },
+      },
+      null,
+      2,
+    ),
+  );
   await writeFile(join(externalDir, "src/index.ts"), externalAdapterSource);
-  await writeFile(join(externalDir, "tsconfig.json"), JSON.stringify({
-    compilerOptions: {
-      target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext",
-      strict: true, declaration: true, outDir: "dist", skipLibCheck: false, types: [],
-    },
-    include: ["src/index.ts"],
-  }));
+  await writeFile(
+    join(externalDir, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+        declaration: true,
+        outDir: "dist",
+        skipLibCheck: false,
+        types: [],
+      },
+      include: ["src/index.ts"],
+    }),
+  );
   run("bun", ["install", "--no-save"], externalDir);
   run(join(root, "node_modules/.bin/tsc"), ["-p", "tsconfig.json"], externalDir);
   const externalManifest = JSON.parse(await readFile(join(externalDir, "package.json"), "utf8"));
-  delete externalManifest.dependencies["@sandbar/adapter"];
+  delete externalManifest.dependencies["sandbar-adapter"];
   delete externalManifest.overrides;
   await writeFile(join(externalDir, "package.json"), JSON.stringify(externalManifest, null, 2));
   const externalArchive = await pack(externalDir);
 
-  const remoteDeps = { "sandbar-sdk": archiveOverrides["sandbar-sdk"] };
+  const sdkDeps = { "sandbar-sdk": archiveOverrides["sandbar-sdk"] };
+  const remoteDeps = { ...sdkDeps, "sandbar-service": archiveOverrides["sandbar-service"] };
 
   const customDeps = {
-    ...remoteDeps,
+    ...sdkDeps,
     "@acme/sandbar-adapter": `file:${externalArchive}`,
   };
 
   const directDeps = {
-    ...remoteDeps,
+    ...sdkDeps,
     "@sandbar/provider-fake": archiveOverrides["@sandbar/provider-fake"],
   };
 
   const daytonaDeps = {
-    ...remoteDeps,
+    ...sdkDeps,
     "@sandbar/provider-daytona": archiveOverrides["@sandbar/provider-daytona"],
   };
 
   const modalDeps = {
-    ...remoteDeps,
+    ...sdkDeps,
     "@sandbar/provider-modal": archiveOverrides["@sandbar/provider-modal"],
   };
 
@@ -518,33 +569,93 @@ try {
   const direct = join(temporary, "direct-consumer");
   const daytona = join(temporary, "daytona-consumer");
   const modal = join(temporary, "modal-consumer");
+  const builtins = join(temporary, "builtins-consumer");
   const service = join(temporary, "service-consumer");
   await consumer(remote, remoteDeps, archiveOverrides, remoteSource);
   await consumer(custom, customDeps, archiveOverrides, customSource);
   await consumer(direct, directDeps, archiveOverrides, directSource);
   await consumer(daytona, daytonaDeps, archiveOverrides, daytonaSource);
   await consumer(modal, modalDeps, archiveOverrides, modalSource);
-  await consumer(service, { ...customDeps, "@sandbar/service": archiveOverrides["@sandbar/service"] }, archiveOverrides, serviceSource);
+  await consumer(builtins, sdkDeps, archiveOverrides, builtinsSource);
+  await consumer(
+    service,
+    { ...customDeps, "sandbar-service": archiveOverrides["sandbar-service"] },
+    archiveOverrides,
+    serviceSource,
+  );
 
-  if ((await readdir(join(remote, "node_modules", "@sandbar"))).includes("provider-fake"))
+  if (
+    (await readdir(join(remote, "node_modules", "@sandbar")).catch(() => [])).includes(
+      "provider-fake",
+    )
+  )
     throw new Error("Remote-only consumer installed the fake provider");
   await checkTypes(custom, "custom");
   await checkTypes(service, "service");
   await checkTypes(direct, "direct");
   await checkTypes(daytona, "daytona");
   await checkTypes(modal, "modal");
+  await checkTypes(builtins, "builtins");
   await checkTypes(remote, "remote");
-  inspectGraph(remote, ["sandbar-sdk"]);
+  const serviceGraph = inspectGraph(remote, ["sandbar-service"]);
   inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
   inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);
   inspectGraph(modal, ["sandbar-sdk", "@sandbar/provider-modal"]);
+  const publicSdkGraph = inspectGraph(builtins, ["sandbar-sdk"]);
+
+  if (publicSdkGraph.some((name) => name.startsWith("@sandbar/")))
+    throw new Error(`SDK package leaked a private workspace dependency: ${publicSdkGraph}`);
+
+  if (serviceGraph.some((name) => name.startsWith("@sandbar/")))
+    throw new Error(`Service package leaked a private workspace dependency: ${serviceGraph}`);
   console.log(`bun: ${run("bun", ["consumer.mjs"], service)}`);
   console.log(
     `Runtimes: Node ${run("node", ["--version"], remote)}, Bun ${run("bun", ["--version"], remote)}`,
   );
 
-  for (const runtime of ["node", "bun"]) run(runtime, ["consumer.mjs"], remote);
+  await fixture.startFake();
+  await fixture.startService();
+
+  const post = async (path, token, body) => {
+    const headers = new Headers({ "Content-Type": "application/json" });
+
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+
+    const response = await fetch(`${fixture.serviceUrl}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) throw new Error(`Packed remote setup ${path}: HTTP ${response.status}`);
+
+    return response.json();
+  };
+
+  const setup = await post("/v1/setup", undefined, { setupToken: fixture.setupToken });
+  const project = await post("/v1/projects", setup.token, { name: "Packed remote" });
+
+  const connection = await post(`/v1/projects/${project.id}/provider-connections`, setup.token, {
+    provider: "fake",
+    name: "Fake",
+  });
+
+  await post(
+    `/v1/projects/${project.id}/provider-connections/${connection.id}/verify`,
+    setup.token,
+    {},
+  );
+
+  for (const runtime of ["node", "bun"])
+    console.log(
+      `${runtime}: ${run(runtime, ["consumer.mjs"], remote, {
+        REMOTE_URL: fixture.serviceUrl,
+        REMOTE_TOKEN: setup.token,
+        REMOTE_PROJECT: project.id,
+      })}`,
+    );
+
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], custom)}`);
 
@@ -553,7 +664,9 @@ try {
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], modal)}`);
-  await fixture.startFake();
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], builtins)}`);
 
   for (const runtime of ["node", "bun"]) {
     await fixture.fakeControl("/_test/seed", {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ExecCommand } from "@sandbar/contracts";
+import { ExecCommand } from "sandbar-adapter/portable";
 import { InvocationIdentity, NativeScope, SandboxRef } from "@sandbar/provider-spi";
 
 export const FakeInventoryCursor = z

@@ -1,6 +1,6 @@
 import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { z } from "zod";
-import { ExecCommand, canonicalJson, intentSha256 } from "@sandbar/contracts";
+import { ExecCommand, canonicalJson, intentSha256 } from "sandbar-adapter/portable";
 import {
   DriverResult,
   NativeRef,

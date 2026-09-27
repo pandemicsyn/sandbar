@@ -1,4 +1,4 @@
-import { AdapterError } from "@sandbar/adapter";
+import { AdapterError } from "sandbar-adapter";
 import { timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
@@ -28,12 +28,8 @@ import {
   SessionResponse,
   SetupRequest,
   intentSha256,
-} from "@sandbar/contracts";
-import {
-  ProviderReadError,
-  type NativeScope,
-  type SandboxRef,
-} from "@sandbar/provider-spi";
+} from "../http-contracts";
+import { ProviderReadError, type NativeScope, type SandboxRef } from "@sandbar/provider-spi";
 import {
   ControlStore,
   StoreError,
@@ -79,7 +75,9 @@ function safeError(code: string, message: string, effect: "none" | "possible" = 
 function errorResponse(c: Context, error: Error | z.ZodError): Response {
   if (error instanceof AdapterError)
     return c.json(
-      ErrorResponse.parse({ error: safeError(error.code, "Adapter input or connection is invalid") }),
+      ErrorResponse.parse({
+        error: safeError(error.code, "Adapter input or connection is invalid"),
+      }),
       error.code === "UNAUTHENTICATED" ? 401 : error.code === "UNSUPPORTED" ? 422 : 400,
     );
 
@@ -631,6 +629,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
             configuration: body.configuration ?? {},
           })
         : { credentials: body.credentials ?? {}, configuration: body.configuration ?? {} };
+
       if (!deps.registry && (body.provider !== "fake" || body.credentials || body.configuration))
         throw new SyntaxError("Provider is not configured");
 

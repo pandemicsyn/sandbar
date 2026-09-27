@@ -1,5 +1,5 @@
 {
-  "name": "@sandbar/service",
+  "name": "sandbar-service",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
     }
   },
   "files": [
@@ -14,10 +18,10 @@
   ],
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts --target bun --format esm --outdir dist --external sandbar-sdk --external @sandbar/adapter --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && cp -R ../store/migrations dist/migrations && if test -d ../../apps/web/dist; then cp -R ../../apps/web/dist dist/web; fi"
+    "build": "rm -rf dist && bun build src/index.ts src/client.ts --target bun --format esm --outdir dist --external sandbar-sdk --external sandbar-adapter --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun flatten-declarations.mjs && cp -R ../store/migrations dist/migrations && if test -d ../../apps/web/dist; then cp -R ../../apps/web/dist dist/web; fi"
   },
   "dependencies": {
-    "@sandbar/adapter": "workspace:*",
+    "sandbar-adapter": "workspace:*",
     "sandbar-sdk": "workspace:*",
     "zod": "4.6.5"
   }

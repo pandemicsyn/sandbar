@@ -6,7 +6,7 @@ import {
   isOutcome,
   operationParts,
   outcomeKind,
-  type Guarantees,
+  type AdapterSession,
   type AttemptContext,
   type CreateInput,
   type DestroyValue,
@@ -21,43 +21,96 @@ import {
   type Unknown,
 } from "./index";
 
-export type RuntimeSession = {
-  supports: Guarantees;
+export type RuntimeSession = Omit<AdapterSession, "create" | "destroy" | "exec" | "files"> & {
   create: unknown;
   destroy: unknown;
   exec?: unknown;
-  files?: { maxBytes: number; write?: unknown };
+  files?: {
+    maxBytes: number;
+    read?: NonNullable<AdapterSession["files"]>["read"];
+    write?: unknown;
+  };
 };
+
 export type OperationKind = "create" | "destroy" | "exec" | "file_write";
+
 export type SpecialOutcome = Pending | Unknown | Rejected;
+
 export type OperationResult =
   | { id: string; state: "running" | "unknown" }
   | DestroyValue
   | ExecValue
   | { bytesWritten: number };
+
 export type PreparedOperation = {
   readonly kind: OperationKind;
   readonly input: unknown;
   readonly operation: Mutation<unknown, unknown, unknown>;
 };
-export type RuntimeResult = { kind: "completed"; value: OperationResult }
+
+export type RuntimeResult =
+  | { kind: "completed"; value: OperationResult }
   | { kind: "pending"; token: Json; pollAfterMs: number; version: number }
   | { kind: "unknown"; reason: string }
   | { kind: "rejected"; code: string; message: string };
 
 const Id = z.string().min(1).max(512);
+
+const SandboxSchema = z.strictObject({ id: Id });
+
+const CreateInputSchema = z.strictObject({
+  image: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("prepared"), value: z.string().min(1) }),
+    z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
+  ]),
+  networkPolicy: z.string().min(1),
+  region: z.string().optional(),
+  labels: z.record(z.string(), z.string()).optional(),
+});
+
+const ExecInputSchema = z.strictObject({
+  sandbox: SandboxSchema,
+  command: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("argv"), argv: z.array(z.string()).min(1) }),
+    z.strictObject({ kind: z.literal("shell"), script: z.string() }),
+  ]),
+  cwd: z.string().optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  deadlineSeconds: z.number().positive(),
+  maxOutputBytes: z.number().int().nonnegative().max(1_048_576),
+});
+
+const FileWriteInputSchema = z.strictObject({
+  sandbox: SandboxSchema,
+  path: z.string().min(1),
+  bytes: z.instanceof(Uint8Array),
+  overwrite: z.boolean(),
+});
+
 const CreateValueSchema = z.strictObject({ id: Id, state: z.enum(["running", "unknown"]) });
+
 const DestroyValueSchema = z.strictObject({
   computeStopped: z.boolean(),
   retainedResources: z.array(z.string().min(1).max(512)).max(128),
 });
-const WriteValueSchema = z.strictObject({ bytesWritten: z.number().int().nonnegative().max(1_048_576) });
+
+const WriteValueSchema = z.strictObject({
+  bytesWritten: z.number().int().nonnegative().max(1_048_576),
+});
+
 const ExecValueSchema = z.strictObject({
   exitCode: z.number().int().nullable(),
-  stdout: z.union([z.instanceof(Uint8Array), z.custom<ReadableStream<Uint8Array>>((value) => value instanceof ReadableStream)]),
-  stderr: z.union([z.instanceof(Uint8Array), z.custom<ReadableStream<Uint8Array>>((value) => value instanceof ReadableStream)]),
+  stdout: z.union([
+    z.instanceof(Uint8Array),
+    z.custom<ReadableStream<Uint8Array>>((value) => value instanceof ReadableStream),
+  ]),
+  stderr: z.union([
+    z.instanceof(Uint8Array),
+    z.custom<ReadableStream<Uint8Array>>((value) => value instanceof ReadableStream),
+  ]),
   truncated: z.boolean(),
 });
+
 const MAX_OUTPUT = 1_048_576;
 
 async function collect(
@@ -70,25 +123,32 @@ async function collect(
       truncated: value.length > limit,
     };
   }
+
   const reader = value.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
   let truncated = false;
+
   try {
     while (true) {
       const next = await reader.read();
+
       if (next.done) break;
+
       if (!(next.value instanceof Uint8Array))
         throw new AdapterError("INVALID_ARGUMENT", "Execution stream emitted non-byte data");
       const remaining = limit - total;
+
       if (next.value.length > remaining) {
         if (remaining > 0) chunks.push(Uint8Array.from(next.value.subarray(0, remaining)));
         total += remaining;
         truncated = true;
         break;
       }
+
       chunks.push(Uint8Array.from(next.value));
       total += next.value.length;
+
       if (total === limit) {
         const extra = await reader.read();
         truncated = !extra.done;
@@ -98,23 +158,34 @@ async function collect(
   } finally {
     await reader.cancel().catch(() => undefined);
   }
+
   const bytes = new Uint8Array(total);
   let offset = 0;
+
   for (const chunk of chunks) {
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
+
   return { bytes, truncated };
 }
 
-async function validateValue(kind: OperationKind, value: unknown, maxOutputBytes: number): Promise<OperationResult> {
+async function validateValue(
+  kind: OperationKind,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native operation results cross the provider boundary and are parsed by kind below.
+  value: unknown,
+  maxOutputBytes: number,
+): Promise<OperationResult> {
   if (kind === "create") return CreateValueSchema.parse(value);
+
   if (kind === "destroy") return DestroyValueSchema.parse(value);
+
   if (kind === "file_write") return WriteValueSchema.parse(value);
   const parsed = ExecValueSchema.parse(value);
   const limit = Math.min(MAX_OUTPUT, maxOutputBytes);
   const stdout = await collect(parsed.stdout, limit);
   const stderr = await collect(parsed.stderr, limit - stdout.bytes.length);
+
   return {
     exitCode: parsed.exitCode,
     stdout: stdout.bytes,
@@ -124,58 +195,106 @@ async function validateValue(kind: OperationKind, value: unknown, maxOutputBytes
 }
 
 function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown, unknown, unknown> {
-  const op = kind === "create" ? session.create
-    : kind === "destroy" ? session.destroy
-    : kind === "exec" ? session.exec
-    : session.files?.write;
+  let op: unknown;
+
+  switch (kind) {
+    case "create":
+      op = session.create;
+      break;
+    case "destroy":
+      op = session.destroy;
+      break;
+    case "exec":
+      op = session.exec;
+      break;
+    case "file_write":
+      op = session.files?.write;
+      break;
+  }
+
   if (!op) throw new AdapterError("UNSUPPORTED", `${kind} is unsupported`);
+
+  // SAFETY: RuntimeSession comes from a host-installed adapter; select maps its declared operation field by kind.
   return op as Mutation<unknown, unknown, unknown>;
 }
 
-function checkCapability(session: RuntimeSession, kind: OperationKind, input: unknown): void {
+function checkCapability(
+  session: RuntimeSession,
+  kind: OperationKind,
+  input: CreateInput | ExecInput | FileWriteInput | Sandbox,
+): CreateInput | ExecInput | FileWriteInput | Sandbox {
   if (kind === "create") {
-    const request = input as CreateInput;
-    if (!session.supports.images.includes(request.image.kind) ||
-        !session.supports.network.includes(request.networkPolicy))
+    const request = CreateInputSchema.parse(input);
+
+    if (
+      !session.supports.images.includes(request.image.kind) ||
+      !session.supports.network.includes(request.networkPolicy)
+    )
       throw new AdapterError("UNSUPPORTED", "Requested image or network policy is unsupported");
+
+    return request;
   }
+
   if (kind === "exec") {
-    const request = input as ExecInput;
+    const request = ExecInputSchema.parse(input);
     const support = session.supports.exec;
-    if (!support || !support.commands.includes(request.command.kind) ||
-        request.maxOutputBytes > support.maxOutputBytes)
+
+    if (
+      !support ||
+      !support.commands.includes(request.command.kind) ||
+      request.maxOutputBytes > support.maxOutputBytes
+    )
       throw new AdapterError("UNSUPPORTED", "Requested command or output limit is unsupported");
+
+    return request;
   }
+
   if (kind === "file_write") {
-    const request = input as FileWriteInput;
+    const request = FileWriteInputSchema.parse(input);
+
     if (!session.files?.write || (request.overwrite && !session.supports.fileWrite?.overwrite))
       throw new AdapterError("UNSUPPORTED", "Requested file write is unsupported");
+
     if (request.bytes.length > session.files.maxBytes)
       throw new AdapterError("CAPACITY", "File exceeds adapter limit");
+
+    return request;
   }
+
+  return SandboxSchema.parse(input);
 }
 
 export async function prepareOperation(
   session: RuntimeSession,
   kind: OperationKind,
-  input: unknown,
+  input: CreateInput | ExecInput | FileWriteInput | Sandbox,
   signal: AbortSignal,
 ): Promise<PreparedOperation> {
   const operation = select(session, kind);
-  checkCapability(session, kind, input);
+  const checkedInput = checkCapability(session, kind, input);
   const parts = operationParts(operation);
+
   const prepared = parts.prepare
-    ? await parts.prepare(structuredClone(input), { signal, deadline: Date.now() + 30_000 })
-    : structuredClone(input);
+    ? await parts.prepare(structuredClone(checkedInput), { signal, deadline: Date.now() + 30_000 })
+    : structuredClone(checkedInput);
+
   return { kind, input: prepared, operation };
 }
 
-function normalizeSpecial(value: SpecialOutcome, operation: Mutation<unknown, unknown, unknown>): RuntimeResult {
+function normalizeSpecial(
+  value: SpecialOutcome,
+  operation: Mutation<unknown, unknown, unknown>,
+): RuntimeResult {
   const parts = operationParts(operation);
   const kind = outcomeKind(value);
+
   if (kind === "pending") {
+    // SAFETY: outcomeKind read the private outcome brand and selected Pending.
     const pending = value as Pending;
-    if (!parts.recovery) throw new AdapterError("INVALID_ARGUMENT", "Pending requires declared recovery");
+
+    if (!parts.recovery)
+      throw new AdapterError("INVALID_ARGUMENT", "Pending requires declared recovery");
+
     return {
       kind: "pending",
       token: pending.token,
@@ -183,8 +302,17 @@ function normalizeSpecial(value: SpecialOutcome, operation: Mutation<unknown, un
       version: parts.recovery.version,
     };
   }
-  if (kind === "unknown") return { kind: "unknown", reason: (value as Unknown).reason };
+
+  if (kind === "unknown") {
+    // SAFETY: outcomeKind read the private outcome brand and selected Unknown.
+    const unknownValue = value as Unknown;
+
+    return { kind: "unknown", reason: unknownValue.reason };
+  }
+
+  // SAFETY: Pending and Unknown were handled above; the branded outcome is Rejected.
   const rejected = value as Rejected;
+
   return { kind: "rejected", code: rejected.code, message: rejected.message };
 }
 
@@ -195,40 +323,55 @@ export async function submitOperation(
   maxOutputBytes = MAX_OUTPUT,
 ): Promise<RuntimeResult> {
   const parts = operationParts(prepared.operation);
-  const context = createAttemptContext(
-    { ...identity, signal },
-    parts.recovery?.token as z.ZodType<Json> | undefined,
-  );
+
+  const context = createAttemptContext({ ...identity, signal }, parts.recovery?.token);
+
   const value = await parts.submit(prepared.input, context);
+
   if (isOutcome(value)) return normalizeSpecial(value, prepared.operation);
+
   return { kind: "completed", value: await validateValue(prepared.kind, value, maxOutputBytes) };
 }
 
 export async function observeOperation(
   session: RuntimeSession,
   kind: OperationKind,
-  attempt: { operationId: string; submissionId: string; sandbox?: Sandbox; token?: Json; version?: number },
+  attempt: {
+    operationId: string;
+    submissionId: string;
+    sandbox?: Sandbox;
+    token?: Json;
+    version?: number;
+  },
   signal: AbortSignal,
   maxOutputBytes = MAX_OUTPUT,
 ): Promise<RuntimeResult | null> {
   const operation = select(session, kind);
   const parts = operationParts(operation);
+
   if (!parts.observe) return null;
+
   if (attempt.token !== undefined) {
     if (!parts.recovery || parts.recovery.version !== attempt.version)
       throw new AdapterError("CONFLICT", "Recovery token version is unsupported");
     parts.recovery.token.parse(attempt.token);
   }
+
   const context = createObserveContext(
     { signal, deadline: Date.now() + 30_000 },
-    parts.recovery?.token as z.ZodType<Json> | undefined,
+    parts.recovery?.token,
   );
+
   const value = await parts.observe({ ...attempt, sandbox: attempt.sandbox }, context);
+
   if (value === null) return null;
+
   if (isOutcome(value)) {
     if (outcomeKind(value) === "rejected")
       throw new AdapterError("INVALID_ARGUMENT", "Observation cannot certify rejection");
+
     return normalizeSpecial(value, operation);
   }
+
   return { kind: "completed", value: await validateValue(kind, value, maxOutputBytes) };
 }

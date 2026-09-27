@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { adapterSuite } from "@sandbar/adapter/testing";
+import { adapterSuite } from "sandbar-adapter/testing";
 import { createModalAdapter } from "./adapter";
 import type { ModalTransport } from "./transport";
 
@@ -9,31 +9,56 @@ test("Modal public adapter passes required managed-compute scenarios", async () 
   let lose = false;
   let hold = false;
   let resume: (() => void) | undefined;
+
   const transportFactory = (): ModalTransport => ({
-    async lookupApp(_name, environment) { return environment === "main" ? "ap-main" : "ap-alternate"; },
-    async imageExists(id) { return id === "im-fixture"; },
+    async lookupApp(_name, environment) {
+      return environment === "main" ? "ap-main" : "ap-alternate";
+    },
+    async imageExists(id) {
+      return id === "im-fixture";
+    },
     async create(input) {
       effects.create++;
       const record = { id: `sb-${effects.create}`, tags: input.tags, running: true };
       records.set(input.name, record);
-      if (lose) { lose = false; throw new Error("response lost after native effect"); }
+
+      if (lose) {
+        lose = false;
+        throw new Error("response lost after native effect");
+      }
+
       if (hold) {
         hold = false;
-        await new Promise<void>((resolve) => { resume = resolve; });
+        await new Promise<void>((resolve) => {
+          resume = resolve;
+        });
       }
+
       return record.id;
     },
-    async findByName(_name, _environment, name) { return records.get(name) ?? null; },
-    async *list() { for (const record of records.values()) yield record; },
+    async findByName(_name, _environment, name) {
+      return records.get(name) ?? null;
+    },
+    async *list() {
+      for (const record of records.values()) yield record;
+    },
     async terminate(id) {
       effects.destroy++;
+
       for (const record of records.values()) if (record.id === id) record.running = false;
+
       return true;
     },
-    async readBytes() { return new Uint8Array(); },
-    close() { effects.release++; },
+    async readBytes() {
+      return new Uint8Array();
+    },
+    close() {
+      effects.release++;
+    },
   });
+
   const adapter = createModalAdapter(transportFactory);
+
   const report = await adapterSuite({
     adapter,
     fixture: {
@@ -45,8 +70,12 @@ test("Modal public adapter passes required managed-compute scenarios", async () 
       },
       createInput: { image: { kind: "prepared", value: "im-fixture" }, networkPolicy: "blocked" },
       counters: () => ({ ...effects }),
-      loseNextCreateResponse() { lose = true; },
-      holdNextCreateResponse() { hold = true; },
+      loseNextCreateResponse() {
+        lose = true;
+      },
+      holdNextCreateResponse() {
+        hold = true;
+      },
       releaseHeldCreateResponse() {
         if (!resume) throw new Error("Native create was not held");
         resume();
@@ -58,6 +87,7 @@ test("Modal public adapter passes required managed-compute scenarios", async () 
       },
     },
   });
+
   expect(report.scenarios).toContain("lost response unknown and observation without replay");
   expect(report.counters).toEqual({ create: 3, destroy: 1, release: 2 });
 });

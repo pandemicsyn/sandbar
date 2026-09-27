@@ -9,7 +9,7 @@ This complete fixture is [compiled and executed in the repository](https://githu
 
 ```ts
 import { z } from "zod";
-import { defineAdapter } from "@sandbar/adapter";
+import { defineAdapter } from "sandbar-adapter";
 import { AcmeClient } from "./acme-native.js";
 
 export const acme = defineAdapter({
@@ -35,7 +35,7 @@ export const acme = defineAdapter({
           public: false,
           requestId: ctx.submissionId,
         });
-        return { id: box.id, state: box.ready ? "running" as const : "unknown" as const };
+        return { id: box.id, state: box.ready ? ("running" as const) : ("unknown" as const) };
       },
       async destroy(box) {
         await client.deleteAndWait(box.id, account.id, config.region);
@@ -50,4 +50,4 @@ The complete [AcmeClient fixture](https://github.com/pandemicsyn/sandbar/blob/ma
 
 `create` and `destroy` are required for managed compute. Add `inspect`, `exec`, `files`, or `inventory` only when their native semantics satisfy the [capability checklist](/docs/guides/adapter-capabilities/). Unsupported calls fail locally. Add a read-only `observe` operation when the provider can find a prior attempt by stable identity; see [asynchronous recovery](/docs/guides/adapter-recovery/).
 
-Before distributing an adapter, run `adapterSuite` from `@sandbar/adapter/testing` with a deterministic native-boundary fixture. Its report lists the scenarios actually run, including lost response, one native effect, scope separation, late response, and release behavior. Each provider fixture must independently prove that its upstream transport does not retry mutations.
+Before distributing an adapter, run `adapterSuite` from `sandbar-adapter/testing` with a deterministic native-boundary fixture. Its report lists the scenarios actually run, including lost response, one native effect, scope separation, late response, and release behavior. Each provider fixture must independently prove that its upstream transport does not retry mutations.

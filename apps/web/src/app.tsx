@@ -16,7 +16,7 @@ import {
   type CreateProviderConnectionRequest,
   type Operation,
   type Sandbox,
-} from "@sandbar/contracts";
+} from "../../server/src/http-contracts";
 import { api, ApiError, setCsrfToken, type Connection, type Project } from "./api";
 import { SchemaFields, formFields, formObject, initialValues } from "./schema-form";
 import {
@@ -440,6 +440,7 @@ function ConnectionsPage() {
   const selectedProvider = catalog.data?.items.find((item) => item.name === provider);
   const configurationFields = formFields(selectedProvider?.configurationSchema);
   const credentialFields = formFields(selectedProvider?.credentialsSchema);
+
   function selectProvider(next: string) {
     const selected = catalog.data?.items.find((item) => item.name === next);
     setProvider(next);
@@ -448,6 +449,7 @@ function ConnectionsPage() {
     setConfigurationJson("{}");
     setCredentialsJson("");
   }
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -460,6 +462,7 @@ function ConnectionsPage() {
 
     try {
       if (!selectedProvider) throw new Error("Choose an available provider");
+
       const input: z.infer<typeof CreateProviderConnectionRequest> = {
         provider: selectedProvider.name,
         name: name.trim(),
@@ -518,7 +521,9 @@ function ConnectionsPage() {
             >
               {!provider && <option value="">Choose provider</option>}
               {catalog.data?.items.map((item) => (
-                <option key={item.name} value={item.name}>{item.displayName}</option>
+                <option key={item.name} value={item.name}>
+                  {item.displayName}
+                </option>
               ))}
             </select>
           </Field>
@@ -762,7 +767,8 @@ function FleetPage() {
             <div className="field">
               <span className="field-label">Blocked network</span>
               <span className="field-hint">
-                Enter a prepared image ID accepted by the selected provider. OCI builds are not enabled.
+                Enter a prepared image ID accepted by the selected provider. OCI builds are not
+                enabled.
               </span>
             </div>
             <Field label="Connection" htmlFor="create-connection">

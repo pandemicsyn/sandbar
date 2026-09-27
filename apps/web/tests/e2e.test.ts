@@ -434,7 +434,10 @@ test("browser and public HTTP recover fake effects across service restarts witho
   expect((await defaultRequest).postDataJSON()).toMatchObject({
     environment: { kind: "prepared", imageId: "snapshot-for-daytona" },
   });
-  expect((await defaultRequest).postDataJSON()).toHaveProperty("connectionId", "conn_daytona_browser");
+  expect((await defaultRequest).postDataJSON()).toHaveProperty(
+    "connectionId",
+    "conn_daytona_browser",
+  );
   await page.getByText("Probe only").waitFor();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "Start new create attempt" }).click();

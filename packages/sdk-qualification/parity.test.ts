@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Sandbar as DirectSandbar, Image as DirectImage } from "sandbar-sdk/direct";
-import { Sandbar as RemoteSandbar, Image as RemoteImage } from "sandbar-sdk/remote";
-import type { RecoveryReference, SandbarClient, SandboxHandle } from "sandbar-sdk";
+import { Sandbar as DirectSandbar, Image as DirectImage } from "sandbar-sdk";
+import { Sandbar as RemoteSandbar, Image as RemoteImage } from "sandbar-service/client";
+import type { RecoveryReference, SandboxHandle } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake";
 import { ProcessFixture } from "./processes";
 
@@ -31,6 +31,19 @@ async function post(url: string, token: string | undefined, body: ServiceRequest
   return response.json();
 }
 
+type DirectClient = Awaited<ReturnType<typeof DirectSandbar.connect>>;
+
+type RemoteClient = ReturnType<typeof RemoteSandbar.connect>;
+
+type FixtureBackend<T> = {
+  fixture: ProcessFixture;
+  client: T;
+  image: ReturnType<typeof DirectImage.prepared>;
+};
+
+async function backend(kind: "direct"): Promise<FixtureBackend<DirectClient>>;
+async function backend(kind: "remote"): Promise<FixtureBackend<RemoteClient>>;
+async function backend(kind: Backend): Promise<FixtureBackend<DirectClient | RemoteClient>>;
 async function backend(kind: Backend) {
   const fixture = new ProcessFixture();
   fixtures.push(fixture);
@@ -39,12 +52,11 @@ async function backend(kind: Backend) {
   if (kind === "direct") {
     const client = await DirectSandbar.connect({
       adapter: createFakeAdapter({ url: fixture.fakeUrl!, token: fixture.fakeToken }),
-      config: {}, credentials: {},
+      config: {},
+      credentials: {},
     });
 
-    const sharedClient: SandbarClient = client;
-
-    return { fixture, client: sharedClient, image: DirectImage.prepared("fake-starter") };
+    return { fixture, client, image: DirectImage.prepared("fake-starter") };
   }
 
   await fixture.startService();
@@ -75,9 +87,7 @@ async function backend(kind: Backend) {
     projectId: project.id,
   });
 
-  const sharedClient: SandbarClient = client;
-
-  return { fixture, client: sharedClient, image: RemoteImage.prepared("fake-starter") };
+  return { fixture, client, image: RemoteImage.prepared("fake-starter") };
 }
 
 for (const kind of ["direct", "remote"] as const) {
@@ -376,4 +386,3 @@ describe("remote recovery evidence", () => {
     }
   }, 30_000);
 });
-

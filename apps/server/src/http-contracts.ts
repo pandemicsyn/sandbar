@@ -2,15 +2,25 @@ import { z } from "zod";
 
 // Inputs are strict so a misspelled security or lifecycle setting cannot be ignored.
 // Outputs intentionally strip additive fields when decoded by older clients.
-export const Id = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9_-]+$/);
+import { Id, CreateSandboxInput, Effect, SafeError } from "sandbar-adapter/portable";
+
+export {
+  Id,
+  InvocationKey,
+  ImageSource,
+  NetworkSelection,
+  ExecCommand,
+  ExecRequest,
+  Effect,
+  ErrorCode,
+  SafeError,
+  canonicalJson,
+  intentSha256,
+} from "sandbar-adapter/portable";
+
+export type { CanonicalJsonValue } from "sandbar-adapter/portable";
 
 export const Rfc3339 = z.iso.datetime({ offset: true });
-
-export const InvocationKey = z.uuidv7();
 
 export const ProjectPath = z.strictObject({ projectId: Id });
 
@@ -18,12 +28,7 @@ export const SandboxPath = ProjectPath.extend({ sandboxId: Id });
 
 export const OperationPath = ProjectPath.extend({ operationId: Id });
 
-export const ImageSource = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("prepared"), imageId: Id }),
-  z.strictObject({ kind: z.literal("oci"), reference: z.string().min(1).max(1024) }),
-]);
-
-export const NetworkSelection = z.strictObject({ policy: z.string().min(1).max(128) });
+export const CreateSandboxRequest = CreateSandboxInput.extend({ connectionId: Id.optional() });
 
 const ImageSourceResponse = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("prepared"), imageId: Id }),
@@ -31,59 +36,6 @@ const ImageSourceResponse = z.discriminatedUnion("kind", [
 ]);
 
 const NetworkSelectionResponse = z.object({ policy: z.string().min(1).max(128) });
-
-export const CreateSandboxRequest = z.strictObject({
-  environment: ImageSource,
-  connectionId: Id.optional(),
-  region: z.string().min(1).max(128).optional(),
-  network: NetworkSelection.optional(),
-  labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
-});
-
-export const ExecCommand = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("argv"), argv: z.array(z.string().max(8192)).min(1).max(128) }),
-  z.strictObject({ kind: z.literal("shell"), script: z.string().min(1).max(65536) }),
-]);
-
-export const ExecRequest = z.strictObject({
-  command: ExecCommand,
-  cwd: z.string().min(1).max(4096).optional(),
-  env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(8192)).optional(),
-  deadlineSeconds: z.number().int().min(1).max(3600).optional(),
-  output: z
-    .strictObject({
-      capture: z.enum(["bounded", "none"]),
-      maxBytes: z.number().int().min(0).max(1048576).optional(),
-    })
-    .optional(),
-});
-
-export const Effect = z.enum(["none", "applied", "partial", "possible", "unknown"]);
-
-export const ErrorCode = z.enum([
-  "INVALID_ARGUMENT",
-  "UNSUPPORTED",
-  "UNAUTHENTICATED",
-  "FORBIDDEN",
-  "NOT_FOUND",
-  "CONFLICT",
-  "CAPACITY",
-  "RATE_LIMIT",
-  "INVOCATION_EXPIRED",
-  "UNAVAILABLE",
-  "TIMEOUT",
-  "OUTPUT_CAPACITY",
-  "OUTCOME_UNKNOWN",
-  "INTERNAL",
-]);
-
-export const SafeError = z.object({
-  code: ErrorCode,
-  message: z.string().max(1024),
-  effect: Effect,
-  retry: z.enum(["never", "same_invocation", "observe_only", "new_invocation_with_risk"]),
-  retryAfterSeconds: z.number().int().nonnegative().optional(),
-});
 
 export const ErrorResponse = z.object({ error: SafeError });
 
@@ -363,7 +315,11 @@ export const Project = z.object({ id: Id, name: z.string(), createdAt: Rfc3339 }
 
 export const ProjectPage = z.object({ items: z.array(Project) });
 
-export const ProviderName = z.string().min(1).max(128).regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/);
+export const ProviderName = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/);
 
 export const CreateProviderConnectionRequest = z.strictObject({
   provider: ProviderName,
@@ -384,10 +340,12 @@ export const ProviderConnection = z.object({
       resourceScope: z.object({ kind: z.literal("app"), id: z.string() }).optional(),
       region: z.string().optional(),
       endpoint: z.url().optional(),
-      adapterScope: z.object({
-        authority: z.object({ kind: z.string(), id: z.string() }),
-        partition: z.record(z.string(), z.string()),
-      }).optional(),
+      adapterScope: z
+        .object({
+          authority: z.object({ kind: z.string(), id: z.string() }),
+          partition: z.record(z.string(), z.string()),
+        })
+        .optional(),
     })
     .optional(),
   capabilities: z
@@ -398,12 +356,14 @@ export const ProviderConnection = z.object({
 export const ProviderConnectionPage = z.object({ items: z.array(ProviderConnection) });
 
 export const ProviderCatalog = z.object({
-  items: z.array(z.object({
-    name: ProviderName,
-    displayName: z.string().min(1).max(120),
-    configurationSchema: z.json(),
-    credentialsSchema: z.json(),
-  })),
+  items: z.array(
+    z.object({
+      name: ProviderName,
+      displayName: z.string().min(1).max(120),
+      configurationSchema: z.json(),
+      credentialsSchema: z.json(),
+    }),
+  ),
 });
 
 export const SandboxListQuery = z.strictObject({
@@ -453,65 +413,12 @@ export const StreamFrame = z.discriminatedUnion("kind", [
 
 export type CreateSandboxRequest = z.infer<typeof CreateSandboxRequest>;
 
-export type ExecRequest = z.infer<typeof ExecRequest>;
-
 export type Operation = z.infer<typeof Operation>;
 
 export type Sandbox = z.infer<typeof Sandbox>;
 
 export type Execution = z.infer<typeof Execution>;
 
-export type SafeError = z.infer<typeof SafeError>;
-
-export type ExecCommand = z.infer<typeof ExecCommand>;
-
 export type Project = z.infer<typeof Project>;
 
 export type ProviderConnection = z.infer<typeof ProviderConnection>;
-
-// Internal JS/Bun intent serialization. The server computes this hash from validated parsed input;
-// clients only repeat the same request and Idempotency-Key. This is not a cross-language wire format.
-export type CanonicalJsonValue =
-  | null
-  | string
-  | boolean
-  | number
-  | CanonicalJsonValue[]
-  | { [key: string]: CanonicalJsonValue | undefined };
-
-export function canonicalJson(value: CanonicalJsonValue): string {
-  if (value === null) return "null";
-
-  const stringValue = z.string().safeParse(value);
-
-  if (stringValue.success) return JSON.stringify(stringValue.data);
-
-  const booleanValue = z.boolean().safeParse(value);
-
-  if (booleanValue.success) return JSON.stringify(booleanValue.data);
-
-  const numberValue = z.number().safeParse(value);
-
-  if (numberValue.success && Number.isFinite(numberValue.data))
-    return JSON.stringify(numberValue.data);
-
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-
-  if (!z.record(z.string(), z.any()).safeParse(value).success)
-    throw new TypeError("Intent must be JSON-compatible");
-
-  return `{${Object.entries(value)
-    .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`)
-    .join(",")}}`;
-}
-
-export async function intentSha256(input: CanonicalJsonValue): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(canonicalJson(input)),
-  );
-
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}

@@ -21,9 +21,10 @@
       },
       "devDependencies": {
         "@astrojs/check": "0.9.6",
-        "@sandbar/adapter": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
+        "sandbar-adapter": "workspace:*",
         "sandbar-sdk": "workspace:*",
+        "sandbar-service": "workspace:*",
         "typescript": "5.9.3",
         "wrangler": "4.141.0",
         "zod": "4.6.5",
@@ -32,8 +33,6 @@
     "apps/server": {
       "name": "@sandbar/server",
       "dependencies": {
-        "@sandbar/adapter": "workspace:*",
-        "@sandbar/contracts": "workspace:*",
         "@sandbar/core": "workspace:*",
         "@sandbar/provider-daytona": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
@@ -42,16 +41,17 @@
         "@sandbar/service-runtime": "workspace:*",
         "@sandbar/store": "workspace:*",
         "hono": "4.13.9",
+        "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
         "drizzle-orm": "1.0.0-beta.22",
+        "oxfmt": "0.70.0",
       },
     },
     "apps/web": {
       "name": "@sandbar/web",
       "dependencies": {
-        "@sandbar/contracts": "workspace:*",
         "@tanstack/react-router": "1.170.39",
         "react": "19.3.0",
         "react-dom": "19.3.0",
@@ -68,14 +68,7 @@
       },
     },
     "packages/adapter": {
-      "name": "@sandbar/adapter",
-      "version": "0.0.0",
-      "dependencies": {
-        "zod": "4.6.5",
-      },
-    },
-    "packages/contracts": {
-      "name": "@sandbar/contracts",
+      "name": "sandbar-adapter",
       "version": "0.0.0",
       "dependencies": {
         "zod": "4.6.5",
@@ -85,15 +78,16 @@
       "name": "@sandbar/core",
       "version": "0.0.0",
       "dependencies": {
-        "@sandbar/contracts": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
+        "sandbar-adapter": "workspace:*",
+        "zod": "4.6.5",
       },
     },
     "packages/provider-spi": {
       "name": "@sandbar/provider-spi",
       "version": "0.0.0",
       "dependencies": {
-        "@sandbar/contracts": "workspace:*",
+        "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
     },
@@ -101,9 +95,8 @@
       "name": "@sandbar/provider-daytona",
       "version": "0.0.0",
       "dependencies": {
-        "@sandbar/adapter": "workspace:*",
-        "@sandbar/contracts": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
+        "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
@@ -114,9 +107,8 @@
       "name": "@sandbar/provider-fake",
       "version": "0.0.0",
       "dependencies": {
-        "@sandbar/adapter": "workspace:*",
-        "@sandbar/contracts": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
+        "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
     },
@@ -125,10 +117,9 @@
       "version": "0.0.0",
       "dependencies": {
         "@bufbuild/protobuf": "2.0.0",
-        "@sandbar/adapter": "workspace:*",
-        "@sandbar/contracts": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
         "modal": "0.10.1",
+        "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
@@ -140,14 +131,14 @@
       "name": "sandbar-sdk",
       "version": "0.0.0",
       "dependencies": {
-        "@sandbar/adapter": "workspace:*",
-        "@sandbar/contracts": "workspace:*",
-        "@sandbar/core": "workspace:*",
-        "@sandbar/provider-spi": "workspace:*",
+        "modal": "0.10.1",
+        "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
+        "@sandbar/provider-daytona": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
+        "@sandbar/provider-modal": "workspace:*",
       },
     },
     "packages/sdk-qualification": {
@@ -155,14 +146,15 @@
       "dependencies": {
         "@sandbar/provider-fake": "workspace:*",
         "sandbar-sdk": "workspace:*",
+        "sandbar-service": "workspace:*",
         "zod": "4.6.5",
       },
     },
     "packages/service": {
-      "name": "@sandbar/service",
+      "name": "sandbar-service",
       "version": "0.0.0",
       "dependencies": {
-        "@sandbar/adapter": "workspace:*",
+        "sandbar-adapter": "workspace:*",
         "sandbar-sdk": "workspace:*",
         "zod": "4.6.5",
       },
@@ -170,11 +162,10 @@
     "packages/service-runtime": {
       "name": "@sandbar/service-runtime",
       "dependencies": {
-        "@sandbar/adapter": "workspace:*",
-        "@sandbar/contracts": "workspace:*",
         "@sandbar/core": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
         "@sandbar/store": "workspace:*",
+        "sandbar-adapter": "workspace:*",
         "sandbar-sdk": "workspace:*",
         "zod": "4.6.5",
       },
@@ -609,10 +600,6 @@
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
 
-    "@sandbar/adapter": ["@sandbar/adapter@workspace:packages/adapter"],
-
-    "@sandbar/contracts": ["@sandbar/contracts@workspace:packages/contracts"],
-
     "@sandbar/core": ["@sandbar/core@workspace:packages/core"],
 
     "@sandbar/docs": ["@sandbar/docs@workspace:apps/docs"],
@@ -626,8 +613,6 @@
     "@sandbar/provider-spi": ["@sandbar/provider-spi@workspace:packages/provider-spi"],
 
     "@sandbar/server": ["@sandbar/server@workspace:apps/server"],
-
-    "@sandbar/service": ["@sandbar/service@workspace:packages/service"],
 
     "@sandbar/service-runtime": ["@sandbar/service-runtime@workspace:packages/service-runtime"],
 
@@ -1227,9 +1212,13 @@
 
     "safer-buffer": ["safer-buffer@2.1.2", "", {}, "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg=="],
 
+    "sandbar-adapter": ["sandbar-adapter@workspace:packages/adapter"],
+
     "sandbar-sdk": ["sandbar-sdk@workspace:packages/sdk"],
 
     "sandbar-sdk-qualification": ["sandbar-sdk-qualification@workspace:packages/sdk-qualification"],
+
+    "sandbar-service": ["sandbar-service@workspace:packages/service"],
 
     "satteri": ["satteri@0.10.5", "", { "dependencies": { "@types/estree-jsx": "^1.0.5", "@types/hast": "^3.0.5", "@types/mdast": "^4.0.4", "@types/unist": "^3.0.3" }, "optionalDependencies": { "@bruits/satteri-darwin-arm64": "0.10.5", "@bruits/satteri-darwin-x64": "0.10.5", "@bruits/satteri-linux-arm64-gnu": "0.10.5", "@bruits/satteri-linux-arm64-musl": "0.10.5", "@bruits/satteri-linux-x64-gnu": "0.10.5", "@bruits/satteri-linux-x64-musl": "0.10.5", "@bruits/satteri-wasm32-wasi": "0.10.5", "@bruits/satteri-win32-arm64-msvc": "0.10.5", "@bruits/satteri-win32-x64-msvc": "0.10.5" } }, "sha512-Ao1LKpAEa9Wdg0otgbVKViZHEq9ebdXe4DMrp3s9vQAU0HNIuHnFEuMuOcm0ZIXyV0Yzxj91NvhLpvXZJO/5ZQ=="],
 

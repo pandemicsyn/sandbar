@@ -15,50 +15,74 @@ export type FormField = z.infer<typeof PrimitiveField> & {
   required: boolean;
 };
 
-export function formFields(schema: unknown): FormField[] | null {
-  const root = z.object({
-    type: z.literal("object"),
-    properties: z.record(z.string(), z.unknown()).default({}),
-    required: z.array(z.string()).default([]),
-  }).safeParse(schema);
+type JsonObject = Record<string, z.infer<ReturnType<typeof z.json>>>;
+
+export function formFields(
+  schema: z.infer<ReturnType<typeof z.json>> | undefined,
+): FormField[] | null {
+  const root = z
+    .object({
+      type: z.literal("object"),
+      properties: z.record(z.string(), z.unknown()).default({}),
+      required: z.array(z.string()).default([]),
+    })
+    .safeParse(schema);
+
   if (!root.success) return null;
   const fields: FormField[] = [];
+
   for (const [key, value] of Object.entries(root.data.properties)) {
     const field = PrimitiveField.safeParse(value);
+
     if (!field.success || (field.data.format && !["uri", "email"].includes(field.data.format)))
       return null;
     fields.push({ key, ...field.data, required: root.data.required.includes(key) });
   }
+
   return fields;
 }
 
 export function initialValues(fields: FormField[] | null, secret: boolean): Record<string, string> {
   if (!fields || secret) return {};
-  return Object.fromEntries(fields
-    .filter((field) => field.default !== undefined)
-    .map((field) => [field.key, String(field.default)]));
+
+  return Object.fromEntries(
+    fields
+      .filter((field) => field.default !== undefined)
+      .map((field) => [field.key, String(field.default)]),
+  );
 }
 
-export function formObject(fields: FormField[] | null, values: Record<string, string>, fallback: string): Record<string, z.infer<ReturnType<typeof z.json>>> {
+export function formObject(
+  fields: FormField[] | null,
+  values: Record<string, string>,
+  fallback: string,
+) {
   if (!fields) {
     const parsed: unknown = JSON.parse(fallback);
+
     return z.record(z.string(), z.json()).parse(parsed);
   }
-  const result: Record<string, z.infer<ReturnType<typeof z.json>>> = {};
+
+  const result: JsonObject = {};
+
   for (const field of fields) {
     const value = values[field.key] ?? "";
+
     if (!value.trim() && field.type !== "boolean") {
       if (field.required) throw new Error(`${field.title ?? field.key} is required`);
       continue;
     }
+
     if (field.type === "boolean") result[field.key] = value === "true";
     else if (field.type === "number" || field.type === "integer") {
       const numeric = Number(value);
+
       if (!Number.isFinite(numeric) || (field.type === "integer" && !Number.isSafeInteger(numeric)))
         throw new Error(`${field.title ?? field.key} must be a valid number`);
       result[field.key] = numeric;
     } else result[field.key] = value;
   }
+
   return result;
 }
 
@@ -87,7 +111,11 @@ export function SchemaFields({
     return (
       <Field
         label={secret ? "Credentials JSON" : "Configuration JSON"}
-        hint={secret ? "Paste a JSON object. This field is masked and cleared after submission." : "This provider uses a complex schema. Enter a JSON object."}
+        hint={
+          secret
+            ? "Paste a JSON object. This field is masked and cleared after submission."
+            : "This provider uses a complex schema. Enter a JSON object."
+        }
         htmlFor={`${prefix}-json`}
       >
         <input
@@ -102,25 +130,50 @@ export function SchemaFields({
       </Field>
     );
   }
+
   return fields.map((field) => {
     const id = `${prefix}-${field.key}`;
     const title = field.title ?? label(field.key);
     const value = values[field.key] ?? "";
     const set = (next: string) => onChange({ ...values, [field.key]: next });
+
     return (
       <Field key={id} label={title} hint={field.description} htmlFor={id}>
         {field.enum ? (
-          <select className="select" id={id} value={value} required={field.required} onChange={(event) => set(event.target.value)}>
+          <select
+            className="select"
+            id={id}
+            value={value}
+            required={field.required}
+            onChange={(event) => set(event.target.value)}
+          >
             {!field.required && <option value="">Optional</option>}
-            {field.enum.map((option) => <option key={option} value={option}>{option}</option>)}
+            {field.enum.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
           </select>
         ) : field.type === "boolean" ? (
-          <input id={id} type="checkbox" checked={value === "true"} onChange={(event) => set(String(event.target.checked))} />
+          <input
+            id={id}
+            type="checkbox"
+            checked={value === "true"}
+            onChange={(event) => set(String(event.target.checked))}
+          />
         ) : (
           <input
             className="input"
             id={id}
-            type={secret ? "password" : field.type === "number" || field.type === "integer" ? "number" : field.format === "uri" ? "url" : "text"}
+            type={
+              secret
+                ? "password"
+                : field.type === "number" || field.type === "integer"
+                  ? "number"
+                  : field.format === "uri"
+                    ? "url"
+                    : "text"
+            }
             autoComplete={secret ? "new-password" : "off"}
             required={field.required}
             value={value}

@@ -3,7 +3,7 @@
 Status: **implemented safe subset; deterministic fixtures only; live unverified**. This package uses the official `modal@0.10.1` JavaScript SDK. It does not require Python, Hono, SQL, or a Sandbar service in direct mode.
 
 ```ts
-import { Sandbar, Image } from "sandbar-sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk";
 import { modalAdapter } from "@sandbar/provider-modal";
 
 const client = await Sandbar.connect({

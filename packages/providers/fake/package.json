@@ -27,12 +27,11 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts src/client.ts src/server.ts src/adapter.ts --target node --format esm --outdir dist --external '@sandbar/*' --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts src/client.ts src/server.ts src/adapter.ts --target node --format esm --outdir dist --external '@sandbar/*' --external sandbar-adapter --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs"
   },
   "dependencies": {
-    "@sandbar/contracts": "workspace:*",
     "@sandbar/provider-spi": "workspace:*",
     "zod": "4.6.5",
-    "@sandbar/adapter": "workspace:*"
+    "sandbar-adapter": "workspace:*"
   }
 }

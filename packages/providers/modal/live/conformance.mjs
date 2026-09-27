@@ -1,4 +1,4 @@
-import { Sandbar, Image } from "sandbar-sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk";
 import { createModalAdapter } from "../dist/index.js";
 
 function required(name) {

@@ -8,7 +8,7 @@ import {
   type SandboxRef,
   type InvocationIdentity,
 } from "@sandbar/provider-spi";
-import type { ExecCommand } from "@sandbar/contracts";
+import type { ExecCommand } from "sandbar-adapter/portable";
 import { z } from "zod";
 import { FakeAction, FakeInventoryCursor, FakeEvent, FakeFileBytesBase64 } from "./protocol";
 

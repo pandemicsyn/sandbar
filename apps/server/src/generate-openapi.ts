@@ -1,10 +1,15 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { format } from "oxfmt";
 import { openApiDocument } from "./openapi";
 
 const path = fileURLToPath(new URL("../openapi.json", import.meta.url));
 
-const output = `${JSON.stringify(openApiDocument, null, 2)}\n`;
+const formatted = await format(path, `${JSON.stringify(openApiDocument, null, 2)}\n`);
+
+if (formatted.errors.length) throw new Error("OpenAPI formatter failed");
+
+const output = formatted.code;
 
 if (process.argv.includes("--check")) {
   const current = await readFile(path, "utf8").catch(() => "");

@@ -398,51 +398,75 @@ export async function openMysqlBackend(url: string): Promise<Backend> {
 
 /** Apply committed SQL migrations in order. Existing version checksums are preserved. */
 export async function migrate(backend: Backend, migrationSql: string): Promise<void> {
-  const migrations = [
-    { version: "0001_control", source: migrationSql },
-    { version: "0002_adapter", source: bundledAdapterMigration(backend.dialect) },
-  ];
+  const migrations = [{ version: "0001_control", source: migrationSql }];
+
   for (const migration of migrations) {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(migration.source));
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(migration.source),
+    );
+
     const checksum = Buffer.from(digest).toString("hex");
+
     if (backend.dialect === "sqlite") {
       await backend.transaction(async (tx) => {
-        await tx.run(sql.raw("CREATE TABLE IF NOT EXISTS _sandbar_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL)"));
+        await tx.run(
+          sql.raw(
+            "CREATE TABLE IF NOT EXISTS _sandbar_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL)",
+          ),
+        );
+
         const prior = await tx.row<{ checksum: string }>(
           sql`SELECT checksum FROM _sandbar_migrations WHERE version=${migration.version}`,
         );
+
         if (prior) {
           if (prior.checksum !== checksum)
-            throw new Error(`Committed SQLite migration checksum differs from applied ${migration.version}`);
+            throw new Error(
+              `Development schema changed at ${migration.version}; use a fresh database. Existing data was not modified`,
+            );
+
           return;
         }
-        for (const statement of migration.source.split(";").map((part) => part.trim()).filter(Boolean))
+
+        for (const statement of migration.source
+          .split(";")
+          .map((part) => part.trim())
+          .filter(Boolean))
           await tx.run(sql.raw(statement));
-        await tx.run(sql`INSERT INTO _sandbar_migrations (version,checksum) VALUES (${migration.version},${checksum})`);
+        await tx.run(
+          sql`INSERT INTO _sandbar_migrations (version,checksum) VALUES (${migration.version},${checksum})`,
+        );
       });
     } else {
-      await backend.run(sql.raw(
-        "CREATE TABLE IF NOT EXISTS _sandbar_migrations (version varchar(128) COLLATE utf8mb4_bin PRIMARY KEY, checksum char(64) COLLATE utf8mb4_bin NOT NULL) ENGINE=InnoDB",
-      ));
+      await backend.run(
+        sql.raw(
+          "CREATE TABLE IF NOT EXISTS _sandbar_migrations (version varchar(128) COLLATE utf8mb4_bin PRIMARY KEY, checksum char(64) COLLATE utf8mb4_bin NOT NULL) ENGINE=InnoDB",
+        ),
+      );
+
       const prior = await backend.row<{ checksum: string }>(
         sql`SELECT checksum FROM _sandbar_migrations WHERE version=${migration.version}`,
       );
+
       if (prior) {
         if (prior.checksum !== checksum)
-          throw new Error(`Committed MySQL migration checksum differs from applied ${migration.version}`);
+          throw new Error(
+            `Development schema changed at ${migration.version}; use a fresh database. Existing data was not modified`,
+          );
         continue;
       }
-      for (const statement of migration.source.split(";").map((part) => part.trim()).filter(Boolean))
+
+      for (const statement of migration.source
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean))
         await backend.run(sql.raw(statement));
-      await backend.run(sql`INSERT INTO _sandbar_migrations (version,checksum) VALUES (${migration.version},${checksum})`);
+      await backend.run(
+        sql`INSERT INTO _sandbar_migrations (version,checksum) VALUES (${migration.version},${checksum})`,
+      );
     }
   }
-}
-
-function bundledAdapterMigration(dialect: Dialect): string {
-  const source = join(import.meta.dir, `../migrations/${dialect}/0002_adapter.sql`);
-  const bundled = join(import.meta.dir, `migrations/${dialect}/0002_adapter.sql`);
-  return readFileSync(existsSync(source) ? source : bundled, "utf8");
 }
 
 export function bundledMigration(dialect: Dialect): string {

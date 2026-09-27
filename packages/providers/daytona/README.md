@@ -5,7 +5,7 @@
 ## Direct TypeScript
 
 ```ts
-import { Sandbar, Image } from 'sandbar-sdk/direct';
+import { Sandbar, Image } from 'sandbar-sdk';
 import { daytonaAdapter } from '@sandbar/provider-daytona';
 
 const sandbar = await Sandbar.connect({

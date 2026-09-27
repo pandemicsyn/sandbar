@@ -1,9 +1,17 @@
 # TypeScript resource SDK
 
-`sandbar-sdk/direct` uses an installed adapter in the caller's server-side Node.js or Bun process. `sandbar-sdk/remote` uses the Sandbar service over HTTP. Both expose the same resource flow. The fake provider is the initial verified implementation; it is a simulation, not an OCI importer or evidence of real-provider support.
+`sandbar-sdk` uses an installed adapter in the caller's server-side Node.js or Bun process. Implemented first-party adapter imports are `sandbar-sdk/daytona` and `sandbar-sdk/modal`; both are included in the SDK package and use the same public adapter contract as custom integrations. `sandbar-service/client` uses the Sandbar service over HTTP. The fake provider is a deterministic test fixture. Live provider qualification remains separate from the packaged API shape.
 
 ```ts
-import { Sandbar, Image } from "sandbar-sdk/direct";
+import { Sandbar } from "sandbar-sdk";
+import { daytona } from "sandbar-sdk/daytona";
+
+const sandbar = await Sandbar.connect(daytona({ apiKey: process.env.DAYTONA_API_KEY!, target: "us" }));
+await sandbar.close();
+```
+
+```ts
+import { Sandbar, Image } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake";
 
 const sandbar = await Sandbar.connect({
@@ -25,7 +33,7 @@ try {
 The independent fake service must be running for this fixture. Its command fixtures must be seeded in test mode before `exec`; the SDK does not start the fake server. Direct construction imports no service, database, Hono or Drizzle code. Provider credentials remain in the caller's process and are inappropriate for browser code.
 
 ```ts
-import { Sandbar, Image } from "sandbar-sdk/remote";
+import { Sandbar, Image } from "sandbar-service/client";
 
 const sandbar = Sandbar.connect({ url: "https://sandbar.example/", token: process.env.SANDBAR_TOKEN!, projectId: "my_project" });
 const box = await sandbar.sandboxes.create({ environment: Image.prepared("fake-starter") });

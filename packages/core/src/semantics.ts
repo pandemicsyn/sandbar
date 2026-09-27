@@ -1,8 +1,9 @@
-import { CreateSandboxRequest, ExecRequest } from "@sandbar/contracts";
+import { CreateSandboxInput, ExecRequest } from "sandbar-adapter/portable";
+import { z } from "zod";
 import type {
-  CreateSandboxRequest as CreateSandboxRequestInput,
+  CreateSandboxInput as CreateSandboxInputInput,
   ExecRequest as ExecRequestInput,
-} from "@sandbar/contracts";
+} from "sandbar-adapter/portable";
 import {
   validateDriverResult,
   type DriverResult,
@@ -26,8 +27,10 @@ export interface ExecPlan {
   maxOutputBytes: number;
 }
 
-export function normalizeCreate(input: CreateSandboxRequestInput): CreatePlan {
-  const request = CreateSandboxRequest.parse(input);
+export function normalizeCreate(input: CreateSandboxInputInput): CreatePlan {
+  const request = CreateSandboxInput.safeExtend({ connectionId: z.string().optional() }).parse(
+    input,
+  );
 
   return {
     image:

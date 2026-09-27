@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Sandbar, Image } from "sandbar-sdk/remote";
+import { Sandbar, Image } from "sandbar-service/client";
 import { ProcessFixture } from "../../../packages/sdk-qualification/processes";
 
 type RequestBody =

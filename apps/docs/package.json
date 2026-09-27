@@ -4,12 +4,14 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "check": "astro check && tsc -p examples/tsconfig.json && bun scripts/check-links.mjs",
+    "check": "astro check && tsc -p examples/tsconfig.json && bun scripts/check-links.mjs && bun run typescript:check",
     "build": "bun scripts/generate-http-reference.mjs --check && astro build && bun scripts/check-dist.mjs",
     "reference:generate": "bun scripts/generate-http-reference.mjs",
     "reference:check": "bun scripts/generate-http-reference.mjs --check",
     "examples:test": "bun test examples",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "typescript:generate": "bun scripts/generate-typescript-reference.mjs",
+    "typescript:check": "bun scripts/generate-typescript-reference.mjs --check"
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.4",
@@ -21,7 +23,8 @@
     "@sandbar/provider-fake": "workspace:*",
     "typescript": "5.9.3",
     "wrangler": "4.141.0",
-    "@sandbar/adapter": "workspace:*",
-    "zod": "4.6.5"
+    "sandbar-adapter": "workspace:*",
+    "zod": "4.6.5",
+    "sandbar-service": "workspace:*"
   }
 }

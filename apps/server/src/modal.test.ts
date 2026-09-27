@@ -157,7 +157,10 @@ test("service verifies Modal App scope, encrypts credentials and routes bounded 
     expect(verified.value).toMatchObject({
       status: "verified",
       nativeScope: {
-        adapterScope: { authority: { kind: "app", id: "ap-fixture" }, partition: { environment: "main" } },
+        adapterScope: {
+          authority: { kind: "app", id: "ap-fixture" },
+          partition: { environment: "main" },
+        },
         region: "us-east-1",
         endpoint: "https://api.modal.com:443",
       },

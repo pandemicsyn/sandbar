@@ -1,5 +1,4 @@
 import { readFileSync, statSync } from "node:fs";
-import { z } from "zod";
 import { createApp } from "./app";
 import { registerDomainRoutes } from "./routes/domain";
 import {
@@ -91,9 +90,10 @@ export async function openDomainRuntime(config: RuntimeConfig) {
       throw new Error("Setup token file must contain at least 24 characters");
     const store = new ControlStore(backend);
 
-    const fakeAdapter = config.fakeProviderUrl && config.fakeProviderToken
-      ? createFakeAdapter({ url: config.fakeProviderUrl, token: config.fakeProviderToken })
-      : undefined;
+    const fakeAdapter =
+      config.fakeProviderUrl && config.fakeProviderToken
+        ? createFakeAdapter({ url: config.fakeProviderUrl, token: config.fakeProviderToken })
+        : undefined;
 
     const registry = new ProviderRegistry(store, secrets, [
       createDaytonaAdapter(config.daytonaFetch, config.daytonaTrustedEndpoints),

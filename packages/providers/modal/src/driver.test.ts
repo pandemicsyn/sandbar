@@ -1,7 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-} from "sandbar-sdk/direct";
-import {
   createModalRegistration,
   modalProvider,
   MODAL_ENDPOINT,
@@ -385,4 +383,3 @@ test("lost termination response stays unknown and is not retried", async () => {
   expect(result.status).toBe("unknown");
   expect(fixture.terminates).toBe(1);
 });
-

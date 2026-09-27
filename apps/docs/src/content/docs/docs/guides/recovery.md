@@ -19,4 +19,4 @@ Direct references have `durability: 'process'` on their operation handles. A new
 
 `close()` stops client-owned waiting and never destroys a sandbox. Call `destroy()` explicitly and preserve a reference if destruction becomes uncertain. If native discovery is unavailable, an unknown result stays unknown.
 
-When direct mode receives a borrowed provider driver, `close()` does not cancel that driver's transport work or provider compute. It only stops SDK-owned waiting.
+An adapter may register a release hook for a transport it owns. `close()` invokes that hook once and stops SDK-owned waiting; it does not prove provider compute was canceled.

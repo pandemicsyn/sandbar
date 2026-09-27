@@ -26,7 +26,7 @@ import {
   SessionResponse,
   SetupRequest,
   StreamFrame,
-} from "./index";
+} from "./http-contracts";
 
 const schemas = {
   AcceptedExecution,

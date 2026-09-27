@@ -492,14 +492,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "enum": [
-                "resolving",
-                "provisioning",
-                "running",
-                "destroying",
-                "destroyed",
-                "unknown"
-              ]
+              "enum": ["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"]
             }
           },
           {
@@ -951,10 +944,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "enum": [
-                "true",
-                "false"
-              ]
+              "enum": ["true", "false"]
             },
             "description": "Whether an existing file may be replaced; defaults to false."
           }
@@ -1157,12 +1147,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "enum": [
-                "create",
-                "exec",
-                "destroy",
-                "file_write"
-              ]
+              "enum": ["create", "exec", "destroy", "file_write"]
             }
           },
           {
@@ -1250,13 +1235,7 @@
               },
               "status": {
                 "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "succeeded",
-                  "failed",
-                  "unknown"
-                ]
+                "enum": ["queued", "running", "succeeded", "failed", "unknown"]
               },
               "phase": {
                 "type": "string",
@@ -1274,13 +1253,7 @@
               },
               "effect": {
                 "type": "string",
-                "enum": [
-                  "none",
-                  "applied",
-                  "partial",
-                  "possible",
-                  "unknown"
-                ]
+                "enum": ["none", "applied", "partial", "possible", "unknown"]
               },
               "error": {
                 "type": "object",
@@ -1310,22 +1283,11 @@
                   },
                   "effect": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
+                    "enum": ["none", "applied", "partial", "possible", "unknown"]
                   },
                   "retry": {
                     "type": "string",
-                    "enum": [
-                      "never",
-                      "same_invocation",
-                      "observe_only",
-                      "new_invocation_with_risk"
-                    ]
+                    "enum": ["never", "same_invocation", "observe_only", "new_invocation_with_risk"]
                   },
                   "retryAfterSeconds": {
                     "type": "integer",
@@ -1333,23 +1295,13 @@
                     "maximum": 9007199254740991
                   }
                 },
-                "required": [
-                  "code",
-                  "message",
-                  "effect",
-                  "retry"
-                ]
+                "required": ["code", "message", "effect", "retry"]
               },
               "recovery": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "enum": [
-                    "check_again",
-                    "inspect_candidates",
-                    "acknowledge",
-                    "run_again"
-                  ]
+                  "enum": ["check_again", "inspect_candidates", "acknowledge", "run_again"]
                 }
               },
               "kind": {
@@ -1370,10 +1322,7 @@
                     "pattern": "^[A-Za-z0-9_-]+$"
                   }
                 },
-                "required": [
-                  "kind",
-                  "executionId"
-                ]
+                "required": ["kind", "executionId"]
               }
             },
             "required": [
@@ -1395,18 +1344,12 @@
                       "const": "succeeded"
                     }
                   },
-                  "required": [
-                    "status"
-                  ]
+                  "required": ["status"]
                 },
                 "then": {
-                  "required": [
-                    "result"
-                  ],
+                  "required": ["result"],
                   "not": {
-                    "required": [
-                      "error"
-                    ]
+                    "required": ["error"]
                   }
                 }
               },
@@ -1417,18 +1360,12 @@
                       "const": "failed"
                     }
                   },
-                  "required": [
-                    "status"
-                  ]
+                  "required": ["status"]
                 },
                 "then": {
-                  "required": [
-                    "error"
-                  ],
+                  "required": ["error"],
                   "not": {
-                    "required": [
-                      "result"
-                    ]
+                    "required": ["result"]
                   }
                 }
               },
@@ -1439,10 +1376,7 @@
                       "const": "none"
                     }
                   },
-                  "required": [
-                    "effect",
-                    "error"
-                  ]
+                  "required": ["effect", "error"]
                 },
                 "then": {
                   "properties": {
@@ -1452,9 +1386,7 @@
                           "const": "none"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   }
                 }
@@ -1469,11 +1401,7 @@
                       "const": "none"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "effect",
-                    "result"
-                  ]
+                  "required": ["kind", "effect", "result"]
                 },
                 "then": {
                   "properties": {
@@ -1485,14 +1413,10 @@
                               "const": "none"
                             }
                           },
-                          "required": [
-                            "effect"
-                          ]
+                          "required": ["effect"]
                         }
                       },
-                      "required": [
-                        "receipt"
-                      ]
+                      "required": ["receipt"]
                     }
                   }
                 }
@@ -1504,10 +1428,7 @@
                       "const": "applied"
                     }
                   },
-                  "required": [
-                    "effect",
-                    "error"
-                  ]
+                  "required": ["effect", "error"]
                 },
                 "then": {
                   "properties": {
@@ -1517,9 +1438,7 @@
                           "const": "applied"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   }
                 }
@@ -1534,11 +1453,7 @@
                       "const": "applied"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "effect",
-                    "result"
-                  ]
+                  "required": ["kind", "effect", "result"]
                 },
                 "then": {
                   "properties": {
@@ -1550,14 +1465,10 @@
                               "const": "applied"
                             }
                           },
-                          "required": [
-                            "effect"
-                          ]
+                          "required": ["effect"]
                         }
                       },
-                      "required": [
-                        "receipt"
-                      ]
+                      "required": ["receipt"]
                     }
                   }
                 }
@@ -1569,10 +1480,7 @@
                       "const": "partial"
                     }
                   },
-                  "required": [
-                    "effect",
-                    "error"
-                  ]
+                  "required": ["effect", "error"]
                 },
                 "then": {
                   "properties": {
@@ -1582,9 +1490,7 @@
                           "const": "partial"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   }
                 }
@@ -1599,11 +1505,7 @@
                       "const": "partial"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "effect",
-                    "result"
-                  ]
+                  "required": ["kind", "effect", "result"]
                 },
                 "then": {
                   "properties": {
@@ -1615,14 +1517,10 @@
                               "const": "partial"
                             }
                           },
-                          "required": [
-                            "effect"
-                          ]
+                          "required": ["effect"]
                         }
                       },
-                      "required": [
-                        "receipt"
-                      ]
+                      "required": ["receipt"]
                     }
                   }
                 }
@@ -1634,10 +1532,7 @@
                       "const": "possible"
                     }
                   },
-                  "required": [
-                    "effect",
-                    "error"
-                  ]
+                  "required": ["effect", "error"]
                 },
                 "then": {
                   "properties": {
@@ -1647,9 +1542,7 @@
                           "const": "possible"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   }
                 }
@@ -1664,11 +1557,7 @@
                       "const": "possible"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "effect",
-                    "result"
-                  ]
+                  "required": ["kind", "effect", "result"]
                 },
                 "then": {
                   "properties": {
@@ -1680,14 +1569,10 @@
                               "const": "possible"
                             }
                           },
-                          "required": [
-                            "effect"
-                          ]
+                          "required": ["effect"]
                         }
                       },
-                      "required": [
-                        "receipt"
-                      ]
+                      "required": ["receipt"]
                     }
                   }
                 }
@@ -1699,10 +1584,7 @@
                       "const": "unknown"
                     }
                   },
-                  "required": [
-                    "effect",
-                    "error"
-                  ]
+                  "required": ["effect", "error"]
                 },
                 "then": {
                   "properties": {
@@ -1712,9 +1594,7 @@
                           "const": "unknown"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   }
                 }
@@ -1729,11 +1609,7 @@
                       "const": "unknown"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "effect",
-                    "result"
-                  ]
+                  "required": ["kind", "effect", "result"]
                 },
                 "then": {
                   "properties": {
@@ -1745,14 +1621,10 @@
                               "const": "unknown"
                             }
                           },
-                          "required": [
-                            "effect"
-                          ]
+                          "required": ["effect"]
                         }
                       },
-                      "required": [
-                        "receipt"
-                      ]
+                      "required": ["receipt"]
                     }
                   }
                 }
@@ -1788,12 +1660,7 @@
               },
               "status": {
                 "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "completed",
-                  "unknown"
-                ]
+                "enum": ["queued", "running", "completed", "unknown"]
               },
               "exitCode": {
                 "anyOf": [
@@ -1812,13 +1679,7 @@
               },
               "outputAvailability": {
                 "type": "string",
-                "enum": [
-                  "captured",
-                  "truncated",
-                  "not_captured",
-                  "expired",
-                  "evicted"
-                ]
+                "enum": ["captured", "truncated", "not_captured", "expired", "evicted"]
               },
               "capturedBytes": {
                 "type": "integer",
@@ -1852,10 +1713,7 @@
             "description": "Captured stdoutBase64 and stderrBase64 decode to at most 1 MiB combined. For captured or truncated output, capturedBytes equals their decoded total. Not-captured, expired, and evicted output has no byte fields; not-captured output has capturedBytes 0."
           }
         },
-        "required": [
-          "operation",
-          "execution"
-        ],
+        "required": ["operation", "execution"],
         "description": "The operation must have kind exec and satisfy terminal status payload rules; operation.id equals execution.operationId, operation.executionId and any result.executionId equal execution.id, and their projectId and sandboxId values match."
       },
       "AcceptedOperation": {
@@ -1892,13 +1750,7 @@
                   },
                   "status": {
                     "type": "string",
-                    "enum": [
-                      "queued",
-                      "running",
-                      "succeeded",
-                      "failed",
-                      "unknown"
-                    ]
+                    "enum": ["queued", "running", "succeeded", "failed", "unknown"]
                   },
                   "phase": {
                     "type": "string",
@@ -1916,13 +1768,7 @@
                   },
                   "effect": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
+                    "enum": ["none", "applied", "partial", "possible", "unknown"]
                   },
                   "error": {
                     "type": "object",
@@ -1952,13 +1798,7 @@
                       },
                       "effect": {
                         "type": "string",
-                        "enum": [
-                          "none",
-                          "applied",
-                          "partial",
-                          "possible",
-                          "unknown"
-                        ]
+                        "enum": ["none", "applied", "partial", "possible", "unknown"]
                       },
                       "retry": {
                         "type": "string",
@@ -1975,23 +1815,13 @@
                         "maximum": 9007199254740991
                       }
                     },
-                    "required": [
-                      "code",
-                      "message",
-                      "effect",
-                      "retry"
-                    ]
+                    "required": ["code", "message", "effect", "retry"]
                   },
                   "recovery": {
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": [
-                        "check_again",
-                        "inspect_candidates",
-                        "acknowledge",
-                        "run_again"
-                      ]
+                      "enum": ["check_again", "inspect_candidates", "acknowledge", "run_again"]
                     }
                   },
                   "kind": {
@@ -2012,10 +1842,7 @@
                         "pattern": "^[A-Za-z0-9_-]+$"
                       }
                     },
-                    "required": [
-                      "kind",
-                      "sandboxId"
-                    ]
+                    "required": ["kind", "sandboxId"]
                   }
                 },
                 "required": [
@@ -2059,13 +1886,7 @@
                   },
                   "status": {
                     "type": "string",
-                    "enum": [
-                      "queued",
-                      "running",
-                      "succeeded",
-                      "failed",
-                      "unknown"
-                    ]
+                    "enum": ["queued", "running", "succeeded", "failed", "unknown"]
                   },
                   "phase": {
                     "type": "string",
@@ -2083,13 +1904,7 @@
                   },
                   "effect": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
+                    "enum": ["none", "applied", "partial", "possible", "unknown"]
                   },
                   "error": {
                     "type": "object",
@@ -2119,13 +1934,7 @@
                       },
                       "effect": {
                         "type": "string",
-                        "enum": [
-                          "none",
-                          "applied",
-                          "partial",
-                          "possible",
-                          "unknown"
-                        ]
+                        "enum": ["none", "applied", "partial", "possible", "unknown"]
                       },
                       "retry": {
                         "type": "string",
@@ -2142,23 +1951,13 @@
                         "maximum": 9007199254740991
                       }
                     },
-                    "required": [
-                      "code",
-                      "message",
-                      "effect",
-                      "retry"
-                    ]
+                    "required": ["code", "message", "effect", "retry"]
                   },
                   "recovery": {
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": [
-                        "check_again",
-                        "inspect_candidates",
-                        "acknowledge",
-                        "run_again"
-                      ]
+                      "enum": ["check_again", "inspect_candidates", "acknowledge", "run_again"]
                     }
                   },
                   "kind": {
@@ -2179,10 +1978,7 @@
                         "pattern": "^[A-Za-z0-9_-]+$"
                       }
                     },
-                    "required": [
-                      "kind",
-                      "executionId"
-                    ]
+                    "required": ["kind", "executionId"]
                   }
                 },
                 "required": [
@@ -2226,13 +2022,7 @@
                   },
                   "status": {
                     "type": "string",
-                    "enum": [
-                      "queued",
-                      "running",
-                      "succeeded",
-                      "failed",
-                      "unknown"
-                    ]
+                    "enum": ["queued", "running", "succeeded", "failed", "unknown"]
                   },
                   "phase": {
                     "type": "string",
@@ -2250,13 +2040,7 @@
                   },
                   "effect": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
+                    "enum": ["none", "applied", "partial", "possible", "unknown"]
                   },
                   "error": {
                     "type": "object",
@@ -2286,13 +2070,7 @@
                       },
                       "effect": {
                         "type": "string",
-                        "enum": [
-                          "none",
-                          "applied",
-                          "partial",
-                          "possible",
-                          "unknown"
-                        ]
+                        "enum": ["none", "applied", "partial", "possible", "unknown"]
                       },
                       "retry": {
                         "type": "string",
@@ -2309,23 +2087,13 @@
                         "maximum": 9007199254740991
                       }
                     },
-                    "required": [
-                      "code",
-                      "message",
-                      "effect",
-                      "retry"
-                    ]
+                    "required": ["code", "message", "effect", "retry"]
                   },
                   "recovery": {
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": [
-                        "check_again",
-                        "inspect_candidates",
-                        "acknowledge",
-                        "run_again"
-                      ]
+                      "enum": ["check_again", "inspect_candidates", "acknowledge", "run_again"]
                     }
                   },
                   "kind": {
@@ -2349,11 +2117,7 @@
                         }
                       }
                     },
-                    "required": [
-                      "kind",
-                      "computeStopped",
-                      "retainedResources"
-                    ]
+                    "required": ["kind", "computeStopped", "retainedResources"]
                   }
                 },
                 "required": [
@@ -2397,13 +2161,7 @@
                   },
                   "status": {
                     "type": "string",
-                    "enum": [
-                      "queued",
-                      "running",
-                      "succeeded",
-                      "failed",
-                      "unknown"
-                    ]
+                    "enum": ["queued", "running", "succeeded", "failed", "unknown"]
                   },
                   "phase": {
                     "type": "string",
@@ -2421,13 +2179,7 @@
                   },
                   "effect": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
+                    "enum": ["none", "applied", "partial", "possible", "unknown"]
                   },
                   "error": {
                     "type": "object",
@@ -2457,13 +2209,7 @@
                       },
                       "effect": {
                         "type": "string",
-                        "enum": [
-                          "none",
-                          "applied",
-                          "partial",
-                          "possible",
-                          "unknown"
-                        ]
+                        "enum": ["none", "applied", "partial", "possible", "unknown"]
                       },
                       "retry": {
                         "type": "string",
@@ -2480,23 +2226,13 @@
                         "maximum": 9007199254740991
                       }
                     },
-                    "required": [
-                      "code",
-                      "message",
-                      "effect",
-                      "retry"
-                    ]
+                    "required": ["code", "message", "effect", "retry"]
                   },
                   "recovery": {
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": [
-                        "check_again",
-                        "inspect_candidates",
-                        "acknowledge",
-                        "run_again"
-                      ]
+                      "enum": ["check_again", "inspect_candidates", "acknowledge", "run_again"]
                     }
                   },
                   "kind": {
@@ -2526,27 +2262,13 @@
                           },
                           "effect": {
                             "type": "string",
-                            "enum": [
-                              "none",
-                              "applied",
-                              "partial",
-                              "possible",
-                              "unknown"
-                            ]
+                            "enum": ["none", "applied", "partial", "possible", "unknown"]
                           }
                         },
-                        "required": [
-                          "path",
-                          "bytesWritten",
-                          "complete",
-                          "effect"
-                        ]
+                        "required": ["path", "bytesWritten", "complete", "effect"]
                       }
                     },
-                    "required": [
-                      "kind",
-                      "receipt"
-                    ]
+                    "required": ["kind", "receipt"]
                   }
                 },
                 "required": [
@@ -2571,18 +2293,12 @@
                       "const": "succeeded"
                     }
                   },
-                  "required": [
-                    "status"
-                  ]
+                  "required": ["status"]
                 },
                 "then": {
-                  "required": [
-                    "result"
-                  ],
+                  "required": ["result"],
                   "not": {
-                    "required": [
-                      "error"
-                    ]
+                    "required": ["error"]
                   }
                 }
               },
@@ -2593,18 +2309,12 @@
                       "const": "failed"
                     }
                   },
-                  "required": [
-                    "status"
-                  ]
+                  "required": ["status"]
                 },
                 "then": {
-                  "required": [
-                    "error"
-                  ],
+                  "required": ["error"],
                   "not": {
-                    "required": [
-                      "result"
-                    ]
+                    "required": ["result"]
                   }
                 }
               },
@@ -2615,10 +2325,7 @@
                       "const": "none"
                     }
                   },
-                  "required": [
-                    "effect",
-                    "error"
-                  ]
+                  "required": ["effect", "error"]
                 },
                 "then": {
                   "properties": {
@@ -2628,9 +2335,7 @@
                           "const": "none"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   }
                 }
@@ -2645,11 +2350,7 @@
                       "const": "none"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "effect",
-                    "result"
-                  ]
+                  "required": ["kind", "effect", "result"]
                 },
                 "then": {
                   "properties": {
@@ -2661,14 +2362,10 @@
                               "const": "none"
                             }
                           },
-                          "required": [
-                            "effect"
-                          ]
+                          "required": ["effect"]
                         }
                       },
-                      "required": [
-                        "receipt"
-                      ]
+                      "required": ["receipt"]
                     }
                   }
                 }
@@ -2680,10 +2377,7 @@
                       "const": "applied"
                     }
                   },
-                  "required": [
-                    "effect",
-                    "error"
-                  ]
+                  "required": ["effect", "error"]
                 },
                 "then": {
                   "properties": {
@@ -2693,9 +2387,7 @@
                           "const": "applied"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   }
                 }
@@ -2710,11 +2402,7 @@
                       "const": "applied"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "effect",
-                    "result"
-                  ]
+                  "required": ["kind", "effect", "result"]
                 },
                 "then": {
                   "properties": {
@@ -2726,14 +2414,10 @@
                               "const": "applied"
                             }
                           },
-                          "required": [
-                            "effect"
-                          ]
+                          "required": ["effect"]
                         }
                       },
-                      "required": [
-                        "receipt"
-                      ]
+                      "required": ["receipt"]
                     }
                   }
                 }
@@ -2745,10 +2429,7 @@
                       "const": "partial"
                     }
                   },
-                  "required": [
-                    "effect",
-                    "error"
-                  ]
+                  "required": ["effect", "error"]
                 },
                 "then": {
                   "properties": {
@@ -2758,9 +2439,7 @@
                           "const": "partial"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   }
                 }
@@ -2775,11 +2454,7 @@
                       "const": "partial"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "effect",
-                    "result"
-                  ]
+                  "required": ["kind", "effect", "result"]
                 },
                 "then": {
                   "properties": {
@@ -2791,14 +2466,10 @@
                               "const": "partial"
                             }
                           },
-                          "required": [
-                            "effect"
-                          ]
+                          "required": ["effect"]
                         }
                       },
-                      "required": [
-                        "receipt"
-                      ]
+                      "required": ["receipt"]
                     }
                   }
                 }
@@ -2810,10 +2481,7 @@
                       "const": "possible"
                     }
                   },
-                  "required": [
-                    "effect",
-                    "error"
-                  ]
+                  "required": ["effect", "error"]
                 },
                 "then": {
                   "properties": {
@@ -2823,9 +2491,7 @@
                           "const": "possible"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   }
                 }
@@ -2840,11 +2506,7 @@
                       "const": "possible"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "effect",
-                    "result"
-                  ]
+                  "required": ["kind", "effect", "result"]
                 },
                 "then": {
                   "properties": {
@@ -2856,14 +2518,10 @@
                               "const": "possible"
                             }
                           },
-                          "required": [
-                            "effect"
-                          ]
+                          "required": ["effect"]
                         }
                       },
-                      "required": [
-                        "receipt"
-                      ]
+                      "required": ["receipt"]
                     }
                   }
                 }
@@ -2875,10 +2533,7 @@
                       "const": "unknown"
                     }
                   },
-                  "required": [
-                    "effect",
-                    "error"
-                  ]
+                  "required": ["effect", "error"]
                 },
                 "then": {
                   "properties": {
@@ -2888,9 +2543,7 @@
                           "const": "unknown"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   }
                 }
@@ -2905,11 +2558,7 @@
                       "const": "unknown"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "effect",
-                    "result"
-                  ]
+                  "required": ["kind", "effect", "result"]
                 },
                 "then": {
                   "properties": {
@@ -2921,14 +2570,10 @@
                               "const": "unknown"
                             }
                           },
-                          "required": [
-                            "effect"
-                          ]
+                          "required": ["effect"]
                         }
                       },
-                      "required": [
-                        "receipt"
-                      ]
+                      "required": ["receipt"]
                     }
                   }
                 }
@@ -2936,9 +2581,7 @@
             ]
           }
         },
-        "required": [
-          "operation"
-        ]
+        "required": ["operation"]
       },
       "CreateProjectRequest": {
         "type": "object",
@@ -2949,9 +2592,7 @@
             "maxLength": 120
           }
         },
-        "required": [
-          "name"
-        ],
+        "required": ["name"],
         "additionalProperties": false
       },
       "CreateProviderConnectionRequest": {
@@ -2987,10 +2628,7 @@
             }
           }
         },
-        "required": [
-          "provider",
-          "name"
-        ],
+        "required": ["provider", "name"],
         "additionalProperties": false,
         "definitions": {
           "__schema0": {
@@ -3087,10 +2725,7 @@
                     "pattern": "^[A-Za-z0-9_-]+$"
                   }
                 },
-                "required": [
-                  "kind",
-                  "imageId"
-                ],
+                "required": ["kind", "imageId"],
                 "additionalProperties": false
               },
               {
@@ -3106,19 +2741,10 @@
                     "maxLength": 1024
                   }
                 },
-                "required": [
-                  "kind",
-                  "reference"
-                ],
+                "required": ["kind", "reference"],
                 "additionalProperties": false
               }
             ]
-          },
-          "connectionId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128,
-            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "region": {
             "type": "string",
@@ -3134,9 +2760,7 @@
                 "maxLength": 128
               }
             },
-            "required": [
-              "policy"
-            ],
+            "required": ["policy"],
             "additionalProperties": false
           },
           "labels": {
@@ -3150,11 +2774,15 @@
               "minLength": 1,
               "maxLength": 64
             }
+          },
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
           }
         },
-        "required": [
-          "environment"
-        ],
+        "required": ["environment"],
         "additionalProperties": false
       },
       "ErrorResponse": {
@@ -3188,22 +2816,11 @@
               },
               "effect": {
                 "type": "string",
-                "enum": [
-                  "none",
-                  "applied",
-                  "partial",
-                  "possible",
-                  "unknown"
-                ]
+                "enum": ["none", "applied", "partial", "possible", "unknown"]
               },
               "retry": {
                 "type": "string",
-                "enum": [
-                  "never",
-                  "same_invocation",
-                  "observe_only",
-                  "new_invocation_with_risk"
-                ]
+                "enum": ["never", "same_invocation", "observe_only", "new_invocation_with_risk"]
               },
               "retryAfterSeconds": {
                 "type": "integer",
@@ -3211,17 +2828,10 @@
                 "maximum": 9007199254740991
               }
             },
-            "required": [
-              "code",
-              "message",
-              "effect",
-              "retry"
-            ]
+            "required": ["code", "message", "effect", "retry"]
           }
         },
-        "required": [
-          "error"
-        ]
+        "required": ["error"]
       },
       "Execution": {
         "type": "object",
@@ -3252,12 +2862,7 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "queued",
-              "running",
-              "completed",
-              "unknown"
-            ]
+            "enum": ["queued", "running", "completed", "unknown"]
           },
           "exitCode": {
             "anyOf": [
@@ -3276,13 +2881,7 @@
           },
           "outputAvailability": {
             "type": "string",
-            "enum": [
-              "captured",
-              "truncated",
-              "not_captured",
-              "expired",
-              "evicted"
-            ]
+            "enum": ["captured", "truncated", "not_captured", "expired", "evicted"]
           },
           "capturedBytes": {
             "type": "integer",
@@ -3337,10 +2936,7 @@
                     }
                   }
                 },
-                "required": [
-                  "kind",
-                  "argv"
-                ],
+                "required": ["kind", "argv"],
                 "additionalProperties": false
               },
               {
@@ -3356,10 +2952,7 @@
                     "maxLength": 65536
                   }
                 },
-                "required": [
-                  "kind",
-                  "script"
-                ],
+                "required": ["kind", "script"],
                 "additionalProperties": false
               }
             ]
@@ -3390,10 +2983,7 @@
             "properties": {
               "capture": {
                 "type": "string",
-                "enum": [
-                  "bounded",
-                  "none"
-                ]
+                "enum": ["bounded", "none"]
               },
               "maxBytes": {
                 "type": "integer",
@@ -3401,15 +2991,11 @@
                 "maximum": 1048576
               }
             },
-            "required": [
-              "capture"
-            ],
+            "required": ["capture"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "command"
-        ],
+        "required": ["command"],
         "additionalProperties": false
       },
       "FileReceipt": {
@@ -3428,21 +3014,10 @@
           },
           "effect": {
             "type": "string",
-            "enum": [
-              "none",
-              "applied",
-              "partial",
-              "possible",
-              "unknown"
-            ]
+            "enum": ["none", "applied", "partial", "possible", "unknown"]
           }
         },
-        "required": [
-          "path",
-          "bytesWritten",
-          "complete",
-          "effect"
-        ]
+        "required": ["path", "bytesWritten", "complete", "effect"]
       },
       "Operation": {
         "oneOf": [
@@ -3475,13 +3050,7 @@
               },
               "status": {
                 "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "succeeded",
-                  "failed",
-                  "unknown"
-                ]
+                "enum": ["queued", "running", "succeeded", "failed", "unknown"]
               },
               "phase": {
                 "type": "string",
@@ -3499,13 +3068,7 @@
               },
               "effect": {
                 "type": "string",
-                "enum": [
-                  "none",
-                  "applied",
-                  "partial",
-                  "possible",
-                  "unknown"
-                ]
+                "enum": ["none", "applied", "partial", "possible", "unknown"]
               },
               "error": {
                 "type": "object",
@@ -3535,22 +3098,11 @@
                   },
                   "effect": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
+                    "enum": ["none", "applied", "partial", "possible", "unknown"]
                   },
                   "retry": {
                     "type": "string",
-                    "enum": [
-                      "never",
-                      "same_invocation",
-                      "observe_only",
-                      "new_invocation_with_risk"
-                    ]
+                    "enum": ["never", "same_invocation", "observe_only", "new_invocation_with_risk"]
                   },
                   "retryAfterSeconds": {
                     "type": "integer",
@@ -3558,23 +3110,13 @@
                     "maximum": 9007199254740991
                   }
                 },
-                "required": [
-                  "code",
-                  "message",
-                  "effect",
-                  "retry"
-                ]
+                "required": ["code", "message", "effect", "retry"]
               },
               "recovery": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "enum": [
-                    "check_again",
-                    "inspect_candidates",
-                    "acknowledge",
-                    "run_again"
-                  ]
+                  "enum": ["check_again", "inspect_candidates", "acknowledge", "run_again"]
                 }
               },
               "kind": {
@@ -3595,10 +3137,7 @@
                     "pattern": "^[A-Za-z0-9_-]+$"
                   }
                 },
-                "required": [
-                  "kind",
-                  "sandboxId"
-                ]
+                "required": ["kind", "sandboxId"]
               }
             },
             "required": [
@@ -3642,13 +3181,7 @@
               },
               "status": {
                 "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "succeeded",
-                  "failed",
-                  "unknown"
-                ]
+                "enum": ["queued", "running", "succeeded", "failed", "unknown"]
               },
               "phase": {
                 "type": "string",
@@ -3666,13 +3199,7 @@
               },
               "effect": {
                 "type": "string",
-                "enum": [
-                  "none",
-                  "applied",
-                  "partial",
-                  "possible",
-                  "unknown"
-                ]
+                "enum": ["none", "applied", "partial", "possible", "unknown"]
               },
               "error": {
                 "type": "object",
@@ -3702,22 +3229,11 @@
                   },
                   "effect": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
+                    "enum": ["none", "applied", "partial", "possible", "unknown"]
                   },
                   "retry": {
                     "type": "string",
-                    "enum": [
-                      "never",
-                      "same_invocation",
-                      "observe_only",
-                      "new_invocation_with_risk"
-                    ]
+                    "enum": ["never", "same_invocation", "observe_only", "new_invocation_with_risk"]
                   },
                   "retryAfterSeconds": {
                     "type": "integer",
@@ -3725,23 +3241,13 @@
                     "maximum": 9007199254740991
                   }
                 },
-                "required": [
-                  "code",
-                  "message",
-                  "effect",
-                  "retry"
-                ]
+                "required": ["code", "message", "effect", "retry"]
               },
               "recovery": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "enum": [
-                    "check_again",
-                    "inspect_candidates",
-                    "acknowledge",
-                    "run_again"
-                  ]
+                  "enum": ["check_again", "inspect_candidates", "acknowledge", "run_again"]
                 }
               },
               "kind": {
@@ -3762,10 +3268,7 @@
                     "pattern": "^[A-Za-z0-9_-]+$"
                   }
                 },
-                "required": [
-                  "kind",
-                  "executionId"
-                ]
+                "required": ["kind", "executionId"]
               }
             },
             "required": [
@@ -3809,13 +3312,7 @@
               },
               "status": {
                 "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "succeeded",
-                  "failed",
-                  "unknown"
-                ]
+                "enum": ["queued", "running", "succeeded", "failed", "unknown"]
               },
               "phase": {
                 "type": "string",
@@ -3833,13 +3330,7 @@
               },
               "effect": {
                 "type": "string",
-                "enum": [
-                  "none",
-                  "applied",
-                  "partial",
-                  "possible",
-                  "unknown"
-                ]
+                "enum": ["none", "applied", "partial", "possible", "unknown"]
               },
               "error": {
                 "type": "object",
@@ -3869,22 +3360,11 @@
                   },
                   "effect": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
+                    "enum": ["none", "applied", "partial", "possible", "unknown"]
                   },
                   "retry": {
                     "type": "string",
-                    "enum": [
-                      "never",
-                      "same_invocation",
-                      "observe_only",
-                      "new_invocation_with_risk"
-                    ]
+                    "enum": ["never", "same_invocation", "observe_only", "new_invocation_with_risk"]
                   },
                   "retryAfterSeconds": {
                     "type": "integer",
@@ -3892,23 +3372,13 @@
                     "maximum": 9007199254740991
                   }
                 },
-                "required": [
-                  "code",
-                  "message",
-                  "effect",
-                  "retry"
-                ]
+                "required": ["code", "message", "effect", "retry"]
               },
               "recovery": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "enum": [
-                    "check_again",
-                    "inspect_candidates",
-                    "acknowledge",
-                    "run_again"
-                  ]
+                  "enum": ["check_again", "inspect_candidates", "acknowledge", "run_again"]
                 }
               },
               "kind": {
@@ -3932,11 +3402,7 @@
                     }
                   }
                 },
-                "required": [
-                  "kind",
-                  "computeStopped",
-                  "retainedResources"
-                ]
+                "required": ["kind", "computeStopped", "retainedResources"]
               }
             },
             "required": [
@@ -3980,13 +3446,7 @@
               },
               "status": {
                 "type": "string",
-                "enum": [
-                  "queued",
-                  "running",
-                  "succeeded",
-                  "failed",
-                  "unknown"
-                ]
+                "enum": ["queued", "running", "succeeded", "failed", "unknown"]
               },
               "phase": {
                 "type": "string",
@@ -4004,13 +3464,7 @@
               },
               "effect": {
                 "type": "string",
-                "enum": [
-                  "none",
-                  "applied",
-                  "partial",
-                  "possible",
-                  "unknown"
-                ]
+                "enum": ["none", "applied", "partial", "possible", "unknown"]
               },
               "error": {
                 "type": "object",
@@ -4040,22 +3494,11 @@
                   },
                   "effect": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
+                    "enum": ["none", "applied", "partial", "possible", "unknown"]
                   },
                   "retry": {
                     "type": "string",
-                    "enum": [
-                      "never",
-                      "same_invocation",
-                      "observe_only",
-                      "new_invocation_with_risk"
-                    ]
+                    "enum": ["never", "same_invocation", "observe_only", "new_invocation_with_risk"]
                   },
                   "retryAfterSeconds": {
                     "type": "integer",
@@ -4063,23 +3506,13 @@
                     "maximum": 9007199254740991
                   }
                 },
-                "required": [
-                  "code",
-                  "message",
-                  "effect",
-                  "retry"
-                ]
+                "required": ["code", "message", "effect", "retry"]
               },
               "recovery": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "enum": [
-                    "check_again",
-                    "inspect_candidates",
-                    "acknowledge",
-                    "run_again"
-                  ]
+                  "enum": ["check_again", "inspect_candidates", "acknowledge", "run_again"]
                 }
               },
               "kind": {
@@ -4109,27 +3542,13 @@
                       },
                       "effect": {
                         "type": "string",
-                        "enum": [
-                          "none",
-                          "applied",
-                          "partial",
-                          "possible",
-                          "unknown"
-                        ]
+                        "enum": ["none", "applied", "partial", "possible", "unknown"]
                       }
                     },
-                    "required": [
-                      "path",
-                      "bytesWritten",
-                      "complete",
-                      "effect"
-                    ]
+                    "required": ["path", "bytesWritten", "complete", "effect"]
                   }
                 },
-                "required": [
-                  "kind",
-                  "receipt"
-                ]
+                "required": ["kind", "receipt"]
               }
             },
             "required": [
@@ -4154,18 +3573,12 @@
                   "const": "succeeded"
                 }
               },
-              "required": [
-                "status"
-              ]
+              "required": ["status"]
             },
             "then": {
-              "required": [
-                "result"
-              ],
+              "required": ["result"],
               "not": {
-                "required": [
-                  "error"
-                ]
+                "required": ["error"]
               }
             }
           },
@@ -4176,18 +3589,12 @@
                   "const": "failed"
                 }
               },
-              "required": [
-                "status"
-              ]
+              "required": ["status"]
             },
             "then": {
-              "required": [
-                "error"
-              ],
+              "required": ["error"],
               "not": {
-                "required": [
-                  "result"
-                ]
+                "required": ["result"]
               }
             }
           },
@@ -4198,10 +3605,7 @@
                   "const": "none"
                 }
               },
-              "required": [
-                "effect",
-                "error"
-              ]
+              "required": ["effect", "error"]
             },
             "then": {
               "properties": {
@@ -4211,9 +3615,7 @@
                       "const": "none"
                     }
                   },
-                  "required": [
-                    "effect"
-                  ]
+                  "required": ["effect"]
                 }
               }
             }
@@ -4228,11 +3630,7 @@
                   "const": "none"
                 }
               },
-              "required": [
-                "kind",
-                "effect",
-                "result"
-              ]
+              "required": ["kind", "effect", "result"]
             },
             "then": {
               "properties": {
@@ -4244,14 +3642,10 @@
                           "const": "none"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   },
-                  "required": [
-                    "receipt"
-                  ]
+                  "required": ["receipt"]
                 }
               }
             }
@@ -4263,10 +3657,7 @@
                   "const": "applied"
                 }
               },
-              "required": [
-                "effect",
-                "error"
-              ]
+              "required": ["effect", "error"]
             },
             "then": {
               "properties": {
@@ -4276,9 +3667,7 @@
                       "const": "applied"
                     }
                   },
-                  "required": [
-                    "effect"
-                  ]
+                  "required": ["effect"]
                 }
               }
             }
@@ -4293,11 +3682,7 @@
                   "const": "applied"
                 }
               },
-              "required": [
-                "kind",
-                "effect",
-                "result"
-              ]
+              "required": ["kind", "effect", "result"]
             },
             "then": {
               "properties": {
@@ -4309,14 +3694,10 @@
                           "const": "applied"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   },
-                  "required": [
-                    "receipt"
-                  ]
+                  "required": ["receipt"]
                 }
               }
             }
@@ -4328,10 +3709,7 @@
                   "const": "partial"
                 }
               },
-              "required": [
-                "effect",
-                "error"
-              ]
+              "required": ["effect", "error"]
             },
             "then": {
               "properties": {
@@ -4341,9 +3719,7 @@
                       "const": "partial"
                     }
                   },
-                  "required": [
-                    "effect"
-                  ]
+                  "required": ["effect"]
                 }
               }
             }
@@ -4358,11 +3734,7 @@
                   "const": "partial"
                 }
               },
-              "required": [
-                "kind",
-                "effect",
-                "result"
-              ]
+              "required": ["kind", "effect", "result"]
             },
             "then": {
               "properties": {
@@ -4374,14 +3746,10 @@
                           "const": "partial"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   },
-                  "required": [
-                    "receipt"
-                  ]
+                  "required": ["receipt"]
                 }
               }
             }
@@ -4393,10 +3761,7 @@
                   "const": "possible"
                 }
               },
-              "required": [
-                "effect",
-                "error"
-              ]
+              "required": ["effect", "error"]
             },
             "then": {
               "properties": {
@@ -4406,9 +3771,7 @@
                       "const": "possible"
                     }
                   },
-                  "required": [
-                    "effect"
-                  ]
+                  "required": ["effect"]
                 }
               }
             }
@@ -4423,11 +3786,7 @@
                   "const": "possible"
                 }
               },
-              "required": [
-                "kind",
-                "effect",
-                "result"
-              ]
+              "required": ["kind", "effect", "result"]
             },
             "then": {
               "properties": {
@@ -4439,14 +3798,10 @@
                           "const": "possible"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   },
-                  "required": [
-                    "receipt"
-                  ]
+                  "required": ["receipt"]
                 }
               }
             }
@@ -4458,10 +3813,7 @@
                   "const": "unknown"
                 }
               },
-              "required": [
-                "effect",
-                "error"
-              ]
+              "required": ["effect", "error"]
             },
             "then": {
               "properties": {
@@ -4471,9 +3823,7 @@
                       "const": "unknown"
                     }
                   },
-                  "required": [
-                    "effect"
-                  ]
+                  "required": ["effect"]
                 }
               }
             }
@@ -4488,11 +3838,7 @@
                   "const": "unknown"
                 }
               },
-              "required": [
-                "kind",
-                "effect",
-                "result"
-              ]
+              "required": ["kind", "effect", "result"]
             },
             "then": {
               "properties": {
@@ -4504,14 +3850,10 @@
                           "const": "unknown"
                         }
                       },
-                      "required": [
-                        "effect"
-                      ]
+                      "required": ["effect"]
                     }
                   },
-                  "required": [
-                    "receipt"
-                  ]
+                  "required": ["receipt"]
                 }
               }
             }
@@ -4536,11 +3878,7 @@
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
           }
         },
-        "required": [
-          "id",
-          "name",
-          "createdAt"
-        ]
+        "required": ["id", "name", "createdAt"]
       },
       "ProjectPage": {
         "type": "object",
@@ -4565,17 +3903,11 @@
                   "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
                 }
               },
-              "required": [
-                "id",
-                "name",
-                "createdAt"
-              ]
+              "required": ["id", "name", "createdAt"]
             }
           }
         },
-        "required": [
-          "items"
-        ]
+        "required": ["items"]
       },
       "ProviderConnection": {
         "type": "object",
@@ -4603,11 +3935,7 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "unverified",
-              "verified",
-              "draining"
-            ]
+            "enum": ["unverified", "verified", "draining"]
           },
           "nativeScope": {
             "type": "object",
@@ -4626,10 +3954,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "kind",
-                  "id"
-                ]
+                "required": ["kind", "id"]
               },
               "region": {
                 "type": "string"
@@ -4651,10 +3976,7 @@
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "kind",
-                      "id"
-                    ]
+                    "required": ["kind", "id"]
                   },
                   "partition": {
                     "type": "object",
@@ -4666,10 +3988,7 @@
                     }
                   }
                 },
-                "required": [
-                  "authority",
-                  "partition"
-                ]
+                "required": ["authority", "partition"]
               }
             }
           },
@@ -4689,21 +4008,10 @@
                 "type": "boolean"
               }
             },
-            "required": [
-              "create",
-              "exec",
-              "files",
-              "destroy"
-            ]
+            "required": ["create", "exec", "files", "destroy"]
           }
         },
-        "required": [
-          "id",
-          "projectId",
-          "provider",
-          "name",
-          "status"
-        ]
+        "required": ["id", "projectId", "provider", "name", "status"]
       },
       "ProviderConnectionPage": {
         "type": "object",
@@ -4736,11 +4044,7 @@
                 },
                 "status": {
                   "type": "string",
-                  "enum": [
-                    "unverified",
-                    "verified",
-                    "draining"
-                  ]
+                  "enum": ["unverified", "verified", "draining"]
                 },
                 "nativeScope": {
                   "type": "object",
@@ -4759,10 +4063,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "kind",
-                        "id"
-                      ]
+                      "required": ["kind", "id"]
                     },
                     "region": {
                       "type": "string"
@@ -4784,10 +4085,7 @@
                               "type": "string"
                             }
                           },
-                          "required": [
-                            "kind",
-                            "id"
-                          ]
+                          "required": ["kind", "id"]
                         },
                         "partition": {
                           "type": "object",
@@ -4799,10 +4097,7 @@
                           }
                         }
                       },
-                      "required": [
-                        "authority",
-                        "partition"
-                      ]
+                      "required": ["authority", "partition"]
                     }
                   }
                 },
@@ -4822,27 +4117,14 @@
                       "type": "boolean"
                     }
                   },
-                  "required": [
-                    "create",
-                    "exec",
-                    "files",
-                    "destroy"
-                  ]
+                  "required": ["create", "exec", "files", "destroy"]
                 }
               },
-              "required": [
-                "id",
-                "projectId",
-                "provider",
-                "name",
-                "status"
-              ]
+              "required": ["id", "projectId", "provider", "name", "status"]
             }
           }
         },
-        "required": [
-          "items"
-        ]
+        "required": ["items"]
       },
       "ProviderCatalog": {
         "type": "object",
@@ -4870,18 +4152,11 @@
                   "$ref": "#/definitions/__schema1"
                 }
               },
-              "required": [
-                "name",
-                "displayName",
-                "configurationSchema",
-                "credentialsSchema"
-              ]
+              "required": ["name", "displayName", "configurationSchema", "credentialsSchema"]
             }
           }
         },
-        "required": [
-          "items"
-        ],
+        "required": ["items"],
         "definitions": {
           "__schema0": {
             "anyOf": [
@@ -4970,21 +4245,11 @@
           },
           "desiredState": {
             "type": "string",
-            "enum": [
-              "running",
-              "destroyed"
-            ]
+            "enum": ["running", "destroyed"]
           },
           "observedState": {
             "type": "string",
-            "enum": [
-              "resolving",
-              "provisioning",
-              "running",
-              "destroying",
-              "destroyed",
-              "unknown"
-            ]
+            "enum": ["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"]
           },
           "observedAt": {
             "type": "string",
@@ -5018,10 +4283,7 @@
                     "pattern": "^[A-Za-z0-9_-]+$"
                   }
                 },
-                "required": [
-                  "kind",
-                  "imageId"
-                ]
+                "required": ["kind", "imageId"]
               },
               {
                 "type": "object",
@@ -5036,10 +4298,7 @@
                     "maxLength": 1024
                   }
                 },
-                "required": [
-                  "kind",
-                  "reference"
-                ]
+                "required": ["kind", "reference"]
               }
             ]
           },
@@ -5052,9 +4311,7 @@
                 "maxLength": 128
               }
             },
-            "required": [
-              "policy"
-            ]
+            "required": ["policy"]
           },
           "labels": {
             "type": "object",
@@ -5106,10 +4363,7 @@
                 },
                 "desiredState": {
                   "type": "string",
-                  "enum": [
-                    "running",
-                    "destroyed"
-                  ]
+                  "enum": ["running", "destroyed"]
                 },
                 "observedState": {
                   "type": "string",
@@ -5154,10 +4408,7 @@
                           "pattern": "^[A-Za-z0-9_-]+$"
                         }
                       },
-                      "required": [
-                        "kind",
-                        "imageId"
-                      ]
+                      "required": ["kind", "imageId"]
                     },
                     {
                       "type": "object",
@@ -5172,10 +4423,7 @@
                           "maxLength": 1024
                         }
                       },
-                      "required": [
-                        "kind",
-                        "reference"
-                      ]
+                      "required": ["kind", "reference"]
                     }
                   ]
                 },
@@ -5188,9 +4436,7 @@
                       "maxLength": 128
                     }
                   },
-                  "required": [
-                    "policy"
-                  ]
+                  "required": ["policy"]
                 },
                 "labels": {
                   "type": "object",
@@ -5224,10 +4470,7 @@
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
           }
         },
-        "required": [
-          "items",
-          "asOf"
-        ]
+        "required": ["items", "asOf"]
       },
       "SandboxListQuery": {
         "type": "object",
@@ -5249,14 +4492,7 @@
           },
           "state": {
             "type": "string",
-            "enum": [
-              "resolving",
-              "provisioning",
-              "running",
-              "destroying",
-              "destroyed",
-              "unknown"
-            ]
+            "enum": ["resolving", "provisioning", "running", "destroying", "destroyed", "unknown"]
           },
           "q": {
             "type": "string",
@@ -5281,10 +4517,7 @@
                 "pattern": "^[A-Za-z0-9_-]+$"
               }
             },
-            "required": [
-              "kind",
-              "sandboxId"
-            ]
+            "required": ["kind", "sandboxId"]
           },
           {
             "type": "object",
@@ -5300,10 +4533,7 @@
                 "pattern": "^[A-Za-z0-9_-]+$"
               }
             },
-            "required": [
-              "kind",
-              "executionId"
-            ]
+            "required": ["kind", "executionId"]
           },
           {
             "type": "object",
@@ -5322,11 +4552,7 @@
                 }
               }
             },
-            "required": [
-              "kind",
-              "computeStopped",
-              "retainedResources"
-            ]
+            "required": ["kind", "computeStopped", "retainedResources"]
           },
           {
             "type": "object",
@@ -5351,27 +4577,13 @@
                   },
                   "effect": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
+                    "enum": ["none", "applied", "partial", "possible", "unknown"]
                   }
                 },
-                "required": [
-                  "path",
-                  "bytesWritten",
-                  "complete",
-                  "effect"
-                ]
+                "required": ["path", "bytesWritten", "complete", "effect"]
               }
             },
-            "required": [
-              "kind",
-              "receipt"
-            ]
+            "required": ["kind", "receipt"]
           }
         ]
       },
@@ -5384,9 +4596,7 @@
             "maxLength": 512
           }
         },
-        "required": [
-          "token"
-        ],
+        "required": ["token"],
         "additionalProperties": false
       },
       "SessionResponse": {
@@ -5406,10 +4616,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "operatorId",
-          "csrfToken"
-        ]
+        "required": ["operatorId", "csrfToken"]
       },
       "SetupRequest": {
         "type": "object",
@@ -5420,9 +4627,7 @@
             "maxLength": 512
           }
         },
-        "required": [
-          "setupToken"
-        ],
+        "required": ["setupToken"],
         "additionalProperties": false
       },
       "StreamFrame": {
@@ -5452,12 +4657,7 @@
                 "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
               }
             },
-            "required": [
-              "kind",
-              "executionId",
-              "sequence",
-              "bytesBase64"
-            ]
+            "required": ["kind", "executionId", "sequence", "bytesBase64"]
           },
           {
             "type": "object",
@@ -5484,12 +4684,7 @@
                 "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
               }
             },
-            "required": [
-              "kind",
-              "executionId",
-              "sequence",
-              "bytesBase64"
-            ]
+            "required": ["kind", "executionId", "sequence", "bytesBase64"]
           },
           {
             "type": "object",
@@ -5515,12 +4710,7 @@
                 "maximum": 9007199254740991
               }
             },
-            "required": [
-              "kind",
-              "executionId",
-              "fromSequence",
-              "toSequence"
-            ],
+            "required": ["kind", "executionId", "fromSequence", "toSequence"],
             "description": "Missing inclusive sequence range; fromSequence must be less than or equal to toSequence."
           },
           {
@@ -5552,11 +4742,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "executionId",
-              "exitCode"
-            ]
+            "required": ["kind", "executionId", "exitCode"]
           }
         ]
       }

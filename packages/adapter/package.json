@@ -1,13 +1,19 @@
 {
-  "name": "@sandbar/adapter",
+  "name": "sandbar-adapter",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./portable": {
+      "types": "./dist/portable.d.ts",
+      "import": "./dist/portable.js"
     },
     "./testing": {
       "types": "./dist/testing.d.ts",
@@ -16,7 +22,9 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts src/testing.ts --target node --format esm --outdir dist --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts src/testing.ts src/portable.ts --target node --format esm --outdir dist --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
   },
-  "dependencies": { "zod": "4.6.5" }
+  "dependencies": {
+    "zod": "4.6.5"
+  }
 }

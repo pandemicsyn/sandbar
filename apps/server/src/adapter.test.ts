@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
-import { defineAdapter } from "@sandbar/adapter";
+import { defineAdapter } from "sandbar-adapter";
 import { openDomainRuntime } from "./runtime";
 
 test("custom adapter catalog, encrypted structured connection, and pending restart observation", async () => {
@@ -19,6 +19,7 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
   let submissions = 0;
   let observations = 0;
   let destroys = 0;
+
   const adapter = defineAdapter({
     name: "example.custom",
     config: z.strictObject({
@@ -28,6 +29,7 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
     credentials: z.strictObject({ token: z.string().min(1) }),
     async connect({ config, credentials }) {
       expect(credentials.token).toBe("secret-credential");
+
       return {
         scope: {
           authority: { kind: "account", id: "account-1" },
@@ -39,40 +41,63 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
           async submit(input, ctx) {
             expect(input.networkPolicy).toBe("blocked");
             submissions++;
+
             return ctx.pending({ jobId: "job-1" });
           },
           async observe(attempt, _ctx) {
             observations++;
             expect(z.strictObject({ jobId: z.string() }).parse(attempt.token).jobId).toBe("job-1");
+
             return { id: "native-box-1", state: "running" };
           },
         },
         async destroy(box, _ctx) {
           expect(box.id).toBe("native-box-1");
           destroys++;
+
           return { computeStopped: true, retainedResources: [] };
         },
       };
     },
   });
+
   const config = { databaseUrl, keyFile, setupTokenFile, startRunner: false, adapters: [adapter] };
   let runtime = await openDomainRuntime(config);
   let bearer = "";
-  const request = async (path: string, method = "GET", body?: object, key?: string) => {
+
+  const request = async (
+    path: string,
+    method = "GET",
+    body?: z.infer<ReturnType<typeof z.json>>,
+    key?: string,
+  ) => {
     const headers: Record<string, string> = {};
+
     if (bearer) headers.Authorization = `Bearer ${bearer}`;
+
     if (body) headers["Content-Type"] = "application/json";
+
     if (key) headers["Idempotency-Key"] = key;
+
     const response = await runtime.app.request(path, {
-      method, headers, body: body ? JSON.stringify(body) : undefined,
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
     });
-    return { status: response.status, body: await response.json() as Record<string, unknown> };
+
+    return {
+      status: response.status,
+      body: z.record(z.string(), z.json()).parse(await response.json()),
+    };
   };
+
   try {
     expect((await request("/v1/providers")).status).toBe(401);
+
     const setup = await request("/v1/setup", "POST", {
       setupToken: "long-custom-adapter-fixture-setup-token",
     });
+
     bearer = String(setup.body.token);
     const catalog = await request("/v1/providers");
     expect(catalog.status).toBe(200);
@@ -80,29 +105,46 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
     expect(JSON.stringify(catalog.body)).not.toContain("secret-credential");
     const project = await request("/v1/projects", "POST", { name: "Custom" });
     const projectId = String(project.body.id);
-    const createConnection = () => request(`/v1/projects/${projectId}/provider-connections`, "POST", {
-      provider: "example.custom",
-      name: "Custom US",
-      configuration: { region: "us", flags: { privateOnly: true } },
-      credentials: { token: "secret-credential" },
-    });
+
+    const createConnection = () =>
+      request(`/v1/projects/${projectId}/provider-connections`, "POST", {
+        provider: "example.custom",
+        name: "Custom US",
+        configuration: { region: "us", flags: { privateOnly: true } },
+        credentials: { token: "secret-credential" },
+      });
+
     const connection = await createConnection();
     expect(connection.status).toBe(201);
     const connectionId = String(connection.body.id);
     expect(JSON.stringify(connection.body)).not.toContain("secret-credential");
     const databaseBytes = await readFile(databaseUrl);
     expect(databaseBytes.toString()).not.toContain("secret-credential");
+
     const verified = await request(
-      `/v1/projects/${projectId}/provider-connections/${connectionId}/verify`, "POST",
+      `/v1/projects/${projectId}/provider-connections/${connectionId}/verify`,
+      "POST",
     );
+
     expect(verified.status).toBe(200);
-    const create = await request(`/v1/projects/${projectId}/sandboxes`, "POST", {
-      environment: { kind: "prepared", imageId: "image-1" },
-      network: { policy: "blocked" },
-      connectionId,
-    }, Bun.randomUUIDv7());
+
+    const create = await request(
+      `/v1/projects/${projectId}/sandboxes`,
+      "POST",
+      {
+        environment: { kind: "prepared", imageId: "image-1" },
+        network: { policy: "blocked" },
+        connectionId,
+      },
+      Bun.randomUUIDv7(),
+    );
+
     expect(create.status).toBe(202);
-    const operation = create.body.operation as Record<string, unknown>;
+
+    const operation = z
+      .object({ id: z.string(), sandboxId: z.string().optional() })
+      .parse(create.body.operation);
+
     expect(await runtime.runner.tick()).toBe(true);
     expect(submissions).toBe(1);
     const pending = await runtime.store.getOperation(projectId, String(operation.id));
@@ -117,20 +159,37 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
     const completed = await runtime.store.getOperation(projectId, String(operation.id));
     expect(completed?.status).toBe("succeeded");
     const boxId = String(operation.sandboxId);
-    const destroy = await request(`/v1/projects/${projectId}/sandboxes/${boxId}`, "DELETE", undefined, Bun.randomUUIDv7());
+
+    const destroy = await request(
+      `/v1/projects/${projectId}/sandboxes/${boxId}`,
+      "DELETE",
+      undefined,
+      Bun.randomUUIDv7(),
+    );
+
     expect(destroy.status).toBe(202);
     expect(await runtime.runner.tick()).toBe(true);
     expect(destroys).toBe(1);
 
     const otherProject = await request("/v1/projects", "POST", { name: "Other" });
-    const foreign = await request(`/v1/projects/${String(otherProject.body.id)}/sandboxes`, "POST", {
-      environment: { kind: "prepared", imageId: "image-1" },
-      network: { policy: "blocked" }, connectionId,
-    }, Bun.randomUUIDv7());
+
+    const foreign = await request(
+      `/v1/projects/${String(otherProject.body.id)}/sandboxes`,
+      "POST",
+      {
+        environment: { kind: "prepared", imageId: "image-1" },
+        network: { policy: "blocked" },
+        connectionId,
+      },
+      Bun.randomUUIDv7(),
+    );
+
     expect(foreign.status).not.toBe(202);
     expect(submissions).toBe(1);
 
-    await runtime.store.backend.run(sql`UPDATE provider_connections SET adapter_contract_version=99 WHERE id=${connectionId}`);
+    await runtime.store.backend.run(
+      sql`UPDATE provider_connections SET adapter_contract_version=99 WHERE id=${connectionId}`,
+    );
     const stale = await runtime.store.getConnection(projectId, connectionId);
     await expect(runtime.registry.connect(stale!)).rejects.toThrow("stored contract version 99");
     expect(submissions).toBe(1);

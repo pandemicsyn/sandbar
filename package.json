@@ -9,16 +9,16 @@
     "packages/providers/*"
   ],
   "scripts": {
-    "build:packages": "bun run --cwd packages/contracts build && bun run --cwd packages/adapter build && bun run --cwd packages/provider-spi build && bun run --cwd packages/core build && bun run --cwd packages/providers/fake build && bun run --cwd packages/providers/daytona build && bun run --cwd packages/providers/modal build && bun run --cwd packages/sdk build",
-    "check": "bun run build:packages && bun run --filter '@sandbar/*' check && bun run --cwd packages/sdk check && bun run --cwd packages/service check",
+    "build:packages": "bun run --cwd packages/adapter build && bun run --cwd packages/provider-spi build && bun run --cwd packages/core build && bun run --cwd packages/providers/fake build && bun run --cwd packages/providers/daytona build && bun run --cwd packages/providers/modal build && bun run --cwd packages/sdk build && bun run --cwd packages/service build",
+    "check": "bun run build:packages && bun run --filter '@sandbar/*' check && bun run --cwd packages/adapter check && bun run --cwd packages/sdk check && bun run --cwd packages/service check",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test": "bun run build:packages && bun test",
-    "build": "bun run build:packages && bun run --filter '@sandbar/web' build && bun run --filter '@sandbar/server' build && bun run --cwd apps/docs build && bun run --cwd packages/service build",
+    "build": "bun run build:packages && bun run --filter '@sandbar/web' build && bun run --filter '@sandbar/server' build && bun run --cwd apps/docs build",
     "docs:check": "bun run build:packages && bun run --cwd apps/docs check && bun run --cwd apps/docs reference:check && bun run --cwd apps/docs build && bun run --cwd apps/docs examples:test",
-    "package:smoke": "bun run build:packages && bun run --cwd packages/service build && bun packages/sdk-qualification/package-smoke.mjs",
+    "package:smoke": "bun run build:packages && bun packages/sdk-qualification/package-smoke.mjs",
     "dev": "bun run build:packages && bun --watch apps/server/src/index.ts",
     "start": "bun apps/server/dist/index.js"
   },

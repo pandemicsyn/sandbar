@@ -18,7 +18,7 @@ import {
   Sandbox,
   SandboxPage,
   SessionResponse,
-} from "@sandbar/contracts";
+} from "../../server/src/http-contracts";
 
 export type Project = z.infer<typeof ProjectSchema>;
 

@@ -1,6 +1,6 @@
 # Validation and executable contracts
 
-Selected direction · September 26, 2026 · Design, not an implemented package
+Current validation ownership · September 27, 2026
 
 Use **Zod 4** as Sandbar's validation library. Keep one schema language across the TypeScript service, provider integration boundaries, and browser forms. Zod's native JSON Schema export supports the language-neutral contract workflow; Valibot remains a reasonable alternative, but using both adds unnecessary duplication. [Zod JSON Schema](https://zod.dev/json-schema)
 
@@ -8,7 +8,7 @@ Use **Zod 4** as Sandbar's validation library. Keep one schema language across t
 
 The [direct TypeScript SDK](direct-typescript-sdk.md) reuses portable value/driver schemas while defining resource handles independently of service-only project and durable-operation envelopes. Validate both direct and HTTP IO boundaries; do not force in-process calls through JSON serialization solely for code reuse.
 
-`packages/contracts` owns versioned JSON-compatible request, response, error, and stream-frame schemas. It has no Hono, Drizzle, provider SDK, server configuration, or secret-resolution dependencies. The service and UI share these definitions. Route metadata adds methods, paths, security schemes, status codes, and examples to emit a checked-in OpenAPI document. JSON Schema export alone does not produce that complete document.
+The SDK exposes portable sandbox and execution validation. Lower-level portable primitives live in `sandbar-adapter/portable` to keep provider, core and SDK dependencies acyclic. The standalone service owns HTTP request/response, authentication, project and stream-frame schemas in `apps/server/src/http-contracts.ts`; the UI reuses that service source. Service route metadata and those schemas generate the checked-in `apps/server/openapi.json`.
 
 Generate internal TypeScript, Rust, and Python transport/models from the published protocol, with handwritten public SDK conveniences. Hono RPC types may help internal development but are not the public protocol or the only client contract. Keep client response decoders forward-compatible with additive fields, while server request schemas reject unknown fields that could hide a security-sensitive typo.
 

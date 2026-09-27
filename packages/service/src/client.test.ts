@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { Sandbar as RemoteSandbar, Image as RemoteImage } from "./remote";
-import { OutcomeUnknownError, WaitAbortedError, SandbarError, NoExitCodeError } from "./resource";
-import type { RecoveryReference } from "./resource";
+import { Sandbar as RemoteSandbar, Image as RemoteImage } from "./client";
+import { OutcomeUnknownError, WaitAbortedError, SandbarError, NoExitCodeError } from "sandbar-sdk";
+import type { RecoveryReference } from "sandbar-sdk";
 import * as packagedRoot from "sandbar-sdk";
-import * as packagedDirect from "sandbar-sdk/direct";
-import * as packagedRemote from "sandbar-sdk/remote";
+import * as packagedDirect from "sandbar-sdk";
+import * as packagedRemote from "sandbar-service/client";
 
 test("packaged SDK entry points share error class identity", () => {
   expect(packagedRoot.SandbarError).toBe(packagedDirect.SandbarError);
@@ -1310,7 +1310,7 @@ test("remote recovery rejects an incomplete execution observation", async () => 
   });
 
   const reference = {
-    version: 1 as const,
+    version: 2 as const,
     mode: "remote" as const,
     kind: "exec" as const,
     invocationKey: "0199f92e-1234-7000-8000-000000000001",
@@ -1367,7 +1367,7 @@ test("remote recovery requires confirmed destroy and exact file receipts", async
   });
 
   const common = {
-    version: 1 as const,
+    version: 2 as const,
     mode: "remote" as const,
     invocationKey: "0199f92e-1234-7000-8000-000000000001",
     operationId: "op_1",
@@ -1427,7 +1427,7 @@ test("remote completed execution without an exit code has a distinct outcome", a
   });
 
   const reference = {
-    version: 1 as const,
+    version: 2 as const,
     mode: "remote" as const,
     kind: "exec" as const,
     invocationKey: "0199f92e-1234-7000-8000-000000000001",
@@ -1438,4 +1438,3 @@ test("remote completed execution without an exit code has a distinct outcome", a
 
   await expect((await client.recover(reference)).observe()).rejects.toBeInstanceOf(NoExitCodeError);
 });
-

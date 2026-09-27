@@ -3,7 +3,7 @@ title: Self-hosted service quickstart
 description: Exercise the Sandbar API and remote TypeScript SDK against a local service and fake provider.
 ---
 
-The remote SDK connects to the optional standalone `@sandbar/service` package that you operate. The service consumes the same public adapter and SDK lifecycle as direct mode. The service persists operations and project state. This source checkout uses SQLite by default and can be configured for MySQL. The only qualified provider remains the local fake simulation.
+The remote SDK connects to the optional standalone `sandbar-service` package that you operate. The service consumes the same public adapter and SDK lifecycle as direct mode. The service persists operations and project state. This source checkout uses SQLite by default and can be configured for MySQL. The only qualified provider remains the local fake simulation.
 
 ## Run the verified flow
 
@@ -20,7 +20,7 @@ The [checked-in remote example](https://github.com/pandemicsyn/sandbar/blob/7f87
 ## Connect from server-side TypeScript
 
 ```ts
-import { Sandbar, Image } from "sandbar-sdk/remote";
+import { Sandbar, Image } from "sandbar-service/client";
 
 const sandbar = Sandbar.connect({
   url: "http://127.0.0.1:3000",
