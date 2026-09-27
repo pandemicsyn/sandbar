@@ -651,11 +651,7 @@ test("stored Daytona endpoint trust removal terminates fresh work before provide
     );
 
     expect(verified.status).toBe(200);
-    expect(calls).toEqual([
-      "/api/api-keys/current",
-      "/api/regions",
-      "/api/organizations/org-1",
-    ]);
+    expect(calls).toEqual(["/api/api-keys/current", "/api/regions", "/api/organizations/org-1"]);
     await runtime.close();
     runtime = await openDomainRuntime({
       databaseUrl,
@@ -693,11 +689,7 @@ test("stored Daytona endpoint trust removal terminates fresh work before provide
       error: { code: "INVALID_ARGUMENT", effect: "none", retry: "never" },
     });
     expect(JSON.stringify(operation.value)).not.toContain("private-key");
-    expect(calls).toEqual([
-      "/api/api-keys/current",
-      "/api/regions",
-      "/api/organizations/org-1",
-    ]);
+    expect(calls).toEqual(["/api/api-keys/current", "/api/regions", "/api/organizations/org-1"]);
 
     const repeated = await request(`/v1/projects/${projectId}/sandboxes`, "POST", token, body, key);
 
