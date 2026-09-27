@@ -108,9 +108,15 @@ export class EffectCreateClient {
   private readonly closeController = new AbortController();
   private readonly runtime: ManagedRuntime.ManagedRuntime<Provider, never>;
   private readonly decoder: DirectClient;
-  private readonly completed = new Map<string, DriverResult>();
-  private readonly completedFinalizer = new FinalizationRegistry<string>((submissionId) => {
-    this.completed.delete(submissionId);
+  private readonly completed = new Map<
+    string,
+    { result: DriverResult; owner: WeakRef<PrototypeSandbox>; token: object }
+  >();
+  private readonly completedFinalizer = new FinalizationRegistry<{
+    submissionId: string;
+    token: object;
+  }>(({ submissionId, token }) => {
+    if (this.completed.get(submissionId)?.token === token) this.completed.delete(submissionId);
   });
   private closed = false;
   readonly sandboxes = {
@@ -159,7 +165,7 @@ export class EffectCreateClient {
         if (cached && sameNativeScope(request.scope, this.scope)) {
           this.completed.delete(request.submissionId);
 
-          return Promise.resolve(cached);
+          return Promise.resolve(cached.result);
         }
 
         return source.observe(request);
@@ -419,12 +425,28 @@ export class EffectCreateClient {
       throw new OutcomeUnknownError(reference, "Provider returned a non-sandbox completion");
 
     // Delay reuse of non-CREATE methods until the caller actually needs them.
+    const submissionId = reference.submissionId!;
+    const existing = this.completed.get(submissionId)?.owner.deref();
+
+    if (existing) {
+      if (existing.id !== result.value.observation.ref.nativeId)
+        throw new OutcomeUnknownError(
+          reference,
+          "Provider returned conflicting sandbox identities for one submission",
+        );
+
+      return existing;
+    }
+
     const sandbox = new PrototypeSandbox(this.decoder, reference, result.value.observation.ref);
-    this.completed.set(reference.submissionId!, {
-      ...result,
-      submissionId: reference.submissionId!,
+    const token = {};
+
+    this.completed.set(submissionId, {
+      result: { ...result, submissionId },
+      owner: new WeakRef(sandbox),
+      token,
     });
-    this.completedFinalizer.register(sandbox, reference.submissionId!);
+    this.completedFinalizer.register(sandbox, { submissionId, token });
 
     return sandbox;
   }
@@ -533,6 +555,8 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
   private first?: DriverResult;
   private settled?: { value: SandboxHandle } | { error: unknown };
   private observing?: Promise<SandboxHandle | null>;
+  private reading?: Promise<SandboxHandle | null>;
+  private activeWaits = 0;
   constructor(
     private readonly client: EffectCreateClient,
     reference: RecoveryReference,
@@ -558,7 +582,19 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
     const observation = this.client
       .observation(this.reference, first)
       .then((value) => {
-        if (value) this.settled = { value };
+        if (value) {
+          if (this.settled && "value" in this.settled) {
+            if (this.settled.value.id !== value.id)
+              throw new OutcomeUnknownError(
+                this.reference,
+                "Provider returned conflicting sandbox identities for one submission",
+              );
+
+            return this.settled.value;
+          }
+
+          this.settled = { value };
+        }
 
         return value;
       })
@@ -577,6 +613,19 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
 
     return this.observing;
   }
+  private readForWait(): Promise<SandboxHandle | null> {
+    if (this.first !== undefined || this.observing || this.settled) return this.observe();
+
+    if (this.reading) return this.reading;
+
+    const reading = this.observe().finally(() => {
+      if (this.reading === reading) this.reading = undefined;
+    });
+
+    this.reading = reading;
+
+    return reading;
+  }
   async wait(options: { signal?: AbortSignal; pollMs?: number } = {}): Promise<SandboxHandle> {
     this.client.ensureOpen();
 
@@ -594,8 +643,23 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
       return this.settled.value;
     }
 
+    this.activeWaits++;
+    let active = true;
+
+    const release = () => {
+      if (!active) return;
+      active = false;
+      this.activeWaits--;
+
+      // A detached transport Promise may never settle. New callers must be able
+      // to start a fresh read once every waiter has stopped awaiting that read.
+      if (this.activeWaits === 0) this.reading = undefined;
+    };
+
+    options.signal?.addEventListener("abort", release, { once: true });
+
     try {
-      const value = await this.client.wait(() => this.observe(), options);
+      const value = await this.client.wait(() => this.readForWait(), options);
 
       this.settled = { value };
 
@@ -603,6 +667,9 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
     } catch (error) {
       if (error instanceof SandbarError) this.settleTerminalError(error);
       throw error;
+    } finally {
+      options.signal?.removeEventListener("abort", release);
+      release();
     }
   }
   private settleTerminalError(error: SandbarError): void {

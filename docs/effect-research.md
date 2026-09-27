@@ -37,7 +37,7 @@ This is deliberately **not** an all-in migration implementation. CREATE uses the
 
 ## Paired behavior and transport results
 
-The same localhost fake-provider fixtures run once with the corrected direct SDK and once with the experimental client. They use the real HTTP fake server, not a mocked Effect scheduler. **34 paired fixture executions plus one virtual-clock test pass** on merged PR #7:
+The same localhost fake-provider fixtures run once with the corrected direct SDK and once with the experimental client. They use the real HTTP fake server, not a mocked Effect scheduler. **40 paired fixture executions plus one virtual-clock test pass** on merged PR #7:
 
 | Fixture | Baseline | Effect prototype | Invariant |
 |---|---|---|---|
@@ -59,12 +59,15 @@ The same localhost fake-provider fixtures run once with the corrected direct SDK
 | Concurrent observe and wait on completed CREATE | pass | pass | Share the original result with no provider rediscovery |
 | Abort a hanging read, then observe again | pass | pass | A fresh read-only request recovers without CREATE replay |
 | Transient lazy-handle preflight failure | pass | pass | Completed CREATE remains usable on the next operation |
+| Concurrent waits after pending CREATE | pass | pass | Both settle without replay; the prototype shares its active read |
+| Abort one of two concurrent waits | pass | pass | The other waiter can finish on the read-only result |
+| Observe and wait complete after pending CREATE | pass | pass | Both returned handles stay usable without rediscovery |
 
 The fixture timeout clears its timer; gated Promise work is released; fake servers are stopped after each test. `TestClock` confirms the read-only loop stops after success without another scheduled poll. The process exits cleanly, though this is not a heap-level proof that arbitrary third-party SDKs release sockets or streams. A Promise SPI without `AbortSignal` cannot cancel its underlying HTTP request merely because the Effect fiber was interrupted. A future native transport adapter needs its own cancellation and leak tests, with the same uncertainty semantics.
 
 The existing `bun run package:smoke` also passes for Node and Bun direct/remote packed consumers. The experimental `packed-smoke.mjs` packs six workspace packages, installs them into a fresh external directory, typechecks public declarations, and runs a real fake-server CREATE under Node and Bun. It passed with Node v26.4.0 and Bun 1.3.14. The SDK's direct dependency graph remains free of Hono, Drizzle, store, service runtime, MySQL, and Bun-only modules. The extra Effect dependency is confined to the experimental package.
 
-On merged PR #7, `bun run lint`, `format:check`, `check`, and `build` pass. The complete `bun run test` suite passes **191 tests with five MySQL tests skipped**. This includes the existing SDK, SQLite finalization, durable runner, process-kill, fake transport, and UI/server tests. No production SDK, store, or service-runtime source was changed by this experiment. The existing three SDK scope deferrals (imported remote reference's original smaller EXEC cap, exported raw/request helpers, and nonconforming fake inspect 2xx errors) remain outside this research task.
+On merged PR #7, `bun run lint`, `format:check`, `check`, and `build` pass. The complete `bun run test` suite passes **197 tests with five MySQL tests skipped**. This includes the existing SDK, SQLite finalization, durable runner, process-kill, fake transport, and UI/server tests. No production SDK, store, or service-runtime source was changed by this experiment. The existing three SDK scope deferrals (imported remote reference's original smaller EXEC cap, exported raw/request helpers, and nonconforming fake inspect 2xx errors) remain outside this research task.
 
 ## Cost and complexity
 
@@ -72,14 +75,14 @@ Measured on macOS 25.6.0, Apple M3 arm64, Node v26.4.0 and Bun 1.3.14. `measure.
 
 | Measure | Current direct | Effect prototype |
 |---|---:|---:|
-| Node module import | 26.6 ms | 139.3 ms |
-| Node child startup including import | 56.6 ms | 165.7 ms |
-| Bun module import | 16.2 ms | 87.1 ms |
-| Bun child startup including import | 27.8 ms | 99.3 ms |
-| In-memory CREATE, Node | 0.269 ms | 0.297 ms |
+| Node module import | 31.2 ms | 157.0 ms |
+| Node child startup including import | 65.1 ms | 188.5 ms |
+| Bun module import | 19.7 ms | 94.7 ms |
+| Bun child startup including import | 34.0 ms | 108.5 ms |
+| In-memory CREATE, Node | 0.294 ms | 0.311 ms |
 | Read-only observations per successful measured CREATE | 0 | 0 |
 
-The baseline SDK tarball was 14,173 bytes; the additional prototype tarball was 6,240 bytes. The installed Effect package resolves to roughly 33 MiB on disk on this machine and adds `@standard-schema/spec`, `fast-check`, and `pure-rand` to the lockfile. Tarball size is not total transitive installed size or a browser bundle measurement. No statistically reliable operation-speed advantage is established; the import overhead is a regression for this prototype.
+The baseline SDK tarball was 14,173 bytes; the additional prototype tarball was 6,596 bytes. The installed Effect package resolves to roughly 33 MiB on disk on this machine and adds `@standard-schema/spec`, `fast-check`, and `pure-rand` to the lockfile. Tarball size is not total transitive installed size or a browser bundle measurement. No statistically reliable operation-speed advantage is established; the import overhead is a regression for this prototype.
 
 For this narrow path, Effect replaces bespoke `raceAbort`/`waitDelay` polling and listener cleanup with `ManagedRuntime`, `Effect.sleep`, fiber interruption, and scoped finalization. It also requires explicit `FiberFailure`/typed-error conversion at the Promise boundary and a careful dispatch barrier. File line counts do not show a simplification: the prototype covers CREATE while the baseline direct module covers all operations. The likely benefit emerges only if the same runtime and semantics are shared across CREATE, EXEC, destroy, file writes, service due-work, and provider sessions. The present prototype adds complexity because it intentionally coexists with baseline code.
 

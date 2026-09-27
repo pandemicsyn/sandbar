@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 import { startFakeProviderServer } from "@sandbar/provider-fake/server";
-import { ProviderReadError } from "@sandbar/provider-spi";
+import { ProviderReadError, type DriverResult } from "@sandbar/provider-spi";
 import { Image, OutcomeUnknownError, Sandbar } from "@sandbar/sdk/direct";
 import { EffectCreateClient } from "./index";
 
@@ -157,6 +157,175 @@ for (const [name, make] of Object.entries(variants)) {
     expect(box?.id).toBe(waitBox.id);
     expect((await waitBox.inspect()).state).toBe("running");
     expect(observations).toBe(0);
+    expect(createCount(await control("/_test/state"))).toBe(1);
+    await client.close();
+  });
+
+  test(`${name}: concurrent waits after pending CREATE settle without mutation replay`, async () => {
+    const { provider, control } = await fixture();
+    const originalCreate = provider.driver.create.bind(provider.driver);
+    provider.driver.create = async (request) => {
+      await originalCreate(request);
+
+      return {
+        status: "pending",
+        effect: "possible",
+        submissionId: request.identity.submissionId,
+        observeAfterMs: 50,
+      };
+    };
+
+    const originalObserve = provider.driver.observe.bind(provider.driver);
+    let entered!: () => void, release!: () => void;
+
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    let observations = 0;
+    provider.driver.observe = async (request) => {
+      observations++;
+
+      if (observations === 1) {
+        entered();
+        await gate;
+      }
+
+      return originalObserve(request);
+    };
+
+    const client = make(provider);
+    const operation = await client.sandboxes.submitCreate(input);
+    const first = operation.wait({ pollMs: 50 });
+    const second = operation.wait({ pollMs: 50 });
+    await started;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    release();
+    const [one, two] = await Promise.all([timeout(first), timeout(second)]);
+    expect(one.id).toBe(two.id);
+
+    if (name === "effect") expect(observations).toBe(1);
+    else expect(observations).toBeGreaterThan(0);
+    expect(createCount(await control("/_test/state"))).toBe(1);
+    await client.close();
+  });
+
+  test(`${name}: aborting one concurrent wait preserves the other's read`, async () => {
+    const { provider, control } = await fixture();
+    const originalCreate = provider.driver.create.bind(provider.driver);
+    provider.driver.create = async (request) => {
+      await originalCreate(request);
+
+      return {
+        status: "pending",
+        effect: "possible",
+        submissionId: request.identity.submissionId,
+        observeAfterMs: 50,
+      };
+    };
+
+    const originalObserve = provider.driver.observe.bind(provider.driver);
+    let entered!: () => void, release!: () => void;
+
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    let observations = 0;
+    provider.driver.observe = async (request) => {
+      observations++;
+      entered();
+      await gate;
+
+      return originalObserve(request);
+    };
+
+    const client = make(provider);
+    const operation = await client.sandboxes.submitCreate(input);
+    const abort = new AbortController();
+    const first = operation.wait({ signal: abort.signal, pollMs: 50 });
+    const second = operation.wait({ pollMs: 50 });
+    await started;
+    abort.abort(new Error("stop only first waiter"));
+    await expect(timeout(first)).rejects.toBe(abort.signal.reason);
+    release();
+    expect((await timeout(second)).id).toStartWith("fake_sandbox_");
+
+    if (name === "effect") expect(observations).toBe(1);
+    expect(createCount(await control("/_test/state"))).toBe(1);
+    await client.close();
+  });
+
+  test(`${name}: post-pending observe and wait return usable completed handles`, async () => {
+    const { provider, control } = await fixture();
+    await control("/_test/profile", {
+      nativeIdempotency: { create: false, exec: false, destroy: false, writeFile: false },
+      discoveryBySubmission: false,
+    });
+
+    const originalCreate = provider.driver.create.bind(provider.driver);
+    let completion: Extract<DriverResult, { status: "completed" }> | undefined;
+    provider.driver.create = async (request) => {
+      const result = await originalCreate(request);
+
+      if (result.status !== "completed") throw new Error("Fixture CREATE did not complete");
+      completion = result;
+
+      return {
+        status: "pending",
+        effect: "possible",
+        submissionId: request.identity.submissionId,
+        observeAfterMs: 50,
+      };
+    };
+
+    let release!: () => void, bothEntered!: () => void;
+
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const started = new Promise<void>((resolve) => {
+      bothEntered = resolve;
+    });
+
+    let observations = 0;
+    provider.driver.observe = async (request) => {
+      observations++;
+
+      if (observations === 2) bothEntered();
+      await gate;
+
+      if (!completion) throw new Error("Fixture completion unavailable");
+
+      return { ...completion, submissionId: request.submissionId };
+    };
+
+    const client = make(provider);
+    const operation = await client.sandboxes.submitCreate(input);
+    expect(await operation.observe()).toBeNull();
+    const seen = operation.observe();
+    const waited = operation.wait({ pollMs: 50 });
+    await timeout(started);
+    release();
+    const [box, waitBox] = await Promise.all([timeout(seen), timeout(waited)]);
+
+    if (!box) throw new Error("Fixture observation stayed pending");
+
+    if (name === "effect") expect(box).toBe(waitBox);
+    Bun.gc(true);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect((await box.inspect()).state).toBe("running");
+    expect((await waitBox.inspect()).state).toBe("running");
+    expect(observations).toBe(2);
     expect(createCount(await control("/_test/state"))).toBe(1);
     await client.close();
   });
