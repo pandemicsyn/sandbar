@@ -48,6 +48,46 @@ export async function readBoundedStream(
   }
 }
 
+interface ModalFileReadSandbox {
+  filesystem: { stat(path: string): Promise<{ type: string; size: number }> };
+  exec(
+    command: string[],
+    options: { mode: "binary" },
+  ): Promise<{ stdout: ReadableStream<Uint8Array>; wait(): Promise<number> }>;
+}
+
+export async function readModalFile(
+  sandbox: ModalFileReadSandbox,
+  path: string,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  try {
+    const info = await sandbox.filesystem.stat(path);
+
+    if (
+      info.type !== "file" ||
+      !Number.isSafeInteger(info.size) ||
+      info.size < 0 ||
+      info.size > maxBytes
+    )
+      throw new Error("Modal file is not a bounded regular file");
+
+    const process = await sandbox.exec([MODAL_FS_TOOL, JSON.stringify({ ReadFile: { path } })], {
+      mode: "binary",
+    });
+
+    const bytes = await readBoundedStream(process.stdout, maxBytes);
+
+    if ((await process.wait()) !== 0) throw new Error("Modal file read failed");
+
+    return bytes;
+  } catch (error) {
+    if (error instanceof SandboxFilesystemNotFoundError)
+      throw new ProviderReadError("NOT_FOUND", "Modal file not found");
+    throw error;
+  }
+}
+
 export interface ModalSandboxRecord {
   id: string;
   tags: Record<string, string>;
@@ -186,32 +226,7 @@ export function createSdkTransport(input: {
     async readBytes(sandboxId, path, maxBytes) {
       const sandbox = await client.sandboxes.fromId(sandboxId);
 
-      try {
-        const info = await sandbox.filesystem.stat(path);
-
-        if (
-          info.type !== "file" ||
-          !Number.isSafeInteger(info.size) ||
-          info.size < 0 ||
-          info.size > maxBytes
-        )
-          throw new Error("Modal file is not a bounded regular file");
-
-        const process = await sandbox.exec(
-          [MODAL_FS_TOOL, JSON.stringify({ ReadFile: { path } })],
-          { mode: "binary" },
-        );
-
-        const bytes = await readBoundedStream(process.stdout, maxBytes);
-
-        if ((await process.wait()) !== 0) throw new Error("Modal file read failed");
-
-        return bytes;
-      } catch (error) {
-        if (error instanceof SandboxFilesystemNotFoundError)
-          throw new ProviderReadError("NOT_FOUND", "Modal file not found");
-        throw error;
-      }
+      return readModalFile(sandbox, path, maxBytes);
     },
     close() {
       client.close();

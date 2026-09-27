@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
 import { ModalClient } from "modal";
-import { noRetryGrpcMiddleware, readBoundedStream } from "./transport";
+import { noRetryGrpcMiddleware, readBoundedStream, readModalFile } from "./transport";
 
 const server = new grpc.Server();
 
@@ -89,6 +89,75 @@ test("bounded file stream stops when a file grows after stat", async () => {
   });
 
   expect(await readBoundedStream(exact, 3)).toEqual(Uint8Array.from([0, 255, 129]));
+});
+
+test("pinned Modal read command preserves binary bytes and checks process exit", async () => {
+  const commands: Array<{ command: string[]; mode: string }> = [];
+  let exitCode = 0;
+
+  const sandbox = {
+    filesystem: {
+      async stat() {
+        return { type: "file", size: 3 };
+      },
+    },
+    async exec(command: string[], options: { mode: "binary" }) {
+      commands.push({ command, mode: options.mode });
+
+      return {
+        stdout: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(Uint8Array.from([0, 255, 129]));
+            controller.close();
+          },
+        }),
+        async wait() {
+          return exitCode;
+        },
+      };
+    },
+  };
+
+  expect(await readModalFile(sandbox, "/tmp/data.bin", 4)).toEqual(Uint8Array.from([0, 255, 129]));
+  expect(commands).toEqual([
+    {
+      command: ["/__modal/.bin/modal-sandbox-fs-tools", '{"ReadFile":{"path":"/tmp/data.bin"}}'],
+      mode: "binary",
+    },
+  ]);
+
+  exitCode = 1;
+  await expect(readModalFile(sandbox, "/tmp/data.bin", 4)).rejects.toThrow("read failed");
+});
+
+test("pinned Modal read command cancels when the file grows after stat", async () => {
+  let cancelled = false;
+
+  const sandbox = {
+    filesystem: {
+      async stat() {
+        return { type: "file", size: 1 };
+      },
+    },
+    async exec(_command: string[], _options: { mode: "binary" }) {
+      return {
+        stdout: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(Uint8Array.from([1, 2, 3, 4, 5]));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        async wait() {
+          return 0;
+        },
+      };
+    },
+  };
+
+  await expect(readModalFile(sandbox, "/tmp/growing.bin", 4)).rejects.toThrow("bounded read size");
+  expect(cancelled).toBe(true);
 });
 
 test("pinned SDK's public middleware limits ambiguous control-plane calls to one outbound attempt", async () => {
