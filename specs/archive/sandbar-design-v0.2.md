@@ -78,7 +78,7 @@ SDK-local TCP listeners belong on the caller's machine. The service supplies aut
 
 ## Provider integration model
 
-The mandatory adapter implements prepare, create, inspect, destroy, exec, readFile, and writeFile. Optional drivers cover inventory, processes, terminals, lifecycle, checkpoints, forks, networking, credentials, images, pools, endpoints, tunnels, storage, workspace versions, events, and telemetry. See [driver contracts](provider-drivers.md).
+The mandatory adapter implements prepare, create, inspect, destroy, exec, readFile, and writeFile. Optional drivers cover inventory, processes, terminals, lifecycle, checkpoints, forks, networking, credentials, images, pools, endpoints, tunnels, storage, workspace versions, events, and telemetry. See [driver contracts](../provider-drivers.md).
 
 Drivers target fetch, WebSockets, Web Streams, and Web Crypto. Use vendor SDKs only after verifying their dependencies on both runtimes. Prefer direct provider APIs where a vendor SDK requires unsupported Node or native functionality. Provider adapters never choose another provider.
 
@@ -122,4 +122,4 @@ Local mode uses a local Worker-compatible service. Self-hosting also requires qu
 - [celld compatibility](https://celld.dev/docs/cloudflare-compat/)
 - [celld Durable Objects](https://celld.dev/docs/services/durable-objects/)
 
-Provider research sources are recorded in [provider-drivers.md](provider-drivers.md). Documentation was reviewed during the September 25–26, 2026 design discussion; capabilities still require live validation.
+Provider research sources are recorded in [provider-drivers.md](../provider-drivers.md). Documentation was reviewed during the September 25–26, 2026 design discussion; capabilities still require live validation.

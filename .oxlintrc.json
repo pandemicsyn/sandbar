@@ -4,7 +4,8 @@
     "correctness": "error"
   },
   "ignorePatterns": [
-    "docs/archive/**",
+    "specs/archive/**",
+    "plans/archive/**",
     ".agent/**",
     ".agents/**",
     ".claude/**",

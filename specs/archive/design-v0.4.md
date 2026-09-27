@@ -1,10 +1,12 @@
+> Archived September 27, 2026. Historical planning context; current status and entry points are in [specs](../README.md).
+
 # Sandbar architecture
 
 Draft 0.4 · September 26, 2026 · Selected stack; implementation pending
 
 ## Decision
 
-V1 is a self-hosted TypeScript service using **Hono, relational storage through Drizzle, and a Vite UI styled with Tailwind**. The implementation direction is Bun, SQLite by default, MySQL as a tested deployment option, React with TanStack Router, and Zod 4 for IO contracts. This supersedes the [Worker/DO baseline](archive/sandbar-design-v0.3.md). Cloudflare, celld, Durable Objects and D1 are not v1 deployment dependencies.
+V1 is a self-hosted TypeScript service using **Hono, relational storage through Drizzle, and a Vite UI styled with Tailwind**. The implementation direction is Bun, SQLite by default, MySQL as a tested deployment option, React with TanStack Router, and Zod 4 for IO contracts. This supersedes the [Worker/DO baseline](sandbar-design-v0.3.md). Cloudflare, celld, Durable Objects and D1 are not v1 deployment dependencies.
 
 The user selected Hono, MySQL or SQLite, latest-beta Drizzle, Vite, Tailwind and Zod or Valibot. The choices within those alternatives are SQLite for the simplest install, MySQL for operators with database infrastructure, Zod 4, and TanStack Router for nested resource/settings routes and validated URL filters. Bun follows the proposed installable service model. These are implementation decisions, not claims that packages or migrations already exist.
 
@@ -12,11 +14,11 @@ The npm registry's `beta` tag returned **1.0.0-beta.22** for both `drizzle-orm` 
 
 Sandbar provides a consistent API over Daytona, E2B, Modal, Tensorlake and future providers without hiding differences in security, storage or lifecycle. TypeScript, Rust and Python remain first-class SDKs over HTTP/JSON plus explicit streaming protocols. Handwritten SDK ergonomics wrap generated transport/models.
 
-The refined [contracts](contract-recommendations.md), [storage/images](storage-and-images.md), [observability/accounting](observability-and-accounting.md), [validation](validation-and-contracts.md), and [management UI](management-ui.md) define the behavioral requirements.
+The refined [contracts](../contract-recommendations.md), [storage/images](../storage-and-images.md), [observability/accounting](../observability-and-accounting.md), [validation](../validation-and-contracts.md), and [management UI](../management-ui.md) define the behavioral requirements.
 
 ## Optional direct TypeScript mode
 
-The accepted [direct SDK plan](direct-typescript-sdk.md) adds direct provider access without a service, database or hidden daemon. The portable `packages/core` now contains shared request normalization, result correlation and bounded output helpers; `packages/service-runtime` owns the store-dependent durable runner and key custody. The direct SDK is the next implementation step and will reuse the portable contracts and provider SPI. Keep the following service topology intact behind the HTTP backend. Administration, durable scheduling, shared fleet/quotas and accounting remain service concerns.
+The accepted [direct SDK plan](../direct-typescript-sdk.md) adds direct provider access without a service, database or hidden daemon. The portable `packages/core` now contains shared request normalization, result correlation and bounded output helpers; `packages/service-runtime` owns the store-dependent durable runner and key custody. The direct SDK is the next implementation step and will reuse the portable contracts and provider SPI. Keep the following service topology intact behind the HTTP backend. Administration, durable scheduling, shared fleet/quotas and accounting remain service concerns.
 
 ## Topology
 
@@ -86,7 +88,7 @@ MySQL uses InnoDB and tested transactions through Drizzle's MySQL adapter. Use r
 
 `packages/contracts` contains Zod 4 wire schemas and protocol metadata. `packages/core` owns policy, placement, operations and resource semantics. `packages/store` owns Drizzle schemas, migrations and transaction implementations. Provider modules own native schemas and driver translation. `apps/server` composes Hono, the runner and IO; `apps/web` owns Vite/React/Router/Tailwind. SDK workspaces hold generated transport and handwritten language APIs. These are proposed package boundaries, not a requirement to publish every module.
 
-Validate every IO boundary as detailed in [validation and contracts](validation-and-contracts.md). DB rows are not public API DTOs. Hono routing does not bind Rust/Python clients to TypeScript RPC inference. Runtime capability checks remain separate from syntactic validation.
+Validate every IO boundary as detailed in [validation and contracts](../validation-and-contracts.md). DB rows are not public API DTOs. Hono routing does not bind Rust/Python clients to TypeScript RPC inference. Runtime capability checks remain separate from syntactic validation.
 
 Keep a small mandatory provider core plus optional drivers. Drivers never choose fallback providers or write domain state directly. Prefer standard network APIs; vendor SDKs may be used when qualified on Bun. Reconciliation, exact security requirements and mutation uncertainty remain service responsibilities.
 

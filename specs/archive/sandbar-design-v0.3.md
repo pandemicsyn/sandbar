@@ -6,7 +6,7 @@ Draft 0.3 · September 26, 2026 · Recorded baseline, not an implemented service
 
 V1 is confirmed self-hosted and includes a management UI for provider keys, fleet management, and related settings. The user reopened the Worker/celld runtime decision and explicitly requested strategy documentation before selecting an alternative. The topology below remains the recorded baseline; no Hono/Bun retooling has been adopted.
 
-The refined behavioral proposals are [contracts](contract-recommendations.md), [storage/snapshots/images](storage-and-images.md), [observability/accounting](observability-and-accounting.md), and [management UI](management-ui.md). These take precedence for API semantics; the runtime discussion remains separate.
+The refined behavioral proposals are [contracts](../contract-recommendations.md), [storage/snapshots/images](../storage-and-images.md), [observability/accounting](../observability-and-accounting.md), and [management UI](../management-ui.md). These take precedence for API semantics; the runtime discussion remains separate.
 
 ## Purpose and decisions
 
@@ -85,7 +85,7 @@ SDK-local TCP listeners belong on the caller's machine. The service supplies aut
 
 ## Provider integration model
 
-The mandatory adapter implements prepare, create, inspect, destroy, exec, readFile, and writeFile. Optional drivers cover inventory, processes, terminals, lifecycle, checkpoints, forks, networking, credentials, images, pools, endpoints, tunnels, storage, volume versions, events, telemetry, and accounting. The newer strategy separates Volume, Mount, VolumeVersion, and Checkpoint instead of a mandatory versioned-workspace interface. See [driver contracts](provider-drivers.md).
+The mandatory adapter implements prepare, create, inspect, destroy, exec, readFile, and writeFile. Optional drivers cover inventory, processes, terminals, lifecycle, checkpoints, forks, networking, credentials, images, pools, endpoints, tunnels, storage, volume versions, events, telemetry, and accounting. The newer strategy separates Volume, Mount, VolumeVersion, and Checkpoint instead of a mandatory versioned-workspace interface. See [driver contracts](../provider-drivers.md).
 
 Drivers target fetch, WebSockets, Web Streams, and Web Crypto. Use vendor SDKs only after verifying their dependencies on both runtimes. Prefer direct provider APIs where a vendor SDK requires unsupported Node or native functionality. Provider adapters never choose another provider.
 
@@ -129,4 +129,4 @@ Local mode uses a local Worker-compatible service. Self-hosting also requires qu
 - [celld compatibility](https://celld.dev/docs/cloudflare-compat/)
 - [celld Durable Objects](https://celld.dev/docs/services/durable-objects/)
 
-Provider research sources are recorded in [provider-drivers.md](provider-drivers.md). Documentation was reviewed during the September 25–26, 2026 design discussion; capabilities still require live validation.
+Provider research sources are recorded in [provider-drivers.md](../provider-drivers.md). Documentation was reviewed during the September 25–26, 2026 design discussion; capabilities still require live validation.

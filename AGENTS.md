@@ -1,31 +1,16 @@
 # Sandbar working agreements
 
-## Second implementation wave: direct TypeScript SDK
+## Current implementation
 
-The reviewed first-wave PRs #1–#4 are merged into `main`. The second wave starts with portable core extraction in PR #5 based on `main` at `fba002c6349a27de78c74c86bc25408e63bda6e9`, followed by the TypeScript SDK and Node/Bun package qualification as stacked PRs. Follow `docs/direct-typescript-sdk.md`. Direct mode runs against provider drivers from the caller's process without the Sandbar service, database, or hidden process. The initial verified driver is the independent fake; real provider support is not implied. Service-owned coordination, store access, credential custody, and encryption stay outside `@sandbar/core` and the direct dependency graph.
+PRs #1–#8 are merged: fake-provider service and management UI, portable core, direct/remote TypeScript SDK, runtime qualification, and the public documentation source. Preserve those implemented contracts. Provider implementation and isolated Effect research are coordinated by manager chat `01a0db94-f78d-70f3-83dd-106d28e38da3`; research does not authorize production adoption.
 
-- Portable core and service runtime task: `01a0decc-8ab3-7202-9ef9-a84c5ea95c12`, owning `packages/core`, `packages/service-runtime`, service composition, plan adoption, and initial root package/lock changes.
-- TypeScript SDK task: `01a0decd-04b4-7c61-b305-ea7fdcf5b5b4`, owning `packages/sdk`, its direct/remote entry points, and the fake provider client/server split.
-- Node/Bun qualification task: `01a0decd-90d2-7761-9736-8560f7ead2b5`, owning parity/packed-consumer tests, CI and measured runtime documentation.
-- Coordinate through manager chat `01a0db94-f78d-70f3-83dd-106d28e38da3`. Exchange package interfaces and checkpoint refs before integration. Each new PR targets its immediate parent explicitly and passes the mandatory review gate below.
-
-## First implementation wave
-
-Build a coherent fake-provider vertical slice in a stacked sequence: foundation, public contracts and fake provider, durable control and SQL, then management UI and end-to-end flows. Keep API wire contracts separate from database rows. Use Bun/Hono, Zod 4 at IO boundaries, Drizzle ORM and Kit pinned to `1.0.0-beta.22`, SQLite by default and a separately tested MySQL implementation. The UI uses Vite, React, Tailwind and TanStack Router. Real provider calls, production deployment, and paid usage are outside this wave.
+Read [specs/README.md](specs/README.md) for current contracts and clearly marked proposals, and [plans/implementation-plan.md](plans/implementation-plan.md) for sequencing. Public documentation lives in `apps/docs`. Historical drafts and completed handoffs live under `specs/archive` and `plans/archive`; they do not override current executable contracts or user decisions.
 
 ## Ownership and integration
 
-- Foundation task: `01a0de54-08f6-7702-92f5-d57e5d0c2804`.
-- Contracts and fake provider task: `01a0de54-6131-79e1-a593-8e96b322ffa1`.
-- Durable control and SQL task: `01a0de54-b8f6-7f20-91e0-de8657b28727`.
-- Management UI and end-to-end task: `01a0de55-18c7-7e73-81d4-cbd2535cccbc`.
-- Coordinate these tasks through manager chat `01a0db94-f78d-70f3-83dd-106d28e38da3`.
-- Foundation owns root workspace config, lockfile, CI, initial server composition and asset serving, README and docs.
-- Contracts owns `packages/contracts`, `packages/provider-spi`, and `packages/providers/fake` semantics.
-- Durable control owns `packages/store`, `packages/core`, and resource routes under `apps/server/src/routes`.
-- Web owns actual `apps/web` implementation and end-to-end UI flows.
-- Coordinate root dependency and lockfile changes with foundation while branches are parallel. Rebase each child branch on its parent before creating a stacked PR. Set explicit PR base and head, and link dependencies.
-- Do not merge PRs, deploy to production, or run paid provider operations without a separate user request.
+Keep changes in the assigned checkout. Coordinate shared root files and final parent commits through the manager; do not rebase active author branches onto provisional work. Direct mode must not depend on the service, SQL storage or a hidden bridge. Service authentication, durable scheduling and credential custody remain outside the portable core.
+
+The manager performs sequential implementation merges only after the authorized review, validation, CI and GitHub feedback gates clear. Authors do not merge independently. No package publication, production deployment or paid/live provider operation is authorized by these working agreements. Preserve user files and archive completed author chats after handoff.
 
 ## Mandatory PR review gate
 

@@ -1,3 +1,5 @@
+> Archived September 27, 2026. Historical planning context; current status and entry points are in [specs](../README.md).
+
 # Direct and service-backed TypeScript SDK
 
 Accepted direction · September 26, 2026 · Implementation wave 2

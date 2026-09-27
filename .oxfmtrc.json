@@ -8,7 +8,8 @@
   "trailingComma": "all",
   "sortPackageJson": false,
   "ignorePatterns": [
-    "docs/**",
+    "specs/**",
+    "plans/**",
     "README.md",
     "packages/contracts/openapi.json",
     "apps/docs/src/content/docs/docs/reference/http.md",
