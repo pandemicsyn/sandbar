@@ -404,6 +404,10 @@ describe("public contract", () => {
     const sandboxCreateHeaders =
       openApiDocument.paths["/v1/projects/{projectId}/sandboxes"].post.parameters;
 
+    expect(
+      projectCreateHeaders.find((parameter) => parameter.name === "Origin")?.description,
+    ).toContain("if supplied it must match");
+
     for (const parameters of [projectCreateHeaders, logoutHeaders, sandboxCreateHeaders]) {
       expect(parameters).toEqual(
         expect.arrayContaining([
@@ -411,7 +415,7 @@ describe("public contract", () => {
             name: "Origin",
             in: "header",
             required: false,
-            description: expect.stringContaining("cookie-authenticated"),
+            description: expect.stringContaining("an absent Origin is accepted"),
           }),
           expect.objectContaining({
             name: "X-CSRF-Token",

@@ -189,7 +189,8 @@ const cookieMutationHeaders = [
     in: "header",
     required: false,
     schema: { type: "string", format: "uri" },
-    description: "Required for cookie-authenticated mutations; must match the public origin.",
+    description:
+      "For cookie-authenticated mutations, if supplied it must match the public origin; an absent Origin is accepted.",
   },
   {
     name: "X-CSRF-Token",
