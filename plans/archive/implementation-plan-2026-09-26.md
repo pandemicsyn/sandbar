@@ -19,7 +19,7 @@ Recommendations and numeric defaults remain proposals. Provider documentation in
 
 ## Current provider wave: Daytona and Modal
 
-Modal and Daytona are the first real adapters selected September 26, 2026. Their portable packages target both direct TypeScript and the service through explicit provider registration, encrypted service connection credentials, and verified native scope. Fixture tests and packed Node/Bun consumption precede a separately authorized live conformance pass. Tensorlake and E2B follow later. Existing snapshot/native-image inputs are the first supported materialization subset; unsupported OCI builds fail before paid side effects rather than hiding creation in capability checks. Snapshots, volumes, accounting and deployment remain later slices.
+Modal and Daytona are the first real adapters selected September 26, 2026. Daytona is implemented in this stack for direct TypeScript and the service through explicit provider registration, encrypted service connection credentials, and verified native scope; Modal follows in a separate child stack. Daytona has fixture and packed Node/Bun coverage, with live conformance requiring separate authorization. Tensorlake and E2B follow later. Existing snapshot/native-image inputs are the first supported materialization subset; unsupported OCI builds fail before paid side effects rather than hiding creation in capability checks. Snapshots, volumes, accounting and deployment remain later slices.
 
 ## Previous wave: direct TypeScript SDK
 
