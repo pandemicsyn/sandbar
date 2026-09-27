@@ -33,9 +33,9 @@ async function connectionId(appId: string, environment: string, region?: string)
  * The SDK has no public authoritative workspace-ID reader, so this adapter
  * claims only the verified App, environment and fixed control endpoint.
  */
-async function connect(options: ModalProviderOptions, injectedTransport?: ModalTransport, suppliedConnectionId?: string): Promise<{ driver: ModalProviderDriver; scope: NativeScope; ownership: "owned"; release: () => void }> {
+async function connect(options: ModalProviderOptions, transportFactory?: () => ModalTransport, suppliedConnectionId?: string): Promise<{ driver: ModalProviderDriver; scope: NativeScope; ownership: "owned"; release: () => void }> {
   const parsed = Options.parse(options);
-  const transport = injectedTransport ?? createSdkTransport(parsed);
+  const transport = transportFactory?.() ?? createSdkTransport(parsed);
   try {
     const appId = await transport.lookupApp(parsed.appName, parsed.environment);
     if (!/^ap-[A-Za-z0-9_-]+$/.test(appId)) throw new Error("Modal app lookup returned an invalid native ID");
@@ -53,7 +53,7 @@ async function connect(options: ModalProviderOptions, injectedTransport?: ModalT
 }
 
 export async function modalProvider(options: ModalProviderOptions, injectedTransport?: ModalTransport) {
-  return connect(options, injectedTransport);
+  return connect(options, injectedTransport ? () => injectedTransport : undefined);
 }
 
 /** Structural registry factory: the portable package does not import service-runtime. */
@@ -68,7 +68,7 @@ export function createModalRegistration(transportFactory?: (options: ModalProvid
       const validated = validate(input);
       const { timeoutSeconds, ...configuration } = validated.configuration;
       const options = { ...validated.credentials, ...configuration, ...(timeoutSeconds === undefined ? {} : { timeoutSeconds: Number(timeoutSeconds) }) };
-      return connect(options, transportFactory?.(options), input.connectionId);
+      return connect(options, transportFactory ? () => transportFactory(options) : undefined, input.connectionId);
     },
   };
 }
