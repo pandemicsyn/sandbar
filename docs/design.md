@@ -86,6 +86,8 @@ Validate every IO boundary as detailed in [validation and contracts](validation-
 
 Keep a small mandatory provider core plus optional drivers. Drivers never choose fallback providers or write domain state directly. Prefer standard network APIs; vendor SDKs may be used when qualified on Bun. Reconciliation, exact security requirements and mutation uncertainty remain service responsibilities.
 
+The first-wave fake driver gives each HTTP request a 10-second transport deadline spanning response headers and body consumption. This bounds runner stalls; it does not cancel native work or shorten an execution's requested process deadline. A timed-out mutation remains a possible submission and is reconciled by observation without replay.
+
 ## Streaming, secrets and operations
 
 Authorize process/file/tunnel sessions through ordinary domain services, then relay bytes with bounded buffers or grant scoped direct access where supported. Store session identity, receipts and bounded output, not every live traffic chunk in the operation journal. Disconnects do not imply cancellation, cleanup or rerun. Local listeners and filesystem traversal run on the SDK caller; remote builders execute Dockerfiles outside the API process.

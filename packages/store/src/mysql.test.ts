@@ -8,6 +8,8 @@ const url = process.env.SANDBAR_TEST_MYSQL_URL;
 
 const otherUrl = process.env.SANDBAR_TEST_MYSQL_OTHER_URL;
 
+const latin1Url = process.env.SANDBAR_TEST_MYSQL_LATIN1_URL;
+
 test.skipIf(!url)("MySQL excludes another controller of the same database", async () => {
   const first = await openMysqlBackend(url!);
 
@@ -126,6 +128,55 @@ test.skipIf(!url)(
       expect((await store.getSandbox(project.id, first.sandbox.id))?.observed_state).toBe(
         "running",
       );
+    } finally {
+      await backend.close();
+    }
+  },
+);
+
+test.skipIf(!latin1Url)(
+  "MySQL tables round-trip Unicode under a latin1 database default",
+  async () => {
+    const backend = await openMysqlBackend(latin1Url!);
+
+    try {
+      const database = await backend.row<{ charset: string }>(
+        sql`SELECT DEFAULT_CHARACTER_SET_NAME AS charset FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = DATABASE()`,
+      );
+
+      expect(database?.charset).toBe("latin1");
+      await migrate(backend, bundledMigration("mysql"));
+      const store = new ControlStore(backend);
+      const name = "München 東京 🚀";
+      const project = await store.createProject(name);
+
+      expect((await store.listProjects()).find((item) => item.id === project.id)?.name).toBe(name);
+
+      const connection = await store.createConnection({
+        id: `conn_${crypto.randomUUID().replaceAll("-", "")}`,
+        projectId: project.id,
+        provider: "fake",
+        name: "接続 🌙",
+        encryptedCredentials: "ciphertext",
+      });
+
+      await store.verifyConnection(project.id, connection.id, "fake-local");
+
+      const admitted = await store.admitCreate({
+        projectId: project.id,
+        endpoint: "POST /sandboxes",
+        key: Bun.randomUUIDv7(),
+        intentHash: "unicode",
+        request: {
+          environment: { kind: "prepared", imageId: "fake-starter" },
+          labels: { note: "雪と星 🌌" },
+        },
+        connectionId: connection.id,
+      });
+
+      expect(JSON.parse(admitted.sandbox.labels_json)).toEqual({ note: "雪と星 🌌" });
+      expect(JSON.parse(admitted.operation.request_json).labels).toEqual({ note: "雪と星 🌌" });
+      expect((await store.getConnection(project.id, connection.id))?.name).toBe("接続 🌙");
     } finally {
       await backend.close();
     }

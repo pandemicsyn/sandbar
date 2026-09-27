@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS operators (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
   token_hash char(64) COLLATE utf8mb4_bin NOT NULL UNIQUE,
   created_at bigint NOT NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE TABLE IF NOT EXISTS sessions (
   id_hash char(64) COLLATE utf8mb4_bin PRIMARY KEY,
   operator_id varchar(128) COLLATE utf8mb4_bin NOT NULL,
@@ -11,12 +11,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at bigint NOT NULL,
   KEY sessions_expiry_idx (expires_at),
   CONSTRAINT sessions_operator_fk FOREIGN KEY (operator_id) REFERENCES operators(id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE TABLE IF NOT EXISTS projects (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
   name varchar(255) NOT NULL,
   created_at bigint NOT NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE TABLE IF NOT EXISTS provider_connections (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
   project_id varchar(128) COLLATE utf8mb4_bin NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS provider_connections (
   UNIQUE KEY connections_project_id (project_id,id),
   KEY connections_project_idx (project_id,created_at,id),
   CONSTRAINT connections_project_fk FOREIGN KEY (project_id) REFERENCES projects(id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS sandboxes (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS sandboxes (
   KEY sandboxes_connection_idx (connection_id,observed_state),
   CONSTRAINT sandboxes_project_fk FOREIGN KEY (project_id) REFERENCES projects(id),
   CONSTRAINT sandboxes_connection_fk FOREIGN KEY (connection_id) REFERENCES provider_connections(id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS operations (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS operations (
   CONSTRAINT operations_project_fk FOREIGN KEY (project_id) REFERENCES projects(id),
   CONSTRAINT operations_sandbox_fk FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id),
   CONSTRAINT operations_connection_fk FOREIGN KEY (connection_id) REFERENCES provider_connections(id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE TABLE IF NOT EXISTS operation_attempts (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
   operation_id varchar(128) COLLATE utf8mb4_bin NOT NULL,
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS operation_attempts (
   error_code varchar(128),
   UNIQUE KEY attempts_generation (operation_id,lease_generation),
   CONSTRAINT attempts_operation_fk FOREIGN KEY (operation_id) REFERENCES operations(id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS executions (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS executions (
   CONSTRAINT executions_project_fk FOREIGN KEY (project_id) REFERENCES projects(id),
   CONSTRAINT executions_sandbox_fk FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id),
   CONSTRAINT executions_operation_fk FOREIGN KEY (operation_id) REFERENCES operations(id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS invocation_keys (
   project_id varchar(128) COLLATE utf8mb4_bin NOT NULL,
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS invocation_keys (
   PRIMARY KEY(project_id,endpoint,`key`),
   CONSTRAINT invocation_project_fk FOREIGN KEY (project_id) REFERENCES projects(id),
   CONSTRAINT invocation_operation_fk FOREIGN KEY (operation_id) REFERENCES operations(id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE TABLE IF NOT EXISTS reservations (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
   project_id varchar(128) COLLATE utf8mb4_bin NOT NULL,
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS reservations (
   CONSTRAINT reservations_project_fk FOREIGN KEY (project_id) REFERENCES projects(id),
   CONSTRAINT reservations_sandbox_fk FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id),
   CONSTRAINT reservations_operation_fk FOREIGN KEY (operation_id) REFERENCES operations(id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS resource_events (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS resource_events (
   KEY resource_events_sandbox_idx (project_id,sandbox_id,recorded_at),
   CONSTRAINT resource_events_project_fk FOREIGN KEY (project_id) REFERENCES projects(id),
   CONSTRAINT resource_events_sandbox_fk FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE TABLE IF NOT EXISTS usage_evidence (
   id varchar(128) COLLATE utf8mb4_bin PRIMARY KEY,
   project_id varchar(128) COLLATE utf8mb4_bin NOT NULL,
@@ -174,4 +174,4 @@ CREATE TABLE IF NOT EXISTS usage_evidence (
   UNIQUE KEY usage_source_idx (project_id,source_key),
   CONSTRAINT usage_project_fk FOREIGN KEY (project_id) REFERENCES projects(id),
   CONSTRAINT usage_sandbox_fk FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
