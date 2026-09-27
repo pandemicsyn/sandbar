@@ -318,9 +318,9 @@ export class ControlStore {
         "Idempotency-Key is outside the first-admission window",
       );
   }
-  private async checkUnknownQuota(tx: QueryConnection, projectId: string): Promise<void> {
+  private async checkUnresolvedQuota(tx: QueryConnection, projectId: string): Promise<void> {
     const row = await tx.row<{ n: number }>(
-      sql`SELECT COUNT(*) AS n FROM operations WHERE project_id=${projectId} AND status='unknown'`,
+      sql`SELECT COUNT(*) AS n FROM operations WHERE project_id=${projectId} AND kind IN ('create','exec','file_write') AND status IN ('queued','running','unknown')`,
     );
 
     if (Number(row?.n ?? 0) >= 100)
@@ -348,7 +348,7 @@ export class ControlStore {
 
       if (old) return old;
       this.checkNewKey(input.key);
-      await this.checkUnknownQuota(tx, input.projectId);
+      await this.checkUnresolvedQuota(tx, input.projectId);
 
       const connection = input.connectionId
         ? await tx.row<ConnectionRow>(
@@ -421,7 +421,7 @@ export class ControlStore {
 
       if (old) return old;
       this.checkNewKey(input.key);
-      await this.checkUnknownQuota(tx, input.projectId);
+      await this.checkUnresolvedQuota(tx, input.projectId);
 
       const box = await tx.row<SandboxRow>(
         sql`SELECT * FROM sandboxes WHERE project_id=${input.projectId} AND id=${input.sandboxId}`,
@@ -625,7 +625,7 @@ export class ControlStore {
 
       if (old) return old;
       this.checkNewKey(input.key);
-      await this.checkUnknownQuota(tx, input.projectId);
+      await this.checkUnresolvedQuota(tx, input.projectId);
 
       const box = await tx.row<SandboxRow>(
         sql`SELECT * FROM sandboxes WHERE project_id=${input.projectId} AND id=${input.sandboxId}`,

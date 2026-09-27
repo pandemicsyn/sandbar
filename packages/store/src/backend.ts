@@ -2,14 +2,17 @@ import { Database } from "bun:sqlite";
 import {
   readFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   writeSync,
   closeSync,
   readdirSync,
+  realpathSync,
+  statSync,
   unlinkSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { drizzle as drizzleSqlite } from "drizzle-orm/bun-sqlite";
 import { drizzle as drizzleMysql } from "drizzle-orm/mysql2";
@@ -79,7 +82,35 @@ function processIdentity(pid: number): string {
 /** Every contender publishes its process instance before checking for other owners. */
 export function openSqliteBackend(path: string): Backend {
   if (path === ":memory:") return sqliteBackend(new Database(path));
-  const lockDir = `${path}.sandbar.locks`;
+  const absolutePath = resolve(path);
+  let entry: ReturnType<typeof lstatSync> | undefined;
+
+  try {
+    entry = lstatSync(absolutePath);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+
+  let canonicalPath: string;
+
+  if (entry) {
+    try {
+      canonicalPath = realpathSync(absolutePath);
+    } catch {
+      throw new Error(`SQLite path is a dangling or ambiguous alias: ${absolutePath}`);
+    }
+
+    const target = statSync(canonicalPath);
+
+    if (!target.isFile()) throw new Error(`SQLite database path is not a regular file: ${path}`);
+
+    if (target.nlink > 1)
+      throw new Error(`Hard-linked SQLite databases are unsupported; remove aliases to ${path}`);
+  } else {
+    canonicalPath = join(realpathSync(dirname(absolutePath)), basename(absolutePath));
+  }
+
+  const lockDir = `${canonicalPath}.sandbar.locks`;
   mkdirSync(lockDir, { recursive: true, mode: 0o700 });
   const identity = processIdentity(process.pid);
   const ownName = `pid-${process.pid}-${crypto.randomUUID()}`;
@@ -150,7 +181,7 @@ export function openSqliteBackend(path: string): Backend {
   }
 
   try {
-    const native = new Database(path, { create: true });
+    const native = new Database(canonicalPath, { create: true });
 
     try {
       return sqliteBackend(native, ownPath);

@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openSqliteBackend } from "./backend";
@@ -86,6 +96,56 @@ test("SQLite owner records distinguish process instances and fail closed on ambi
   } finally {
     child.kill("SIGKILL");
     await child.exited;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("SQLite ownership uses canonical file paths and rejects hard links", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-sqlite-alias-"));
+  const path = join(directory, "control.sqlite");
+  const alias = join(directory, "alias.sqlite");
+  const hardLink = join(directory, "hard.sqlite");
+
+  try {
+    const created = openSqliteBackend(path);
+    await created.close();
+    await symlink(path, alias);
+
+    const direct = openSqliteBackend(path);
+
+    try {
+      expect(() => openSqliteBackend(alias)).toThrow("another live contender");
+    } finally {
+      await direct.close();
+    }
+
+    const throughAlias = openSqliteBackend(alias);
+    await throughAlias.close();
+    await link(path, hardLink);
+    expect(() => openSqliteBackend(path)).toThrow("Hard-linked SQLite databases are unsupported");
+    expect(() => openSqliteBackend(hardLink)).toThrow(
+      "Hard-linked SQLite databases are unsupported",
+    );
+
+    const realParent = join(directory, "real-parent");
+    const aliasParent = join(directory, "alias-parent");
+    await mkdir(realParent);
+    await symlink(realParent, aliasParent);
+    const newPath = join(realParent, "new.sqlite");
+    const newViaAlias = openSqliteBackend(join(aliasParent, "new.sqlite"));
+
+    try {
+      await access(newPath);
+      expect(() => openSqliteBackend(newPath)).toThrow("another live contender");
+    } finally {
+      await newViaAlias.close();
+    }
+
+    await symlink(join(directory, "missing.sqlite"), join(directory, "dangling.sqlite"));
+    expect(() => openSqliteBackend(join(directory, "dangling.sqlite"))).toThrow(
+      "dangling or ambiguous alias",
+    );
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });

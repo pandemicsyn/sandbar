@@ -148,6 +148,114 @@ if (process.env.SANDBAR_TEST_MYSQL_URL) dialects.push("mysql");
 
 for (const dialect of dialects)
   describe(`${dialect} durable admission`, () => {
+    test("unresolved admission quota counts queued and pending work while allowing lookup and cleanup", async () => {
+      const { store, project, connection } = await fixture(dialect);
+      const endpoint = "POST /sandboxes";
+      const request = { environment: { kind: "prepared" as const, imageId: "fake-starter" } };
+      const accepted: Awaited<ReturnType<typeof store.admitCreate>>[] = [];
+      const keys: string[] = [];
+
+      try {
+        for (let index = 0; index < 100; index++) {
+          const key = Bun.randomUUIDv7();
+          keys.push(key);
+          accepted.push(
+            await store.admitCreate({
+              projectId: project.id,
+              endpoint,
+              key,
+              intentHash: `create-${index}`,
+              request,
+              connectionId: connection.id,
+            }),
+          );
+        }
+
+        const newCreate = () =>
+          store.admitCreate({
+            projectId: project.id,
+            endpoint,
+            key: Bun.randomUUIDv7(),
+            intentHash: "overflow",
+            request,
+            connectionId: connection.id,
+          });
+
+        await expect(newCreate()).rejects.toThrow("Too many unresolved outcomes");
+        expect(
+          (
+            await store.admitCreate({
+              projectId: project.id,
+              endpoint,
+              key: keys[0]!,
+              intentHash: "create-0",
+              request,
+              connectionId: connection.id,
+            })
+          ).repeated,
+        ).toBe(true);
+        expect(await store.lookupInvocation(project.id, endpoint, keys[0]!)).toBeDefined();
+
+        const pending = (await store.claimDue("pending", 1000, project.id))!;
+        expect(await store.beginSubmission(pending)).toBe(true);
+        await store.reschedule(pending, "awaiting_observation", 60_000, undefined, true);
+        expect((await store.getOperation(project.id, pending.operation.id))?.status).toBe(
+          "running",
+        );
+        await expect(newCreate()).rejects.toThrow("Too many unresolved outcomes");
+
+        const terminal = (await store.claimDue("terminal", 1000, project.id))!;
+        await store.complete(terminal, {
+          effect: "applied",
+          value: {
+            kind: "sandbox",
+            observation: { ref: { nativeId: `native_${crypto.randomUUID()}` }, state: "running" },
+          },
+        });
+        expect((await store.getOperation(project.id, terminal.operation.id))?.status).toBe(
+          "succeeded",
+        );
+        expect((await newCreate()).operation.status).toBe("queued");
+
+        await expect(
+          store.admitExec({
+            projectId: project.id,
+            sandboxId: terminal.operation.sandbox_id,
+            endpoint: "POST /executions",
+            key: Bun.randomUUIDv7(),
+            intentHash: "overflow-exec",
+            encryptedRequest: "sealed",
+            captureBytes: 0,
+          }),
+        ).rejects.toThrow("Too many unresolved outcomes");
+        await expect(
+          store.admitFileWrite({
+            projectId: project.id,
+            sandboxId: terminal.operation.sandbox_id,
+            endpoint: "PUT /files",
+            key: Bun.randomUUIDv7(),
+            intentHash: "overflow-file",
+            path: "/data/blob",
+            overwrite: false,
+            encryptedBytes: "sealed",
+            bytes: 1,
+          }),
+        ).rejects.toThrow("Too many unresolved outcomes");
+
+        const cleanup = await store.admitDestroy({
+          projectId: project.id,
+          sandboxId: accepted[0]!.sandbox.id,
+          endpoint: `DELETE /sandboxes/${accepted[0]!.sandbox.id}`,
+          key: Bun.randomUUIDv7(),
+          intentHash: "cleanup",
+        });
+
+        expect(cleanup.operation.status).toBe("queued");
+      } finally {
+        await store.close();
+      }
+    });
+
     test("retained captures continue consuming sandbox and project capacity after completion", async () => {
       const { store, project, connection } = await fixture(dialect);
       const mebibyte = 1024 * 1024;
