@@ -3,11 +3,21 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "files": ["dist"],
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "check": "tsc -p tsconfig.json",
     "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external '@sandbar/*' && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
   },
-  "dependencies": { "@sandbar/contracts": "workspace:*", "@sandbar/provider-spi": "workspace:*" }
+  "dependencies": {
+    "@sandbar/contracts": "workspace:*",
+    "@sandbar/provider-spi": "workspace:*"
+  }
 }

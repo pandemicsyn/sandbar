@@ -3,11 +3,22 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./direct": { "types": "./dist/direct.d.ts", "import": "./dist/direct.js" },
-    "./remote": { "types": "./dist/remote.d.ts", "import": "./dist/remote.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./direct": {
+      "types": "./dist/direct.d.ts",
+      "import": "./dist/direct.js"
+    },
+    "./remote": {
+      "types": "./dist/remote.d.ts",
+      "import": "./dist/remote.js"
+    }
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
@@ -19,5 +30,7 @@
     "@sandbar/provider-spi": "workspace:*",
     "zod": "4.6.5"
   },
-  "devDependencies": { "@sandbar/provider-fake": "workspace:*" }
+  "devDependencies": {
+    "@sandbar/provider-fake": "workspace:*"
+  }
 }

@@ -3,7 +3,11 @@
   "private": true,
   "type": "module",
   "packageManager": "bun@1.3.14",
-  "workspaces": ["apps/*", "packages/*", "packages/providers/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "packages/providers/*"
+  ],
   "scripts": {
     "build:packages": "bun run --cwd packages/contracts build && bun run --cwd packages/provider-spi build && bun run --cwd packages/core build && bun run --cwd packages/providers/fake build && bun run --cwd packages/sdk build",
     "check": "bun run build:packages && bun run --filter '@sandbar/*' check",

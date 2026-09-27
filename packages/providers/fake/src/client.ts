@@ -332,18 +332,36 @@ export class FakeProviderDriver implements ProviderDriver {
 }
 
 /** Fixture-only scope: binds recovery to this exact fake endpoint without exposing its token. */
-export async function fakeProvider(options: { url: string; token: string; fetch?: typeof fetch }): Promise<{ driver: FakeProviderDriver; scope: NativeScope }> {
+export async function fakeProvider(options: {
+  url: string;
+  token: string;
+  fetch?: typeof fetch;
+}): Promise<{ driver: FakeProviderDriver; scope: NativeScope }> {
   const endpoint = new URL(options.url);
-  const driver = new FakeProviderDriver({ baseUrl: endpoint.href, token: options.token, fetch: options.fetch });
+
+  const driver = new FakeProviderDriver({
+    baseUrl: endpoint.href,
+    token: options.token,
+    fetch: options.fetch,
+  });
+
   const canonical = endpoint.href.replace(/\/$/, "");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
-  const connectionId = `fake_${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}`;
-  const scope = NativeScope.parse({ provider: "fake", connectionId, accountId: "fake-local", region: "local" });
+  const connectionId = `fake_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+
+  const scope = NativeScope.parse({
+    provider: "fake",
+    connectionId,
+    accountId: "fake-local",
+    region: "local",
+  });
+
   const caps = await driver.capabilities(scope);
+
   if (caps.provider !== "fake") throw new Error("Fake provider identity mismatch");
+
   return { driver, scope };
 }
-
 
 class FakeTransportError extends Error {
   constructor(readonly status: number) {

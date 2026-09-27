@@ -57,7 +57,23 @@ export const FakeAction = z.discriminatedUnion("kind", [
 ]);
 
 export type FakeAction = z.infer<typeof FakeAction>;
-export const FakeEvent = z.strictObject({ eventId: z.string().min(1), ref: z.object({ scope: z.object({ provider: z.string(), connectionId: z.string(), accountId: z.string(), region: z.string().optional() }), nativeId: z.string(), kind: z.literal("sandbox") }), sequence: z.number().int().nonnegative(), state: z.enum(["running", "destroyed"]), occurredAt: z.iso.datetime({ offset: true }) });
+
+export const FakeEvent = z.strictObject({
+  eventId: z.string().min(1),
+  ref: z.object({
+    scope: z.object({
+      provider: z.string(),
+      connectionId: z.string(),
+      accountId: z.string(),
+      region: z.string().optional(),
+    }),
+    nativeId: z.string(),
+    kind: z.literal("sandbox"),
+  }),
+  sequence: z.number().int().nonnegative(),
+  state: z.enum(["running", "destroyed"]),
+  occurredAt: z.iso.datetime({ offset: true }),
+});
 
 export function validFakePath(path: string): boolean {
   return (

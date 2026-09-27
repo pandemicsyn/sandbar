@@ -162,6 +162,7 @@ export class ProviderReadError extends Error {
     this.name = "ProviderReadError";
   }
 }
+
 export interface ProviderDriver {
   readonly name: string;
   capabilities(scope: NativeScope): Promise<DriverCapabilities>;
