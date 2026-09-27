@@ -1230,6 +1230,120 @@ test("remote exec carries its recovery reference through a failed execution read
   expect(execs).toBe(1);
 });
 
+test("remote exec uses the submitted output limit after caller input changes", async () => {
+  const projectId = "project_1";
+
+  const common = {
+    projectId,
+    status: "succeeded",
+    phase: "done",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    effect: "applied",
+    recovery: [],
+  };
+
+  const createOperation = {
+    ...common,
+    id: "op_create",
+    kind: "create",
+    sandboxId: "box_1",
+    result: { kind: "create", sandboxId: "box_1" },
+  };
+
+  const execOperation = {
+    ...common,
+    id: "op_exec",
+    kind: "exec",
+    sandboxId: "box_1",
+    executionId: "exec_1",
+    result: { kind: "exec", executionId: "exec_1" },
+  };
+
+  const execution = {
+    id: "exec_1",
+    projectId,
+    sandboxId: "box_1",
+    operationId: "op_exec",
+    status: "completed",
+    exitCode: 0,
+    outputAvailability: "captured",
+    capturedBytes: 4,
+    stdoutBase64: "YWI=",
+    stderrBase64: "Y2Q=",
+  };
+
+  let execDispatches = 0;
+
+  const fetcher: typeof fetch = async (url, init) => {
+    const target = new URL(String(url));
+    const path = target.pathname;
+
+    if (init?.method === "POST" && path.endsWith("/sandboxes"))
+      return Response.json({ operation: createOperation }, { status: 202 });
+
+    if (init?.method === "POST" && path.endsWith("/executions")) {
+      execDispatches++;
+
+      return Response.json({ operation: execOperation, execution }, { status: 202 });
+    }
+
+    if (path.includes("/invocations/"))
+      return Response.json(
+        target.searchParams.get("kind") === "exec" ? execOperation : createOperation,
+      );
+
+    if (path.endsWith("/sandboxes/box_1"))
+      return Response.json({
+        id: "box_1",
+        projectId,
+        connectionId: "conn_1",
+        desiredState: "running",
+        observedState: "running",
+        revision: 1,
+        environment: { kind: "prepared", imageId: "fake-starter" },
+        network: { policy: "blocked" },
+        labels: {},
+      });
+
+    if (path.endsWith("/executions/exec_1")) return Response.json(execution);
+
+    throw new Error(`Unexpected path: ${path}`);
+  };
+
+  const client = RemoteSandbar.connect({
+    url: "https://sandbar.example/",
+    token: "secret",
+    projectId,
+    fetch: fetcher,
+  });
+
+  const box = await client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") });
+
+  const input = { command: { kind: "argv" as const, argv: ["echo", "ok"] }, maxOutputBytes: 4 };
+
+  const operation = await box.submitExec(input);
+
+  input.maxOutputBytes = 1;
+
+  await expect(operation.wait()).resolves.toMatchObject({
+    stdout: Uint8Array.of(97, 98),
+    stderr: Uint8Array.of(99, 100),
+  });
+
+  expect(execDispatches).toBe(1);
+
+  const tooSmall = { command: input.command, maxOutputBytes: 3 };
+
+  const oversized = await box.submitExec(tooSmall);
+
+  tooSmall.maxOutputBytes = 10;
+
+  await expect(oversized.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+
+  expect(execDispatches).toBe(2);
+});
+
 test("remote create rejects disagreement between operation and result sandbox IDs", async () => {
   const projectId = "project_1";
 

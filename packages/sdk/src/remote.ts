@@ -179,6 +179,8 @@ class RemoteSandbox implements SandboxHandle {
       output: { capture: "bounded", maxBytes: input.maxOutputBytes ?? 1_048_576 },
     });
 
+    const maxOutputBytes = body.output?.maxBytes ?? 1_048_576;
+
     const path = `sandboxes/${encodeURIComponent(this.id)}/executions`;
     let dispatched: RecoveryReference | undefined;
 
@@ -233,12 +235,9 @@ class RemoteSandbox implements SandboxHandle {
 
         if (value.exitCode === undefined)
           throw new OutcomeUnknownError(reference, "Execution has no exit code");
-        const stdout = base64Bytes(value.stdoutBase64, input.maxOutputBytes ?? 1_048_576);
+        const stdout = base64Bytes(value.stdoutBase64, maxOutputBytes);
 
-        const stderr = base64Bytes(
-          value.stderrBase64,
-          (input.maxOutputBytes ?? 1_048_576) - stdout.length,
-        );
+        const stderr = base64Bytes(value.stderrBase64, maxOutputBytes - stdout.length);
 
         return checkExec(
           execOutput(value.exitCode, stdout, stderr, value.outputAvailability === "truncated"),
