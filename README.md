@@ -2,11 +2,11 @@
 
 Sandbar is a provider-neutral API for creating, controlling, and observing sandboxes across Daytona, E2B, Modal, Tensorlake, and future providers.
 
-Sandbar's target design includes direct TypeScript provider access and an optional self-hosted service with a management UI for provider credentials, fleet control, environments, policies, and accounting visibility. TypeScript, Rust, and Python are first-class remote SDK targets; TypeScript also has a planned direct mode.
+Sandbar's target design includes direct TypeScript provider access and an optional self-hosted service with a management UI for provider credentials, fleet control, environments, policies, and accounting visibility. TypeScript, Rust, and Python are first-class remote SDK targets; TypeScript direct mode is implemented with the independent fake provider driver.
 
 The selected architecture is a Bun/Hono TypeScript service with Drizzle, SQLite by default and a tested MySQL option. The management UI uses Vite, React, TanStack Router and Tailwind. Zod 4 validates public contracts and IO boundaries. Drizzle ORM and Kit target the verified `beta` tag, currently `1.0.0-beta.22`, pinned exactly at scaffolding.
 
-**Status:** the first fake-provider service/UI slice from PRs #1–#4 is merged. Portable core extraction is in progress for the next implementation wave, followed by direct TypeScript SDK support. No real provider adapter or published SDK is qualified yet.
+**Status:** the fake-provider service/UI slice, portable core, and direct TypeScript SDK are merged. The [SDK runtime qualification](docs/sdk-runtime-qualification.md) records measured package and fake-provider support. No real provider adapter or published SDK is qualified yet.
 
 ## Local checks
 
@@ -36,6 +36,7 @@ Lint also runs the [vendored anti-slop Oxlint rules](tools/oxlint/anti-slop/UPST
 - [Provider drivers and research](docs/provider-drivers.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [Direct and service-backed TypeScript SDK](docs/direct-typescript-sdk.md)
+- [SDK runtime and package qualification](docs/sdk-runtime-qualification.md)
 
 The new strategy documents refine the earlier drafts; recommendations are marked as proposals, with provider guarantees pending live conformance. The current documents supersede the [original design and TypeScript sketches](docs/archive/README.md). Proposed API names and routes remain subject to contract review.
 

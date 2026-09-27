@@ -34,3 +34,5 @@ jobs:
         run: bun run test
       - name: Build
         run: bun run build
+      - name: Packed Node and Bun consumers
+        run: bun run package:smoke
