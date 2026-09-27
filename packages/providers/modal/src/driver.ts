@@ -52,7 +52,9 @@ export class ModalProviderDriver implements ProviderDriver {
     if (ref.kind !== "sandbox" || !this.matches(ref.scope)) throw new ProviderReadError("INVALID_RESPONSE", "Modal sandbox scope mismatch");
     await this.verify();
     for await (const record of this.transport.list(modalAppId(this.scope))) {
-      if (record.id === ref.nativeId) return record;
+      const parsed = ModalRecord.safeParse(record);
+      if (!parsed.success) throw new ProviderReadError("INVALID_RESPONSE", "Modal returned malformed sandbox inventory");
+      if (parsed.data.id === ref.nativeId) return parsed.data;
     }
     return null;
   }
@@ -142,10 +144,14 @@ export class ModalProviderDriver implements ProviderDriver {
   }
   async observe(input: { scope: NativeScope; submissionId: string; operationId?: string }): Promise<DriverResult | null> {
     if (!this.matches(input.scope)) throw new ProviderReadError("INVALID_RESPONSE", "Modal observation scope mismatch");
+    if (!input.operationId) return unknown(input.submissionId, "Modal create recovery requires the original operation ID");
     await this.verify();
-    const record = await this.transport.findByName(this.appName, this.environment, input.submissionId);
-    if (!record || record.tags[TAG_SUBMISSION] !== input.submissionId || !record.tags[TAG_OPERATION] || (input.operationId !== undefined && record.tags[TAG_OPERATION] !== input.operationId)) return null;
-    return DriverResult.parse({ status: "completed", effect: "applied", submissionId: input.submissionId, value: { kind: "sandbox", observation: observation(this.scope, record) } });
+    try {
+      const record = await this.transport.findByName(this.appName, this.environment, input.submissionId);
+      if (!record) return null;
+      if (record.tags[TAG_SUBMISSION] !== input.submissionId || record.tags[TAG_OPERATION] !== input.operationId) return unknown(input.submissionId, "Modal native recovery tags do not match the original operation");
+      return DriverResult.parse({ status: "completed", effect: "applied", submissionId: input.submissionId, value: { kind: "sandbox", observation: observation(this.scope, record) } });
+    } catch { return unknown(input.submissionId, "Modal create observation unavailable or malformed; do not replay"); }
   }
   close() { this.transport.close(); }
 }

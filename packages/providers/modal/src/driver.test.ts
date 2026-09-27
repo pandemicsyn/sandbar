@@ -97,7 +97,15 @@ test("lost create response is observed by submission name after a fresh provider
   expect(restarted.scope).toEqual(first.scope);
   const observed = await restarted.driver.observe({ scope: restarted.scope, submissionId: identity.submissionId, operationId: identity.operationId });
   expect(observed?.status).toBe("completed");
-  expect(await restarted.driver.observe({ scope: restarted.scope, submissionId: identity.submissionId, operationId: "op_other" })).toBeNull();
+  expect((await restarted.driver.observe({ scope: restarted.scope, submissionId: identity.submissionId }))?.status).toBe("unknown");
+  expect((await restarted.driver.observe({ scope: restarted.scope, submissionId: identity.submissionId, operationId: "op_other" }))?.status).toBe("unknown");
+  delete fixture.records.get(identity.submissionId)?.tags.sandbar_operation;
+  expect((await restarted.driver.observe({ scope: restarted.scope, submissionId: identity.submissionId, operationId: identity.operationId }))?.status).toBe("unknown");
+  const record = fixture.records.get(identity.submissionId);
+  if (!record) throw new Error("Fixture sandbox missing");
+  record.tags.sandbar_operation = identity.operationId;
+  delete record.tags.sandbar_submission;
+  expect((await restarted.driver.observe({ scope: restarted.scope, submissionId: identity.submissionId, operationId: identity.operationId }))?.status).toBe("unknown");
   expect(fixture.creates).toBe(1);
 });
 
