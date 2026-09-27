@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   createRootRoute,
   createRoute,
@@ -838,6 +838,7 @@ function SandboxPage() {
   const [command, setCommand] = useState("echo hello");
   const [path, setPath] = useState("/work/example.txt");
   const [file, setFile] = useState<File>();
+  const fileInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -908,6 +909,7 @@ function SandboxPage() {
       const result = await withInvocation(fileScope, intent, (key) =>
         api.writeFile(projectId, sandboxId, path, bytes, key),
       );
+      if (fileInput.current) fileInput.current.value = "";
       setFile(undefined);
       if ("operation" in result)
         await navigate({
@@ -1128,6 +1130,7 @@ function SandboxPage() {
                 <input
                   id="file-upload"
                   type="file"
+                  ref={fileInput}
                   onChange={(e) => setFile(e.target.files?.[0])}
                 />
               </Field>

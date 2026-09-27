@@ -191,13 +191,11 @@ async function waitForEffect(action: string, count: number): Promise<void> {
 }
 
 beforeAll(async () => {
-  if (!(await Bun.file(join(root, "apps/web/dist/index.html")).exists())) {
-    const build = Bun.spawnSync(
-      ["bun", "run", "--filter", "@sandbar/web", "build"],
-      { cwd: root, stdout: "inherit", stderr: "inherit" },
-    );
-    if (build.exitCode !== 0) throw new Error("Web build failed before E2E");
-  }
+  const build = Bun.spawnSync(
+    ["bun", "run", "--filter", "@sandbar/web", "build"],
+    { cwd: root, stdout: "inherit", stderr: "inherit" },
+  );
+  if (build.exitCode !== 0) throw new Error("Web build failed before E2E");
   temp = await mkdtemp(join(tmpdir(), "sandbar-e2e-"));
   await writeFile(
     join(temp, "key"),
@@ -511,6 +509,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("button", { name: "Upload file" }).click();
   await page.getByRole("button", { name: "Upload file" }).waitFor();
   await page.getByText("Wrote 22 bytes to /work/example.txt.").waitFor();
+  expect(await page.getByLabel("Local file").inputValue()).toBe("");
   const fileResponse = await context.request.get(
     `${serviceUrl}/v1/projects/${projectId}/sandboxes/${sandboxId}/files?path=%2Fwork%2Fexample.txt`,
   );
@@ -522,6 +521,20 @@ test("browser and public HTTP recover fake effects across service restarts witho
   const downloadedPath = join(temp, "downloaded-example.txt");
   await download.saveAs(downloadedPath);
   expect(await readFile(downloadedPath, "utf8")).toBe("persisted virtual file");
+
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Start new file_write attempt" }).click();
+  await page.getByLabel("Remote path").fill("/work/second.txt");
+  await page.getByLabel("Local file").setInputFiles({
+    name: "sample.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("persisted virtual file"),
+  });
+  expect(await page.getByRole("button", { name: "Upload file" }).isEnabled()).toBe(true);
+  await page.getByRole("button", { name: "Upload file" }).click();
+  await page.getByText("Wrote 22 bytes to /work/second.txt.").waitFor();
+  await waitForEffect("file_write", 2);
+  expect(await page.getByLabel("Local file").inputValue()).toBe("");
 
   await page.route("**/sandboxes/*/files?*", (route) =>
     route.fulfill({ status: 401, contentType: "application/json", body: "{}" }),
