@@ -2,7 +2,9 @@
 
 ## Current implementation
 
-PRs #1–#8 are merged: fake-provider service and management UI, portable core, direct/remote TypeScript SDK, runtime qualification, and the public documentation source. Preserve those implemented contracts. Provider implementation and isolated Effect research are coordinated by manager chat `01a0db94-f78d-70f3-83dd-106d28e38da3`; research does not authorize production adoption.
+PRs #1–#8 are merged: fake-provider service and management UI, portable core, direct/remote TypeScript SDK, runtime qualification, and the public documentation source. Preserve current-version safety guarantees. The user-approved SDK-first refactor may replace unpublished APIs without compatibility layers. Provider implementation and isolated Effect research are coordinated by manager chat `01a0db94-f78d-70f3-83dd-106d28e38da3`; Effect research is parked: do not wake, monitor, repair or merge it as part of the active SDK and release work.
+
+Follow the accepted [package and adapter conventions](specs/package-conventions.md) for public names, imports and provider scope. E2B and additional providers are plans, not new implementation authorization.
 
 Read [specs/README.md](specs/README.md) for current contracts and clearly marked proposals, and [plans/implementation-plan.md](plans/implementation-plan.md) for sequencing. Public documentation lives in `apps/docs`. Historical drafts and completed handoffs live under `specs/archive` and `plans/archive`; they do not override current executable contracts or user decisions.
 
