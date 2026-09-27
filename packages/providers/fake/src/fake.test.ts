@@ -1140,6 +1140,17 @@ describe("independent fake provider", () => {
       { ...source, tick: 251_635_075_200 },
       { ...source, resources: [source.resources[0], source.resources[0]] },
       { ...source, resources: [] },
+      {
+        ...source,
+        nextId: 3,
+        resources: [
+          source.resources[0],
+          {
+            ...source.resources[0],
+            ref: { ...source.resources[0].ref, nativeId: "fake_sandbox_2" },
+          },
+        ],
+      },
       { ...source, ledger: [source.ledger[0], source.ledger[0]] },
       {
         ...source,
@@ -1315,5 +1326,83 @@ describe("independent fake provider", () => {
     }
 
     expect(rejected).toBe(true);
+  });
+
+  test("reads expose only committed state while a mutation save is pending or fails", async () => {
+    directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
+    const statePath = join(directory, "provider.json");
+    const engine = new FakeProviderEngine(statePath, true);
+    await engine.load();
+
+    const created = await engine.create({
+      scope,
+      identity: identity("read_committed_parent"),
+      image: "fake-starter",
+      networkPolicy: "blocked",
+    });
+
+    if (created.result.status !== "completed" || created.result.value.kind !== "sandbox")
+      throw new Error("Create failed");
+    const sandbox = created.result.value.observation.ref;
+    const originalSave = engine["save"].bind(engine);
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+
+    Object.defineProperty(engine, "save", {
+      configurable: true,
+      value: async (state: Parameters<typeof originalSave>[0]) => {
+        started.resolve();
+        await release.promise;
+        await originalSave(state);
+      },
+    });
+
+    const firstWrite = engine.writeFile({
+      sandbox,
+      identity: identity("read_committed_first"),
+      path: "/blob",
+      bytesBase64: Buffer.from("first").toString("base64"),
+      overwrite: true,
+    });
+
+    await started.promise;
+    expect(engine.readFile(sandbox, "/blob")).toBeNull();
+    expect(engine.inspect(sandbox)?.sourceSequence).toBe(1);
+    expect(engine.inventory(scope, undefined, 10).items).toHaveLength(1);
+    expect(engine.snapshot().ledger).toHaveLength(1);
+    release.resolve();
+    expect((await firstWrite).result.status).toBe("completed");
+    expect(engine.readFile(sandbox, "/blob")).toBe(Buffer.from("first").toString("base64"));
+
+    const failedSaveStarted = Promise.withResolvers<void>();
+    const failSave = Promise.withResolvers<void>();
+
+    Object.defineProperty(engine, "save", {
+      value: async () => {
+        failedSaveStarted.resolve();
+        await failSave.promise;
+        throw new Error("simulated state save failure");
+      },
+    });
+
+    const failedDestroy = engine.destroy({
+      sandbox,
+      identity: identity("read_committed_failed"),
+    });
+
+    await failedSaveStarted.promise;
+    expect(engine.inspect(sandbox)?.state).toBe("running");
+    expect(engine.inventory(scope, undefined, 10).items[0]?.state).toBe("running");
+    expect(engine.readFile(sandbox, "/blob")).toBe(Buffer.from("first").toString("base64"));
+    expect(engine.snapshot().ledger).toHaveLength(2);
+    failSave.resolve();
+    await expect(failedDestroy).rejects.toThrow("simulated state save failure");
+    expect(engine.inspect(sandbox)?.state).toBe("running");
+    expect(engine.readFile(sandbox, "/blob")).toBe(Buffer.from("first").toString("base64"));
+
+    const reloaded = new FakeProviderEngine(statePath, true);
+    await reloaded.load();
+    expect(reloaded.readFile(sandbox, "/blob")).toBe(Buffer.from("first").toString("base64"));
+    expect(reloaded.snapshot().ledger).toHaveLength(2);
   });
 });

@@ -266,6 +266,16 @@ const StateSchema = z
       }
     }
 
+    for (const resource of state.resources) {
+      if (!createdResourceIds.has(resource.ref.nativeId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["resources"],
+          message: "Native sandbox has no matching create effect",
+        });
+      }
+    }
+
     const allocatorClaims = new Map<number, string>();
 
     for (const ref of allRefs) {
@@ -350,9 +360,9 @@ export class FakeProviderEngine {
       throw error;
     }
   }
-  private async save(): Promise<void> {
-    StateSchema.parse(this.state);
-    const json = JSON.stringify(this.state);
+  private async save(state: State): Promise<void> {
+    StateSchema.parse(state);
+    const json = JSON.stringify(state);
 
     if (Buffer.byteLength(json) > MAX_TOTAL_BYTES)
       throw new FakeCapacityError("Fake provider state limit reached");
@@ -362,16 +372,27 @@ export class FakeProviderEngine {
   }
   private async mutate<T>(fn: () => T, capacityResult?: () => T): Promise<T> {
     const work = this.pending.then(async () => {
-      const previous = structuredClone(this.state);
+      const committed = this.state;
+      let candidate: State;
+      let value: T;
 
       try {
-        const value = fn();
-        await this.save();
+        this.state = structuredClone(committed);
+        value = fn();
+        candidate = this.state;
+      } catch (error) {
+        if (error instanceof FakeCapacityError && capacityResult) return capacityResult();
+        throw error;
+      } finally {
+        this.state = committed;
+      }
+
+      try {
+        await this.save(candidate);
+        this.state = candidate;
 
         return value;
       } catch (error) {
-        this.state = previous;
-
         if (error instanceof FakeCapacityError && capacityResult) return capacityResult();
         throw error;
       }
