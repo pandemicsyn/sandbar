@@ -12,31 +12,26 @@ await sandbar.close();
 
 ```ts
 import { Sandbar, Image } from "sandbar-sdk";
-import { createFakeAdapter } from "@sandbar/provider-fake";
+import { daytona } from "sandbar-sdk/daytona";
 
-const sandbar = await Sandbar.connect({
-  adapter: createFakeAdapter({ url: process.env.FAKE_PROVIDER_URL!, token: process.env.FAKE_PROVIDER_TOKEN! }),
-  config: {}, credentials: {},
-});
+const sandbar = await Sandbar.connect(daytona({ apiKey: process.env.DAYTONA_API_KEY!, target: "us" }));
 try {
-  const box = await sandbar.sandboxes.create({ environment: Image.prepared("fake-starter") });
-  await box.writeFile("/input.bin", Uint8Array.of(0, 255));
-  const bytes = await box.readFile("/input.bin");
-  const result = await box.exec(["fixture", "hello"]);
-  console.log(result.stdoutText(4096), bytes.length);
+  const box = await sandbar.sandboxes.create({ environment: Image.prepared("your-snapshot-id") });
+  const result = await box.exec(["printf", "hello"]);
+  console.log(result.stdoutText(4096));
   await box.destroy();
 } finally {
   await sandbar.close();
 }
 ```
 
-The independent fake service must be running for this fixture. Its command fixtures must be seeded in test mode before `exec`; the SDK does not start the fake server. Direct construction imports no service, database, Hono or Drizzle code. Provider credentials remain in the caller's process and are inappropriate for browser code.
+Direct construction imports no service, database, Hono or Drizzle code. Provider credentials remain in the caller's process and are inappropriate for browser code. The repository's deterministic fake provider is an internal test fixture and is not published with the SDK.
 
 ```ts
 import { Sandbar, Image } from "sandbar-service/client";
 
 const sandbar = Sandbar.connect({ url: "https://sandbar.example/", token: process.env.SANDBAR_TOKEN!, projectId: "my_project" });
-const box = await sandbar.sandboxes.create({ environment: Image.prepared("fake-starter") });
+const box = await sandbar.sandboxes.create({ environment: Image.prepared("your-image-id") });
 await box.destroy();
 await sandbar.close();
 ```
