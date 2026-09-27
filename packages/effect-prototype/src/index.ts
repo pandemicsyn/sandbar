@@ -30,11 +30,29 @@ import {
   type SandboxHandle,
 } from "@sandbar/sdk/direct";
 import {
+  SandbarError as BundledSandbarError,
   newInvocationKey,
-  sealedReference,
+  sealedReference as sealSdkReference,
   throwIfAborted,
-  validateCreate,
+  validateCreate as validateSdkCreate,
 } from "../../sdk/src/resource";
+
+// The private prototype bundles the source-only SDK helpers. Reconstruct any
+// helper error with the public package class at this package boundary.
+function publicSdkError<T>(run: () => T): T {
+  try {
+    return run();
+  } catch (error) {
+    if (error instanceof BundledSandbarError)
+      throw new SandbarError(error.code, error.message, error.effect);
+
+    throw error;
+  }
+}
+
+const sealedReference = (value: RecoveryReference) => publicSdkError(() => sealSdkReference(value));
+
+const validateCreate = (value: CreateInput) => publicSdkError(() => validateSdkCreate(value));
 
 const providerErrorCodes = {
   invalid: "INVALID_ARGUMENT",

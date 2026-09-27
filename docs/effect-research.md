@@ -75,14 +75,14 @@ Measured on macOS 25.6.0, Apple M3 arm64, Node v26.4.0 and Bun 1.3.14. `measure.
 
 | Measure | Current direct | Effect prototype |
 |---|---:|---:|
-| Node module import | 30.5 ms | 169.0 ms |
-| Node child startup including import | 63.0 ms | 201.6 ms |
-| Bun module import | 22.3 ms | 110.1 ms |
-| Bun child startup including import | 36.7 ms | 126.4 ms |
-| In-memory CREATE, Node | 0.356 ms | 0.371 ms |
+| Node module import | 27.9 ms | 153.1 ms |
+| Node child startup including import | 59.7 ms | 186.7 ms |
+| Bun module import | 19.8 ms | 105.4 ms |
+| Bun child startup including import | 33.4 ms | 118.4 ms |
+| In-memory CREATE, Node | 0.344 ms | 0.330 ms |
 | Read-only observations per successful measured CREATE | 0 | 0 |
 
-The baseline SDK tarball was 14,173 bytes; the additional prototype tarball was 6,698 bytes. The installed Effect package resolves to roughly 33 MiB on disk on this machine and adds `@standard-schema/spec`, `fast-check`, and `pure-rand` to the lockfile. Tarball size is not total transitive installed size or a browser bundle measurement. No statistically reliable operation-speed advantage is established; the import overhead is a regression for this prototype.
+The baseline SDK tarball was 14,173 bytes; the additional prototype tarball was 6,781 bytes. The installed Effect package resolves to roughly 33 MiB on disk on this machine and adds `@standard-schema/spec`, `fast-check`, and `pure-rand` to the lockfile. Tarball size is not total transitive installed size or a browser bundle measurement. No statistically reliable operation-speed advantage is established; the import overhead is a regression for this prototype.
 
 For this narrow path, Effect replaces bespoke `raceAbort`/`waitDelay` polling and listener cleanup with `ManagedRuntime`, `Effect.sleep`, fiber interruption, and scoped finalization. It also requires explicit `FiberFailure`/typed-error conversion at the Promise boundary and a careful dispatch barrier. File line counts do not show a simplification: the prototype covers CREATE while the baseline direct module covers all operations. The likely benefit emerges only if the same runtime and semantics are shared across CREATE, EXEC, destroy, file writes, service due-work, and provider sessions. The present prototype adds complexity because it intentionally coexists with baseline code.
 

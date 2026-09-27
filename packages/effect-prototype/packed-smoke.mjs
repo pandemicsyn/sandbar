@@ -68,8 +68,18 @@ try {
     `
 import { EffectCreateClient } from "@sandbar/effect-prototype";
 import { fakeProvider } from "@sandbar/provider-fake/client";
+import { SandbarError } from "@sandbar/sdk/direct";
 const client = new EffectCreateClient({ provider: await fakeProvider({ url: process.env.FAKE_URL, token: process.env.FAKE_TOKEN }) });
 try {
+  for (const invalid of [
+    () => client.sandboxes.create({ environment: { kind: "prepared", value: "" } }),
+    () => client.recover({ version: 1, mode: "direct", kind: "create" }),
+  ]) {
+    try { await invalid(); throw new Error("Invalid input was accepted"); }
+    catch (error) {
+      if (!(error instanceof SandbarError) || error.code !== "INVALID_ARGUMENT") throw error;
+    }
+  }
   const box = await client.sandboxes.create({ environment: { kind: "prepared", value: "fake-starter" } });
   if (!box.id.startsWith("fake_sandbox_")) throw new Error("Invalid sandbox");
   process.stdout.write("experimental packed create passed\\n");
