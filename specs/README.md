@@ -2,6 +2,11 @@
 
 Public usage documentation lives in [apps/docs](../apps/docs/README.md). Implementation sequencing lives in [plans](../plans/implementation-plan.md).
 
+## Accepted implementation decisions
+
+- [Public packages and adapter conventions](package-conventions.md) — selected names, built-in providers, custom integrations and release boundaries.
+- [First-class custom adapter DX](custom-adapters.md) — approved SDK-first refactor; implementation and qualification in progress.
+
 ## Implemented interfaces and architecture
 
 - [Public API contract and executable schema sources](api-spec.md)
