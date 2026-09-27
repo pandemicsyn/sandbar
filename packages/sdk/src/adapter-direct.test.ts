@@ -1194,3 +1194,55 @@ test("close stops a stalled file stream chunk without awaiting reader cancellati
   await Bun.sleep(1);
   expect(cancelRequested).toBe(true);
 });
+
+test("oversized streamed file returns capacity error despite stalled or rejected cancel", async () => {
+  for (const cancelMode of ["stall", "reject"] as const) {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.of(1, 2, 3));
+      },
+      cancel() {
+        return cancelMode === "stall"
+          ? new Promise<void>(() => {})
+          : Promise.reject(new Error("cancel failed"));
+      },
+    });
+
+    const adapter = defineAdapter({
+      name: `example.file-capacity-${cancelMode}`,
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async create() {
+            return { id: "box", state: "running" as const };
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+          files: {
+            maxBytes: 2,
+            async read() {
+              return stream;
+            },
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+    const box = await client.sandboxes.create({ environment: Image.prepared("image") });
+    await expect(
+      Promise.race([
+        box.readFile("/file"),
+        Bun.sleep(300).then(() => {
+          throw new Error("file capacity error was held by cancel");
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
+    await Bun.sleep(1);
+    await client.close();
+  }
+});

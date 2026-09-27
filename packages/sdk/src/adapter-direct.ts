@@ -410,11 +410,9 @@ export class AdapterSandbox {
         total += part.value.length;
       }
     } finally {
-      // A non-cooperative stream must not hold local close waiting on cancellation.
+      // A non-cooperative stream must not hold a bounded result or local close.
       try {
-        const cancellation = reader.cancel().catch(() => undefined);
-
-        if (!this.client.isClosed()) await cancellation;
+        void reader.cancel().catch(() => undefined);
       } catch {
         // Reader cancellation is best effort after the read has ended.
       }
