@@ -70,7 +70,7 @@ export const FakeFileBytesBase64 = z
   .refine((value) => Buffer.from(value, "base64").length <= MAX_FILE_BYTES, "File exceeds 1 MiB");
 
 const ResourceSchema = z.strictObject({
-  ref: NativeRef,
+  ref: NativeRef.refine((ref) => ref.kind === "sandbox", "Resource reference must be a sandbox"),
   state: z.enum(["running", "destroyed"]),
   image: z.string(),
   networkPolicy: z.string(),
@@ -104,10 +104,29 @@ const LedgerEntrySchema = z
       file_write: "file_write",
     }[entry.action];
 
-    const effectScope =
-      value.kind === "sandbox" ? value.observation.ref.scope : value.observation.sandbox.scope;
+    let effectScope: NativeScope;
+    let validRefKinds = true;
 
-    if (value.kind !== expectedKind || scopeKey(effectScope) !== scopeKey(entry.scope)) {
+    switch (value.kind) {
+      case "sandbox":
+        effectScope = value.observation.ref.scope;
+        validRefKinds = value.observation.ref.kind === "sandbox";
+        break;
+      case "execution":
+        effectScope = value.observation.sandbox.scope;
+        validRefKinds =
+          value.observation.ref.kind === "execution" &&
+          value.observation.sandbox.kind === "sandbox" &&
+          sameScope(value.observation.ref.scope, effectScope);
+        break;
+      case "destroy":
+      case "file_write":
+        effectScope = value.observation.sandbox.scope;
+        validRefKinds = value.observation.sandbox.kind === "sandbox";
+        break;
+    }
+
+    if (!validRefKinds || value.kind !== expectedKind || !sameScope(effectScope, entry.scope)) {
       context.addIssue({
         code: "custom",
         message: "Persisted effect does not match its action or scope",

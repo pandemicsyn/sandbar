@@ -266,7 +266,14 @@ export const openApiDocument = {
     schemas: Object.fromEntries(
       Object.entries(schemas).map(([name, schema]) => [
         name,
-        z.toJSONSchema(schema, { target: "openapi-3.1" }),
+        z.toJSONSchema(schema, {
+          target: "openapi-3.1",
+          override({ zodSchema, jsonSchema }) {
+            if (zodSchema._zod.def.type === "object" && !("catchall" in zodSchema._zod.def)) {
+              delete jsonSchema.additionalProperties;
+            }
+          },
+        }),
       ]),
     ),
   },

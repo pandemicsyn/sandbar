@@ -916,8 +916,7 @@
                   "message",
                   "effect",
                   "retry"
-                ],
-                "additionalProperties": false
+                ]
               },
               "result": {
                 "oneOf": [
@@ -938,8 +937,7 @@
                     "required": [
                       "kind",
                       "sandboxId"
-                    ],
-                    "additionalProperties": false
+                    ]
                   },
                   {
                     "type": "object",
@@ -958,8 +956,7 @@
                     "required": [
                       "kind",
                       "executionId"
-                    ],
-                    "additionalProperties": false
+                    ]
                   },
                   {
                     "type": "object",
@@ -982,8 +979,7 @@
                       "kind",
                       "computeStopped",
                       "retainedResources"
-                    ],
-                    "additionalProperties": false
+                    ]
                   },
                   {
                     "type": "object",
@@ -1022,15 +1018,13 @@
                           "bytesWritten",
                           "complete",
                           "effect"
-                        ],
-                        "additionalProperties": false
+                        ]
                       }
                     },
                     "required": [
                       "kind",
                       "receipt"
-                    ],
-                    "additionalProperties": false
+                    ]
                   }
                 ]
               },
@@ -1057,8 +1051,7 @@
               "updatedAt",
               "effect",
               "recovery"
-            ],
-            "additionalProperties": false
+            ]
           },
           "execution": {
             "type": "object",
@@ -1141,15 +1134,13 @@
               "status",
               "outputAvailability",
               "capturedBytes"
-            ],
-            "additionalProperties": false
+            ]
           }
         },
         "required": [
           "operation",
           "execution"
-        ],
-        "additionalProperties": false
+        ]
       },
       "AcceptedOperation": {
         "type": "object",
@@ -1280,8 +1271,7 @@
                   "message",
                   "effect",
                   "retry"
-                ],
-                "additionalProperties": false
+                ]
               },
               "result": {
                 "oneOf": [
@@ -1302,8 +1292,7 @@
                     "required": [
                       "kind",
                       "sandboxId"
-                    ],
-                    "additionalProperties": false
+                    ]
                   },
                   {
                     "type": "object",
@@ -1322,8 +1311,7 @@
                     "required": [
                       "kind",
                       "executionId"
-                    ],
-                    "additionalProperties": false
+                    ]
                   },
                   {
                     "type": "object",
@@ -1346,8 +1334,7 @@
                       "kind",
                       "computeStopped",
                       "retainedResources"
-                    ],
-                    "additionalProperties": false
+                    ]
                   },
                   {
                     "type": "object",
@@ -1386,15 +1373,13 @@
                           "bytesWritten",
                           "complete",
                           "effect"
-                        ],
-                        "additionalProperties": false
+                        ]
                       }
                     },
                     "required": [
                       "kind",
                       "receipt"
-                    ],
-                    "additionalProperties": false
+                    ]
                   }
                 ]
               },
@@ -1421,14 +1406,12 @@
               "updatedAt",
               "effect",
               "recovery"
-            ],
-            "additionalProperties": false
+            ]
           }
         },
         "required": [
           "operation"
-        ],
-        "additionalProperties": false
+        ]
       },
       "CreateProjectRequest": {
         "type": "object",
@@ -1617,14 +1600,12 @@
               "message",
               "effect",
               "retry"
-            ],
-            "additionalProperties": false
+            ]
           }
         },
         "required": [
           "error"
-        ],
-        "additionalProperties": false
+        ]
       },
       "Execution": {
         "type": "object",
@@ -1707,8 +1688,7 @@
           "status",
           "outputAvailability",
           "capturedBytes"
-        ],
-        "additionalProperties": false
+        ]
       },
       "ExecRequest": {
         "type": "object",
@@ -1833,8 +1813,7 @@
           "bytesWritten",
           "complete",
           "effect"
-        ],
-        "additionalProperties": false
+        ]
       },
       "Operation": {
         "type": "object",
@@ -1962,8 +1941,7 @@
               "message",
               "effect",
               "retry"
-            ],
-            "additionalProperties": false
+            ]
           },
           "result": {
             "oneOf": [
@@ -1984,8 +1962,7 @@
                 "required": [
                   "kind",
                   "sandboxId"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
@@ -2004,8 +1981,7 @@
                 "required": [
                   "kind",
                   "executionId"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
@@ -2028,8 +2004,7 @@
                   "kind",
                   "computeStopped",
                   "retainedResources"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
@@ -2068,15 +2043,13 @@
                       "bytesWritten",
                       "complete",
                       "effect"
-                    ],
-                    "additionalProperties": false
+                    ]
                   }
                 },
                 "required": [
                   "kind",
                   "receipt"
-                ],
-                "additionalProperties": false
+                ]
               }
             ]
           },
@@ -2103,8 +2076,7 @@
           "updatedAt",
           "effect",
           "recovery"
-        ],
-        "additionalProperties": false
+        ]
       },
       "Project": {
         "type": "object",
@@ -2128,8 +2100,7 @@
           "id",
           "name",
           "createdAt"
-        ],
-        "additionalProperties": false
+        ]
       },
       "ProjectPage": {
         "type": "object",
@@ -2158,15 +2129,13 @@
                 "id",
                 "name",
                 "createdAt"
-              ],
-              "additionalProperties": false
+              ]
             }
           }
         },
         "required": [
           "items"
-        ],
-        "additionalProperties": false
+        ]
       },
       "ProviderConnection": {
         "type": "object",
@@ -2210,8 +2179,7 @@
             },
             "required": [
               "accountId"
-            ],
-            "additionalProperties": false
+            ]
           },
           "capabilities": {
             "type": "object",
@@ -2234,8 +2202,7 @@
               "exec",
               "files",
               "destroy"
-            ],
-            "additionalProperties": false
+            ]
           }
         },
         "required": [
@@ -2244,8 +2211,7 @@
           "provider",
           "name",
           "status"
-        ],
-        "additionalProperties": false
+        ]
       },
       "ProviderConnectionPage": {
         "type": "object",
@@ -2294,8 +2260,7 @@
                   },
                   "required": [
                     "accountId"
-                  ],
-                  "additionalProperties": false
+                  ]
                 },
                 "capabilities": {
                   "type": "object",
@@ -2318,8 +2283,7 @@
                     "exec",
                     "files",
                     "destroy"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               },
               "required": [
@@ -2328,15 +2292,13 @@
                 "provider",
                 "name",
                 "status"
-              ],
-              "additionalProperties": false
+              ]
             }
           }
         },
         "required": [
           "items"
-        ],
-        "additionalProperties": false
+        ]
       },
       "Sandbox": {
         "type": "object",
@@ -2467,8 +2429,7 @@
           "environment",
           "network",
           "labels"
-        ],
-        "additionalProperties": false
+        ]
       },
       "SandboxPage": {
         "type": "object",
@@ -2604,8 +2565,7 @@
                 "environment",
                 "network",
                 "labels"
-              ],
-              "additionalProperties": false
+              ]
             }
           },
           "nextCursor": {
@@ -2620,8 +2580,7 @@
         "required": [
           "items",
           "asOf"
-        ],
-        "additionalProperties": false
+        ]
       },
       "SandboxListQuery": {
         "type": "object",
@@ -2678,8 +2637,7 @@
             "required": [
               "kind",
               "sandboxId"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2698,8 +2656,7 @@
             "required": [
               "kind",
               "executionId"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2722,8 +2679,7 @@
               "kind",
               "computeStopped",
               "retainedResources"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2762,15 +2718,13 @@
                   "bytesWritten",
                   "complete",
                   "effect"
-                ],
-                "additionalProperties": false
+                ]
               }
             },
             "required": [
               "kind",
               "receipt"
-            ],
-            "additionalProperties": false
+            ]
           }
         ]
       },
@@ -2808,8 +2762,7 @@
         "required": [
           "operatorId",
           "csrfToken"
-        ],
-        "additionalProperties": false
+        ]
       },
       "SetupRequest": {
         "type": "object",
@@ -2857,8 +2810,7 @@
               "executionId",
               "sequence",
               "bytesBase64"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2890,8 +2842,7 @@
               "executionId",
               "sequence",
               "bytesBase64"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2923,7 +2874,6 @@
               "fromSequence",
               "toSequence"
             ],
-            "additionalProperties": false,
             "description": "Missing inclusive sequence range; fromSequence must be less than or equal to toSequence."
           },
           {
@@ -2959,8 +2909,7 @@
               "kind",
               "executionId",
               "exitCode"
-            ],
-            "additionalProperties": false
+            ]
           }
         ]
       }

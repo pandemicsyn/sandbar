@@ -813,6 +813,8 @@ describe("independent fake provider", () => {
     await recovered.load();
     expect(recovered.snapshot().ledger).toHaveLength(1);
     const source = JSON.parse(valid);
+    const wrongLedgerRef = structuredClone(source.ledger[0]);
+    wrongLedgerRef.result.value.observation.ref.kind = "execution";
 
     for (const damaged of [
       { ...source, version: 2 },
@@ -832,11 +834,18 @@ describe("independent fake provider", () => {
       },
       { ...source, ledger: [{ ...source.ledger[0], action: "destroy" }] },
       { ...source, ledger: [{ ...source.ledger[0], remaining: -1 }] },
+      { ...source, ledger: [wrongLedgerRef] },
       {
         ...source,
         ledger: [{ ...source.ledger[0], scope: { ...scope, connectionId: "foreign" } }],
       },
       { ...source, resources: [{ ...source.resources[0], files: { "/blob": "not-base64" } }] },
+      {
+        ...source,
+        resources: [
+          { ...source.resources[0], ref: { ...source.resources[0].ref, kind: "execution" } },
+        ],
+      },
       {
         ...source,
         resources: [{ ...source.resources[0], files: { "/blob": "A".repeat(1_398_104) } }],

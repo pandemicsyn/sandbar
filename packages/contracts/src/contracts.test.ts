@@ -109,4 +109,12 @@ describe("public contract", () => {
       expect(response.headers.Location.schema).toEqual({ type: "string", format: "uri-reference" });
     }
   });
+  test("OpenAPI preserves additive output fields and strict request inputs", () => {
+    expect(openApiDocument.components.schemas.Operation).not.toHaveProperty("additionalProperties");
+    expect(openApiDocument.components.schemas.Sandbox).not.toHaveProperty("additionalProperties");
+    expect(openApiDocument.components.schemas.CreateSandboxRequest).toHaveProperty(
+      "additionalProperties",
+      false,
+    );
+  });
 });
