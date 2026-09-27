@@ -159,10 +159,9 @@ test("service verifies Modal App scope, encrypts credentials and routes bounded 
       nativeScope: {
         adapterScope: {
           authority: { kind: "app", id: "ap-fixture" },
-          partition: { environment: "main" },
+          partition: { environment: "main", endpoint: "https://api.modal.com:443" },
         },
         region: "us-east-1",
-        endpoint: "https://api.modal.com:443",
       },
     });
 
