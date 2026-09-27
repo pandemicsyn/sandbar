@@ -147,8 +147,12 @@ async function flow() {
   const client = await Sandbar.connect(modal({ appName: "existing", environment: "main", tokenId: "ak-fixture", tokenSecret: "as-fixture" }));
   const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked" });
   const bytes: Uint8Array = await box.readFile("/file");
+  const exec = await box.exec({ command: { kind: "argv", argv: ["printf", "ready"] }, cwd: "/tmp", env: { KEY: "value" }, maxOutputBytes: 16 });
+  const code: number | null = exec.exitCode;
+  await box.writeFile("/file", new Uint8Array([0, 255]), { overwrite: false });
+  const image = Image.oci("python:3.12-slim");
   await client.close();
-  return bytes;
+  return { bytes, code, image };
 }
 void flow;
 `;
@@ -309,19 +313,35 @@ import { Sandbar, Image } from "sandbar-sdk";
 import { createModalAdapter } from "@sandbar/provider-modal";
 let creates = 0, terminates = 0, closed = 0;
 const records = new Map();
+const files = new Map();
+const executions = new Map();
+let writePath = "";
 const transport = {
   async lookupApp(name, environment) { if (name !== "existing" || environment !== "main") throw Error("Wrong App"); return "ap-fixture"; },
   async imageExists(id) { return id === "im-fixture"; },
   async create(input) {
-    if (input.appId !== "ap-fixture" || input.imageId !== "im-fixture" || input.timeoutMs !== 300000 || input.regions?.[0] !== "us-east-1") throw Error("Wrong create input");
+    if (input.appId !== "ap-fixture" || (input.imageId !== "im-fixture" && input.ociReference !== "python:3.12-slim") || input.timeoutMs !== 300000 || input.regions?.[0] !== "us-east-1") throw Error("Wrong create input");
     creates++;
-    records.set(input.name, { id: "sb-1", tags: input.tags, running: true });
-    return "sb-1";
+    records.set(input.name, { id: "sb-" + creates, tags: input.tags, running: true });
+    return "sb-" + creates;
   },
   async findByName(_app, _environment, name) { return records.get(name) ?? null; },
   async *list(appId) { if (appId !== "ap-fixture") throw Error("Wrong inventory scope"); for (const record of records.values()) if (record.running) yield record; },
-  async readBytes(id, path, maxBytes) { if (id !== "sb-1" || path !== "/file" || maxBytes !== 1048576) throw Error("Wrong read"); return Uint8Array.from([0, 255, 128]); },
-  async terminate(id) { if (id !== "sb-1") throw Error("Wrong termination"); terminates++; for (const record of records.values()) record.running = false; return true; },
+  async readBytes(id, path, maxBytes) { if (!id.startsWith("sb-") || maxBytes !== 1048576) throw Error("Wrong read"); return files.get(path) ?? Uint8Array.from([0, 255, 128]); },
+  async fileExists(_id, path) { return files.has(path); },
+  async start(input) {
+    if (input.command[0] === "/bin/sh" && input.command[2]?.includes("cat >")) {
+      writePath = input.command.at(-1);
+      executions.set(input.execId, { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false });
+    } else {
+      if (input.command.join(" ") !== "printf ready" || input.cwd !== "/tmp" || input.env?.KEY !== "value") throw Error("Wrong exec input");
+      executions.set(input.execId, { exitCode: 0, stdout: Uint8Array.from([0, 255]), stderr: new Uint8Array(), truncated: false });
+    }
+  },
+  async stdin(_id, execId, bytes) { files.set(writePath, bytes.slice()); executions.set(execId, { exitCode: 0, stdout: new TextEncoder().encode(String(bytes.length) + "\\n"), stderr: new Uint8Array(), truncated: false }); },
+  async result(_id, execId) { return executions.get(execId); },
+  async terminate() { terminates++; for (const record of records.values()) record.running = false; return true; },
+  async poll() { return "stopped"; },
   close() { closed++; },
 };
 const client = await Sandbar.connect({ adapter: createModalAdapter(() => transport), config: { appName: "existing", environment: "main", region: "us-east-1", timeoutSeconds: 300 }, credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" } });
@@ -329,8 +349,15 @@ try {
   const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked", region: "us-east-1" });
   const bytes = await box.readFile("/file");
   if (bytes.length !== 3 || bytes[0] !== 0 || bytes[1] !== 255 || bytes[2] !== 128) throw Error("Binary read mismatch");
+  const result = await box.exec({ command: { kind: "argv", argv: ["printf", "ready"] }, cwd: "/tmp", env: { KEY: "value" }, maxOutputBytes: 16 });
+  if (result.exitCode !== 0 || result.stdout[0] !== 0 || result.stdout[1] !== 255) throw Error("Binary exec mismatch");
+  await box.writeFile("/file", Uint8Array.from([0, 255, 129]), { overwrite: true });
+  const roundtrip = await box.readFile("/file");
+  if (roundtrip[2] !== 129) throw Error("Binary write mismatch");
   await box.destroy();
-  if (creates !== 1 || terminates !== 1) throw Error("Mutation replay in packed Modal consumer");
+  const oci = await client.sandboxes.create({ environment: Image.oci("python:3.12-slim"), networkPolicy: "blocked", region: "us-east-1" });
+  await oci.destroy();
+  if (creates !== 2 || terminates !== 2) throw Error("Mutation replay in packed Modal consumer");
 } finally { await client.close(); }
 if (closed !== 1) throw Error("Owned provider was not released");
 process.stdout.write("packed Modal fixture flow passed\\n");

@@ -28,9 +28,10 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts src/service-support.ts src/daytona.ts src/modal.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external modal --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts src/service-support.ts src/daytona.ts src/modal.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external modal --external @grpc/grpc-js --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
   },
   "dependencies": {
+    "@grpc/grpc-js": "1.14.5",
     "sandbar-adapter": "workspace:*",
     "zod": "4.6.5",
     "modal": "0.10.1"

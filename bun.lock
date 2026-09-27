@@ -119,13 +119,13 @@
       "version": "0.0.0",
       "dependencies": {
         "@bufbuild/protobuf": "2.0.0",
+        "@grpc/grpc-js": "1.14.5",
         "@sandbar/provider-spi": "workspace:*",
         "modal": "0.10.1",
         "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
-        "@grpc/grpc-js": "1.14.5",
         "sandbar-sdk": "workspace:*",
       },
     },
@@ -133,6 +133,7 @@
       "name": "sandbar-sdk",
       "version": "0.0.0",
       "dependencies": {
+        "@grpc/grpc-js": "1.14.5",
         "modal": "0.10.1",
         "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",

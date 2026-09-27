@@ -89,10 +89,21 @@ class Fixture implements ModalTransport {
 
     return true;
   }
+  async poll() {
+    return "stopped" as const;
+  }
   async readBytes(_sandboxId: string, _path: string, maxBytes: number) {
     if (this.file.length > maxBytes) throw new Error("too large");
 
     return this.file;
+  }
+  async fileExists() {
+    return false;
+  }
+  async start() {}
+  async stdin() {}
+  async result() {
+    return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false };
   }
   close() {}
 }

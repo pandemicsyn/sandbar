@@ -7,6 +7,7 @@ import {
   type Sandbox,
 } from "modal";
 import { ProviderReadError } from "@sandbar/provider-spi";
+import { ModalRouterWire, type RouterRun } from "./router-wire";
 
 export const MODAL_ENDPOINT = "https://api.modal.com:443";
 
@@ -101,6 +102,7 @@ export interface ModalTransport {
   create(input: {
     appId: string;
     imageId: string;
+    ociReference?: string;
     name: string;
     tags: Record<string, string>;
     timeoutMs: number;
@@ -113,7 +115,22 @@ export interface ModalTransport {
   ): Promise<ModalSandboxRecord | null>;
   list(appId: string): AsyncIterable<ModalSandboxRecord>;
   terminate(sandboxId: string): Promise<boolean>;
+  poll(sandboxId: string): Promise<"running" | "stopped" | "missing">;
   readBytes(sandboxId: string, path: string, maxBytes: number): Promise<Uint8Array>;
+  fileExists(sandboxId: string, path: string): Promise<boolean>;
+  start(input: RouterRun, signal?: AbortSignal): Promise<void>;
+  stdin(sandboxId: string, execId: string, bytes: Uint8Array, signal?: AbortSignal): Promise<void>;
+  result(
+    sandboxId: string,
+    execId: string,
+    maxBytes: number,
+    signal?: AbortSignal,
+  ): Promise<{
+    exitCode: number;
+    stdout: Uint8Array;
+    stderr: Uint8Array;
+    truncated: boolean;
+  }>;
   close(): void;
 }
 
@@ -149,6 +166,7 @@ export function createSdkTransport(input: {
   }
 
   const apps = new Map<string, App>();
+  const router = new ModalRouterWire(client);
 
   async function appFor(appId: string): Promise<App> {
     const app = apps.get(appId);
@@ -186,10 +204,13 @@ export function createSdkTransport(input: {
         throw error;
       }
     },
-    async create({ appId, imageId, name, tags, timeoutMs, regions }) {
-      const image = await client.images.fromId(imageId);
+    async create({ appId, imageId, ociReference, name, tags, timeoutMs, regions }) {
+      const image = ociReference
+        ? client.images.fromRegistry(ociReference)
+        : await client.images.fromId(imageId);
 
-      if (image.imageId !== imageId) throw new Error("Modal image identity mismatch");
+      if (!ociReference && image.imageId !== imageId)
+        throw new Error("Modal image identity mismatch");
 
       const sandbox = await client.sandboxes.experimentalCreate(await appFor(appId), image, {
         name,
@@ -223,12 +244,40 @@ export function createSdkTransport(input: {
 
       return (await sandbox.poll()) !== null;
     },
+    async poll(sandboxId) {
+      try {
+        const sandbox = await client.sandboxes.fromId(sandboxId);
+
+        return (await sandbox.poll()) === null ? "running" : "stopped";
+      } catch (error) {
+        if (error instanceof NotFoundError) return "missing";
+
+        throw error;
+      }
+    },
     async readBytes(sandboxId, path, maxBytes) {
       const sandbox = await client.sandboxes.fromId(sandboxId);
 
       return readModalFile(sandbox, path, maxBytes);
     },
+    async fileExists(sandboxId, path) {
+      const sandbox = await client.sandboxes.fromId(sandboxId);
+
+      try {
+        await sandbox.filesystem.stat(path);
+
+        return true;
+      } catch (error) {
+        if (error instanceof SandboxFilesystemNotFoundError) return false;
+        throw error;
+      }
+    },
+    start: (input, signal) => router.start(input, signal),
+    stdin: (sandboxId, execId, bytes, signal) => router.stdin(sandboxId, execId, bytes, signal),
+    result: (sandboxId, execId, maxBytes, signal) =>
+      router.result(sandboxId, execId, maxBytes, signal),
     close() {
+      router.close();
       client.close();
     },
   };

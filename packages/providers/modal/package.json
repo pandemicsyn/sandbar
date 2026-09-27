@@ -15,10 +15,11 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external '@sandbar/*' --external sandbar-adapter --external modal --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs",
+    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external '@sandbar/*' --external sandbar-adapter --external modal --external @grpc/grpc-js --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs",
     "test:live": "bun live/conformance.mjs"
   },
   "dependencies": {
+    "@grpc/grpc-js": "1.14.5",
     "@bufbuild/protobuf": "2.0.0",
     "@sandbar/provider-spi": "workspace:*",
     "modal": "0.10.1",
@@ -26,7 +27,6 @@
     "sandbar-adapter": "workspace:*"
   },
   "devDependencies": {
-    "@grpc/grpc-js": "1.14.5",
     "sandbar-sdk": "workspace:*"
   }
 }

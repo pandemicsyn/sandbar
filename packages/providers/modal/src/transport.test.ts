@@ -2,12 +2,17 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
 import { ModalClient } from "modal";
 import { noRetryGrpcMiddleware, readBoundedStream, readModalFile } from "./transport";
+import { field, message } from "./router-wire";
 
 const server = new grpc.Server();
 
 const calls = new Map<string, number>();
 
 let port = 0;
+
+let imageSuccess = false;
+
+let createSuccess = false;
 
 const path = "/modal.client.ModalClient/AppGetOrCreate";
 
@@ -25,6 +30,8 @@ const createPath = "/modal.client.ModalClient/SandboxCreateV2";
 
 const terminatePath = "/modal.client.ModalClient/SandboxTerminateV2";
 
+const imagePath = "/modal.client.ModalClient/ImageGetOrCreate";
+
 function lost(requestPath: string): grpc.handleUnaryCall<Buffer, Buffer> {
   return (_call, callback) => {
     calls.set(requestPath, (calls.get(requestPath) ?? 0) + 1);
@@ -37,6 +44,7 @@ server.addService(
     appGetOrCreate: method,
     sandboxCreateV2: { ...method, path: createPath },
     sandboxTerminateV2: { ...method, path: terminatePath },
+    imageGetOrCreate: { ...method, path: imagePath },
     authTokenGet: { ...method, path: "/modal.client.ModalClient/AuthTokenGet" },
   },
   {
@@ -48,8 +56,25 @@ server.addService(
       callback(null, Buffer.concat([Buffer.from([10, token.length]), token]));
     },
     appGetOrCreate: lost(path),
-    sandboxCreateV2: lost(createPath),
+    sandboxCreateV2(
+      _call: grpc.ServerUnaryCall<Buffer, Buffer>,
+      callback: grpc.sendUnaryData<Buffer>,
+    ) {
+      calls.set(createPath, (calls.get(createPath) ?? 0) + 1);
+
+      if (createSuccess) callback(null, message(field(1, "sb-oci"), field(3, "ta-fixture")));
+      else callback(Object.assign(new Error("lost response"), { code: grpc.status.UNAVAILABLE }));
+    },
     sandboxTerminateV2: lost(terminatePath),
+    imageGetOrCreate(
+      _call: grpc.ServerUnaryCall<Buffer, Buffer>,
+      callback: grpc.sendUnaryData<Buffer>,
+    ) {
+      calls.set(imagePath, (calls.get(imagePath) ?? 0) + 1);
+
+      if (imageSuccess) callback(null, message(field(1, "im-oci"), field(2, field(1, 1))));
+      else callback(Object.assign(new Error("lost response"), { code: grpc.status.UNAVAILABLE }));
+    },
   },
 );
 
@@ -181,9 +206,11 @@ test("pinned SDK's public middleware limits ambiguous control-plane calls to one
     ).rejects.toThrow();
     await expect(client.cpClient.sandboxCreateV2({ appId: "ap-fixture" })).rejects.toThrow();
     await expect(client.cpClient.sandboxTerminateV2({ sandboxId: "sb-fixture" })).rejects.toThrow();
+    await expect(client.cpClient.imageGetOrCreate({ appId: "ap-fixture" })).rejects.toThrow();
     expect(calls.get(path)).toBe(1);
     expect(calls.get(createPath)).toBe(1);
     expect(calls.get(terminatePath)).toBe(1);
+    expect(calls.get(imagePath)).toBe(1);
     client.close();
   } finally {
     if (previous === undefined) delete process.env.MODAL_SERVER_URL;
@@ -211,5 +238,85 @@ test("the SDK constructor maxRetries option alone does not disable automatic rep
   } finally {
     if (previous === undefined) delete process.env.MODAL_SERVER_URL;
     else process.env.MODAL_SERVER_URL = previous;
+  }
+});
+
+test("fromRegistry is IO-free and pinned OCI build sends one image mutation on lost response", async () => {
+  const previousUrl = process.env.MODAL_SERVER_URL;
+  const previousBuilder = process.env.MODAL_IMAGE_BUILDER_VERSION;
+  process.env.MODAL_SERVER_URL = `http://127.0.0.1:${port}`;
+  process.env.MODAL_IMAGE_BUILDER_VERSION = "fixture-builder";
+
+  try {
+    calls.clear();
+
+    const client = new ModalClient({
+      tokenId: "ak-fixture",
+      tokenSecret: "as-fixture",
+      maxThrottleWaitSecs: 0,
+      grpcMiddleware: [noRetryGrpcMiddleware],
+    });
+
+    const image = client.images.fromRegistry("python:3.12-slim");
+    expect(image.imageId).toBe("");
+    expect(calls.get(imagePath)).toBeUndefined();
+    // SAFETY: Image.build only reads appId and environmentName from the fixture App.
+    await expect(
+      image.build({ appId: "ap-fixture", environmentName: "main" } as never),
+    ).rejects.toThrow();
+    expect(calls.get(imagePath)).toBe(1);
+    client.close();
+  } finally {
+    if (previousUrl === undefined) delete process.env.MODAL_SERVER_URL;
+    else process.env.MODAL_SERVER_URL = previousUrl;
+
+    if (previousBuilder === undefined) delete process.env.MODAL_IMAGE_BUILDER_VERSION;
+    else process.env.MODAL_IMAGE_BUILDER_VERSION = previousBuilder;
+  }
+});
+
+test("pinned OCI path builds once and creates one V2 sandbox in the same submit", async () => {
+  const previousUrl = process.env.MODAL_SERVER_URL;
+  const previousBuilder = process.env.MODAL_IMAGE_BUILDER_VERSION;
+  process.env.MODAL_SERVER_URL = `http://127.0.0.1:${port}`;
+  process.env.MODAL_IMAGE_BUILDER_VERSION = "fixture-builder";
+  imageSuccess = true;
+  createSuccess = true;
+
+  try {
+    calls.clear();
+
+    const client = new ModalClient({
+      tokenId: "ak-fixture",
+      tokenSecret: "as-fixture",
+      maxThrottleWaitSecs: 0,
+      grpcMiddleware: [noRetryGrpcMiddleware],
+    });
+
+    const image = client.images.fromRegistry("python:3.12-slim");
+    expect(calls.get(imagePath)).toBeUndefined();
+
+    // SAFETY: The pinned native method only reads these two App fields in this no-secrets fixture.
+    const sandbox = await client.sandboxes.experimentalCreate(
+      { appId: "ap-fixture", environmentName: "main" } as never,
+      image,
+      { name: "sub-fixture", blockNetwork: true },
+    );
+
+    expect(sandbox.sandboxId).toBe("sb-oci");
+    expect(image.imageId).toBe("im-oci");
+    expect(calls.get(imagePath)).toBe(1);
+    expect(calls.get(createPath)).toBe(1);
+    sandbox.detach();
+    client.close();
+  } finally {
+    imageSuccess = false;
+    createSuccess = false;
+
+    if (previousUrl === undefined) delete process.env.MODAL_SERVER_URL;
+    else process.env.MODAL_SERVER_URL = previousUrl;
+
+    if (previousBuilder === undefined) delete process.env.MODAL_IMAGE_BUILDER_VERSION;
+    else process.env.MODAL_IMAGE_BUILDER_VERSION = previousBuilder;
   }
 });

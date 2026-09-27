@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { AdapterError, defineAdapter } from "sandbar-adapter";
 import { createSdkTransport, MODAL_ENDPOINT, type ModalTransport } from "./transport";
 
@@ -22,7 +23,31 @@ const RecordSchema = z.strictObject({
   running: z.boolean(),
 });
 
+const ExecToken = z.strictObject({ maxBytes: z.number().int().min(0).max(MAX_BYTES) });
+
+const DestroyToken = z.strictObject({ id: z.string().min(1).max(128) });
+
 type RecordValue = z.output<typeof RecordSchema>;
+
+export function modalWriteScript(overwrite: boolean): string {
+  const prefix = 'umask 077; mkdir -p -- "${1%/*}" && ';
+
+  return prefix + (overwrite ? "" : "set -C && ") + 'cat > "$1" && wc -c < "$1"';
+}
+
+function modalExecId(submissionId: string): string {
+  const bytes = createHash("sha256")
+    .update("sandbar-modal-exec\0")
+    .update(submissionId)
+    .digest()
+    .subarray(0, 16);
+
+  bytes[6] = (bytes[6]! & 15) | 64;
+  bytes[8] = (bytes[8]! & 63) | 128;
+  const hex = bytes.toString("hex");
+
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 /** Create a Modal adapter using the pinned single-attempt control transport. */
 export function createModalAdapter(
@@ -75,11 +100,22 @@ export function createModalAdapter(
             region: config.region ?? "",
           },
         },
-        supports: { images: ["prepared"], network: ["blocked"] },
+        supports: {
+          images: ["prepared", "oci"],
+          network: ["blocked"],
+          exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_BYTES },
+          fileWrite: { overwrite: true, noClobber: true },
+        },
         create: {
           async prepare(input) {
-            if (input.image.kind !== "prepared" || !/^im-[A-Za-z0-9_-]+$/.test(input.image.value))
+            if (input.image.kind === "prepared" && !/^im-[A-Za-z0-9_-]+$/.test(input.image.value))
               throw new AdapterError("UNSUPPORTED", "Use an existing Modal image ID");
+
+            if (
+              input.image.kind === "oci" &&
+              !/^[A-Za-z0-9][A-Za-z0-9._/@:-]{0,1023}$/.test(input.image.value)
+            )
+              throw new AdapterError("INVALID_ARGUMENT", "Invalid OCI image reference");
 
             if (input.region && input.region !== config.region)
               throw new AdapterError(
@@ -91,10 +127,17 @@ export function createModalAdapter(
               throw new AdapterError("INVALID_ARGUMENT", "Reserved Modal tag prefix");
             await verify();
 
-            if (!(await transport.imageExists(input.image.value)))
+            if (
+              input.image.kind === "prepared" &&
+              !(await transport.imageExists(input.image.value))
+            )
               throw new AdapterError("NOT_FOUND", "Modal image is unavailable");
 
-            return { imageId: input.image.value, labels: input.labels ?? {} };
+            return {
+              imageId: input.image.kind === "prepared" ? input.image.value : "",
+              ociReference: input.image.kind === "oci" ? input.image.value : undefined,
+              labels: input.labels ?? {},
+            };
           },
           async submit(input, ctx) {
             if (ctx.submissionId.length >= 64)
@@ -112,6 +155,8 @@ export function createModalAdapter(
                 },
                 timeoutMs: config.timeoutSeconds * 1000,
               };
+
+              if (input.ociReference) request.ociReference = input.ociReference;
 
               if (config.region) request.regions = [config.region];
               const id = await transport.create(request);
@@ -161,21 +206,48 @@ export function createModalAdapter(
             };
           },
         },
-        async destroy(box, ctx) {
-          const record = await find(box.id);
+        destroy: {
+          recovery: { version: 1, token: DestroyToken },
+          async prepare(box) {
+            const record = await find(box.id);
 
-          if (!record)
-            return ctx.reject("NOT_FOUND", "Modal sandbox was not found in the verified App");
+            if (!record)
+              throw new AdapterError(
+                "NOT_FOUND",
+                "Modal sandbox was not found in the verified App",
+              );
 
-          try {
-            const stopped = await transport.terminate(record.id);
+            return box;
+          },
+          async submit(box, ctx) {
+            try {
+              const stopped = await transport.terminate(box.id);
 
-            return stopped
-              ? { computeStopped: true, retainedResources: [] }
-              : ctx.unknown("Modal termination was not confirmed");
-          } catch {
-            return ctx.unknown("Modal termination response unavailable; do not replay");
-          }
+              return stopped
+                ? { computeStopped: true, retainedResources: [] }
+                : ctx.pending({ id: box.id });
+            } catch {
+              return ctx.pending({ id: box.id });
+            }
+          },
+          async observe(attempt, ctx) {
+            const token = DestroyToken.safeParse(attempt.token);
+
+            if (!token.success || token.data.id !== attempt.sandbox?.id)
+              return ctx.unknown("Modal termination scope evidence is unavailable; do not replay");
+
+            await verify();
+
+            try {
+              const state = await transport.poll(token.data.id);
+
+              return state === "stopped"
+                ? { computeStopped: true, retainedResources: [] }
+                : ctx.unknown("Modal termination is not confirmed; do not replay");
+            } catch {
+              return ctx.unknown("Modal termination observation failed; do not replay");
+            }
+          },
         },
         async inspect(box) {
           const record = await find(box.id);
@@ -206,6 +278,81 @@ export function createModalAdapter(
             nextCursor: items.length > input.limit ? String(offset + input.limit) : undefined,
           };
         },
+        exec: {
+          recovery: { version: 1, token: ExecToken },
+          async prepare(input) {
+            if (!(await find(input.sandbox.id)))
+              throw new AdapterError(
+                "NOT_FOUND",
+                "Modal sandbox was not found in the verified App",
+              );
+
+            return input;
+          },
+          async submit(input, ctx) {
+            const command =
+              input.command.kind === "argv"
+                ? input.command.argv
+                : ["/bin/sh", "-c", input.command.script];
+
+            const signal = AbortSignal.any([
+              ctx.signal,
+              AbortSignal.timeout((input.deadlineSeconds + 5) * 1000),
+            ]);
+
+            try {
+              await transport.start(
+                {
+                  sandboxId: input.sandbox.id,
+                  execId: modalExecId(ctx.submissionId),
+                  command,
+                  cwd: input.cwd,
+                  env: input.env,
+                  timeoutSeconds: input.deadlineSeconds,
+                },
+                signal,
+              );
+            } catch {
+              return ctx.pending({ maxBytes: input.maxOutputBytes });
+            }
+
+            try {
+              return await transport.result(
+                input.sandbox.id,
+                modalExecId(ctx.submissionId),
+                input.maxOutputBytes,
+                signal,
+              );
+            } catch {
+              return ctx.pending({ maxBytes: input.maxOutputBytes });
+            }
+          },
+          async observe(attempt, ctx) {
+            if (!attempt.sandbox || !(await find(attempt.sandbox.id)))
+              return ctx.unknown("Modal command sandbox is unavailable in the verified App");
+
+            try {
+              const signal = AbortSignal.any([
+                ctx.signal,
+                AbortSignal.timeout(Math.max(1, ctx.deadline - Date.now())),
+              ]);
+
+              const token = ExecToken.safeParse(attempt.token);
+
+              if (!token.success)
+                return ctx.unknown("Modal command output limit is unavailable; do not replay");
+
+              return await transport.result(
+                attempt.sandbox.id,
+                modalExecId(attempt.submissionId),
+                token.data.maxBytes,
+                signal,
+              );
+            } catch {
+              return ctx.unknown("Modal command evidence is unavailable; do not replay");
+            }
+          },
+        },
         files: {
           maxBytes: MAX_BYTES,
           async read(input) {
@@ -220,6 +367,105 @@ export function createModalAdapter(
               throw new AdapterError("CAPACITY", "Modal file exceeds the read bound");
 
             return bytes;
+          },
+          write: {
+            async prepare(input) {
+              if (!(await find(input.sandbox.id)))
+                throw new AdapterError(
+                  "NOT_FOUND",
+                  "Modal sandbox was not found in the verified App",
+                );
+
+              if (input.bytes.length > MAX_BYTES)
+                throw new AdapterError("CAPACITY", "Modal file exceeds the write bound");
+
+              if (!input.overwrite && (await transport.fileExists(input.sandbox.id, input.path)))
+                throw new AdapterError("CONFLICT", "Modal file already exists");
+
+              return input;
+            },
+            async submit(input, ctx) {
+              // POSIX noclobber opens the destination with O_EXCL. Stdin carries
+              // raw bytes, so NUL and non-UTF-8 content are never transcoded.
+              const script = modalWriteScript(input.overwrite);
+
+              try {
+                await transport.start(
+                  {
+                    sandboxId: input.sandbox.id,
+                    execId: modalExecId(ctx.submissionId),
+                    command: ["/bin/sh", "-c", script, "sandbar-write", input.path],
+                    timeoutSeconds: 300,
+                  },
+                  ctx.signal,
+                );
+                await transport.stdin(
+                  input.sandbox.id,
+                  modalExecId(ctx.submissionId),
+                  input.bytes,
+                  ctx.signal,
+                );
+              } catch {
+                return ctx.unknown(
+                  "Modal file submission is uncertain; observe the original execution ID",
+                );
+              }
+
+              try {
+                const result = await transport.result(
+                  input.sandbox.id,
+                  modalExecId(ctx.submissionId),
+                  64,
+                  ctx.signal,
+                );
+
+                if (
+                  result.exitCode === 0 &&
+                  !result.truncated &&
+                  Number(new TextDecoder().decode(result.stdout).trim()) === input.bytes.length
+                )
+                  return { bytesWritten: input.bytes.length };
+
+                return ctx.unknown(
+                  "Modal file write failed after submission; inspect destination before retry",
+                );
+              } catch {
+                return ctx.unknown("Modal file result is unavailable; observe without replay");
+              }
+            },
+            async observe(attempt, ctx) {
+              if (!attempt.sandbox || !(await find(attempt.sandbox.id)))
+                return ctx.unknown("Modal write sandbox is unavailable in the verified App");
+
+              try {
+                const signal = AbortSignal.any([
+                  ctx.signal,
+                  AbortSignal.timeout(Math.max(1, ctx.deadline - Date.now())),
+                ]);
+
+                const result = await transport.result(
+                  attempt.sandbox.id,
+                  modalExecId(attempt.submissionId),
+                  64,
+                  signal,
+                );
+
+                const count = Number(new TextDecoder().decode(result.stdout).trim());
+
+                if (
+                  result.exitCode === 0 &&
+                  !result.truncated &&
+                  Number.isSafeInteger(count) &&
+                  count >= 0 &&
+                  count <= MAX_BYTES
+                )
+                  return { bytesWritten: count };
+
+                return ctx.unknown("Modal write completion cannot be certified; do not replay");
+              } catch {
+                return ctx.unknown("Modal write evidence is unavailable; do not replay");
+              }
+            },
           },
         },
       };
