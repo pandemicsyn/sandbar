@@ -763,6 +763,10 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       const params = new URL(c.req.url).searchParams;
 
+      for (const key of params.keys())
+        if (!["kind", "sandboxId"].includes(key) || params.getAll(key).length !== 1)
+          throw new SyntaxError("Invalid invocation query");
+
       const kind = params.get("kind"),
         sandboxIdValue = params.get("sandboxId");
 
@@ -813,6 +817,12 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
   app.get(
     "/v1/projects/:projectId/sandboxes/:sandboxId/files",
     protect(deps, false, async (c) => {
+      const params = new URL(c.req.url).searchParams;
+
+      for (const key of params.keys())
+        if (key !== "path" || params.getAll(key).length !== 1)
+          throw new SyntaxError("Invalid file query");
+
       const projectId = idParam(c, "projectId"),
         box = await deps.store.getSandbox(projectId, idParam(c, "sandboxId"));
 

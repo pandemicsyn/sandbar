@@ -164,6 +164,19 @@ test("API persists ambiguous create and exec, then observes each once after rest
     const createLookup = `/v1/projects/${project.id}/invocations/${createKey}?kind=create`;
     expect((await json(createLookup, "GET", undefined, bearer)).value.id).toBe(opId);
     expect((await json(createLookup)).response.status).toBe(401);
+
+    for (const query of ["kind=create&kind=exec", "kind=create&extra=1"]) {
+      const invalid = await json(
+        `/v1/projects/${project.id}/invocations/${createKey}?${query}`,
+        "GET",
+        undefined,
+        bearer,
+      );
+
+      expect(invalid.response.status).toBe(400);
+      expect(invalid.value.error.code).toBe("INVALID_ARGUMENT");
+    }
+
     expect(
       (
         await json(
@@ -355,6 +368,18 @@ test("API persists ambiguous create and exec, then observes each once after rest
 
     expect(read.status).toBe(200);
     expect(new Uint8Array(await read.arrayBuffer())).toEqual(bytes);
+
+    for (const query of ["path=/data/blob&path=/data/missing", "path=/data/blob&extra=1"]) {
+      const invalid = await json(
+        `/v1/projects/${project.id}/sandboxes/${boxId}/files?${query}`,
+        "GET",
+        undefined,
+        bearer,
+      );
+
+      expect(invalid.response.status).toBe(400);
+      expect(invalid.value.error.code).toBe("INVALID_ARGUMENT");
+    }
 
     const missing = await runtime.app.request(
       `/v1/projects/${project.id}/sandboxes/${boxId}/files?path=/data/missing`,
