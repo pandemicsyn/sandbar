@@ -1,33 +1,348 @@
+/*
+ * Ocean Drive mapped onto Starlight. Brand tokens live in tokens.css.
+ * Starlight's own styles sit in cascade layers, so these unlayered rules win.
+ */
 :root {
-  --sl-color-accent-low: #123d3c;
-  --sl-color-accent: #44c9b6;
-  --sl-color-accent-high: #a4efe0;
-  --sl-color-bg: #112633;
-  --sl-color-bg-nav: #112633;
-  --sl-color-bg-sidebar: #10212b;
+  --sl-font: var(--sb-font-sans);
+  --sl-font-mono: var(--sb-font-mono);
+  --sl-nav-height: 4rem;
+  --sl-sidebar-width: 16.5rem;
+  --sl-content-width: 45rem;
+  --sl-line-height: 1.7;
+  --sl-text-h1: clamp(2.2rem, 4vw, 3rem);
+  --sl-text-h2: 1.375rem;
+  --sl-text-h3: 1.125rem;
+
+  --sl-color-accent-low: #3a1830;
+  --sl-color-accent: var(--sb-pink);
+  --sl-color-accent-high: #ff7bb0;
+
+  --sl-color-white: #f4ede3;
+  --sl-color-gray-1: #e9e3da;
+  --sl-color-gray-2: #d3d2dc;
+  --sl-color-gray-3: #a3a8c3;
+  --sl-color-gray-4: #6f7695;
+  --sl-color-gray-5: #26304f;
+  --sl-color-gray-6: #151c33;
+  --sl-color-black: #0f1528;
+
+  --sl-hue-blue: 174;
+  --sl-color-blue-low: #0f2e33;
+  --sl-color-blue: var(--sb-aqua);
+  --sl-color-blue-high: #4fe0cf;
+  --sl-color-red-low: #3a1830;
+  --sl-color-red: var(--sb-pink);
+  --sl-color-red-high: #ff7bb0;
+  --sl-color-purple-low: #251f4a;
+  --sl-color-purple: var(--sb-lav);
+  --sl-color-purple-high: #b9adff;
+  --sl-color-orange-low: #3d2219;
+  --sl-color-orange: var(--sb-coral);
+  --sl-color-orange-high: #ffb38a;
+  --sl-color-green-low: #0f2e33;
+  --sl-color-green: var(--sb-aqua);
+  --sl-color-green-high: #4fe0cf;
+
+  --sl-color-text: var(--sb-ink);
+  --sl-color-text-accent: var(--sb-pink-ink);
+  --sl-color-bg: var(--sb-bg);
+  --sl-color-bg-nav: var(--sb-bg);
+  --sl-color-bg-sidebar: var(--sb-sunk);
+  --sl-color-bg-inline-code: var(--sb-pink-wash);
+  --sl-color-hairline: var(--sb-line);
+  --sl-color-hairline-light: var(--sb-line);
+  --sl-color-hairline-shade: var(--sb-line);
 }
+
 :root[data-theme="light"] {
-  --sl-color-accent-low: #d3f5ee;
-  --sl-color-accent: #006e63;
-  --sl-color-accent-high: #0b3f3c;
-  --sl-color-bg: #f7f9fa;
-  --sl-color-bg-nav: #f7f9fa;
-  --sl-color-bg-sidebar: #eff4f5;
+  --sl-color-accent-low: #fbd9e7;
+  --sl-color-accent: var(--sb-pink);
+  --sl-color-accent-high: var(--sb-pink-ink);
+
+  --sl-color-white: #1b1f3b;
+  --sl-color-gray-1: #262b4d;
+  --sl-color-gray-2: #3a3f5e;
+  --sl-color-gray-3: #5d6180;
+  --sl-color-gray-4: #8a8ca3;
+  --sl-color-gray-5: #d9cbb6;
+  --sl-color-gray-6: #f3e8d8;
+  --sl-color-gray-7: #f7efe3;
+  --sl-color-black: #fbf4ea;
+
+  --sl-color-blue-low: #d4f1ed;
+  --sl-color-blue-high: var(--sb-aqua-ink);
+  --sl-color-red-low: #fbd9e7;
+  --sl-color-red-high: var(--sb-pink-ink);
+  --sl-color-purple-low: #e5e0fc;
+  --sl-color-purple-high: var(--sb-lav-ink);
+  --sl-color-orange-low: #ffe2d8;
+  --sl-color-orange-high: #a8401f;
+  --sl-color-green-low: #d4f1ed;
+  --sl-color-green-high: var(--sb-aqua-ink);
 }
-:root {
-  font-family: ui-sans-serif, system-ui, sans-serif;
+
+body {
+  -webkit-font-smoothing: antialiased;
 }
+
+::selection {
+  background: rgba(239, 79, 145, 0.28);
+}
+
+:focus-visible {
+  outline: 3px solid var(--sb-pink);
+  outline-offset: 3px;
+}
+
+/* Header */
+.header {
+  border-bottom: 1px solid var(--sb-line);
+  padding-inline: 1.5rem;
+}
+
+site-search button[data-open-modal] {
+  border-radius: 999px;
+}
+
+@media (min-width: 50rem) {
+  site-search button[data-open-modal] {
+    height: 2.375rem;
+    max-width: 25rem;
+    margin-inline: auto;
+    padding-inline: 1rem 0.5rem;
+    border-color: var(--sb-line);
+    background: var(--sb-surface);
+    color: var(--sb-muted);
+  }
+
+  site-search button[data-open-modal]:hover {
+    border-color: var(--sb-pink);
+    color: var(--sb-ink);
+  }
+
+  site-search button[data-open-modal] > kbd {
+    padding: 2px 8px;
+    border: 1px solid var(--sb-line);
+    border-radius: 999px;
+    background: var(--sb-sunk);
+    font-family: var(--sb-font-mono);
+  }
+}
+
+/* Sidebar */
+.sidebar-pane {
+  border-inline-end: 1px solid var(--sb-line);
+}
+
+.sidebar-content .large,
+.sidebar-content summary .group-label {
+  font-family: var(--sb-font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sb-muted);
+}
+
+.sidebar-content a {
+  border-radius: 8px;
+  padding: 0.3125rem 0.75rem;
+  color: var(--sb-ink);
+  font-size: 0.90625rem;
+}
+
+.sidebar-content a:hover {
+  color: var(--sb-pink-ink);
+}
+
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+  background: var(--sb-pink-wash);
+  color: var(--sb-pink-ink);
+  font-weight: 600;
+}
+
+.sidebar-content .sl-badge {
+  font-family: var(--sb-font-mono);
+  border-radius: 999px;
+}
+
+/* Table of contents */
+starlight-toc h2,
+mobile-starlight-toc .toggle {
+  font-family: var(--sb-font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sb-muted);
+}
+
+starlight-toc ul {
+  border-inline-start: 2px solid var(--sb-line);
+}
+
+starlight-toc ul ul {
+  border: 0;
+}
+
+starlight-toc a {
+  margin-inline-start: -2px;
+  border-inline-start: 2px solid transparent;
+  color: var(--sb-muted);
+}
+
+starlight-toc a:hover {
+  color: var(--sb-pink-ink);
+}
+
+starlight-toc a[aria-current="true"] {
+  border-inline-start-color: var(--sb-pink);
+  color: var(--sb-pink-ink);
+}
+
+/* Article */
+.content-panel {
+  border-top-color: var(--sb-line);
+}
+
+.content-panel h1#_top {
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
 .sl-markdown-content {
-  line-height: 1.72;
+  line-height: 1.7;
 }
+
+.sl-markdown-content :is(h2, h3, h4) {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
 .sl-markdown-content p,
 .sl-markdown-content li {
   max-width: 75ch;
 }
+
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--sb-pink-ink);
+  text-decoration-color: var(--sb-pink);
+  text-underline-offset: 3px;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  color: var(--sb-aqua-ink);
+  text-decoration-color: var(--sb-aqua);
+}
+
+.sl-markdown-content :not(pre) > code {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--sb-pink-wash);
+  color: var(--sb-pink-ink);
+  font-size: 0.86em;
+}
+
 .sl-markdown-content pre {
   max-height: 36rem;
 }
-:focus-visible {
-  outline: 3px solid #43cbb7;
-  outline-offset: 3px;
+
+.sl-markdown-content table {
+  font-size: 0.9375rem;
+}
+
+.sl-markdown-content :is(th, td) {
+  border-color: var(--sb-line);
+}
+
+.sl-markdown-content th {
+  background: var(--sb-sunk);
+}
+
+/* Asides: aqua for notes and tips, flamingo for warnings */
+.starlight-aside {
+  border: 0;
+  border-radius: 12px;
+  padding: 1rem 1.125rem;
+  color: var(--sb-ink);
+}
+
+.starlight-aside--note,
+.starlight-aside--tip {
+  background: var(--sb-aqua-wash);
+}
+
+.starlight-aside--caution,
+.starlight-aside--danger {
+  background: var(--sb-pink-wash);
+}
+
+.starlight-aside__title {
+  font-weight: 600;
+}
+
+.starlight-aside--note .starlight-aside__title,
+.starlight-aside--tip .starlight-aside__title {
+  color: var(--sb-aqua-ink);
+}
+
+.starlight-aside--caution .starlight-aside__title,
+.starlight-aside--danger .starlight-aside__title {
+  color: var(--sb-pink-ink);
+}
+
+/* Steps: flamingo numbered circles on a hairline rail */
+.sl-steps {
+  --bullet-size: 2rem;
+  --bullet-margin: 0.375rem;
+}
+
+.sl-steps > li::before {
+  background: var(--sb-pink);
+  color: #fff;
+  font-family: var(--sb-font-display);
+  font-weight: 700;
+  font-size: 0.875rem;
+  box-shadow: none;
+}
+
+.sl-steps > li::after {
+  background: var(--sb-line);
+  width: 2px;
+}
+
+/* Tabs */
+starlight-tabs [role="tab"][aria-selected="true"] {
+  border-color: var(--sb-pink);
+  color: var(--sb-pink-ink);
+}
+
+/* Cards and pagination */
+.pagination-links a,
+.sl-link-card,
+.card {
+  border: 1px solid var(--sb-line);
+  border-radius: 12px;
+  background: var(--sb-surface);
+  box-shadow: none;
+}
+
+.pagination-links a:hover,
+.sl-link-card:hover {
+  border-color: var(--sb-aqua);
+}
+
+.pagination-links .link-title {
+  color: var(--sb-ink);
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+/* Code frames: Biscayne-night in both modes */
+.expressive-code .frame {
+  box-shadow: none;
 }

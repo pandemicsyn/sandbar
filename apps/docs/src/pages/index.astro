@@ -1,35 +1,1228 @@
 ---
-const title = 'Sandbar | One sandbox API, two ways to run it';
+import Logo from "../components/Logo.astro";
+import ThemeToggle from "../components/ThemeToggle.astro";
+import "../styles/tokens.css";
+
+const title = "Sandbar | One SDK. Every sandbox.";
+
+const description =
+  "Sandbar is one typed TypeScript API to create, run code in and tear down sandboxes on Modal, Daytona, E2B or any provider you adapt.";
+
+const fonts =
+  "https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap";
+
+const github = "https://github.com/pandemicsyn/sandbar";
+
+const providers = ["modal", "daytona", "e2b"];
+
+const install = "npm i sandbar-sdk";
+
+const sunBands = [
+  [5, "var(--sb-coral)"],
+  [3, "#FF6A7F"],
+  [2, "var(--sb-pink)"],
+  [1.4, "#C85BD0"],
+  [1, "var(--sb-lav)"],
+];
 ---
+
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Sandbar development documentation: a provider-neutral sandbox API with direct TypeScript and an optional self-hosted service." />
+    <meta name="description" content={description} />
     <meta name="robots" content="noindex, nofollow" />
     <link rel="canonical" href="https://sandbarsdk.dev/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href={fonts} />
     <title>{title}</title>
-    <style>
-      :root{font-family:ui-sans-serif,system-ui,sans-serif;color:oklch(0.94 0.01 230);background:oklch(0.16 0.025 230);font-synthesis:none}*{box-sizing:border-box}body{margin:0;min-width:320px}a{color:inherit}a:focus-visible{outline:3px solid oklch(0.77 0.16 185);outline-offset:4px}.wrap{max-width:1260px;margin:auto;padding:0 clamp(20px,4vw,64px)}header{display:flex;align-items:center;justify-content:space-between;padding-top:24px;padding-bottom:24px;border-bottom:1px solid oklch(0.35 0.03 230)}.logo{display:flex;gap:12px;align-items:center;text-decoration:none;font-weight:800;font-size:22px;letter-spacing:-.03em}.logo img{width:32px}nav{display:flex;gap:24px;align-items:center}nav a{text-decoration:none;color:oklch(0.8 0.02 230)}nav a:hover{color:white}.status{display:inline-flex;border:1px solid oklch(0.55 0.07 185);border-radius:999px;color:oklch(0.86 0.08 185);padding:8px 14px;font-size:13px}.hero{padding-top:clamp(74px,12vw,180px);padding-bottom:clamp(80px,12vw,156px);display:grid;grid-template-columns:1.15fr .85fr;gap:clamp(36px,5vw,90px);align-items:end}.hero h1{font-size:clamp(3.4rem,6.6vw,6rem);line-height:1.02;letter-spacing:-.035em;text-wrap:balance;margin:25px 0}.hero p{max-width:55ch;color:oklch(0.82 0.02 230);font-size:clamp(1.1rem,1.65vw,1.35rem);line-height:1.65}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:35px}.button{display:inline-flex;min-height:48px;align-items:center;padding:0 20px;border-radius:8px;background:oklch(0.77 0.16 185);color:oklch(0.12 0.03 230);font-weight:750;text-decoration:none}.button.alt{background:transparent;color:oklch(0.95 0.01 230);border:1px solid oklch(0.62 0.02 230)}.button:hover{filter:brightness(1.1)}.terminal{background:oklch(0.12 0.017 230);border:1px solid oklch(0.35 0.03 230);border-radius:12px;overflow:hidden;box-shadow:0 8px 0 oklch(0.10 0.01 230)}.terminal-top{padding:15px 21px;border-bottom:1px solid oklch(0.3 0.02 230);display:flex;justify-content:space-between;color:oklch(0.72 0.02 230);font-size:13px}.terminal pre{padding:24px;overflow:auto;font:14px/1.75 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.cyan{color:oklch(0.78 0.15 185)}.yellow{color:oklch(0.83 0.13 85)}.modes{background:oklch(0.95 0.01 230);color:oklch(0.18 0.03 230);padding-top:clamp(64px,8vw,108px);padding-bottom:clamp(80px,10vw,136px)}.modes h2{font-size:clamp(2.3rem,4vw,4rem);letter-spacing:-.03em;line-height:1.1;max-width:18ch;margin:0 0 45px}.mode-list{display:grid;grid-template-columns:1fr 1fr;border-top:2px solid currentColor}.mode{padding:30px 38px 0 0}.mode+ .mode{border-left:1px solid oklch(0.7 0.02 230);padding-left:38px}.mode h3{font-size:1.55rem;margin:0}.mode p{line-height:1.65;max-width:52ch;color:oklch(0.38 0.03 230)}.mode a{font-weight:700;text-underline-offset:5px}.foot{padding-top:35px;padding-bottom:35px;color:oklch(0.75 0.02 230);font-size:14px}.foot a{text-underline-offset:4px}@media(max-width:800px){.hero{grid-template-columns:1fr;padding-top:64px}.terminal{max-width:100%}.mode-list{grid-template-columns:1fr}.mode+.mode{border-left:0;border-top:1px solid oklch(0.7 0.02 230);padding-left:0;margin-top:28px;padding-top:28px}nav{gap:12px;font-size:14px}}
-    </style>
+    <script is:inline>
+      // Same resolution as Starlight's ThemeProvider, applied before paint.
+      (() => {
+        let stored = null;
+
+        try {
+          stored = localStorage.getItem("starlight-theme");
+        } catch {}
+
+        const theme =
+          stored === "light" || stored === "dark"
+            ? stored
+            : matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
   </head>
   <body>
-    <header class="wrap"><a class="logo" href="/"><img src="/favicon.svg" alt="" />Sandbar</a><nav aria-label="Main navigation"><a href="/docs/">Documentation</a><a href="https://github.com/pandemicsyn/sandbar">Source</a></nav></header>
+    <header class="site-header">
+      <div class="header-row">
+        <a class="home" href="/" aria-label="Sandbar home"><Logo /></a>
+        <div class="search-slot">
+          <a class="search" href="/docs/?search" aria-keyshortcuts="Meta+K Control+K">
+            <span class="search-label">Search the docs</span>
+            <kbd>⌘K</kbd>
+          </a>
+        </div>
+        <nav class="nav" aria-label="Main">
+          <a class="nav-link wide-only" href="/docs/">Docs</a>
+          <a class="nav-link wide-only" href={github}>GitHub</a>
+          <ThemeToggle />
+        </nav>
+      </div>
+    </header>
+
     <main>
-      <section class="hero wrap"><div><span class="status">Development documentation · fixture tested, no live provider qualification</span><h1>A sandbox API with room to choose.</h1><p>Create, inspect, execute, transfer bytes, and clean up through a consistent TypeScript resource flow. Connect Daytona, Modal, or a custom adapter with the SDK in your server process, or use a service you run. Available operations depend on the adapter.</p><div class="actions"><a class="button" href="/docs/direct-quickstart/">Start with TypeScript →</a><a class="button alt" href="/docs/service-quickstart/">Run the service →</a></div></div><div class="terminal" aria-label="Example TypeScript code"><div class="terminal-top"><span>resource-flow.ts</span><span>TypeScript</span></div><pre><code>{`const box = await sandbar.sandboxes.create({
-  environment: Image.prepared('fake-starter')
-});
+      <section class="hero" id="hero">
+        <div class="hero-grid wrap">
+          <div class="hero-copy">
+            <div class="eyebrow"><span></span>Sandbox router for TypeScript</div>
+            <h1>One SDK.<br />Every <span class="accent-word">sandbox.</span></h1>
+            <p class="lede">
+              A single typed API to spin up, run code in, and tear down sandboxes on Modal, Daytona,
+              E2B, or any provider you adapt. Swap providers by changing one import.
+            </p>
+            <div class="cta-stack">
+              <div class="ctas">
+                <a class="btn btn-primary" href="/docs/">Get started →</a>
+                <a class="btn btn-secondary" href={github}>View on GitHub</a>
+              </div>
+              <button class="npm" type="button" data-copy={install} aria-label={`Copy ${install}`}>
+                <span class="prompt">$</span><span>{install}</span>
+                <span class="npm-state" data-copy-label>copy</span>
+              </button>
+            </div>
+          </div>
 
-await box.writeFile('/input.bin', bytes);
-const result = await box.exec({
-  command: { kind: 'argv', argv: ['fixture', 'hello'] }
-});
+          <div class="hero-art">
+            <div class="sun-frame" aria-hidden="true">
+              <div class="sun" data-motion>
+                {sunBands.map(([flex, color]) => <div style={`flex:${flex};background:${color}`} />)}
+              </div>
+              <svg class="palm" viewBox="0 0 200 300">
+                <path d="M92 300 C96 230 104 150 114 72 L122 74 C114 150 108 230 106 300 Z"></path>
+                <path d="M118 70 C150 50 190 60 200 100 C180 78 150 72 118 74 Z"></path>
+                <path d="M118 70 C85 48 40 55 20 95 C45 72 85 70 118 76 Z"></path>
+                <path d="M118 70 C135 35 165 20 190 30 C160 35 138 50 120 74 Z"></path>
+                <path d="M118 70 C100 30 70 15 42 22 C72 30 98 48 116 74 Z"></path>
+                <path d="M118 72 C145 80 170 110 175 145 C160 115 140 95 116 78 Z"></path>
+                <path d="M118 72 C90 82 65 110 58 142 C75 112 95 95 120 78 Z"></path>
+                <circle cx="113" cy="82" r="5"></circle>
+                <circle cx="123" cy="84" r="5"></circle>
+              </svg>
+            </div>
 
-await box.destroy();`}</code></pre></div></section>
-      <section class="modes"><div class="wrap"><h2>Run close to your code or operate a service.</h2><div class="mode-list"><article class="mode"><h3>Direct TypeScript</h3><p>Connect a provider adapter with sandbar-sdk in a server-side Node.js or Bun process. No Sandbar service or database sits in the call path. Recovery evidence depends on the provider and your saved reference.</p><a href="/docs/direct-quickstart/">Read the direct quickstart →</a></article><article class="mode"><h3>Self-hosted service</h3><p>Run the Bun/Hono API with SQLite or MySQL and a management UI. The service owns operation admission, project scope and reconciliation for remote clients.</p><a href="/docs/service-quickstart/">Read the service quickstart →</a></article></div></div></section>
+            <div class="code-card hero-code">
+              <div class="code-bar">
+                <span class="dot" style="background:var(--sb-pink)"></span>
+                <span class="dot" style="background:var(--sb-coral)"></span>
+                <span class="dot" style="background:var(--sb-aqua)"></span>
+                <span class="file">run.ts</span>
+                <div class="provider-tabs" role="group" aria-label="Provider">
+                  {
+                    providers.map((name, index) => (
+                      <button type="button" data-provider={name} aria-pressed={index === 0 ? "true" : "false"}>
+                        {name}
+                      </button>
+                    ))
+                  }
+                </div>
+              </div>
+              <pre class="code" aria-label="Example: create a sandbox and run a command"><code><span class="k">import</span> {"{"} Sandbar, Image {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
+<span class="k">import</span> {"{"} <span data-typed-plain>modal</span> {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk/<span data-typed-plain>modal</span>"</span>
+
+<span class="k">const</span> sandbar = <span class="k">await</span> <span class="t">Sandbar</span>.<span class="f">connect</span>(
+  <span class="typed"><span class="f" data-typed>modal</span><span class="caret" data-caret></span></span>({"{"}
+<span data-options>    tokenId: process.env.<span class="t">MODAL_TOKEN_ID</span>!,
+    tokenSecret: process.env.<span class="t">MODAL_TOKEN_SECRET</span>!,
+    appName: <span class="s">"sandbar"</span>,
+    environment: <span class="s">"main"</span>,</span>
+  {"}"}),
+)
+<span class="k">const</span> box = <span class="k">await</span> sandbar.sandboxes.<span class="f">create</span>({"{"}
+  environment: <span class="t">Image</span>.<span class="f">oci</span>(<span class="s">"python:3.12-slim"</span>),
+{"})"}
+<span class="k">const</span> run = <span class="k">await</span> box.<span class="f">exec</span>([<span class="s">"python"</span>, <span class="s">"-V"</span>])
+console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <span class="c">// "Python 3.12.4"</span></code></pre>
+              <div class="code-status" aria-live="polite">
+                <span class="status-dot" data-status-dot></span>
+                <span class="status-text" data-status>connecting…</span>
+                <span class="status-time" data-status-time></span>
+              </div>
+            </div>
+
+            <div class="flare" data-flare aria-hidden="true">
+              <div class="flare-core"></div>
+              <div class="flare-streak"></div>
+              <div class="ghost ghost-1"></div>
+              <div class="ghost ghost-2"></div>
+              <div class="ghost ghost-3"></div>
+              <div class="ghost ghost-4"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="adapters">
+        <div class="wrap adapters-row">
+          <span class="adapters-label">Adapters</span>
+          <ul class="chips">
+            <li class="chip chip-modal"><span></span>Modal</li>
+            <li class="chip chip-daytona"><span></span>Daytona</li>
+            <li class="chip chip-e2b"><span></span>E2B</li>
+            <li class="chip chip-yours">+ your adapter</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="features wrap">
+        <h2>Built on Effect. <span>Shipped as plain TypeScript.</span></h2>
+        <div class="feature-grid">
+          <article class="feature">
+            <span class="rule" style="background:var(--sb-pink)"></span>
+            <h3>One API, any provider</h3>
+            <p>Create, exec, files and destroy work the same on every adapter, so switching providers is a one-line change.</p>
+          </article>
+          <article class="feature">
+            <span class="rule" style="background:var(--sb-coral)"></span>
+            <h3>Effect inside</h3>
+            <p>Retries, timeouts, typed errors and scoped cleanup come from Effect. Your code stays plain async/await.</p>
+          </article>
+          <article class="feature">
+            <span class="rule" style="background:var(--sb-aqua)"></span>
+            <h3>Traced end to end</h3>
+            <p>Every operation emits OpenTelemetry spans and logs, correlated from your call through to the provider request.</p>
+          </article>
+          <article class="feature">
+            <span class="rule" style="background:var(--sb-lav)"></span>
+            <h3>Small adapters</h3>
+            <p>Implement create and destroy to start. Add exec, files and recovery as your provider supports them.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="band">
+        <div class="wrap band-grid">
+          <div class="band-copy">
+            <span class="band-chip">sandbar-adapter</span>
+            <h2>Bring your own provider</h2>
+            <p>
+              Wrap any sandbox API with <code>defineAdapter</code>. Declare config and credential schemas,
+              implement the operations your provider supports, and Sandbar handles lifecycle, error mapping
+              and recovery around it.
+            </p>
+            <a class="band-link" href="/docs/guides/write-an-adapter/">Writing an adapter →</a>
+          </div>
+          <div class="code-card">
+            <div class="code-bar"><span class="file file-only">adapters/acme.ts</span></div>
+            <pre class="code" aria-label="Example: a small adapter"><code><span class="k">import</span> {"{"} z {"}"} <span class="k">from</span> <span class="s">"zod"</span>
+<span class="k">import</span> {"{"} defineAdapter {"}"} <span class="k">from</span> <span class="s">"sandbar-adapter"</span>
+
+<span class="k">export const</span> acme = <span class="f">defineAdapter</span>({"{"}
+  name: <span class="s">"acme"</span>,
+  config: z.<span class="f">strictObject</span>({"{"} region: z.<span class="f">string</span>() {"}"}),
+  credentials: z.<span class="f">strictObject</span>({"{"} token: z.<span class="f">string</span>() {"}"}),
+  <span class="k">async</span> <span class="f">connect</span>({"{"} config, credentials {"}"}) {"{"}
+    <span class="k">const</span> client = <span class="k">new</span> <span class="t">AcmeClient</span>(credentials)
+    <span class="k">return</span> {"{"}
+      <span class="f">create</span>: (input) =&gt; client.<span class="f">spawn</span>(input),
+      <span class="f">destroy</span>: (box) =&gt; client.<span class="f">delete</span>(box.id),
+    {"}"}
+  {"}"},
+{"})"}</code></pre>
+          </div>
+        </div>
+      </section>
     </main>
-    <footer class="foot wrap">Sandbar is under development. <a href="/docs/providers/support/">See the verified support matrix</a>.</footer>
+
+    <footer class="wrap footer">
+      <span>Apache-2.0 · sandbarsdk.dev</span>
+      <span>Built with Astro + Starlight</span>
+    </footer>
+
+    <script>
+      const motionQuery = matchMedia("(prefers-reduced-motion: reduce)");
+
+      const motionOn = () => !motionQuery.matches;
+
+      // ⌘K / Ctrl+K opens docs search, matching the Starlight pages.
+      document.addEventListener("keydown", (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+          event.preventDefault();
+          location.href = "/docs/?search";
+        }
+      });
+
+      // Copy the install command.
+      document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((button) => {
+        const label = button.querySelector("[data-copy-label]");
+        let reset: ReturnType<typeof setTimeout> | undefined;
+
+        button.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(button.dataset.copy ?? "");
+          } catch {
+            return;
+          }
+
+          if (label) label.textContent = "copied";
+          clearTimeout(reset);
+          reset = setTimeout(() => label && (label.textContent = "copy"), 1400);
+        });
+      });
+
+      // Hero: type the provider name, then simulate a sandbox boot.
+      const typed = document.querySelector<HTMLElement>("[data-typed]");
+
+      const typedPlain = document.querySelectorAll<HTMLElement>("[data-typed-plain]");
+
+      const caret = document.querySelector<HTMLElement>("[data-caret]");
+
+      const status = document.querySelector<HTMLElement>("[data-status]");
+
+      const statusDot = document.querySelector<HTMLElement>("[data-status-dot]");
+
+      const statusTime = document.querySelector<HTMLElement>("[data-status-time]");
+
+      const tabs = document.querySelectorAll<HTMLButtonElement>("[data-provider]");
+
+      let timers: ReturnType<typeof setTimeout>[] = [];
+
+      let tick: ReturnType<typeof setInterval> | undefined;
+
+      let current = "modal";
+
+      // Each provider factory's options: [key, env var] reads process.env, [key, , literal] is a string.
+      const optionsNode = document.querySelector<HTMLElement>("[data-options]");
+
+      const providerOptions = new Map<string, [string, string?, string?][]>([
+        [
+          "modal",
+          [
+            ["tokenId", "MODAL_TOKEN_ID"],
+            ["tokenSecret", "MODAL_TOKEN_SECRET"],
+            ["appName", undefined, "sandbar"],
+            ["environment", undefined, "main"],
+          ],
+        ],
+        [
+          "daytona",
+          [
+            ["apiKey", "DAYTONA_API_KEY"],
+            ["target", undefined, "us"],
+          ],
+        ],
+        ["e2b", [["apiKey", "E2B_API_KEY"]]],
+      ]);
+
+      function renderOptions(provider: string) {
+        if (!optionsNode) return;
+
+        const lines = (providerOptions.get(provider) ?? []).map(([key, env, literal]) => {
+          const line = document.createElement("span");
+          const value = document.createElement("span");
+
+          if (env) {
+            value.className = "t";
+            value.textContent = env;
+            line.append(`    ${key}: process.env.`, value, "!,");
+          } else {
+            value.className = "s";
+            value.textContent = `"${literal}"`;
+            line.append(`    ${key}: `, value, ",");
+          }
+
+          return line;
+        });
+
+        optionsNode.replaceChildren(...lines.flatMap((line, i) => (i ? ["\n", line] : [line])));
+      }
+
+      function setTyped(text: string) {
+        if (typed) typed.textContent = text;
+        typedPlain.forEach((node) => (node.textContent = text));
+      }
+
+      function setStatus(text: string, color: string, time: string) {
+        if (status) status.textContent = text;
+
+        if (statusDot) statusDot.style.background = color;
+
+        if (statusTime) statusTime.textContent = time;
+      }
+
+      function traceId() {
+        const bytes = crypto.getRandomValues(new Uint8Array(4));
+
+        return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      }
+
+      function later(fn: () => void, ms: number) {
+        timers.push(setTimeout(fn, ms));
+      }
+
+      function runHero(to: string, from: string) {
+        timers.forEach(clearTimeout);
+        clearInterval(tick);
+        timers = [];
+        current = to;
+        tabs.forEach((tab) => tab.setAttribute("aria-pressed", String(tab.dataset.provider === to)));
+        renderOptions(to);
+        caret?.classList.remove("idle");
+        setStatus("connecting…", "var(--sb-code-dim)", "");
+
+        let t = 0;
+
+        if (motionOn()) {
+          for (let i = from.length; i >= 0; i--) {
+            const text = from.slice(0, i);
+            later(() => setTyped(text), t);
+            t += 35;
+          }
+
+          for (let i = 1; i <= to.length; i++) {
+            const text = to.slice(0, i);
+            later(() => setTyped(text), t);
+            t += 70;
+          }
+        } else {
+          setTyped(to);
+        }
+
+        const boot = 2000 + Math.random() * 4000;
+
+        later(() => {
+          const start = performance.now();
+          caret?.classList.add("idle");
+          setStatus("booting sandbox…", "var(--sb-coral)", "0.0s");
+          tick = setInterval(() => {
+            if (statusTime) statusTime.textContent = ((performance.now() - start) / 1000).toFixed(1) + "s";
+          }, 100);
+        }, t + 200);
+
+        later(() => {
+          clearInterval(tick);
+          setStatus(
+            "Python 3.12.4",
+            "var(--sb-aqua)",
+            `${(boot / 1000).toFixed(2)}s · via ${to} · trace ${traceId()}`,
+          );
+        }, t + 200 + boot);
+      }
+
+      tabs.forEach((tab) =>
+        tab.addEventListener("click", () => {
+          const name = tab.dataset.provider;
+
+          if (name && name !== current) runHero(name, typed?.textContent ?? "");
+        }),
+      );
+
+      setTyped("");
+
+      setTimeout(() => runHero("modal", ""), motionOn() ? 900 : 0);
+
+      // Lens flare: brightest mid-scroll through the hero, ghosts trail down-right.
+      const hero = document.getElementById("hero");
+
+      const flare = document.querySelector<HTMLElement>("[data-flare]");
+
+      function updateFlare() {
+        if (!flare || !hero) return;
+
+        if (!motionOn()) {
+          flare.style.opacity = "0";
+
+          return;
+        }
+
+        const rect = hero.getBoundingClientRect();
+        const progress = Math.min(1, Math.max(0, -rect.top / (rect.height * 0.75)));
+        const k = Math.sin(Math.PI * progress);
+        const [core, streak, ...ghosts] = flare.querySelectorAll<HTMLElement>(":scope > div");
+        flare.style.opacity = (k * 0.38).toFixed(3);
+        core.style.transform = `scale(${0.8 + k * 0.3})`;
+        streak.style.transform = `scaleX(${0.5 + k * 0.6})`;
+        const w = flare.offsetWidth;
+        const sx = w / 2;
+        const sy = flare.offsetHeight * 0.48;
+        const dx = w * 0.34;
+        const dy = w * 0.6;
+        const steps = [0.45, 0.7, 1.0, 1.35];
+        ghosts.forEach((ghost, i) => {
+          const s = steps[i] * (0.5 + progress);
+          ghost.style.transform = `translate(${sx + dx * s}px, ${sy + dy * s}px)`;
+        });
+      }
+
+      addEventListener("scroll", updateFlare, { passive: true });
+
+      addEventListener("resize", updateFlare);
+
+      updateFlare();
+    </script>
+
+    <style is:global>
+      html,
+      body {
+        margin: 0;
+        background: var(--sb-bg);
+        color: var(--sb-ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      body {
+        min-width: 320px;
+        font-family: var(--sb-font-sans);
+        font-size: 16px;
+        line-height: 1.7;
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      a {
+        color: var(--sb-pink-ink);
+        text-decoration-color: var(--sb-pink);
+        text-underline-offset: 3px;
+      }
+      a:hover {
+        color: var(--sb-aqua-ink);
+        text-decoration-color: var(--sb-aqua);
+      }
+      :focus-visible {
+        outline: 3px solid var(--sb-pink);
+        outline-offset: 3px;
+      }
+      ::selection {
+        background: rgba(239, 79, 145, 0.28);
+      }
+      button {
+        font: inherit;
+      }
+    </style>
+
+    <style>
+      .wrap {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding-inline: 24px;
+      }
+
+      /* Header */
+      .site-header {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: var(--sb-bg);
+        border-bottom: 1px solid var(--sb-line);
+      }
+      .header-row {
+        height: 64px;
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        padding: 0 24px;
+      }
+      .home {
+        flex: none;
+        text-decoration: none;
+      }
+      .search-slot {
+        flex: 1;
+        display: flex;
+        justify-content: center;
+        min-width: 0;
+      }
+      .search {
+        width: 100%;
+        max-width: 400px;
+        height: 38px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 8px 0 16px;
+        border: 1px solid var(--sb-line);
+        border-radius: 999px;
+        background: var(--sb-surface);
+        color: var(--sb-muted);
+        font-size: 14px;
+        text-decoration: none;
+      }
+      .search:hover {
+        border-color: var(--sb-pink);
+        color: var(--sb-muted);
+      }
+      .search-label {
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .search kbd {
+        font-family: var(--sb-font-mono);
+        font-size: 11px;
+        padding: 2px 8px;
+        border: 1px solid var(--sb-line);
+        border-radius: 999px;
+        background: var(--sb-sunk);
+      }
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: none;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .nav-link {
+        padding: 6px 12px;
+        border-radius: 999px;
+        color: var(--sb-muted);
+        text-decoration: none;
+      }
+      .nav-link:hover {
+        color: var(--sb-pink-ink);
+      }
+      @media (max-width: 819px) {
+        .wide-only {
+          display: none;
+        }
+        .header-row {
+          gap: 14px;
+          padding: 0 16px;
+        }
+      }
+      @media (max-width: 479px) {
+        .search kbd {
+          display: none;
+        }
+      }
+
+      /* Hero */
+      .hero {
+        position: relative;
+        overflow: hidden;
+        border-bottom: 1px solid var(--sb-line);
+      }
+      .hero-grid {
+        position: relative;
+        padding-block: clamp(40px, 5vw, 72px);
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+        gap: 56px;
+        align-items: center;
+      }
+      .hero-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 26px;
+      }
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--sb-font-mono);
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--sb-aqua-ink);
+      }
+      .eyebrow span {
+        width: 28px;
+        height: 2px;
+        background: var(--sb-aqua);
+      }
+      h1 {
+        margin: 0;
+        font-weight: 700;
+        font-size: clamp(2.8rem, 6.4vw, 5.2rem);
+        line-height: 1.02;
+        letter-spacing: -0.035em;
+        text-wrap: balance;
+      }
+      .accent-word {
+        display: inline-block;
+        font-family: var(--sb-font-display);
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        color: var(--sb-pink);
+        transform: skewX(-8deg);
+      }
+      .lede {
+        margin: 0;
+        max-width: 32em;
+        color: var(--sb-muted);
+        font-size: 18px;
+        line-height: 1.6;
+        text-wrap: pretty;
+      }
+      .cta-stack {
+        align-self: flex-start;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        max-width: 100%;
+      }
+      .ctas {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+      .btn {
+        height: 48px;
+        padding: 0 26px;
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        font-weight: 600;
+        font-size: 15px;
+        text-decoration: none;
+        transition:
+          transform 0.08s ease,
+          box-shadow 0.08s ease;
+      }
+      .btn:hover {
+        transform: translateY(2px);
+      }
+      .btn-primary {
+        background: var(--sb-pink);
+        color: #fff;
+        box-shadow: 0 6px 0 var(--sb-pink-ink);
+      }
+      .btn-primary:hover {
+        color: #fff;
+        box-shadow: 0 4px 0 var(--sb-pink-ink);
+      }
+      .btn-secondary {
+        border: 1.5px solid var(--sb-ink);
+        background: var(--sb-surface);
+        color: var(--sb-ink);
+        box-shadow: 0 6px 0 var(--sb-ink);
+      }
+      .btn-secondary:hover {
+        color: var(--sb-ink);
+        box-shadow: 0 4px 0 var(--sb-ink);
+      }
+      .npm {
+        height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 8px 0 22px;
+        border: 1.5px dashed var(--sb-line);
+        border-radius: 999px;
+        background: var(--sb-surface);
+        color: var(--sb-ink);
+        font-family: var(--sb-font-mono);
+        font-size: 15px;
+        font-weight: 500;
+        cursor: pointer;
+        text-align: left;
+      }
+      .npm:hover {
+        border-color: var(--sb-pink);
+      }
+      .prompt {
+        color: var(--sb-pink-ink);
+      }
+      .npm-state {
+        margin-left: auto;
+        font-size: 12px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: var(--sb-sunk);
+        color: var(--sb-muted);
+      }
+
+      /* Sunset, palm and flare */
+      .hero-art {
+        position: relative;
+        min-width: 0;
+        padding-top: 24px;
+      }
+      .sun-frame {
+        position: absolute;
+        left: 50%;
+        top: 0;
+        width: min(500px, 96%);
+        aspect-ratio: 2 / 1;
+        transform: translateX(-50%);
+        pointer-events: none;
+      }
+      .sun {
+        width: 100%;
+        height: 100%;
+        border-radius: 500px 500px 0 0;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        animation: sb-rise 1.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+      }
+      .palm {
+        position: absolute;
+        left: 60%;
+        top: -26%;
+        width: 52%;
+        aspect-ratio: 2 / 3;
+        transform: scaleX(-1);
+        fill: var(--sb-palm);
+        transition: fill 0.4s ease;
+      }
+      @keyframes sb-rise {
+        from {
+          transform: translateY(18px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .sun {
+          animation: none;
+        }
+        .caret {
+          animation: none !important;
+        }
+      }
+      .flare {
+        position: absolute;
+        left: 50%;
+        top: 0;
+        width: min(500px, 96%);
+        aspect-ratio: 2 / 1;
+        transform: translateX(-50%);
+        pointer-events: none;
+        opacity: 0;
+      }
+      .flare > div {
+        position: absolute;
+        border-radius: 50%;
+      }
+      .flare-core {
+        left: 50%;
+        top: 48%;
+        width: 200px;
+        height: 200px;
+        margin: -100px 0 0 -100px;
+        background: radial-gradient(
+          circle,
+          rgba(255, 250, 235, 0.9) 0%,
+          rgba(255, 214, 170, 0.45) 20%,
+          rgba(255, 160, 120, 0) 62%
+        );
+      }
+      .flare > .flare-streak {
+        left: -20%;
+        right: -20%;
+        top: 48%;
+        height: 5px;
+        margin-top: -2px;
+        border-radius: 5px;
+        background: linear-gradient(
+          90deg,
+          rgba(111, 230, 214, 0) 0%,
+          rgba(255, 245, 230, 0.85) 50%,
+          rgba(189, 178, 255, 0) 100%
+        );
+        filter: blur(1px);
+      }
+      .ghost {
+        left: 0;
+        top: 0;
+      }
+      .ghost-1 {
+        width: 38px;
+        height: 38px;
+        margin: -19px 0 0 -19px;
+        background: radial-gradient(
+          circle,
+          rgba(111, 230, 214, 0) 40%,
+          rgba(111, 230, 214, 0.4) 70%,
+          rgba(111, 230, 214, 0) 100%
+        );
+      }
+      .ghost-2 {
+        width: 18px;
+        height: 18px;
+        margin: -9px 0 0 -9px;
+        background: rgba(255, 134, 183, 0.4);
+      }
+      .ghost-3 {
+        width: 68px;
+        height: 68px;
+        margin: -34px 0 0 -34px;
+        background: radial-gradient(
+          circle,
+          rgba(189, 178, 255, 0.3) 0%,
+          rgba(189, 178, 255, 0.12) 60%,
+          rgba(189, 178, 255, 0) 72%
+        );
+      }
+      .ghost-4 {
+        width: 112px;
+        height: 112px;
+        margin: -56px 0 0 -56px;
+        border: 1.5px solid rgba(111, 230, 214, 0.25);
+      }
+
+      /* Code cards */
+      .code-card {
+        position: relative;
+        min-width: 0;
+        background: var(--sb-code-bg);
+        border-radius: 14px;
+        overflow: hidden;
+        color: var(--sb-code-ink);
+      }
+      .hero-code {
+        margin-top: clamp(110px, 15vw, 160px);
+        box-shadow: 0 30px 60px -20px rgba(23, 32, 61, 0.45);
+      }
+      .code-bar {
+        height: 42px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 14px;
+        background: var(--sb-code-bar);
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+      .file {
+        margin-left: 8px;
+        font-family: var(--sb-font-mono);
+        font-size: 12px;
+        color: var(--sb-code-dim);
+      }
+      .file-only {
+        margin-left: 2px;
+      }
+      .provider-tabs {
+        margin-left: auto;
+        display: flex;
+        gap: 4px;
+        padding: 3px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .provider-tabs button {
+        padding: 2px 10px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--sb-code-dim);
+        font-family: var(--sb-font-mono);
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .provider-tabs button:hover {
+        color: var(--sb-code-ink);
+      }
+      .provider-tabs button[aria-pressed="true"] {
+        background: var(--sb-code-string);
+        color: var(--sb-code-bg);
+      }
+      .code {
+        margin: 0;
+        padding: 20px 22px;
+        font-family: var(--sb-font-mono);
+        font-size: var(--code-size, 13.5px);
+        line-height: 1.8;
+        overflow-x: auto;
+      }
+      .k {
+        color: var(--sb-code-keyword);
+      }
+      .s {
+        color: var(--sb-code-string);
+      }
+      .f {
+        color: var(--sb-code-function);
+      }
+      .c {
+        color: var(--sb-code-dim);
+      }
+      .t {
+        color: var(--sb-code-type);
+      }
+      .typed {
+        color: var(--sb-code-ink);
+        background: rgba(111, 230, 214, 0.12);
+        border-radius: 4px;
+        padding: 1px 3px;
+      }
+      .caret {
+        display: inline-block;
+        width: 1px;
+        height: 1.1em;
+        vertical-align: -2px;
+        background: var(--sb-code-ink);
+        animation: sb-blink 0.9s steps(1) infinite;
+      }
+      .caret.idle {
+        opacity: 0;
+        animation: none;
+      }
+      @keyframes sb-blink {
+        50% {
+          opacity: 0;
+        }
+      }
+      .code-status {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 22px;
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
+        font-family: var(--sb-font-mono);
+        font-size: 12px;
+        color: var(--sb-code-dim);
+      }
+      .status-dot {
+        flex: none;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--sb-code-dim);
+        transition: background 0.3s;
+      }
+      .status-text {
+        color: var(--sb-code-ink);
+        white-space: nowrap;
+      }
+      .status-time {
+        margin-left: auto;
+        text-align: right;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* Adapters strip */
+      .adapters {
+        border-bottom: 1px solid var(--sb-line);
+        background: var(--sb-surface);
+        --modal: #62de61;
+        --modal-bg: #e3f8dc;
+        --modal-ink: #1d5c1a;
+        --daytona-bg: #111318;
+        --daytona-ink: #f5f5f5;
+        --e2b: #ff8800;
+        --e2b-bg: #ffecd6;
+        --e2b-ink: #8a3f00;
+      }
+      :global(:root[data-theme="dark"]) .adapters {
+        --modal-bg: rgba(98, 222, 97, 0.14);
+        --modal-ink: #8bf08a;
+        --daytona-bg: #f5f5f5;
+        --daytona-ink: #111318;
+        --e2b-bg: rgba(255, 136, 0, 0.14);
+        --e2b-ink: #ffb066;
+      }
+      .adapters-row {
+        padding-block: 26px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 14px 28px;
+      }
+      .adapters-label {
+        font-family: var(--sb-font-mono);
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--sb-muted);
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 16px;
+        border-radius: 999px;
+        font-weight: 600;
+        font-size: 14px;
+        line-height: 1.7;
+      }
+      .chip span {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+      .chip-modal {
+        background: var(--modal-bg);
+        color: var(--modal-ink);
+      }
+      .chip-modal span {
+        background: var(--modal);
+      }
+      .chip-daytona {
+        background: var(--daytona-bg);
+        color: var(--daytona-ink);
+      }
+      .chip-daytona span {
+        border-radius: 2px;
+        background: var(--daytona-ink);
+      }
+      .chip-e2b {
+        background: var(--e2b-bg);
+        color: var(--e2b-ink);
+      }
+      .chip-e2b span {
+        border-radius: 2px;
+        background: var(--e2b);
+        transform: rotate(45deg);
+      }
+      .chip-yours {
+        padding: 5px 15px;
+        border: 1px dashed var(--sb-muted);
+        color: var(--sb-muted);
+        font-weight: 500;
+      }
+
+      /* Features */
+      .features {
+        padding-block: clamp(56px, 8vw, 104px);
+      }
+      .features h2 {
+        margin: 0 0 44px;
+        font-weight: 700;
+        font-size: clamp(1.8rem, 3.6vw, 2.8rem);
+        line-height: 1.1;
+        letter-spacing: -0.025em;
+        max-width: 16em;
+        text-wrap: balance;
+      }
+      .features h2 span {
+        color: var(--sb-muted);
+      }
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+        gap: 16px;
+      }
+      .feature {
+        padding: 26px 24px;
+        border-radius: 14px;
+        background: var(--sb-surface);
+        border: 1px solid var(--sb-line);
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .rule {
+        width: 34px;
+        height: 4px;
+        border-radius: 2px;
+      }
+      .feature h3 {
+        margin: 6px 0 0;
+        font-weight: 700;
+        font-size: 17px;
+      }
+      .feature p {
+        margin: 0;
+        color: var(--sb-muted);
+        font-size: 15px;
+        text-wrap: pretty;
+      }
+
+      /* Adapter band */
+      .band {
+        background: var(--sb-band);
+        color: var(--sb-band-ink);
+        border-block: 1px solid var(--sb-band-line);
+      }
+      .band-grid {
+        padding-block: clamp(56px, 8vw, 104px);
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+        gap: 48px;
+        align-items: center;
+      }
+      .band-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .band-chip {
+        align-self: flex-start;
+        padding: 4px 12px;
+        border-radius: 999px;
+        background: #bdb2ff;
+        color: #1b1f3b;
+        font-family: var(--sb-font-mono);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .band h2 {
+        margin: 0;
+        font-weight: 700;
+        font-size: clamp(1.8rem, 3.6vw, 2.8rem);
+        line-height: 1.1;
+        letter-spacing: -0.025em;
+      }
+      .band p {
+        margin: 0;
+        max-width: 30em;
+        font-size: 17px;
+        color: #c9cce0;
+        text-wrap: pretty;
+      }
+      .band code {
+        font-family: var(--sb-font-mono);
+        font-size: 0.88em;
+      }
+      .band-link {
+        align-self: flex-start;
+        font-weight: 600;
+        color: #ff86b7;
+        text-decoration: none;
+        border-bottom: 2px solid #ff86b7;
+      }
+      .band-link:hover {
+        color: #6fe6d6;
+        border-color: #6fe6d6;
+      }
+      .band .code-card {
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .band .code-bar {
+        height: 40px;
+        padding: 0 16px;
+      }
+
+      /* Footer */
+      .footer {
+        padding-block: 28px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: space-between;
+        font-size: 13px;
+        color: var(--sb-muted);
+      }
+    </style>
   </body>
 </html>

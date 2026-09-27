@@ -1,0 +1,65 @@
+/*
+ * Ocean Drive brand tokens, shared by the landing page and the Starlight docs.
+ * Linen daylight pages, Biscayne-night code. Flamingo leads, aqua confirms,
+ * coral and lavender appear only in brand art.
+ */
+:root {
+  --sb-bg: #fbf4ea;
+  --sb-surface: #fffbf5;
+  --sb-sunk: #f3e8d8;
+  --sb-ink: #1b1f3b;
+  --sb-muted: #5d6180;
+  --sb-line: #e6d8c4;
+
+  --sb-pink: #ef4f91;
+  --sb-pink-ink: #b81e5e;
+  --sb-pink-wash: rgba(239, 79, 145, 0.1);
+  --sb-aqua: #1fb5a8;
+  --sb-aqua-ink: #087169;
+  --sb-aqua-wash: rgba(31, 181, 168, 0.12);
+  --sb-coral: #ff7a59;
+  --sb-lav: #8e7cf0;
+  --sb-lav-ink: #5a45c9;
+  --sb-lav-wash: rgba(142, 124, 240, 0.12);
+
+  --sb-code-bg: #17203d;
+  --sb-code-bar: #1e2950;
+  --sb-code-ink: #eaf2ff;
+  --sb-code-dim: #8189ae;
+  --sb-code-keyword: #ff86b7;
+  --sb-code-string: #6fe6d6;
+  --sb-code-function: #ffb38a;
+  --sb-code-type: #bdb2ff;
+
+  --sb-band: #1b1f3b;
+  --sb-band-ink: #f4ede3;
+  --sb-band-line: transparent;
+  --sb-palm: #1b1f3b;
+
+  --sb-font-display: "Unbounded", sans-serif;
+  --sb-font-sans: "Instrument Sans", system-ui, sans-serif;
+  --sb-font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+:root[data-theme="dark"] {
+  --sb-bg: #0f1528;
+  --sb-surface: #151c33;
+  --sb-sunk: #0b1020;
+  --sb-ink: #f4ede3;
+  --sb-muted: #a3a8c3;
+  --sb-line: #26304f;
+
+  --sb-pink-ink: #ff7bb0;
+  --sb-pink-wash: rgba(239, 79, 145, 0.14);
+  --sb-aqua-ink: #4fe0cf;
+  --sb-aqua-wash: rgba(31, 181, 168, 0.14);
+  --sb-lav-ink: #b9adff;
+  --sb-lav-wash: rgba(142, 124, 240, 0.16);
+
+  --sb-code-bg: #0a0f1e;
+  --sb-code-bar: #121a33;
+
+  --sb-band: #151c33;
+  --sb-band-line: #26304f;
+  --sb-palm: #3b2f6e;
+}

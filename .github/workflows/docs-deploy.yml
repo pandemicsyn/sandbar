@@ -1,0 +1,41 @@
+name: Deploy docs
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/docs/**"
+      - "bun.lock"
+      - ".github/workflows/docs-deploy.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Holds CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; pull requests never receive them.
+    environment:
+      name: production
+      url: https://sandbarsdk.dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Check and build documentation
+        run: bun run docs:check
+      - name: Deploy to Cloudflare Workers
+        run: bunx wrangler deploy --config wrangler.jsonc
+        working-directory: apps/docs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
