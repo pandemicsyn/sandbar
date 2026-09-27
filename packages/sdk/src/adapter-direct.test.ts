@@ -1665,6 +1665,7 @@ test("file reads enforce the SDK ceiling and reject invalid adapter limits befor
 
   const over = new Uint8Array(1_048_577);
   const buffered = await open(2_000_000, over);
+  expect(buffered.client.capabilities().maxFileBytes).toBe(1_048_576);
   await expect(buffered.box.readFile("/over")).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
   expect(buffered.reads()).toBe(1);
   await buffered.client.close();
@@ -1683,6 +1684,7 @@ test("file reads enforce the SDK ceiling and reject invalid adapter limits befor
   await streamed.client.close();
 
   const lower = await open(2, Uint8Array.of(1, 2, 3));
+  expect(lower.client.capabilities().maxFileBytes).toBe(2);
   await expect(lower.box.readFile("/lower")).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
   await lower.client.close();
 

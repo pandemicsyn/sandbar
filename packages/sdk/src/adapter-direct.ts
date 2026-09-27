@@ -110,6 +110,13 @@ function unsupported(feature: string): never {
   throw new SandbarError("UNSUPPORTED", `${feature} is unsupported`);
 }
 
+function fileReadLimit(maxBytes: number): number {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+    throw new SandbarError("INVALID_ARGUMENT", "Adapter file limit is invalid", "none");
+
+  return Math.min(maxBytes, 1_048_576);
+}
+
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- AbortSignal.reason may be any JavaScript value and is preserved in WaitAbortedError.
 function abortWaiting(ref: AdapterRecoveryReference, reason: unknown): never {
   throw new WaitAbortedError(ref, reason);
@@ -381,12 +388,7 @@ export class AdapterSandbox {
 
     if (!this.client.session.files?.read) unsupported("readFile");
     validateFilePath(path);
-    const adapterMaxBytes = this.client.session.files.maxBytes;
-
-    if (!Number.isSafeInteger(adapterMaxBytes) || adapterMaxBytes < 0)
-      throw new SandbarError("INVALID_ARGUMENT", "Adapter file limit is invalid", "none");
-
-    const maxBytes = Math.min(adapterMaxBytes, 1_048_576);
+    const maxBytes = fileReadLimit(this.client.session.files.maxBytes);
 
     const value = await readWhileOpen(
       this.client,
@@ -782,7 +784,7 @@ export class AdapterDirectClient {
       readFile: !!this.session.files?.read,
       writeFile: !!this.session.files?.write,
       maxOutputBytes: support.exec?.maxOutputBytes ?? 0,
-      maxFileBytes: this.session.files?.maxBytes ?? 0,
+      maxFileBytes: this.session.files ? fileReadLimit(this.session.files.maxBytes) : 0,
     };
   }
   async submitCreate(
