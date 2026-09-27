@@ -20,6 +20,10 @@ export type Kind = "create" | "exec" | "destroy" | "file_write";
 
 export type OperationStatus = "queued" | "running" | "succeeded" | "failed" | "unknown";
 
+const outputRetentionMs = 24 * 60 * 60 * 1000;
+
+const outputExpiryBatch = 100;
+
 type CreateIntent = { environment: object; network?: object; labels?: Record<string, string> };
 
 type OperationFailure = {
@@ -715,9 +719,50 @@ export class ControlStore {
     );
   }
   async getExecution(projectId: string, executionId: string): Promise<ExecutionRow | undefined> {
-    return this.backend.row(
+    const row = await this.backend.row<ExecutionRow>(
       sql`SELECT * FROM executions WHERE project_id=${projectId} AND id=${executionId}`,
     );
+
+    if (
+      row?.output_ciphertext &&
+      row.completed_at !== null &&
+      Number(row.completed_at) <= now() - outputRetentionMs
+    ) {
+      await this.expireOutputs(now(), { projectId, executionId });
+
+      return this.backend.row(
+        sql`SELECT * FROM executions WHERE project_id=${projectId} AND id=${executionId}`,
+      );
+    }
+
+    return row;
+  }
+  async expireOutputs(
+    at = now(),
+    only?: { projectId: string; executionId: string },
+  ): Promise<number> {
+    const cutoff = at - outputRetentionMs;
+
+    return this.backend.transaction(async (tx) => {
+      const scope = only
+        ? sql`AND e.project_id=${only.projectId} AND e.id=${only.executionId}`
+        : sql``;
+
+      const candidates = await tx.rows<{ id: string; operation_id: string }>(
+        sql`SELECT e.id,e.operation_id FROM executions e JOIN operations o ON o.id=e.operation_id WHERE e.status='completed' AND o.status='succeeded' AND e.output_state IN ('captured','truncated') AND e.output_ciphertext IS NOT NULL AND e.completed_at<=${cutoff} ${scope} ORDER BY e.completed_at,e.id LIMIT ${outputExpiryBatch}`,
+      );
+
+      for (const candidate of candidates) {
+        await tx.run(
+          sql`UPDATE executions SET output_state='expired',output_ciphertext=NULL WHERE id=${candidate.id}`,
+        );
+        await tx.run(
+          sql`UPDATE reservations SET state='released',released_at=${at} WHERE operation_id=${candidate.operation_id} AND kind='output' AND state='active'`,
+        );
+      }
+
+      return candidates.length;
+    });
   }
   async getInvocationKey(operationId: string): Promise<string | undefined> {
     return (

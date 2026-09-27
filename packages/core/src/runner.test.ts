@@ -314,6 +314,8 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
 test("polling continues after a transient claim error", async () => {
   let claims = 0;
   const store = new ControlStore(openSqliteBackend(":memory:"));
+  await migrate(store.backend, bundledMigration("sqlite"));
+
   store.claimDue = async () => {
     claims++;
 

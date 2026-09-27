@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { SecretBox, DurableRunner } from "@sandbar/core";
 import type { NativeScope } from "@sandbar/provider-spi";
 import { FakeProviderDriver } from "@sandbar/provider-fake";
@@ -12,7 +13,8 @@ test("timed-out fake submission releases the runner and recovers only by observa
   const keyFile = join(directory, "key");
   await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)));
   await chmod(keyFile, 0o600);
-  const backend = openSqliteBackend(":memory:");
+  const databasePath = join(directory, "control.sqlite");
+  const backend = openSqliteBackend(databasePath);
   await migrate(backend, bundledMigration("sqlite"));
   const store = new ControlStore(backend);
 
@@ -148,6 +150,39 @@ test("timed-out fake submission releases the runner and recovers only by observa
     expect((await store.getSandbox(project.id, first.sandbox.id))?.native_id).toBe("native_first");
     expect(firstCreateCalls).toBe(1);
     expect(observationCalls).toBe(1);
+
+    const execution = await store.admitExec({
+      projectId: project.id,
+      sandboxId: first.sandbox.id,
+      endpoint: "POST /executions",
+      key: Bun.randomUUIDv7(),
+      intentHash: "retained-output",
+      encryptedRequest: "sealed",
+      captureBytes: 1,
+    });
+
+    const executionClaim = (await store.claimDue("manual-completion", 1000, project.id))!;
+    await store.beginSubmission(executionClaim);
+    await store.complete(executionClaim, {
+      effect: "applied",
+      value: { kind: "execution", observation: { completed: true, exitCode: 0 } },
+      encryptedOutput: "sealed-output",
+      outputBytes: 1,
+    });
+    const native = new Database(databasePath);
+
+    try {
+      native
+        .query("UPDATE executions SET completed_at=? WHERE id=?")
+        .run(Date.now() - 24 * 60 * 60 * 1000 - 60_000, execution.execution!.id);
+    } finally {
+      native.close();
+    }
+
+    expect(await runner.tick()).toBe(false);
+    expect((await store.getExecution(project.id, execution.execution!.id))?.output_state).toBe(
+      "expired",
+    );
   } finally {
     await store.close();
     await rm(directory, { recursive: true, force: true });

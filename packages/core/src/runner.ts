@@ -53,6 +53,7 @@ export class DurableRunner {
     this.active = true;
 
     try {
+      await this.options.store.expireOutputs();
       const claim = await this.options.store.claimDue(this.owner);
 
       if (!claim) return false;

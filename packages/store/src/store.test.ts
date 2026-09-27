@@ -33,7 +33,7 @@ test("operator setup rolls back when its first session cannot be stored", async 
   }
 });
 
-test("SQLite evicts retained output after restart when capacity is needed", async () => {
+test("SQLite evicts retained output under pressure and expires aged output on read after restart", async () => {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-output-quota-"));
   const path = join(directory, "control.sqlite");
   let store = new ControlStore(openSqliteBackend(path));
@@ -113,6 +113,33 @@ test("SQLite evicts retained output after restart when capacity is needed", asyn
     expect(
       (await store.getExecution(project.id, admitted.execution!.id))?.output_ciphertext,
     ).toBeNull();
+
+    const refillClaim = (await store.claimDue("refill", 1000, project.id))!;
+    await store.beginSubmission(refillClaim);
+    await store.complete(refillClaim, {
+      effect: "applied",
+      value: { kind: "execution", observation: { completed: true, exitCode: 7 } },
+      encryptedOutput: "fresh-ciphertext",
+      outputBytes: 1,
+    });
+    await store.backend.run(
+      sql`UPDATE executions SET completed_at=${Date.now() - 24 * 60 * 60 * 1000 - 60_000} WHERE id=${refill.execution!.id}`,
+    );
+    await store.close();
+    store = new ControlStore(openSqliteBackend(path));
+
+    const expired = await store.getExecution(project.id, refill.execution!.id);
+
+    expect(expired?.output_state).toBe("expired");
+    expect(expired?.output_ciphertext).toBeNull();
+    expect(expired?.output_bytes).toBe(1);
+    expect(expired?.exit_code).toBe(7);
+
+    const reservation = await store.backend.row<{ state: string }>(
+      sql`SELECT state FROM reservations WHERE operation_id=${refill.operation.id} AND kind='output'`,
+    );
+
+    expect(reservation?.state).toBe("released");
   } finally {
     await store.close();
     await rm(directory, { recursive: true, force: true });
@@ -414,6 +441,116 @@ for (const dialect of dialects)
         );
 
         expect(rejected?.reason.code).toBe("OUTPUT_CAPACITY");
+      } finally {
+        await store.close();
+      }
+    });
+    test("completed output expires at the age cutoff without a new admission", async () => {
+      const { store, project, connection } = await fixture(dialect);
+
+      try {
+        const created = await store.admitCreate({
+          projectId: project.id,
+          endpoint: "POST /sandboxes",
+          key: Bun.randomUUIDv7(),
+          intentHash: "create",
+          request: { environment: { kind: "prepared", imageId: "fake-starter" } },
+          connectionId: connection.id,
+        });
+
+        const createClaim = (await store.claimDue("setup", 1000, project.id))!;
+        await store.beginSubmission(createClaim);
+        await store.complete(createClaim, {
+          effect: "applied",
+          value: {
+            kind: "sandbox",
+            observation: { ref: { nativeId: "native_retention" }, state: "running" },
+          },
+        });
+
+        const capture = async (name: string) => {
+          const admitted = await store.admitExec({
+            projectId: project.id,
+            sandboxId: created.sandbox.id,
+            endpoint: "POST /executions",
+            key: Bun.randomUUIDv7(),
+            intentHash: name,
+            encryptedRequest: "sealed",
+            captureBytes: 1,
+          });
+
+          const claim = (await store.claimDue(name, 1000, project.id))!;
+          await store.beginSubmission(claim);
+          await store.complete(claim, {
+            effect: "applied",
+            value: { kind: "execution", observation: { completed: true, exitCode: 7 } },
+            encryptedOutput: "sealed-output",
+            outputBytes: 1,
+          });
+
+          return admitted;
+        };
+
+        const aged = await capture("aged");
+        const fresh = await capture("fresh");
+
+        const pending = await store.admitExec({
+          projectId: project.id,
+          sandboxId: created.sandbox.id,
+          endpoint: "POST /executions",
+          key: Bun.randomUUIDv7(),
+          intentHash: "pending",
+          encryptedRequest: "sealed",
+          captureBytes: 1,
+        });
+
+        const pendingClaim = (await store.claimDue("pending", 1000, project.id))!;
+        await store.beginSubmission(pendingClaim);
+        await store.reschedule(pendingClaim, "outcome_unknown", 5_000, "DRIVER_ERROR");
+
+        const at = Date.now() + 60 * 60 * 1000;
+        const cutoff = at - 24 * 60 * 60 * 1000;
+        await store.backend.run(
+          sql`UPDATE executions SET completed_at=${cutoff - 1} WHERE id=${aged.execution!.id}`,
+        );
+        await store.backend.run(
+          sql`UPDATE executions SET completed_at=${cutoff + 1} WHERE id=${fresh.execution!.id}`,
+        );
+
+        expect(await store.expireOutputs(at)).toBe(1);
+        expect(await store.expireOutputs(at)).toBe(0);
+        const agedRow = await store.getExecution(project.id, aged.execution!.id);
+        const freshRow = await store.getExecution(project.id, fresh.execution!.id);
+
+        expect(agedRow).toMatchObject({
+          output_state: "expired",
+          output_ciphertext: null,
+          output_bytes: 1,
+          exit_code: 7,
+          status: "completed",
+        });
+        expect(freshRow?.output_state).toBe("captured");
+        expect(freshRow?.output_ciphertext).toBe("sealed-output");
+
+        const reservations = await store.backend.rows<{
+          operation_id: string;
+          state: string;
+        }>(
+          sql`SELECT operation_id,state FROM reservations WHERE project_id=${project.id} AND kind='output'`,
+        );
+
+        expect(reservations.find((row) => row.operation_id === aged.operation.id)?.state).toBe(
+          "released",
+        );
+        expect(reservations.find((row) => row.operation_id === fresh.operation.id)?.state).toBe(
+          "active",
+        );
+        expect(reservations.find((row) => row.operation_id === pending.operation.id)?.state).toBe(
+          "active",
+        );
+        expect((await store.getOperation(project.id, pending.operation.id))?.status).toBe(
+          "unknown",
+        );
       } finally {
         await store.close();
       }
