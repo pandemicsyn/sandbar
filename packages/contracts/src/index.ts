@@ -149,12 +149,33 @@ const FileWriteOperation = OperationBase.extend({
   result: FileWriteOperationResult.optional(),
 });
 
-export const Operation = z.discriminatedUnion("kind", [
-  CreateOperation,
-  ExecOperation,
-  DestroyOperation,
-  FileWriteOperation,
-]);
+export const Operation = z
+  .discriminatedUnion("kind", [
+    CreateOperation,
+    ExecOperation,
+    DestroyOperation,
+    FileWriteOperation,
+  ])
+  .superRefine((operation, context) => {
+    if (operation.status === "succeeded" && (!operation.result || operation.error)) {
+      context.addIssue({
+        code: "custom",
+        path: ["result"],
+        message: "Succeeded operations require a result and cannot carry an error",
+      });
+    }
+
+    if (operation.status === "failed" && (!operation.error || operation.result)) {
+      context.addIssue({
+        code: "custom",
+        path: ["error"],
+        message: "Failed operations require an error and cannot carry a result",
+      });
+    }
+  })
+  .describe(
+    "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads.",
+  );
 
 export const AcceptedOperation = z.object({ operation: Operation });
 
@@ -257,6 +278,7 @@ export const AcceptedExecution = z
   .object({ operation: ExecOperation, execution: Execution })
   .refine(
     ({ operation, execution }) =>
+      Operation.safeParse(operation).success &&
       operation.id === execution.operationId &&
       operation.executionId === execution.id &&
       operation.projectId === execution.projectId &&
@@ -266,7 +288,7 @@ export const AcceptedExecution = z
     },
   )
   .describe(
-    "The operation must have kind exec; operation.id equals execution.operationId, operation.executionId equals execution.id, and their projectId and sandboxId values match.",
+    "The operation must have kind exec and satisfy terminal status payload rules; operation.id equals execution.operationId, operation.executionId equals execution.id, and their projectId and sandboxId values match.",
   );
 
 export const FileReadHeaders = z.object({

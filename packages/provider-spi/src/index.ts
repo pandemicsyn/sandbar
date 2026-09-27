@@ -14,6 +14,20 @@ export const NativeRef = z.object({
   kind: z.enum(["sandbox", "execution"]),
 });
 
+const SandboxRef = NativeRef.refine((ref) => ref.kind === "sandbox", {
+  message: "Expected a sandbox reference",
+});
+
+const ExecutionRef = NativeRef.refine((ref) => ref.kind === "execution", {
+  message: "Expected an execution reference",
+});
+
+const sameScope = (left: z.infer<typeof NativeScope>, right: z.infer<typeof NativeScope>) =>
+  left.provider === right.provider &&
+  left.connectionId === right.connectionId &&
+  left.accountId === right.accountId &&
+  left.region === right.region;
+
 export const InvocationIdentity = z.object({
   projectId: Id,
   operationId: Id,
@@ -61,31 +75,35 @@ export const DriverCapabilities = z.object({
 });
 
 export const SandboxObservation = z.object({
-  ref: NativeRef,
+  ref: SandboxRef,
   state: z.enum(["running", "destroyed", "unknown"]),
   observedAt: z.iso.datetime({ offset: true }),
   sourceSequence: z.number().int().nonnegative().optional(),
 });
 
-export const ExecutionObservation = z.object({
-  ref: NativeRef,
-  sandbox: NativeRef,
-  completed: z.boolean(),
-  exitCode: z.number().int().nullable().optional(),
-  stdoutBase64: z.base64().optional(),
-  stderrBase64: z.base64().optional(),
-  truncated: z.boolean().optional(),
-  observedAt: z.iso.datetime({ offset: true }),
-});
+export const ExecutionObservation = z
+  .object({
+    ref: ExecutionRef,
+    sandbox: SandboxRef,
+    completed: z.boolean(),
+    exitCode: z.number().int().nullable().optional(),
+    stdoutBase64: z.base64().optional(),
+    stderrBase64: z.base64().optional(),
+    truncated: z.boolean().optional(),
+    observedAt: z.iso.datetime({ offset: true }),
+  })
+  .refine((observation) => sameScope(observation.ref.scope, observation.sandbox.scope), {
+    message: "Execution and sandbox references must share a native scope",
+  });
 
 export const DestroyObservation = z.object({
-  sandbox: NativeRef,
+  sandbox: SandboxRef,
   computeStopped: z.boolean(),
   retainedResources: z.array(z.string()),
 });
 
 export const FileWriteObservation = z.object({
-  sandbox: NativeRef,
+  sandbox: SandboxRef,
   path: z.string(),
   bytesWritten: z.number().int().nonnegative(),
   complete: z.boolean(),

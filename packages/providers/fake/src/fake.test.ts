@@ -899,6 +899,9 @@ describe("independent fake provider", () => {
 
     for (const damaged of [
       { ...source, version: 2 },
+      { ...source, nextId: 1 },
+      { ...source, resources: [source.resources[0], source.resources[0]] },
+      { ...source, resources: [] },
       {
         ...source,
         ledger: [

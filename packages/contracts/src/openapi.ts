@@ -53,6 +53,21 @@ const schemas = {
   StreamFrame,
 };
 
+// JSON Schema conditionals require the "then" keyword; this object is serialized, never awaited.
+// oxlint-disable-next-line unicorn/no-thenable
+const consequentKeyword = "then";
+
+const terminalOperationConstraints = [
+  {
+    if: { properties: { status: { const: "succeeded" } }, required: ["status"] },
+    [consequentKeyword]: { required: ["result"], not: { required: ["error"] } },
+  },
+  {
+    if: { properties: { status: { const: "failed" } }, required: ["status"] },
+    [consequentKeyword]: { required: ["error"], not: { required: ["result"] } },
+  },
+];
+
 const component = (name: keyof typeof schemas) => ({ $ref: `#/components/schemas/${name}` });
 
 const json = (name: keyof typeof schemas) => ({
@@ -277,6 +292,16 @@ export const openApiDocument = {
               jsonSchema.propertyNames = z.toJSONSchema(zodSchema.keyType, {
                 target: "openapi-3.1",
               });
+            }
+
+            if (zodSchema === Operation) jsonSchema.allOf = terminalOperationConstraints;
+
+            if (zodSchema === AcceptedExecution && jsonSchema.properties) {
+              const operation = jsonSchema.properties.operation;
+
+              if (operation && operation !== true) {
+                operation.allOf = terminalOperationConstraints;
+              }
             }
           },
         }),

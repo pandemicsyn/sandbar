@@ -157,6 +157,22 @@ const StateSchema = z
   })
   .superRefine((state, context) => {
     const projects = new Map<string, string>();
+    const resourceRefs = new Map<string, z.infer<typeof NativeRef>>();
+    const executionIds = new Set<string>();
+    const allRefs: z.infer<typeof NativeRef>[] = [];
+
+    for (const resource of state.resources) {
+      if (resourceRefs.has(resource.ref.nativeId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["resources"],
+          message: "Native resource IDs must be unique",
+        });
+      }
+
+      resourceRefs.set(resource.ref.nativeId, resource.ref);
+      allRefs.push(resource.ref);
+    }
 
     for (const entry of state.ledger) {
       const key = JSON.stringify([scopeKey(entry.scope), entry.submissionId]);
@@ -171,6 +187,73 @@ const StateSchema = z
       }
 
       projects.set(key, entry.projectId);
+
+      if (entry.result.status !== "completed") continue;
+      const value = entry.result.value;
+
+      const sandboxRef =
+        value.kind === "sandbox"
+          ? value.observation.ref
+          : value.kind === "execution"
+            ? value.observation.sandbox
+            : value.observation.sandbox;
+
+      const resourceRef = resourceRefs.get(sandboxRef.nativeId);
+
+      if (!resourceRef || !sameScope(resourceRef.scope, sandboxRef.scope)) {
+        context.addIssue({
+          code: "custom",
+          path: ["ledger"],
+          message: "Ledger effect references an unknown sandbox",
+        });
+      }
+
+      allRefs.push(sandboxRef);
+
+      if (value.kind === "execution") {
+        const executionRef = value.observation.ref;
+
+        if (executionIds.has(executionRef.nativeId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["ledger"],
+            message: "Native execution IDs must be unique",
+          });
+        }
+
+        executionIds.add(executionRef.nativeId);
+        allRefs.push(executionRef);
+      }
+    }
+
+    const allocatorClaims = new Map<number, string>();
+
+    for (const ref of allRefs) {
+      const match = /^fake_(sandbox|execution)_([1-9][0-9]*)$/.exec(ref.nativeId);
+      const allocated = match ? Number(match[2]) : Number.NaN;
+
+      if (
+        !match ||
+        match[1] !== ref.kind ||
+        !Number.isSafeInteger(allocated) ||
+        allocated >= state.nextId
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Native reference is incompatible with the next allocator ID",
+        });
+      } else {
+        const claimedBy = allocatorClaims.get(allocated);
+
+        if (claimedBy !== undefined && claimedBy !== ref.nativeId) {
+          context.addIssue({
+            code: "custom",
+            message: "An allocator ID cannot name multiple native references",
+          });
+        }
+
+        allocatorClaims.set(allocated, ref.nativeId);
+      }
     }
   });
 

@@ -41,6 +41,27 @@ describe("public contract", () => {
     };
 
     expect(Operation.parse(operation)).not.toHaveProperty("futureField");
+    expect(Operation.safeParse({ ...operation, status: "succeeded" }).success).toBe(false);
+    expect(Operation.safeParse({ ...operation, status: "failed" }).success).toBe(false);
+    expect(
+      Operation.safeParse({
+        ...operation,
+        status: "succeeded",
+        result: { kind: "create", sandboxId: "sb_1" },
+      }).success,
+    ).toBe(true);
+    expect(
+      Operation.safeParse({
+        ...operation,
+        status: "failed",
+        error: {
+          code: "CAPACITY",
+          message: "Unavailable",
+          effect: "none",
+          retry: "never",
+        },
+      }).success,
+    ).toBe(true);
     expect(
       Operation.safeParse({
         ...operation,
@@ -123,6 +144,12 @@ describe("public contract", () => {
     };
 
     expect(AcceptedExecution.safeParse({ operation: execOperation, execution }).success).toBe(true);
+    expect(
+      AcceptedExecution.safeParse({
+        operation: { ...execOperation, status: "succeeded" },
+        execution,
+      }).success,
+    ).toBe(false);
     expect(
       AcceptedExecution.safeParse({
         operation: { ...execOperation, id: "other_op" },
@@ -259,9 +286,35 @@ describe("public contract", () => {
         },
       ],
     });
+    expect(openApiDocument.components.schemas.Operation).toHaveProperty(
+      "description",
+      expect.stringContaining("A succeeded operation has a same-kind result"),
+    );
+    expect(openApiDocument.components.schemas.Operation).toHaveProperty(
+      "allOf.0.if.properties.status.const",
+      "succeeded",
+    );
+    expect(openApiDocument.components.schemas.Operation).toHaveProperty("allOf.0.then.required", [
+      "result",
+    ]);
+    expect(openApiDocument.components.schemas.Operation).toHaveProperty(
+      "allOf.1.if.properties.status.const",
+      "failed",
+    );
+    expect(openApiDocument.components.schemas.Operation).toHaveProperty("allOf.1.then.required", [
+      "error",
+    ]);
     expect(openApiDocument.components.schemas.AcceptedExecution).toMatchObject({
-      properties: { operation: { properties: { kind: { const: "exec" } } } },
+      properties: {
+        operation: {
+          properties: { kind: { const: "exec" } },
+        },
+      },
     });
+    expect(openApiDocument.components.schemas.AcceptedExecution).toHaveProperty(
+      "properties.operation.allOf.0.then.required",
+      ["result"],
+    );
     expect(openApiDocument.components.schemas.AcceptedExecution).toHaveProperty(
       "description",
       expect.stringContaining("operation.executionId equals execution.id"),

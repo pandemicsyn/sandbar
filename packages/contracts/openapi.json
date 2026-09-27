@@ -955,6 +955,52 @@
               "effect",
               "recovery",
               "kind"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "succeeded"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "result"
+                  ],
+                  "not": {
+                    "required": [
+                      "error"
+                    ]
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "failed"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "error"
+                  ],
+                  "not": {
+                    "required": [
+                      "result"
+                    ]
+                  }
+                }
+              }
             ]
           },
           "execution": {
@@ -1054,7 +1100,7 @@
           "operation",
           "execution"
         ],
-        "description": "The operation must have kind exec; operation.id equals execution.operationId, operation.executionId equals execution.id, and their projectId and sandboxId values match."
+        "description": "The operation must have kind exec and satisfy terminal status payload rules; operation.id equals execution.operationId, operation.executionId equals execution.id, and their projectId and sandboxId values match."
       },
       "AcceptedOperation": {
         "type": "object",
@@ -1758,6 +1804,53 @@
                   "recovery",
                   "kind"
                 ]
+              }
+            ],
+            "description": "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads.",
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "succeeded"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "result"
+                  ],
+                  "not": {
+                    "required": [
+                      "error"
+                    ]
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "failed"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "error"
+                  ],
+                  "not": {
+                    "required": [
+                      "result"
+                    ]
+                  }
+                }
               }
             ]
           }
@@ -2885,6 +2978,53 @@
               "recovery",
               "kind"
             ]
+          }
+        ],
+        "description": "A succeeded operation has a same-kind result and no error. A failed operation has an error and no result. Queued, running, and unknown operations may omit both payloads.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "succeeded"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "result"
+              ],
+              "not": {
+                "required": [
+                  "error"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "failed"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "error"
+              ],
+              "not": {
+                "required": [
+                  "result"
+                ]
+              }
+            }
           }
         ]
       },

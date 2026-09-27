@@ -29,3 +29,87 @@ test("normalized mutation outcomes cannot contradict their effect classification
       .success,
   ).toBe(false);
 });
+
+test("provider observations enforce reference roles and execution scope", () => {
+  const scope = { provider: "fake", connectionId: "c1", accountId: "local" };
+  const sandbox = { scope, nativeId: "fake_sandbox_1", kind: "sandbox" };
+  const execution = { scope, nativeId: "fake_execution_2", kind: "execution" };
+
+  const completedSandbox = {
+    status: "completed",
+    effect: "applied",
+    value: {
+      kind: "sandbox",
+      observation: { ref: sandbox, state: "running", observedAt: "2026-09-26T10:00:00Z" },
+    },
+  };
+
+  const completedExecution = {
+    status: "completed",
+    effect: "applied",
+    value: {
+      kind: "execution",
+      observation: {
+        ref: execution,
+        sandbox,
+        completed: true,
+        observedAt: "2026-09-26T10:00:00Z",
+      },
+    },
+  };
+
+  expect(
+    DriverResult.safeParse({
+      ...completedSandbox,
+      value: {
+        ...completedSandbox.value,
+        observation: {
+          ...completedSandbox.value.observation,
+          ref: { ...sandbox, kind: "execution" },
+        },
+      },
+    }).success,
+  ).toBe(false);
+  expect(DriverResult.safeParse(completedExecution).success).toBe(true);
+  expect(
+    DriverResult.safeParse({
+      ...completedExecution,
+      value: {
+        ...completedExecution.value,
+        observation: { ...completedExecution.value.observation, ref: sandbox },
+      },
+    }).success,
+  ).toBe(false);
+  expect(
+    DriverResult.safeParse({
+      ...completedExecution,
+      value: {
+        ...completedExecution.value,
+        observation: {
+          ...completedExecution.value.observation,
+          sandbox: { ...sandbox, scope: { ...scope, accountId: "other" } },
+        },
+      },
+    }).success,
+  ).toBe(false);
+  expect(
+    DriverResult.safeParse({
+      status: "completed",
+      effect: "applied",
+      value: {
+        kind: "destroy",
+        observation: { sandbox: execution, computeStopped: true, retainedResources: [] },
+      },
+    }).success,
+  ).toBe(false);
+  expect(
+    DriverResult.safeParse({
+      status: "completed",
+      effect: "applied",
+      value: {
+        kind: "file_write",
+        observation: { sandbox: execution, path: "/x", bytesWritten: 1, complete: true },
+      },
+    }).success,
+  ).toBe(false);
+});
