@@ -389,6 +389,10 @@ function nativeRef(box: SandboxRow, scope: NativeScope): SandboxRef {
   return { scope, nativeId: box.native_id, kind: "sandbox" };
 }
 
+function providerAvailable(deps: DomainDependencies, provider: string): boolean {
+  return deps.registry ? deps.registry.has(provider) : deps.driver?.name === provider;
+}
+
 async function providerFor(
   deps: DomainDependencies,
   connection: ConnectionRow,
@@ -706,6 +710,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
         intentHash: await intentSha256(body),
         request: body,
         connectionId: body.connectionId,
+        providerAvailable: (provider) => providerAvailable(deps, provider),
       });
 
       return accepted(c, admission.operation);
@@ -811,6 +816,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
         encryptedRequest,
         output: body.output,
         captureBytes,
+        providerAvailable: (provider) => providerAvailable(deps, provider),
       });
 
       return accepted(c, admitted.operation, await executionDto(deps, admitted.execution!));
@@ -839,6 +845,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
         endpoint: `DELETE /sandboxes/${sandboxId}`,
         key,
         intentHash: await intentSha256({ sandboxId }),
+        providerAvailable: (provider) => providerAvailable(deps, provider),
       });
 
       return accepted(c, admitted.operation);
@@ -980,6 +987,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
         overwrite,
         encryptedBytes,
         bytes: bytes.length,
+        providerAvailable: (provider) => providerAvailable(deps, provider),
       });
 
       if (!admitted.repeated && deps.runner) await deps.runner.tick();

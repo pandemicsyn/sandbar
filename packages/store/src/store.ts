@@ -26,6 +26,8 @@ const outputExpiryBatch = 100;
 
 type CreateIntent = { environment: object; network?: object; labels?: Record<string, string> };
 
+type ProviderAvailable = (provider: string) => boolean;
+
 type OperationFailure = {
   code: string;
   message: string;
@@ -268,6 +270,22 @@ export class ControlStore {
 
     if (!project) throw new StoreError("NOT_FOUND", "Project not found");
   }
+
+  private async requireProviderAvailable(
+    tx: QueryConnection,
+    projectId: string,
+    connectionId: string,
+    providerAvailable?: ProviderAvailable,
+  ): Promise<void> {
+    if (!providerAvailable) return;
+
+    const connection = await tx.row<{ provider: string }>(
+      sql`SELECT provider FROM provider_connections WHERE project_id=${projectId} AND id=${connectionId}`,
+    );
+
+    if (!connection || !providerAvailable(connection.provider))
+      throw new StoreError("CONFLICT", "Provider is not registered");
+  }
   private async lockOperation(
     tx: QueryConnection,
     operationId: string,
@@ -338,6 +356,7 @@ export class ControlStore {
     intentHash: string;
     request: CreateIntent;
     connectionId?: string;
+    providerAvailable?: ProviderAvailable;
   }): Promise<Admission> {
     return this.backend.transaction(async (tx) => {
       await this.lockProject(tx, input.projectId);
@@ -354,13 +373,17 @@ export class ControlStore {
       this.checkNewKey(input.key);
       await this.checkUnresolvedQuota(tx, input.projectId);
 
-      const connection = input.connectionId
-        ? await tx.row<ConnectionRow>(
+      const connections = input.connectionId
+        ? await tx.rows<ConnectionRow>(
             sql`SELECT * FROM provider_connections WHERE project_id=${input.projectId} AND id=${input.connectionId} AND status='verified'`,
           )
-        : await tx.row<ConnectionRow>(
-            sql`SELECT * FROM provider_connections WHERE project_id=${input.projectId} AND status='verified' ORDER BY created_at,id LIMIT 1`,
+        : await tx.rows<ConnectionRow>(
+            sql`SELECT * FROM provider_connections WHERE project_id=${input.projectId} AND status='verified' ORDER BY created_at,id`,
           );
+
+      const connection = connections.find(
+        (candidate) => !input.providerAvailable || input.providerAvailable(candidate.provider),
+      );
 
       if (!connection)
         throw new StoreError("CONFLICT", "No verified provider connection is available");
@@ -411,6 +434,7 @@ export class ControlStore {
     encryptedRequest: string;
     output?: { capture: "bounded" | "none"; maxBytes?: number };
     captureBytes: number;
+    providerAvailable?: ProviderAvailable;
   }): Promise<Admission> {
     return this.backend.transaction(async (tx) => {
       await this.lockProject(tx, input.projectId);
@@ -435,6 +459,13 @@ export class ControlStore {
 
       if (box.observed_state !== "running" || box.desired_state !== "running" || !box.native_id)
         throw new StoreError("CONFLICT", "Sandbox is not running");
+
+      await this.requireProviderAvailable(
+        tx,
+        input.projectId,
+        box.connection_id,
+        input.providerAvailable,
+      );
 
       const totals = await tx.row<{ project_bytes: number; sandbox_bytes: number }>(
         sql`SELECT COALESCE(SUM(amount),0) AS project_bytes, COALESCE(SUM(CASE WHEN sandbox_id=${box.id} THEN amount ELSE 0 END),0) AS sandbox_bytes FROM reservations WHERE project_id=${input.projectId} AND kind='output' AND state='active'`,
@@ -526,6 +557,7 @@ export class ControlStore {
     endpoint: string;
     key: string;
     intentHash: string;
+    providerAvailable?: ProviderAvailable;
   }): Promise<Admission> {
     return this.backend.transaction(async (tx) => {
       await this.lockProject(tx, input.projectId);
@@ -568,6 +600,15 @@ export class ControlStore {
         : undefined;
 
       const localOnly = !!creation && creation.status === "failed" && creation.effect === "none";
+
+      if (!localOnly)
+        await this.requireProviderAvailable(
+          tx,
+          input.projectId,
+          box.connection_id,
+          input.providerAvailable,
+        );
+
       const observedState = localOnly ? "destroyed" : "destroying";
       await tx.run(
         sql`UPDATE sandboxes SET desired_state='destroyed',observed_state=${observedState},observed_at=${localOnly ? time : box.observed_at},revision=revision+1,updated_at=${time} WHERE id=${box.id}`,
@@ -615,6 +656,7 @@ export class ControlStore {
     overwrite: boolean;
     encryptedBytes: string;
     bytes: number;
+    providerAvailable?: ProviderAvailable;
   }): Promise<Admission> {
     return this.backend.transaction(async (tx) => {
       await this.lockProject(tx, input.projectId);
@@ -639,6 +681,13 @@ export class ControlStore {
 
       if (box.observed_state !== "running" || box.desired_state !== "running" || !box.native_id)
         throw new StoreError("CONFLICT", "Sandbox is not running");
+
+      await this.requireProviderAvailable(
+        tx,
+        input.projectId,
+        box.connection_id,
+        input.providerAvailable,
+      );
 
       const operationId = id("op"),
         submissionId = id("sub"),

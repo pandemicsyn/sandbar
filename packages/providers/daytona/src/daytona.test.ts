@@ -177,7 +177,18 @@ test.each([
       throw new Error(`Unexpected ${url.pathname}`);
     });
 
-    await expect(daytonaProvider({ apiKey: "key", target, fetch: fetchImpl })).rejects.toThrow();
+    const error = await daytonaProvider({ apiKey: "key", target, fetch: fetchImpl }).then(
+      () => null,
+      (failure: Error) => failure,
+    );
+
+    if (["name only", "missing", "foreign dedicated"].includes(_case))
+      expect(error).toBeInstanceOf(z.ZodError);
+    else {
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(z.ZodError);
+    }
+
     expect(calls).toEqual(["GET /api/api-keys/current", "GET /api/regions"]);
   },
 );

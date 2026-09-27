@@ -987,14 +987,29 @@ export function daytonaRegistration(
       });
 
       if (!regionsResponse.ok) throw new Error("Daytona target verification failed");
-      const regions = await boundedJson(regionsResponse, z.array(Region), 1_048_576);
+      let regions: z.infer<typeof Region>[];
+
+      try {
+        regions = await boundedJson(regionsResponse, z.array(Region), 1_048_576);
+      } catch {
+        throw new Error("Daytona target verification failed");
+      }
+
       const matches = regions.filter((region) => region.id === config.configuration.target);
 
+      if (matches.length > 1) throw new Error("Daytona target verification failed");
+
       if (
-        matches.length !== 1 ||
+        matches.length === 0 ||
         (matches[0]!.regionType !== "shared" && matches[0]!.organizationId !== key.organizationId)
       )
-        throw new Error("Daytona target verification failed");
+        throw new z.ZodError([
+          {
+            code: "custom",
+            path: ["configuration", "target"],
+            message: "Daytona target is unavailable for the verified organization",
+          },
+        ]);
 
       const scope = NativeScope.parse({
         provider: "daytona",

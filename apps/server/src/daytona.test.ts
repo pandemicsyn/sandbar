@@ -35,7 +35,9 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     creates = 0,
     snapshotReads = 0,
     limitedNetworkEgress = false,
-    credentialStatus = 200;
+    credentialStatus = 200,
+    regionType: "shared" | "dedicated" = "shared",
+    regionOwner = "org-1";
 
   let createdState = "started";
 
@@ -55,7 +57,7 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
     if (url.pathname === "/api/regions")
       return Response.json([
-        { id: "us", name: "United States", regionType: "shared", organizationId: account },
+        { id: "us", name: "United States", regionType, organizationId: regionOwner },
       ]);
 
     if (url.pathname === "/api/snapshots/snap-1") {
@@ -158,6 +160,54 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
     expect(untrusted.response.status).toBe(400);
     expect(calls).toHaveLength(0);
+
+    for (const [caseName, target] of [
+      ["missing", "not-a-region"],
+      ["foreign-dedicated", "us"],
+    ] as const) {
+      regionType = caseName === "foreign-dedicated" ? "dedicated" : "shared";
+      regionOwner = caseName === "foreign-dedicated" ? "org-other" : account;
+
+      const candidate = await request(
+        `/v1/projects/${project.id}/provider-connections`,
+        "POST",
+        {
+          provider: "daytona",
+          name: caseName,
+          credentials: { apiKey: "private-key" },
+          configuration: { target },
+        },
+        token,
+      );
+
+      expect(candidate.response.status).toBe(201);
+      const candidateId = z.object({ id: z.string() }).parse(candidate.value).id;
+
+      const verification = await request(
+        `/v1/projects/${project.id}/provider-connections/${candidateId}/verify`,
+        "POST",
+        {},
+        token,
+      );
+
+      expect(verification.response.status).toBe(400);
+      expect(verification.value).toEqual({
+        error: {
+          code: "INVALID_ARGUMENT",
+          message: "Invalid request",
+          effect: "none",
+          retry: "never",
+        },
+      });
+      expect(JSON.stringify(verification.value)).not.toContain("private-key");
+      expect((await runtime.store.getConnection(project.id, candidateId))?.status).toBe(
+        "unverified",
+      );
+      expect(creates).toBe(0);
+    }
+
+    regionType = "shared";
+    regionOwner = account;
 
     const created = await request(
       `/v1/projects/${project.id}/provider-connections`,
