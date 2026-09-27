@@ -121,3 +121,10 @@ The initial PR base was `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed c
 - GitHub review `discussion_r4112123977`: a successful file write cleared React's selected `File` while the native file input kept its value. The upload handler now clears both only after an accepted result. Chromium E2E checks the native value is empty, explicitly starts a new file-write attempt, selects the same local file again, and verifies a second fake-provider effect at a new remote path.
 - GitHub review `discussion_r4112123982`: a standalone browser test could reuse stale `apps/web/dist`. E2E setup now runs the web build on every invocation before starting the service and browser. The new native-input assertions exercise behavior from the rebuilt source.
 - Focused validation on repair commit `e80ae7c`: web TypeScript check and standalone Chromium E2E pass (1 test, 36 assertions); `git diff --check` passes. Full validation and an independent review of the final parent-based diff remain pending.
+
+## PR feedback review, preparent checkpoint
+
+- Reviewer: independent read-only subagent, `gpt-6-luna`, high reasoning.
+- Base: `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b`; reviewed HEAD: `8e885ad456f197c03900d7d1ad4e4ef3f33dcc25`.
+- Complete diff: `/private/tmp/sandbar-web-pr4-repair-preparent.diff` (3,553 lines).
+- Finding: zero remaining actionable findings at this checkpoint. Reviewer inspected the UI, API client, invocation recovery, styles, CI changes, and browser E2E. The final parent rebase and final review are still required before updating PR #4.
