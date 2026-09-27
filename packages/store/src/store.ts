@@ -691,13 +691,19 @@ export class ControlStore {
         attemptId = id("att");
 
       const observeOnly = !!Number(op.submission_possible);
+
+      const knownPending =
+        observeOnly &&
+        op.status === "running" &&
+        ["awaiting_observation", "execution_running", "observing_pending"].includes(op.phase);
+
       await tx.run(
-        sql`UPDATE operations SET status=${observeOnly ? "unknown" : "running"},phase=${observeOnly ? "reconciling" : "claimed"},lease_owner=${owner},lease_generation=${generation},lease_expires_at=${time + leaseMs},next_attempt_at=NULL,updated_at=${time} WHERE id=${op.id}`,
+        sql`UPDATE operations SET status=${observeOnly && !knownPending ? "unknown" : "running"},phase=${observeOnly ? (knownPending ? "observing_pending" : "reconciling") : "claimed"},lease_owner=${owner},lease_generation=${generation},lease_expires_at=${time + leaseMs},next_attempt_at=NULL,updated_at=${time} WHERE id=${op.id}`,
       );
 
       if (op.kind === "exec")
         await tx.run(
-          sql`UPDATE executions SET status=${observeOnly ? "unknown" : "running"} WHERE operation_id=${op.id}`,
+          sql`UPDATE executions SET status=${observeOnly && !knownPending ? "unknown" : "running"} WHERE operation_id=${op.id}`,
         );
       await tx.run(
         sql`INSERT INTO operation_attempts (id,operation_id,lease_generation,status,submission_possible,started_at,submitted_at,completed_at,error_code) VALUES (${attemptId},${op.id},${generation},${observeOnly ? "observing" : "claimed"},${observeOnly ? 1 : 0},${time},NULL,NULL,NULL)`,

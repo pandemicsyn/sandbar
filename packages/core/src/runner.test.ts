@@ -266,6 +266,14 @@ test("nonterminal execution stays running; cross-wired observation remains unkno
     expect((await store.getOperation(project.id, pending.operation.id))?.status).toBe("running");
     expect((await store.getExecution(project.id, pending.execution!.id))?.status).toBe("running");
     await store.requestReconcile(project.id, pending.operation.id);
+    const observationClaim = await store.claimDue("pending-observer", -1, project.id);
+
+    expect(observationClaim?.observeOnly).toBe(true);
+    expect((await store.getOperation(project.id, pending.operation.id))?.status).toBe("running");
+    expect((await store.getOperation(project.id, pending.operation.id))?.phase).toBe(
+      "observing_pending",
+    );
+    expect((await store.getExecution(project.id, pending.execution!.id))?.status).toBe("running");
     await runner.tick();
     const uncorrelated = await store.getOperation(project.id, pending.operation.id);
     expect(uncorrelated?.status).toBe("unknown");
