@@ -2,7 +2,7 @@
 
 ## Second implementation wave: direct TypeScript SDK
 
-The reviewed first-wave PRs #1–#4 remain an unmerged stack. Build the next stack on `codex/web-e2e` at `dbd2ee66c76e4f1cd2e340bede75ad699dbdfcc7`: portable core extraction, TypeScript SDK, then Node/Bun and package qualification. Follow `docs/direct-typescript-sdk.md`. Direct mode runs against provider drivers from the caller's process without the Sandbar service, database, or hidden process. The initial verified driver is the independent fake; real provider support is not implied. Service-owned coordination, store access, credential custody, and encryption stay outside `@sandbar/core` and the direct dependency graph.
+The reviewed first-wave PRs #1–#4 are merged into `main`. The second wave starts with portable core extraction in PR #5 based on `main` at `fba002c6349a27de78c74c86bc25408e63bda6e9`, followed by the TypeScript SDK and Node/Bun package qualification as stacked PRs. Follow `docs/direct-typescript-sdk.md`. Direct mode runs against provider drivers from the caller's process without the Sandbar service, database, or hidden process. The initial verified driver is the independent fake; real provider support is not implied. Service-owned coordination, store access, credential custody, and encryption stay outside `@sandbar/core` and the direct dependency graph.
 
 - Portable core and service runtime task: `01a0decc-8ab3-7202-9ef9-a84c5ea95c12`, owning `packages/core`, `packages/service-runtime`, service composition, plan adoption, and initial root package/lock changes.
 - TypeScript SDK task: `01a0decd-04b4-7c61-b305-ea7fdcf5b5b4`, owning `packages/sdk`, its direct/remote entry points, and the fake provider client/server split.
