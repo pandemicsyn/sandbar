@@ -28,6 +28,7 @@
   "dependencies": {
     "@sandbar/contracts": "workspace:*",
     "@sandbar/provider-spi": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@sandbar/adapter": "workspace:*"
   }
 }

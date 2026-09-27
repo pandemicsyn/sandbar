@@ -14,6 +14,7 @@ import { ControlStore, type Claimed, type SandboxRow, type ConnectionRow } from 
 import { SecretBox } from "./crypto";
 import {
   ProviderConfigurationError,
+  AdapterContractMismatchError,
   ProviderIdentityMismatchError,
   type ProviderRegistry,
   type AdapterProviderLease,
@@ -118,13 +119,14 @@ export class DurableRunner {
           !claim.observeOnly &&
           ((error instanceof ProviderReadError && error.code === "UNAUTHENTICATED") ||
             error instanceof ProviderIdentityMismatchError ||
-            error instanceof ProviderConfigurationError)
+            error instanceof ProviderConfigurationError ||
+            error instanceof AdapterContractMismatchError)
         ) {
           await store.failWithoutEffect(claim, {
             code:
               error instanceof ProviderIdentityMismatchError
                 ? "CONFLICT"
-                : error instanceof ProviderConfigurationError
+                : error instanceof ProviderConfigurationError || error instanceof AdapterContractMismatchError
                   ? "INVALID_ARGUMENT"
                   : "UNAUTHENTICATED",
             message: "Provider connection verification failed",

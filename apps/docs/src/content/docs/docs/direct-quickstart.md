@@ -1,43 +1,26 @@
 ---
-title: Direct TypeScript quickstart
-description: Run the server-side SDK against the independent fake provider from source.
+title: SDK quickstart
+description: Create a sandbox with a custom adapter in one Node.js or Bun process.
 ---
 
-The direct SDK uses a provider driver in your Node.js or Bun process. Keep credentials on the server. This exercise uses a **local fake simulation**, not a production sandbox.
-
-## Run the checked-in example
-
-Use Bun 1.3.14 and Node.js 22.23.2 or 26.4.0, the versions measured in [runtime qualification](https://github.com/pandemicsyn/sandbar/blob/af06bb6/docs/sdk-runtime-qualification.md). From the repository root:
-
-```sh
-bun install --frozen-lockfile
-bun run build:packages
-bun run --cwd apps/docs examples:test
-```
-
-The example starts the independent fake provider on loopback, seeds one command fixture, imports `sandbar-sdk/direct` and `@sandbar/provider-fake/client` from this workspace, then creates a sandbox, transfers bytes, executes, inspects and destroys it. See [the runnable source](https://github.com/pandemicsyn/sandbar/blob/7f87057c3de255b1878597c09dcdaf0c432a5289/apps/docs/examples/direct.test.ts).
-
-For an application outside this repository, use the verified local archive process in [`bun run package:smoke`](https://github.com/pandemicsyn/sandbar/blob/af06bb6/packages/sdk-qualification/package-smoke.mjs). It builds and packs the SDK and its portable dependencies into an external consumer. There are no published registry artifacts yet.
-
-## Create a client
+Sandbar's primary API is `sandbar-sdk/direct`. Install the SDK and a provider adapter in your server-side application, supply provider credentials, and create a sandbox. This path needs no Sandbar service or SQL database. Packages are currently **unpublished**; the repository's [packed consumer check](https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/package-smoke.mjs) verifies the install shape with local tarballs.
 
 ```ts
 import { Sandbar, Image } from "sandbar-sdk/direct";
-import { fakeProvider } from "@sandbar/provider-fake/client";
+import { acme } from "@acme/sandbar-adapter";
 
-const sandbar = Sandbar.direct({
-  provider: await fakeProvider({
-    url: process.env.FAKE_PROVIDER_URL!,
-    token: process.env.FAKE_PROVIDER_TOKEN!,
-  }),
+const sandbar = await Sandbar.connect({
+  adapter: acme,
+  config: { region: "us" },
+  credentials: { token: process.env.ACME_TOKEN! },
 });
-
 try {
-  const box = await sandbar.sandboxes.create({ environment: Image.prepared("fake-starter") });
+  const box = await sandbar.sandboxes.create({
+    environment: Image.prepared("image-123"),
+    networkPolicy: "blocked",
+  });
   try {
-    await box.writeFile("/input.bin", Uint8Array.of(0, 255));
-    const bytes = await box.readFile("/input.bin");
-    console.log(bytes.length);
+    console.log(box.id);
   } finally {
     await box.destroy();
   }
@@ -46,4 +29,6 @@ try {
 }
 ```
 
-The fake server must already be running for this snippet. `close()` releases client activity; it does **not** destroy a sandbox. In real applications, retain a sandbox ID or recovery reference before crossing process boundaries, and handle uncertain mutation outcomes as described in [Recovery](/docs/guides/recovery/).
+The adapter must verify the native account and enforce blocked network access. The checked-in [Acme adapter fixture](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/acme-adapter.ts) and [runnable test](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/acme.test.ts) show the full shape without making live provider calls. See [Write an adapter](/docs/guides/write-an-adapter/) to implement one.
+
+`close()` releases local client resources and does not destroy sandboxes. Save a recovery reference before crossing a mutation boundary. If a response is lost, [observe the prior attempt](/docs/guides/recovery/) instead of submitting it again.

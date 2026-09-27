@@ -142,3 +142,5 @@ export const modalRegistration = createModalRegistration();
 export { ModalProviderDriver } from "./driver";
 
 export { MODAL_ENDPOINT, type ModalTransport } from "./transport";
+
+export { modalAdapter, createModalAdapter } from "./adapter";

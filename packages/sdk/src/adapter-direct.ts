@@ -289,6 +289,7 @@ export class AdapterSandbox {
 }
 
 /** Optional lifecycle API for applications with their own durable operation ledger. */
+export const ADAPTER_CONTRACT_VERSION = 1 as const;
 export type AdvancedOperationResult = RuntimeResult;
 export type AdvancedOperationKind = OperationKind;
 export type AdvancedIdentity = { operationId: string; submissionId: string; invocationKey: string };
@@ -528,7 +529,7 @@ export class AdapterDirectClient {
   }
 }
 
-export type AdapterConnectOptions<C extends z.ZodType, K extends z.ZodType, S extends AdapterSession> = {
+export type AdapterConnectOptions<C extends z.ZodType, K extends z.ZodType, S extends { scope: Scope }> = {
   adapter: AdapterDefinition<C, K, S>;
   config: z.input<C>;
   credentials: z.input<K>;
@@ -536,7 +537,7 @@ export type AdapterConnectOptions<C extends z.ZodType, K extends z.ZodType, S ex
   onDiagnostic?: (error: unknown) => void;
 };
 
-export async function connectDirect<C extends z.ZodType, K extends z.ZodType, S extends AdapterSession>(
+export async function connectDirect<C extends z.ZodType, K extends z.ZodType, S extends { scope: Scope }>(
   options: AdapterConnectOptions<C, K, S>,
 ): Promise<AdapterDirectClient> {
   const connection = await connectAdapter(options.adapter, {
@@ -544,5 +545,6 @@ export async function connectDirect<C extends z.ZodType, K extends z.ZodType, S 
     credentials: options.credentials,
     onDiagnostic: options.onDiagnostic,
   });
-  return new AdapterDirectClient(options.adapter.name, connection, options.onReference);
+  return new AdapterDirectClient(options.adapter.name,
+    connection as unknown as AdapterConnection<AdapterSession>, options.onReference);
 }

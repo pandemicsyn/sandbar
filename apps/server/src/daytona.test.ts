@@ -189,7 +189,7 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
       expect(invalid.value).toEqual({
         error: {
           code: "INVALID_ARGUMENT",
-          message: "Invalid request",
+          message: "Adapter input or connection is invalid",
           effect: "none",
           retry: "never",
         },
@@ -340,7 +340,7 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
       .object({ nativeScope: z.object({ accountId: z.string(), endpoint: z.string() }) })
       .parse(verified.value).nativeScope;
 
-    expect(verifiedScope.accountId).toBe("org-1");
+    expect(verifiedScope.accountId).toBe("organization:org-1");
     expect(verifiedScope.endpoint).toBe("https://app.daytona.io/api");
     expect(verified.value).not.toHaveProperty("capabilities");
 

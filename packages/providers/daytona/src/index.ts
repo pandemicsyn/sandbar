@@ -1071,3 +1071,5 @@ export async function daytonaProvider(input: DaytonaInput) {
     connectionId,
   });
 }
+
+export { daytonaAdapter, createDaytonaAdapter } from "./adapter";

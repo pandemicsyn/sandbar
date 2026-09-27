@@ -20,6 +20,8 @@
     "sandbar-sdk": "workspace:*",
     "@sandbar/provider-fake": "workspace:*",
     "typescript": "5.9.3",
-    "wrangler": "4.141.0"
+    "wrangler": "4.141.0",
+    "@sandbar/adapter": "workspace:*",
+    "zod": "4.6.5"
   }
 }

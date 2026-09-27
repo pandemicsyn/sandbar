@@ -2,7 +2,7 @@ import {
   validateAdapterConfiguration,
   type Scope,
 } from "@sandbar/adapter";
-import { Sandbar, type AdapterDirectClient } from "sandbar-sdk/direct";
+import { Sandbar, ADAPTER_CONTRACT_VERSION, type AdapterDirectClient } from "sandbar-sdk/direct";
 import { NativeScope, type ProviderLease } from "@sandbar/provider-spi";
 import { z } from "zod";
 import { StoreError, type ConnectionRow, type ControlStore } from "@sandbar/store";
@@ -27,6 +27,7 @@ export interface ProviderRegistration {
 
 export interface InstalledAdapter {
   readonly name: string;
+  readonly displayName?: string;
   readonly config: z.ZodType;
   readonly credentials: z.ZodType;
   connect(input: { config: never; credentials: never; host: {
@@ -75,6 +76,12 @@ export class ProviderIdentityMismatchError extends StoreError {
   }
 }
 
+export class AdapterContractMismatchError extends Error {
+  constructor(provider: string, stored: number) {
+    super(`Adapter ${provider} stored contract version ${stored}; host supports ${ADAPTER_CONTRACT_VERSION}. Install a compatible adapter or create a new connection.`);
+  }
+}
+
 export class ProviderConfigurationError extends Error {
   constructor() {
     super("Stored provider configuration is no longer valid");
@@ -110,7 +117,7 @@ export class ProviderRegistry {
       .map((registration) => ({ name: registration.provider, ...registration.catalog! }));
     const installed = [...this.adapters.values()].map((adapter) => ({
       name: adapter.name,
-      displayName: adapter.name,
+      displayName: adapter.displayName ?? adapter.name,
       configurationSchema: z.toJSONSchema(adapter.config, { unrepresentable: "any" }),
       credentialsSchema: z.toJSONSchema(adapter.credentials, { unrepresentable: "any" }),
     }));
@@ -149,6 +156,8 @@ export class ProviderRegistry {
     }
 
     if (adapter) {
+      if (row.adapter_contract_version !== ADAPTER_CONTRACT_VERSION)
+        throw new AdapterContractMismatchError(row.provider, row.adapter_contract_version);
       const connection = await Sandbar.connect({
         adapter: adapter as never,
         config: config.configuration,

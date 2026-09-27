@@ -5,6 +5,7 @@ import { openDomainRuntime, type RuntimeConfig } from "@sandbar/server/runtime";
 /** Trusted installed code; connections only supply validated JSON configuration and credentials. */
 export type ServiceAdapter = {
   readonly name: string;
+  readonly displayName?: string;
   readonly config: z.ZodType;
   readonly credentials: z.ZodType;
   readonly policy?: { readonly schema: z.ZodType; readonly default: unknown };

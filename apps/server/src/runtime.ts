@@ -16,10 +16,10 @@ import {
   type ProviderRegistration,
   type InstalledAdapter,
 } from "@sandbar/service-runtime";
-import { FakeProviderDriver } from "@sandbar/provider-fake";
-import { daytonaRegistration, type DaytonaEndpointPair } from "@sandbar/provider-daytona";
+import { FakeProviderDriver, createFakeAdapter } from "@sandbar/provider-fake";
+import { createDaytonaAdapter, type DaytonaEndpointPair } from "@sandbar/provider-daytona";
 import {
-  createModalRegistration,
+  createModalAdapter,
   type ModalProviderOptions,
   type ModalTransport,
 } from "@sandbar/provider-modal";
@@ -101,48 +101,18 @@ export async function openDomainRuntime(config: RuntimeConfig) {
           })
         : undefined;
 
-    const fakeRegistration: ProviderRegistration[] = driver
-      ? [
-          {
-            provider: "fake",
-            catalog: {
-              displayName: "Fake test provider",
-              configurationSchema: z.toJSONSchema(z.strictObject({})),
-              credentialsSchema: z.toJSONSchema(z.strictObject({})),
-            },
-            validate(input) {
-              if (Object.keys(input.credentials).length || Object.keys(input.configuration).length)
-                throw new z.ZodError([
-                  {
-                    code: "custom",
-                    path: ["credentials"],
-                    message: "Fake connection has no native credentials or configuration",
-                  },
-                ]);
-
-              return input;
-            },
-            async connect(input) {
-              return {
-                driver,
-                scope: {
-                  provider: "fake",
-                  connectionId: input.connectionId,
-                  accountId: "fake-local",
-                  region: "local",
-                },
-              };
-            },
-          },
-        ]
-      : [];
+    const fakeAdapter = config.fakeProviderUrl && config.fakeProviderToken
+      ? createFakeAdapter({ url: config.fakeProviderUrl, token: config.fakeProviderToken })
+      : undefined;
 
     const registry = new ProviderRegistry(store, secrets, [
-      daytonaRegistration(config.daytonaFetch, config.daytonaTrustedEndpoints),
-      createModalRegistration(config.modalTransportFactory),
-      ...fakeRegistration,
       ...(config.providerRegistrations ?? []),
-    ], config.adapters);
+    ], [
+      createDaytonaAdapter(config.daytonaFetch, config.daytonaTrustedEndpoints),
+      createModalAdapter(config.modalTransportFactory),
+      ...(fakeAdapter ? [fakeAdapter] : []),
+      ...(config.adapters ?? []),
+    ]);
 
     const runner = new DurableRunner({ store, registry, secrets });
 

@@ -17,8 +17,12 @@ export type AdapterSuiteFixture<C extends z.ZodType, K extends z.ZodType> = {
   config: z.input<C>;
   credentials: z.input<K>;
   alternate: { config: z.input<C>; credentials: z.input<K> };
+  /** Use another host-installed definition when endpoint is fixed in trusted host configuration. */
+  alternateAdapter?: AdapterDefinition<C, K, { scope: Scope }>;
   createInput: CreateInput;
   counters(): Counters;
+  /** Owned clients release once; borrowed transports have no close hook. */
+  expectedReleasesPerConnection?: 0 | 1;
   /** Fault is injected after a real native effect, before its response reaches the adapter. */
   loseNextCreateResponse(): void | Promise<void>;
   /** Pause a response after the native effect so the local wait can be aborted. */
@@ -66,7 +70,7 @@ export async function adapterSuite<
     config: fixture.config, credentials: fixture.credentials,
   });
   try {
-    const alternate = await connectAdapter(adapter, {
+    const alternate = await connectAdapter(fixture.alternateAdapter ?? adapter, {
       config: fixture.alternate.config, credentials: fixture.alternate.credentials,
     });
     try {
@@ -157,7 +161,7 @@ export async function adapterSuite<
     await Promise.all([connection.close(), connection.close()]);
   }
   const after = fixture.counters();
-  requireCondition(after.release === before.release + 2,
+  requireCondition(after.release === before.release + 2 * (fixture.expectedReleasesPerConnection ?? 1),
     "each verified connection must release once, including the alternate");
   scenarios.push("close hooks exactly once");
   return { scenarios, counters: after };

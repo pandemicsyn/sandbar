@@ -100,6 +100,7 @@ export type AdapterSession<CP = CreateInput, DP = Sandbox, EP = ExecInput, WP = 
 };
 export type AdapterDefinition<C extends z.ZodType, K extends z.ZodType, S = AdapterSession> = {
   readonly name: string;
+  readonly displayName?: string;
   readonly config: C;
   readonly credentials: K;
   readonly connect: (input: { config: z.output<C>; credentials: z.output<K>; host: HostContext }) => Promise<S>;
