@@ -30,7 +30,7 @@ Do not collapse caller-known resources, provider inventory and managed fleet int
 
 ## Operations, retries and recovery
 
-Both modes allocate stable invocation/submission identities before provider mutation, validate normalized responses, distinguish nonzero process exit from transport failure, and never repeat an ambiguous create/exec or fall back to a second provider after uncertain effects. AbortSignal cancels waiting unless remote cancellation is separately supported and requested; it does not prove the sandbox stopped.
+Both modes allocate stable invocation/submission identities before provider mutation, validate normalized responses, distinguish nonzero process exit from transport failure, and never repeat an ambiguous create/exec or fall back to a second provider after uncertain effects. Portable result disposition requires the caller to identify whether a result came from the original submission or later observation; an observed rejection never certifies no effect. AbortSignal cancels waiting unless remote cancellation is separately supported and requested; it does not prove the sandbox stopped.
 
 Direct mode keeps invocation state in memory while the caller runs and can observe/reconcile where the provider supports it. A direct operation is not a durably accepted service operation. Distinguish process-lifetime versus service-persisted recovery guarantees in documented types/metadata without adding a mode flag to every resource method. Closing a client stops its own resources/timers; it does not silently destroy provider sandboxes. Native TTL support and explicit destroy remain important.
 

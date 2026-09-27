@@ -141,13 +141,14 @@ export function correlateDriverResult(
   return result;
 }
 
-/** Ambiguous outcomes may be observed but cannot authorize a replay or provider fallback. */
+/** Only a rejection returned by the original submission proves no effect for that invocation. */
 export function resultDisposition(
   result: DriverResult,
+  source: "submission" | "observation",
 ): "completed" | "definitive_rejection" | "observe_only" {
   return result.status === "completed"
     ? "completed"
-    : result.status === "rejected"
+    : result.status === "rejected" && source === "submission"
       ? "definitive_rejection"
       : "observe_only";
 }

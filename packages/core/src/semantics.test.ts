@@ -82,13 +82,28 @@ test("correlation rejects mismatched submission and resource scope", () => {
   ).toThrow("identity mismatch");
 });
 
-test("ambiguous effects remain observe only and output bounds preserve binary bytes", () => {
+test("an observed rejection after an ambiguous submission cannot authorize replay", () => {
   const unknown = correlateDriverResult(
     { status: "unknown", effect: "possible", submissionId: "submission", reason: "response lost" },
     { submissionId: "submission", kind: "create", scope },
   );
 
-  expect(resultDisposition(unknown)).toBe("observe_only");
+  expect(resultDisposition(unknown, "submission")).toBe("observe_only");
+
+  const rejected = correlateDriverResult(
+    {
+      status: "rejected",
+      effect: "none",
+      error: { code: "capacity", message: "full", effect: "none", retry: "never" },
+    },
+    { submissionId: "submission", kind: "create", scope, requireSubmissionId: true },
+  );
+
+  expect(resultDisposition(rejected, "observation")).toBe("observe_only");
+  expect(resultDisposition(rejected, "submission")).toBe("definitive_rejection");
+});
+
+test("output bounds preserve binary bytes", () => {
   const bytes = Buffer.from([0, 255, 65]);
 
   const captured = captureBoundedOutput(
