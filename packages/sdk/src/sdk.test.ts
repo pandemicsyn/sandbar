@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 import { startFakeProviderServer } from "@sandbar/provider-fake/server";
 import { Image as DirectImage, Sandbar as DirectSandbar, NonzeroExitError, NoExitCodeError, OutcomeUnknownError, WaitAbortedError } from "./direct";
+import type { RecoveryReference } from "./direct";
 import { Image as RemoteImage, Sandbar as RemoteSandbar } from "./remote";
 import * as packagedRoot from "@sandbar/sdk";
 import * as packagedDirect from "@sandbar/sdk/direct";
@@ -294,7 +295,7 @@ test("direct imported recovery strips nested secrets and ignores later caller ch
   imported.scope.connectionId = "changed";
   imported.sandbox.scope.connectionId = "changed";
   try { recovered.reference.scope!.connectionId = "changed"; } catch { /* frozen references reject caller mutation */ }
-  await expect(recovered.observe()).rejects.toMatchObject({ code: "NOT_FOUND" });
+  await expect(recovered.observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
   expect(observedScope).toEqual(provider.scope);
   expect(recovered.reference.sandbox?.scope).toEqual(provider.scope);
 });
@@ -407,9 +408,15 @@ test("remote create rejects disagreement between operation and result sandbox ID
   const mismatched = { id: "op_1", projectId, kind: "create", sandboxId: "box_other", status: "succeeded", phase: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", effect: "applied", recovery: [], result: { kind: "create", sandboxId: "box_1" } };
   const fetcher: typeof fetch = async (_url, init) => init?.method === "POST" ? Response.json({ operation: mismatched }, { status: 202 }) : Response.json(mismatched);
   const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
-  const operation = await client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
-  await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-  await expect((await client.recover(operation.reference)).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  let reference: RecoveryReference | undefined;
+  try {
+    await client.sandboxes.submitCreate({ environment: RemoteImage.prepared("fake-starter") });
+    throw new Error("Expected an uncertain admission");
+  } catch (error) {
+    expect(error).toBeInstanceOf(OutcomeUnknownError);
+    reference = (error as OutcomeUnknownError).reference;
+  }
+  await expect(client.recover(reference!)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
 });
 
 test("remote file reads stop at the SDK limit and cancel the response stream", async () => {
@@ -514,7 +521,7 @@ test("remote recovery requires confirmed destroy and exact file receipts", async
   const client = RemoteSandbar.connect({ url: "https://sandbar.example/", token: "secret", projectId, fetch: fetcher });
   const common = { version: 1 as const, mode: "remote" as const, invocationKey: "0199f92e-1234-7000-8000-000000000001", operationId: "op_1", resourceId: "box_1", service: { url: "https://sandbar.example/", projectId } };
   await expect((await client.recover({ ...common, kind: "destroy" })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
-  operation = { ...base, kind: "file_write", result: { kind: "file_write", receipt: { path: "/data", bytesWritten: 1, complete: false, effect: "partial" } } };
+  operation = { ...base, kind: "file_write", effect: "partial", result: { kind: "file_write", receipt: { path: "/data", bytesWritten: 1, complete: false, effect: "partial" } } };
   await expect((await client.recover({ ...common, kind: "file_write", file: { path: "/data", bytes: 2 } })).observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
 });
 

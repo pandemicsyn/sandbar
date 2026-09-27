@@ -1,4 +1,4 @@
-import { NativeScope, ProviderReadError, SandboxObservation, type NativeRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
+import { NativeScope, ProviderReadError, SandboxObservation, type NativeRef, type SandboxRef, type ProviderDriver, type DriverResult, type InvocationIdentity } from "@sandbar/provider-spi";
 import { normalizeCreate, normalizeExec, correlateDriverResult, sameNativeScope, sameNativeRef, captureBoundedOutput } from "@sandbar/core";
 import { Image, SandbarError, OutcomeUnknownError, WaitAbortedError, awaitSubmission, checkExec, execOutput, newInvocationKey, raceAbort, rethrowCloseWithReference, sameRef, sealedReference, throwIfAborted, validateCreate, validateFilePath, validateReference, waitDelay, type CreateInput, type ExecInput, type ExecOutput, type OperationHandle, type RecoveryReference, type SandboxHandle, type SandbarClient } from "./resource";
 
@@ -26,15 +26,17 @@ class DirectOperation<T> implements OperationHandle<T> {
       if ("error" in this.settled) throw this.settled.error;
       return this.settled.value;
     }
+    const initialResponse = this.first !== undefined;
     const raw = this.first ?? await this.client.driver.observe({ scope: this.reference.scope!, submissionId: this.reference.submissionId! });
     this.client.ensureOpen();
     this.first = undefined;
     if (!raw) throw new OutcomeUnknownError(this.reference, "Provider has no observation for this submission; resubmission is unsafe");
     let result: DriverResult;
     try {
-      result = correlateDriverResult(raw, { submissionId: this.reference.submissionId!, kind: this.reference.kind, scope: this.reference.scope!, sandbox: this.reference.sandbox, file: this.reference.file });
+      result = correlateDriverResult(raw, { submissionId: this.reference.submissionId!, kind: this.reference.kind, scope: this.reference.scope!, sandbox: this.reference.sandbox, file: this.reference.file, requireSubmissionId: !initialResponse });
     } catch { throw new OutcomeUnknownError(this.reference, "Provider result failed identity or scope validation; observe without replay"); }
     if (result.status === "rejected") {
+      if (!initialResponse) throw new OutcomeUnknownError(this.reference, "Observed rejection cannot prove the earlier submission had no effect");
       const error = new SandbarError(result.error.code.toUpperCase(), result.error.message, "none");
       this.settled = { error };
       throw error;
@@ -66,7 +68,7 @@ class DirectOperation<T> implements OperationHandle<T> {
 
 class DirectSandbox implements SandboxHandle {
   readonly id: string;
-  constructor(private readonly client: DirectClient, readonly ref: NativeRef) { this.id = ref.nativeId; }
+  constructor(private readonly client: DirectClient, readonly ref: SandboxRef) { this.id = ref.nativeId; }
   async inspect() {
     this.client.ensureOpen();
     const raw = await this.client.driver.inspect(this.ref);

@@ -67,3 +67,9 @@ export function validFakePath(path: string): boolean {
     path.length <= 4096
   );
 }
+
+/** Bound fake file payloads before decoding in the client. */
+export const FakeFileBytesBase64 = z
+  .base64()
+  .max(1_398_104)
+  .refine((value) => Buffer.from(value, "base64").length <= 1024 * 1024, "File exceeds 1 MiB");
