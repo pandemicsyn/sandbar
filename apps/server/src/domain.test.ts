@@ -37,6 +37,20 @@ test("runtime rejects remote fake provider endpoints before opening storage", as
   ).rejects.toThrow("loopback");
 });
 
+test("runtime rejects mysqls before connecting or creating SQLite storage", async () => {
+  const databaseUrl = "mysqls://operator:secret@127.0.0.1:1/control";
+
+  await expect(
+    openDomainRuntime({
+      databaseUrl,
+      keyFile: "/missing",
+      setupTokenFile: "/missing",
+      fakeProviderUrl: "http://127.0.0.1:8789",
+      fakeProviderToken: transportToken,
+    }),
+  ).rejects.toThrow("mysqls:// is unsupported");
+});
+
 test("API persists ambiguous create and exec, then observes each once after restart", async () => {
   directory = await mkdtemp(join(tmpdir(), "sandbar-domain-"));
 

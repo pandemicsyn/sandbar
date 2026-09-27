@@ -55,14 +55,14 @@ export async function openDomainRuntime(config: RuntimeConfig) {
       throw new Error("Public origin must be an HTTPS origin, or local loopback for development");
   }
 
-  const backend =
-    config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mysqls://")
-      ? await openMysqlBackend(config.databaseUrl)
-      : openSqliteBackend(
-          config.databaseUrl.startsWith("sqlite:")
-            ? config.databaseUrl.slice(7)
-            : config.databaseUrl,
-        );
+  if (/^mysqls:\/\//i.test(config.databaseUrl))
+    throw new Error("mysqls:// is unsupported; a MySQL URI scheme does not configure TLS");
+
+  const backend = /^mysql:\/\//i.test(config.databaseUrl)
+    ? await openMysqlBackend(config.databaseUrl)
+    : openSqliteBackend(
+        config.databaseUrl.startsWith("sqlite:") ? config.databaseUrl.slice(7) : config.databaseUrl,
+      );
 
   try {
     await migrate(backend, bundledMigration(backend.dialect));

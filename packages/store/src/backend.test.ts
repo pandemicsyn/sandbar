@@ -12,7 +12,13 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openSqliteBackend } from "./backend";
+import { openMysqlBackend, openSqliteBackend } from "./backend";
+
+test("direct MySQL backend rejects mysqls before connecting", async () => {
+  await expect(openMysqlBackend("mysqls://operator:secret@127.0.0.1:1/control")).rejects.toThrow(
+    "mysqls:// is unsupported",
+  );
+});
 
 test("SQLite owner records exclude a contender and ignore dead owners", async () => {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-sqlite-lock-"));

@@ -259,6 +259,9 @@ function sqliteBackend(native: Database, ownLockPath?: string): Backend {
 }
 
 export async function openMysqlBackend(url: string): Promise<Backend> {
+  if (/^mysqls:\/\//i.test(url))
+    throw new Error("mysqls:// is unsupported; a MySQL URI scheme does not configure TLS");
+
   const pool = mysql.createPool({
     uri: url,
     connectionLimit: 8,
