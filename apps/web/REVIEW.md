@@ -148,3 +148,12 @@ The initial PR base was `3913213ca9a43e8dab8ca70dbff3c562abcc8f6b` on reviewed c
 - Execution display now decodes the exact `stdoutBase64` and `stderrBase64` contract fields as UTF-8, replacing invalid sequences for display; download uses the original bytes. Chromium E2E checks both display and byte-exact download for an invalid UTF-8 fixture.
 - Validation: `bun install --frozen-lockfile`, `bun run lint:fix`, `bun run format`, `bun run lint`, `bun run format:check`, `bun run check`, `bun run build`, `bun run test`, and `git diff --check` pass. Full test result: 82 passed, 5 MySQL tests skipped without a local MySQL test URL, 0 failed, 1,823 assertions. Chromium E2E rebuilt the current web assets and passed with 38 assertions.
 - A fresh read-only independent review of the complete `main...HEAD` diff is required before PR #4 is updated. The final exact base/HEAD review record is kept locally alongside the PR provenance.
+
+## Merged-parent review round 1
+
+- Reviewer: independent read-only subagent, `gpt-6-luna`, high reasoning.
+- Base: `1e1acd832f6c9b8dd075bc78ea95c672e75467a2`; reviewed HEAD: `1a4537f2b6babc79d39f14089a8bd0e559b40500`.
+- Complete diff: `/private/tmp/sandbar-web-pr4-final-main.diff` (3,581 lines).
+- Finding: a 500 response from Fleet's provider-connection list was presented as an empty verified-connection list, hiding the fetch error and blocking creation without a retry path. The manager approved a narrow fix after the concrete supported-path reproduction was reported.
+- Fix: Fleet now renders the connection error and a retry action before the successful-empty warning; loading also keeps the create form gated. Chromium E2E fails the first list request after a verified connection exists, checks the error and absence of the misleading warning, then retries and sees creation available without navigation.
+- Validation after fix: `bun run lint`, `bun run format:check`, `bun run check`, `bun run build`, `bun run test`, and `git diff --check` pass; 82 tests passed, 5 local MySQL skips, 0 failed, 1,826 assertions. Chromium E2E passed with 41 assertions after rebuilding current assets. Another independent complete-diff review is required before the PR update.

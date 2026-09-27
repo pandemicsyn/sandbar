@@ -634,7 +634,14 @@ function FleetPage() {
       />
       <section className="surface panel">
         <h2 className="section-title">Create a sandbox</h2>
-        {!available.length && !connections.loading ? (
+        {connections.loading ? (
+          <LoadingRows count={1} />
+        ) : connections.error ? (
+          <Notice tone="error">
+            Could not load provider connections: {connections.error}{" "}
+            <Button onClick={connections.refresh}>Retry connections</Button>
+          </Notice>
+        ) : !available.length ? (
           <Notice tone="warning">
             Verify a fake provider connection before creating a sandbox.{" "}
             <Link to="/projects/$projectId/connections" params={{ projectId }}>

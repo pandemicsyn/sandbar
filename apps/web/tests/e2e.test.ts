@@ -306,8 +306,36 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("button", { name: "Add connection" }).click();
   await page.getByRole("button", { name: "Verify scope" }).click();
   await page.getByText("Connection scope verified.").waitFor();
+  const connectionListRoute = "**/v1/projects/*/provider-connections";
+  let failFirstConnectionList = true;
+  await page.route(connectionListRoute, async (route) => {
+    if (route.request().method() !== "GET" || !failFirstConnectionList) {
+      await route.continue();
+
+      return;
+    }
+
+    failFirstConnectionList = false;
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "TEMPORARY", message: "Connection list unavailable" },
+      }),
+    });
+  });
   await page.getByRole("link", { name: "Fleet" }).click();
   await page.getByRole("heading", { name: "Fleet" }).waitFor();
+  const fleetUrl = page.url();
+  await page.getByText("Connection list unavailable").waitFor();
+  expect(
+    await page.getByText("Verify a fake provider connection before creating a sandbox.").count(),
+  ).toBe(0);
+  expect(await page.getByRole("button", { name: "Create sandbox" }).count()).toBe(0);
+  await page.getByRole("button", { name: "Retry connections" }).click();
+  await page.getByRole("button", { name: "Create sandbox" }).waitFor();
+  expect(page.url()).toBe(fleetUrl);
+  await page.unroute(connectionListRoute);
   await page.getByLabel("Label key (optional)").fill("team");
   await page.getByLabel("Label value").fill("e2e");
 
