@@ -8,6 +8,20 @@ The selected architecture is a Bun/Hono TypeScript service with Drizzle, SQLite 
 
 **Status:** the base workspace, health endpoint, and prebuilt UI serving are scaffolded. The management UI, persistence, public resource API, SDKs, and verified provider adapters remain in development.
 
+## Local checks
+
+Use Bun 1.3.14 and Node.js 22, then run `bun install --frozen-lockfile` before checking a checkout. Oxfmt uses Node.js to format HTML. CI runs these same commands:
+
+```sh
+bun run lint
+bun run format:check
+bun run check
+bun run test
+bun run build
+```
+
+`check` typechecks the workspace packages. To apply safe lint fixes, run `bun run lint:fix`; to format supported source and configuration files, run `bun run format`. Historical material in `docs/archive` is excluded from linting. The root README, `docs/` prose, and generated OpenAPI and HTTP reference files are excluded from Oxfmt; their generators check the generated files for drift.
+
 ## Design documents
 
 - [V1 contract recommendations and review decisions](docs/contract-recommendations.md)

@@ -2,7 +2,13 @@
   "name": "@sandbar/contracts",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "check": "tsc -p tsconfig.json" },
-  "dependencies": { "zod": "4.6.5" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  }
 }
