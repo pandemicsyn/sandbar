@@ -79,6 +79,7 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
         target: "us",
         state: "started",
         networkBlockAll: true,
+        public: false,
       });
     }
 

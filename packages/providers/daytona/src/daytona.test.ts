@@ -21,11 +21,12 @@ const native = (name: string, state = "started") => ({
   target: "us",
   state,
   networkBlockAll: true,
+  public: false,
   toolboxProxyUrl: `${toolboxOrigin}/toolbox`,
 });
 
 const listed = (name: string) => {
-  const { networkBlockAll: _omitted, ...summary } = native(name);
+  const { networkBlockAll: _network, public: _public, ...summary } = native(name);
 
   return summary;
 };
@@ -219,11 +220,45 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
   await client.close();
 });
 
+test("unexpected public create response remains unknown without replay", async () => {
+  let creates = 0;
+
+  const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
+
+    if (url.pathname === "/api/sandbox" && init?.method === "POST") {
+      creates++;
+
+      return Response.json({ ...native("sandbar-public-create"), public: true });
+    }
+
+    throw new Error(`Unexpected ${url.pathname}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+  const result = await provider.driver.create({
+    scope: provider.scope,
+    identity: identity("public-create"),
+    image: "snap-1",
+    networkPolicy: "blocked",
+  });
+
+  expect(result.status).toBe("unknown");
+  expect(result.effect).toBe("possible");
+  expect(creates).toBe(1);
+});
+
 test("lost create response is observed by stable name without replay; scope rotation fails", async () => {
   let posts = 0;
   let name = "";
   let account = "org-1";
   let detailPolicy = true;
+  let detailPublic: boolean | undefined = false;
   let detailAccount = "org-1";
   let detailLabels: NativeLabels | null = null;
 
@@ -262,6 +297,7 @@ test("lost create response is observed by stable name without replay; scope rota
         ...native(name),
         organizationId: detailAccount,
         networkBlockAll: detailPolicy,
+        public: detailPublic,
         labels: detailLabels ?? labels,
       });
     throw new Error("Unexpected request");
@@ -319,6 +355,23 @@ test("lost create response is observed by stable name without replay; scope rota
     }),
   ).toBeNull();
   detailPolicy = true;
+  detailPublic = true;
+  expect(
+    await provider.driver.observe({
+      scope: provider.scope,
+      submissionId: "submit-1",
+      operationId: "op_submit-1",
+    }),
+  ).toBeNull();
+  detailPublic = undefined;
+  expect(
+    await provider.driver.observe({
+      scope: provider.scope,
+      submissionId: "submit-1",
+      operationId: "op_submit-1",
+    }),
+  ).toBeNull();
+  detailPublic = false;
   detailAccount = "org-other";
   expect(
     await provider.driver.observe({

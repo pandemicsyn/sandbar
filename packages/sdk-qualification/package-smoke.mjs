@@ -206,7 +206,7 @@ import { Sandbar, Image } from "@sandbar/sdk/direct";
 import { daytonaProvider } from "@sandbar/provider-daytona";
 let name = "", mutations = 0;
 const origin = "https://proxy.app.daytona.io/toolbox";
-const native = (state = "started") => ({ id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, toolboxProxyUrl: origin });
+const native = (state = "started") => ({ id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
 const mock = async (input, init = {}) => {
   const url = new URL(String(input));
   const json = value => Response.json(value);

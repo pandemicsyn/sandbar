@@ -37,12 +37,13 @@ const NativeSandbox = z.object({
   target: z.string().min(1),
   state: z.string(),
   networkBlockAll: z.boolean(),
+  public: z.boolean(),
   toolboxProxyUrl: z.url().optional(),
   snapshot: z.string().optional(),
   labels: z.record(z.string(), z.string()).optional(),
 });
 
-const ListedSandbox = NativeSandbox.omit({ networkBlockAll: true });
+const ListedSandbox = NativeSandbox.omit({ networkBlockAll: true, public: true });
 
 const ListResponse = z.object({
   items: z.array(ListedSandbox),
@@ -170,9 +171,12 @@ function observed(scope: NativeScope, sandbox: Sandbox): SandboxObservation {
   if (
     sandbox.organizationId !== scope.accountId ||
     sandbox.target !== scope.region ||
-    !sandbox.networkBlockAll
+    !sandbox.networkBlockAll ||
+    sandbox.public
   )
-    throw new Error("Daytona sandbox scope or network policy mismatch");
+    throw new Error(
+      "Daytona sandbox scope, outbound network policy or preview visibility mismatch",
+    );
 
   return SandboxObservation.parse({
     ref: ref(scope, sandbox.id),
