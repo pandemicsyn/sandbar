@@ -369,6 +369,44 @@ test("API persists ambiguous create and exec, then observes each once after rest
     expect(read.status).toBe(200);
     expect(new Uint8Array(await read.arrayBuffer())).toEqual(bytes);
 
+    const invalidDotPath = "/data/./blob";
+    const invalidWriteKey = Bun.randomUUIDv7();
+    const invocationsBeforeInvalidPath = (await control("/_test/state")).invocations.length;
+
+    const invalidRead = await json(
+      `/v1/projects/${project.id}/sandboxes/${boxId}/files?path=${invalidDotPath}`,
+      "GET",
+      undefined,
+      bearer,
+    );
+
+    expect(invalidRead.response.status).toBe(400);
+    expect(invalidRead.value.error.code).toBe("INVALID_ARGUMENT");
+
+    const invalidWrite = await runtime.app.request(
+      `/v1/projects/${project.id}/sandboxes/${boxId}/files?path=${invalidDotPath}`,
+      {
+        method: "PUT",
+        headers: { ...bearer, "Idempotency-Key": invalidWriteKey },
+        body: bytes,
+      },
+    );
+
+    expect(invalidWrite.status).toBe(400);
+    // SAFETY: The in-process API emits an ErrorResponse for invalid file paths.
+    expect(((await invalidWrite.json()) as any).error.code).toBe("INVALID_ARGUMENT");
+    expect(
+      (
+        await json(
+          `/v1/projects/${project.id}/invocations/${invalidWriteKey}?kind=file_write&sandboxId=${boxId}`,
+          "GET",
+          undefined,
+          bearer,
+        )
+      ).response.status,
+    ).toBe(404);
+    expect((await control("/_test/state")).invocations).toHaveLength(invocationsBeforeInvalidPath);
+
     for (const query of ["path=/data/blob&path=/data/missing", "path=/data/blob&extra=1"]) {
       const invalid = await json(
         `/v1/projects/${project.id}/sandboxes/${boxId}/files?${query}`,

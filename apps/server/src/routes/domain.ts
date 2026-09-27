@@ -370,7 +370,7 @@ function filePath(c: Context): string {
     path.length > 4096 ||
     !path.startsWith("/") ||
     path.includes("\0") ||
-    path.split("/").includes("..")
+    path.split("/").some((part) => part === ".." || part === ".")
   )
     throw new SyntaxError("Invalid path");
 
