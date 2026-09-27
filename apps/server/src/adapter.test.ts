@@ -75,7 +75,7 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
     bearer = String(setup.body.token);
     const catalog = await request("/v1/providers");
     expect(catalog.status).toBe(200);
-    expect(catalog.body.items).toMatchObject([{ name: "example.custom" }]);
+    expect(catalog.body.items).toContainEqual(expect.objectContaining({ name: "example.custom" }));
     expect(JSON.stringify(catalog.body)).not.toContain("secret-credential");
     const project = await request("/v1/projects", "POST", { name: "Custom" });
     const projectId = String(project.body.id);

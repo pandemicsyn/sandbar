@@ -10,12 +10,14 @@ const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
 const packages = [
   ["@sandbar/contracts", "packages/contracts"],
+  ["@sandbar/adapter", "packages/adapter"],
   ["@sandbar/provider-spi", "packages/provider-spi"],
   ["@sandbar/core", "packages/core"],
   ["@sandbar/provider-fake", "packages/providers/fake"],
   ["@sandbar/provider-daytona", "packages/providers/daytona"],
   ["@sandbar/provider-modal", "packages/providers/modal"],
-  ["@sandbar/sdk", "packages/sdk"],
+  ["sandbar-sdk", "packages/sdk"],
+  ["@sandbar/service", "packages/service"],
 ];
 
 const forbidden = new Set([
@@ -46,9 +48,10 @@ function run(command, args, cwd, env = {}) {
 }
 
 async function pack(directory) {
-  const manifest = JSON.parse(await readFile(join(root, directory, "package.json"), "utf8"));
+  const packageDirectory = resolve(root, directory);
+  const manifest = JSON.parse(await readFile(join(packageDirectory, "package.json"), "utf8"));
   const before = new Set(await readdir(archives));
-  run("bun", ["pm", "pack", "--destination", archives], join(root, directory));
+  run("bun", ["pm", "pack", "--destination", archives], packageDirectory);
 
   const added = (await readdir(archives)).filter(
     (file) => !before.has(file) && file.endsWith(".tgz"),
@@ -110,9 +113,36 @@ async function consumer(directory, dependencies, overrides, source) {
 async function checkTypes(directory, mode) {
   let source;
 
-  if (mode === "modal")
+  if (mode === "service")
     source = `
-import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { createService, type ServiceHandle } from "@sandbar/service";
+import { asyncAcme } from "@acme/sandbar-adapter";
+async function flow(): Promise<ServiceHandle> {
+  return createService({
+    storage: { url: "/tmp/control.sqlite", keyFile: "/tmp/key" },
+    auth: { setupTokenFile: "/tmp/setup" },
+    adapters: [asyncAcme],
+  });
+}
+void flow;
+`;
+  else if (mode === "custom")
+    source = `
+import { Sandbar, Image } from "sandbar-sdk/direct";
+import { acme } from "@acme/sandbar-adapter";
+async function flow() {
+  const client = await Sandbar.connect({ adapter: acme, config: { region: "us" }, credentials: { token: "fixture" } });
+  const box = await client.sandboxes.create({ environment: Image.prepared("image-1") });
+  await box.destroy();
+  await client.close();
+}
+// @ts-expect-error config must include region
+void Sandbar.connect({ adapter: acme, config: {}, credentials: { token: "fixture" } });
+void flow;
+`;
+  else if (mode === "modal")
+    source = `
+import { Sandbar, Image } from "sandbar-sdk/direct";
 import { modalProvider } from "@sandbar/provider-modal";
 async function flow() {
   const provider = await modalProvider({ tokenId: "ak-fixture", tokenSecret: "as-fixture", appName: "existing", environment: "main" });
@@ -126,7 +156,7 @@ void flow;
 `;
   else if (mode === "daytona")
     source = `
-import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk/direct";
 import { daytonaProvider } from "@sandbar/provider-daytona";
 async function flow() {
   const provider = await daytonaProvider({ apiKey: "fixture", target: "us" });
@@ -141,7 +171,7 @@ void flow;
 `;
   else if (mode === "direct")
     source = `
-import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk/direct";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 async function flow() {
   const provider = await fakeProvider({ url: "http://127.0.0.1:1234", token: "example-token-123456" });
@@ -159,7 +189,7 @@ void flow;
 `;
   else
     source = `
-import { Sandbar, Image } from "@sandbar/sdk/remote";
+import { Sandbar, Image } from "sandbar-sdk/remote";
 async function flow() {
   const client = Sandbar.connect({ url: "https://sandbar.example", token: "example-token-123456", projectId: "project_1" });
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
@@ -194,9 +224,9 @@ void flow;
 }
 
 const directSource = `
-import { OutcomeUnknownError as RootUnknown } from "@sandbar/sdk";
-import { Sandbar, Image, OutcomeUnknownError as DirectUnknown } from "@sandbar/sdk/direct";
-import { OutcomeUnknownError as RemoteUnknown } from "@sandbar/sdk/remote";
+import { OutcomeUnknownError as RootUnknown } from "sandbar-sdk";
+import { Sandbar, Image, OutcomeUnknownError as DirectUnknown } from "sandbar-sdk/direct";
+import { OutcomeUnknownError as RemoteUnknown } from "sandbar-sdk/remote";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 if (RootUnknown !== DirectUnknown || RootUnknown !== RemoteUnknown) throw new Error("SDK entry points disagree on error identity");
 const client = Sandbar.direct({ provider: await fakeProvider({ url: process.env.FAKE_URL, token: process.env.FAKE_TOKEN }) });
@@ -215,15 +245,15 @@ try {
 `;
 
 const remoteSource = `
-import { OutcomeUnknownError as RootUnknown } from "@sandbar/sdk";
-import { Sandbar, Image, OutcomeUnknownError as RemoteUnknown } from "@sandbar/sdk/remote";
+import { OutcomeUnknownError as RootUnknown } from "sandbar-sdk";
+import { Sandbar, Image, OutcomeUnknownError as RemoteUnknown } from "sandbar-sdk/remote";
 if (RootUnknown !== RemoteUnknown) throw new Error("Remote-only SDK entry point disagrees on error identity");
 if (typeof Sandbar.connect !== "function" || Image.prepared("fake-starter").kind !== "prepared") throw new Error("Remote-only export unavailable");
 process.stdout.write("packed remote import passed\\n");
 `;
 
 const daytonaSource = `
-import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk/direct";
 import { daytonaProvider } from "@sandbar/provider-daytona";
 let name = "", mutations = 0;
 const origin = "https://proxy.app.daytona.io/toolbox";
@@ -259,7 +289,7 @@ try {
 `;
 
 const modalSource = `
-import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk/direct";
 import { modalProvider } from "@sandbar/provider-modal";
 let creates = 0, terminates = 0, closed = 0;
 const records = new Map();
@@ -291,6 +321,134 @@ if (closed !== 1) throw Error("Owned provider was not released");
 process.stdout.write("packed Modal fixture flow passed\\n");
 `;
 
+const externalAdapterSource = `
+import { z } from "zod";
+import { defineAdapter } from "@sandbar/adapter";
+export const metrics = { creates: 0, destroys: 0, closes: 0, observes: 0 };
+export const acme = defineAdapter({
+  name: "example.acme",
+  config: z.strictObject({ region: z.string().min(1) }),
+  credentials: z.strictObject({ token: z.string().min(1) }),
+  async connect({ config, credentials, host }) {
+    if (credentials.token !== "fixture") throw Error("Wrong fixture token");
+    host.onClose(() => { metrics.closes++; });
+    return {
+      scope: { authority: { kind: "account", id: "fixture-account" }, partition: { region: config.region } },
+      supports: { images: ["prepared"], network: ["blocked"] },
+      async create(input, ctx) {
+        if (!ctx.submissionId || input.image.value !== "image-1") throw Error("Wrong request");
+        metrics.creates++;
+        return { id: "box-1", state: "running" };
+      },
+      async destroy(box, _ctx) {
+        if (box.id !== "box-1") throw Error("Wrong sandbox");
+        metrics.destroys++;
+        return { computeStopped: true, retainedResources: [] };
+      },
+    };
+  },
+});
+export const asyncAcme = defineAdapter({
+  name: "example.async-acme",
+  config: z.strictObject({ region: z.string().min(1) }),
+  credentials: z.strictObject({ token: z.string().min(1) }),
+  async connect({ config, credentials }) {
+    if (credentials.token !== "fixture") throw Error("Wrong fixture token");
+    return {
+      scope: { authority: { kind: "account", id: "fixture-account" }, partition: { region: config.region } },
+      supports: { images: ["prepared"], network: ["blocked"] },
+      create: {
+        recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
+        async submit(_input, ctx) { metrics.creates++; return ctx.pending({ jobId: "job-1" }, { pollAfterMs: 1000 }); },
+        async observe(attempt) {
+          if (z.strictObject({ jobId: z.string() }).parse(attempt.token).jobId !== "job-1") throw Error("Wrong recovery token");
+          metrics.observes++;
+          return { id: "box-1", state: "running" };
+        },
+      },
+      async destroy() { metrics.destroys++; return { computeStopped: true, retainedResources: [] }; },
+    };
+  },
+});
+`;
+
+const customSource = `
+import { Sandbar, Image } from "sandbar-sdk/direct";
+import { acme, metrics } from "@acme/sandbar-adapter";
+const client = await Sandbar.connect({
+  adapter: acme,
+  config: { region: "us" },
+  credentials: { token: "fixture" },
+});
+try {
+  const box = await client.sandboxes.create({ environment: Image.prepared("image-1") });
+  if (box.supports("exec")) throw Error("Unsupported operation was advertised");
+  await box.destroy();
+} finally { await client.close(); }
+if (metrics.creates !== 1 || metrics.destroys !== 1 || metrics.closes !== 1) throw Error("Mutation or release count mismatch");
+process.stdout.write("packed external adapter flow passed\\n");
+`;
+
+const serviceSource = `
+import { createService } from "@sandbar/service";
+import { asyncAcme, metrics } from "@acme/sandbar-adapter";
+import { writeFile, chmod, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const directory = await mkdtemp(join(tmpdir(), "sandbar-packed-service-"));
+const keyFile = join(directory, "key"), setupTokenFile = join(directory, "setup"), url = join(directory, "control.sqlite");
+await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32))); await chmod(keyFile, 0o600);
+await writeFile(setupTokenFile, "long-packed-service-setup-token"); await chmod(setupTokenFile, 0o600);
+const options = { storage: { url, keyFile }, auth: { setupTokenFile }, adapters: [asyncAcme] };
+let service = await createService(options);
+let origin = "";
+let bearer = "";
+const start = async () => { const binding = await service.listen({ port: 0 }); origin = \`http://127.0.0.1:\${binding.port}\`; };
+const request = async (path, method = "GET", body, key) => {
+  const headers = {};
+  if (bearer) headers.Authorization = \`Bearer \${bearer}\`;
+  if (body) headers["Content-Type"] = "application/json";
+  if (key) headers["Idempotency-Key"] = key;
+  const response = await fetch(origin + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  return { status: response.status, body: await response.json() };
+};
+const until = async (check) => {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) { if (await check()) return; await new Promise((r) => setTimeout(r, 20)); }
+  throw Error("Timed out waiting for packed service recovery");
+};
+try {
+  await start();
+  const setup = await request("/v1/setup", "POST", { setupToken: "long-packed-service-setup-token" });
+  bearer = setup.body.token;
+  if (setup.status !== 200 && setup.status !== 201) throw Error("Setup failed: " + JSON.stringify(setup));
+  const project = await request("/v1/projects", "POST", { name: "Packed" });
+  const projectId = project.body.id;
+  const conn = await request(\`/v1/projects/\${projectId}/provider-connections\`, "POST", {
+    provider: "example.async-acme", name: "Acme", configuration: { region: "us" }, credentials: { token: "fixture" },
+  });
+  if (conn.status !== 201) throw Error("Connection failed: " + JSON.stringify(conn));
+  const verified = await request(\`/v1/projects/\${projectId}/provider-connections/\${conn.body.id}/verify\`, "POST");
+  if (verified.status !== 200) throw Error("Verification failed");
+  const admitted = await request(\`/v1/projects/\${projectId}/sandboxes\`, "POST", {
+    environment: { kind: "prepared", imageId: "image-1" }, network: { policy: "blocked" }, connectionId: conn.body.id,
+  }, Bun.randomUUIDv7());
+  if (admitted.status !== 202) throw Error("Admission failed: " + JSON.stringify(admitted));
+  const operationId = admitted.body.operation.id;
+  await until(async () => {
+    const op = await request(\`/v1/projects/\${projectId}/operations/\${operationId}\`);
+    return metrics.creates === 1 && op.body.status === "running";
+  });
+  await service.close();
+  service = await createService(options);
+  await start();
+  await request(\`/v1/projects/\${projectId}/operations/\${operationId}/reconcile\`, "POST");
+  await until(async () => (await request(\`/v1/projects/\${projectId}/operations/\${operationId}\`)).body.status === "succeeded");
+  if (metrics.creates !== 1 || metrics.observes < 1) throw Error("Packed service replayed an effect or skipped observation");
+  process.stdout.write("packed service HTTP restart flow passed\\n");
+} finally { await service.close(); await rm(directory, { recursive: true, force: true }); }
+`;
+
 const temporary = await mkdtemp(join(tmpdir(), "sandbar-packed-sdk-"));
 
 const archives = join(temporary, "archives");
@@ -307,7 +465,43 @@ try {
     packages.map(([name]) => [name, `file:${packed[name]}`]),
   );
 
-  const remoteDeps = { "@sandbar/sdk": archiveOverrides["@sandbar/sdk"] };
+  const externalDir = join(temporary, "external-adapter");
+  await mkdir(join(externalDir, "src"), { recursive: true });
+  await writeFile(join(externalDir, "package.json"), JSON.stringify({
+    name: "@acme/sandbar-adapter",
+    version: "0.0.1",
+    type: "module",
+    files: ["dist"],
+    exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
+    peerDependencies: { "@sandbar/adapter": "0.0.0" },
+    overrides: { "@sandbar/adapter": archiveOverrides["@sandbar/adapter"] },
+    dependencies: {
+      "@sandbar/adapter": archiveOverrides["@sandbar/adapter"],
+      zod: "4.6.5",
+    },
+  }, null, 2));
+  await writeFile(join(externalDir, "src/index.ts"), externalAdapterSource);
+  await writeFile(join(externalDir, "tsconfig.json"), JSON.stringify({
+    compilerOptions: {
+      target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext",
+      strict: true, declaration: true, outDir: "dist", skipLibCheck: false, types: [],
+    },
+    include: ["src/index.ts"],
+  }));
+  run("bun", ["install", "--no-save"], externalDir);
+  run(join(root, "node_modules/.bin/tsc"), ["-p", "tsconfig.json"], externalDir);
+  const externalManifest = JSON.parse(await readFile(join(externalDir, "package.json"), "utf8"));
+  delete externalManifest.dependencies["@sandbar/adapter"];
+  delete externalManifest.overrides;
+  await writeFile(join(externalDir, "package.json"), JSON.stringify(externalManifest, null, 2));
+  const externalArchive = await pack(externalDir);
+
+  const remoteDeps = { "sandbar-sdk": archiveOverrides["sandbar-sdk"] };
+
+  const customDeps = {
+    ...remoteDeps,
+    "@acme/sandbar-adapter": `file:${externalArchive}`,
+  };
 
   const directDeps = {
     ...remoteDeps,
@@ -325,29 +519,39 @@ try {
   };
 
   const remote = join(temporary, "remote-consumer");
+  const custom = join(temporary, "custom-consumer");
   const direct = join(temporary, "direct-consumer");
   const daytona = join(temporary, "daytona-consumer");
   const modal = join(temporary, "modal-consumer");
+  const service = join(temporary, "service-consumer");
   await consumer(remote, remoteDeps, archiveOverrides, remoteSource);
+  await consumer(custom, customDeps, archiveOverrides, customSource);
   await consumer(direct, directDeps, archiveOverrides, directSource);
   await consumer(daytona, daytonaDeps, archiveOverrides, daytonaSource);
   await consumer(modal, modalDeps, archiveOverrides, modalSource);
+  await consumer(service, { ...customDeps, "@sandbar/service": archiveOverrides["@sandbar/service"] }, archiveOverrides, serviceSource);
 
   if ((await readdir(join(remote, "node_modules", "@sandbar"))).includes("provider-fake"))
     throw new Error("Remote-only consumer installed the fake provider");
+  await checkTypes(custom, "custom");
+  await checkTypes(service, "service");
   await checkTypes(direct, "direct");
   await checkTypes(daytona, "daytona");
   await checkTypes(modal, "modal");
   await checkTypes(remote, "remote");
-  inspectGraph(remote, ["@sandbar/sdk"]);
-  inspectGraph(direct, ["@sandbar/sdk", "@sandbar/provider-fake"]);
-  inspectGraph(daytona, ["@sandbar/sdk", "@sandbar/provider-daytona"]);
-  inspectGraph(modal, ["@sandbar/sdk", "@sandbar/provider-modal"]);
+  inspectGraph(remote, ["sandbar-sdk"]);
+  inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
+  inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
+  inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);
+  inspectGraph(modal, ["sandbar-sdk", "@sandbar/provider-modal"]);
+  console.log(`bun: ${run("bun", ["consumer.mjs"], service)}`);
   console.log(
     `Runtimes: Node ${run("node", ["--version"], remote)}, Bun ${run("bun", ["--version"], remote)}`,
   );
 
   for (const runtime of ["node", "bun"]) run(runtime, ["consumer.mjs"], remote);
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], custom)}`);
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], daytona)}`);
@@ -373,7 +577,7 @@ try {
   }
 
   console.log(
-    `Packed consumer graph: ${inspectGraph(direct, ["@sandbar/sdk", "@sandbar/provider-fake"]).join(", ")}`,
+    `Packed consumer graph: ${inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]).join(", ")}`,
   );
 } finally {
   await fixture.close();

@@ -437,9 +437,6 @@ function ConnectionsPage() {
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   const [configurationJson, setConfigurationJson] = useState("{}");
   const [credentialsJson, setCredentialsJson] = useState("");
-  useEffect(() => {
-    if (!provider && catalog.data?.items.length) setProvider(catalog.data.items[0]!.name);
-  }, [provider, catalog.data]);
   const selectedProvider = catalog.data?.items.find((item) => item.name === provider);
   const configurationFields = formFields(selectedProvider?.configurationSchema);
   const credentialFields = formFields(selectedProvider?.credentialsSchema);

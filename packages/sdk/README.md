@@ -1,9 +1,9 @@
 # TypeScript resource SDK
 
-`@sandbar/sdk/direct` uses a provider driver in the caller's server-side Node.js or Bun process. `@sandbar/sdk/remote` uses the Sandbar service over HTTP. Both expose the same resource flow. The fake provider is the initial verified implementation; it is a simulation, not an OCI importer or evidence of real-provider support.
+`sandbar-sdk/direct` uses a provider driver in the caller's server-side Node.js or Bun process. `sandbar-sdk/remote` uses the Sandbar service over HTTP. Both expose the same resource flow. The fake provider is the initial verified implementation; it is a simulation, not an OCI importer or evidence of real-provider support.
 
 ```ts
-import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk/direct";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 
 const sandbar = Sandbar.direct({
@@ -24,7 +24,7 @@ try {
 The independent fake service must be running for this fixture. Its command fixtures must be seeded in test mode before `exec`; the SDK does not start the fake server. Direct construction imports no service, database, Hono or Drizzle code. Provider credentials remain in the caller's process and are inappropriate for browser code.
 
 ```ts
-import { Sandbar, Image } from "@sandbar/sdk/remote";
+import { Sandbar, Image } from "sandbar-sdk/remote";
 
 const sandbar = Sandbar.connect({ url: "https://sandbar.example/", token: process.env.SANDBAR_TOKEN!, projectId: "my_project" });
 const box = await sandbar.sandboxes.create({ environment: Image.prepared("fake-starter") });

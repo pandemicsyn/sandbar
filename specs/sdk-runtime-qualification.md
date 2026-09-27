@@ -1,12 +1,12 @@
 # TypeScript SDK runtime and package qualification
 
-The direct SDK is a server-side TypeScript client. `@sandbar/sdk/direct` uses a caller-configured provider driver; `@sandbar/sdk/remote` uses a Sandbar HTTP service. The current verified provider is the deterministic fake. These checks do not establish support for Daytona, E2B, Modal, Tensorlake, or OCI import on a real provider.
+The direct SDK is a server-side TypeScript client. `sandbar-sdk/direct` uses a caller-configured provider driver; `sandbar-sdk/remote` uses a Sandbar HTTP service. The current verified provider is the deterministic fake. These checks do not establish support for Daytona, E2B, Modal, Tensorlake, or OCI import on a real provider.
 
 ## Measured support
 
 The packed direct SDK, portable dependencies, and fake client completed create, binary exec, binary file write/read, and destroy from separate processes outside the monorepo on **Node.js 26.4.0** and **Bun 1.3.14** on macOS arm64. GitHub CI passed the same packed flow on Ubuntu with **Node.js 22.23.2** and **Bun 1.3.14**. Both imports use built ESM JavaScript and emitted declarations. A strict external TypeScript `NodeNext` consumer typechecked the declarations. The Sandbar HTTP service and independent fake server remain Bun processes in these tests. No package was published.
 
-The external consumer uses local package archives. Its remote-only installation omits `@sandbar/provider-fake` and imports `@sandbar/sdk/remote` under both runtimes. Packed consumers check that the root, direct, and remote exports share error-class identity. The direct dependency graph includes SDK, contracts, core, provider SPI, Zod, and the explicitly installed fake client. It excludes Hono, Drizzle, SQL drivers, `@sandbar/store`, and `@sandbar/service-runtime`. The fake server persists its test ledger separately; this is not direct SDK storage.
+The external consumer uses local package archives. Its remote-only installation omits `@sandbar/provider-fake` and imports `sandbar-sdk/remote` under both runtimes. Packed consumers check that the root, direct, and remote exports share error-class identity. The direct dependency graph includes SDK, contracts, core, provider SPI, Zod, and the explicitly installed fake client. It excludes Hono, Drizzle, SQL drivers, `@sandbar/store`, and `@sandbar/service-runtime`. The fake server persists its test ledger separately; this is not direct SDK storage.
 
 ## Behavioral coverage
 

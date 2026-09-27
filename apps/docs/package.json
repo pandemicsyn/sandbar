@@ -17,7 +17,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "0.9.6",
-    "@sandbar/sdk": "workspace:*",
+    "sandbar-sdk": "workspace:*",
     "@sandbar/provider-fake": "workspace:*",
     "typescript": "5.9.3",
     "wrangler": "4.141.0"

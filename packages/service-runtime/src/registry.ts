@@ -1,10 +1,8 @@
 import {
-  connectAdapter,
   validateAdapterConfiguration,
-  type AdapterConnection,
-  type AdapterSession,
   type Scope,
 } from "@sandbar/adapter";
+import { Sandbar, type AdapterDirectClient } from "sandbar-sdk/direct";
 import { NativeScope, type ProviderLease } from "@sandbar/provider-spi";
 import { z } from "zod";
 import { StoreError, type ConnectionRow, type ControlStore } from "@sandbar/store";
@@ -39,7 +37,7 @@ export interface InstalledAdapter {
 }
 
 export type AdapterProviderLease = ProviderLease & {
-  adapterConnection: AdapterConnection<AdapterSession>;
+  adapterConnection: AdapterDirectClient;
 };
 
 export function storedScope(scope: NativeScope): string {
@@ -151,22 +149,19 @@ export class ProviderRegistry {
     }
 
     if (adapter) {
-      const connection = await connectAdapter(
-        adapter as unknown as Parameters<typeof connectAdapter>[0],
-        {
-          config: config.configuration,
-          credentials: config.credentials,
-        },
-      );
+      const connection = await Sandbar.connect({
+        adapter: adapter as never,
+        config: config.configuration,
+        credentials: config.credentials,
+      });
       try {
-        const session = connection.session as AdapterSession;
         const scope = adapterNativeScope(row.provider, row.id, connection.scope);
         if (row.scope && storedScope(scope) !== row.scope)
           throw new ProviderIdentityMismatchError("Verified native scope or endpoint changed");
-        const driver = new AdapterProviderDriver(row.provider, scope, connection as AdapterConnection<AdapterSession>);
+        const driver = new AdapterProviderDriver(row.provider, scope, connection);
         return {
           driver, scope, ownership: "owned", release: () => connection.close(),
-          adapterConnection: connection as AdapterConnection<AdapterSession>,
+          adapterConnection: connection,
         };
       } catch (error) {
         await connection.close();

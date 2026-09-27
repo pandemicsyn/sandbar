@@ -5,7 +5,7 @@ import {
   OutcomeUnknownError,
   WaitAbortedError,
   type RecoveryReference,
-} from "@sandbar/sdk/direct";
+} from "sandbar-sdk/direct";
 import {
   createModalRegistration,
   modalProvider,

@@ -18,5 +18,8 @@
     "@sandbar/store": "workspace:*",
     "hono": "4.13.9",
     "zod": "4.6.5"
+  },
+  "exports": {
+    "./runtime": "./src/runtime.ts"
   }
 }

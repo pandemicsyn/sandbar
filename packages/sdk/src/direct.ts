@@ -1,6 +1,6 @@
 import { connectDirect } from "./adapter-direct";
-export { AdapterDirectClient, AdapterSandbox, AdapterOperation } from "./adapter-direct";
-export type { AdapterRecoveryReference, AdapterConnectOptions, AdapterCapabilities } from "./adapter-direct";
+export { AdapterDirectClient, AdapterSandbox, AdapterOperation, PreparedAdapterAttempt } from "./adapter-direct";
+export type { AdapterRecoveryReference, AdapterConnectOptions, AdapterCapabilities, AdvancedOperationResult, AdvancedOperationKind, AdvancedIdentity, AdvancedObservation } from "./adapter-direct";
 import {
   NativeScope,
   ProviderReadError,

@@ -15,14 +15,14 @@ bun run build:packages
 bun run --cwd apps/docs examples:test
 ```
 
-The example starts the independent fake provider on loopback, seeds one command fixture, imports `@sandbar/sdk/direct` and `@sandbar/provider-fake/client` from this workspace, then creates a sandbox, transfers bytes, executes, inspects and destroys it. See [the runnable source](https://github.com/pandemicsyn/sandbar/blob/7f87057c3de255b1878597c09dcdaf0c432a5289/apps/docs/examples/direct.test.ts).
+The example starts the independent fake provider on loopback, seeds one command fixture, imports `sandbar-sdk/direct` and `@sandbar/provider-fake/client` from this workspace, then creates a sandbox, transfers bytes, executes, inspects and destroys it. See [the runnable source](https://github.com/pandemicsyn/sandbar/blob/7f87057c3de255b1878597c09dcdaf0c432a5289/apps/docs/examples/direct.test.ts).
 
 For an application outside this repository, use the verified local archive process in [`bun run package:smoke`](https://github.com/pandemicsyn/sandbar/blob/af06bb6/packages/sdk-qualification/package-smoke.mjs). It builds and packs the SDK and its portable dependencies into an external consumer. There are no published registry artifacts yet.
 
 ## Create a client
 
 ```ts
-import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk/direct";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 
 const sandbar = Sandbar.direct({

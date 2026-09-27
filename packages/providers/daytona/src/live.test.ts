@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { daytonaProvider } from "./index";
-import { Image, Sandbar } from "@sandbar/sdk/direct";
+import { Image, Sandbar } from "sandbar-sdk/direct";
 
 const enabled = process.env.SANDBAR_DAYTONA_LIVE === "1";
 

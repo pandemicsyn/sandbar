@@ -10,6 +10,7 @@ import {
   type AdapterSession,
   type Json,
   type OperationKind,
+  type PreparedOperation,
   type RuntimeResult,
   type Scope,
 } from "@sandbar/adapter";
@@ -91,6 +92,7 @@ function assertSignal(signal?: AbortSignal) {
 }
 
 export type AdapterCapabilities = {
+  commands: readonly ("argv" | "shell")[];
   images: readonly ("prepared" | "oci")[];
   network: readonly string[];
   exec: boolean;
@@ -201,7 +203,7 @@ export class AdapterSandbox {
     if (feature === "writeFile") return !!this.client.session.files?.write;
     return true;
   }
-  async inspect() {
+  async inspect(): Promise<{ state: "running" | "destroyed" | "unknown" }> {
     this.client.ensureOpen();
     if (!this.client.session.inspect) unsupported("inspect");
     const result = await this.client.session.inspect({ id: this.id }, { signal: this.client.signal, deadline: Date.now() + 30_000 });
@@ -286,10 +288,67 @@ export class AdapterSandbox {
   }
 }
 
+/** Optional lifecycle API for applications with their own durable operation ledger. */
+export type AdvancedOperationResult = RuntimeResult;
+export type AdvancedOperationKind = OperationKind;
+export type AdvancedIdentity = { operationId: string; submissionId: string; invocationKey: string };
+export type AdvancedObservation = {
+  kind: OperationKind;
+  operationId: string;
+  submissionId: string;
+  sandboxId?: string;
+  token?: Json;
+  tokenVersion?: number;
+};
+const AdvancedIdentitySchema = z.strictObject({
+  operationId: z.string().min(1).max(128),
+  submissionId: z.string().min(1).max(128),
+  invocationKey: z.string().min(1).max(128),
+});
+class BeforeSubmitError extends Error {
+  constructor(readonly original: unknown) { super("Submission barrier failed"); }
+}
+export class PreparedAdapterAttempt {
+  private used = false;
+  constructor(
+    private readonly client: AdapterDirectClient,
+    private readonly prepared: PreparedOperation,
+    private readonly kind: OperationKind,
+    private readonly maxOutputBytes?: number,
+  ) {}
+  /** The callback must durably record the submission marker; false cancels dispatch. */
+  async submit(
+    identity: AdvancedIdentity,
+    options: { beforeSubmit: () => Promise<boolean>; signal?: AbortSignal },
+  ): Promise<AdvancedOperationResult | null> {
+    if (this.used) throw new SandbarError("CONFLICT", "Prepared attempt was already used");
+    this.used = true;
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+    const checked = AdvancedIdentitySchema.parse(identity);
+    let permitted: boolean;
+    try { permitted = await options.beforeSubmit(); }
+    catch (error) { throw new BeforeSubmitError(error); }
+    if (!permitted) return null;
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+    const signal = options.signal
+      ? AbortSignal.any([this.client.signal, options.signal]) : this.client.signal;
+    return submitOperation(this.prepared, checked, signal,
+      this.kind === "exec" ? this.maxOutputBytes : undefined);
+  }
+}
+
 export class AdapterDirectClient {
   private closed = false;
   private closePromise?: Promise<void>;
   readonly session: AdapterSession;
+  readonly scope: Scope;
+  readonly operations: {
+    inventory: (input: { cursor?: string; limit: number }) => Promise<{ items: { id: string; state: "running" | "destroyed" | "unknown" }[]; nextCursor?: string }>;
+    prepare: (kind: OperationKind, input: unknown, options?: { signal?: AbortSignal; maxOutputBytes?: number }) => Promise<PreparedAdapterAttempt>;
+    observe: (input: AdvancedObservation, options?: { signal?: AbortSignal }) => Promise<AdvancedOperationResult | null>;
+  };
   readonly signal: AbortSignal;
   readonly sandboxes: {
     create: (input: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
@@ -301,7 +360,56 @@ export class AdapterDirectClient {
     private readonly onReference?: (reference: AdapterRecoveryReference) => void | Promise<void>,
   ) {
     this.session = connection.session;
+    this.scope = connection.scope;
     this.signal = connection.signal;
+    this.operations = {
+      inventory: async (input) => {
+        this.ensureOpen();
+        if (!this.session.inventory) unsupported("inventory");
+        const checked = z.strictObject({
+          cursor: z.string().max(4096).optional(), limit: z.number().int().min(1).max(100),
+        }).parse(input);
+        const result = await this.session.inventory(checked, {
+          signal: this.signal, deadline: Date.now() + 30_000,
+        });
+        return z.strictObject({
+          items: z.array(z.strictObject({ id: z.string().min(1).max(512),
+            state: z.enum(["running", "destroyed", "unknown"]) })).max(100),
+          nextCursor: z.string().max(4096).optional(),
+        }).parse(result);
+      },
+      prepare: async (kind, input, options = {}) => {
+        this.ensureOpen();
+        assertSignal(options.signal);
+        const signal = options.signal ? AbortSignal.any([this.signal, options.signal]) : this.signal;
+        const prepared = await prepareOperation(this.session, kind, input, signal);
+        this.ensureOpen();
+        return new PreparedAdapterAttempt(this, prepared, kind, options.maxOutputBytes);
+      },
+      observe: async (input, options = {}) => {
+        this.ensureOpen();
+        assertSignal(options.signal);
+        const signal = options.signal ? AbortSignal.any([this.signal, options.signal]) : this.signal;
+        const checked = z.strictObject({
+          kind: z.enum(["create", "destroy", "exec", "file_write"]),
+          operationId: z.string().min(1).max(128),
+          submissionId: z.string().min(1).max(128),
+          sandboxId: z.string().min(1).max(512).optional(),
+          token: z.json().optional(),
+          tokenVersion: z.number().int().positive().optional(),
+        }).parse(input);
+        if ((checked.kind === "create" && checked.sandboxId) ||
+            (checked.kind !== "create" && !checked.sandboxId))
+          throw new SandbarError("INVALID_ARGUMENT", "Observation sandbox binding is invalid");
+        return observeOperation(this.session, checked.kind, {
+          operationId: checked.operationId,
+          submissionId: checked.submissionId,
+          sandbox: checked.sandboxId ? { id: checked.sandboxId } : undefined,
+          token: checked.token,
+          version: checked.tokenVersion,
+        }, signal);
+      },
+    };
     this.sandboxes = {
       create: async (input, options = {}) => (await this.submitCreate(input, options)).wait(options),
       submitCreate: (input, options = {}) => this.submitCreate(input, options),
@@ -315,6 +423,7 @@ export class AdapterDirectClient {
     this.ensureOpen();
     const support = this.session.supports;
     return {
+      commands: support.exec?.commands ?? [],
       images: support.images,
       network: support.network,
       exec: !!this.session.exec && !!support.exec,
@@ -351,7 +460,7 @@ export class AdapterDirectClient {
   ): Promise<AdapterOperation<T>> {
     this.ensureOpen();
     assertSignal(options.signal);
-    const prepared = await prepareOperation(this.session, kind, input, this.signal);
+    const prepared = await this.operations.prepare(kind, input, options);
     this.ensureOpen();
     assertSignal(options.signal);
     const ids = identity();
@@ -366,18 +475,25 @@ export class AdapterDirectClient {
       file: options.file,
       maxOutputBytes: options.maxOutputBytes,
     });
-    await this.onReference?.(reference);
-    this.ensureOpen();
-    assertSignal(options.signal);
     let first: RuntimeResult;
     const signals = options.signal ? [this.signal, options.signal] : [this.signal];
     const waiting = AbortSignal.any(signals);
     try {
       first = await raceAbort(
-        submitOperation(prepared, ids, waiting, options.maxOutputBytes),
+        prepared.submit(ids, {
+          beforeSubmit: async () => {
+            await this.onReference?.(reference);
+            return true;
+          },
+          signal: waiting,
+        }).then((value) => {
+          if (!value) throw new SandbarError("CONFLICT", "Submission was cancelled");
+          return value;
+        }),
         waiting,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof BeforeSubmitError) throw error.original;
       if (waiting.aborted) abortWaiting(reference, waiting.reason);
       throw asUnknown(reference, "Provider submission outcome is unknown");
     }

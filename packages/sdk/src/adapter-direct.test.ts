@@ -173,3 +173,70 @@ test("close stops waiting after dispatch with a recovery reference", async () =>
   await client.close();
   await expect(waiting).rejects.toMatchObject({ code: "WAIT_ABORTED", reference: { kind: "create" } });
 });
+
+test("advanced lifecycle commits a marker once and cannot replay a prepared attempt", async () => {
+  let submits = 0;
+  let markers = 0;
+  const adapter = defineAdapter({
+    name: "example.advanced-lifecycle",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() { submits++; return { id: `box-${submits}`, state: "running" as const }; },
+        async destroy() { return { computeStopped: true, retainedResources: [] }; },
+      };
+    },
+  });
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const input = { image: { kind: "prepared" as const, value: "image" }, networkPolicy: "blocked" };
+  const prepared = await client.operations.prepare("create", input);
+  const id = { operationId: "op-1", submissionId: "sub-1", invocationKey: "key-1" };
+  const [one, two] = await Promise.allSettled([
+    prepared.submit(id, { beforeSubmit: async () => { markers++; return true; } }),
+    prepared.submit(id, { beforeSubmit: async () => { markers++; return true; } }),
+  ]);
+  expect([one.status, two.status].sort()).toEqual(["fulfilled", "rejected"]);
+  expect(markers).toBe(1);
+  expect(submits).toBe(1);
+  const refused = await client.operations.prepare("create", input);
+  expect(await refused.submit(id, { beforeSubmit: async () => false })).toBeNull();
+  expect(submits).toBe(1);
+  const failed = await client.operations.prepare("create", input);
+  await expect(failed.submit(id, { beforeSubmit: async () => { throw new Error("ledger unavailable"); } }))
+    .rejects.toThrow("Submission barrier failed");
+  expect(submits).toBe(1);
+  await client.close();
+});
+
+test("closing during the advanced barrier prevents a late provider effect", async () => {
+  let submits = 0;
+  let unblock!: () => void;
+  const gate = new Promise<void>((resolve) => { unblock = resolve; });
+  const adapter = defineAdapter({
+    name: "example.advanced-close",
+    config: z.strictObject({}), credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() { submits++; return { id: "box", state: "running" as const }; },
+        async destroy() { return { computeStopped: true, retainedResources: [] }; },
+      };
+    },
+  });
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const prepared = await client.operations.prepare("create", {
+    image: { kind: "prepared", value: "image" }, networkPolicy: "blocked",
+  });
+  const waiting = prepared.submit(
+    { operationId: "op", submissionId: "sub", invocationKey: "key" },
+    { beforeSubmit: async () => { await gate; return true; } },
+  );
+  await client.close();
+  unblock();
+  await expect(waiting).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+  expect(submits).toBe(0);
+});

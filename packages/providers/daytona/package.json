@@ -23,6 +23,6 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@sandbar/sdk": "workspace:*"
+    "sandbar-sdk": "workspace:*"
   }
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { Sandbar, Image } from "sandbar-sdk/direct";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 import { ProcessFixture } from "../../../packages/sdk-qualification/processes";
 

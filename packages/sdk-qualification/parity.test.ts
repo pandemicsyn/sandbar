@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Sandbar as DirectSandbar, Image as DirectImage } from "@sandbar/sdk/direct";
-import { Sandbar as RemoteSandbar, Image as RemoteImage } from "@sandbar/sdk/remote";
-import type { RecoveryReference, SandbarClient, SandboxHandle } from "@sandbar/sdk";
+import { Sandbar as DirectSandbar, Image as DirectImage } from "sandbar-sdk/direct";
+import { Sandbar as RemoteSandbar, Image as RemoteImage } from "sandbar-sdk/remote";
+import type { RecoveryReference, SandbarClient, SandboxHandle } from "sandbar-sdk";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 import { ProcessFixture } from "./processes";
 

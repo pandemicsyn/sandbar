@@ -14,6 +14,7 @@
     "@sandbar/core": "workspace:*",
     "@sandbar/provider-spi": "workspace:*",
     "@sandbar/store": "workspace:*",
+    "sandbar-sdk": "workspace:*",
     "zod": "4.6.5"
   }
 }

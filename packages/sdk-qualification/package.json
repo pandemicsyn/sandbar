@@ -1,5 +1,5 @@
 {
-  "name": "@sandbar/sdk-qualification",
+  "name": "sandbar-sdk-qualification",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@sandbar/provider-fake": "workspace:*",
-    "@sandbar/sdk": "workspace:*",
+    "sandbar-sdk": "workspace:*",
     "zod": "4.6.5"
   }
 }

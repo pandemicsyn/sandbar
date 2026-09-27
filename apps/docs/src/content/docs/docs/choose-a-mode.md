@@ -5,7 +5,7 @@ description: Compare Sandbar's direct and service-backed TypeScript entry points
 
 |                      | Direct                                            | Service-backed                        |
 | -------------------- | ------------------------------------------------- | ------------------------------------- |
-| Entry point          | `@sandbar/sdk/direct`                             | `@sandbar/sdk/remote`                 |
+| Entry point          | `sandbar-sdk/direct`                             | `sandbar-sdk/remote`                 |
 | Runs in              | Server-side Node.js or Bun process                | Client talks to your Bun/Hono service |
 | Provider credentials | Caller process                                    | Service operator                      |
 | Control database     | None                                              | SQLite or MySQL                       |

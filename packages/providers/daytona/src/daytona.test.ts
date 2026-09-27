@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import type { ExecCommand } from "@sandbar/contracts";
 import { daytonaProvider, daytonaRegistration } from "./index";
-import { NonzeroExitError, Sandbar } from "@sandbar/sdk/direct";
+import { NonzeroExitError, Sandbar } from "sandbar-sdk/direct";
 import { ProviderReadError } from "@sandbar/provider-spi";
 
 function fixtureFetch(

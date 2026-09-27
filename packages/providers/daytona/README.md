@@ -5,7 +5,7 @@
 ## Direct TypeScript
 
 ```ts
-import { Sandbar, Image } from '@sandbar/sdk/direct';
+import { Sandbar, Image } from 'sandbar-sdk/direct';
 import { daytonaProvider } from '@sandbar/provider-daytona';
 
 const provider = await daytonaProvider({ apiKey: process.env.DAYTONA_API_KEY!, target: 'us' });

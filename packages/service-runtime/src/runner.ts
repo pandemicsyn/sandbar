@@ -1,4 +1,5 @@
-import { AdapterError, observeOperation, prepareOperation, submitOperation, type RuntimeResult } from "@sandbar/adapter";
+import { AdapterError } from "@sandbar/adapter";
+import type { AdvancedOperationResult as RuntimeResult } from "sandbar-sdk/direct";
 import type {
   ProviderDriver,
   ProviderLease,
@@ -304,7 +305,6 @@ export class DurableRunner {
   private async processAdapter(claim: Claimed, lease: AdapterProviderLease): Promise<void> {
     const { store, secrets } = this.options;
     const op = claim.operation;
-    const session = lease.adapterConnection.session;
     const box = await store.getSandbox(op.project_id, op.sandbox_id);
     if (!box) throw new Error("Sandbox record vanished");
 
@@ -314,13 +314,14 @@ export class DurableRunner {
         const plaintext = await secrets.open("adapter-recovery-token", op.id, op.adapter_token_ciphertext);
         token = JSON.parse(plaintext);
       }
-      const result = await observeOperation(session, op.kind, {
+      const result = await lease.adapterConnection.operations.observe({
+        kind: op.kind,
         operationId: op.id,
         submissionId: op.provider_token,
-        sandbox: op.kind === "create" ? undefined : box.native_id ? { id: box.native_id } : undefined,
+        sandboxId: op.kind === "create" ? undefined : box.native_id ?? undefined,
         token: token?.token as never,
-        version: token?.version,
-      }, lease.adapterConnection.signal);
+        tokenVersion: token?.version,
+      });
       await this.handleAdapterResult(claim, lease.scope, result);
       return;
     }
@@ -360,7 +361,9 @@ export class DurableRunner {
 
     let prepared;
     try {
-      prepared = await prepareOperation(session, op.kind, input, lease.adapterConnection.signal);
+      prepared = await lease.adapterConnection.operations.prepare(op.kind, input, {
+        maxOutputBytes: op.kind === "exec" ? (input as { maxOutputBytes: number }).maxOutputBytes : undefined,
+      });
     } catch (error) {
       if (error instanceof AdapterError && ["INVALID_ARGUMENT", "UNSUPPORTED", "CAPACITY", "CONFLICT"].includes(error.code)) {
         await store.failWithoutEffect(claim, {
@@ -375,14 +378,12 @@ export class DurableRunner {
       return;
     }
 
-    if (!(await store.beginSubmission(claim))) return;
-    const result = await submitOperation(prepared, {
+    const result = await prepared.submit({
       operationId: op.id,
       submissionId: op.provider_token,
       invocationKey: key,
-    }, lease.adapterConnection.signal,
-    op.kind === "exec" ? (input as { maxOutputBytes: number }).maxOutputBytes : undefined);
-    await this.handleAdapterResult(claim, lease.scope, result);
+    }, { beforeSubmit: () => store.beginSubmission(claim) });
+    if (result) await this.handleAdapterResult(claim, lease.scope, result);
   }
 
   private async handleAdapterResult(

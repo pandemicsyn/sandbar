@@ -36,6 +36,7 @@ export interface RuntimeConfig {
   daytonaTrustedEndpoints?: DaytonaEndpointPair[];
   modalTransportFactory?: (options: ModalProviderOptions) => ModalTransport;
   publicOrigin?: string;
+  webDist?: string;
   startRunner?: boolean;
 }
 
@@ -146,6 +147,7 @@ export async function openDomainRuntime(config: RuntimeConfig) {
     const runner = new DurableRunner({ store, registry, secrets });
 
     const app = createApp({
+      webDist: config.webDist,
       registerRoutes: (app) =>
         registerDomainRoutes(app, {
           store,

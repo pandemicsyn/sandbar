@@ -90,7 +90,7 @@ export type AdapterSession<CP = CreateInput, DP = Sandbox, EP = ExecInput, WP = 
   create: Mutation<CreateInput, CreateValue, CP, CT, undefined>;
   destroy: Mutation<Sandbox, DestroyValue, DP, Json, Sandbox>;
   inspect?: (box: Sandbox, ctx: ReadContext) => Promise<{ id: string; state: "running" | "destroyed" | "unknown" } | null>;
-  exec?: Mutation<ExecInput<NoInfer<C>>, ExecValue, EP, Json, Sandbox>;
+  exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox>;
   files?: {
     maxBytes: number;
     read?: (input: { sandbox: Sandbox; path: string }, ctx: ReadContext) => Promise<Uint8Array | ReadableStream<Uint8Array>>;
@@ -104,19 +104,42 @@ export type AdapterDefinition<C extends z.ZodType, K extends z.ZodType, S = Adap
   readonly credentials: K;
   readonly connect: (input: { config: z.output<C>; credentials: z.output<K>; host: HostContext }) => Promise<S>;
 };
+export type PolicyAdapterDefinition<
+  C extends z.ZodType, K extends z.ZodType, P extends z.ZodType<Json>, S = AdapterSession,
+> = Omit<AdapterDefinition<C, K, S>, "connect"> & {
+  readonly policy: { readonly schema: P; readonly default: z.output<P> };
+  readonly connect: (input: {
+    config: z.output<C>; credentials: z.output<K>; host: HostContext<z.output<P>>;
+  }) => Promise<S>;
+  withPolicy(value: z.input<P>): PolicyAdapterDefinition<C, K, P, S>;
+};
 const ProviderName = z.string().min(1).max(128).regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/);
 export function defineAdapter<
-  C extends z.ZodType,
-  K extends z.ZodType,
-  Cmd extends Command["kind"],
-  CT extends Json,
-  CP = CreateInput,
-  DP = Sandbox,
-  EP = ExecInput,
-  WP = FileWriteInput,
->(definition: AdapterDefinition<C, K, AdapterSession<CP, DP, EP, WP, Cmd, CT>>): AdapterDefinition<C, K, AdapterSession<CP, DP, EP, WP, Cmd, CT>> {
+  C extends z.ZodType, K extends z.ZodType, P extends z.ZodType<Json>,
+  Cmd extends Command["kind"], CT extends Json,
+  CP = CreateInput, DP = Sandbox, EP = ExecInput, WP = FileWriteInput,
+>(definition: Omit<PolicyAdapterDefinition<C, K, P, AdapterSession<CP, DP, EP, WP, Cmd, CT>>, "withPolicy">):
+  PolicyAdapterDefinition<C, K, P, AdapterSession<CP, DP, EP, WP, Cmd, CT>>;
+export function defineAdapter<
+  C extends z.ZodType, K extends z.ZodType,
+  Cmd extends Command["kind"], CT extends Json,
+  CP = CreateInput, DP = Sandbox, EP = ExecInput, WP = FileWriteInput,
+>(definition: AdapterDefinition<C, K, AdapterSession<CP, DP, EP, WP, Cmd, CT>>):
+  AdapterDefinition<C, K, AdapterSession<CP, DP, EP, WP, Cmd, CT>>;
+export function defineAdapter(definition: AdapterDefinition<z.ZodType, z.ZodType> & {
+  policy?: { schema: z.ZodType; default: Json };
+}) {
   ProviderName.parse(definition.name);
-  return Object.freeze(definition);
+  if (!definition.policy) return Object.freeze(definition);
+  const parsedDefault = parseBoundedSchema(definition.policy.schema, definition.policy.default, "host policy") as Json;
+  const clone = (policy: Json) => Object.freeze({
+    ...definition,
+    policy: Object.freeze({ schema: definition.policy!.schema, default: policy }),
+    withPolicy(value: Json) {
+      return clone(parseBoundedSchema(definition.policy!.schema, value, "host policy") as Json);
+    },
+  });
+  return clone(parsedDefault);
 }
 export function isOutcome(value: unknown): value is Pending | Unknown | Rejected {
   return typeof value === "object" && value !== null && outcomeBrand in value;
@@ -216,11 +239,13 @@ export type AdapterConnection<S> = {
 };
 
 export async function connectAdapter<C extends z.ZodType, K extends z.ZodType, S extends { scope: Scope }>(
-  definition: AdapterDefinition<C, K, S>,
+  definition: Pick<AdapterDefinition<C, K, S>, "config" | "credentials"> & {
+    connect: (input: never) => Promise<S>;
+    policy?: { schema: z.ZodType; default: Json };
+  },
   input: {
     config: z.input<C>;
     credentials: z.input<K>;
-    policy?: Json;
     onDiagnostic?: (error: unknown) => void;
   },
 ): Promise<AdapterConnection<S>> {
@@ -246,14 +271,18 @@ export async function connectAdapter<C extends z.ZodType, K extends z.ZodType, S
   };
   const host: HostContext = {
     signal: controller.signal,
-    policy: Object.freeze(boundedSchemaOutput(input.policy ?? {}, "host policy")),
+    policy: Object.freeze(definition.policy
+      ? parseBoundedSchema(definition.policy.schema, definition.policy.default, "host policy")
+      : {}),
     onClose(release) {
       if (closed) throw new AdapterError("CONFLICT", "Connection is closed");
       releases.push(release);
     },
   };
   try {
-    const session = await definition.connect({ config, credentials, host });
+    const session = await (definition.connect as (input: {
+      config: z.output<C>; credentials: z.output<K>; host: HostContext;
+    }) => Promise<S>)({ config, credentials, host });
     const scope = ScopeSchema.safeParse(session.scope);
     if (!scope.success) throw new AdapterError("INVALID_ARGUMENT", "Invalid verified scope");
     const detached = structuredClone(scope.data);

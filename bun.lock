@@ -22,7 +22,7 @@
       "devDependencies": {
         "@astrojs/check": "0.9.6",
         "@sandbar/provider-fake": "workspace:*",
-        "@sandbar/sdk": "workspace:*",
+        "sandbar-sdk": "workspace:*",
         "typescript": "5.9.3",
         "wrangler": "4.141.0",
       },
@@ -101,7 +101,7 @@
         "zod": "4.6.5",
       },
       "devDependencies": {
-        "@sandbar/sdk": "workspace:*",
+        "sandbar-sdk": "workspace:*",
       },
     },
     "packages/providers/fake": {
@@ -125,11 +125,11 @@
       },
       "devDependencies": {
         "@grpc/grpc-js": "1.14.5",
-        "@sandbar/sdk": "workspace:*",
+        "sandbar-sdk": "workspace:*",
       },
     },
     "packages/sdk": {
-      "name": "@sandbar/sdk",
+      "name": "sandbar-sdk",
       "version": "0.0.0",
       "dependencies": {
         "@sandbar/adapter": "workspace:*",
@@ -143,10 +143,19 @@
       },
     },
     "packages/sdk-qualification": {
-      "name": "@sandbar/sdk-qualification",
+      "name": "sandbar-sdk-qualification",
       "dependencies": {
         "@sandbar/provider-fake": "workspace:*",
-        "@sandbar/sdk": "workspace:*",
+        "sandbar-sdk": "workspace:*",
+        "zod": "4.6.5",
+      },
+    },
+    "packages/service": {
+      "name": "@sandbar/service",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sandbar/adapter": "workspace:*",
+        "sandbar-sdk": "workspace:*",
         "zod": "4.6.5",
       },
     },
@@ -158,6 +167,7 @@
         "@sandbar/core": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
         "@sandbar/store": "workspace:*",
+        "sandbar-sdk": "workspace:*",
         "zod": "4.6.5",
       },
     },
@@ -607,11 +617,9 @@
 
     "@sandbar/provider-spi": ["@sandbar/provider-spi@workspace:packages/provider-spi"],
 
-    "@sandbar/sdk": ["@sandbar/sdk@workspace:packages/sdk"],
-
-    "@sandbar/sdk-qualification": ["@sandbar/sdk-qualification@workspace:packages/sdk-qualification"],
-
     "@sandbar/server": ["@sandbar/server@workspace:apps/server"],
+
+    "@sandbar/service": ["@sandbar/service@workspace:packages/service"],
 
     "@sandbar/service-runtime": ["@sandbar/service-runtime@workspace:packages/service-runtime"],
 
@@ -1210,6 +1218,10 @@
     "rolldown": ["rolldown@1.2.11", "", { "dependencies": { "@oxc-project/types": "=0.151.0", "@rolldown/pluginutils": "^1.0.0" }, "optionalDependencies": { "@rolldown/binding-android-arm-eabi": "1.2.11", "@rolldown/binding-android-arm64": "1.2.11", "@rolldown/binding-darwin-arm64": "1.2.11", "@rolldown/binding-darwin-x64": "1.2.11", "@rolldown/binding-freebsd-x64": "1.2.11", "@rolldown/binding-linux-arm-gnueabihf": "1.2.11", "@rolldown/binding-linux-arm64-gnu": "1.2.11", "@rolldown/binding-linux-arm64-musl": "1.2.11", "@rolldown/binding-linux-ppc64-gnu": "1.2.11", "@rolldown/binding-linux-s390x-gnu": "1.2.11", "@rolldown/binding-linux-x64-gnu": "1.2.11", "@rolldown/binding-linux-x64-musl": "1.2.11", "@rolldown/binding-openharmony-arm64": "1.2.11", "@rolldown/binding-win32-arm64-msvc": "1.2.11", "@rolldown/binding-win32-x64-msvc": "1.2.11" }, "bin": { "rolldown": "./bin/cli.mjs" } }, "sha512-qpSwIyz0jHQq5qXBTNxFmE6664rJ7O+4TvPFOiOaBSrz8IOHc1koKKSqTM2H6u1UG1+TveuC6vaDHKXFOvb1Kw=="],
 
     "safer-buffer": ["safer-buffer@2.1.2", "", {}, "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg=="],
+
+    "sandbar-sdk": ["sandbar-sdk@workspace:packages/sdk"],
+
+    "sandbar-sdk-qualification": ["sandbar-sdk-qualification@workspace:packages/sdk-qualification"],
 
     "satteri": ["satteri@0.10.5", "", { "dependencies": { "@types/estree-jsx": "^1.0.5", "@types/hast": "^3.0.5", "@types/mdast": "^4.0.4", "@types/unist": "^3.0.3" }, "optionalDependencies": { "@bruits/satteri-darwin-arm64": "0.10.5", "@bruits/satteri-darwin-x64": "0.10.5", "@bruits/satteri-linux-arm64-gnu": "0.10.5", "@bruits/satteri-linux-arm64-musl": "0.10.5", "@bruits/satteri-linux-x64-gnu": "0.10.5", "@bruits/satteri-linux-x64-musl": "0.10.5", "@bruits/satteri-wasm32-wasi": "0.10.5", "@bruits/satteri-win32-arm64-msvc": "0.10.5", "@bruits/satteri-win32-x64-msvc": "0.10.5" } }, "sha512-Ao1LKpAEa9Wdg0otgbVKViZHEq9ebdXe4DMrp3s9vQAU0HNIuHnFEuMuOcm0ZIXyV0Yzxj91NvhLpvXZJO/5ZQ=="],
 

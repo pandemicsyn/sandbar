@@ -49,3 +49,33 @@ test("outcome constructors are branded and observe context lacks rejection", () 
   expect(isOutcome(ctx.reject("CAPACITY", "No capacity"))).toBe(true);
   expect(isOutcome({ status: "pending", token: {} })).toBe(false);
 });
+
+test("host policy is typed, validated, immutable, and cloned at registration", async () => {
+  const observed: string[] = [];
+  const adapter = defineAdapter({
+    name: "example.policy",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    policy: {
+      schema: z.strictObject({ allowedEndpoint: z.string().url() }),
+      default: { allowedEndpoint: "https://default.example" },
+    },
+    async connect({ host }) {
+      host.policy.allowedEndpoint satisfies string;
+      observed.push(host.policy.allowedEndpoint);
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() { return { id: "one", state: "running" as const }; },
+        async destroy() { return { computeStopped: true, retainedResources: [] }; },
+      };
+    },
+  });
+  const configured = adapter.withPolicy({ allowedEndpoint: "https://configured.example" });
+  expect(() => adapter.withPolicy({ allowedEndpoint: "invalid" })).toThrow();
+  const first = await connectAdapter(adapter, { config: {}, credentials: {} });
+  const second = await connectAdapter(configured, { config: {}, credentials: {} });
+  expect(observed).toEqual(["https://default.example", "https://configured.example"]);
+  await first.close();
+  await second.close();
+});

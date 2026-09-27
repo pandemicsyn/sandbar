@@ -20,7 +20,7 @@ The [checked-in remote example](https://github.com/pandemicsyn/sandbar/blob/7f87
 ## Connect from server-side TypeScript
 
 ```ts
-import { Sandbar, Image } from "@sandbar/sdk/remote";
+import { Sandbar, Image } from "sandbar-sdk/remote";
 
 const sandbar = Sandbar.connect({
   url: "http://127.0.0.1:3000",

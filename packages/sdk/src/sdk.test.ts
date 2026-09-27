@@ -16,9 +16,9 @@ import {
 } from "./direct";
 import type { RecoveryReference } from "./direct";
 import { Image as RemoteImage, Sandbar as RemoteSandbar } from "./remote";
-import * as packagedRoot from "@sandbar/sdk";
-import * as packagedDirect from "@sandbar/sdk/direct";
-import * as packagedRemote from "@sandbar/sdk/remote";
+import * as packagedRoot from "sandbar-sdk";
+import * as packagedDirect from "sandbar-sdk/direct";
+import * as packagedRemote from "sandbar-sdk/remote";
 
 let server: Awaited<ReturnType<typeof startFakeProviderServer>> | undefined;
 

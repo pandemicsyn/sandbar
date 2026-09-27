@@ -259,6 +259,33 @@
         }
       }
     },
+    "/v1/providers": {
+      "get": {
+        "operationId": "listRegisteredProviders",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCatalog"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/projects/{projectId}/provider-connections": {
       "parameters": [
         {
@@ -2932,11 +2959,9 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": [
-              "fake",
-              "daytona",
-              "modal"
-            ]
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
           },
           "name": {
             "type": "string",
@@ -2946,7 +2971,7 @@
           "credentials": {
             "type": "object",
             "additionalProperties": {
-              "type": "string"
+              "$ref": "#/definitions/__schema0"
             },
             "propertyNames": {
               "type": "string"
@@ -2955,7 +2980,7 @@
           "configuration": {
             "type": "object",
             "additionalProperties": {
-              "type": "string"
+              "$ref": "#/definitions/__schema1"
             },
             "propertyNames": {
               "type": "string"
@@ -2966,7 +2991,71 @@
           "provider",
           "name"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "definitions": {
+          "__schema0": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/__schema0"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/definitions/__schema0"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "__schema1": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/__schema1"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/definitions/__schema1"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              }
+            ]
+          }
+        }
       },
       "InvocationKey": {
         "type": "string",
@@ -4505,11 +4594,9 @@
           },
           "provider": {
             "type": "string",
-            "enum": [
-              "fake",
-              "daytona",
-              "modal"
-            ]
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
           },
           "name": {
             "type": "string"
@@ -4550,6 +4637,39 @@
               "endpoint": {
                 "type": "string",
                 "format": "uri"
+              },
+              "adapterScope": {
+                "type": "object",
+                "properties": {
+                  "authority": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "partition": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "authority",
+                  "partition"
+                ]
               }
             }
           },
@@ -4607,11 +4727,9 @@
                 },
                 "provider": {
                   "type": "string",
-                  "enum": [
-                    "fake",
-                    "daytona",
-                    "modal"
-                  ]
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
                 },
                 "name": {
                   "type": "string"
@@ -4652,6 +4770,39 @@
                     "endpoint": {
                       "type": "string",
                       "format": "uri"
+                    },
+                    "adapterScope": {
+                      "type": "object",
+                      "properties": {
+                        "authority": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "id"
+                          ]
+                        },
+                        "partition": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "propertyNames": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "authority",
+                        "partition"
+                      ]
                     }
                   }
                 },
@@ -4692,6 +4843,109 @@
         "required": [
           "items"
         ]
+      },
+      "ProviderCatalog": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                },
+                "displayName": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "configurationSchema": {
+                  "$ref": "#/definitions/__schema0"
+                },
+                "credentialsSchema": {
+                  "$ref": "#/definitions/__schema1"
+                }
+              },
+              "required": [
+                "name",
+                "displayName",
+                "configurationSchema",
+                "credentialsSchema"
+              ]
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "definitions": {
+          "__schema0": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/__schema0"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/definitions/__schema0"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "__schema1": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/__schema1"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/definitions/__schema1"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              }
+            ]
+          }
+        }
       },
       "Sandbox": {
         "type": "object",

@@ -3,7 +3,7 @@ title: TypeScript SDK reference
 description: Public entry points, resource handles and errors in the current unpublished SDK.
 ---
 
-The **unpublished** `@sandbar/sdk` package provides `@sandbar/sdk/direct` and `@sandbar/sdk/remote`. Both entry points export `Sandbar`, `Image`, `SandbarError`, `OutcomeUnknownError`, `WaitAbortedError`, `NonzeroExitError`, `NoExitCodeError`, `outputText` and the shared public resource types. The root entry point exports the common types and errors but not a constructor.
+The **unpublished** `sandbar-sdk` package provides `sandbar-sdk/direct` and `sandbar-sdk/remote`. Both entry points export `Sandbar`, `Image`, `SandbarError`, `OutcomeUnknownError`, `WaitAbortedError`, `NonzeroExitError`, `NoExitCodeError`, `outputText` and the shared public resource types. The root entry point exports the common types and errors but not a constructor.
 
 ## Construction
 
