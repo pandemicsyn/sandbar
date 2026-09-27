@@ -7,7 +7,7 @@ The direct SDK uses a provider driver in your Node.js or Bun process. Keep crede
 
 ## Run the checked-in example
 
-Use Bun 1.3.14 and Node.js 22.23.2 or 26.4.0, the versions measured in [runtime qualification](https://github.com/pandemicsyn/sandbar/blob/c4dea72/docs/sdk-runtime-qualification.md). From the repository root:
+Use Bun 1.3.14 and Node.js 22.23.2 or 26.4.0, the versions measured in [runtime qualification](https://github.com/pandemicsyn/sandbar/blob/af06bb6/docs/sdk-runtime-qualification.md). From the repository root:
 
 ```sh
 bun install --frozen-lockfile
@@ -15,15 +15,15 @@ bun run build:packages
 bun run --cwd apps/docs examples:test
 ```
 
-The example starts the independent fake provider on loopback, seeds one command fixture, imports `@sandbar/sdk/direct` and `@sandbar/provider-fake/client` from this workspace, then creates a sandbox, transfers bytes, executes, inspects and destroys it. See [the runnable source](https://github.com/pandemicsyn/sandbar/blob/f1c61f8a32353a9cf78cafa5792ebdbe30e15987/apps/docs/examples/direct.test.ts).
+The example starts the independent fake provider on loopback, seeds one command fixture, imports `@sandbar/sdk/direct` and `@sandbar/provider-fake/client` from this workspace, then creates a sandbox, transfers bytes, executes, inspects and destroys it. See [the runnable source](https://github.com/pandemicsyn/sandbar/blob/b4295bda452b4fc7cd655ee48b09798df47ffba7/apps/docs/examples/direct.test.ts).
 
-For an application outside this repository, use the verified local archive process in [`bun run package:smoke`](https://github.com/pandemicsyn/sandbar/blob/c4dea72/packages/sdk-qualification/package-smoke.mjs). It builds and packs the SDK and its portable dependencies into an external consumer. There are no published registry artifacts yet.
+For an application outside this repository, use the verified local archive process in [`bun run package:smoke`](https://github.com/pandemicsyn/sandbar/blob/af06bb6/packages/sdk-qualification/package-smoke.mjs). It builds and packs the SDK and its portable dependencies into an external consumer. There are no published registry artifacts yet.
 
 ## Create a client
 
 ```ts
-import { Sandbar, Image } from '@sandbar/sdk/direct';
-import { fakeProvider } from '@sandbar/provider-fake/client';
+import { Sandbar, Image } from "@sandbar/sdk/direct";
+import { fakeProvider } from "@sandbar/provider-fake/client";
 
 const sandbar = Sandbar.direct({
   provider: await fakeProvider({
@@ -33,10 +33,10 @@ const sandbar = Sandbar.direct({
 });
 
 try {
-  const box = await sandbar.sandboxes.create({ environment: Image.prepared('fake-starter') });
+  const box = await sandbar.sandboxes.create({ environment: Image.prepared("fake-starter") });
   try {
-    await box.writeFile('/input.bin', Uint8Array.of(0, 255));
-    const bytes = await box.readFile('/input.bin');
+    await box.writeFile("/input.bin", Uint8Array.of(0, 255));
+    const bytes = await box.readFile("/input.bin");
     console.log(bytes.length);
   } finally {
     await box.destroy();

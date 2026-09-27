@@ -3,7 +3,7 @@ title: Sandbar documentation
 description: Development documentation for Sandbar's direct TypeScript SDK and self-hosted service.
 ---
 
-Sandbar is a provider-neutral sandbox API. This documentation describes the current **unpublished development build at `c4dea72`**. Its independent fake provider is the only qualified driver. It simulates results and **does not isolate or execute host processes**.
+Sandbar is a provider-neutral sandbox API. This documentation describes the current **unpublished development build at `af06bb6`**. Its independent fake provider is the only qualified driver. It simulates results and **does not isolate or execute host processes**.
 
 Choose a starting point:
 

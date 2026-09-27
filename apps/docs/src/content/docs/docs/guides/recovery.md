@@ -6,7 +6,9 @@ description: Observe submitted operations without replaying possibly applied mut
 Mutations can complete even if a response is lost. `submitCreate()` and `box.submitExec()` return an `OperationHandle` with a serializable `reference`, `observe()` and `wait({ signal, pollMs })`. Normal `create()` and `exec()` submit and wait in one call.
 
 ```ts
-const pending = await sandbar.sandboxes.submitCreate({ environment: Image.prepared('fake-starter') });
+const pending = await sandbar.sandboxes.submitCreate({
+  environment: Image.prepared("fake-starter"),
+});
 saveReference(pending.reference);
 const box = await pending.wait();
 ```
@@ -16,3 +18,5 @@ const box = await pending.wait();
 Direct references have `durability: 'process'` on their operation handles. A new caller can import a saved reference only if the provider retains matching native evidence and the caller reconfigures credentials and scope. A crash after submission but before saving the reference may lose the pointer. Remote handles have `durability: 'service'` and use the service operation ledger. Neither mode should blindly retry an unknown effect.
 
 `close()` stops client-owned waiting and never destroys a sandbox. Call `destroy()` explicitly and preserve a reference if destruction becomes uncertain. If native discovery is unavailable, an unknown result stays unknown.
+
+When direct mode receives a borrowed provider driver, `close()` does not cancel that driver's transport work or provider compute. It only stops SDK-owned waiting.

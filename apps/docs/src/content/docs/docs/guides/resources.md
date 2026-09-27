@@ -8,10 +8,10 @@ description: Create, inspect, execute, and clean up resources with the TypeScrip
 `sandbar.sandboxes.create({ environment })` returns a `SandboxHandle` with `id`, `inspect()`, `exec()`, `readFile()`, `writeFile()` and `destroy()`. The default network policy is `blocked`; the fake only simulates this policy and provides no guest network isolation.
 
 ```ts
-const box = await sandbar.sandboxes.create({ environment: Image.prepared('fake-starter') });
+const box = await sandbar.sandboxes.create({ environment: Image.prepared("fake-starter") });
 try {
   const state = await box.inspect();
-  const output = await box.exec({ command: { kind: 'argv', argv: ['fixture', 'hello'] } });
+  const output = await box.exec({ command: { kind: "argv", argv: ["fixture", "hello"] } });
   console.log(state.state, output.stdoutText(4096));
 } finally {
   await box.destroy();
