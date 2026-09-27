@@ -972,3 +972,151 @@ test("generated capture wrapper isolates utilities from requested PATH and prese
 
   expect(posts).toBe(cases.length);
 });
+
+test.each([
+  [
+    "odd hex token",
+    "SANDBAR-EXEC-V1\n0\n1\n0\na\nSANDBAR-STDERR\nSANDBAR-END\n",
+    2,
+    "unknown",
+    false,
+  ],
+  [
+    "missing captured byte",
+    "SANDBAR-EXEC-V1\n0\n1\n0\nSANDBAR-STDERR\nSANDBAR-END\n",
+    2,
+    "unknown",
+    false,
+  ],
+  [
+    "short captured payload",
+    "SANDBAR-EXEC-V1\n0\n2\n0\n00\nSANDBAR-STDERR\nSANDBAR-END\n",
+    2,
+    "unknown",
+    false,
+  ],
+  [
+    "wrong stderr allocation",
+    "SANDBAR-EXEC-V1\n0\n2\n1\n00\nSANDBAR-STDERR\nff\nSANDBAR-END\n",
+    1,
+    "unknown",
+    false,
+  ],
+  ["zero bytes", "SANDBAR-EXEC-V1\n0\n0\n0\nSANDBAR-STDERR\nSANDBAR-END\n", 2, "completed", false],
+  [
+    "full binary bytes",
+    "SANDBAR-EXEC-V1\n0\n2\n0\n00 ff\nSANDBAR-STDERR\nSANDBAR-END\n",
+    2,
+    "completed",
+    false,
+  ],
+  [
+    "legitimate truncation",
+    "SANDBAR-EXEC-V1\n0\n2\n1\n00\nSANDBAR-STDERR\nSANDBAR-END\n",
+    1,
+    "completed",
+    true,
+  ],
+] as const)(
+  "capture frame %s has exact byte accounting",
+  async (_name, frame, maxOutputBytes, expectedStatus, truncated) => {
+    let posts = 0;
+
+    const fetchImpl = fixtureFetch(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/sandbox/native-1")
+        return Response.json(native("sandbar-existing"));
+
+      if (url.pathname.endsWith("/process/execute")) {
+        posts++;
+
+        return Response.json({ exitCode: 0, result: frame });
+      }
+
+      throw new Error(`Unexpected ${url.pathname}`);
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const submissionId = `frame-${_name.replaceAll(" ", "-")}`;
+
+    const result = await provider.driver.exec({
+      sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+      identity: identity(submissionId),
+      command: { kind: "shell", script: "true" },
+      deadlineSeconds: 10,
+      maxOutputBytes,
+    });
+
+    expect(result.status).toBe(expectedStatus);
+    expect(posts).toBe(1);
+
+    if (result.status === "unknown") {
+      expect(result.effect).toBe("possible");
+      expect(result.submissionId).toBe(submissionId);
+    } else if (result.status === "completed" && result.value.kind === "execution") {
+      expect(result.value.observation.truncated).toBe(truncated);
+    }
+  },
+);
+
+test("local capture utility failure leaves an incomplete frame that stays unknown", async () => {
+  let posts = 0;
+
+  const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
+
+    if (url.pathname === "/api/sandbox/native-1") return Response.json(native("sandbar-existing"));
+
+    if (url.pathname.endsWith("/process/execute")) {
+      posts++;
+
+      const script = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      const failedCapture = script.replaceAll("| od -An -tx1 -v", "| false");
+
+      const execution = spawnSync("sh", ["-c", failedCapture], {
+        encoding: "utf8",
+        timeout: 10_000,
+        maxBuffer: 8192,
+      });
+
+      expect(execution.error).toBeUndefined();
+      expect(execution.status).toBe(0);
+
+      return Response.json({ exitCode: execution.status, result: execution.stdout });
+    }
+
+    throw new Error(`Unexpected ${url.pathname}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+  const result = await provider.driver.exec({
+    sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+    identity: identity("capture-tool-failed"),
+    command: { kind: "shell", script: "/usr/bin/printf a" },
+    deadlineSeconds: 10,
+    maxOutputBytes: 4,
+  });
+
+  expect(result.status).toBe("unknown");
+
+  if (result.status === "unknown") {
+    expect(result.effect).toBe("possible");
+    expect(result.submissionId).toBe("capture-tool-failed");
+  }
+
+  expect(posts).toBe(1);
+});

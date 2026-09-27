@@ -707,20 +707,35 @@ export class DaytonaDriver implements ProviderDriver {
 
       if (!match) return unknown(input.identity.submissionId, "Daytona command response malformed");
 
-      const decode = (hex: string): Uint8Array =>
-        Uint8Array.from(
-          hex
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean)
-            .map((byte) => Number.parseInt(byte, 16)),
-        );
+      const decode = (hex: string): Uint8Array | null => {
+        const trimmed = hex.trim();
+        const tokens = trimmed ? trimmed.split(/\s+/) : [];
+
+        if (tokens.some((token) => !/^[0-9a-f]{2}$/.test(token))) return null;
+
+        return Uint8Array.from(tokens.map((token) => Number.parseInt(token, 16)));
+      };
 
       const stdout = decode(match[4]!),
         stderr = decode(match[5]!);
 
-      if (stdout.length + stderr.length > max)
-        return unknown(input.identity.submissionId, "Daytona output exceeded bound");
+      const stdoutCount = Number(match[2]),
+        stderrCount = Number(match[3]);
+
+      if (
+        !stdout ||
+        !stderr ||
+        !Number.isSafeInteger(stdoutCount) ||
+        !Number.isSafeInteger(stderrCount) ||
+        stdoutCount < 0 ||
+        stderrCount < 0 ||
+        stdoutCount > max + 1 ||
+        stderrCount > max + 1 ||
+        stdout.length !== Math.min(stdoutCount, max) ||
+        stderr.length !== Math.min(stderrCount, max - stdout.length) ||
+        stdout.length + stderr.length > max
+      )
+        return unknown(input.identity.submissionId, "Daytona capture output inconsistent");
 
       const observation = {
         ref: {
@@ -733,7 +748,7 @@ export class DaytonaDriver implements ProviderDriver {
         exitCode: Number(match[1]),
         stdoutBase64: Buffer.from(stdout).toString("base64"),
         stderrBase64: Buffer.from(stderr).toString("base64"),
-        truncated: Number(match[2]) + Number(match[3]) > stdout.length + stderr.length,
+        truncated: stdoutCount + stderrCount > stdout.length + stderr.length,
         observedAt: new Date().toISOString(),
       };
 
