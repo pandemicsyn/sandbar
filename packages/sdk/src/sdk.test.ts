@@ -702,6 +702,60 @@ test("direct null submission response never treats a later rejection as definiti
   expect(observations).toBe(0);
 });
 
+test("direct definitive provider rejections use the service error vocabulary", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+
+  const expected = [
+    ["invalid", "INVALID_ARGUMENT"],
+    ["unsupported", "UNSUPPORTED"],
+    ["unauthorized", "UNAUTHENTICATED"],
+    ["not_found", "NOT_FOUND"],
+    ["conflict", "CONFLICT"],
+    ["capacity", "CAPACITY"],
+    ["rate_limit", "RATE_LIMIT"],
+    ["unavailable", "UNAVAILABLE"],
+    ["timeout", "TIMEOUT"],
+    ["internal", "INTERNAL"],
+  ] as const;
+
+  let code: (typeof expected)[number][0] = "invalid";
+  let dispatches = 0;
+
+  Reflect.set(provider.driver, "create", async () => {
+    dispatches++;
+
+    return {
+      status: "rejected",
+      effect: "none",
+      error: { code, message: "provider rejected", effect: "none", retry: "never" },
+    };
+  });
+  provider.driver.observe = async () => {
+    throw new Error("Definitive submission rejection must not require observation");
+  };
+
+  const client = DirectSandbar.direct({ provider });
+
+  for (const [providerCode, publicCode] of expected) {
+    code = providerCode;
+
+    const operation = await client.sandboxes.submitCreate({
+      environment: DirectImage.prepared("fake-starter"),
+    });
+
+    await expect(operation.observe()).rejects.toMatchObject({
+      code: publicCode,
+      message: "provider rejected",
+      effect: "none",
+    });
+
+    await expect(operation.observe()).rejects.toMatchObject({ code: publicCode });
+  }
+
+  expect(dispatches).toBe(expected.length);
+});
+
 test("direct execution bounds provider output before decoding", async () => {
   const { url } = await fixture();
   const provider = await fakeProvider({ url, token });

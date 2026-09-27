@@ -66,6 +66,19 @@ export type DirectOptions = { provider: DirectProvider };
 
 type MutationKind = RecoveryReference["kind"];
 
+const providerErrorCodes = {
+  invalid: "INVALID_ARGUMENT",
+  unsupported: "UNSUPPORTED",
+  unauthorized: "UNAUTHENTICATED",
+  not_found: "NOT_FOUND",
+  conflict: "CONFLICT",
+  capacity: "CAPACITY",
+  rate_limit: "RATE_LIMIT",
+  unavailable: "UNAVAILABLE",
+  timeout: "TIMEOUT",
+  internal: "INTERNAL",
+} as const;
+
 function identity(): InvocationIdentity {
   const id = () => `sdk_${crypto.randomUUID().replaceAll("-", "")}`;
 
@@ -150,7 +163,13 @@ class DirectOperation<T> implements OperationHandle<T> {
           this.reference,
           "Observed rejection cannot prove the earlier submission had no effect",
         );
-      const error = new SandbarError(result.error.code.toUpperCase(), result.error.message, "none");
+
+      const error = new SandbarError(
+        providerErrorCodes[result.error.code],
+        result.error.message,
+        "none",
+      );
+
       this.settled = { error };
       throw error;
     }
