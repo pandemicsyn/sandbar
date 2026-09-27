@@ -1,3 +1,4 @@
+import { AdapterError } from "@sandbar/adapter";
 import { timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
@@ -19,6 +20,7 @@ import {
   ProjectPage,
   ProviderConnection,
   ProviderConnectionPage,
+  ProviderCatalog,
   Sandbox,
   SandboxListQuery,
   SandboxPage,
@@ -77,6 +79,12 @@ function safeError(code: string, message: string, effect: "none" | "possible" = 
 }
 
 function errorResponse(c: Context, error: Error | z.ZodError): Response {
+  if (error instanceof AdapterError)
+    return c.json(
+      ErrorResponse.parse({ error: safeError(error.code, "Adapter input or connection is invalid") }),
+      error.code === "UNAUTHENTICATED" ? 401 : error.code === "UNSUPPORTED" ? 422 : 400,
+    );
+
   if (error instanceof ProviderConfigurationError)
     return c.json(
       ErrorResponse.parse({ error: safeError("INVALID_ARGUMENT", "Invalid request") }),
@@ -627,6 +635,12 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       c.json(ProjectPage.parse({ items: await deps.store.listProjects() })),
     ),
   );
+  app.get(
+    "/v1/providers",
+    protect(deps, false, async (c) =>
+      c.json(ProviderCatalog.parse({ items: deps.registry?.catalog() ?? [] })),
+    ),
+  );
   app.post(
     "/v1/projects/:projectId/provider-connections",
     protect(deps, true, async (c) => {
@@ -635,20 +649,21 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       const id = `conn_${crypto.randomUUID().replaceAll("-", "")}`;
 
-      if (deps.registry)
-        deps.registry.validate(body.provider, {
-          credentials: body.credentials ?? {},
-          configuration: body.configuration ?? {},
-        });
-      else if (body.provider !== "fake" || body.credentials || body.configuration)
+      const validated = deps.registry
+        ? deps.registry.validate(body.provider, {
+            credentials: body.credentials ?? {},
+            configuration: body.configuration ?? {},
+          })
+        : { credentials: body.credentials ?? {}, configuration: body.configuration ?? {} };
+      if (!deps.registry && (body.provider !== "fake" || body.credentials || body.configuration))
         throw new SyntaxError("Provider is not configured");
 
       const encryptedCredentials = await deps.secrets.seal(
         "provider-connection",
         id,
         JSON.stringify({
-          credentials: body.credentials ?? {},
-          configuration: body.configuration ?? {},
+          credentials: validated.credentials,
+          configuration: validated.configuration,
         }),
       );
 

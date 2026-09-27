@@ -9,6 +9,10 @@ export const NativeScope = z
     resourceScope: z.object({ kind: z.literal("app"), id: z.string().min(1) }).optional(),
     region: z.string().optional(),
     endpoint: z.url().optional(),
+    adapterScope: z.strictObject({
+      authority: z.strictObject({ kind: z.string().min(1).max(64), id: z.string().min(1).max(512) }),
+      partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
+    }).optional(),
   })
   .refine(
     (value) => !!value.accountId !== !!value.resourceScope,
@@ -32,7 +36,8 @@ const sameScope = (left: z.infer<typeof NativeScope>, right: z.infer<typeof Nati
   left.resourceScope?.kind === right.resourceScope?.kind &&
   left.resourceScope?.id === right.resourceScope?.id &&
   left.region === right.region &&
-  left.endpoint === right.endpoint;
+  left.endpoint === right.endpoint &&
+  JSON.stringify(left.adapterScope) === JSON.stringify(right.adapterScope);
 
 export const InvocationIdentity = z.object({
   projectId: Id,

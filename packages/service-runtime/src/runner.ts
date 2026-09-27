@@ -1,3 +1,4 @@
+import { AdapterError, observeOperation, prepareOperation, submitOperation, type RuntimeResult } from "@sandbar/adapter";
 import type {
   ProviderDriver,
   ProviderLease,
@@ -14,6 +15,7 @@ import {
   ProviderConfigurationError,
   ProviderIdentityMismatchError,
   type ProviderRegistry,
+  type AdapterProviderLease,
 } from "./registry";
 import {
   normalizeCreate,
@@ -22,6 +24,10 @@ import {
   correlateDriverResult,
   captureBoundedOutput,
 } from "@sandbar/core";
+
+function isAdapterLease(lease: ProviderLease | AdapterProviderLease): lease is AdapterProviderLease {
+  return "adapterConnection" in lease;
+}
 
 export interface RunnerOptions {
   store: ControlStore;
@@ -94,7 +100,7 @@ export class DurableRunner {
   private async process(claim: Claimed): Promise<void> {
     const { store } = this.options;
     const op = claim.operation;
-    let lease: ProviderLease | undefined;
+    let lease: ProviderLease | AdapterProviderLease | undefined;
 
     try {
       const connection = await store.getConnection(op.project_id, op.connection_id);
@@ -132,6 +138,11 @@ export class DurableRunner {
       }
 
       const { driver, scope } = lease;
+
+      if (isAdapterLease(lease)) {
+        await this.processAdapter(claim, lease);
+        return;
+      }
 
       if (claim.observeOnly) {
         // This path is read only even when the claim follows a process crash.
@@ -290,6 +301,180 @@ export class DurableRunner {
       }
     }
   }
+  private async processAdapter(claim: Claimed, lease: AdapterProviderLease): Promise<void> {
+    const { store, secrets } = this.options;
+    const op = claim.operation;
+    const session = lease.adapterConnection.session;
+    const box = await store.getSandbox(op.project_id, op.sandbox_id);
+    if (!box) throw new Error("Sandbox record vanished");
+
+    if (claim.observeOnly) {
+      let token: { version: number; token: unknown } | undefined;
+      if (op.adapter_token_ciphertext) {
+        const plaintext = await secrets.open("adapter-recovery-token", op.id, op.adapter_token_ciphertext);
+        token = JSON.parse(plaintext);
+      }
+      const result = await observeOperation(session, op.kind, {
+        operationId: op.id,
+        submissionId: op.provider_token,
+        sandbox: op.kind === "create" ? undefined : box.native_id ? { id: box.native_id } : undefined,
+        token: token?.token as never,
+        version: token?.version,
+      }, lease.adapterConnection.signal);
+      await this.handleAdapterResult(claim, lease.scope, result);
+      return;
+    }
+
+    const key = await store.getInvocationKey(op.id);
+    if (!key) throw new Error("Durable invocation identity is missing");
+    if (op.kind !== "create" && !box.native_id) {
+      if (op.kind === "destroy" && await store.completeDestroyWithoutNative(claim)) return;
+      await store.reschedule(claim, "waiting_for_sandbox", 2_000);
+      return;
+    }
+
+    let input: unknown;
+    if (op.kind === "create") {
+      const plan = normalizeCreate(JSON.parse(op.request_json));
+      input = { image: plan.image, networkPolicy: plan.networkPolicy, region: plan.region, labels: plan.labels };
+    } else if (op.kind === "exec") {
+      const envelope = JSON.parse(op.request_json) as { encryptedRequest: string };
+      const plan = normalizeExec(JSON.parse(await secrets.open(
+        "execution-request", `${box.id}:${key}`, envelope.encryptedRequest,
+      )));
+      input = { sandbox: { id: box.native_id! }, ...plan };
+    } else if (op.kind === "file_write") {
+      const request = JSON.parse(op.request_json) as {
+        path: string; overwrite: boolean; encryptedBytes: string;
+      };
+      const base64 = await secrets.open("file-write-input", `${box.id}:${key}`, request.encryptedBytes);
+      input = {
+        sandbox: { id: box.native_id! },
+        path: request.path,
+        overwrite: request.overwrite,
+        bytes: Uint8Array.from(Buffer.from(base64, "base64")),
+      };
+    } else {
+      input = { id: box.native_id! };
+    }
+
+    let prepared;
+    try {
+      prepared = await prepareOperation(session, op.kind, input, lease.adapterConnection.signal);
+    } catch (error) {
+      if (error instanceof AdapterError && ["INVALID_ARGUMENT", "UNSUPPORTED", "CAPACITY", "CONFLICT"].includes(error.code)) {
+        await store.failWithoutEffect(claim, {
+          code: error.code,
+          message: "Adapter cannot prepare this request",
+          effect: "none",
+          retry: "never",
+        });
+      } else {
+        await store.reschedule(claim, "prepare_failed", 5_000, "ADAPTER_PREPARE_FAILED");
+      }
+      return;
+    }
+
+    if (!(await store.beginSubmission(claim))) return;
+    const result = await submitOperation(prepared, {
+      operationId: op.id,
+      submissionId: op.provider_token,
+      invocationKey: key,
+    }, lease.adapterConnection.signal,
+    op.kind === "exec" ? (input as { maxOutputBytes: number }).maxOutputBytes : undefined);
+    await this.handleAdapterResult(claim, lease.scope, result);
+  }
+
+  private async handleAdapterResult(
+    claim: Claimed,
+    scope: NativeScope,
+    result: RuntimeResult | null,
+  ): Promise<void> {
+    const { store, secrets } = this.options;
+    const op = claim.operation;
+    if (!result) {
+      await store.reschedule(claim, "outcome_unknown", 5_000, "NO_OBSERVATION");
+      return;
+    }
+    if (result.kind === "pending") {
+      const ciphertext = await secrets.seal(
+        "adapter-recovery-token", op.id,
+        JSON.stringify({ version: result.version, token: result.token }),
+      );
+      await store.reschedule(claim, "awaiting_observation", Math.max(500, result.pollAfterMs), undefined, true, ciphertext);
+      return;
+    }
+    if (result.kind === "unknown") {
+      await store.reschedule(claim, "outcome_unknown", 5_000, "ADAPTER_UNKNOWN");
+      return;
+    }
+    if (result.kind === "rejected") {
+      if (claim.observeOnly) {
+        await store.reschedule(claim, "outcome_unknown", 5_000, "UNCORRELATED_REJECTION");
+        return;
+      }
+      await store.failWithoutEffect(claim, {
+        code: result.code,
+        message: "Adapter rejected the request before acceptance",
+        effect: "none",
+        retry: "never",
+      }, true);
+      return;
+    }
+
+    const value = result.value;
+    const observedAt = new Date().toISOString();
+    let wrapped: DriverResult;
+    if (op.kind === "create" && "id" in value) {
+      wrapped = {
+        status: "completed", effect: "applied", submissionId: op.provider_token,
+        value: { kind: "sandbox", observation: {
+          ref: { kind: "sandbox", scope, nativeId: value.id },
+          state: value.state, observedAt,
+        } },
+      };
+    } else if (op.kind === "destroy" && "computeStopped" in value) {
+      wrapped = {
+        status: "completed", effect: value.computeStopped ? "applied" : "partial",
+        submissionId: op.provider_token,
+        value: { kind: "destroy", observation: {
+          sandbox: this.ref(scope, (await store.getSandbox(op.project_id, op.sandbox_id))!),
+          computeStopped: value.computeStopped,
+          retainedResources: value.retainedResources,
+        } },
+      };
+    } else if (op.kind === "exec" && "stdout" in value &&
+               value.stdout instanceof Uint8Array && value.stderr instanceof Uint8Array) {
+      const box = await store.getSandbox(op.project_id, op.sandbox_id);
+      if (!box) throw new Error("Sandbox record vanished");
+      const sandbox = this.ref(scope, box);
+      wrapped = {
+        status: "completed", effect: "applied", submissionId: op.provider_token,
+        value: { kind: "execution", observation: {
+          ref: { kind: "execution", scope, nativeId: op.provider_token },
+          sandbox, completed: true, exitCode: value.exitCode,
+          stdoutBase64: Buffer.from(value.stdout).toString("base64"),
+          stderrBase64: Buffer.from(value.stderr).toString("base64"),
+          truncated: value.truncated, observedAt,
+        } },
+      };
+    } else if (op.kind === "file_write" && "bytesWritten" in value) {
+      const box = await store.getSandbox(op.project_id, op.sandbox_id);
+      if (!box) throw new Error("Sandbox record vanished");
+      const request = JSON.parse(op.request_json) as { path: string; bytes: number };
+      wrapped = {
+        status: "completed", effect: "applied", submissionId: op.provider_token,
+        value: { kind: "file_write", observation: {
+          sandbox: this.ref(scope, box), path: request.path,
+          bytesWritten: value.bytesWritten, complete: value.bytesWritten === request.bytes,
+        } },
+      };
+    } else {
+      throw new Error("Adapter completion mismatches operation kind");
+    }
+    await this.handleResult(claim, wrapped, scope);
+  }
+
   private ref(scope: NativeScope, box: SandboxRow): SandboxRef {
     if (!box.native_id) throw new Error("Native identity unavailable");
 

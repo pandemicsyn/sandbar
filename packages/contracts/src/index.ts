@@ -363,17 +363,19 @@ export const Project = z.object({ id: Id, name: z.string(), createdAt: Rfc3339 }
 
 export const ProjectPage = z.object({ items: z.array(Project) });
 
+export const ProviderName = z.string().min(1).max(128).regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/);
+
 export const CreateProviderConnectionRequest = z.strictObject({
-  provider: z.enum(["fake", "daytona", "modal"]),
+  provider: ProviderName,
   name: z.string().min(1).max(120),
-  credentials: z.record(z.string(), z.string()).optional(),
-  configuration: z.record(z.string(), z.string()).optional(),
+  credentials: z.record(z.string(), z.json()).optional(),
+  configuration: z.record(z.string(), z.json()).optional(),
 });
 
 export const ProviderConnection = z.object({
   id: Id,
   projectId: Id,
-  provider: z.enum(["fake", "daytona", "modal"]),
+  provider: ProviderName,
   name: z.string(),
   status: z.enum(["unverified", "verified", "draining"]),
   nativeScope: z
@@ -382,6 +384,10 @@ export const ProviderConnection = z.object({
       resourceScope: z.object({ kind: z.literal("app"), id: z.string() }).optional(),
       region: z.string().optional(),
       endpoint: z.url().optional(),
+      adapterScope: z.object({
+        authority: z.object({ kind: z.string(), id: z.string() }),
+        partition: z.record(z.string(), z.string()),
+      }).optional(),
     })
     .optional(),
   capabilities: z
@@ -390,6 +396,15 @@ export const ProviderConnection = z.object({
 });
 
 export const ProviderConnectionPage = z.object({ items: z.array(ProviderConnection) });
+
+export const ProviderCatalog = z.object({
+  items: z.array(z.object({
+    name: ProviderName,
+    displayName: z.string().min(1).max(120),
+    configurationSchema: z.json(),
+    credentialsSchema: z.json(),
+  })),
+});
 
 export const SandboxListQuery = z.strictObject({
   cursor: z.string().max(256).optional(),

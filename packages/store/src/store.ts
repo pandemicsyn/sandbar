@@ -44,6 +44,7 @@ export interface ConnectionRow {
   scope: string | null;
   encrypted_credentials: string;
   credential_revision: number;
+  adapter_contract_version: number;
   status: string;
   created_at: number;
   updated_at: number;
@@ -79,6 +80,7 @@ export interface OperationRow {
   result_json: string | null;
   error_json: string | null;
   provider_token: string;
+  adapter_token_ciphertext: string | null;
   submission_possible: number;
   lease_owner: string | null;
   lease_generation: number;
@@ -982,6 +984,7 @@ export class ControlStore {
     delayMs: number,
     errorCode?: string,
     knownPending = false,
+    adapterTokenCiphertext?: string,
   ): Promise<void> {
     await this.backend.transaction(async (tx) => {
       const time = now();
@@ -995,7 +998,7 @@ export class ControlStore {
         return;
       const uncertain = !!Number(op.submission_possible);
       await tx.run(
-        sql`UPDATE operations SET status=${knownPending ? "running" : uncertain ? "unknown" : "queued"},phase=${phase},effect=${uncertain ? "possible" : "none"},lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=${time + delayMs},updated_at=${time} WHERE id=${op.id}`,
+        sql`UPDATE operations SET status=${knownPending ? "running" : uncertain ? "unknown" : "queued"},phase=${phase},effect=${uncertain ? "possible" : "none"},lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=${time + delayMs},adapter_token_ciphertext=${adapterTokenCiphertext ?? op.adapter_token_ciphertext},updated_at=${time} WHERE id=${op.id}`,
       );
 
       if (op.kind === "exec")

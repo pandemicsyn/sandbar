@@ -14,6 +14,7 @@ import {
   ProviderRegistry,
   SecretBox,
   type ProviderRegistration,
+  type InstalledAdapter,
 } from "@sandbar/service-runtime";
 import { FakeProviderDriver } from "@sandbar/provider-fake";
 import { daytonaRegistration, type DaytonaEndpointPair } from "@sandbar/provider-daytona";
@@ -30,6 +31,7 @@ export interface RuntimeConfig {
   fakeProviderUrl?: string;
   fakeProviderToken?: string;
   providerRegistrations?: ProviderRegistration[];
+  adapters?: readonly InstalledAdapter[];
   daytonaFetch?: typeof fetch;
   daytonaTrustedEndpoints?: DaytonaEndpointPair[];
   modalTransportFactory?: (options: ModalProviderOptions) => ModalTransport;
@@ -102,6 +104,11 @@ export async function openDomainRuntime(config: RuntimeConfig) {
       ? [
           {
             provider: "fake",
+            catalog: {
+              displayName: "Fake test provider",
+              configurationSchema: z.toJSONSchema(z.strictObject({})),
+              credentialsSchema: z.toJSONSchema(z.strictObject({})),
+            },
             validate(input) {
               if (Object.keys(input.credentials).length || Object.keys(input.configuration).length)
                 throw new z.ZodError([
@@ -134,7 +141,7 @@ export async function openDomainRuntime(config: RuntimeConfig) {
       createModalRegistration(config.modalTransportFactory),
       ...fakeRegistration,
       ...(config.providerRegistrations ?? []),
-    ]);
+    ], config.adapters);
 
     const runner = new DurableRunner({ store, registry, secrets });
 

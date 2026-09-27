@@ -9,6 +9,7 @@
     "check": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@sandbar/adapter": "workspace:*",
     "@sandbar/contracts": "workspace:*",
     "@sandbar/core": "workspace:*",
     "@sandbar/provider-spi": "workspace:*",

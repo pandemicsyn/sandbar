@@ -18,6 +18,7 @@ import {
   type Sandbox,
 } from "@sandbar/contracts";
 import { api, ApiError, setCsrfToken, type Connection, type Project } from "./api";
+import { SchemaFields, formFields, formObject, initialValues } from "./schema-form";
 import {
   AppShell,
   Button,
@@ -430,16 +431,26 @@ function ConnectionsPage() {
   const { projectId } = projectRoute.useParams();
   const connections = useResource(() => api.connections(projectId), projectId);
   const [name, setName] = useState("");
-  const [provider, setProvider] = useState<"fake" | "daytona" | "modal">("fake");
-  const [apiKey, setApiKey] = useState("");
-  const [target, setTarget] = useState("us");
-  const [apiUrl, setApiUrl] = useState("https://app.daytona.io/api");
-  const [toolboxOrigin, setToolboxOrigin] = useState("https://proxy.app.daytona.io");
-  const [tokenId, setTokenId] = useState("");
-  const [tokenSecret, setTokenSecret] = useState("");
-  const [appName, setAppName] = useState("");
-  const [environment, setEnvironment] = useState("main");
-  const [region, setRegion] = useState("");
+  const catalog = useResource(() => api.providers(), "provider-catalog");
+  const [provider, setProvider] = useState("");
+  const [configuration, setConfiguration] = useState<Record<string, string>>({});
+  const [credentials, setCredentials] = useState<Record<string, string>>({});
+  const [configurationJson, setConfigurationJson] = useState("{}");
+  const [credentialsJson, setCredentialsJson] = useState("");
+  useEffect(() => {
+    if (!provider && catalog.data?.items.length) setProvider(catalog.data.items[0]!.name);
+  }, [provider, catalog.data]);
+  const selectedProvider = catalog.data?.items.find((item) => item.name === provider);
+  const configurationFields = formFields(selectedProvider?.configurationSchema);
+  const credentialFields = formFields(selectedProvider?.credentialsSchema);
+  function selectProvider(next: string) {
+    const selected = catalog.data?.items.find((item) => item.name === next);
+    setProvider(next);
+    setConfiguration(initialValues(formFields(selected?.configurationSchema), false));
+    setCredentials({});
+    setConfigurationJson("{}");
+    setCredentialsJson("");
+  }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -451,40 +462,18 @@ function ConnectionsPage() {
     setNotice(undefined);
 
     try {
-      let input: z.infer<typeof CreateProviderConnectionRequest>;
-
-      if (provider === "fake") input = { provider, name: name.trim() };
-      else if (provider === "daytona")
-        input = {
-          provider,
-          name: name.trim(),
-          credentials: { apiKey },
-          configuration: { apiUrl, toolboxOrigin, target, ttlMinutes: "60" },
-        };
-      else {
-        const configuration = {
-          appName: appName.trim(),
-          environment: environment.trim(),
-          timeoutSeconds: "300",
-        };
-
-        const configuredRegion = region.trim();
-
-        input = {
-          provider,
-          name: name.trim(),
-          credentials: { tokenId, tokenSecret },
-          configuration: configuredRegion
-            ? { ...configuration, region: configuredRegion }
-            : configuration,
-        };
-      }
+      if (!selectedProvider) throw new Error("Choose an available provider");
+      const input: z.infer<typeof CreateProviderConnectionRequest> = {
+        provider: selectedProvider.name,
+        name: name.trim(),
+        configuration: formObject(configurationFields, configuration, configurationJson),
+        credentials: formObject(credentialFields, credentials, credentialsJson || "{}"),
+      };
 
       await api.createConnection(projectId, input);
       setName("");
-      setApiKey("");
-      setTokenId("");
-      setTokenSecret("");
+      setCredentials({});
+      setCredentialsJson("");
       setNotice("Connection added. Verify its native scope before creating a sandbox.");
       connections.refresh();
     } catch (reason) {
@@ -526,13 +515,14 @@ function ConnectionsPage() {
               className="select"
               id="connection-provider"
               value={provider}
-              onChange={(e) =>
-                setProvider(z.enum(["fake", "daytona", "modal"]).parse(e.target.value))
-              }
+              required
+              disabled={!catalog.data?.items.length}
+              onChange={(event) => selectProvider(event.target.value)}
             >
-              <option value="fake">Fake test provider</option>
-              <option value="daytona">Daytona</option>
-              <option value="modal">Modal</option>
+              {!provider && <option value="">Choose provider</option>}
+              {catalog.data?.items.map((item) => (
+                <option key={item.name} value={item.name}>{item.displayName}</option>
+              ))}
             </select>
           </Field>
           <Field label="Connection name" htmlFor="connection-name">
@@ -542,106 +532,33 @@ function ConnectionsPage() {
               required
               maxLength={80}
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(event) => setName(event.target.value)}
             />
           </Field>
-          {provider === "daytona" && (
+          {selectedProvider && (
             <>
-              <Field label="Daytona API key" htmlFor="connection-api-key">
-                <input
-                  className="input"
-                  id="connection-api-key"
-                  type="password"
-                  autoComplete="off"
-                  required
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                />
-              </Field>
-              <Field label="Daytona target" htmlFor="connection-target">
-                <input
-                  className="input"
-                  id="connection-target"
-                  required
-                  value={target}
-                  onChange={(e) => setTarget(e.target.value)}
-                />
-              </Field>
-              <Field label="Daytona API URL" htmlFor="connection-api-url">
-                <input
-                  className="input"
-                  id="connection-api-url"
-                  type="url"
-                  required
-                  value={apiUrl}
-                  onChange={(e) => setApiUrl(e.target.value)}
-                />
-              </Field>
-              <Field label="Daytona toolbox origin" htmlFor="connection-toolbox-origin">
-                <input
-                  className="input"
-                  id="connection-toolbox-origin"
-                  type="url"
-                  required
-                  value={toolboxOrigin}
-                  onChange={(e) => setToolboxOrigin(e.target.value)}
-                />
-              </Field>
+              <SchemaFields
+                fields={configurationFields}
+                values={configuration}
+                onChange={setConfiguration}
+                secret={false}
+                fallback={configurationJson}
+                onFallbackChange={setConfigurationJson}
+                prefix="connection-config"
+              />
+              <SchemaFields
+                fields={credentialFields}
+                values={credentials}
+                onChange={setCredentials}
+                secret
+                fallback={credentialsJson}
+                onFallbackChange={setCredentialsJson}
+                prefix="connection-secret"
+              />
             </>
           )}
-          {provider === "modal" && (
-            <>
-              <Field label="Modal token ID" htmlFor="connection-token-id">
-                <input
-                  className="input"
-                  id="connection-token-id"
-                  type="password"
-                  autoComplete="off"
-                  required
-                  value={tokenId}
-                  onChange={(e) => setTokenId(e.target.value)}
-                />
-              </Field>
-              <Field label="Modal token secret" htmlFor="connection-token-secret">
-                <input
-                  className="input"
-                  id="connection-token-secret"
-                  type="password"
-                  autoComplete="off"
-                  required
-                  value={tokenSecret}
-                  onChange={(e) => setTokenSecret(e.target.value)}
-                />
-              </Field>
-              <Field label="Existing Modal App" htmlFor="connection-app-name">
-                <input
-                  className="input"
-                  id="connection-app-name"
-                  required
-                  value={appName}
-                  onChange={(e) => setAppName(e.target.value)}
-                />
-              </Field>
-              <Field label="Modal environment" htmlFor="connection-environment">
-                <input
-                  className="input"
-                  id="connection-environment"
-                  required
-                  value={environment}
-                  onChange={(e) => setEnvironment(e.target.value)}
-                />
-              </Field>
-              <Field label="Modal region (optional)" htmlFor="connection-region">
-                <input
-                  className="input"
-                  id="connection-region"
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                />
-              </Field>
-            </>
-          )}
-          <Button variant="primary" busy={busy} type="submit">
+          {catalog.error && <Notice tone="error">{catalog.error}</Notice>}
+          <Button variant="primary" busy={busy} disabled={!selectedProvider} type="submit">
             Add connection
           </Button>
         </form>
@@ -758,19 +675,18 @@ function FleetPage() {
     setError(undefined);
 
     try {
-      if (connectionId && !selectedConnection)
-        throw new Error("Selected connection is no longer available. Refresh connections.");
+      if (!selectedConnection)
+        throw new Error("Select a verified connection before creating a sandbox.");
 
       const candidate: CreateSandboxRequest = {
         environment: {
           kind: "prepared" as const,
-          imageId:
-            selectedConnection?.provider === "fake" ? "fake-starter" : preparedImageId.trim(),
+          imageId: preparedImageId.trim(),
         },
         network: { policy: "blocked" as const },
       };
 
-      if (selectedConnection) candidate.connectionId = selectedConnection.id;
+      candidate.connectionId = selectedConnection.id;
 
       if (labelKey.trim()) candidate.labels = { [labelKey.trim()]: labelValue.trim() };
 
@@ -849,8 +765,7 @@ function FleetPage() {
             <div className="field">
               <span className="field-label">Blocked network</span>
               <span className="field-hint">
-                Daytona requires an existing active snapshot ID. OCI builds are not enabled in this
-                slice.
+                Enter a prepared image ID accepted by the selected provider. OCI builds are not enabled.
               </span>
             </div>
             <Field label="Connection" htmlFor="create-connection">
@@ -858,9 +773,10 @@ function FleetPage() {
                 className="select"
                 id="create-connection"
                 value={connectionId}
+                required
                 onChange={(e) => setConnectionId(e.target.value)}
               >
-                <option value="">Project default</option>
+                <option value="">Choose a verified connection</option>
                 {available.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -868,23 +784,15 @@ function FleetPage() {
                 ))}
               </select>
             </Field>
-            {selectedConnection?.provider !== "fake" && (
-              <Field label="Prepared image ID" htmlFor="create-prepared-image">
-                <input
-                  className="input"
-                  id="create-prepared-image"
-                  required
-                  value={preparedImageId}
-                  onChange={(e) => setPreparedImageId(e.target.value)}
-                />
-                {!connectionId && (
-                  <span className="field-hint">
-                    Enter an active Daytona snapshot ID or existing Modal im- image ID; fake-starter
-                    is the fake default.
-                  </span>
-                )}
-              </Field>
-            )}
+            <Field label="Prepared image ID" htmlFor="create-prepared-image">
+              <input
+                className="input"
+                id="create-prepared-image"
+                required
+                value={preparedImageId}
+                onChange={(e) => setPreparedImageId(e.target.value)}
+              />
+            </Field>
             <Field label="Label key (optional)" htmlFor="create-label-key">
               <input
                 className="input"

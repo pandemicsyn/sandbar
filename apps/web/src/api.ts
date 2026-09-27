@@ -14,6 +14,7 @@ import {
   ProjectPage,
   ProviderConnection,
   ProviderConnectionPage,
+  ProviderCatalog,
   Sandbox,
   SandboxPage,
   SessionResponse,
@@ -146,6 +147,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(CreateProjectRequest.parse({ name })),
     }),
+  providers: () => request("/v1/providers", ProviderCatalog),
   connections: (projectId: string) =>
     request(`${base(projectId)}/provider-connections`, ProviderConnectionPage),
   createConnection: (projectId: string, input: z.infer<typeof CreateProviderConnectionRequest>) =>

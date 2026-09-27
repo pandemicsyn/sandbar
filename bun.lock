@@ -30,6 +30,7 @@
     "apps/server": {
       "name": "@sandbar/server",
       "dependencies": {
+        "@sandbar/adapter": "workspace:*",
         "@sandbar/contracts": "workspace:*",
         "@sandbar/core": "workspace:*",
         "@sandbar/provider-daytona": "workspace:*",
@@ -152,6 +153,7 @@
     "packages/service-runtime": {
       "name": "@sandbar/service-runtime",
       "dependencies": {
+        "@sandbar/adapter": "workspace:*",
         "@sandbar/contracts": "workspace:*",
         "@sandbar/core": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",

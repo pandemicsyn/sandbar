@@ -84,10 +84,10 @@ export type Guarantees<C extends Command["kind"] = Command["kind"]> = {
   exec?: { commands: readonly C[]; maxOutputBytes: number };
   fileWrite?: { overwrite: boolean };
 };
-export type AdapterSession<CP = CreateInput, DP = Sandbox, EP = ExecInput, WP = FileWriteInput, C extends Command["kind"] = Command["kind"]> = {
+export type AdapterSession<CP = CreateInput, DP = Sandbox, EP = ExecInput, WP = FileWriteInput, C extends Command["kind"] = Command["kind"], CT extends Json = Json> = {
   scope: Scope;
   supports: Guarantees<C>;
-  create: Mutation<CreateInput, CreateValue, CP, Json, undefined>;
+  create: Mutation<CreateInput, CreateValue, CP, CT, undefined>;
   destroy: Mutation<Sandbox, DestroyValue, DP, Json, Sandbox>;
   inspect?: (box: Sandbox, ctx: ReadContext) => Promise<{ id: string; state: "running" | "destroyed" | "unknown" } | null>;
   exec?: Mutation<ExecInput<NoInfer<C>>, ExecValue, EP, Json, Sandbox>;
@@ -109,11 +109,12 @@ export function defineAdapter<
   C extends z.ZodType,
   K extends z.ZodType,
   Cmd extends Command["kind"],
+  CT extends Json,
   CP = CreateInput,
   DP = Sandbox,
   EP = ExecInput,
   WP = FileWriteInput,
->(definition: AdapterDefinition<C, K, AdapterSession<CP, DP, EP, WP, Cmd>>): AdapterDefinition<C, K, AdapterSession<CP, DP, EP, WP, Cmd>> {
+>(definition: AdapterDefinition<C, K, AdapterSession<CP, DP, EP, WP, Cmd, CT>>): AdapterDefinition<C, K, AdapterSession<CP, DP, EP, WP, Cmd, CT>> {
   ProviderName.parse(definition.name);
   return Object.freeze(definition);
 }
@@ -271,3 +272,13 @@ export {
   observeOperation,
 } from "./runtime";
 export type { OperationKind, PreparedOperation, RuntimeResult } from "./runtime";
+
+export function validateAdapterConfiguration<C extends z.ZodType, K extends z.ZodType>(
+  definition: Pick<AdapterDefinition<C, K>, "config" | "credentials">,
+  input: { configuration: unknown; credentials: unknown },
+): { configuration: z.output<C>; credentials: z.output<K> } {
+  return {
+    configuration: parseBoundedSchema(definition.config, input.configuration, "configuration"),
+    credentials: parseBoundedSchema(definition.credentials, input.credentials, "credentials"),
+  };
+}

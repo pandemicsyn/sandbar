@@ -76,14 +76,14 @@ function identity() {
   const id = () => `sdk_${crypto.randomUUID().replaceAll("-", "")}`;
   return { operationId: id(), submissionId: id(), invocationKey: newInvocationKey() };
 }
-function asUnknown(ref: AdapterRecoveryReference, reason?: string): OutcomeUnknownError {
-  return new OutcomeUnknownError(ref as never, reason);
+function asUnknown(ref: AdapterRecoveryReference, reason?: string): OutcomeUnknownError<AdapterRecoveryReference> {
+  return new OutcomeUnknownError(ref, reason);
 }
 function unsupported(feature: string): never {
   throw new SandbarError("UNSUPPORTED", `${feature} is unsupported`);
 }
 function abortWaiting(ref: AdapterRecoveryReference, reason: unknown): never {
-  throw new WaitAbortedError(ref as never, reason);
+  throw new WaitAbortedError(ref, reason);
 }
 function assertSignal(signal?: AbortSignal) {
   if (signal?.aborted)

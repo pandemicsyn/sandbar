@@ -1,3 +1,4 @@
+import type { AdapterRecoveryReference } from "./adapter-direct";
 import { z } from "zod";
 import {
   CreateSandboxRequest,
@@ -114,9 +115,9 @@ export class SandbarError extends Error {
   }
 }
 
-export class OutcomeUnknownError extends SandbarError {
+export class OutcomeUnknownError<R extends RecoveryReference | AdapterRecoveryReference = RecoveryReference> extends SandbarError {
   constructor(
-    readonly reference: RecoveryReference,
+    readonly reference: R,
     message = "Outcome unknown; observe this reference without resubmitting",
   ) {
     super("OUTCOME_UNKNOWN", message, "possible");
@@ -124,10 +125,10 @@ export class OutcomeUnknownError extends SandbarError {
   }
 }
 
-export class WaitAbortedError extends SandbarError {
+export class WaitAbortedError<R extends RecoveryReference | AdapterRecoveryReference = RecoveryReference> extends SandbarError {
   readonly cause: unknown;
   constructor(
-    readonly reference: RecoveryReference,
+    readonly reference: R,
     reason: AbortSignal["reason"],
   ) {
     super(
@@ -360,7 +361,9 @@ export function sameScope(a: NativeScope, b: NativeScope): boolean {
     a.provider === b.provider &&
     a.connectionId === b.connectionId &&
     a.accountId === b.accountId &&
-    a.region === b.region
+    a.region === b.region &&
+    a.endpoint === b.endpoint &&
+    JSON.stringify(a.adapterScope) === JSON.stringify(b.adapterScope)
   );
 }
 

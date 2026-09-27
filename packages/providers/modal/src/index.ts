@@ -107,6 +107,11 @@ export function createModalRegistration(
 
   return {
     provider: "modal" as const,
+    catalog: {
+      displayName: "Modal",
+      configurationSchema: z.toJSONSchema(Configuration),
+      credentialsSchema: z.toJSONSchema(Credentials),
+    },
     validate,
     async connect(input: {
       connectionId: string;

@@ -945,6 +945,11 @@ export function daytonaRegistration(
 ) {
   return {
     provider: "daytona" as const,
+    catalog: {
+      displayName: "Daytona",
+      configurationSchema: z.toJSONSchema(Input.shape.configuration, { io: "input", unrepresentable: "any" }),
+      credentialsSchema: z.toJSONSchema(Input.shape.credentials),
+    },
     validate(input: {
       credentials: Record<string, string>;
       configuration: Record<string, string>;
