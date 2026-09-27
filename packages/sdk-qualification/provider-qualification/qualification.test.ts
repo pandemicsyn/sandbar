@@ -25,6 +25,25 @@ async function ledger(checkpoint?: ConstructorParameters<typeof LedgerStore>[2])
   return store;
 }
 
+test("private ledger retains nonsecret connection routing for crash cleanup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-qualification-test-"));
+  directories.push(directory);
+  const runId = crypto.randomUUID();
+  const store = new LedgerStore(directory, runId);
+  await store.initialize(
+    "modal",
+    { kind: "borrowed-prepared", class: "prepared" },
+    { appName: "fixture-app", environment: "test", region: "us", timeoutSeconds: 300 },
+  );
+  const reopened = new LedgerStore(directory, runId);
+  expect((await reopened.read()).connection).toEqual({
+    appName: "fixture-app",
+    environment: "test",
+    region: "us",
+    timeoutSeconds: 300,
+  });
+});
+
 const reference = {
   version: 2,
   mode: "direct",
@@ -340,10 +359,11 @@ test("a failed exercise still destroys and confirms its one owned sandbox", asyn
     (onReference) => Sandbar.connect({ adapter, config: {}, credentials: {}, onReference }),
     store,
     "borrowed-image",
-    { network: "blocked", cleanupWaitMs: 0 },
+    { network: "blocked", cleanupWaitMs: 0, selectedScenarios: new Set(["inspect", "exec-argv"]) },
   );
 
   expect(steps.find((step) => step.scenario === "exec-argv")?.status).toBe("failed");
+  expect(steps.find((step) => step.scenario === "exec-shell")?.status).toBe("not-run");
   expect(steps.find((step) => step.scenario === "confirm-cleanup")?.status).toBe("passed");
   expect(destroys).toBe(1);
   expect((await store.read()).cleanup).toBe("confirmed");

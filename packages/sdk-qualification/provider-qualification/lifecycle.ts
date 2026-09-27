@@ -41,7 +41,13 @@ export async function runPrepared(
   factory: ConnectionFactory,
   ledger: LedgerStore,
   imageId: string,
-  options: { network: string; region?: string; cleanupWaitMs?: number; signal?: AbortSignal },
+  options: {
+    network: string;
+    region?: string;
+    cleanupWaitMs?: number;
+    signal?: AbortSignal;
+    selectedScenarios?: ReadonlySet<Scenario>;
+  },
 ): Promise<Step[]> {
   const steps: Step[] = [];
   let client: AdapterDirectClient | undefined;
@@ -49,6 +55,18 @@ export async function runPrepared(
   let createFailed = false;
 
   const step = async (scenario: Scenario, work: () => Promise<void>) => {
+    if (
+      options.selectedScenarios &&
+      !options.selectedScenarios.has(scenario) &&
+      scenario !== "connect" &&
+      scenario !== "create-prepared" &&
+      scenario !== "close"
+    ) {
+      steps.push({ scenario, status: "not-run", issue: "not-selected" });
+
+      return;
+    }
+
     if (options.signal?.aborted && scenario !== "close") {
       steps.push({ scenario, status: "blocked", issue: "interrupted" });
 

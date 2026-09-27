@@ -12,6 +12,14 @@ const ledgerSchema = z.strictObject({
     kind: z.enum(["borrowed-prepared", "owned-built"]),
     class: z.string().min(1).max(80),
   }),
+  connection: z
+    .strictObject({
+      appName: z.string().min(1).max(128),
+      environment: z.string().min(1).max(128),
+      region: z.string().min(1).max(128),
+      timeoutSeconds: z.number().int().min(60).max(3600),
+    })
+    .optional(),
   createIntent: z.boolean(),
   createReference: z.unknown().optional(),
   destroyReference: z.unknown().optional(),
@@ -59,7 +67,11 @@ export class LedgerStore {
     return value;
   }
 
-  async initialize(provider: RunLedger["provider"], image: RunLedger["image"]): Promise<void> {
+  async initialize(
+    provider: RunLedger["provider"],
+    image: RunLedger["image"],
+    connection?: RunLedger["connection"],
+  ): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const directoryInfo = await lstat(dirname(this.path));
 
@@ -80,6 +92,7 @@ export class LedgerStore {
           provider,
           createdAt: new Date().toISOString(),
           image,
+          connection,
           createIntent: false,
           cleanup: "pending",
         }),
