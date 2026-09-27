@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import type { RuntimeSession } from "sandbar-adapter";
 import { fileURLToPath } from "node:url";
-import { openDomainRuntime } from "@sandbar/server/runtime";
+import { openDomainRuntime } from "../../../apps/server/src/runtime";
 
 /** Trusted installed code; connections only supply validated JSON configuration and credentials. */
 export type ServiceAdapter = {
