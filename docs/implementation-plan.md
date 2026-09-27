@@ -23,6 +23,10 @@ Direct mode requires no Hono, Drizzle, database, hidden service or synthetic pro
 
 Exit criteria: packed SDK imports work in separately tested Node/Bun consumers; equivalent resource flows pass direct and HTTP tests; uncertainty/recovery is honest; the direct dependency graph excludes service storage; existing service tests remain passing.
 
+## Public documentation deliverable
+
+`apps/docs` implements the development Astro/Starlight site for `https://sandbarsdk.dev`. It targets Cloudflare Workers Static Assets after launch approval. Its direct and remote quickstarts run against the independent fake provider; its HTTP index is generated from the executable OpenAPI contract. `bun run docs:check` validates content, examples and static output. See the [site plan](documentation-site.md) for publication boundaries and remaining launch work.
+
 ## Phase 0: scaffold the selected stack and qualify persistence
 
 - Review the proposed resource boundaries and three-language golden flows together.

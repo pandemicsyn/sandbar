@@ -1,0 +1,35 @@
+---
+const title = 'Sandbar | One sandbox API, two ways to run it';
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Sandbar development documentation: a provider-neutral sandbox API with direct TypeScript and an optional self-hosted service." />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="canonical" href="https://sandbarsdk.dev/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>{title}</title>
+    <style>
+      :root{font-family:ui-sans-serif,system-ui,sans-serif;color:oklch(0.94 0.01 230);background:oklch(0.16 0.025 230);font-synthesis:none}*{box-sizing:border-box}body{margin:0;min-width:320px}a{color:inherit}a:focus-visible{outline:3px solid oklch(0.77 0.16 185);outline-offset:4px}.wrap{max-width:1260px;margin:auto;padding:0 clamp(20px,4vw,64px)}header{display:flex;align-items:center;justify-content:space-between;padding-top:24px;padding-bottom:24px;border-bottom:1px solid oklch(0.35 0.03 230)}.logo{display:flex;gap:12px;align-items:center;text-decoration:none;font-weight:800;font-size:22px;letter-spacing:-.03em}.logo img{width:32px}nav{display:flex;gap:24px;align-items:center}nav a{text-decoration:none;color:oklch(0.8 0.02 230)}nav a:hover{color:white}.status{display:inline-flex;border:1px solid oklch(0.55 0.07 185);border-radius:999px;color:oklch(0.86 0.08 185);padding:8px 14px;font-size:13px}.hero{padding-top:clamp(74px,12vw,180px);padding-bottom:clamp(80px,12vw,156px);display:grid;grid-template-columns:1.15fr .85fr;gap:clamp(36px,5vw,90px);align-items:end}.hero h1{font-size:clamp(3.4rem,6.6vw,6rem);line-height:1.02;letter-spacing:-.035em;text-wrap:balance;margin:25px 0}.hero p{max-width:55ch;color:oklch(0.82 0.02 230);font-size:clamp(1.1rem,1.65vw,1.35rem);line-height:1.65}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:35px}.button{display:inline-flex;min-height:48px;align-items:center;padding:0 20px;border-radius:8px;background:oklch(0.77 0.16 185);color:oklch(0.12 0.03 230);font-weight:750;text-decoration:none}.button.alt{background:transparent;color:oklch(0.95 0.01 230);border:1px solid oklch(0.62 0.02 230)}.button:hover{filter:brightness(1.1)}.terminal{background:oklch(0.12 0.017 230);border:1px solid oklch(0.35 0.03 230);border-radius:12px;overflow:hidden;box-shadow:0 8px 0 oklch(0.10 0.01 230)}.terminal-top{padding:15px 21px;border-bottom:1px solid oklch(0.3 0.02 230);display:flex;justify-content:space-between;color:oklch(0.72 0.02 230);font-size:13px}.terminal pre{padding:24px;overflow:auto;font:14px/1.75 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.cyan{color:oklch(0.78 0.15 185)}.yellow{color:oklch(0.83 0.13 85)}.modes{background:oklch(0.95 0.01 230);color:oklch(0.18 0.03 230);padding-top:clamp(64px,8vw,108px);padding-bottom:clamp(80px,10vw,136px)}.modes h2{font-size:clamp(2.3rem,4vw,4rem);letter-spacing:-.03em;line-height:1.1;max-width:18ch;margin:0 0 45px}.mode-list{display:grid;grid-template-columns:1fr 1fr;border-top:2px solid currentColor}.mode{padding:30px 38px 0 0}.mode+ .mode{border-left:1px solid oklch(0.7 0.02 230);padding-left:38px}.mode h3{font-size:1.55rem;margin:0}.mode p{line-height:1.65;max-width:52ch;color:oklch(0.38 0.03 230)}.mode a{font-weight:700;text-underline-offset:5px}.foot{padding-top:35px;padding-bottom:35px;color:oklch(0.75 0.02 230);font-size:14px}.foot a{text-underline-offset:4px}@media(max-width:800px){.hero{grid-template-columns:1fr;padding-top:64px}.terminal{max-width:100%}.mode-list{grid-template-columns:1fr}.mode+.mode{border-left:0;border-top:1px solid oklch(0.7 0.02 230);padding-left:0;margin-top:28px;padding-top:28px}nav{gap:12px;font-size:14px}}
+    </style>
+  </head>
+  <body>
+    <header class="wrap"><a class="logo" href="/"><img src="/favicon.svg" alt="" />Sandbar</a><nav aria-label="Main navigation"><a href="/docs/">Documentation</a><a href="https://github.com/pandemicsyn/sandbar">Source</a></nav></header>
+    <main>
+      <section class="hero wrap"><div><span class="status">Development documentation · fake provider only</span><h1>A sandbox API with room to choose.</h1><p>Create, inspect, execute, transfer bytes, and clean up through a consistent TypeScript resource flow. Call a driver in your server process or connect to a service you run.</p><div class="actions"><a class="button" href="/docs/direct-quickstart/">Start with TypeScript →</a><a class="button alt" href="/docs/service-quickstart/">Run the service →</a></div></div><div class="terminal" aria-label="Example TypeScript code"><div class="terminal-top"><span>resource-flow.ts</span><span>TypeScript</span></div><pre><code>{`const box = await sandbar.sandboxes.create({
+  environment: Image.prepared('fake-starter')
+});
+
+await box.writeFile('/input.bin', bytes);
+const result = await box.exec({
+  command: { kind: 'argv', argv: ['fixture', 'hello'] }
+});
+
+await box.destroy();`}</code></pre></div></section>
+      <section class="modes"><div class="wrap"><h2>Run close to your code or operate a service.</h2><div class="mode-list"><article class="mode"><h3>Direct TypeScript</h3><p>Configure a provider driver in a server-side Node.js or Bun process. No Sandbar service or database sits in the call path. Recovery evidence depends on the provider and your saved reference.</p><a href="/docs/direct-quickstart/">Read the direct quickstart →</a></article><article class="mode"><h3>Self-hosted service</h3><p>Run the Bun/Hono API with SQLite or MySQL and a management UI. The service owns operation admission, project scope and reconciliation for remote clients.</p><a href="/docs/service-quickstart/">Read the service quickstart →</a></article></div></div></section>
+    </main>
+    <footer class="foot wrap">Sandbar is under development. <a href="/docs/providers/support/">See the verified support matrix</a>.</footer>
+  </body>
+</html>

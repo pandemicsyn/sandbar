@@ -16,7 +16,8 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test": "bun run build:packages && bun test",
-    "build": "bun run build:packages && bun run --filter '@sandbar/web' build && bun run --filter '@sandbar/server' build",
+    "build": "bun run build:packages && bun run --filter '@sandbar/web' build && bun run --filter '@sandbar/server' build && bun run --cwd apps/docs build",
+    "docs:check": "bun run build:packages && bun run --cwd apps/docs check && bun run --cwd apps/docs reference:check && bun run --cwd apps/docs build && bun run --cwd apps/docs examples:test",
     "package:smoke": "bun run build:packages && bun packages/sdk-qualification/package-smoke.mjs",
     "dev": "bun run build:packages && bun --watch apps/server/src/index.ts",
     "start": "bun apps/server/dist/index.js"

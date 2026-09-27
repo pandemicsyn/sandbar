@@ -1,0 +1,33 @@
+:root {
+  --sl-color-accent-low: #123d3c;
+  --sl-color-accent: #44c9b6;
+  --sl-color-accent-high: #a4efe0;
+  --sl-color-bg: #112633;
+  --sl-color-bg-nav: #112633;
+  --sl-color-bg-sidebar: #10212b;
+}
+:root[data-theme="light"] {
+  --sl-color-accent-low: #d3f5ee;
+  --sl-color-accent: #006e63;
+  --sl-color-accent-high: #0b3f3c;
+  --sl-color-bg: #f7f9fa;
+  --sl-color-bg-nav: #f7f9fa;
+  --sl-color-bg-sidebar: #eff4f5;
+}
+:root {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+.sl-markdown-content {
+  line-height: 1.72;
+}
+.sl-markdown-content p,
+.sl-markdown-content li {
+  max-width: 75ch;
+}
+.sl-markdown-content pre {
+  max-height: 36rem;
+}
+:focus-visible {
+  outline: 3px solid #43cbb7;
+  outline-offset: 3px;
+}
