@@ -75,6 +75,19 @@ try {
 
   const paths = JSON.parse(readFileSync(join(temporary, "scripts/release-packages.json"), "utf8"));
 
+  const workspacePaths = Object.keys(
+    Bun.JSONC.parse(readFileSync(join(temporary, "bun.lock"), "utf8")).workspaces,
+  );
+
+  const privateBefore = new Map(
+    workspacePaths
+      .filter((path) => path && !paths.includes(path))
+      .map((path) => [
+        path,
+        JSON.parse(readFileSync(join(temporary, path, "package.json"), "utf8")),
+      ]),
+  );
+
   for (const path of paths) {
     const file = join(temporary, path, "package.json");
     const manifest = JSON.parse(readFileSync(file, "utf8"));
@@ -92,6 +105,21 @@ try {
   }
 
   if (!sdkName) throw new Error("Fixture release graph has no SDK");
+
+  const emptyStatus = join(temporary, "empty-changeset-status.json");
+
+  writeFileSync(
+    emptyStatus,
+    JSON.stringify({ releases: [{ name: "private-fixture", type: "none" }] }),
+  );
+
+  const noChange = spawnSync("node", ["scripts/assert-pending-changesets.mjs", emptyStatus], {
+    cwd: temporary,
+    encoding: "utf8",
+  });
+
+  if (noChange.status === 0 || !noChange.stderr.includes("No publishable package releases"))
+    throw new Error("Version preparation accepted a no-change/private-only status");
 
   run("bun", ["scripts/refresh-workspace-lock.mjs"]);
 
@@ -111,6 +139,14 @@ try {
   run("bun", ["scripts/refresh-workspace-lock.mjs"]);
   run("bun", ["install", "--frozen-lockfile"]);
   run("bun", ["scripts/release.mjs", "check"]);
+
+  for (const [path, oldManifest] of privateBefore) {
+    const current = JSON.parse(readFileSync(join(temporary, path, "package.json"), "utf8"));
+
+    if (current.private !== oldManifest.private || current.version !== oldManifest.version)
+      throw new Error(`Private workspace was versioned: ${path}`);
+  }
+
   const stableArtifacts = join(temporary, "stable-artifacts");
 
   run("bun", ["scripts/release.mjs", "dry-run"], temporary, { RELEASE_ARTIFACTS: stableArtifacts });
@@ -210,6 +246,27 @@ if (args[1] === "view") {
 
   rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
   run("bun", ["scripts/release.mjs", "publish"], temporary, publishEnv);
+
+  const metadataPath = join(stableArtifacts, "release-metadata.json");
+  const originalMetadata = readFileSync(metadataPath, "utf8");
+  const changedMetadata = { ...qualified, notesHash: "wrong-notes-fixture" };
+
+  writeFileSync(metadataPath, JSON.stringify(changedMetadata));
+  rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
+
+  const wrongArtifact = spawnSync("bun", ["scripts/release.mjs", "publish"], {
+    cwd: temporary,
+    env: { ...process.env, ...publishEnv },
+    encoding: "utf8",
+  });
+
+  if (
+    wrongArtifact.status === 0 ||
+    !wrongArtifact.stderr.includes("differ from the qualified dry run")
+  )
+    throw new Error("Mismatched qualified release metadata was not rejected");
+
+  writeFileSync(metadataPath, originalMetadata);
 
   const conflicting = {
     ...published,
