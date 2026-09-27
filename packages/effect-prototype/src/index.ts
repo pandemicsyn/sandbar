@@ -108,6 +108,10 @@ export class EffectCreateClient {
   private readonly closeController = new AbortController();
   private readonly runtime: ManagedRuntime.ManagedRuntime<Provider, never>;
   private readonly decoder: DirectClient;
+  private readonly completed = new Map<string, DriverResult>();
+  private readonly completedFinalizer = new FinalizationRegistry<string>((submissionId) => {
+    this.completed.delete(submissionId);
+  });
   private closed = false;
   readonly sandboxes = {
     create: (input: CreateInput, options: CreateOptions = {}) => this.create(input, options),
@@ -133,7 +137,36 @@ export class EffectCreateClient {
         ),
       ),
     );
-    this.decoder = new DirectClient(options);
+
+    // Reuse the existing direct handle decoder with the already correlated CREATE
+    // completion. It must not rediscover a handle that was returned successfully.
+    const source = options.provider.driver;
+
+    const driver: ProviderDriver = {
+      name: source.name,
+      capabilities: (scope) => source.capabilities(scope),
+      prepare: (input) => source.prepare(input),
+      create: (input) => source.create(input),
+      inspect: (ref) => source.inspect(ref),
+      inventory: (input) => source.inventory(input),
+      exec: (input) => source.exec(input),
+      readFile: (input) => source.readFile(input),
+      writeFile: (input) => source.writeFile(input),
+      destroy: (input) => source.destroy(input),
+      observe: (request) => {
+        const cached = this.completed.get(request.submissionId);
+
+        if (cached && sameNativeScope(request.scope, this.scope)) {
+          this.completed.delete(request.submissionId);
+
+          return Promise.resolve(cached);
+        }
+
+        return source.observe(request);
+      },
+    };
+
+    this.decoder = new DirectClient({ provider: { driver, scope: this.scope } });
   }
 
   ensureOpen() {
@@ -386,26 +419,25 @@ export class EffectCreateClient {
       throw new OutcomeUnknownError(reference, "Provider returned a non-sandbox completion");
 
     // Delay reuse of non-CREATE methods until the caller actually needs them.
-    return new PrototypeSandbox(this.decoder, reference, result.value.observation.ref);
+    const sandbox = new PrototypeSandbox(this.decoder, reference, result.value.observation.ref);
+    this.completed.set(reference.submissionId!, {
+      ...result,
+      submissionId: reference.submissionId!,
+    });
+    this.completedFinalizer.register(sandbox, reference.submissionId!);
+
+    return sandbox;
   }
 
   wait(
-    reference: RecoveryReference,
-    first: DriverResult | undefined,
+    observe: () => Promise<SandboxHandle | null>,
     options: { signal?: AbortSignal; pollMs?: number },
   ): Promise<SandboxHandle> {
     const pollMs = options.pollMs ?? 500;
 
     if (!Number.isSafeInteger(pollMs) || pollMs < 50 || pollMs > 60_000)
       return Promise.reject(new RangeError("Invalid pollMs"));
-    let initial = first;
-
-    const program = pollReadOnly(() => {
-      const current = initial;
-      initial = undefined;
-
-      return fromDriver(() => this.observation(reference, current, options.signal));
-    }, pollMs);
+    const program = pollReadOnly(() => fromDriver(observe), pollMs);
 
     return this.run(program, options.signal);
   }
@@ -414,6 +446,7 @@ export class EffectCreateClient {
     if (this.closed) return;
     this.closed = true;
     this.closeController.abort(new SandbarError("CLIENT_CLOSED", "Client is closed"));
+    this.completed.clear();
     await this.decoder.close();
     await this.runtime.dispose();
   }
@@ -443,7 +476,9 @@ class PrototypeSandbox implements SandboxHandle {
     this.id = this.ref.nativeId;
   }
   private resolve(): Promise<SandboxHandle> {
-    return (this.materialized ??= this.decoder.recover(this.reference).then(async (operation) => {
+    if (this.materialized) return this.materialized;
+
+    const pending = this.decoder.recover(this.reference).then(async (operation) => {
       // SAFETY: a validated direct CREATE reference decodes to the baseline SandboxHandle.
       const box = (await operation.wait()) as SandboxHandle;
 
@@ -454,7 +489,16 @@ class PrototypeSandbox implements SandboxHandle {
         );
 
       return box;
-    }));
+    });
+
+    const retriable = pending.catch((error) => {
+      if (this.materialized === retriable) this.materialized = undefined;
+      throw error;
+    });
+
+    this.materialized = retriable;
+
+    return retriable;
   }
   async inspect() {
     return (await this.resolve()).inspect();
@@ -488,6 +532,7 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
   readonly reference: RecoveryReference;
   private first?: DriverResult;
   private settled?: { value: SandboxHandle } | { error: unknown };
+  private observing?: Promise<SandboxHandle | null>;
   constructor(
     private readonly client: EffectCreateClient,
     reference: RecoveryReference,
@@ -505,22 +550,43 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
       return this.settled.value;
     }
 
+    if (this.observing) return this.observing;
+
     const first = this.first;
     this.first = undefined;
 
-    try {
-      const value = await this.client.observation(this.reference, first);
+    const observation = this.client
+      .observation(this.reference, first)
+      .then((value) => {
+        if (value) this.settled = { value };
 
-      if (value) this.settled = { value };
+        return value;
+      })
+      .catch((error) => {
+        if (error instanceof SandbarError) this.settleTerminalError(error);
+        throw error;
+      });
 
-      return value;
-    } catch (error) {
-      if (error instanceof SandbarError) this.settleTerminalError(error);
-      throw error;
-    }
+    // Only the local submission response is single-use. Read-only discovery may
+    // hang after a caller aborts, so later observations must be able to retry.
+    if (first === undefined) return observation;
+
+    this.observing = observation.finally(() => {
+      this.observing = undefined;
+    });
+
+    return this.observing;
   }
   async wait(options: { signal?: AbortSignal; pollMs?: number } = {}): Promise<SandboxHandle> {
     this.client.ensureOpen();
+
+    const pollMs = options.pollMs ?? 500;
+
+    if (!Number.isSafeInteger(pollMs) || pollMs < 50 || pollMs > 60_000)
+      throw new RangeError("Invalid pollMs");
+
+    if (options.signal?.aborted)
+      throw options.signal.reason ?? new DOMException("Aborted", "AbortError");
 
     if (this.settled) {
       if ("error" in this.settled) throw this.settled.error;
@@ -528,11 +594,9 @@ class EffectCreateOperation implements OperationHandle<SandboxHandle> {
       return this.settled.value;
     }
 
-    const first = this.first;
-    this.first = undefined;
-
     try {
-      const value = await this.client.wait(this.reference, first, options);
+      const value = await this.client.wait(() => this.observe(), options);
+
       this.settled = { value };
 
       return value;

@@ -20,6 +20,17 @@ type ControlBody =
   | {
       nativeIdempotency: { create: boolean; exec: boolean; destroy: boolean; writeFile: boolean };
       discoveryBySubmission: boolean;
+    }
+  | {
+      submissionId: string;
+      action: "exec";
+      behavior: "normal";
+      command: {
+        command: { kind: "argv"; argv: string[] };
+        exitCode: number;
+        stdoutBase64: string;
+        stderrBase64: string;
+      };
     };
 
 const variants = {
@@ -84,6 +95,138 @@ const timeout = <T>(promise: Promise<T>, ms = 300): Promise<T> => {
 };
 
 for (const [name, make] of Object.entries(variants)) {
+  test(`${name}: completed undiscoverable CREATE handle remains usable without rediscovery`, async () => {
+    const { provider, control } = await fixture();
+    await control("/_test/profile", {
+      nativeIdempotency: { create: false, exec: false, destroy: false, writeFile: false },
+      discoveryBySubmission: false,
+    });
+    const command = { kind: "argv" as const, argv: ["fixture", "binary"] };
+    await control("/_test/seed", {
+      submissionId: "*",
+      action: "exec",
+      behavior: "normal",
+      command: {
+        command,
+        exitCode: 0,
+        stdoutBase64: Buffer.from(Uint8Array.of(0, 255)).toString("base64"),
+        stderrBase64: "",
+      },
+    });
+    const originalObserve = provider.driver.observe.bind(provider.driver);
+    let observations = 0;
+    provider.driver.observe = (request) => {
+      observations++;
+
+      return originalObserve(request);
+    };
+
+    const client = make(provider);
+    const box = await client.sandboxes.create(input);
+    expect((await box.inspect()).state).toBe("running");
+    expect((await box.exec({ command })).stdout).toEqual(Uint8Array.of(0, 255));
+    const bytes = Uint8Array.of(0, 255, 128, 42);
+    await box.writeFile("/binary", bytes);
+    expect(await box.readFile("/binary")).toEqual(bytes);
+    await box.destroy();
+    expect((await box.inspect()).state).toBe("destroyed");
+    expect(observations).toBe(0);
+    expect(createCount(await control("/_test/state"))).toBe(1);
+    await client.close();
+  });
+
+  test(`${name}: concurrent observe and wait share undiscoverable CREATE completion`, async () => {
+    const { provider, control } = await fixture();
+    await control("/_test/profile", {
+      nativeIdempotency: { create: false, exec: false, destroy: false, writeFile: false },
+      discoveryBySubmission: false,
+    });
+    const originalObserve = provider.driver.observe.bind(provider.driver);
+    let observations = 0;
+    provider.driver.observe = (request) => {
+      observations++;
+
+      return originalObserve(request);
+    };
+
+    const client = make(provider);
+    const operation = await client.sandboxes.submitCreate(input);
+    const observed = operation.observe();
+    const waited = operation.wait();
+    const [box, waitBox] = await Promise.all([observed, waited]);
+    expect(box?.id).toBe(waitBox.id);
+    expect((await waitBox.inspect()).state).toBe("running");
+    expect(observations).toBe(0);
+    expect(createCount(await control("/_test/state"))).toBe(1);
+    await client.close();
+  });
+
+  test(`${name}: transient lazy-handle preflight failure does not strand completed CREATE`, async () => {
+    const { provider, control } = await fixture();
+    const originalCapabilities = provider.driver.capabilities.bind(provider.driver);
+    let failNext = false;
+
+    provider.driver.capabilities = async (scope) => {
+      if (failNext) {
+        failNext = false;
+        throw new ProviderReadError("INVALID_RESPONSE", "transient capability read");
+      }
+
+      return originalCapabilities(scope);
+    };
+
+    const client = make(provider);
+    const box = await client.sandboxes.create(input);
+    failNext = true;
+
+    if (name === "effect")
+      await expect(box.inspect()).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+
+    expect((await box.inspect()).state).toBe("running");
+    expect(createCount(await control("/_test/state"))).toBe(1);
+    await client.close();
+  });
+
+  test(`${name}: invalid or aborted wait retains completed submission response`, async () => {
+    const { provider, control } = await fixture();
+    await control("/_test/profile", {
+      nativeIdempotency: { create: false, exec: false, destroy: false, writeFile: false },
+      discoveryBySubmission: false,
+    });
+    const client = make(provider);
+    const operation = await client.sandboxes.submitCreate(input);
+    await expect(operation.wait({ pollMs: 0 })).rejects.toBeInstanceOf(RangeError);
+    const aborted = new AbortController();
+    aborted.abort(new Error("before wait"));
+    await expect(operation.wait({ signal: aborted.signal })).rejects.toBe(aborted.signal.reason);
+    expect((await operation.wait()).id).toStartWith("fake_sandbox_");
+    expect(createCount(await control("/_test/state"))).toBe(1);
+    await client.close();
+  });
+
+  test(`${name}: invalid or aborted wait retains certified rejection`, async () => {
+    const { provider, control } = await fixture();
+    await control("/_test/profile", {
+      nativeIdempotency: { create: false, exec: false, destroy: false, writeFile: false },
+      discoveryBySubmission: false,
+    });
+    await control("/_test/seed", {
+      submissionId: "*",
+      action: "create",
+      behavior: "reject",
+      rejectCode: "capacity",
+    });
+    const client = make(provider);
+    const operation = await client.sandboxes.submitCreate(input);
+    await expect(operation.wait({ pollMs: 0 })).rejects.toBeInstanceOf(RangeError);
+    const aborted = new AbortController();
+    aborted.abort(new Error("before wait"));
+    await expect(operation.wait({ signal: aborted.signal })).rejects.toBe(aborted.signal.reason);
+    await expect(operation.wait()).rejects.toMatchObject({ code: "CAPACITY", effect: "none" });
+    expect(createCount(await control("/_test/state"))).toBe(1);
+    await client.close();
+  });
+
   test(`${name}: pre-abort and abort during preparation never create`, async () => {
     const { provider, control } = await fixture();
     const client = make(provider);
@@ -211,6 +354,58 @@ for (const [name, make] of Object.entries(variants)) {
     await expect(timeout(pending)).rejects.toBe(abort.signal.reason);
     release();
     expect(createCount(await control("/_test/state"))).toBe(1);
+    await client.close();
+  });
+
+  test(`${name}: aborted hanging read allows a fresh read-only observation`, async () => {
+    const { provider, control } = await fixture();
+    const originalCreate = provider.driver.create.bind(provider.driver);
+    provider.driver.create = async (request) => {
+      await originalCreate(request);
+
+      return {
+        status: "pending",
+        effect: "possible",
+        submissionId: request.identity.submissionId,
+        observeAfterMs: 50,
+      };
+    };
+
+    const originalObserve = provider.driver.observe.bind(provider.driver);
+    let entered!: () => void, release!: () => void;
+
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    let observations = 0;
+    provider.driver.observe = async (request) => {
+      observations++;
+
+      if (observations === 1) {
+        entered();
+        await gate;
+      }
+
+      return originalObserve(request);
+    };
+
+    const client = make(provider);
+    const operation = await client.sandboxes.submitCreate(input);
+    const abort = new AbortController();
+    const first = operation.wait({ signal: abort.signal, pollMs: 50 });
+    await started;
+    abort.abort(new Error("stop first read"));
+    await expect(timeout(first)).rejects.toBe(abort.signal.reason);
+    const box = await timeout(operation.wait({ pollMs: 50 }));
+    expect(box.id).toStartWith("fake_sandbox_");
+    expect(observations).toBe(2);
+    expect(createCount(await control("/_test/state"))).toBe(1);
+    release();
     await client.close();
   });
 

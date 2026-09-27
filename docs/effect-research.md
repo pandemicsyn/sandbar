@@ -33,11 +33,11 @@ The prototype lives in private `@sandbar/effect-prototype`. It is absent from `@
 
 The dispatch edge exposes a sealed stable recovery reference before invoking `driver.create`. The reference is retained on a synchronous transport throw, rejected Promise, close, or abort after that edge. A conservative unknown result is correct even if the transport never sent bytes. JS run-to-completion narrows an in-process gap, but cannot make provider IO atomic with process death. The merged core's `resultDisposition(result, source)` prevents an observed rejection from being treated as proof of no effect; only the original submission response can certify that classification.
 
-This is deliberately **not** an all-in migration implementation. CREATE uses the existing Promise `ProviderDriver`, validation/normalization/correlation, and public error classes. Non-CREATE methods on a returned sandbox handle lazily resolve the existing `DirectClient` handle. That shortcut may perform one extra read-only observation when such a method is first used; it does not affect measured CREATE. The prototype does not implement service workers, SQL leases, EXEC, native Effect driver transport, telemetry, or streaming.
+This is deliberately **not** an all-in migration implementation. CREATE uses the existing Promise `ProviderDriver`, validation/normalization/correlation, and public error classes. Non-CREATE methods on a returned sandbox handle lazily resolve the existing `DirectClient` handle. A client-scoped adapter supplies the already correlated CREATE completion to that decoder, so a successful handle needs no provider rediscovery even when the provider cannot discover by submission ID. The adapter releases its cached result after use, when an unused handle is collected, or when the client closes. This shortcut does not affect measured CREATE. The prototype does not implement service workers, SQL leases, EXEC orchestration, native Effect driver transport, telemetry, or streaming.
 
 ## Paired behavior and transport results
 
-The same localhost fake-provider fixtures run once with the corrected direct SDK and once with the experimental client. They use the real HTTP fake server, not a mocked Effect scheduler. **22 paired fixture executions plus one virtual-clock test pass** on merged PR #7:
+The same localhost fake-provider fixtures run once with the corrected direct SDK and once with the experimental client. They use the real HTTP fake server, not a mocked Effect scheduler. **34 paired fixture executions plus one virtual-clock test pass** on merged PR #7:
 
 | Fixture | Baseline | Effect prototype | Invariant |
 |---|---|---|---|
@@ -53,12 +53,18 @@ The same localhost fake-provider fixtures run once with the corrected direct SDK
 | Submission versus observation rejection | pass | pass | Only original response certifies no effect |
 | Provider preflight read error | pass | pass | SDK error mapping; no dispatch |
 | Scope and recovery reference snapshots | pass | pass | Immutable after client construction |
+| Successful CREATE without submission discovery | pass | pass | Returned handle supports inspect, exec, binary files, and destroy without rediscovery |
+| Invalid/pre-aborted wait, then valid wait | pass | pass | Initial completion remains available |
+| Invalid/pre-aborted wait, then certified rejection | pass | pass | Original `effect: none` evidence remains available |
+| Concurrent observe and wait on completed CREATE | pass | pass | Share the original result with no provider rediscovery |
+| Abort a hanging read, then observe again | pass | pass | A fresh read-only request recovers without CREATE replay |
+| Transient lazy-handle preflight failure | pass | pass | Completed CREATE remains usable on the next operation |
 
 The fixture timeout clears its timer; gated Promise work is released; fake servers are stopped after each test. `TestClock` confirms the read-only loop stops after success without another scheduled poll. The process exits cleanly, though this is not a heap-level proof that arbitrary third-party SDKs release sockets or streams. A Promise SPI without `AbortSignal` cannot cancel its underlying HTTP request merely because the Effect fiber was interrupted. A future native transport adapter needs its own cancellation and leak tests, with the same uncertainty semantics.
 
 The existing `bun run package:smoke` also passes for Node and Bun direct/remote packed consumers. The experimental `packed-smoke.mjs` packs six workspace packages, installs them into a fresh external directory, typechecks public declarations, and runs a real fake-server CREATE under Node and Bun. It passed with Node v26.4.0 and Bun 1.3.14. The SDK's direct dependency graph remains free of Hono, Drizzle, store, service runtime, MySQL, and Bun-only modules. The extra Effect dependency is confined to the experimental package.
 
-On merged PR #7, `bun run lint`, `format:check`, `check`, and `build` pass. The complete `bun run test` suite passes **179 tests with five MySQL tests skipped**. This includes the existing SDK, SQLite finalization, durable runner, process-kill, fake transport, and UI/server tests. No production SDK, store, or service-runtime source was changed by this experiment. The existing three SDK scope deferrals (imported remote reference's original smaller EXEC cap, exported raw/request helpers, and nonconforming fake inspect 2xx errors) remain outside this research task.
+On merged PR #7, `bun run lint`, `format:check`, `check`, and `build` pass. The complete `bun run test` suite passes **191 tests with five MySQL tests skipped**. This includes the existing SDK, SQLite finalization, durable runner, process-kill, fake transport, and UI/server tests. No production SDK, store, or service-runtime source was changed by this experiment. The existing three SDK scope deferrals (imported remote reference's original smaller EXEC cap, exported raw/request helpers, and nonconforming fake inspect 2xx errors) remain outside this research task.
 
 ## Cost and complexity
 
@@ -66,14 +72,14 @@ Measured on macOS 25.6.0, Apple M3 arm64, Node v26.4.0 and Bun 1.3.14. `measure.
 
 | Measure | Current direct | Effect prototype |
 |---|---:|---:|
-| Node module import | 24.6 ms | 143.0 ms |
-| Node child startup including import | 51.8 ms | 169.7 ms |
-| Bun module import | 16.7 ms | 90.7 ms |
-| Bun child startup including import | 27.9 ms | 103.0 ms |
-| In-memory CREATE, Node | 0.278 ms | 0.281 ms |
+| Node module import | 26.6 ms | 139.3 ms |
+| Node child startup including import | 56.6 ms | 165.7 ms |
+| Bun module import | 16.2 ms | 87.1 ms |
+| Bun child startup including import | 27.8 ms | 99.3 ms |
+| In-memory CREATE, Node | 0.269 ms | 0.297 ms |
 | Read-only observations per successful measured CREATE | 0 | 0 |
 
-The baseline SDK tarball was 14,173 bytes; the additional prototype tarball was 5,808 bytes. The installed Effect package resolves to roughly 33 MiB on disk on this machine and adds `@standard-schema/spec`, `fast-check`, and `pure-rand` to the lockfile. Tarball size is not total transitive installed size or a browser bundle measurement. No statistically reliable operation-speed advantage is established; the import overhead is a regression for this prototype.
+The baseline SDK tarball was 14,173 bytes; the additional prototype tarball was 6,240 bytes. The installed Effect package resolves to roughly 33 MiB on disk on this machine and adds `@standard-schema/spec`, `fast-check`, and `pure-rand` to the lockfile. Tarball size is not total transitive installed size or a browser bundle measurement. No statistically reliable operation-speed advantage is established; the import overhead is a regression for this prototype.
 
 For this narrow path, Effect replaces bespoke `raceAbort`/`waitDelay` polling and listener cleanup with `ManagedRuntime`, `Effect.sleep`, fiber interruption, and scoped finalization. It also requires explicit `FiberFailure`/typed-error conversion at the Promise boundary and a careful dispatch barrier. File line counts do not show a simplification: the prototype covers CREATE while the baseline direct module covers all operations. The likely benefit emerges only if the same runtime and semantics are shared across CREATE, EXEC, destroy, file writes, service due-work, and provider sessions. The present prototype adds complexity because it intentionally coexists with baseline code.
 
