@@ -129,6 +129,15 @@ test("service registration validates secret/config maps and pins stored connecti
     return fixture;
   });
 
+  for (const timeoutSeconds of ["1", "3601", "999999999999999999999999"]) {
+    expect(() =>
+      registration.validate({
+        credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+        configuration: { appName: "existing", environment: "main", timeoutSeconds },
+      }),
+    ).toThrow();
+  }
+
   expect(() =>
     registration.validate({
       credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture", extra: "hidden" },

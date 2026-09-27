@@ -21,7 +21,8 @@ const Configuration = z.strictObject({
   region: z.string().min(1).max(128).optional(),
   timeoutSeconds: z
     .string()
-    .regex(/^[0-9]+$/)
+    .regex(/^[1-9][0-9]{0,3}$/)
+    .refine((value) => Number(value) >= 60 && Number(value) <= 3600)
     .optional(),
 });
 
