@@ -1,9 +1,1 @@
-[
-  "packages/contracts",
-  "packages/provider-spi",
-  "packages/core",
-  "packages/providers/fake",
-  "packages/providers/daytona",
-  "packages/providers/modal",
-  "packages/sdk"
-]
+["packages/adapter", "packages/sdk", "packages/service"]

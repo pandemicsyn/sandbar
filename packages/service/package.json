@@ -1,7 +1,7 @@
 {
   "name": "sandbar-service",
   "version": "0.0.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "exports": {
     ".": {
@@ -14,15 +14,33 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "bun run --cwd ../../apps/web build && rm -rf dist && bun build src/index.ts src/client.ts --target bun --format esm --outdir dist --external sandbar-sdk --external sandbar-adapter --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun flatten-declarations.mjs && cp -R ../store/migrations dist/migrations && cp -R ../../apps/web/dist dist/web"
+    "build": "bun run --cwd ../../apps/web build && rm -rf dist && bun build src/index.ts src/client.ts --target bun --format esm --outdir dist --external sandbar-sdk --external sandbar-adapter --external zod --external modal && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun flatten-declarations.mjs && cp -R ../store/migrations dist/migrations && cp -R ../../apps/web/dist dist/web"
   },
   "dependencies": {
     "sandbar-adapter": "workspace:*",
     "sandbar-sdk": "workspace:*",
-    "zod": "4.6.5"
-  }
+    "zod": "4.6.5",
+    "modal": "0.10.1"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pandemicsyn/sandbar.git",
+    "directory": "packages/service"
+  },
+  "description": "Optional self-hosted Sandbar service and HTTP client.",
+  "homepage": "https://sandbarsdk.dev/docs/service-quickstart/",
+  "bugs": {
+    "url": "https://github.com/pandemicsyn/sandbar/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "types": "./dist/index.d.ts"
 }

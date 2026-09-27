@@ -57,6 +57,9 @@ function load() {
     if (manifest.repository?.url !== "git+https://github.com/pandemicsyn/sandbar.git")
       throw new Error(`${manifest.name} needs the exact Sandbar repository URL for npm provenance`);
 
+    if (manifest.license !== "Apache-2.0" || manifest.publishConfig?.access !== "public")
+      throw new Error(`${manifest.name} needs its Apache-2.0 license and public publish config`);
+
     return { path, manifest };
   });
 
@@ -181,6 +184,9 @@ function packAll(plan, directory) {
     }
 
     const files = run("tar", ["-tzf", archive]).split("\n");
+
+    if (!files.includes("package/LICENSE") || !files.includes("package/README.md"))
+      throw new Error(`${manifest.name} tarball lacks its license or README`);
 
     if (files.some((name) => name.includes("/src/") || name.endsWith(".test.d.ts")))
       throw new Error(`${manifest.name} tarball contains source or test declarations`);

@@ -26,11 +26,37 @@ const dependencies = Object.fromEntries(
   metadata.packages.map((item) => [item.name, `file:${join(artifacts, item.archive)}`]),
 );
 
-const source = `
-import { Sandbar, Image } from ${JSON.stringify(`${sdkName}/remote`)};
-if (typeof Sandbar.connect !== "function" || Image.prepared("fixture").kind !== "prepared") {
-  throw new Error("Packed remote SDK import failed");
+const runtimeSource = `
+import { Sandbar, Image } from ${JSON.stringify(sdkName)};
+import { daytona } from ${JSON.stringify(`${sdkName}/daytona`)};
+import { modal } from ${JSON.stringify(`${sdkName}/modal`)};
+import { defineAdapter } from "sandbar-adapter";
+import { Sandbar as RemoteSandbar } from "sandbar-service/client";
+if (typeof Sandbar.connect !== "function" ||
+    typeof RemoteSandbar.connect !== "function" ||
+    typeof daytona !== "function" ||
+    typeof modal !== "function" ||
+    typeof defineAdapter !== "function" ||
+    Image.prepared("fixture").kind !== "prepared") {
+  throw new Error("Packed public graph import failed");
 }
+`;
+
+const typeSource = `
+import { Sandbar, Image } from ${JSON.stringify(sdkName)};
+import { daytona } from ${JSON.stringify(`${sdkName}/daytona`)};
+import { modal } from ${JSON.stringify(`${sdkName}/modal`)};
+import { defineAdapter } from "sandbar-adapter";
+import { Sandbar as RemoteSandbar } from "sandbar-service/client";
+import type { ServiceHandle } from "sandbar-service";
+const direct: typeof Sandbar.connect = Sandbar.connect;
+const remote: typeof RemoteSandbar.connect = RemoteSandbar.connect;
+const factory: typeof daytona = daytona;
+const modalFactory: typeof modal = modal;
+const authoring: typeof defineAdapter = defineAdapter;
+const image = Image.prepared("fixture");
+function typedService(value: ServiceHandle): ServiceHandle { return value; }
+void [direct, remote, factory, modalFactory, authoring, image, typedService];
 `;
 
 const temporary = mkdtempSync(join(tmpdir(), "sandbar-installers-"));
@@ -63,8 +89,8 @@ try {
 
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "package.json"), JSON.stringify(packageFile, null, 2));
-    writeFileSync(join(directory, "consumer.mjs"), source);
-    writeFileSync(join(directory, "consumer.ts"), source);
+    writeFileSync(join(directory, "consumer.mjs"), runtimeSource);
+    writeFileSync(join(directory, "consumer.ts"), typeSource);
     writeFileSync(
       join(directory, "tsconfig.json"),
       JSON.stringify({

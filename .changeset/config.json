@@ -7,17 +7,7 @@
     }
   ],
   "commit": false,
-  "fixed": [
-    [
-      "@sandbar/contracts",
-      "@sandbar/provider-spi",
-      "@sandbar/core",
-      "@sandbar/provider-fake",
-      "@sandbar/provider-daytona",
-      "@sandbar/provider-modal",
-      "@sandbar/sdk"
-    ]
-  ],
+  "fixed": [["sandbar-adapter", "sandbar-sdk", "sandbar-service"]],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

@@ -60,6 +60,10 @@ try {
     copyTree(join(root, name), join(temporary, name));
   }
 
+  // Packed consumer smoke starts the server, and service builds bundle the web UI.
+  copyTree(join(root, "apps/server"), join(temporary, "apps/server"));
+  copyTree(join(root, "apps/web"), join(temporary, "apps/web"));
+
   for (const app of readdirSync(join(root, "apps"))) {
     const manifest = join(root, "apps", app, "package.json");
 
