@@ -198,8 +198,13 @@ const metadata = JSON.parse(fs.readFileSync(path.join(process.env.RELEASE_QUALIF
 const args = process.argv.slice(2);
 if (args[0] === "view") {
   const name = args[2] === "dist-tags" ? args[1] : args[1].slice(0, args[1].lastIndexOf("@"));
-  if (!state.packages[name]) { console.error("E404"); process.exit(1); }
-  console.log(JSON.stringify(args[2] === "dist-tags" ? state.tags[name] : state.packages[name]));
+  if (args[2] === "dist-tags") {
+    if (!state.tags[name]) { console.error("E404"); process.exit(1); }
+    console.log(JSON.stringify(state.tags[name]));
+  } else {
+    if (!state.packages[name]) { console.error("E404"); process.exit(1); }
+    console.log(JSON.stringify(state.packages[name]));
+  }
 } else if (args[0] === "publish") {
   const item = metadata.packages.find(x => x.archive === path.basename(args[1]));
   if (!item || state.packages[item.name]) process.exit(2);
@@ -307,9 +312,30 @@ if (args[1] === "view") {
   if (tagBlocked.status === 0 || !tagBlocked.stderr.includes("dist-tag"))
     throw new Error("Existing registry version with wrong dist-tag was not rejected");
 
+  const newerTag = {
+    packages: {},
+    tags: Object.fromEntries(qualified.packages.map((item) => [item.name, { latest: "0.1.2" }])),
+  };
+
+  writeFileSync(registryFile, JSON.stringify(newerTag));
+  rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
+
+  const backward = spawnSync("bun", ["scripts/release.mjs", "publish"], {
+    cwd: temporary,
+    env: { ...process.env, ...publishEnv },
+    encoding: "utf8",
+  });
+
+  if (
+    backward.status === 0 ||
+    !backward.stderr.includes("already at newer version") ||
+    Object.keys(JSON.parse(readFileSync(registryFile, "utf8")).packages).length !== 0
+  )
+    throw new Error("Older valid release moved a newer npm dist-tag backward");
+
   writeFileSync(registryFile, JSON.stringify(published));
   console.log(
-    "Mock registry: partial publish completed, exact rerun skipped, conflicting bytes and tags rejected",
+    "Mock registry: partial publish completed, exact rerun skipped, conflicting bytes and tags, and backward tag movement rejected",
   );
 
   const lockPath = join(temporary, "bun.lock");

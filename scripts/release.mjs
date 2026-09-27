@@ -325,6 +325,7 @@ if (!real) {
 const state = packed.map((item) => ({
   item,
   existing: registryIntegrity(item.manifest.name, plan.version),
+  tags: registryTags(item.manifest.name),
 }));
 
 for (const { item, existing } of state) {
@@ -334,8 +335,17 @@ for (const { item, existing } of state) {
     );
 }
 
-for (const { item, existing } of state) {
-  if (existing && registryTags(item.manifest.name)[tag] !== plan.version)
+for (const { item, tags } of state) {
+  const current = tags[tag];
+
+  if (current && (!versionPattern.test(current) || Bun.semver.order(plan.version, current) < 0))
+    throw new Error(
+      `${item.manifest.name} npm dist-tag ${tag} is already at newer version ${current}; publication stopped`,
+    );
+}
+
+for (const { item, existing, tags } of state) {
+  if (existing && tags[tag] !== plan.version)
     throw new Error(
       `${item.manifest.name}@${plan.version} exists, but npm dist-tag ${tag} does not point to it`,
     );
