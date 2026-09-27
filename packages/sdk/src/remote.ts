@@ -493,7 +493,11 @@ export class RemoteClient implements SandbarClient {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${this.#token}`);
 
-    return this.fetcher(this.url(path), { ...init, headers, redirect: "error" });
+    const signal = init.signal
+      ? AbortSignal.any([init.signal, this.closedSignal])
+      : this.closedSignal;
+
+    return this.fetcher(this.url(path), { ...init, headers, signal, redirect: "error" });
   }
   async throwResponse(response: Response): Promise<never> {
     const raw: unknown = await response.json().catch(() => undefined);

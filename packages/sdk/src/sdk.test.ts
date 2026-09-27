@@ -668,6 +668,40 @@ test("direct observation failure retains its recovery reference", async () => {
   });
 });
 
+test("direct null submission response never treats a later rejection as definitive", async () => {
+  const { url } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  let dispatches = 0;
+  let observations = 0;
+  Reflect.set(provider.driver, "create", async () => {
+    dispatches++;
+
+    return null;
+  });
+  provider.driver.observe = async () => {
+    observations++;
+
+    return {
+      status: "rejected",
+      effect: "none",
+      error: { code: "invalid", message: "late rejection", effect: "none", retry: "never" },
+    };
+  };
+
+  const client = DirectSandbar.direct({ provider });
+
+  const operation = await client.sandboxes.submitCreate({
+    environment: DirectImage.prepared("fake-starter"),
+  });
+
+  await expect(operation.observe()).rejects.toMatchObject({
+    code: "OUTCOME_UNKNOWN",
+    reference: operation.reference,
+  });
+  expect(dispatches).toBe(1);
+  expect(observations).toBe(0);
+});
+
 test("direct execution bounds provider output before decoding", async () => {
   const { url } = await fixture();
   const provider = await fakeProvider({ url, token });
@@ -1242,6 +1276,78 @@ test("remote file reads stop at the SDK limit and cancel the response stream", a
   expect(cancelled).toBe(2);
 });
 
+test("remote close aborts an in-flight file read", async () => {
+  const projectId = "project_1";
+
+  const operation = {
+    id: "op_1",
+    projectId,
+    kind: "create",
+    sandboxId: "box_1",
+    status: "succeeded",
+    phase: "done",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    effect: "applied",
+    recovery: [],
+    result: { kind: "create", sandboxId: "box_1" },
+  };
+
+  let started!: () => void;
+
+  const dispatched = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+
+  let readSignal: AbortSignal | undefined;
+
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname;
+
+    if (init?.method === "POST") return Response.json({ operation }, { status: 202 });
+
+    if (path.includes("/invocations/")) return Response.json(operation);
+
+    if (path.endsWith("/sandboxes/box_1"))
+      return Response.json({
+        id: "box_1",
+        projectId,
+        connectionId: "conn_1",
+        desiredState: "running",
+        observedState: "running",
+        revision: 1,
+        environment: { kind: "prepared", imageId: "fake-starter" },
+        network: { policy: "blocked" },
+        labels: {},
+      });
+
+    if (path.endsWith("/files")) {
+      readSignal = init?.signal ?? undefined;
+      started();
+
+      return new Promise<Response>((_resolve, reject) =>
+        readSignal?.addEventListener("abort", () => reject(readSignal?.reason), { once: true }),
+      );
+    }
+
+    throw new Error(`Unexpected path: ${path}`);
+  };
+
+  const client = RemoteSandbar.connect({
+    url: "https://sandbar.example/",
+    token: "secret",
+    projectId,
+    fetch: fetcher,
+  });
+
+  const box = await client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") });
+  const pending = box.readFile("/hanging");
+  await dispatched;
+  await client.close();
+  await expect(pending).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+  expect(readSignal?.aborted).toBe(true);
+});
+
 test("remote close after service admission preserves the invocation reference", async () => {
   let started!: () => void, release!: () => void;
 
@@ -1254,6 +1360,8 @@ test("remote close after service admission preserves the invocation reference", 
   });
 
   let key = "";
+  let posts = 0;
+  let requestSignal: AbortSignal | undefined;
   const projectId = "project_1";
 
   const operation = {
@@ -1270,6 +1378,8 @@ test("remote close after service admission preserves the invocation reference", 
 
   const fetcher: typeof fetch = async (_url, init) => {
     if (init?.method !== "POST") throw new Error("Unexpected lookup");
+    posts++;
+    requestSignal = init.signal ?? undefined;
     key = new Headers(init.headers).get("Idempotency-Key") ?? "";
     started();
     await gate;
@@ -1287,6 +1397,8 @@ test("remote close after service admission preserves the invocation reference", 
   const pending = client.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") });
   await dispatched;
   await client.close();
+  expect(requestSignal?.aborted).toBe(true);
+  expect(posts).toBe(1);
 
   try {
     await pending;

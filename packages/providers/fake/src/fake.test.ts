@@ -708,6 +708,34 @@ describe("independent fake provider", () => {
     }
   });
 
+  test("fake driver cancels non-OK response bodies", async () => {
+    let cancelled = 0;
+    let calls = 0;
+
+    const transport = fetchStub(async () => {
+      calls++;
+
+      return new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled++;
+          },
+        }),
+        { status: 503 },
+      );
+    });
+
+    const driver = new FakeProviderDriver({
+      baseUrl: "http://127.0.0.1:8788/",
+      token: "test-token",
+      fetch: transport,
+    });
+
+    await expect(driver.capabilities(scope)).rejects.toThrow("503");
+    expect(calls).toBe(1);
+    expect(cancelled).toBe(1);
+  });
+
   test("fake driver does not forward mutation bodies across redirects", async () => {
     let forwarded = 0;
 

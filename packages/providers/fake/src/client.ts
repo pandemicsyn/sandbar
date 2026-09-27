@@ -112,7 +112,10 @@ export class FakeProviderDriver implements ProviderDriver {
         signal: controller.signal,
       });
 
-      if (!response.ok) throw new FakeTransportError(response.status);
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new FakeTransportError(response.status);
+      }
 
       return FakeHttpJson.parse(await response.json());
     } finally {
