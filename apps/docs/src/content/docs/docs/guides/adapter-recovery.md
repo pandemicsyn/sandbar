@@ -29,4 +29,6 @@ Persist the initial reference before native submission. When `observe()` returns
 
 `wait()` respects each pending result's `pollAfterMs` as the earliest automatic next read. Its `pollMs` option can slow polling further but cannot shorten the adapter's delay. A manual `observe()` remains an explicit read; if it returns pending, a later `wait()` still respects the new delay.
 
+The SDK enforces a 30-second local deadline for `prepare`. An adapter must honor the deadline supplied to `observe` and other read callbacks; the SDK does not apply an automatic timeout to observation. Caller cancellation or client close stops SDK waiting and preserves the recovery reference, without guaranteeing that provider transport or compute stopped.
+
 If a response is lost and the provider offers no correlated discovery, the operation remains unknown. Do not reinterpret a timeout, abort, or thrown error as a provider rejection. For a durable application ledger, the optional `client.operations` lifecycle lets the application commit its submission marker in `beforeSubmit` and persist pending-token updates; ordinary sandbox calls use the same SDK execution path.
