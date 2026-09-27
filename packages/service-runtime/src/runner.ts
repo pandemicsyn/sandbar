@@ -7,12 +7,7 @@ import type {
 } from "@sandbar/provider-spi";
 import { validateDriverResult } from "@sandbar/provider-spi";
 import type { ExecRequest } from "@sandbar/contracts";
-import {
-  ControlStore,
-  type Claimed,
-  type SandboxRow,
-  type ConnectionRow,
-} from "@sandbar/store";
+import { ControlStore, type Claimed, type SandboxRow, type ConnectionRow } from "@sandbar/store";
 import { SecretBox } from "./crypto";
 import {
   normalizeCreate,
@@ -302,10 +297,13 @@ export class DurableRunner {
     const box = await store.getSandbox(claim.operation.project_id, claim.operation.sandbox_id);
 
     if (!box) throw new Error("Sandbox identity missing");
+
     // SAFETY: admission stores the path and byte count used to correlate file receipts.
-    const file = claim.operation.kind === "file_write"
-      ? JSON.parse(claim.operation.request_json) as { path: string; bytes: number }
-      : undefined;
+    const file =
+      claim.operation.kind === "file_write"
+        ? (JSON.parse(claim.operation.request_json) as { path: string; bytes: number })
+        : undefined;
+
     correlateDriverResult(result, {
       submissionId: claim.operation.provider_token,
       kind: claim.operation.kind,
@@ -341,6 +339,7 @@ export class DurableRunner {
 
       // SAFETY: the submission marker retains bounded output options after the secret request is cleared.
       const retained = JSON.parse(claim.operation.request_json) as Pick<ExecRequest, "output">;
+
       const output = captureBoundedOutput(
         value.observation.stdoutBase64,
         value.observation.stderrBase64,

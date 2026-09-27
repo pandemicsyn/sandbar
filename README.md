@@ -6,7 +6,7 @@ Sandbar's target design includes direct TypeScript provider access and an option
 
 The selected architecture is a Bun/Hono TypeScript service with Drizzle, SQLite by default and a tested MySQL option. The management UI uses Vite, React, TanStack Router and Tailwind. Zod 4 validates public contracts and IO boundaries. Drizzle ORM and Kit target the verified `beta` tag, currently `1.0.0-beta.22`, pinned exactly at scaffolding.
 
-**Status:** the first fake-provider service/UI slice is implemented in reviewed, unmerged PRs #1–#4. Direct TypeScript SDK support is the next implementation wave. No real provider adapter or published SDK is qualified yet.
+**Status:** the first fake-provider service/UI slice from PRs #1–#4 is merged. Portable core extraction is in progress for the next implementation wave, followed by direct TypeScript SDK support. No real provider adapter or published SDK is qualified yet.
 
 ## Local checks
 

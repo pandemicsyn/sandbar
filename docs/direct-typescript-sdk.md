@@ -50,13 +50,13 @@ No broad provider support is implied by an ergonomic example. The initial provid
 
 ## Execution and PR order
 
-Keep reviewed PRs #1–#4 unchanged. Add a new stack after `codex/web-e2e` at `dbd2ee66c76e4f1cd2e340bede75ad699dbdfcc7`:
+PRs #1–#4 are merged into `main`; preserve their behavior. PR #5 (portable core) targets `main` at `fba002c6349a27de78c74c86bc25408e63bda6e9`, followed by the TypeScript SDK and qualification PRs:
 
 1. **Portable core extraction and plan adoption.** Move store-dependent runner code behind a service boundary, extract reusable semantic logic, preserve service behavior, and commit these updated design documents. Own initial workspace/package wiring and coordinate exports with SDK owner.
 2. **TypeScript resource SDK with direct and HTTP backends.** Implement the minimal ergonomic API, shared types, provider registration, safe operation/recovery behavior, client lifetime handling and fake-backed examples. No mandatory service or database in direct mode.
 3. **Node/Bun package and parity qualification.** Run common behavioral tests against direct fake and service-backed fake clients; validate packed imports, runtime dependencies, non-UTF-8 files/output, uncertain effects, cancellation, recovery references and cleanup. Add CI and docs reflecting measured support.
 
-Tasks may design and build disjoint components concurrently, but each final PR targets its immediate reviewed parent and undergoes fresh integration validation. Implementation uses GPT-6 Sol at medium reasoning. Before any PR, independent read-only GPT-6 Luna at high reasoning reviews the complete diff; fix every actionable finding and repeat until zero. Rebase/code changes require another final review. No merges, package publication, paid provider use or production deployment are authorized.
+Tasks may design and build disjoint components concurrently, but each final PR targets its immediate reviewed parent and undergoes fresh integration validation. Implementation uses GPT-6 Sol at medium reasoning. Before any PR, independent read-only GPT-6 Luna at high reasoning reviews the complete diff; fix every actionable finding and repeat until zero. Rebase/code changes require another final review. Package publication, paid provider use and production deployment are outside this wave.
 
 ## Acceptance checks
 
