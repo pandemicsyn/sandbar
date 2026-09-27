@@ -24,6 +24,12 @@ const native = (name: string, state = "started") => ({
   toolboxProxyUrl: `${toolboxOrigin}/toolbox`,
 });
 
+const listed = (name: string) => {
+  const { networkBlockAll: _omitted, ...summary } = native(name);
+
+  return summary;
+};
+
 const region = (organizationId = "org-1") => ({
   id: "us",
   name: "United States",
@@ -217,6 +223,9 @@ test("lost create response is observed by stable name without replay; scope rota
   let posts = 0;
   let name = "";
   let account = "org-1";
+  let detailPolicy = true;
+  let detailAccount = "org-1";
+  let detailLabels: NativeLabels | null = null;
 
   let labels: NativeLabels = {
     "sandbar.submission": "submit-1",
@@ -246,7 +255,15 @@ test("lost create response is observed by stable name without replay; scope rota
     }
 
     if (url.pathname === "/api/sandbox")
-      return Response.json({ items: [{ ...native(name), labels }], nextCursor: null });
+      return Response.json({ items: [{ ...listed(name), labels }], nextCursor: null });
+
+    if (url.pathname === "/api/sandbox/native-1")
+      return Response.json({
+        ...native(name),
+        organizationId: detailAccount,
+        networkBlockAll: detailPolicy,
+        labels: detailLabels ?? labels,
+      });
     throw new Error("Unexpected request");
   });
 
@@ -293,6 +310,34 @@ test("lost create response is observed by stable name without replay; scope rota
   ).toBeNull();
   labels = { "sandbar.submission": "submit-1", "sandbar.operation": "op_submit-1" };
 
+  detailPolicy = false;
+  expect(
+    await provider.driver.observe({
+      scope: provider.scope,
+      submissionId: "submit-1",
+      operationId: "op_submit-1",
+    }),
+  ).toBeNull();
+  detailPolicy = true;
+  detailAccount = "org-other";
+  expect(
+    await provider.driver.observe({
+      scope: provider.scope,
+      submissionId: "submit-1",
+      operationId: "op_submit-1",
+    }),
+  ).toBeNull();
+  detailAccount = "org-1";
+  detailLabels = { "sandbar.submission": "forged", "sandbar.operation": "op_submit-1" };
+  expect(
+    await provider.driver.observe({
+      scope: provider.scope,
+      submissionId: "submit-1",
+      operationId: "op_submit-1",
+    }),
+  ).toBeNull();
+  detailLabels = null;
+
   const observed = await provider.driver.observe({
     scope: provider.scope,
     submissionId: "submit-1",
@@ -300,6 +345,9 @@ test("lost create response is observed by stable name without replay; scope rota
   });
 
   expect(observed?.status).toBe("completed");
+  expect((await provider.driver.inventory({ scope: provider.scope, limit: 2 })).items).toHaveLength(
+    1,
+  );
   expect(posts).toBe(1);
   account = "org-2";
   const rotated = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });

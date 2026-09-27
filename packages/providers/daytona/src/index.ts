@@ -42,8 +42,10 @@ const NativeSandbox = z.object({
   labels: z.record(z.string(), z.string()).optional(),
 });
 
+const ListedSandbox = NativeSandbox.omit({ networkBlockAll: true });
+
 const ListResponse = z.object({
-  items: z.array(NativeSandbox),
+  items: z.array(ListedSandbox),
   nextCursor: z.string().nullable().optional(),
 });
 
@@ -491,17 +493,25 @@ export class DaytonaDriver implements ProviderDriver {
     if (input.cursor) query.set("cursor", input.cursor);
     const page = await this.json("GET", `/sandbox?${query}`, ListResponse);
 
-    const result: DaytonaInventoryPage = {
-      items: page.items
-        .filter(
-          (value) =>
-            value.labels?.["sandbar.submission"] &&
-            value.organizationId === this.scope.accountId &&
-            value.target === this.scope.region &&
-            value.networkBlockAll,
-        )
-        .map((value) => observed(this.scope, value)),
-    };
+    const result: DaytonaInventoryPage = { items: [] };
+
+    for (const listed of page.items) {
+      if (
+        !listed.labels?.["sandbar.submission"] ||
+        listed.organizationId !== this.scope.accountId ||
+        listed.target !== this.scope.region
+      )
+        continue;
+
+      const detail = await this.sandbox(listed.id);
+
+      if (
+        detail &&
+        detail.labels?.["sandbar.submission"] === listed.labels["sandbar.submission"] &&
+        detail.labels?.["sandbar.operation"] === listed.labels["sandbar.operation"]
+      )
+        result.items.push(observed(this.scope, detail));
+    }
 
     if (page.nextCursor) result.nextCursor = page.nextCursor;
 
@@ -531,9 +541,25 @@ export class DaytonaDriver implements ProviderDriver {
     );
 
     if (matches.length !== 1) return null;
-    const observation = observed(this.scope, matches[0]!);
+    let detail: Sandbox | null;
 
-    if (["destroyed", "error", "build_failed"].includes(matches[0]!.state))
+    try {
+      detail = await this.sandbox(matches[0]!.id);
+    } catch {
+      return null;
+    }
+
+    if (
+      !detail ||
+      detail.name !== name ||
+      detail.labels?.["sandbar.submission"] !== input.submissionId ||
+      (input.operationId && detail.labels?.["sandbar.operation"] !== input.operationId)
+    )
+      return null;
+
+    const observation = observed(this.scope, detail);
+
+    if (["destroyed", "error", "build_failed"].includes(detail.state))
       return unknown(input.submissionId, "Daytona sandbox did not reach running state");
 
     if (observation.state !== "running")
