@@ -694,7 +694,8 @@ export class DirectClient implements SandbarClient {
 
     if (reference.mode !== "direct" || !sameNativeScope(reference.scope!, this.scope))
       throw new SandbarError("FORBIDDEN", "Recovery scope does not match configured provider");
-    await this.verified();
+    await raceAbort(this.verified(), this.closedSignal);
+    this.ensureOpen();
 
     return new DirectOperation(reference, this, (result) => {
       if (result.status !== "completed") throw new OutcomeUnknownError(reference);

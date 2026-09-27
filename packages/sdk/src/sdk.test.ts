@@ -756,6 +756,58 @@ test("direct submitCreate aborts stalled preflight before dispatch", async () =>
   expect(creates).toBe(0);
 });
 
+test("direct recovery releases a stalled capability check when the client closes", async () => {
+  const { url, control } = await fixture();
+  const provider = await fakeProvider({ url, token });
+  const client = DirectSandbar.direct({ provider });
+
+  const operation = await client.sandboxes.submitCreate({
+    environment: DirectImage.prepared("fake-starter"),
+  });
+
+  const capabilities = provider.driver.capabilities.bind(provider.driver);
+  let entered!: () => void, release!: () => void;
+
+  const checking = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  provider.driver.capabilities = async (scope) => {
+    entered();
+    await gate;
+
+    return capabilities(scope);
+  };
+
+  let observations = 0;
+  provider.driver.observe = async () => {
+    observations++;
+
+    return null;
+  };
+
+  let succeeded = false;
+
+  const recovery = client.recover(operation.reference).then((handle) => {
+    succeeded = true;
+
+    return handle;
+  });
+
+  await checking;
+  await client.close();
+  await expect(recovery).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(succeeded).toBe(false);
+  expect(observations).toBe(0);
+  expect((await control("/_test/state")).invocations).toHaveLength(1);
+});
+
 test("direct operation keeps a terminal result without provider discovery", async () => {
   const { url } = await fixture();
   const provider = await fakeProvider({ url, token });
