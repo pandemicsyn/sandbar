@@ -207,7 +207,21 @@ export const Execution = z.object({
   stderrBase64: z.base64().optional(),
 });
 
-export const AcceptedExecution = z.object({ operation: ExecOperation, execution: Execution });
+export const AcceptedExecution = z
+  .object({ operation: ExecOperation, execution: Execution })
+  .refine(
+    ({ operation, execution }) =>
+      operation.id === execution.operationId &&
+      operation.executionId === execution.id &&
+      operation.projectId === execution.projectId &&
+      operation.sandboxId === execution.sandboxId,
+    {
+      message: "Accepted execution must belong to its operation, project, and sandbox",
+    },
+  )
+  .describe(
+    "The operation must have kind exec; operation.id equals execution.operationId, operation.executionId equals execution.id, and their projectId and sandboxId values match.",
+  );
 
 export const FileReadHeaders = z.object({
   contentType: z.literal("application/octet-stream"),

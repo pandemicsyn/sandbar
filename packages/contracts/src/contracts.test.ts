@@ -95,12 +95,39 @@ describe("public contract", () => {
     expect(Execution.parse(execution).stdoutBase64).toBe("/wA=");
     expect(Execution.safeParse({ ...execution, stdoutBase64: "not-base64" }).success).toBe(false);
     expect(AcceptedExecution.safeParse({ operation, execution }).success).toBe(false);
+
+    const execOperation = {
+      ...operation,
+      kind: "exec",
+      sandboxId: "sb_1",
+      executionId: "exec_1",
+    };
+
+    expect(AcceptedExecution.safeParse({ operation: execOperation, execution }).success).toBe(true);
     expect(
       AcceptedExecution.safeParse({
-        operation: { ...operation, kind: "exec", executionId: "exec_1" },
+        operation: { ...execOperation, id: "other_op" },
         execution,
       }).success,
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      AcceptedExecution.safeParse({
+        operation: { ...execOperation, executionId: "other_exec" },
+        execution,
+      }).success,
+    ).toBe(false);
+    expect(
+      AcceptedExecution.safeParse({
+        operation: { ...execOperation, projectId: "other_project" },
+        execution,
+      }).success,
+    ).toBe(false);
+    expect(
+      AcceptedExecution.safeParse({
+        operation: { ...execOperation, sandboxId: "other_sandbox" },
+        execution,
+      }).success,
+    ).toBe(false);
   });
   test("intent canonicalization preserves omission and is key-order independent", async () => {
     expect(canonicalJson({ b: 2, a: 1 })).toBe(canonicalJson({ a: 1, b: 2 }));
@@ -208,6 +235,10 @@ describe("public contract", () => {
     expect(openApiDocument.components.schemas.AcceptedExecution).toMatchObject({
       properties: { operation: { properties: { kind: { const: "exec" } } } },
     });
+    expect(openApiDocument.components.schemas.AcceptedExecution).toHaveProperty(
+      "description",
+      expect.stringContaining("operation.executionId equals execution.id"),
+    );
   });
   test("OpenAPI retains constrained label keys", () => {
     expect(openApiDocument.components.schemas.CreateSandboxRequest).toMatchObject({

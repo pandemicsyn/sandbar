@@ -1050,7 +1050,8 @@
         "required": [
           "operation",
           "execution"
-        ]
+        ],
+        "description": "The operation must have kind exec; operation.id equals execution.operationId, operation.executionId equals execution.id, and their projectId and sandboxId values match."
       },
       "AcceptedOperation": {
         "type": "object",
