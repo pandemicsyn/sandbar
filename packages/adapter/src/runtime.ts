@@ -124,6 +124,13 @@ const ExecValueSchema = z.strictObject({
 
 const MAX_OUTPUT = 1_048_576;
 
+function checkedRecoveryVersion(version: number): number {
+  if (!Number.isSafeInteger(version) || version <= 0)
+    throw new AdapterError("INVALID_ARGUMENT", "Invalid recovery token version");
+
+  return version;
+}
+
 // oxlint-disable-next-line anti-slop/no-unknown-returns -- AbortSignal.reason is caller-owned and must propagate unchanged through cancellation.
 function abortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException("Aborted", "AbortError");
@@ -384,6 +391,8 @@ export async function prepareOperation(
 
   const parts = operationParts(operation);
 
+  if (parts.recovery) checkedRecoveryVersion(parts.recovery.version);
+
   const prepared = parts.prepare
     ? await prepareBeforeDeadline(parts.prepare, structuredClone(checkedInput), signal)
     : structuredClone(checkedInput);
@@ -461,7 +470,7 @@ function normalizeSpecial(
       kind: "pending",
       token: pending.token,
       pollAfterMs: pending.pollAfterMs ?? 500,
-      version: parts.recovery.version,
+      version: checkedRecoveryVersion(parts.recovery.version),
     };
   }
 

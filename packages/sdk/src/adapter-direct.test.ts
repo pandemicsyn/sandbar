@@ -327,6 +327,129 @@ test("provider observation failures retain possible effect and permit read-only 
   }
 });
 
+test("invalid recovery versions fail before submission and late metadata drift stays unknown", async () => {
+  for (const version of [0, -1, 1.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+    let preparations = 0;
+    let submits = 0;
+    let references = 0;
+    const recovery = { version, token: z.strictObject({ jobId: z.string() }) };
+
+    const adapter = defineAdapter({
+      name: "example.invalid-recovery-version",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          create: {
+            recovery,
+            async prepare(input) {
+              preparations++;
+
+              return input;
+            },
+            async submit(_input, ctx) {
+              submits++;
+
+              return ctx.pending({ jobId: "job" });
+            },
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({
+      adapter,
+      config: {},
+      credentials: {},
+      async onReference() {
+        references++;
+      },
+    });
+
+    await expect(
+      client.sandboxes.submitCreate({ environment: Image.prepared("image") }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT", effect: "none" });
+    await expect(
+      client.operations.prepare("create", {
+        image: { kind: "prepared", value: "image" },
+        networkPolicy: "blocked",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT", effect: "none" });
+    expect(preparations).toBe(0);
+    expect(submits).toBe(0);
+    expect(references).toBe(0);
+    await client.close();
+  }
+
+  const recovery = { version: 1, token: z.strictObject({ jobId: z.string() }) };
+  let submits = 0;
+
+  const adapter = defineAdapter({
+    name: "example.recovery-version-drift",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          recovery,
+          async submit(_input, ctx) {
+            submits++;
+            recovery.version = 0;
+
+            return ctx.pending({ jobId: "job" });
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  let savedReference: unknown;
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {},
+    credentials: {},
+    async onReference(reference) {
+      savedReference = reference;
+    },
+  });
+
+  const prepared = await client.operations.prepare("create", {
+    image: { kind: "prepared", value: "image" },
+    networkPolicy: "blocked",
+  });
+
+  expect(
+    await prepared.submit(
+      { operationId: "op", submissionId: "sub", invocationKey: "key" },
+      { beforeSubmit: async () => true },
+    ),
+  ).toMatchObject({ kind: "unknown" });
+  expect(submits).toBe(1);
+
+  recovery.version = 1;
+  const ordinary = client.sandboxes.create({ environment: Image.prepared("image") });
+
+  await expect(ordinary).rejects.toMatchObject({
+    code: "OUTCOME_UNKNOWN",
+    effect: "possible",
+  });
+  await expect(ordinary).rejects.toMatchObject({ reference: savedReference });
+  expect(savedReference).toMatchObject({ kind: "create", operationId: expect.any(String) });
+  expect(submits).toBe(2);
+  await client.close();
+});
+
 test("reference callback failure prevents provider submission", async () => {
   let submits = 0;
 

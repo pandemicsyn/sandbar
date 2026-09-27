@@ -568,13 +568,17 @@ export class PreparedAdapterAttempt {
         ),
         signal,
       );
-    } catch (error) {
+    } catch {
       if (signal.aborted)
         return {
           kind: "unknown",
           reason: "Provider submission outcome is unknown after cancellation",
         };
-      throw error;
+
+      return {
+        kind: "unknown",
+        reason: "Provider submission outcome is unknown after failure",
+      };
     }
   }
 }
