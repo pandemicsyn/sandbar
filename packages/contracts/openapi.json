@@ -791,57 +791,91 @@
         "type": "object",
         "properties": {
           "operation": {
-            "oneOf": [
-              {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "projectId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "sandboxId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "executionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "unknown"
+                ]
+              },
+              "phase": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "applied",
+                  "partial",
+                  "possible",
+                  "unknown"
+                ]
+              },
+              "error": {
                 "type": "object",
                 "properties": {
-                  "id": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "projectId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "sandboxId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "executionId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "status": {
+                  "code": {
                     "type": "string",
                     "enum": [
-                      "queued",
-                      "running",
-                      "succeeded",
-                      "failed",
-                      "unknown"
+                      "INVALID_ARGUMENT",
+                      "UNSUPPORTED",
+                      "UNAUTHENTICATED",
+                      "FORBIDDEN",
+                      "NOT_FOUND",
+                      "CONFLICT",
+                      "CAPACITY",
+                      "RATE_LIMIT",
+                      "INVOCATION_EXPIRED",
+                      "UNAVAILABLE",
+                      "TIMEOUT",
+                      "OUTPUT_CAPACITY",
+                      "OUTCOME_UNKNOWN",
+                      "INTERNAL"
                     ]
                   },
-                  "phase": {
+                  "message": {
                     "type": "string",
-                    "maxLength": 128
-                  },
-                  "createdAt": {
-                    "type": "string",
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-                  },
-                  "updatedAt": {
-                    "type": "string",
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    "maxLength": 1024
                   },
                   "effect": {
                     "type": "string",
@@ -853,643 +887,74 @@
                       "unknown"
                     ]
                   },
-                  "error": {
-                    "type": "object",
-                    "properties": {
-                      "code": {
-                        "type": "string",
-                        "enum": [
-                          "INVALID_ARGUMENT",
-                          "UNSUPPORTED",
-                          "UNAUTHENTICATED",
-                          "FORBIDDEN",
-                          "NOT_FOUND",
-                          "CONFLICT",
-                          "CAPACITY",
-                          "RATE_LIMIT",
-                          "INVOCATION_EXPIRED",
-                          "UNAVAILABLE",
-                          "TIMEOUT",
-                          "OUTPUT_CAPACITY",
-                          "OUTCOME_UNKNOWN",
-                          "INTERNAL"
-                        ]
-                      },
-                      "message": {
-                        "type": "string",
-                        "maxLength": 1024
-                      },
-                      "effect": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "applied",
-                          "partial",
-                          "possible",
-                          "unknown"
-                        ]
-                      },
-                      "retry": {
-                        "type": "string",
-                        "enum": [
-                          "never",
-                          "same_invocation",
-                          "observe_only",
-                          "new_invocation_with_risk"
-                        ]
-                      },
-                      "retryAfterSeconds": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "required": [
-                      "code",
-                      "message",
-                      "effect",
-                      "retry"
-                    ]
-                  },
-                  "recovery": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "check_again",
-                        "inspect_candidates",
-                        "acknowledge",
-                        "run_again"
-                      ]
-                    }
-                  },
-                  "kind": {
+                  "retry": {
                     "type": "string",
-                    "const": "create"
-                  },
-                  "result": {
-                    "type": "object",
-                    "properties": {
-                      "kind": {
-                        "type": "string",
-                        "const": "create"
-                      },
-                      "sandboxId": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 128,
-                        "pattern": "^[A-Za-z0-9_-]+$"
-                      }
-                    },
-                    "required": [
-                      "kind",
-                      "sandboxId"
+                    "enum": [
+                      "never",
+                      "same_invocation",
+                      "observe_only",
+                      "new_invocation_with_risk"
                     ]
+                  },
+                  "retryAfterSeconds": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
                   }
                 },
                 "required": [
-                  "id",
-                  "projectId",
-                  "status",
-                  "phase",
-                  "createdAt",
-                  "updatedAt",
+                  "code",
+                  "message",
                   "effect",
-                  "recovery",
-                  "kind"
+                  "retry"
                 ]
               },
-              {
+              "recovery": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "check_again",
+                    "inspect_candidates",
+                    "acknowledge",
+                    "run_again"
+                  ]
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "exec"
+              },
+              "result": {
                 "type": "object",
                 "properties": {
-                  "id": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "projectId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "sandboxId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "executionId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "queued",
-                      "running",
-                      "succeeded",
-                      "failed",
-                      "unknown"
-                    ]
-                  },
-                  "phase": {
-                    "type": "string",
-                    "maxLength": 128
-                  },
-                  "createdAt": {
-                    "type": "string",
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-                  },
-                  "updatedAt": {
-                    "type": "string",
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-                  },
-                  "effect": {
-                    "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
-                  },
-                  "error": {
-                    "type": "object",
-                    "properties": {
-                      "code": {
-                        "type": "string",
-                        "enum": [
-                          "INVALID_ARGUMENT",
-                          "UNSUPPORTED",
-                          "UNAUTHENTICATED",
-                          "FORBIDDEN",
-                          "NOT_FOUND",
-                          "CONFLICT",
-                          "CAPACITY",
-                          "RATE_LIMIT",
-                          "INVOCATION_EXPIRED",
-                          "UNAVAILABLE",
-                          "TIMEOUT",
-                          "OUTPUT_CAPACITY",
-                          "OUTCOME_UNKNOWN",
-                          "INTERNAL"
-                        ]
-                      },
-                      "message": {
-                        "type": "string",
-                        "maxLength": 1024
-                      },
-                      "effect": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "applied",
-                          "partial",
-                          "possible",
-                          "unknown"
-                        ]
-                      },
-                      "retry": {
-                        "type": "string",
-                        "enum": [
-                          "never",
-                          "same_invocation",
-                          "observe_only",
-                          "new_invocation_with_risk"
-                        ]
-                      },
-                      "retryAfterSeconds": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "required": [
-                      "code",
-                      "message",
-                      "effect",
-                      "retry"
-                    ]
-                  },
-                  "recovery": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "check_again",
-                        "inspect_candidates",
-                        "acknowledge",
-                        "run_again"
-                      ]
-                    }
-                  },
                   "kind": {
                     "type": "string",
                     "const": "exec"
                   },
-                  "result": {
-                    "type": "object",
-                    "properties": {
-                      "kind": {
-                        "type": "string",
-                        "const": "exec"
-                      },
-                      "executionId": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 128,
-                        "pattern": "^[A-Za-z0-9_-]+$"
-                      }
-                    },
-                    "required": [
-                      "kind",
-                      "executionId"
-                    ]
-                  }
-                },
-                "required": [
-                  "id",
-                  "projectId",
-                  "status",
-                  "phase",
-                  "createdAt",
-                  "updatedAt",
-                  "effect",
-                  "recovery",
-                  "kind"
-                ]
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "projectId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "sandboxId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
                   "executionId": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 128,
                     "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "queued",
-                      "running",
-                      "succeeded",
-                      "failed",
-                      "unknown"
-                    ]
-                  },
-                  "phase": {
-                    "type": "string",
-                    "maxLength": 128
-                  },
-                  "createdAt": {
-                    "type": "string",
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-                  },
-                  "updatedAt": {
-                    "type": "string",
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-                  },
-                  "effect": {
-                    "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
-                  },
-                  "error": {
-                    "type": "object",
-                    "properties": {
-                      "code": {
-                        "type": "string",
-                        "enum": [
-                          "INVALID_ARGUMENT",
-                          "UNSUPPORTED",
-                          "UNAUTHENTICATED",
-                          "FORBIDDEN",
-                          "NOT_FOUND",
-                          "CONFLICT",
-                          "CAPACITY",
-                          "RATE_LIMIT",
-                          "INVOCATION_EXPIRED",
-                          "UNAVAILABLE",
-                          "TIMEOUT",
-                          "OUTPUT_CAPACITY",
-                          "OUTCOME_UNKNOWN",
-                          "INTERNAL"
-                        ]
-                      },
-                      "message": {
-                        "type": "string",
-                        "maxLength": 1024
-                      },
-                      "effect": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "applied",
-                          "partial",
-                          "possible",
-                          "unknown"
-                        ]
-                      },
-                      "retry": {
-                        "type": "string",
-                        "enum": [
-                          "never",
-                          "same_invocation",
-                          "observe_only",
-                          "new_invocation_with_risk"
-                        ]
-                      },
-                      "retryAfterSeconds": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "required": [
-                      "code",
-                      "message",
-                      "effect",
-                      "retry"
-                    ]
-                  },
-                  "recovery": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "check_again",
-                        "inspect_candidates",
-                        "acknowledge",
-                        "run_again"
-                      ]
-                    }
-                  },
-                  "kind": {
-                    "type": "string",
-                    "const": "destroy"
-                  },
-                  "result": {
-                    "type": "object",
-                    "properties": {
-                      "kind": {
-                        "type": "string",
-                        "const": "destroy"
-                      },
-                      "computeStopped": {
-                        "type": "boolean"
-                      },
-                      "retainedResources": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      }
-                    },
-                    "required": [
-                      "kind",
-                      "computeStopped",
-                      "retainedResources"
-                    ]
                   }
                 },
                 "required": [
-                  "id",
-                  "projectId",
-                  "status",
-                  "phase",
-                  "createdAt",
-                  "updatedAt",
-                  "effect",
-                  "recovery",
-                  "kind"
-                ]
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "projectId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "sandboxId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "executionId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "queued",
-                      "running",
-                      "succeeded",
-                      "failed",
-                      "unknown"
-                    ]
-                  },
-                  "phase": {
-                    "type": "string",
-                    "maxLength": 128
-                  },
-                  "createdAt": {
-                    "type": "string",
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-                  },
-                  "updatedAt": {
-                    "type": "string",
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-                  },
-                  "effect": {
-                    "type": "string",
-                    "enum": [
-                      "none",
-                      "applied",
-                      "partial",
-                      "possible",
-                      "unknown"
-                    ]
-                  },
-                  "error": {
-                    "type": "object",
-                    "properties": {
-                      "code": {
-                        "type": "string",
-                        "enum": [
-                          "INVALID_ARGUMENT",
-                          "UNSUPPORTED",
-                          "UNAUTHENTICATED",
-                          "FORBIDDEN",
-                          "NOT_FOUND",
-                          "CONFLICT",
-                          "CAPACITY",
-                          "RATE_LIMIT",
-                          "INVOCATION_EXPIRED",
-                          "UNAVAILABLE",
-                          "TIMEOUT",
-                          "OUTPUT_CAPACITY",
-                          "OUTCOME_UNKNOWN",
-                          "INTERNAL"
-                        ]
-                      },
-                      "message": {
-                        "type": "string",
-                        "maxLength": 1024
-                      },
-                      "effect": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "applied",
-                          "partial",
-                          "possible",
-                          "unknown"
-                        ]
-                      },
-                      "retry": {
-                        "type": "string",
-                        "enum": [
-                          "never",
-                          "same_invocation",
-                          "observe_only",
-                          "new_invocation_with_risk"
-                        ]
-                      },
-                      "retryAfterSeconds": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "required": [
-                      "code",
-                      "message",
-                      "effect",
-                      "retry"
-                    ]
-                  },
-                  "recovery": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "check_again",
-                        "inspect_candidates",
-                        "acknowledge",
-                        "run_again"
-                      ]
-                    }
-                  },
-                  "kind": {
-                    "type": "string",
-                    "const": "file_write"
-                  },
-                  "result": {
-                    "type": "object",
-                    "properties": {
-                      "kind": {
-                        "type": "string",
-                        "const": "file_write"
-                      },
-                      "receipt": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string"
-                          },
-                          "bytesWritten": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "complete": {
-                            "type": "boolean"
-                          },
-                          "effect": {
-                            "type": "string",
-                            "enum": [
-                              "none",
-                              "applied",
-                              "partial",
-                              "possible",
-                              "unknown"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "path",
-                          "bytesWritten",
-                          "complete",
-                          "effect"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "kind",
-                      "receipt"
-                    ]
-                  }
-                },
-                "required": [
-                  "id",
-                  "projectId",
-                  "status",
-                  "phase",
-                  "createdAt",
-                  "updatedAt",
-                  "effect",
-                  "recovery",
-                  "kind"
+                  "kind",
+                  "executionId"
                 ]
               }
+            },
+            "required": [
+              "id",
+              "projectId",
+              "status",
+              "phase",
+              "createdAt",
+              "updatedAt",
+              "effect",
+              "recovery",
+              "kind"
             ]
           },
           "execution": {

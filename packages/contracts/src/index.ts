@@ -129,14 +129,31 @@ const OperationBase = z.object({
   recovery: z.array(z.enum(["check_again", "inspect_candidates", "acknowledge", "run_again"])),
 });
 
+const CreateOperation = OperationBase.extend({
+  kind: z.literal("create"),
+  result: CreateOperationResult.optional(),
+});
+
+const ExecOperation = OperationBase.extend({
+  kind: z.literal("exec"),
+  result: ExecOperationResult.optional(),
+});
+
+const DestroyOperation = OperationBase.extend({
+  kind: z.literal("destroy"),
+  result: DestroyOperationResult.optional(),
+});
+
+const FileWriteOperation = OperationBase.extend({
+  kind: z.literal("file_write"),
+  result: FileWriteOperationResult.optional(),
+});
+
 export const Operation = z.discriminatedUnion("kind", [
-  OperationBase.extend({ kind: z.literal("create"), result: CreateOperationResult.optional() }),
-  OperationBase.extend({ kind: z.literal("exec"), result: ExecOperationResult.optional() }),
-  OperationBase.extend({ kind: z.literal("destroy"), result: DestroyOperationResult.optional() }),
-  OperationBase.extend({
-    kind: z.literal("file_write"),
-    result: FileWriteOperationResult.optional(),
-  }),
+  CreateOperation,
+  ExecOperation,
+  DestroyOperation,
+  FileWriteOperation,
 ]);
 
 export const AcceptedOperation = z.object({ operation: Operation });
@@ -190,7 +207,7 @@ export const Execution = z.object({
   stderrBase64: z.base64().optional(),
 });
 
-export const AcceptedExecution = z.object({ operation: Operation, execution: Execution });
+export const AcceptedExecution = z.object({ operation: ExecOperation, execution: Execution });
 
 export const FileReadHeaders = z.object({
   contentType: z.literal("application/octet-stream"),

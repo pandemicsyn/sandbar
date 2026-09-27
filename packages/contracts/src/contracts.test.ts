@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AcceptedExecution,
   canonicalJson,
   CreateSandboxRequest,
   Execution,
@@ -93,6 +94,13 @@ describe("public contract", () => {
 
     expect(Execution.parse(execution).stdoutBase64).toBe("/wA=");
     expect(Execution.safeParse({ ...execution, stdoutBase64: "not-base64" }).success).toBe(false);
+    expect(AcceptedExecution.safeParse({ operation, execution }).success).toBe(false);
+    expect(
+      AcceptedExecution.safeParse({
+        operation: { ...operation, kind: "exec", executionId: "exec_1" },
+        execution,
+      }).success,
+    ).toBe(true);
   });
   test("intent canonicalization preserves omission and is key-order independent", async () => {
     expect(canonicalJson({ b: 2, a: 1 })).toBe(canonicalJson({ a: 1, b: 2 }));
@@ -196,6 +204,9 @@ describe("public contract", () => {
           },
         },
       ],
+    });
+    expect(openApiDocument.components.schemas.AcceptedExecution).toMatchObject({
+      properties: { operation: { properties: { kind: { const: "exec" } } } },
     });
   });
   test("OpenAPI retains constrained label keys", () => {
