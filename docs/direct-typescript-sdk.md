@@ -4,7 +4,7 @@ Accepted direction · September 26, 2026 · Implementation wave 2
 
 ## Product contract
 
-The Sandbar service is optional for TypeScript callers. Support direct provider access from the caller's process and service-backed access through HTTP with the same ergonomic sandbox resource operations. Use `direct` rather than `local`: compute still runs at the provider. Construction names `Sandbar.direct(...)` and `Sandbar.connect(...)` are the intended DX; package export details must preserve dependency isolation.
+The accepted TypeScript SDK design makes the Sandbar service optional for TypeScript callers. It calls providers from the caller's process or uses the service over HTTP with the same ergonomic sandbox resource operations. Use `direct` rather than `local`: compute still runs at the provider. Construction names `Sandbar.direct(...)` and `Sandbar.connect(...)` are the intended DX; package export details must preserve dependency isolation.
 
 Direct mode requires no database, Hono server, subprocess bridge, implicit background daemon or synthetic project setup. It targets server-side Node.js and Bun; qualify concrete supported runtime versions. Provider packages are explicitly installed/configured, credentials stay with the caller, and direct entry points do not pull Hono, Drizzle, SQL drivers or service configuration into their runtime dependency graph. Browser access to real provider administrator credentials is not a supported mode.
 
@@ -14,9 +14,9 @@ Direct SDK support does not imply embedded Rust/Python support. Those remain fir
 
 ## Shared logic and service responsibilities
 
-Extract a portable semantic core for validated request normalization, capability evaluation, provider-result and scope/submission correlation, effect classification, safe retry/fallback decisions, bounded output handling, and provider-independent planning. Provider drivers depend on the portable contracts/SPI, not the service store.
+The portable `packages/core` now provides validated request normalization, provider-result and scope/submission correlation, effect disposition, and bounded output handling. Provider drivers depend on the portable contracts/SPI, not the service store. Direct SDK work will reuse these helpers and add capability evaluation and provider-independent planning where the shared flow needs them.
 
-The current `packages/core` imports ControlStore and SQL row types and contains DurableRunner. Move durable coordination and encryption/key custody into a service-owned module/package, with explicit store dependencies. Reuse the extracted validation/effect logic from both service and direct paths. Avoid two separately evolving copies or an artificial generic store interface implemented with an in-memory database just to make direct calls possible.
+`DurableRunner`, encryption and key custody now live in the service-owned `packages/service-runtime`, which depends explicitly on `@sandbar/store`. `packages/core` no longer imports `ControlStore` or SQL row types, and the service runner uses the portable helpers. Keep direct and service paths on the same validation/effect semantics without an artificial generic store interface or an in-memory database in direct mode.
 
 The service continues to own authentication, projects, centrally stored provider connections, atomic admission/quotas, durable operations, scheduling, reconciliation, fleet indexes and accounting persistence. This refactor must preserve the reviewed service/API behavior, security checks, transaction boundaries and recovery tests.
 
