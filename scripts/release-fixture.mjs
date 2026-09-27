@@ -69,6 +69,10 @@ try {
     }
   }
 
+  for (const file of readdirSync(join(temporary, ".changeset"))) {
+    if (file.endsWith(".md") && file !== "README.md") rmSync(join(temporary, ".changeset", file));
+  }
+
   const paths = JSON.parse(readFileSync(join(temporary, "scripts/release-packages.json"), "utf8"));
   const names = [];
 
