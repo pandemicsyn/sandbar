@@ -393,6 +393,56 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("button", { name: "Create sandbox" }).waitFor();
   expect(page.url()).toBe(fleetUrl);
   await page.unroute(connectionListRoute);
+
+  // A stored fake connection may be verified but unregistered after a restart.
+  // The default form must leave selection to the server, which can skip it for Daytona.
+  await page.route(connectionListRoute, async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const staleFake = body.items.find((item: { provider: string }) => item.provider === "fake");
+
+    await route.fulfill({
+      response,
+      body: JSON.stringify({
+        ...body,
+        items: [
+          staleFake,
+          { ...staleFake, id: "conn_daytona_browser", name: "Daytona usable", provider: "daytona" },
+        ],
+      }),
+    });
+  });
+  await page.route("**/v1/projects/*/sandboxes", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { code: "CONFLICT", message: "Probe only" } }),
+    });
+  });
+  await page.reload();
+  await page.getByLabel("Prepared image ID").fill("snapshot-for-daytona");
+
+  const defaultRequest = page.waitForRequest(
+    (request) =>
+      request.url().includes(`/v1/projects/${projectId}/sandboxes`) && request.method() === "POST",
+  );
+
+  await page.getByRole("button", { name: "Create sandbox" }).click();
+  expect((await defaultRequest).postDataJSON()).toMatchObject({
+    environment: { kind: "prepared", imageId: "snapshot-for-daytona" },
+  });
+  expect((await defaultRequest).postDataJSON()).not.toHaveProperty("connectionId");
+  await page.getByText("Probe only").waitFor();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Start new create attempt" }).click();
+  await page.getByRole("button", { name: "Start new create attempt" }).waitFor({ state: "hidden" });
+  await page.unroute("**/v1/projects/*/sandboxes");
+  await page.unroute(connectionListRoute);
+  await page.reload();
+  await page.getByLabel("Prepared image ID").fill("fake-starter");
+
   await page
     .getByLabel("Label key (optional)")
     .evaluate((input) => input.removeAttribute("maxlength"));
@@ -438,6 +488,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByText("Retry the same inputs to recover this request.").waitFor();
   await page.getByRole("link", { name: "Connections" }).click();
   await page.getByRole("link", { name: "Fleet" }).click();
+  await page.getByLabel("Prepared image ID").fill("fake-starter");
   await page.getByLabel("Label key (optional)").fill("team");
   await page.getByLabel("Label value").fill("e2e");
   await page.getByRole("button", { name: "Create sandbox" }).click();
@@ -450,6 +501,8 @@ test("browser and public HTTP recover fake effects across service restarts witho
 
   await page.getByRole("link", { name: "Fleet" }).click();
   await page.getByRole("heading", { name: "Fleet" }).waitFor();
+  await page.locator("#create-connection").selectOption({ label: "Fake local" });
+  expect(await page.getByLabel("Prepared image ID").count()).toBe(0);
   const operationPath = `**/v1/projects/${projectId}/operations/${createId}`;
   let operationReads = 0;
 
@@ -505,6 +558,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   );
 
   await page.goto(`${serviceUrl}/projects/${projectId}/sandboxes?q=e2e&state=invalid`);
+  await page.locator("#create-connection").selectOption({ label: "Fake local" });
   const filteredRequest = new URL((await fleetListRequest).url());
   expect(filteredRequest.searchParams.get("q")).toBe("e2e");
   expect(filteredRequest.searchParams.has("state")).toBe(false);
@@ -564,6 +618,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await secondTab.goto(page.url());
 
   for (const tab of [page, secondTab]) {
+    await tab.locator("#create-connection").selectOption({ label: "Fake local" });
     await tab.getByLabel("Label key (optional)").fill("team");
     await tab.getByLabel("Label value").fill("concurrent");
   }
@@ -909,6 +964,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await waitForOperation(projectId, lostExecId, "succeeded");
 
   await page.getByRole("link", { name: "Fleet" }).click();
+  await page.locator("#create-connection").selectOption({ label: "Fake local" });
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "Start new create attempt" }).click();
   await seed("create", "lost_after_effect");

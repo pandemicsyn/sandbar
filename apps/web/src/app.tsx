@@ -662,22 +662,29 @@ function FleetPage() {
 
   const available = connections.data?.items.filter((c) => c.status === "verified") ?? [];
 
+  const selectedConnection = connectionId
+    ? available.find((item) => item.id === connectionId)
+    : undefined;
+
   async function create(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
 
     try {
-      const selected = available.find((item) => item.id === connectionId) ?? available[0];
+      if (connectionId && !selectedConnection)
+        throw new Error("Selected connection is no longer available. Refresh connections.");
 
       const candidate: CreateSandboxRequest = {
         environment: {
           kind: "prepared" as const,
-          imageId: selected?.provider === "fake" ? "fake-starter" : preparedImageId.trim(),
+          imageId:
+            selectedConnection?.provider === "fake" ? "fake-starter" : preparedImageId.trim(),
         },
         network: { policy: "blocked" as const },
-        connectionId: selected?.id,
       };
+
+      if (selectedConnection) candidate.connectionId = selectedConnection.id;
 
       if (labelKey.trim()) candidate.labels = { [labelKey.trim()]: labelValue.trim() };
 
@@ -775,8 +782,7 @@ function FleetPage() {
                 ))}
               </select>
             </Field>
-            {(available.find((item) => item.id === connectionId) ?? available[0])?.provider !==
-              "fake" && (
+            {selectedConnection?.provider !== "fake" && (
               <Field label="Prepared image ID" htmlFor="create-prepared-image">
                 <input
                   className="input"
@@ -785,6 +791,11 @@ function FleetPage() {
                   value={preparedImageId}
                   onChange={(e) => setPreparedImageId(e.target.value)}
                 />
+                {!connectionId && (
+                  <span className="field-hint">
+                    Enter an active snapshot ID for Daytona or fake-starter for a fake default.
+                  </span>
+                )}
               </Field>
             )}
             <Field label="Label key (optional)" htmlFor="create-label-key">
