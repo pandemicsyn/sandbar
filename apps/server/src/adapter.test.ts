@@ -3,6 +3,7 @@ import { chmod, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { sql } from "drizzle-orm";
 import { defineAdapter } from "@sandbar/adapter";
 import { openDomainRuntime } from "./runtime";
 
@@ -120,6 +121,19 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
     expect(destroy.status).toBe(202);
     expect(await runtime.runner.tick()).toBe(true);
     expect(destroys).toBe(1);
+
+    const otherProject = await request("/v1/projects", "POST", { name: "Other" });
+    const foreign = await request(`/v1/projects/${String(otherProject.body.id)}/sandboxes`, "POST", {
+      environment: { kind: "prepared", imageId: "image-1" },
+      network: { policy: "blocked" }, connectionId,
+    }, Bun.randomUUIDv7());
+    expect(foreign.status).not.toBe(202);
+    expect(submissions).toBe(1);
+
+    await runtime.store.backend.run(sql`UPDATE provider_connections SET adapter_contract_version=99 WHERE id=${connectionId}`);
+    const stale = await runtime.store.getConnection(projectId, connectionId);
+    await expect(runtime.registry.connect(stale!)).rejects.toThrow("stored contract version 99");
+    expect(submissions).toBe(1);
   } finally {
     await runtime.close();
     await rm(directory, { recursive: true, force: true });

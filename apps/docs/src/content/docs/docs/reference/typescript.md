@@ -1,42 +1,56 @@
 ---
 title: TypeScript SDK reference
-description: Public entry points, resource handles and errors in the current unpublished SDK.
+description: Public SDK constructors, resource handles, operation lifecycle, and errors.
 ---
 
-The **unpublished** `sandbar-sdk` package provides `sandbar-sdk/direct` and `sandbar-sdk/remote`. Both entry points export `Sandbar`, `Image`, `SandbarError`, `OutcomeUnknownError`, `WaitAbortedError`, `NonzeroExitError`, `NoExitCodeError`, `outputText` and the shared public resource types. The root entry point exports the common types and errors but not a constructor.
+The **unpublished** `sandbar-sdk` package has `sandbar-sdk/direct` and `sandbar-sdk/remote` entry points. The direct entry point uses a trusted installed `defineAdapter` package in the same Node.js or Bun process. The remote entry point talks to the optional standalone Bun service. Both expose the same sandbox resource model.
 
 ## Construction
 
-| Entry point | Signature                                    | Requirements                                                                 |
-| ----------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
-| Direct      | `Sandbar.direct({ provider })`               | `provider` is a driver and verified native scope; server-side Node.js or Bun |
-| Remote      | `Sandbar.connect({ url, token, projectId })` | HTTPS service URL or loopback HTTP, Bearer token and project ID              |
+| Entry point | Signature | Requirements |
+| --- | --- | --- |
+| Direct | `await Sandbar.connect({ adapter, config, credentials, onReference? })` | Server-side Node.js or Bun; adapter verifies native scope. |
+| Remote | `Sandbar.connect({ url, token, projectId })` | HTTPS service URL or loopback HTTP, Bearer token and project ID. |
 
-The direct export also includes `DirectClient`, `DirectOptions` and `DirectProvider`. The remote export includes `RemoteClient` and `RemoteOptions`. Import types from the matching entry point.
+`@sandbar/adapter` exports `defineAdapter`, `AdapterError`, operation result helpers, and the types for scoped create, destroy, exec, files, inventory, and observation. `@sandbar/adapter/testing` exports `adapterSuite`. An adapter with no host policy does not expose `withPolicy`; a policy-bearing definition validates and clones host policy synchronously.
 
-## Inputs and handles
+## Resource methods
 
-| API                                                                                | Current behavior                                              |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `Image.prepared(value)`                                                            | Prepared image input; `fake-starter` is the qualified fixture |
-| `Image.oci(value)`                                                                 | OCI input shape exists; no real importer qualified            |
-| `sandboxes.create({ environment, networkPolicy?, region?, labels? }, { signal? })` | Create and wait for a sandbox                                 |
-| `sandboxes.submitCreate(input, options?)`                                          | Return an `OperationHandle<SandboxHandle>`                    |
-| `box.inspect()`                                                                    | Return state and optional observation time                    |
-| `box.exec(input, { signal? })`                                                     | Return `ExecOutput`; nonzero exit throws                      |
-| `box.submitExec(input, options?)`                                                  | Return an `OperationHandle<ExecOutput>`                       |
-| `box.readFile(path)`                                                               | Return `Uint8Array`, at most 1 MiB                            |
-| `box.writeFile(path, bytes, { overwrite?, signal? })`                              | Buffered binary write, at most 1 MiB                          |
-| `box.destroy({ signal? })`                                                         | Confirm compute stop                                          |
-| `sandbar.recover(reference)`                                                       | Observe a prior mutation without resubmitting                 |
-| `sandbar.close()`                                                                  | Release client state, without destroying sandboxes            |
+| API | Behavior |
+| --- | --- |
+| `Image.prepared(value)` | Existing prepared image ID. |
+| `Image.oci(value)` | OCI input shape where an adapter explicitly supports it. |
+| `sandboxes.create({ environment, networkPolicy?, region?, labels? }, { signal? })` | Submit and wait for a sandbox. |
+| `sandboxes.submitCreate(input, options?)` | Return an operation with a serializable recovery reference. |
+| `box.inspect()` | Read current sandbox state where supported. |
+| `box.exec(input, { signal? })` | Return bounded binary output; nonzero exit throws. |
+| `box.submitExec(input, options?)` | Return an execution operation handle. |
+| `box.readFile(path)` | Return bounded `Uint8Array` where supported. |
+| `box.writeFile(path, bytes, { overwrite?, signal? })` | Write binary bytes where supported. |
+| `box.destroy({ signal? })` | Confirm compute stop. |
+| `sandbar.recover(reference)` | Observe a prior mutation without resubmitting. |
+| `sandbar.close()` | Release client resources without destroying compute. |
 
-`exec` and `submitExec` accept `ExecInput | readonly string[]`. An array is shorthand for `{ command: { kind: "argv", argv } }`: its elements are literal arguments, never shell syntax, and the SDK copies them before dispatch. Both forms share validation and defaults (300-second deadline and 1 MiB output bound); an empty array is invalid. Use the full object for `cwd`, `env`, `deadlineSeconds`, `maxOutputBytes`, or explicit `{ kind: "shell", script }` commands.
+`exec` and `submitExec` accept `ExecInput | readonly string[]`. An array is shorthand for `{ command: { kind: "argv", argv } }`: each element is a literal argument, and the SDK copies the array before dispatch. Both forms share validation and defaults (300-second deadline and 1 MiB output bound); an empty array is invalid. Use the full object for `cwd`, `env`, `deadlineSeconds`, `maxOutputBytes`, or an explicit `{ kind: "shell", script }` command.
 
-`ExecOutput` has `exitCode`, byte-array `stdout` and `stderr`, `truncated`, and bounded `stdoutText(maxBytes?)` / `stderrText(maxBytes?)`. `OperationHandle<T>` has `reference`, `durability`, `observe()` and `wait({ signal?, pollMs? })`. Poll intervals must be between 50 and 60,000 milliseconds. The public source of truth is [`packages/sdk/src/resource.ts`](https://github.com/pandemicsyn/sandbar/blob/3e9f8efbe6bd8932e6d719e292d3430e7eda4346/packages/sdk/src/resource.ts).
+`ExecOutput` contains byte-array `stdout` and `stderr`, `exitCode`, `truncated`, and bounded `stdoutText(maxBytes?)` / `stderrText(maxBytes?)` helpers. `OperationHandle<T>` has `reference`, `durability`, `observe()` and `wait({ signal?, pollMs? })`. Poll intervals must be between 50 and 60,000 milliseconds. A direct operation has process lifetime; a remote operation is backed by service admission. Unsupported optional methods fail locally.
 
-The recovery behavior in these guides applies to the resource methods above. The exported `RemoteClient` class also exposes lower-level `raw`, `request` and `throwResponse` helpers; they do not provide the resource methods' recovery guarantees. For an imported remote execution reference, the SDK applies its global output cap while the service retains the original requested cap.
+## Optional durable lifecycle
 
-## Errors
+The direct client's `operations` property lets an application integrate its own durable ledger without importing the service:
 
-`SandbarError` exposes `code` and `effect` (`none`, `applied`, `partial`, `possible` or `unknown` in the wire error vocabulary). `OutcomeUnknownError` and `WaitAbortedError` carry a `reference`. `WaitAbortedError.cause` is the original abort reason. `NonzeroExitError` carries the completed execution result; `NoExitCodeError` indicates a completed execution without a confirmed exit code. See [Recovery](/docs/guides/recovery/) before retrying mutations.
+```ts
+const prepared = await client.operations.prepare("create", nativeCreateInput);
+const result = await prepared.submit(identity, {
+  beforeSubmit: async () => {
+    await persistSubmissionMarker(identity);
+    return true;
+  },
+});
+```
+
+A prepared attempt is single-use, including concurrent calls. `beforeSubmit` must commit before provider IO; returning false or throwing prevents dispatch. Persist a returned pending token with its version. After restart, `client.operations.observe({ scope, kind, operationId, submissionId, token, tokenVersion })` reads provider evidence without preparing or submitting again. This API exposes no SQL types or persistence framework. See [asynchronous adapter recovery](/docs/guides/adapter-recovery/).
+
+## Errors and uncertainty
+
+`SandbarError` exposes `code` and `effect`. `OutcomeUnknownError` and `WaitAbortedError` carry a recovery reference. A thrown provider error, transport timeout, abort, or close after submission does not prove the native effect failed. `NonzeroExitError` carries completed execution output; `NoExitCodeError` means a completed execution has no confirmed exit code. See [Recovery](/docs/guides/recovery/) before retrying mutations.

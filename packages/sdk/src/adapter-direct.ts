@@ -294,6 +294,7 @@ export type AdvancedOperationResult = RuntimeResult;
 export type AdvancedOperationKind = OperationKind;
 export type AdvancedIdentity = { operationId: string; submissionId: string; invocationKey: string };
 export type AdvancedObservation = {
+  scope: Scope;
   kind: OperationKind;
   operationId: string;
   submissionId: string;
@@ -392,6 +393,7 @@ export class AdapterDirectClient {
         assertSignal(options.signal);
         const signal = options.signal ? AbortSignal.any([this.signal, options.signal]) : this.signal;
         const checked = z.strictObject({
+          scope: ReferenceSchema.shape.scope,
           kind: z.enum(["create", "destroy", "exec", "file_write"]),
           operationId: z.string().min(1).max(128),
           submissionId: z.string().min(1).max(128),
@@ -399,6 +401,8 @@ export class AdapterDirectClient {
           token: z.json().optional(),
           tokenVersion: z.number().int().positive().optional(),
         }).parse(input);
+        if (canonicalScope(checked.scope) !== canonicalScope(this.scope))
+          throw new SandbarError("FORBIDDEN", "Observation scope differs from the verified connection");
         if ((checked.kind === "create" && checked.sandboxId) ||
             (checked.kind !== "create" && !checked.sandboxId))
           throw new SandbarError("INVALID_ARGUMENT", "Observation sandbox binding is invalid");
@@ -530,7 +534,10 @@ export class AdapterDirectClient {
 }
 
 export type AdapterConnectOptions<C extends z.ZodType, K extends z.ZodType, S extends { scope: Scope }> = {
-  adapter: AdapterDefinition<C, K, S>;
+  adapter: Pick<AdapterDefinition<C, K, S>, "name" | "config" | "credentials"> & {
+    connect: (input: never) => Promise<S>;
+    policy?: { schema: z.ZodType; default: Json };
+  };
   config: z.input<C>;
   credentials: z.input<K>;
   onReference?: (reference: AdapterRecoveryReference) => void | Promise<void>;

@@ -317,6 +317,7 @@ export class DurableRunner {
         token = JSON.parse(plaintext);
       }
       const result = await lease.adapterConnection.operations.observe({
+        scope: lease.adapterConnection.scope,
         kind: op.kind,
         operationId: op.id,
         submissionId: op.provider_token,

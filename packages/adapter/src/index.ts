@@ -205,6 +205,14 @@ const ScopeSchema = z.strictObject({
 const JsonSchema = z.json();
 const MAX_CONFIG_BYTES = 65_536;
 
+function freezeJson<T extends Json>(value: T): Readonly<T> {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) freezeJson(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 function boundedSchemaOutput(value: unknown, label: string): Json {
   const parsed = JsonSchema.safeParse(value);
   if (!parsed.success) throw new AdapterError("INVALID_ARGUMENT", `Invalid ${label}`);
@@ -272,8 +280,8 @@ export async function connectAdapter<C extends z.ZodType, K extends z.ZodType, S
   };
   const host: HostContext = {
     signal: controller.signal,
-    policy: Object.freeze(definition.policy
-      ? parseBoundedSchema(definition.policy.schema, definition.policy.default, "host policy")
+    policy: freezeJson(definition.policy
+      ? parseBoundedSchema(definition.policy.schema, definition.policy.default, "host policy") as Json
       : {}),
     onClose(release) {
       if (closed) throw new AdapterError("CONFLICT", "Connection is closed");

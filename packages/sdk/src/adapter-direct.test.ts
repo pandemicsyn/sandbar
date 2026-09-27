@@ -240,3 +240,51 @@ test("closing during the advanced barrier prevents a late provider effect", asyn
   await expect(waiting).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
   expect(submits).toBe(0);
 });
+
+
+test("direct connection accepts a policy-bearing adapter clone", async () => {
+  const adapter = defineAdapter({
+    name: "example.host-policy",
+    config: z.strictObject({}), credentials: z.strictObject({}),
+    policy: { schema: z.strictObject({ endpoint: z.string() }), default: { endpoint: "default" } },
+    async connect({ host }) {
+      host.policy.endpoint satisfies string;
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: { endpoint: host.policy.endpoint } },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() { return { id: "box", state: "running" as const }; },
+        async destroy() { return { computeStopped: true, retainedResources: [] }; },
+      };
+    },
+  });
+  const client = await Sandbar.connect({ adapter: adapter.withPolicy({ endpoint: "configured" }),
+    config: {}, credentials: {} });
+  expect(client.scope.partition.endpoint).toBe("configured");
+  await client.close();
+});
+
+test("advanced observation rejects foreign scope before provider reads", async () => {
+  let reads = 0;
+  const adapter = defineAdapter({
+    name: "example.observe-scope",
+    config: z.strictObject({}), credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: { region: "us" } },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          async submit() { return { id: "box", state: "running" as const }; },
+          async observe() { reads++; return null; },
+        },
+        async destroy() { return { computeStopped: true, retainedResources: [] }; },
+      };
+    },
+  });
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  await expect(client.operations.observe({
+    scope: { authority: { kind: "account", id: "other" }, partition: { region: "us" } },
+    kind: "create", operationId: "op", submissionId: "sub",
+  })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  expect(reads).toBe(0);
+  await client.close();
+});

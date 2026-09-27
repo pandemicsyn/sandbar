@@ -21,5 +21,8 @@
   },
   "exports": {
     "./runtime": "./src/runtime.ts"
+  },
+  "devDependencies": {
+    "drizzle-orm": "1.0.0-beta.22"
   }
 }
