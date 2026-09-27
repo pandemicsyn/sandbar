@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   canonicalJson,
   CreateSandboxRequest,
+  Execution,
   ExecRequest,
   Operation,
+  Sandbox,
   StreamFrame,
   intentSha256,
 } from "./index";
@@ -39,6 +41,12 @@ describe("public contract", () => {
 
     expect(Operation.parse(operation)).not.toHaveProperty("futureField");
     expect(
+      Operation.safeParse({
+        ...operation,
+        result: { kind: "destroy", computeStopped: true, retainedResources: [] },
+      }).success,
+    ).toBe(false);
+    expect(
       Operation.parse({
         ...operation,
         kind: "file_write",
@@ -53,6 +61,38 @@ describe("public contract", () => {
       kind: "file_write",
       receipt: { path: "/blob", bytesWritten: 3, complete: true, effect: "applied" },
     });
+
+    const sandbox = {
+      id: "sb_1",
+      projectId: "p_1",
+      connectionId: "conn_1",
+      desiredState: "running",
+      observedState: "running",
+      revision: 1,
+      environment: { kind: "prepared", imageId: "fake-starter", futureField: true },
+      network: { policy: "blocked", futureField: true },
+      labels: {},
+    };
+
+    expect(Sandbox.parse(sandbox).environment).toEqual({
+      kind: "prepared",
+      imageId: "fake-starter",
+    });
+    expect(Sandbox.parse(sandbox).network).toEqual({ policy: "blocked" });
+
+    const execution = {
+      id: "exec_1",
+      projectId: "p_1",
+      sandboxId: "sb_1",
+      operationId: "op_1",
+      status: "completed",
+      outputAvailability: "captured",
+      capturedBytes: 2,
+      stdoutBase64: "/wA=",
+    };
+
+    expect(Execution.parse(execution).stdoutBase64).toBe("/wA=");
+    expect(Execution.safeParse({ ...execution, stdoutBase64: "not-base64" }).success).toBe(false);
   });
   test("intent canonicalization preserves omission and is key-order independent", async () => {
     expect(canonicalJson({ b: 2, a: 1 })).toBe(canonicalJson({ a: 1, b: 2 }));
@@ -116,6 +156,47 @@ describe("public contract", () => {
       "additionalProperties",
       false,
     );
+    expect(openApiDocument.components.schemas.Sandbox).not.toHaveProperty(
+      "properties.environment.oneOf.0.additionalProperties",
+    );
+    expect(openApiDocument.components.schemas.Sandbox).not.toHaveProperty(
+      "properties.environment.oneOf.1.additionalProperties",
+    );
+    expect(openApiDocument.components.schemas.Sandbox).not.toHaveProperty(
+      "properties.network.additionalProperties",
+    );
+    expect(openApiDocument.components.schemas.Execution).toHaveProperty(
+      "properties.stdoutBase64.contentEncoding",
+      "base64",
+    );
+    expect(openApiDocument.components.schemas.Operation).toMatchObject({
+      oneOf: [
+        {
+          properties: {
+            kind: { const: "create" },
+            result: { properties: { kind: { const: "create" } } },
+          },
+        },
+        {
+          properties: {
+            kind: { const: "exec" },
+            result: { properties: { kind: { const: "exec" } } },
+          },
+        },
+        {
+          properties: {
+            kind: { const: "destroy" },
+            result: { properties: { kind: { const: "destroy" } } },
+          },
+        },
+        {
+          properties: {
+            kind: { const: "file_write" },
+            result: { properties: { kind: { const: "file_write" } } },
+          },
+        },
+      ],
+    });
   });
   test("OpenAPI retains constrained label keys", () => {
     expect(openApiDocument.components.schemas.CreateSandboxRequest).toMatchObject({

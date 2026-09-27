@@ -25,6 +25,13 @@ export const ImageSource = z.discriminatedUnion("kind", [
 
 export const NetworkSelection = z.strictObject({ policy: z.string().min(1).max(128) });
 
+const ImageSourceResponse = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("prepared"), imageId: Id }),
+  z.object({ kind: z.literal("oci"), reference: z.string().min(1).max(1024) }),
+]);
+
+const NetworkSelectionResponse = z.object({ policy: z.string().min(1).max(128) });
+
 export const CreateSandboxRequest = z.strictObject({
   environment: ImageSource,
   connectionId: Id.optional(),
@@ -89,21 +96,28 @@ export const FileReceipt = z.object({
   effect: Effect,
 });
 
+const CreateOperationResult = z.object({ kind: z.literal("create"), sandboxId: Id });
+
+const ExecOperationResult = z.object({ kind: z.literal("exec"), executionId: Id });
+
+const DestroyOperationResult = z.object({
+  kind: z.literal("destroy"),
+  computeStopped: z.boolean(),
+  retainedResources: z.array(z.string()),
+});
+
+const FileWriteOperationResult = z.object({ kind: z.literal("file_write"), receipt: FileReceipt });
+
 export const OperationResult = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("create"), sandboxId: Id }),
-  z.object({ kind: z.literal("exec"), executionId: Id }),
-  z.object({
-    kind: z.literal("destroy"),
-    computeStopped: z.boolean(),
-    retainedResources: z.array(z.string()),
-  }),
-  z.object({ kind: z.literal("file_write"), receipt: FileReceipt }),
+  CreateOperationResult,
+  ExecOperationResult,
+  DestroyOperationResult,
+  FileWriteOperationResult,
 ]);
 
-export const Operation = z.object({
+const OperationBase = z.object({
   id: Id,
   projectId: Id,
-  kind: z.enum(["create", "exec", "destroy", "file_write"]),
   sandboxId: Id.optional(),
   executionId: Id.optional(),
   status: OperationStatus,
@@ -112,9 +126,18 @@ export const Operation = z.object({
   updatedAt: Rfc3339,
   effect: Effect,
   error: SafeError.optional(),
-  result: OperationResult.optional(),
   recovery: z.array(z.enum(["check_again", "inspect_candidates", "acknowledge", "run_again"])),
 });
+
+export const Operation = z.discriminatedUnion("kind", [
+  OperationBase.extend({ kind: z.literal("create"), result: CreateOperationResult.optional() }),
+  OperationBase.extend({ kind: z.literal("exec"), result: ExecOperationResult.optional() }),
+  OperationBase.extend({ kind: z.literal("destroy"), result: DestroyOperationResult.optional() }),
+  OperationBase.extend({
+    kind: z.literal("file_write"),
+    result: FileWriteOperationResult.optional(),
+  }),
+]);
 
 export const AcceptedOperation = z.object({ operation: Operation });
 
@@ -134,8 +157,8 @@ export const Sandbox = z.object({
   observedAt: Rfc3339.optional(),
   revision: z.number().int().nonnegative(),
   currentOperationId: Id.optional(),
-  environment: ImageSource,
-  network: NetworkSelection,
+  environment: ImageSourceResponse,
+  network: NetworkSelectionResponse,
   labels: z.record(z.string(), z.string()),
 });
 
@@ -163,8 +186,8 @@ export const Execution = z.object({
   signal: z.string().optional(),
   outputAvailability: OutputAvailability,
   capturedBytes: z.number().int().nonnegative(),
-  stdout: z.string().optional(),
-  stderr: z.string().optional(),
+  stdoutBase64: z.base64().optional(),
+  stderrBase64: z.base64().optional(),
 });
 
 export const AcceptedExecution = z.object({ operation: Operation, execution: Execution });
