@@ -32,11 +32,13 @@
       "dependencies": {
         "@sandbar/contracts": "workspace:*",
         "@sandbar/core": "workspace:*",
+        "@sandbar/provider-daytona": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
         "@sandbar/service-runtime": "workspace:*",
         "@sandbar/store": "workspace:*",
         "hono": "4.13.9",
+        "zod": "4.6.5",
       },
     },
     "apps/web": {
@@ -81,6 +83,18 @@
         "zod": "4.6.5",
       },
     },
+    "packages/providers/daytona": {
+      "name": "@sandbar/provider-daytona",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sandbar/contracts": "workspace:*",
+        "@sandbar/provider-spi": "workspace:*",
+        "zod": "4.6.5",
+      },
+      "devDependencies": {
+        "@sandbar/sdk": "workspace:*",
+      },
+    },
     "packages/providers/fake": {
       "name": "@sandbar/provider-fake",
       "version": "0.0.0",
@@ -118,6 +132,7 @@
         "@sandbar/core": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
         "@sandbar/store": "workspace:*",
+        "zod": "4.6.5",
       },
     },
     "packages/store": {
@@ -517,6 +532,8 @@
     "@sandbar/core": ["@sandbar/core@workspace:packages/core"],
 
     "@sandbar/docs": ["@sandbar/docs@workspace:apps/docs"],
+
+    "@sandbar/provider-daytona": ["@sandbar/provider-daytona@workspace:packages/providers/daytona"],
 
     "@sandbar/provider-fake": ["@sandbar/provider-fake@workspace:packages/providers/fake"],
 

@@ -4,6 +4,7 @@ import {
   SandboxRef,
   SandboxObservation,
   type NativeRef,
+  type ProviderLease,
   type ProviderDriver,
   type DriverResult,
   type InvocationIdentity,
@@ -60,7 +61,7 @@ export type {
   SandboxHandle,
 } from "./resource";
 
-export type DirectProvider = { driver: ProviderDriver; scope: NativeScope };
+export type DirectProvider = ProviderLease;
 
 export type DirectOptions = { provider: DirectProvider };
 
@@ -124,6 +125,7 @@ class DirectOperation<T> implements OperationHandle<T> {
             this.client.driver.observe({
               scope: this.reference.scope!,
               submissionId: this.reference.submissionId!,
+              operationId: this.reference.operationId,
             }),
             this.client.closedSignal,
           );
@@ -517,6 +519,8 @@ function boundedDriverOutput(
 
 export class DirectClient implements SandbarClient {
   private closed = false;
+  private closePromise?: Promise<void>;
+  private readonly release?: () => void | Promise<void>;
   private readonly closeController = new AbortController();
   get closedSignal(): AbortSignal {
     return this.closeController.signal;
@@ -538,6 +542,8 @@ export class DirectClient implements SandbarClient {
 
     if (this.driver.name !== this.scope.provider)
       throw new SandbarError("INVALID_ARGUMENT", "Provider name and scope mismatch");
+
+    if (options.provider.ownership === "owned") this.release = options.provider.release;
   }
   ensureOpen() {
     if (this.closed) throw new SandbarError("CLIENT_CLOSED", "Client is closed");
@@ -738,10 +744,14 @@ export class DirectClient implements SandbarClient {
       return result.value.observation;
     });
   }
-  async close() {
-    if (this.closed) return;
-    this.closed = true;
-    this.closeController.abort(new SandbarError("CLIENT_CLOSED", "Client is closed"));
+  close(): Promise<void> {
+    if (!this.closePromise) {
+      this.closed = true;
+      this.closeController.abort(new SandbarError("CLIENT_CLOSED", "Client is closed"));
+      this.closePromise = Promise.resolve().then(() => this.release?.());
+    }
+
+    return this.closePromise;
   }
 }
 

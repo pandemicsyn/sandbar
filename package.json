@@ -9,7 +9,7 @@
     "packages/providers/*"
   ],
   "scripts": {
-    "build:packages": "bun run --cwd packages/contracts build && bun run --cwd packages/provider-spi build && bun run --cwd packages/core build && bun run --cwd packages/providers/fake build && bun run --cwd packages/sdk build",
+    "build:packages": "bun run --cwd packages/contracts build && bun run --cwd packages/provider-spi build && bun run --cwd packages/core build && bun run --cwd packages/providers/fake build && bun run --cwd packages/providers/daytona build && bun run --cwd packages/sdk build",
     "check": "bun run build:packages && bun run --filter '@sandbar/*' check",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",

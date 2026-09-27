@@ -26,6 +26,323 @@ afterEach(async () => {
   directory = undefined;
 });
 
+test("persisted connections reject new work while their provider is unregistered", async () => {
+  directory = await mkdtemp(join(tmpdir(), "sandbar-missing-provider-"));
+
+  const keyFile = join(directory, "key"),
+    setupTokenFile = join(directory, "setup"),
+    databaseUrl = join(directory, "control.sqlite");
+
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)));
+  await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "test-setup-token-with-long-random-content");
+  await chmod(setupTokenFile, 0o600);
+  server = await startFakeProviderServer({
+    hostname: "127.0.0.1",
+    port: 0,
+    statePath: join(directory, "fake.json"),
+    token: transportToken,
+    testMode: true,
+  });
+
+  const daytonaFetch = Object.assign(
+    async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions")
+        return Response.json([
+          { id: "us", name: "US", regionType: "shared", organizationId: "org-1" },
+        ]);
+
+      if (path === "/api/organizations/org-1")
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+      throw new Error(`Unexpected Daytona fixture read: ${path}`);
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const common = { databaseUrl, keyFile, setupTokenFile, daytonaFetch, startRunner: false };
+
+  const withFake = {
+    ...common,
+    fakeProviderUrl: server.url.toString(),
+    fakeProviderToken: transportToken,
+  };
+
+  let runtime = await openDomainRuntime(withFake);
+  let bearer = "";
+
+  const request = async (path: string, method: string, body?: JsonRequestBody, key?: string) => {
+    const headers: Record<string, string> = {};
+
+    if (bearer) headers.Authorization = `Bearer ${bearer}`;
+
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+
+    if (key) headers["Idempotency-Key"] = key;
+
+    const response = await runtime.app.request(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    // SAFETY: This helper reads JSON emitted by the in-process API under test.
+    return { response, value: (await response.json()) as any };
+  };
+
+  const counts = () => {
+    const database = new Database(databaseUrl);
+
+    try {
+      return database
+        .query(
+          "SELECT (SELECT COUNT(*) FROM operations) AS operations,(SELECT COUNT(*) FROM invocation_keys) AS invocations,(SELECT COUNT(*) FROM reservations) AS reservations",
+        )
+        .get();
+    } finally {
+      database.close();
+    }
+  };
+
+  try {
+    const setup = await request("/v1/setup", "POST", {
+      setupToken: "test-setup-token-with-long-random-content",
+    });
+
+    bearer = setup.value.token;
+    const project = (await request("/v1/projects", "POST", { name: "Restart" })).value;
+
+    const fake = (
+      await request(`/v1/projects/${project.id}/provider-connections`, "POST", {
+        provider: "fake",
+        name: "Fake",
+      })
+    ).value;
+
+    expect(
+      (
+        await request(
+          `/v1/projects/${project.id}/provider-connections/${fake.id}/verify`,
+          "POST",
+          {},
+        )
+      ).response.status,
+    ).toBe(200);
+
+    const daytona = (
+      await request(`/v1/projects/${project.id}/provider-connections`, "POST", {
+        provider: "daytona",
+        name: "Daytona fixture",
+        credentials: { apiKey: "fixture-key" },
+        configuration: { target: "us" },
+      })
+    ).value;
+
+    expect(
+      (
+        await request(
+          `/v1/projects/${project.id}/provider-connections/${daytona.id}/verify`,
+          "POST",
+          {},
+        )
+      ).response.status,
+    ).toBe(200);
+
+    const unsupportedKey = Bun.randomUUIDv7();
+
+    const unsupported = await request(
+      `/v1/projects/${project.id}/sandboxes`,
+      "POST",
+      { environment: { kind: "prepared", imageId: "unsupported-image" }, connectionId: fake.id },
+      unsupportedKey,
+    );
+
+    expect(unsupported.response.status).toBe(202);
+    expect(await runtime.runner.tick()).toBe(true);
+    expect(
+      (await runtime.store.getOperation(project.id, unsupported.value.operation.id))?.status,
+    ).toBe("failed");
+
+    const createKey = Bun.randomUUIDv7();
+
+    const createBody = {
+      environment: { kind: "prepared", imageId: "fake-starter" },
+      connectionId: fake.id,
+    };
+
+    const queued = await request(
+      `/v1/projects/${project.id}/sandboxes`,
+      "POST",
+      createBody,
+      createKey,
+    );
+
+    expect(queued.response.status).toBe(202);
+    await runtime.close();
+    runtime = await openDomainRuntime(common);
+
+    const repeated = await request(
+      `/v1/projects/${project.id}/sandboxes`,
+      "POST",
+      createBody,
+      createKey,
+    );
+
+    expect(repeated.response.status).toBe(202);
+    expect(repeated.value.operation.id).toBe(queued.value.operation.id);
+
+    const beforeRejectedCreate = await counts();
+
+    const rejectedCreate = await request(
+      `/v1/projects/${project.id}/sandboxes`,
+      "POST",
+      createBody,
+      Bun.randomUUIDv7(),
+    );
+
+    expect(rejectedCreate.response.status).toBe(409);
+    expect(await counts()).toEqual(beforeRejectedCreate);
+
+    const fallback = await request(
+      `/v1/projects/${project.id}/sandboxes`,
+      "POST",
+      { environment: { kind: "prepared", imageId: "fixture-snapshot" } },
+      Bun.randomUUIDv7(),
+    );
+
+    expect(fallback.response.status).toBe(202);
+    expect(
+      (await runtime.store.getOperation(project.id, fallback.value.operation.id))?.connection_id,
+    ).toBe(daytona.id);
+
+    await runtime.close();
+    runtime = await openDomainRuntime(withFake);
+    expect(await runtime.runner.tick()).toBe(true);
+
+    const running = await runtime.store.getSandbox(project.id, queued.value.operation.sandboxId);
+
+    expect(running?.observed_state).toBe("running");
+    expect((await runtime.store.getOperation(project.id, queued.value.operation.id))?.status).toBe(
+      "succeeded",
+    );
+
+    const boxId = queued.value.operation.sandboxId;
+    const executionKey = Bun.randomUUIDv7();
+    const executionBody = { command: { kind: "shell", script: "printf ready" } };
+
+    const priorExecution = await request(
+      `/v1/projects/${project.id}/sandboxes/${boxId}/executions`,
+      "POST",
+      executionBody,
+      executionKey,
+    );
+
+    expect(priorExecution.response.status).toBe(202);
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (
+        (await runtime.store.getExecution(project.id, priorExecution.value.execution.id))
+          ?.status === "completed"
+      )
+        break;
+
+      expect(await runtime.runner.tick()).toBe(true);
+    }
+
+    expect(
+      (await runtime.store.getExecution(project.id, priorExecution.value.execution.id))?.status,
+    ).toBe("completed");
+
+    await runtime.close();
+    runtime = await openDomainRuntime(common);
+
+    const repeatedExecution = await request(
+      `/v1/projects/${project.id}/sandboxes/${boxId}/executions`,
+      "POST",
+      executionBody,
+      executionKey,
+    );
+
+    expect(repeatedExecution.response.status).toBe(202);
+    expect(repeatedExecution.value.operation.id).toBe(priorExecution.value.operation.id);
+    const retained = new Database(databaseUrl);
+
+    try {
+      retained
+        .query(
+          "UPDATE executions SET output_ciphertext='retained-fixture',output_state='captured' WHERE id=?",
+        )
+        .run(priorExecution.value.execution.id);
+      retained
+        .query("UPDATE reservations SET amount=16777216 WHERE operation_id=? AND kind='output'")
+        .run(priorExecution.value.operation.id);
+    } finally {
+      retained.close();
+    }
+
+    const priorExecutionRow = await runtime.store.getExecution(
+      project.id,
+      priorExecution.value.execution.id,
+    );
+
+    expect(priorExecutionRow?.output_ciphertext).toBe("retained-fixture");
+    const beforeRejectedWork = await counts();
+
+    const execute = await request(
+      `/v1/projects/${project.id}/sandboxes/${boxId}/executions`,
+      "POST",
+      { command: { kind: "shell", script: "true" } },
+      Bun.randomUUIDv7(),
+    );
+
+    const write = await runtime.app.request(
+      `/v1/projects/${project.id}/sandboxes/${boxId}/files?path=%2Ffile&overwrite=true`,
+      {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${bearer}`, "Idempotency-Key": Bun.randomUUIDv7() },
+        body: new Uint8Array([1]),
+      },
+    );
+
+    const destroy = await request(
+      `/v1/projects/${project.id}/sandboxes/${boxId}`,
+      "DELETE",
+      undefined,
+      Bun.randomUUIDv7(),
+    );
+
+    expect([execute.response.status, write.status, destroy.response.status]).toEqual([
+      409, 409, 409,
+    ]);
+    expect(await counts()).toEqual(beforeRejectedWork);
+    expect((await runtime.store.getSandbox(project.id, boxId))?.desired_state).toBe("running");
+    expect(
+      (await runtime.store.getExecution(project.id, priorExecution.value.execution.id))
+        ?.output_ciphertext,
+    ).toBe(priorExecutionRow?.output_ciphertext);
+
+    const localBoxId = unsupported.value.operation.sandboxId;
+
+    const localCleanup = await request(
+      `/v1/projects/${project.id}/sandboxes/${localBoxId}`,
+      "DELETE",
+      undefined,
+      Bun.randomUUIDv7(),
+    );
+
+    expect(localCleanup.response.status).toBe(202);
+    expect((await runtime.store.getSandbox(project.id, localBoxId))?.observed_state).toBe(
+      "destroyed",
+    );
+  } finally {
+    await runtime.close();
+  }
+});
+
 test("runtime rejects remote fake provider endpoints before opening storage", async () => {
   await expect(
     openDomainRuntime({
@@ -133,6 +450,16 @@ test("API persists ambiguous create and exec, then observes each once after rest
     const bearer = { Authorization: `Bearer ${setup.value.token}` };
     expect(setup.response.headers.get("set-cookie")).toContain("HttpOnly");
     const project = (await json("/v1/projects", "POST", { name: "Demo" }, bearer)).value;
+
+    const invalidFake = await json(
+      `/v1/projects/${project.id}/provider-connections`,
+      "POST",
+      { provider: "fake", name: "Invalid", credentials: { apiKey: "not-a-fake-secret" } },
+      bearer,
+    );
+
+    expect(invalidFake.response.status).toBe(400);
+    expect(invalidFake.value.error.code).toBe("INVALID_ARGUMENT");
 
     for (const query of [
       "limit=NaN",

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 import { startFakeProviderServer } from "@sandbar/provider-fake/server";
-import { ProviderReadError, type SandboxRef } from "@sandbar/provider-spi";
+import { ProviderReadError, type SandboxRef, type ProviderDriver } from "@sandbar/provider-spi";
 import {
   Image as DirectImage,
   Sandbar as DirectSandbar,
@@ -2735,4 +2735,43 @@ test("remote completed execution without an exit code has a distinct outcome", a
   };
 
   await expect((await client.recover(reference)).observe()).rejects.toBeInstanceOf(NoExitCodeError);
+});
+
+test("direct close releases an owned transport once and leaves borrowed shared transport open", async () => {
+  // SAFETY: This close-only fixture never invokes driver methods; it only verifies lease release ownership.
+  const driver = { name: "fake" } as ProviderDriver;
+  const scope = { provider: "fake", connectionId: "conn_1", accountId: "native-account" };
+  const borrowedA = DirectSandbar.direct({ provider: { driver, scope } });
+  const borrowedB = DirectSandbar.direct({ provider: { driver, scope } });
+  let releases = 0;
+  let finish!: () => void;
+
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+
+  const owned = DirectSandbar.direct({
+    provider: {
+      driver,
+      scope,
+      ownership: "owned",
+      release: async () => {
+        releases++;
+        await pending;
+      },
+    },
+  });
+
+  const first = owned.close(),
+    second = owned.close();
+
+  expect(first).toBe(second);
+  await Promise.resolve();
+  expect(releases).toBe(1);
+  await borrowedA.close();
+  expect(releases).toBe(1);
+  finish();
+  await Promise.all([first, second]);
+  await borrowedB.close();
+  expect(releases).toBe(1);
 });

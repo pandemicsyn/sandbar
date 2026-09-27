@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { z } from "zod";
 import {
   AcceptedExecution,
   AcceptedOperation,
@@ -29,6 +30,7 @@ import {
 import {
   ProviderReadError,
   type ProviderDriver,
+  type ProviderLease,
   type NativeScope,
   type SandboxRef,
 } from "@sandbar/provider-spi";
@@ -41,11 +43,19 @@ import {
   type SandboxRow,
 } from "@sandbar/store";
 import { sha256 } from "@sandbar/core";
-import { DurableRunner, SecretBox } from "@sandbar/service-runtime";
+import {
+  DurableRunner,
+  SecretBox,
+  ProviderRegistry,
+  ProviderConfigurationError,
+  storedScope,
+  publicScope,
+} from "@sandbar/service-runtime";
 
 export interface DomainDependencies {
   store: ControlStore;
-  driver: ProviderDriver;
+  driver?: ProviderDriver;
+  registry?: ProviderRegistry;
   secrets: SecretBox;
   setupToken: string;
   runner?: DurableRunner;
@@ -66,7 +76,19 @@ function safeError(code: string, message: string, effect: "none" | "possible" = 
   return { code, message, effect, retry: effect === "possible" ? "observe_only" : "never" };
 }
 
-function errorResponse(c: Context, error: Error): Response {
+function errorResponse(c: Context, error: Error | z.ZodError): Response {
+  if (error instanceof ProviderConfigurationError)
+    return c.json(
+      ErrorResponse.parse({ error: safeError("INVALID_ARGUMENT", "Invalid request") }),
+      400,
+    );
+
+  if (error instanceof ProviderReadError && error.code === "UNAUTHENTICATED")
+    return c.json(
+      ErrorResponse.parse({ error: safeError("UNAUTHENTICATED", "Provider credential rejected") }),
+      401,
+    );
+
   if (error instanceof ProviderReadError && error.code === "NOT_FOUND")
     return c.json(
       ErrorResponse.parse({ error: safeError("NOT_FOUND", "Provider file not found") }),
@@ -87,7 +109,7 @@ function errorResponse(c: Context, error: Error): Response {
     return c.json(ErrorResponse.parse({ error: safeError(error.code, error.message) }), status);
   }
 
-  if (error instanceof SyntaxError || "issues" in error) {
+  if (error instanceof SyntaxError || error instanceof z.ZodError) {
     return c.json(
       ErrorResponse.parse({ error: safeError("INVALID_ARGUMENT", "Invalid request") }),
       400,
@@ -217,8 +239,7 @@ function connectionDto(row: ConnectionRow) {
 
   if (row.scope)
     Object.assign(dto, {
-      nativeScope: { accountId: row.scope, region: "local" },
-      capabilities: { create: true, exec: true, files: true, destroy: true },
+      nativeScope: publicScope(row.scope),
     });
 
   return ProviderConnection.parse(dto);
@@ -344,7 +365,12 @@ function protect(
 
       return a instanceof Response ? a : await handler(c, a);
     } catch (error) {
-      return errorResponse(c, error instanceof Error ? error : new Error("Unknown failure"));
+      return errorResponse(
+        c,
+        error instanceof Error || error instanceof z.ZodError
+          ? error
+          : new Error("Unknown failure"),
+      );
     }
   };
 }
@@ -364,18 +390,54 @@ function accepted(
   );
 }
 
-function nativeRef(box: SandboxRow, connection: ConnectionRow): SandboxRef {
-  if (!box.native_id || !connection.scope)
-    throw new StoreError("CONFLICT", "Sandbox has no verified native identity");
-
-  const scope: NativeScope = {
-    provider: connection.provider,
-    connectionId: connection.id,
-    accountId: connection.scope,
-    region: "local",
-  };
+function nativeRef(box: SandboxRow, scope: NativeScope): SandboxRef {
+  if (!box.native_id) throw new StoreError("CONFLICT", "Sandbox has no verified native identity");
 
   return { scope, nativeId: box.native_id, kind: "sandbox" };
+}
+
+function providerAvailable(deps: DomainDependencies, provider: string): boolean {
+  return deps.registry ? deps.registry.has(provider) : deps.driver?.name === provider;
+}
+
+async function providerFor(
+  deps: DomainDependencies,
+  connection: ConnectionRow,
+): Promise<ProviderLease> {
+  if (deps.registry) return deps.registry.connect(connection);
+
+  if (!deps.driver || deps.driver.name !== connection.provider || !connection.scope)
+    throw new StoreError("CONFLICT", "Provider connection unavailable");
+
+  return {
+    driver: deps.driver,
+    scope: {
+      provider: connection.provider,
+      connectionId: connection.id,
+      accountId: connection.scope,
+      region: "local",
+    },
+  };
+}
+
+async function withProvider<T>(
+  deps: DomainDependencies,
+  connection: ConnectionRow,
+  use: (lease: ProviderLease) => Promise<T>,
+): Promise<T> {
+  const lease = await providerFor(deps, connection);
+
+  try {
+    return await use(lease);
+  } finally {
+    if (lease.ownership === "owned") {
+      try {
+        await lease.release();
+      } catch {
+        console.error("Provider transport release failed");
+      }
+    }
+  }
 }
 
 function filePath(c: Context): string {
@@ -480,7 +542,12 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       return c.json(SessionResponse.parse({ operatorId: "operator", csrfToken, token }), 201);
     } catch (error) {
-      return errorResponse(c, error instanceof Error ? error : new Error("Unknown failure"));
+      return errorResponse(
+        c,
+        error instanceof Error || error instanceof z.ZodError
+          ? error
+          : new Error("Unknown failure"),
+      );
     }
   });
   app.post("/v1/sessions", async (c) => {
@@ -513,7 +580,12 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       return c.json(SessionResponse.parse({ operatorId: "operator", csrfToken }), 201);
     } catch (error) {
-      return errorResponse(c, error instanceof Error ? error : new Error("Unknown failure"));
+      return errorResponse(
+        c,
+        error instanceof Error || error instanceof z.ZodError
+          ? error
+          : new Error("Unknown failure"),
+      );
     }
   });
   app.get(
@@ -563,10 +635,21 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       const id = `conn_${crypto.randomUUID().replaceAll("-", "")}`;
 
+      if (deps.registry)
+        deps.registry.validate(body.provider, {
+          credentials: body.credentials ?? {},
+          configuration: body.configuration ?? {},
+        });
+      else if (body.provider !== "fake" || body.credentials || body.configuration)
+        throw new SyntaxError("Provider is not configured");
+
       const encryptedCredentials = await deps.secrets.seal(
         "provider-connection",
         id,
-        JSON.stringify({ provider: "fake" }),
+        JSON.stringify({
+          credentials: body.credentials ?? {},
+          configuration: body.configuration ?? {},
+        }),
       );
 
       const row = await deps.store.createConnection({
@@ -599,21 +682,23 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       const row = await deps.store.getConnection(projectId, connectionId);
 
       if (!row) throw new StoreError("NOT_FOUND", "Connection not found");
-      await deps.secrets.open("provider-connection", row.id, row.encrypted_credentials);
 
-      const capabilities = await deps.driver.capabilities({
-        provider: "fake",
-        connectionId: row.id,
-        accountId: "fake-local",
-        region: "local",
+      return withProvider(deps, row, async ({ driver, scope }) => {
+        const capabilities = await driver.capabilities(scope);
+
+        if (capabilities.provider !== row.provider)
+          throw new StoreError("CONFLICT", "Provider identity mismatch");
+
+        return c.json(
+          connectionDto(
+            await deps.store.verifyConnection(
+              projectId,
+              connectionId,
+              deps.registry ? storedScope(scope) : scope.accountId!,
+            ),
+          ),
+        );
       });
-
-      if (capabilities.provider !== "fake")
-        throw new StoreError("CONFLICT", "Provider identity mismatch");
-
-      return c.json(
-        connectionDto(await deps.store.verifyConnection(projectId, connectionId, "fake-local")),
-      );
     }),
   );
 
@@ -632,6 +717,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
         intentHash: await intentSha256(body),
         request: body,
         connectionId: body.connectionId,
+        providerAvailable: (provider) => providerAvailable(deps, provider),
       });
 
       return accepted(c, admission.operation);
@@ -737,6 +823,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
         encryptedRequest,
         output: body.output,
         captureBytes,
+        providerAvailable: (provider) => providerAvailable(deps, provider),
       });
 
       return accepted(c, admitted.operation, await executionDto(deps, admitted.execution!));
@@ -765,6 +852,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
         endpoint: `DELETE /sandboxes/${sandboxId}`,
         key,
         intentHash: await intentSha256({ sandboxId }),
+        providerAvailable: (provider) => providerAvailable(deps, provider),
       });
 
       return accepted(c, admitted.operation);
@@ -856,20 +944,19 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       if (!connection) throw new StoreError("NOT_FOUND", "Connection not found");
 
-      const bytes = await deps.driver.readFile({
-        sandbox: nativeRef(box, connection),
-        path: filePath(c),
-      });
+      return withProvider(deps, connection, async ({ driver, scope }) => {
+        const bytes = await driver.readFile({ sandbox: nativeRef(box, scope), path: filePath(c) });
 
-      if (bytes.length > 1_048_576)
-        throw new StoreError("CAPACITY", "File exceeds buffered read limit");
+        if (bytes.length > 1_048_576)
+          throw new StoreError("CAPACITY", "File exceeds buffered read limit");
 
-      return new Response(Buffer.from(bytes), {
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "Content-Length": String(bytes.length),
-          "Cache-Control": "no-store",
-        },
+        return new Response(Buffer.from(bytes), {
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "Content-Length": String(bytes.length),
+            "Cache-Control": "no-store",
+          },
+        });
       });
     }),
   );
@@ -907,6 +994,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
         overwrite,
         encryptedBytes,
         bytes: bytes.length,
+        providerAvailable: (provider) => providerAvailable(deps, provider),
       });
 
       if (!admitted.repeated && deps.runner) await deps.runner.tick();

@@ -1,12 +1,19 @@
 import { z } from "zod";
 import { ExecCommand, Effect, Id } from "@sandbar/contracts";
 
-export const NativeScope = z.object({
-  provider: z.string().min(1),
-  connectionId: Id,
-  accountId: z.string().min(1),
-  region: z.string().optional(),
-});
+export const NativeScope = z
+  .object({
+    provider: z.string().min(1),
+    connectionId: Id,
+    accountId: z.string().min(1).optional(),
+    resourceScope: z.object({ kind: z.literal("app"), id: z.string().min(1) }).optional(),
+    region: z.string().optional(),
+    endpoint: z.url().optional(),
+  })
+  .refine(
+    (value) => !!value.accountId !== !!value.resourceScope,
+    "Exactly one verified native scope is required",
+  );
 
 export const NativeRef = z.object({
   scope: NativeScope,
@@ -22,7 +29,10 @@ const sameScope = (left: z.infer<typeof NativeScope>, right: z.infer<typeof Nati
   left.provider === right.provider &&
   left.connectionId === right.connectionId &&
   left.accountId === right.accountId &&
-  left.region === right.region;
+  left.resourceScope?.kind === right.resourceScope?.kind &&
+  left.resourceScope?.id === right.resourceScope?.id &&
+  left.region === right.region &&
+  left.endpoint === right.endpoint;
 
 export const InvocationIdentity = z.object({
   projectId: Id,
@@ -204,8 +214,18 @@ export interface ProviderDriver {
   }): Promise<DriverResult>;
   destroy(input: { sandbox: SandboxRef; identity: InvocationIdentity }): Promise<DriverResult>;
   // Observe must not submit a mutation. Null means no evidence, never proof of no effect.
-  observe(input: { scope: NativeScope; submissionId: string }): Promise<DriverResult | null>;
+  observe(input: {
+    scope: NativeScope;
+    submissionId: string;
+    operationId?: string;
+  }): Promise<DriverResult | null>;
 }
+
+/** Releasing an owned transport never destroys provider compute. */
+export type ProviderLease = { driver: ProviderDriver; scope: NativeScope } & (
+  | { ownership: "owned"; release: () => void | Promise<void> }
+  | { ownership?: "borrowed"; release?: never }
+);
 
 export function validateDriverResult(value: DriverResult): DriverResult {
   return DriverResult.parse(value);
