@@ -227,7 +227,6 @@ function connectionDto(row: ConnectionRow) {
   if (row.scope)
     Object.assign(dto, {
       nativeScope: publicScope(row.scope),
-      capabilities: { create: true, exec: true, files: true, destroy: true },
     });
 
   return ProviderConnection.parse(dto);

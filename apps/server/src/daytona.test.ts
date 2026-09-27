@@ -33,7 +33,8 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
   let account = "org-1",
     creates = 0,
-    snapshotReads = 0;
+    snapshotReads = 0,
+    limitedNetworkEgress = false;
 
   let createdState = "started";
 
@@ -46,7 +47,7 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: account });
 
     if (url.pathname === `/api/organizations/${account}`)
-      return Response.json({ id: account, sandboxLimitedNetworkEgress: false });
+      return Response.json({ id: account, sandboxLimitedNetworkEgress: limitedNetworkEgress });
 
     if (url.pathname === "/api/regions")
       return Response.json([
@@ -192,6 +193,35 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
     expect(verifiedScope.accountId).toBe("org-1");
     expect(verifiedScope.endpoint).toBe("https://app.daytona.io/api");
+    expect(verified.value).not.toHaveProperty("capabilities");
+
+    limitedNetworkEgress = true;
+
+    const restrictedVerification = await request(
+      `/v1/projects/${project.id}/provider-connections/${connection.id}/verify`,
+      "POST",
+      {},
+      token,
+    );
+
+    expect(restrictedVerification.response.status).toBe(200);
+    expect(restrictedVerification.value).not.toHaveProperty("capabilities");
+    const callsBeforeList = calls.length;
+
+    const restrictedList = await request(
+      `/v1/projects/${project.id}/provider-connections`,
+      "GET",
+      undefined,
+      token,
+    );
+
+    expect(restrictedList.response.status).toBe(200);
+    expect(calls).toHaveLength(callsBeforeList);
+    expect(
+      z.object({ items: z.array(z.object({ id: z.string() })) }).parse(restrictedList.value).items,
+    ).toContainEqual(expect.objectContaining({ id: connection.id }));
+    expect(JSON.stringify(restrictedList.value)).not.toContain('"create":true');
+    limitedNetworkEgress = false;
 
     const admission = await request(
       `/v1/projects/${project.id}/sandboxes`,

@@ -333,6 +333,7 @@ test("browser and public HTTP recover fake effects across service restarts witho
   await page.getByRole("button", { name: "Verify scope" }).click();
   await page.getByText("Connection scope verified.").waitFor();
   await page.getByText("verified", { exact: true }).first().waitFor();
+  await page.getByText("Not reported", { exact: true }).waitFor();
   const connectionDetailRoute = `**/v1/projects/${projectId}/provider-connections`;
   let failFollowUpConnectionRead = true;
   let connectionMutations = 0;

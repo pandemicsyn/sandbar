@@ -34,6 +34,8 @@ Configure `SANDBAR_DB_URL`, `SANDBAR_KEY_FILE` and `SANDBAR_SETUP_TOKEN_FILE`; f
 
 The service encrypts these fields before persistence. It rechecks native identity when resolving a connection and rejects a changed organization or API endpoint. To rotate credentials, add and verify a new connection; there is no in-place credential-rotation API. Provider leases only release local transport resources and never delete sandboxes. Daytona's raw `fetch` transport has no provider-owned client to close.
 
+A verified connection confirms native identity and target. The connection list does not report operation capabilities because eligibility can change; the service rechecks blocked egress support and snapshot suitability during preparation. Verification alone does not guarantee that every operation or policy is supported.
+
 ## Current capability boundary
 
 | Area | Current behavior |

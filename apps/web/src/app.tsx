@@ -609,7 +609,9 @@ function ConnectionsPage() {
                             .filter(([, enabled]) => enabled)
                             .map(([name]) => name)
                             .join(", ")
-                        : "Not verified"}
+                        : connection.status === "verified"
+                          ? "Not reported"
+                          : "Not verified"}
                     </td>
                     <td>
                       <Button
