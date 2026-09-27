@@ -79,6 +79,24 @@ test("outcome constructors are branded and observe context lacks rejection", () 
   expect(isOutcome(ctx.pending({ id: "job" }))).toBe(true);
   expect(isOutcome(ctx.reject("CAPACITY", "No capacity"))).toBe(true);
   expect(isOutcome({ status: "pending", token: {} })).toBe(false);
+
+  const options = { pollAfterMs: 5, token: { id: "override" }, extra: "ignored" };
+  const pending = ctx.pending({ id: "validated" }, options);
+  expect(pending.token).toEqual({ id: "validated" });
+  expect(pending.pollAfterMs).toBe(5);
+  expect("extra" in pending).toBe(false);
+
+  expect(ctx.reject("CAPACITY", "x".repeat(1024)).message.length).toBe(1024);
+  expect(ctx.unknown("x".repeat(1024)).reason.length).toBe(1024);
+  // SAFETY: Deliberately pass an invalid runtime code to test the public helper's boundary.
+  expect(() => ctx.reject("WRONG" as "CAPACITY", "no capacity")).toThrow(
+    "Invalid rejection outcome",
+  );
+  expect(() => ctx.reject("CAPACITY", "x".repeat(1025))).toThrow("Invalid rejection outcome");
+  const invalidMessage: string = JSON.parse("123");
+  expect(() => ctx.reject("CAPACITY", invalidMessage)).toThrow("Invalid rejection outcome");
+  expect(() => ctx.unknown("x".repeat(1025))).toThrow("Invalid unknown outcome");
+  expect(() => ctx.unknown(invalidMessage)).toThrow("Invalid unknown outcome");
 });
 
 test("host policy is typed, validated, immutable, and cloned at registration", async () => {

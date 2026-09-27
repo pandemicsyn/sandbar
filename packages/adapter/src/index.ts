@@ -85,6 +85,21 @@ export type AdapterErrorCode =
   | "TIMEOUT"
   | "INTERNAL";
 
+const AdapterErrorCodeSchema = z.enum([
+  "INVALID_ARGUMENT",
+  "UNSUPPORTED",
+  "UNAUTHENTICATED",
+  "NOT_FOUND",
+  "CONFLICT",
+  "CAPACITY",
+  "RATE_LIMIT",
+  "UNAVAILABLE",
+  "TIMEOUT",
+  "INTERNAL",
+]);
+
+const OutcomeTextSchema = z.string().max(1024);
+
 export class AdapterError extends Error {
   constructor(
     readonly code: AdapterErrorCode,
@@ -308,10 +323,29 @@ export function createAttemptContext(
       )
         throw new AdapterError("INVALID_ARGUMENT", "Invalid observation delay");
 
-      return { [outcomeBrand]: "pending", token: boundedToken(token, tokenSchema), ...options };
+      const checkedToken = boundedToken(token, tokenSchema);
+
+      if (pollAfterMs === undefined) return { [outcomeBrand]: "pending", token: checkedToken };
+
+      return { [outcomeBrand]: "pending", token: checkedToken, pollAfterMs };
     },
-    reject: (code, message) => ({ [outcomeBrand]: "rejected", code, message }),
-    unknown: (reason) => ({ [outcomeBrand]: "unknown", reason }),
+    reject: (code, message) => {
+      const checkedCode = AdapterErrorCodeSchema.safeParse(code);
+      const checkedMessage = OutcomeTextSchema.safeParse(message);
+
+      if (!checkedCode.success || !checkedMessage.success)
+        throw new AdapterError("INVALID_ARGUMENT", "Invalid rejection outcome");
+
+      return { [outcomeBrand]: "rejected", code: checkedCode.data, message: checkedMessage.data };
+    },
+    unknown: (reason) => {
+      const checkedReason = OutcomeTextSchema.safeParse(reason);
+
+      if (!checkedReason.success)
+        throw new AdapterError("INVALID_ARGUMENT", "Invalid unknown outcome");
+
+      return { [outcomeBrand]: "unknown", reason: checkedReason.data };
+    },
   };
 }
 

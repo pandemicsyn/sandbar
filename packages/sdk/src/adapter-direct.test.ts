@@ -132,6 +132,80 @@ test("lost response is unknown with reference and recovery never resubmits", asy
   await wrong.close();
 });
 
+test("malformed post-dispatch outcome stays unknown with its saved reference", async () => {
+  let submissions = 0;
+
+  const adapter = defineAdapter({
+    name: "example.invalid-outcome",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create(_input, ctx) {
+          submissions++;
+
+          // SAFETY: Deliberately pass an invalid runtime code after dispatch to test unknown recovery.
+          return ctx.reject("NOT_A_CODE" as "CAPACITY", "invalid code");
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  let saved: unknown;
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {},
+    credentials: {},
+    onReference(reference) {
+      saved = reference;
+    },
+  });
+
+  const failed = client.sandboxes.create({ environment: Image.prepared("image") });
+  await expect(failed).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  await expect(failed).rejects.toMatchObject({ reference: saved });
+  expect(submissions).toBe(1);
+  await client.close();
+  const reopened = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  // SAFETY: The test fixture controls the saved SDK reference.
+  const recovered = await reopened.recover(saved as never);
+  await expect(recovered.observe()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  expect(submissions).toBe(1);
+  await reopened.close();
+});
+
+test("valid adapter rejection still certifies no effect", async () => {
+  const adapter = defineAdapter({
+    name: "example.valid-rejection",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create(_input, ctx) {
+          return ctx.reject("CAPACITY", "No capacity");
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  await expect(
+    client.sandboxes.create({ environment: Image.prepared("image") }),
+  ).rejects.toMatchObject({ code: "CAPACITY", effect: "none" });
+  await client.close();
+});
+
 test("pending observation completes without replay and saved reference reopens", async () => {
   let submits = 0;
   let observations = 0;
