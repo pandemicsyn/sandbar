@@ -20,6 +20,7 @@
         "@sandbar/core": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
+        "@sandbar/service-runtime": "workspace:*",
         "@sandbar/store": "workspace:*",
         "hono": "4.13.9",
       },
@@ -55,7 +56,6 @@
       "dependencies": {
         "@sandbar/contracts": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
-        "@sandbar/store": "workspace:*",
       },
     },
     "packages/provider-spi": {
@@ -73,6 +73,15 @@
         "@sandbar/contracts": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
         "zod": "4.6.5",
+      },
+    },
+    "packages/service-runtime": {
+      "name": "@sandbar/service-runtime",
+      "dependencies": {
+        "@sandbar/contracts": "workspace:*",
+        "@sandbar/core": "workspace:*",
+        "@sandbar/provider-spi": "workspace:*",
+        "@sandbar/store": "workspace:*",
       },
     },
     "packages/store": {
@@ -272,6 +281,8 @@
     "@sandbar/provider-spi": ["@sandbar/provider-spi@workspace:packages/provider-spi"],
 
     "@sandbar/server": ["@sandbar/server@workspace:apps/server"],
+
+    "@sandbar/service-runtime": ["@sandbar/service-runtime@workspace:packages/service-runtime"],
 
     "@sandbar/store": ["@sandbar/store@workspace:packages/store"],
 

@@ -1,3 +1,14 @@
-export { SecretBox, sha256 } from "./crypto";
+export { sha256 } from "./hash";
 
-export { DurableRunner } from "./runner";
+export {
+  normalizeCreate,
+  normalizeExec,
+  outputLimit,
+  correlateDriverResult,
+  sameNativeScope,
+  sameNativeRef,
+  captureBoundedOutput,
+  resultDisposition,
+} from "./semantics";
+
+export type { CreatePlan, ExecPlan, CorrelationContext, CapturedOutput } from "./semantics";

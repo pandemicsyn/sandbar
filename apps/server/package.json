@@ -11,6 +11,7 @@
     "@sandbar/core": "workspace:*",
     "@sandbar/provider-spi": "workspace:*",
     "@sandbar/provider-fake": "workspace:*",
+    "@sandbar/service-runtime": "workspace:*",
     "@sandbar/store": "workspace:*",
     "hono": "4.13.9"
   }

@@ -14,6 +14,10 @@ Sandbar provides a consistent API over Daytona, E2B, Modal, Tensorlake and futur
 
 The refined [contracts](contract-recommendations.md), [storage/images](storage-and-images.md), [observability/accounting](observability-and-accounting.md), [validation](validation-and-contracts.md), and [management UI](management-ui.md) define the behavioral requirements.
 
+## Optional direct TypeScript mode
+
+The accepted [direct SDK plan](direct-typescript-sdk.md) adds direct provider access without a service, database or hidden daemon. The portable `packages/core` now contains shared request normalization, result correlation and bounded output helpers; `packages/service-runtime` owns the store-dependent durable runner and key custody. The direct SDK is the next implementation step and will reuse the portable contracts and provider SPI. Keep the following service topology intact behind the HTTP backend. Administration, durable scheduling, shared fleet/quotas and accounting remain service concerns.
+
 ## Topology
 
 ```mermaid

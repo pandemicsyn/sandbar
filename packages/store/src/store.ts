@@ -1135,10 +1135,15 @@ export class ControlStore {
           sql`UPDATE executions SET status='completed',output_state='not_captured',completed_at=${time} WHERE operation_id=${op.id}`,
         );
 
-      if (op.kind === "create")
+      if (op.kind === "create") {
         await tx.run(
           sql`UPDATE sandboxes SET observed_state='unknown',observation_error=${String(error.code ?? "CREATE_REJECTED")},revision=revision+1,updated_at=${time} WHERE id=${op.sandbox_id}`,
         );
+        // A destroy deferred before this definitive no-effect result can now finish locally.
+        await tx.run(
+          sql`UPDATE operations SET next_attempt_at=${time} WHERE project_id=${op.project_id} AND sandbox_id=${op.sandbox_id} AND kind='destroy' AND status='queued' AND submission_possible=0 AND lease_owner IS NULL`,
+        );
+      }
 
       if (op.kind === "destroy") {
         const request = parseJson<{

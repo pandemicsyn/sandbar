@@ -4,7 +4,7 @@ Draft 0.3 · September 26, 2026 · Strategy documented; implementation and live 
 
 ## Scope and sequencing
 
-V1 is self-hosted and includes a management UI. TypeScript, Rust, and Python are first-class SDKs. The selected stack is Bun/Hono, Drizzle beta, SQLite by default with MySQL as a tested option, and Vite/React/TanStack Router/Tailwind. Zod 4 owns executable IO schemas. See [architecture](design.md) and [validation](validation-and-contracts.md). No service has been scaffolded yet.
+V1 is self-hosted and includes a management UI. TypeScript, Rust, and Python are first-class SDKs. The selected stack is Bun/Hono, Drizzle beta, SQLite by default with MySQL as a tested option, and Vite/React/TanStack Router/Tailwind. Zod 4 owns executable IO schemas. See [architecture](design.md) and [validation](validation-and-contracts.md). The initial fake-provider service/UI slice is implemented in reviewed PRs #1–#4; the broader phase deliverables below are not all complete.
 
 The iterative specialist review of security, storage, snapshots, images and observability preceded this architecture selection. Its findings are captured in:
 
@@ -14,6 +14,14 @@ The iterative specialist review of security, storage, snapshots, images and obse
 - [Management UI workflows](management-ui.md)
 
 Recommendations and numeric defaults remain proposals. Provider documentation informs the model; live tests establish supported guarantees.
+
+## Immediate next wave: direct TypeScript SDK
+
+Make the service optional for TypeScript callers by implementing the accepted [direct SDK design](direct-typescript-sdk.md) before expanding real-provider integrations. Preserve reviewed PRs #1–#4 and stack three focused changes after #4: portable semantic-core extraction, ergonomic direct/HTTP SDK backends, then Node/Bun package and parity qualification. The first integration uses the existing independent fake provider. All new PRs retain the mandatory independent Luna/high review-to-zero gate.
+
+Direct mode requires no Hono, Drizzle, database, hidden service or synthetic project setup. Share resource semantics while distinguishing process-lifetime recovery from service durability. Keep administration and central fleet/quota/accounting features on the service. Rust/Python remain first-class remote targets. Package publication and real/paid provider use are separate later actions.
+
+Exit criteria: packed SDK imports work in separately tested Node/Bun consumers; equivalent resource flows pass direct and HTTP tests; uncertainty/recovery is honest; the direct dependency graph excludes service storage; existing service tests remain passing.
 
 ## Phase 0: scaffold the selected stack and qualify persistence
 

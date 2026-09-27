@@ -6,7 +6,7 @@ Refined contracts: [storage/images](storage-and-images.md), [observability/accou
 
 ## Integration architecture
 
-Provider packages implement translation once inside the service; the SPI keeps provider semantics separate from the selected Bun/Hono and SQL implementation. Native inputs and normalized driver results require runtime schemas; TypeScript interfaces alone are insufficient. Keep the mandatory execution interface small. Optional driver presence is necessary but insufficient for a capability: a request-specific prepare/inspect step must check scope, region, runtime, image, resources, mounts, and account enablement.
+Provider packages implement translation once for both direct TypeScript and service execution; the SPI keeps provider semantics separate from the selected Bun/Hono and SQL implementation. Provider drivers must not depend on service authentication, SQL rows or durable scheduling. See the accepted [direct SDK design](direct-typescript-sdk.md). Native inputs and normalized driver results require runtime schemas; TypeScript interfaces alone are insufficient. Keep the mandatory execution interface small. Optional driver presence is necessary but insufficient for a capability: a request-specific prepare/inspect step must check scope, region, runtime, image, resources, mounts, and account enablement.
 
 The baseline compute adapter implements `prepare`, `create`, `inspect`, `destroy`, `exec`, `readFile`, and `writeFile`. Drivers may return completed results or durable operation tokens. Any pending/ambiguous operation requires an explicit observation/reconciliation path; lack of reconciliation must surface as unknown rather than automatic replay.
 

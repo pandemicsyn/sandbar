@@ -6,6 +6,8 @@ Use **Zod 4** as Sandbar's validation library. Keep one schema language across t
 
 ## Schema ownership
 
+The [direct TypeScript SDK](direct-typescript-sdk.md) reuses portable value/driver schemas while defining resource handles independently of service-only project and durable-operation envelopes. Validate both direct and HTTP IO boundaries; do not force in-process calls through JSON serialization solely for code reuse.
+
 `packages/contracts` owns versioned JSON-compatible request, response, error, and stream-frame schemas. It has no Hono, Drizzle, provider SDK, server configuration, or secret-resolution dependencies. The service and UI share these definitions. Route metadata adds methods, paths, security schemes, status codes, and examples to emit a checked-in OpenAPI document. JSON Schema export alone does not produce that complete document.
 
 Generate internal TypeScript, Rust, and Python transport/models from the published protocol, with handwritten public SDK conveniences. Hono RPC types may help internal development but are not the public protocol or the only client contract. Keep client response decoders forward-compatible with additive fields, while server request schemas reject unknown fields that could hide a security-sensitive typo.

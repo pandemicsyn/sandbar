@@ -833,6 +833,11 @@ for (const dialect of dialects)
         });
 
         expect(destroy.operation.status).toBe("queued");
+        const prematureDestroy = (await store.claimDue("early-destroy", 1000, project.id))!;
+        expect(prematureDestroy.operation.id).toBe(destroy.operation.id);
+        expect(await store.completeDestroyWithoutNative(prematureDestroy)).toBe(false);
+        await store.reschedule(prematureDestroy, "waiting_for_native_identity", 5_000);
+        expect(await store.claimDue("before-create-fails", 1000, project.id)).toBeUndefined();
         await store.failWithoutEffect(createClaim, {
           code: "UNSUPPORTED",
           message: "Unsupported image",

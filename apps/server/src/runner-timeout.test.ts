@@ -3,7 +3,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { SecretBox, DurableRunner } from "@sandbar/core";
+import { SecretBox, DurableRunner } from "@sandbar/service-runtime";
 import type { NativeScope } from "@sandbar/provider-spi";
 import { FakeProviderDriver } from "@sandbar/provider-fake";
 import { ControlStore, bundledMigration, migrate, openSqliteBackend } from "@sandbar/store";

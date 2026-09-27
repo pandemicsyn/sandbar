@@ -1,5 +1,14 @@
 # Sandbar working agreements
 
+## Second implementation wave: direct TypeScript SDK
+
+The reviewed first-wave PRs #1–#4 are merged into `main`. The second wave starts with portable core extraction in PR #5 based on `main` at `fba002c6349a27de78c74c86bc25408e63bda6e9`, followed by the TypeScript SDK and Node/Bun package qualification as stacked PRs. Follow `docs/direct-typescript-sdk.md`. Direct mode runs against provider drivers from the caller's process without the Sandbar service, database, or hidden process. The initial verified driver is the independent fake; real provider support is not implied. Service-owned coordination, store access, credential custody, and encryption stay outside `@sandbar/core` and the direct dependency graph.
+
+- Portable core and service runtime task: `01a0decc-8ab3-7202-9ef9-a84c5ea95c12`, owning `packages/core`, `packages/service-runtime`, service composition, plan adoption, and initial root package/lock changes.
+- TypeScript SDK task: `01a0decd-04b4-7c61-b305-ea7fdcf5b5b4`, owning `packages/sdk`, its direct/remote entry points, and the fake provider client/server split.
+- Node/Bun qualification task: `01a0decd-90d2-7761-9736-8560f7ead2b5`, owning parity/packed-consumer tests, CI and measured runtime documentation.
+- Coordinate through manager chat `01a0db94-f78d-70f3-83dd-106d28e38da3`. Exchange package interfaces and checkpoint refs before integration. Each new PR targets its immediate parent explicitly and passes the mandatory review gate below.
+
 ## First implementation wave
 
 Build a coherent fake-provider vertical slice in a stacked sequence: foundation, public contracts and fake provider, durable control and SQL, then management UI and end-to-end flows. Keep API wire contracts separate from database rows. Use Bun/Hono, Zod 4 at IO boundaries, Drizzle ORM and Kit pinned to `1.0.0-beta.22`, SQLite by default and a separately tested MySQL implementation. The UI uses Vite, React, Tailwind and TanStack Router. Real provider calls, production deployment, and paid usage are outside this wave.
