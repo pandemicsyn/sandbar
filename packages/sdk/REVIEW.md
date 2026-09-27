@@ -194,3 +194,9 @@ Final independent complete-diff review of this resulting HEAD remains pending.
 - Two actionable findings: separate SDK entrypoint bundles duplicated public error classes, and public `DirectClient.submitCreate` exposed an unawaited dispatch callback. The SDK build now uses ESM splitting so all package entrypoints import one common runtime chunk; Node 26.4.0 and an automated package-scope test confirm shared class identity. Dispatch reference capture moved to a private method and the captured reference is sealed before the internal synchronous callback.
 - Validation after fixes: focused SDK tests 27/27 passed; `bun run check` passed; full `bun run test` passed 70 tests with one MySQL 8.4 skip and zero failures, including browser E2E.
 - Final parent rebase and independent complete-diff zero-finding review remain pending before PR #6 is updated.
+
+## PR #6 second pre-integration review
+
+- Reviewer: independent `gpt-6-luna`, high reasoning, read-only; reviewed complete `d4a91f395e149f53baf0231e518410deff5eb83f..ea9a29a5809a2fc9c36405d0cad60efbe20be90b`.
+- One actionable finding: exported `RemoteClient.mutate` still exposed an unawaited `onDispatch` callback. The mutation operation now uses a module-private symbol, and its callback receives a sealed reference before dispatch. Public remote submission APIs expose only the cancellation signal.
+- Validation after fix: `bun run check` passed; full `bun run test` passed 70 tests with one MySQL 8.4 skip and zero failures, including browser E2E. Post-rebase independent review remains pending.
