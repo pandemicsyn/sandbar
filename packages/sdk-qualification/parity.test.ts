@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Sandbar as DirectSandbar, Image as DirectImage } from "@sandbar/sdk/direct";
 import { Sandbar as RemoteSandbar, Image as RemoteImage } from "@sandbar/sdk/remote";
-import type { SandbarClient, SandboxHandle } from "@sandbar/sdk";
+import type { RecoveryReference, SandbarClient, SandboxHandle } from "@sandbar/sdk";
 import { fakeProvider } from "@sandbar/provider-fake/client";
 import { ProcessFixture } from "./processes";
 
@@ -137,6 +137,53 @@ describe("remote recovery evidence", () => {
         const state = await fixture.fakeControl("/_test/state");
         expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
         expect(state.invocations.filter((entry: any) => entry.action === "file_write")).toHaveLength(0);
+        await box.destroy();
+      } finally { await next.close(); }
+    } finally { await first.close(); }
+  }, 30_000);
+
+  test("a post-admission sandbox read failure exposes a reference for read-only recovery", async () => {
+    const fixture = new ProcessFixture();
+    fixtures.push(fixture);
+    await fixture.startFake();
+    await fixture.startService();
+    const setup = await post(`${fixture.serviceUrl}/v1/setup`, undefined, { setupToken: fixture.setupToken });
+    const project = await post(`${fixture.serviceUrl}/v1/projects`, setup.token, { name: "SDK read recovery" });
+    const connection = await post(`${fixture.serviceUrl}/v1/projects/${project.id}/provider-connections`, setup.token, { provider: "fake", name: "Local fake" });
+    await post(`${fixture.serviceUrl}/v1/projects/${project.id}/provider-connections/${connection.id}/verify`, setup.token, {});
+
+    let failedReads = 0;
+    const failingFetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const response = await fetch(input, init);
+      const url = input instanceof Request ? input.url : String(input);
+      if ((init?.method ?? "GET") === "GET" && /\/sandboxes\/[^/]+$/.test(new URL(url).pathname) && failedReads++ === 0) {
+        expect(response.ok).toBe(true);
+        await response.body?.cancel();
+        throw new TypeError("Sandbox read failed after admission");
+      }
+      return response;
+    }) as typeof fetch;
+    const first = RemoteSandbar.connect({ url: fixture.serviceUrl!, token: setup.token, projectId: project.id, fetch: failingFetch });
+    let reference: RecoveryReference | undefined;
+    try {
+      try {
+        await first.sandboxes.create({ environment: RemoteImage.prepared("fake-starter") });
+        throw new Error("Expected a failed follow-up sandbox read");
+      } catch (error) {
+        expect(error).toMatchObject({ name: "OutcomeUnknownError", reference: { mode: "remote", kind: "create" } });
+        reference = (error as { reference: RecoveryReference }).reference;
+      }
+      expect(failedReads).toBe(1);
+      const imported = JSON.parse(JSON.stringify(reference)) as RecoveryReference;
+      expect(JSON.stringify(imported)).not.toContain(setup.token);
+      await first.close();
+
+      const next = RemoteSandbar.connect({ url: fixture.serviceUrl!, token: setup.token, projectId: project.id });
+      try {
+        const box = await (await next.recover(imported)).wait() as SandboxHandle;
+        expect((await box.inspect()).state).toBe("running");
+        const state = await fixture.fakeControl("/_test/state");
+        expect(state.invocations.filter((entry: any) => entry.action === "create")).toHaveLength(1);
         await box.destroy();
       } finally { await next.close(); }
     } finally { await first.close(); }
