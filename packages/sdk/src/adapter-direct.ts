@@ -532,21 +532,25 @@ export class PreparedAdapterAttempt {
     this.client.ensureOpen();
     assertSignal(options.signal);
     const checked = AdvancedIdentitySchema.parse(identity);
-    let permitted: boolean;
-
-    try {
-      permitted = await options.beforeSubmit();
-    } catch (error) {
-      throw new BeforeSubmitError(error);
-    }
-
-    if (!permitted) return null;
-    this.client.ensureOpen();
-    assertSignal(options.signal);
 
     const signal = options.signal
       ? AbortSignal.any([this.client.signal, options.signal])
       : this.client.signal;
+
+    let permitted: boolean;
+
+    try {
+      permitted = await raceAbort(options.beforeSubmit(), signal);
+    } catch (error) {
+      this.client.ensureOpen();
+      assertSignal(options.signal);
+      throw new BeforeSubmitError(error);
+    }
+
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+
+    if (!permitted) return null;
 
     try {
       return await raceAbort(

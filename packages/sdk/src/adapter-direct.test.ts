@@ -911,56 +911,85 @@ test("advanced preparation reports invalid arguments before provider preparation
   await client.close();
 });
 
-test("closing during the advanced barrier prevents a late provider effect", async () => {
-  let submits = 0;
-  let unblock!: () => void;
+test("cancelling a stalled advanced barrier settles before release without late submission", async () => {
+  for (const mode of ["close", "abort"] as const) {
+    for (const late of ["resolve", "reject"] as const) {
+      let submits = 0;
+      let markerCalls = 0;
+      let release!: (allowed: boolean) => void;
+      let fail!: (error: Error) => void;
 
-  const gate = new Promise<void>((resolve) => {
-    unblock = resolve;
-  });
+      const gate = new Promise<boolean>((resolve, reject) => {
+        release = resolve;
+        fail = reject;
+      });
 
-  const adapter = defineAdapter({
-    name: "example.advanced-close",
-    config: z.strictObject({}),
-    credentials: z.strictObject({}),
-    async connect() {
-      return {
-        scope: { authority: { kind: "account", id: "one" }, partition: {} },
-        supports: { images: ["prepared"], network: ["blocked"] },
-        async create() {
-          submits++;
+      const adapter = defineAdapter({
+        name: "example.advanced-cancel-barrier",
+        config: z.strictObject({}),
+        credentials: z.strictObject({}),
+        async connect() {
+          return {
+            scope: { authority: { kind: "account", id: "one" }, partition: {} },
+            supports: { images: ["prepared"], network: ["blocked"] },
+            async create() {
+              submits++;
 
-          return { id: "box", state: "running" as const };
+              return { id: "box", state: "running" as const };
+            },
+            async destroy() {
+              return { computeStopped: true, retainedResources: [] };
+            },
+          };
         },
-        async destroy() {
-          return { computeStopped: true, retainedResources: [] };
+      });
+
+      const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+      const prepared = await client.operations.prepare("create", {
+        image: { kind: "prepared", value: "image" },
+        networkPolicy: "blocked",
+      });
+
+      const controller = new AbortController();
+      const identity = { operationId: "op", submissionId: "sub", invocationKey: "key" };
+
+      const waiting = prepared.submit(identity, {
+        beforeSubmit: () => {
+          markerCalls++;
+
+          return gate;
         },
-      };
-    },
-  });
+        signal: controller.signal,
+      });
 
-  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+      expect(markerCalls).toBe(1);
 
-  const prepared = await client.operations.prepare("create", {
-    image: { kind: "prepared", value: "image" },
-    networkPolicy: "blocked",
-  });
+      if (mode === "close") await client.close();
+      else controller.abort("stop");
 
-  const waiting = prepared.submit(
-    { operationId: "op", submissionId: "sub", invocationKey: "key" },
-    {
-      beforeSubmit: async () => {
-        await gate;
+      await expect(
+        Promise.race([
+          waiting,
+          Bun.sleep(500).then(() => {
+            throw new Error("advanced barrier did not stop waiting");
+          }),
+        ]),
+      ).rejects.toMatchObject({ code: mode === "close" ? "CLIENT_CLOSED" : "WAIT_ABORTED" });
+      expect(submits).toBe(0);
+      await expect(
+        prepared.submit(identity, { beforeSubmit: async () => true }),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+      });
 
-        return true;
-      },
-    },
-  );
-
-  await client.close();
-  unblock();
-  await expect(waiting).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
-  expect(submits).toBe(0);
+      if (late === "resolve") release(true);
+      else fail(new Error("late marker failure"));
+      await Bun.sleep(1);
+      expect(submits).toBe(0);
+      await client.close();
+    }
+  }
 });
 
 test("direct connection accepts a policy-bearing adapter clone", async () => {
