@@ -141,33 +141,43 @@ async function collect(
   let truncated = false;
 
   try {
-    while (true) {
-      const next = await reader.read();
+    if (limit === 0) {
+      // No read is needed to enforce a zero-byte budget; EOF is unproven.
+      truncated = true;
+    } else {
+      while (true) {
+        const next = await reader.read();
 
-      if (next.done) break;
+        if (next.done) break;
 
-      if (!(next.value instanceof Uint8Array))
-        throw new AdapterError("INVALID_ARGUMENT", "Execution stream emitted non-byte data");
-      const remaining = limit - total;
+        if (!(next.value instanceof Uint8Array))
+          throw new AdapterError("INVALID_ARGUMENT", "Execution stream emitted non-byte data");
+        const remaining = limit - total;
 
-      if (next.value.length > remaining) {
-        if (remaining > 0) chunks.push(Uint8Array.from(next.value.subarray(0, remaining)));
-        total += remaining;
-        truncated = true;
-        break;
-      }
+        if (next.value.length > remaining) {
+          if (remaining > 0) chunks.push(Uint8Array.from(next.value.subarray(0, remaining)));
+          total += remaining;
+          truncated = true;
+          break;
+        }
 
-      chunks.push(Uint8Array.from(next.value));
-      total += next.value.length;
+        chunks.push(Uint8Array.from(next.value));
+        total += next.value.length;
 
-      if (total === limit) {
-        const extra = await reader.read();
-        truncated = !extra.done;
-        break;
+        if (total === limit) {
+          // Do not wait for another chunk only to distinguish exact EOF from more output.
+          truncated = true;
+          break;
+        }
       }
     }
   } finally {
-    await reader.cancel().catch(() => undefined);
+    // Native stream cancellation is best effort and must not hold a capped result.
+    try {
+      void reader.cancel().catch(() => undefined);
+    } catch {
+      // A broken reader cannot delay delivery of already bounded bytes.
+    }
   }
 
   const bytes = new Uint8Array(total);

@@ -342,3 +342,177 @@ test("combined binary output caps stdout first and reports truncation", async ()
     },
   });
 });
+
+test("stream collection stops at its byte cap without a probe or blocking cancellation", async () => {
+  let stderrReads = 0;
+  let stdoutReads = 0;
+  let cancelRequested = 0;
+
+  const stdout = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(Uint8Array.of(0, 255, 1, 2));
+    },
+    pull() {
+      return new Promise<void>(() => {});
+    },
+    cancel() {
+      return new Promise<void>(() => {});
+    },
+  });
+
+  const stderr = new ReadableStream<Uint8Array>({
+    pull() {
+      return new Promise<void>(() => {});
+    },
+    cancel() {
+      return new Promise<void>(() => {});
+    },
+  });
+
+  for (const [stream, count] of [
+    [stdout, () => stdoutReads++],
+    [stderr, () => stderrReads++],
+  ] as const) {
+    const getReader = stream.getReader.bind(stream);
+    Object.defineProperty(stream, "getReader", {
+      value: () => {
+        const reader = getReader();
+        const read = reader.read.bind(reader);
+        const cancel = reader.cancel.bind(reader);
+        Object.defineProperty(reader, "read", {
+          value: () => {
+            count();
+
+            return read();
+          },
+        });
+
+        reader.cancel = () => {
+          cancelRequested++;
+
+          return cancel();
+        };
+
+        return reader;
+      },
+    });
+  }
+
+  const session = {
+    scope: { authority: { kind: "account", id: "a" }, partition: {} },
+    supports: {
+      images: ["prepared"] as const,
+      network: ["blocked"],
+      exec: { commands: ["argv"] as const, maxOutputBytes: 4 },
+    },
+    async create() {
+      return { id: "box", state: "running" as const };
+    },
+    async destroy() {
+      return { computeStopped: true, retainedResources: [] };
+    },
+    async exec() {
+      return { exitCode: 0, stdout, stderr, truncated: false };
+    },
+  };
+
+  const prepared = await prepareOperation(
+    session,
+    "exec",
+    {
+      sandbox: { id: "box" },
+      command: { kind: "argv", argv: ["echo"] },
+      deadlineSeconds: 1,
+      maxOutputBytes: 4,
+    },
+    signal,
+  );
+
+  const result = await Promise.race([
+    submitOperation(prepared, identity, signal, 4),
+    Bun.sleep(300).then(() => {
+      throw new Error("capped stream kept waiting");
+    }),
+  ]);
+
+  expect(result).toEqual({
+    kind: "completed",
+    value: {
+      exitCode: 0,
+      stdout: Uint8Array.of(0, 255, 1, 2),
+      stderr: new Uint8Array(),
+      truncated: true,
+    },
+  });
+  expect(stdoutReads).toBe(1);
+  expect(stderrReads).toBe(0);
+  expect(cancelRequested).toBe(2);
+});
+
+test("stream and byte-buffer truncation distinguish EOF below cap from conservative cap", async () => {
+  const output = async (stdout: Uint8Array | ReadableStream<Uint8Array>, truncated = false) => {
+    const session = {
+      scope: { authority: { kind: "account", id: "a" }, partition: {} },
+      supports: {
+        images: ["prepared"] as const,
+        network: ["blocked"],
+        exec: { commands: ["argv"] as const, maxOutputBytes: 4 },
+      },
+      async create() {
+        return { id: "box", state: "running" as const };
+      },
+      async destroy() {
+        return { computeStopped: true, retainedResources: [] };
+      },
+      async exec() {
+        return { exitCode: 7, stdout, stderr: new Uint8Array(), truncated };
+      },
+    };
+
+    const prepared = await prepareOperation(
+      session,
+      "exec",
+      {
+        sandbox: { id: "box" },
+        command: { kind: "argv", argv: ["echo"] },
+        deadlineSeconds: 1,
+        maxOutputBytes: 4,
+      },
+      signal,
+    );
+
+    return submitOperation(prepared, identity, signal, 4);
+  };
+
+  const stream = (bytes: Uint8Array) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    });
+
+  expect(await output(stream(Uint8Array.of(1, 2)))).toEqual({
+    kind: "completed",
+    value: {
+      exitCode: 7,
+      stdout: Uint8Array.of(1, 2),
+      stderr: new Uint8Array(),
+      truncated: false,
+    },
+  });
+  expect(await output(stream(Uint8Array.of(1, 2)), true)).toMatchObject({
+    value: { truncated: true },
+  });
+  expect(await output(stream(Uint8Array.of(1, 2, 3, 4, 5)))).toEqual({
+    kind: "completed",
+    value: {
+      exitCode: 7,
+      stdout: Uint8Array.of(1, 2, 3, 4),
+      stderr: new Uint8Array(),
+      truncated: true,
+    },
+  });
+  expect(await output(Uint8Array.of(1, 2, 3, 4))).toMatchObject({ value: { truncated: false } });
+  expect(await output(Uint8Array.of(1, 2, 3, 4, 5))).toMatchObject({ value: { truncated: true } });
+});
