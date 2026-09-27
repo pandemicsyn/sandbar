@@ -964,3 +964,233 @@ test("advanced observation rejects foreign scope before provider reads", async (
   expect(reads).toBe(0);
   await client.close();
 });
+
+test("imported ordinary and advanced recovery tokens are bounded and parsed", async () => {
+  const seen: string[] = [];
+  let submits = 0;
+
+  const adapter = defineAdapter({
+    name: "example.token-import",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          recovery: {
+            version: 1,
+            token: z.strictObject({ jobId: z.string().transform((value) => value.toUpperCase()) }),
+          },
+          async submit(_input, ctx) {
+            submits++;
+
+            return ctx.pending({ jobId: "seed" });
+          },
+          async observe(attempt) {
+            seen.push(attempt.token?.jobId ?? "missing");
+
+            return { id: "box", state: "running" as const };
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const op = await client.sandboxes.submitCreate({ environment: Image.prepared("image") });
+  expect(await op.observe()).toBeNull();
+  const raw = { ...op.reference, token: { jobId: "ordinary" } };
+  expect(await (await client.recover(raw)).observe()).toMatchObject({ id: "box" });
+  expect(seen).toEqual(["ORDINARY"]);
+
+  const advanced = {
+    scope: client.scope,
+    kind: "create" as const,
+    operationId: "op-advanced",
+    submissionId: "sub-advanced",
+    token: { jobId: "advanced" },
+    tokenVersion: 1,
+  };
+
+  expect(await client.operations.observe(advanced)).toMatchObject({ kind: "completed" });
+  expect(seen).toEqual(["ORDINARY", "ADVANCED"]);
+
+  await expect(
+    (await client.recover({ ...raw, token: { jobId: "x".repeat(5_000) } })).observe(),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  await expect(client.operations.observe({ ...advanced, tokenVersion: 2 })).rejects.toMatchObject({
+    code: "CONFLICT",
+  });
+  expect(seen).toEqual(["ORDINARY", "ADVANCED"]);
+  expect(submits).toBe(1);
+  await client.close();
+});
+
+test("close stops stalled inspect, initial file read, and inventory waits", async () => {
+  let inspectStarted = false;
+  let readStarted = false;
+  let inventoryStarted = false;
+  let finishInspect!: (value: { id: string; state: "running" }) => void;
+  let failRead!: (error: Error) => void;
+  let finishInventory!: (value: { items: [] }) => void;
+
+  const inspected = new Promise<{ id: string; state: "running" }>((resolve) => {
+    finishInspect = resolve;
+  });
+
+  const read = new Promise<Uint8Array>((_resolve, reject) => {
+    failRead = reject;
+  });
+
+  const inventory = new Promise<{ items: [] }>((resolve) => {
+    finishInventory = resolve;
+  });
+
+  const adapter = defineAdapter({
+    name: "example.read-close",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          return { id: "box", state: "running" as const };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        async inspect() {
+          inspectStarted = true;
+
+          return inspected;
+        },
+        files: {
+          maxBytes: 1024,
+          async read() {
+            readStarted = true;
+
+            return read;
+          },
+        },
+        async inventory() {
+          inventoryStarted = true;
+
+          return inventory;
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const box = await client.sandboxes.create({ environment: Image.prepared("image") });
+  const calls = [box.inspect(), box.readFile("/file"), client.operations.inventory({ limit: 1 })];
+  const outcomes = Promise.allSettled(calls);
+
+  while (!inspectStarted || !readStarted || !inventoryStarted) await Bun.sleep(1);
+  await client.close();
+
+  const settled = await Promise.race([
+    outcomes,
+    Bun.sleep(500).then(() => {
+      throw new Error("reads did not stop on close");
+    }),
+  ]);
+
+  for (const result of settled) {
+    expect(result.status).toBe("rejected");
+
+    if (result.status === "rejected")
+      expect(result.reason).toMatchObject({ code: "CLIENT_CLOSED" });
+  }
+
+  finishInspect({ id: "box", state: "running" });
+  failRead(new Error("late read rejection"));
+  finishInventory({ items: [] });
+  await Bun.sleep(1);
+});
+
+test("close stops a stalled file stream chunk without awaiting reader cancellation", async () => {
+  let readStarted = false;
+  let cancelRequested = false;
+  let releasePull!: () => void;
+
+  const stream = new ReadableStream<Uint8Array>({
+    pull() {
+      return new Promise<void>((resolve) => {
+        releasePull = resolve;
+      });
+    },
+    cancel() {
+      return new Promise<void>(() => {});
+    },
+  });
+
+  const getReader = stream.getReader.bind(stream);
+  Object.defineProperty(stream, "getReader", {
+    value: () => {
+      const reader = getReader();
+      const read = reader.read.bind(reader);
+      const cancel = reader.cancel.bind(reader);
+      reader.read = () => {
+        readStarted = true;
+
+        return read();
+      };
+
+      reader.cancel = () => {
+        cancelRequested = true;
+
+        return cancel();
+      };
+
+      return reader;
+    },
+  });
+
+  const adapter = defineAdapter({
+    name: "example.stream-close",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          return { id: "box", state: "running" as const };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        files: {
+          maxBytes: 1024,
+          async read() {
+            return stream;
+          },
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const box = await client.sandboxes.create({ environment: Image.prepared("image") });
+  const pending = box.readFile("/file");
+
+  while (!readStarted) await Bun.sleep(1);
+  await client.close();
+  await expect(
+    Promise.race([
+      pending,
+      Bun.sleep(500).then(() => {
+        throw new Error("stream read did not stop on close");
+      }),
+    ]),
+  ).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+  releasePull();
+  await Bun.sleep(1);
+  expect(cancelRequested).toBe(true);
+});

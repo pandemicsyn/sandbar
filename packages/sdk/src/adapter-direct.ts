@@ -120,6 +120,18 @@ function assertSignal(signal?: AbortSignal) {
     throw new SandbarError("WAIT_ABORTED", "Waiting stopped before submission", "none");
 }
 
+async function readWhileOpen<T>(client: AdapterDirectClient, work: Promise<T>): Promise<T> {
+  try {
+    const value = await raceAbort(work, client.signal);
+    client.ensureOpen();
+
+    return value;
+  } catch (error) {
+    client.ensureOpen();
+    throw error;
+  }
+}
+
 export type AdapterCapabilities = {
   commands: readonly ("argv" | "shell")[];
   images: readonly ("prepared" | "oci")[];
@@ -303,9 +315,12 @@ export class AdapterSandbox {
 
     if (!this.client.session.inspect) unsupported("inspect");
 
-    const result = await this.client.session.inspect(
-      { id: this.id },
-      { signal: this.client.signal, deadline: Date.now() + 30_000 },
+    const result = await readWhileOpen(
+      this.client,
+      this.client.session.inspect(
+        { id: this.id },
+        { signal: this.client.signal, deadline: Date.now() + 30_000 },
+      ),
     );
 
     if (!result) return { state: "unknown" };
@@ -361,9 +376,12 @@ export class AdapterSandbox {
     if (!this.client.session.files?.read) unsupported("readFile");
     validateFilePath(path);
 
-    const value = await this.client.session.files.read(
-      { sandbox: { id: this.id }, path },
-      { signal: this.client.signal, deadline: Date.now() + 30_000 },
+    const value = await readWhileOpen(
+      this.client,
+      this.client.session.files.read(
+        { sandbox: { id: this.id }, path },
+        { signal: this.client.signal, deadline: Date.now() + 30_000 },
+      ),
     );
 
     if (value instanceof Uint8Array) {
@@ -379,7 +397,7 @@ export class AdapterSandbox {
 
     try {
       while (true) {
-        const part = await reader.read();
+        const part = await readWhileOpen(this.client, reader.read());
 
         if (part.done) break;
 
@@ -392,7 +410,14 @@ export class AdapterSandbox {
         total += part.value.length;
       }
     } finally {
-      await reader.cancel().catch(() => undefined);
+      // A non-cooperative stream must not hold local close waiting on cancellation.
+      try {
+        const cancellation = reader.cancel().catch(() => undefined);
+
+        if (!this.client.isClosed()) await cancellation;
+      } catch {
+        // Reader cancellation is best effort after the read has ended.
+      }
     }
 
     const bytes = new Uint8Array(total);
@@ -402,6 +427,8 @@ export class AdapterSandbox {
       bytes.set(chunk, offset);
       offset += chunk.length;
     }
+
+    this.client.ensureOpen();
 
     return bytes;
   }
@@ -593,10 +620,13 @@ export class AdapterDirectClient {
           })
           .parse(input);
 
-        const result = await this.session.inventory(checked, {
-          signal: this.signal,
-          deadline: Date.now() + 30_000,
-        });
+        const result = await readWhileOpen(
+          this,
+          this.session.inventory(checked, {
+            signal: this.signal,
+            deadline: Date.now() + 30_000,
+          }),
+        );
 
         return z
           .strictObject({

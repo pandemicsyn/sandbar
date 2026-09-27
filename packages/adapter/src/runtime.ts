@@ -392,18 +392,21 @@ export async function observeOperation(
 
   if (!parts.observe) return null;
 
-  if (attempt.token !== undefined) {
-    if (!parts.recovery || parts.recovery.version !== attempt.version)
-      throw new AdapterError("CONFLICT", "Recovery token version is unsupported");
-    parts.recovery.token.parse(attempt.token);
-  }
-
   const context = createObserveContext(
     { signal, deadline: Date.now() + 30_000 },
     parts.recovery?.token,
   );
 
-  const value = await parts.observe({ ...attempt, sandbox: attempt.sandbox }, context);
+  let token = attempt.token;
+
+  if (token !== undefined) {
+    if (!parts.recovery || parts.recovery.version !== attempt.version)
+      throw new AdapterError("CONFLICT", "Recovery token version is unsupported");
+    // The contextual constructor applies the same bounded parse used for newly pending tokens.
+    token = context.pending(token).token;
+  }
+
+  const value = await parts.observe({ ...attempt, token, sandbox: attempt.sandbox }, context);
 
   if (value === null) return null;
 
