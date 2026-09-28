@@ -4,6 +4,8 @@ This is a bounded manual acceptance check, not a live certification claim. The n
 
 ## Profiles and current gate
 
+Run live acceptance tests when adding a provider or changing a fundamental public guarantee. Routine changes use offline fixtures and packed checks. The repository skill in `.agents/skills/qualify-provider/SKILL.md` explains scenario selection, extending coverage and certifying docs evidence. These tests are manual and require explicit authorization for the specific resource budget; do not schedule routine live CI runs.
+
 The prepared-image prototype runs through `Sandbar.connect` with the public `sandbar-sdk/modal` factory available on this base commit. Modal is planned as an external experimental adapter and this prototype is not a 1.0 launch gate. Daytona and E2B are the intended 1.0 built-in profiles; their manual wiring awaits merged public factories and native teardown evidence. The common lifecycle covers connect, one create, inspect, argv and shell commands with cwd/env and stdout/stderr, a nonzero exit, binary file write/read/overwrite, no-clobber conflict, inventory, destroy confirmation and close. Unsupported core operations are recorded as `unsupported`, never passed. OCI/image-build is separate and **blocked**: an image/template/snapshot can outlive sandbox TTL, and ownership/deletion of all possible build outcomes is not yet proven.
 
 For a locally authorized Modal run, use a borrowed, existing prepared `im-*` image. The harness never deletes it. The exact operator command is:
