@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
+import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
@@ -11,14 +12,33 @@ export async function loadCredentials(
   let source: string;
 
   try {
-    source = await readFile(filename, "utf8");
+    const file = await open(filename, constants.O_RDONLY | constants.O_NONBLOCK);
+
+    try {
+      const info = await file.stat();
+
+      if (!info.isFile() || info.size > 65_536)
+        throw new Error("Credential file must be a regular file within the size limit");
+      const buffer = Buffer.alloc(65_537);
+      let used = 0;
+
+      while (used < buffer.length) {
+        const result = await file.read(buffer, used, buffer.length - used, used);
+
+        if (result.bytesRead === 0) break;
+        used += result.bytesRead;
+      }
+
+      if (used > 65_536) throw new Error("Credential file exceeds the size limit");
+      source = buffer.toString("utf8", 0, used);
+    } finally {
+      await file.close();
+    }
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") source = "";
     else throw new Error("Unable to read Sandbar credential file");
   }
 
-  if (Buffer.byteLength(source) > 65_536)
-    throw new Error("Sandbar credential file exceeds the size limit");
   const parsed = parseEnv(source);
 
   const daytona =

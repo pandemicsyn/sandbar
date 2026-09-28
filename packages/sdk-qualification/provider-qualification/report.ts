@@ -35,8 +35,12 @@ export const recordSchema = z.strictObject({
   scenario: z.enum(scenarios),
   mode: z.enum(["live", "fixture", "packed"]),
   status: z.enum(["passed", "failed", "not-run", "unsupported", "blocked"]),
-  runCleanup: z.enum(["confirmed", "incomplete"]).optional(),
+  runCleanup: z.enum(["confirmed", "incomplete", "not-required"]).optional(),
   sdkCommit: z.string().regex(/^[0-9a-f]{40}$/),
+  harnessCommit: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/)
+    .optional(),
   sdkVersion: safeLabel,
   nativeVersion: safeLabel.optional(),
   runtime: safeLabel,
@@ -164,7 +168,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
     "",
     "Daytona and E2B are the qualification targets. This table reports measured operations only; distribution status is not a live pass.",
     "",
-    "These results cover only the stated image, network and region classes. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.",
+    "These results cover only the stated image, requested network policy and region classes. A blocked-requested policy is a create setting, not a measured egress-isolation result. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.",
     "",
   ];
 

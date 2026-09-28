@@ -3,16 +3,11 @@ import { readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { qualificationRevisions } from "./revisions";
 import { loadCredentials } from "./credentials";
 import { e2bConfiguration, e2bConnection } from "./e2b-profile";
-import { LedgerStore } from "./ledger";
-import {
-  publicCleanupAccess,
-  reconcile,
-  recordReference,
-  runPrepared,
-  type Step,
-} from "./lifecycle";
+import { LedgerStore, requirePrivateDirectory } from "./ledger";
+import { reconcileConnection, runPrepared, type Step } from "./lifecycle";
 import { parseReport, scenarios, type Scenario } from "./report";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -86,6 +81,8 @@ if (!isAbsolute(suppliedDirectory)) throw new Error("Ledger directory must be ab
 
 const directory = await realpath(suppliedDirectory);
 
+await requirePrivateDirectory(directory);
+
 if (
   within(directory, root) ||
   within(directory, "/tmp") ||
@@ -134,14 +131,16 @@ const metadata = {
   schemaVersion: 1 as const,
   provider: "e2b" as const,
   mode: "live" as const,
-  sdkCommit: commit,
+  ...(action === "live-prepared"
+    ? qualificationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "origin/main")
+    : { sdkCommit: commit, harnessCommit: commit }),
   sdkVersion: sdk.version,
   nativeVersion: `e2b ${sdk.dependencies.e2b}`,
   runtime: `Bun ${process.versions.bun ?? "unknown"}`,
   platform: `${process.platform}-${process.arch}`,
   configuration: {
     imageClass: "prepared" as const,
-    network: "blocked",
+    network: "blocked-requested",
     regionClass: "provider-default",
   },
   evidenceRef,
@@ -190,13 +189,7 @@ try {
       selectedScenarios: selected,
     });
   else {
-    const client = await factory((reference) => recordReference(ledger, reference));
-
-    try {
-      steps = await reconcile(publicCleanupAccess(client, ledger), ledger, 60_000);
-    } finally {
-      await client.close();
-    }
+    steps = await reconcileConnection(factory, ledger, 60_000);
   }
 
   const state = await ledger.read();
@@ -206,7 +199,12 @@ try {
       ...metadata,
       scenario: step.scenario,
       status: step.status,
-      runCleanup: state.cleanup === "confirmed" ? ("confirmed" as const) : ("incomplete" as const),
+      runCleanup:
+        state.cleanup === "not-required"
+          ? ("not-required" as const)
+          : state.cleanup === "confirmed"
+            ? ("confirmed" as const)
+            : ("incomplete" as const),
       timestamp: new Date().toISOString(),
       issue: publicIssue(step.issue),
     }));
@@ -227,7 +225,11 @@ try {
           ...previous.records.map((record) => ({
             ...record,
             runCleanup:
-              state.cleanup === "confirmed" ? ("confirmed" as const) : ("incomplete" as const),
+              state.cleanup === "not-required"
+                ? ("not-required" as const)
+                : state.cleanup === "confirmed"
+                  ? ("confirmed" as const)
+                  : ("incomplete" as const),
           })),
           ...records,
         ]
@@ -249,7 +251,7 @@ try {
   } else console.log(`Run ${runId}: cleanup ${state.cleanup}; private ledger ${ledger.path}`);
 
   if (
-    state.cleanup !== "confirmed" ||
+    (state.cleanup !== "confirmed" && state.cleanup !== "not-required") ||
     steps.some((step) => step.status === "failed" || step.status === "blocked")
   )
     process.exitCode = 1;

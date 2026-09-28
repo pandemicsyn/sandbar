@@ -333,6 +333,51 @@ export async function reconcile(
   return ledger.withLock(() => reconcileLocked(access, ledger, waitMs));
 }
 
+/** Standalone recovery acquires the same run lock before authenticating or reading the provider. */
+export async function reconcileConnection(
+  factory: ConnectionFactory,
+  ledger: LedgerStore,
+  waitMs = 60_000,
+): Promise<Step[]> {
+  return ledger.withLock(async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort("cleanup connection time limit"), waitMs);
+    const deadline = Date.now() + waitMs;
+    const opening = factory((reference) => recordReference(ledger, reference));
+    let client: AdapterDirectClient;
+
+    try {
+      client = await boundedRead(opening, controller.signal);
+    } catch (error) {
+      void opening.then((connected) => connected.close()).catch(() => undefined);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const steps: Step[] = [];
+
+    try {
+      steps.push(
+        ...(await reconcileLocked(
+          publicCleanupAccess(client, ledger),
+          ledger,
+          Math.max(1, deadline - Date.now()),
+        )),
+      );
+    } finally {
+      try {
+        await client.close();
+        steps.push({ scenario: "close", status: "passed" });
+      } catch {
+        steps.push({ scenario: "close", status: "failed", issue: "close-failed" });
+      }
+    }
+
+    return steps;
+  });
+}
+
 async function reconcileLocked(
   access: CleanupAccess,
   ledger: LedgerStore,
@@ -340,30 +385,21 @@ async function reconcileLocked(
 ): Promise<Step[]> {
   const state = await ledger.read();
 
-  if (!state.createIntent)
+  // The awaited pre-submit checkpoint must exist before a native create can be dispatched.
+  if (!state.createReference) {
+    await ledger.update((value) => ({ ...value, cleanup: "not-required", lastIssue: undefined }));
+
     return [
       { scenario: "destroy", status: "not-run" },
       { scenario: "confirm-cleanup", status: "not-run" },
     ];
+  }
 
   if (state.cleanup === "confirmed")
     return [
       { scenario: "destroy", status: "passed" },
       { scenario: "confirm-cleanup", status: "passed" },
     ];
-
-  if (!state.createReference) {
-    await ledger.update((value) => ({
-      ...value,
-      cleanup: "unresolved",
-      lastIssue: "outcome-unknown",
-    }));
-
-    return [
-      { scenario: "destroy", status: "blocked", issue: "outcome-unknown" },
-      { scenario: "confirm-cleanup", status: "blocked", issue: "outcome-unknown" },
-    ];
-  }
 
   let id = state.sandboxId;
   const controller = new AbortController();

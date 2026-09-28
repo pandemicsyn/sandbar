@@ -35,3 +35,19 @@ test("missing credential file leaves environment untouched", async () => {
   await loadCredentials(join(tmpdir(), `missing-sandbar-${crypto.randomUUID()}.env`), environment);
   expect(environment).toEqual({});
 });
+
+test("oversized credential file is rejected without importing partial keys", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-credential-size-fixture-"));
+
+  try {
+    const file = join(directory, "sandbar.env");
+    await writeFile(file, "E2B_API_KEY=fixture\n" + "#".repeat(65_537), { mode: 0o600 });
+    const environment: NodeJS.ProcessEnv = {};
+    await expect(loadCredentials(file, environment)).rejects.toThrow(
+      "Unable to read Sandbar credential file",
+    );
+    expect(environment).toEqual({});
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

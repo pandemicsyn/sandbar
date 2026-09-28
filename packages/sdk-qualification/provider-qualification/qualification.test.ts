@@ -6,7 +6,13 @@ import { defineAdapter } from "../../adapter/src/index";
 import { Image, Sandbar } from "sandbar-sdk";
 import { z } from "zod";
 import { LedgerStore } from "./ledger";
-import { reconcile, recordReference, runPrepared, type CleanupAccess } from "./lifecycle";
+import {
+  reconcile,
+  reconcileConnection,
+  recordReference,
+  runPrepared,
+  type CleanupAccess,
+} from "./lifecycle";
 import { parseReport, renderLiveMatrix } from "./report";
 
 const directories: string[] = [];
@@ -49,6 +55,14 @@ test("a second process store cannot reconcile while the run lock is held", async
 
   await store.withLock(async () => {
     await expect(second.withLock(async () => {})).rejects.toMatchObject({ code: "EEXIST" });
+    let connections = 0;
+    await expect(
+      reconcileConnection(async () => {
+        connections++;
+        throw new Error("Must not connect under another process's lock");
+      }, second),
+    ).rejects.toMatchObject({ code: "EEXIST" });
+    expect(connections).toBe(0);
   });
 
   await second.withLock(async () => {});
@@ -109,6 +123,26 @@ test("cleanup recovers a lost create result once and never deletes borrowed imag
   expect((await store.read()).image.kind).toBe("borrowed-prepared");
   await reconcile(fixture.result, store);
   expect(fixture.calls()).toBe(1);
+});
+
+test("create intent without a durable submit reference has no native effect to clean up", async () => {
+  const store = await ledger();
+  await store.update((value) => ({ ...value, createIntent: true }));
+
+  const fixture = access({
+    async verifyReference() {
+      throw new Error("must not contact provider");
+    },
+    sandbox() {
+      throw new Error("must not delete");
+    },
+  });
+
+  expect((await reconcile(fixture.result, store)).map((step) => step.status)).toEqual([
+    "not-run",
+    "not-run",
+  ]);
+  expect((await store.read()).cleanup).toBe("not-required");
 });
 
 test("uncertain create remains actionable without guessing an ID", async () => {

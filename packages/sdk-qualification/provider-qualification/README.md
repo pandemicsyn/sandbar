@@ -28,7 +28,7 @@ SANDBAR_E2B_TEMPLATE_ID=borrowed-ready-template \
 bun packages/sdk-qualification/provider-qualification/manual.ts live-prepared
 ```
 
-`SANDBAR_QUAL_SCENARIOS` optionally selects comma-separated `inspect,exec-argv,exec-shell,exec-nonzero,file-binary,file-overwrite,file-no-clobber,inventory`. Connect, one create, teardown confirmation and close always run; unselected rows are not-run. File overwrite requires file-binary; no-clobber requires both earlier file scenarios. E2B uses blocked internet and the provider's default region; this does not certify other network/region configurations.
+`SANDBAR_QUAL_SCENARIOS` optionally selects comma-separated `inspect,exec-argv,exec-shell,exec-nonzero,file-binary,file-overwrite,file-no-clobber,inventory`. Connect, one create, teardown confirmation and close always run; unselected rows are not-run. File overwrite requires file-binary; no-clobber requires both earlier file scenarios. E2B requests blocked internet and uses the provider's default region. This profile does not probe egress and does not certify network isolation; records use `blocked-requested`.
 
 Cleanup after interruption needs only the saved run UUID/private routing and fresh credentials. It does not require the live-enable flag, clean checkout, template/team environment variables or public evidence reference:
 
@@ -44,13 +44,13 @@ Without `SANDBAR_QUAL_EVIDENCE_REF`, cleanup updates only the private ledger. Wi
 
 `runPrepared` and `reconcile` use the public SDK. The private ledger stores the run UUID, borrowed-image classification, nonsecret routing and create intent. The awaited SDK `onReference` callback journals scoped create, exec, write and destroy references before dispatch. Checkpoint failure prevents the mutation. Returned sandbox identity is saved promptly. Borrowed images are never deletion targets.
 
-On completion, failure or interruption, the lifecycle attempts owned-sandbox teardown. Confirmed cleanup requires a correlated public SDK `computeStopped` completion or scoped inspect state `destroyed`. Unknown state, uncorrelated absence and mere acknowledgement do not confirm cleanup. Unknown creates are observed without resubmission; a saved destroy is observed without another destroy. E2B confirms termination with its scoped destroy result; stopped/absent inspect state alone is unknown. SDK-exposed pending recovery tokens are checkpointed, including on cleanup timeout. If cancellation loses a token before the SDK exposes it, leave the outcome unresolved rather than inventing evidence or replaying a mutation. Unresolved resources remain private, durable and actionable. Never use account-wide name matching or create another sandbox to resolve uncertainty.
+On completion, failure or interruption, the lifecycle attempts owned-sandbox teardown. Confirmed cleanup requires a correlated public SDK `computeStopped` completion or scoped inspect state `destroyed`. Unknown state, uncorrelated absence and mere acknowledgement do not confirm cleanup. An absent durable pre-submit create reference proves that this harness dispatched no create; cleanup is `not-required`. Unknown submitted creates are observed without resubmission; a saved destroy is observed without another destroy. E2B confirms termination with its scoped destroy result; stopped/absent inspect state alone is unknown. SDK-exposed pending recovery tokens are checkpointed, including on cleanup timeout. If cancellation loses a token before the SDK exposes it, leave the outcome unresolved rather than inventing evidence or replaying a mutation. Unresolved resources remain private, durable and actionable. Never use account-wide name matching or create another sandbox to resolve uncertainty.
 
 ## Evidence and offline checks
 
 Exercise and reconciliation hold an exclusive per-run lock across all mutations. A second process fails before mutations. A killed process can leave `<run UUID>.json.lock`; inspect its private host/PID metadata and prove that process has stopped before manually removing only that lock and resuming cleanup. Never remove a lock held by an active process. The recovery ledger remains intact; stale locks are never stolen automatically.
 
-Only reviewed sanitized JSON belongs in `results/`. Records contain provider/scenario, mode (`live`, `fixture`, `packed`), exact SDK commit/version, pinned native version, runtime/platform, timestamp, tested image/network/region class, evidence reference and cleanup state. Private ledgers can contain resource IDs and recovery references; never publish them, credentials or native logs.
+Only reviewed sanitized JSON belongs in `results/`. Records contain provider/scenario, mode (`live`, `fixture`, `packed`), exact merged SDK commit/version and harness commit, pinned native version, runtime/platform, timestamp, tested image/network/region class, evidence reference and cleanup state. Private ledgers can contain resource IDs and recovery references; never publish them, credentials or native logs.
 
 The normal docs build reads only committed JSON and never contacts providers. The generated page uses live evidence only. A newer failure supersedes an older pass for the same configuration. Scenario successes with incomplete cleanup remain incomplete. Missing credentials or approval means not-run. No live records are committed yet.
 
@@ -62,3 +62,5 @@ bun packages/sdk-qualification/provider-qualification/render.ts --check
 ```
 
 Before a later authorized live run, qualify the merged profiles through relevant offline fixtures and packed consumers on that exact commit. The existing partial provider live scripts do not supply this acceptance record.
+
+The live gate checks that SDK sources and dependency pins match `origin/main` (or `SANDBAR_QUAL_SDK_REF`, which must be an ancestor of `origin/main`). A clean, independently reviewed harness branch can run against those unchanged merged sources; both revisions are recorded. Cleanup reconciliation remains available without this gate. Refresh `origin/main` before selecting the SDK revision.

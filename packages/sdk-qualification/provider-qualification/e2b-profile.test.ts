@@ -1,10 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { E2BTransport } from "sandbar-sdk/e2b";
 import { e2bConfiguration, e2bConnection } from "./e2b-profile";
-import { LedgerStore } from "./ledger";
+import { LedgerStore, requirePrivateDirectory } from "./ledger";
 import { publicCleanupAccess, reconcile, recordReference, runPrepared } from "./lifecycle";
 
 const directories: string[] = [];
@@ -183,6 +183,21 @@ test("E2B pending destroy checkpoints its token and reconciles after restart wit
 
 test("E2B profile refuses a longer native lifetime before connection", () => {
   expect(() => e2bConfiguration.parse({ ...config, timeoutSeconds: 3600 })).toThrow();
+});
+
+test("operator preflight refuses a permissive ledger directory before credentials", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-permissions-fixture-"));
+  directories.push(directory);
+  await chmod(directory, 0o755);
+  await expect(requirePrivateDirectory(directory)).rejects.toThrow(
+    "Unsafe ledger directory permissions",
+  );
+  await chmod(directory, 0o500);
+  await expect(requirePrivateDirectory(directory)).rejects.toThrow(
+    "Unsafe ledger directory permissions",
+  );
+  await chmod(directory, 0o700);
+  await requirePrivateDirectory(directory);
 });
 
 test("manual run rejects missing authorization and CI before operator credentials", () => {

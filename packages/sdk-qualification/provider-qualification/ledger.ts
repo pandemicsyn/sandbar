@@ -32,7 +32,7 @@ const ledgerSchema = z.strictObject({
   destroyReference: z.unknown().optional(),
   operationReferences: z.array(z.unknown()).max(32).optional(),
   sandboxId: z.string().min(1).max(512).optional(),
-  cleanup: z.enum(["pending", "confirmed", "unresolved"]),
+  cleanup: z.enum(["pending", "confirmed", "unresolved", "not-required"]),
   lastIssue: z.enum(["outcome-unknown", "cleanup-failed", "confirmation-failed"]).optional(),
 });
 
@@ -41,6 +41,19 @@ export type RunLedger = z.infer<typeof ledgerSchema> & {
   destroyReference?: AdapterRecoveryReference;
   operationReferences?: AdapterRecoveryReference[];
 };
+
+export async function requirePrivateDirectory(directory: string): Promise<void> {
+  const info = await lstat(directory);
+
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    (info.mode & 0o077) !== 0 ||
+    (info.mode & 0o700) !== 0o700 ||
+    (process.getuid && info.uid !== process.getuid())
+  )
+    throw new Error("Unsafe ledger directory permissions");
+}
 
 /** Private crash-recovery state. The caller must put directory on persistent restricted storage. */
 export class LedgerStore {
@@ -97,15 +110,7 @@ export class LedgerStore {
     connection?: RunLedger["connection"],
   ): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    const directoryInfo = await lstat(dirname(this.path));
-
-    if (
-      !directoryInfo.isDirectory() ||
-      directoryInfo.isSymbolicLink() ||
-      (directoryInfo.mode & 0o077) !== 0 ||
-      (process.getuid && directoryInfo.uid !== process.getuid())
-    )
-      throw new Error("Unsafe ledger directory permissions");
+    await requirePrivateDirectory(dirname(this.path));
     const file = await open(this.path, "wx", 0o600);
 
     try {

@@ -7,7 +7,7 @@ description: Dated evidence for tested provider operations and configurations.
 
 Daytona and E2B are the qualification targets. This table reports measured operations only; distribution status is not a live pass.
 
-These results cover only the stated image, network and region classes. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.
+These results cover only the stated image, requested network policy and region classes. A blocked-requested policy is a create setting, not a measured egress-isolation result. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.
 
 | Provider | Scenario | Image | Network | Region class | Runtime | SDK / native | Latest live result        | Date | Evidence |
 | -------- | -------- | ----- | ------- | ------------ | ------- | ------------ | ------------------------- | ---- | -------- |
