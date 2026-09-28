@@ -220,6 +220,8 @@ export function createDaytonaAdapter(
               signal: ctx.signal,
             });
 
+            if (result.status === "rejected") return ctx.reject("UNAVAILABLE", result.reason);
+
             if (result.status !== "completed") {
               const token: z.infer<typeof ImageToken> = {
                 submissionId: ctx.submissionId,

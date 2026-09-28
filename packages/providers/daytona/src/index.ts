@@ -13,10 +13,12 @@ import {
 import { ExecRequest, type ExecCommand } from "sandbar-adapter/portable";
 import type { ImageBuildValue } from "sandbar-adapter";
 
-type ImageBuildResult =
+type ImageBuildObservation =
   | { status: "completed"; value: ImageBuildValue }
   | { status: "pending"; snapshotId: string }
   | { status: "unknown"; reason: string; snapshotId?: string };
+
+type ImageBuildResult = ImageBuildObservation | { status: "rejected"; reason: string };
 
 function fixedImage(image: string): boolean {
   return (
@@ -529,7 +531,7 @@ export class DaytonaDriver implements ProviderDriver {
     snapshot: z.infer<typeof Snapshot>,
     name: string,
     allowMissingName = false,
-  ): ImageBuildResult | null {
+  ): ImageBuildObservation | null {
     if (
       (snapshot.name !== name && !(allowMissingName && snapshot.name === undefined)) ||
       snapshot.organizationId !== this.scope.accountId ||
@@ -565,7 +567,7 @@ export class DaytonaDriver implements ProviderDriver {
     submissionId: string,
     image: string,
     snapshotId?: string,
-  ): Promise<ImageBuildResult | null> {
+  ): Promise<ImageBuildObservation | null> {
     const name = `sandbar-image-${submissionId}`;
 
     const response = await this.request(
@@ -594,8 +596,15 @@ export class DaytonaDriver implements ProviderDriver {
       const prior = await this.request("GET", `/snapshots/${encodeURIComponent(name)}`);
 
       if (prior.status !== 404 || input.signal.aborted)
-        return { status: "unknown", reason: "Daytona image build was not submitted; observe only" };
+        return {
+          status: "rejected",
+          reason: "Daytona image build preflight did not permit submission",
+        };
+    } catch {
+      return { status: "rejected", reason: "Daytona image build preflight unavailable" };
+    }
 
+    try {
       const snapshot = await this.json("POST", "/snapshots", Snapshot, {
         name,
         imageName: input.image,
@@ -695,21 +704,26 @@ export class DaytonaDriver implements ProviderDriver {
     // A stable name lets an unknown OCI build be found without repeating the build.
     const name = `sandbar-${input.identity.submissionId}`;
     let snapshotId = input.image;
+    let retainedSnapshotId: string | undefined;
+
+    const uncertain = (reason: string) =>
+      unknown(
+        input.identity.submissionId,
+        retainedSnapshotId ? `${reason}; snapshot ${retainedSnapshotId} may be retained` : reason,
+      );
 
     if (input.imageKind === "oci") {
       const snapshotName = `sandbar-image-${input.identity.submissionId}`;
+      let buildSubmitted = false;
 
       try {
         const prior = await this.request("GET", `/snapshots/${encodeURIComponent(snapshotName)}`);
 
-        if (prior.status !== 404)
-          return unknown(
-            input.identity.submissionId,
-            "Daytona snapshot name was present or could not be checked before build",
-          );
+        if (prior.status !== 404) throw new Error("Daytona build preflight unavailable");
 
-        if (input.signal?.aborted)
-          return unknown(input.identity.submissionId, "Daytona creation wait was aborted");
+        if (input.signal?.aborted) throw new Error("Daytona build preflight aborted");
+
+        buildSubmitted = true;
 
         const snapshot = await this.json("POST", "/snapshots", Snapshot, {
           name: snapshotName,
@@ -719,31 +733,26 @@ export class DaytonaDriver implements ProviderDriver {
         });
 
         if (
-          snapshot.name !== snapshotName ||
-          snapshot.imageName !== input.image ||
-          snapshot.organizationId !== this.scope.accountId
+          snapshot.organizationId !== this.scope.accountId ||
+          !/^[A-Za-z0-9._:-]{1,128}$/.test(snapshot.id)
         )
-          return unknown(input.identity.submissionId, "Daytona snapshot build response mismatched");
+          return uncertain("Daytona snapshot build response mismatched");
 
         snapshotId = snapshot.id;
-        const deadline = Date.now() + 600_000;
+        retainedSnapshotId = snapshot.id;
+
+        if (snapshot.name !== snapshotName || snapshot.imageName !== input.image)
+          return uncertain("Daytona snapshot build metadata is unverified");
+
         let current = snapshot;
 
-        while (current.state !== "active") {
-          if (["error", "build_failed", "removing", "inactive"].includes(current.state))
-            return unknown(input.identity.submissionId, "Daytona snapshot build did not activate");
-
-          if (Date.now() >= deadline || input.signal?.aborted)
-            return unknown(input.identity.submissionId, "Daytona snapshot build outcome pending");
-          await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
-
+        if (current.state !== "active") {
           const response = await this.request(
             "GET",
             `/snapshots/${encodeURIComponent(snapshotId)}`,
           );
 
-          if (!response.ok)
-            return unknown(input.identity.submissionId, "Daytona snapshot build unreadable");
+          if (!response.ok) return uncertain("Daytona snapshot build unreadable");
           current = await boundedJson(response, Snapshot);
 
           if (
@@ -751,25 +760,33 @@ export class DaytonaDriver implements ProviderDriver {
             current.organizationId !== this.scope.accountId ||
             current.imageName !== input.image
           )
-            return unknown(
-              input.identity.submissionId,
-              "Daytona snapshot build identity mismatched",
-            );
+            return uncertain("Daytona snapshot build identity mismatched");
         }
+
+        if (current.state !== "active")
+          return uncertain(
+            "Daytona snapshot is not ready; use images.build or account for retained resources",
+          );
 
         if (
           !current.regionIds?.includes(this.scope.region!) ||
           !["container", "linux-vm"].includes(current.sandboxClass ?? "")
         )
-          return unknown(
-            input.identity.submissionId,
-            "Daytona snapshot unavailable in target region",
-          );
+          return uncertain("Daytona snapshot unavailable in target region");
       } catch {
-        return unknown(
-          input.identity.submissionId,
-          "Daytona snapshot build response unavailable; do not replay",
-        );
+        if (!buildSubmitted)
+          return {
+            status: "rejected",
+            effect: "none",
+            error: {
+              code: "unavailable",
+              message: "Daytona image build preflight did not permit submission",
+              effect: "none",
+              retry: "never",
+            },
+          };
+
+        return uncertain("Daytona snapshot build response unavailable; do not replay");
       }
     }
 
@@ -781,8 +798,7 @@ export class DaytonaDriver implements ProviderDriver {
 
     if (input.imageKind === "oci") Object.assign(labels, { "sandbar.imageSnapshot": snapshotId });
 
-    if (input.signal?.aborted)
-      return unknown(input.identity.submissionId, "Daytona creation wait was aborted");
+    if (input.signal?.aborted) return uncertain("Daytona creation wait was aborted");
 
     try {
       const value = await this.json("POST", "/sandbox", NativeSandbox, {
@@ -795,15 +811,14 @@ export class DaytonaDriver implements ProviderDriver {
         ttlMinutes: this.config.configuration.ttlMinutes,
       });
 
-      if (value.name !== name)
-        return unknown(input.identity.submissionId, "Daytona returned a different sandbox name");
+      if (value.name !== name) return uncertain("Daytona returned a different sandbox name");
 
       if (value.snapshot && value.snapshot !== snapshotId)
-        return unknown(input.identity.submissionId, "Daytona returned a different snapshot");
+        return uncertain("Daytona returned a different snapshot");
       const observation = observed(this.scope, value);
 
       if (["destroyed", "error", "build_failed"].includes(value.state))
-        return unknown(input.identity.submissionId, "Daytona sandbox did not reach running state");
+        return uncertain("Daytona sandbox did not reach running state");
 
       if (["stopped", "paused", "archived"].includes(value.state))
         return {
@@ -828,10 +843,7 @@ export class DaytonaDriver implements ProviderDriver {
         value: { kind: "sandbox", observation },
       };
     } catch {
-      return unknown(
-        input.identity.submissionId,
-        "Daytona create response unavailable; observe without replay",
-      );
+      return uncertain("Daytona create response unavailable; observe without replay");
     }
   }
   async inspect(value: SandboxRef): Promise<SandboxObservation | null> {

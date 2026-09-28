@@ -572,6 +572,8 @@ test("Daytona service reconnects and observes lost exec, write and delete withou
   const files = new Map<string, Uint8Array>();
   const mutations = { build: 0, create: 0, exec: 0, upload: 0, write: 0, destroy: 0 };
   let snapshotName = "";
+  let implicitBuild = true;
+  let implicitIdReads = 0;
   let state = "started";
   let name = "";
   let labels: Record<string, string> = {};
@@ -614,10 +616,21 @@ test("Daytona service reconnects and observes lost exec, write and delete withou
     if (path === "/api/snapshots" && init?.method === "POST") {
       mutations.build++;
       snapshotName = z.object({ name: z.string() }).parse(JSON.parse(String(init.body))).name;
+
+      if (implicitBuild)
+        return Response.json({
+          id: "built-1",
+          name: snapshotName,
+          imageName: "alpine:3.21",
+          organizationId: "org-1",
+          state: "building",
+        });
       throw new Error("snapshot build response lost");
     }
 
-    if (path.startsWith("/api/snapshots/"))
+    if (path.startsWith("/api/snapshots/")) {
+      if (implicitBuild && path === "/api/snapshots/built-1") implicitIdReads++;
+
       return snapshotName &&
         [snapshotName, "built-1"].includes(decodeURIComponent(path.split("/").at(-1)!))
         ? Response.json({
@@ -625,11 +638,12 @@ test("Daytona service reconnects and observes lost exec, write and delete withou
             name: snapshotName,
             imageName: "alpine:3.21",
             organizationId: "org-1",
-            state: "active",
+            state: implicitBuild ? "building" : "active",
             regionIds: ["us"],
             sandboxClass: "container",
           })
         : new Response(null, { status: 404 });
+    }
 
     if (path === "/api/sandbox" && init?.method === "POST") {
       mutations.create++;
@@ -777,13 +791,27 @@ test("Daytona service reconnects and observes lost exec, write and delete withou
       fetch: fixtureFetch(async (url, init) => runtime.app.request(String(url), init)),
     });
 
+    const implicit = await client.sandboxes.submitCreate({
+      environment: Image.oci("alpine:3.21"),
+      networkPolicy: "blocked",
+    });
+
+    await runtime.runner.tick();
+    expect(
+      (await runtime.store.getOperation(projectId, implicit.reference.operationId!))?.status,
+    ).toBe("unknown");
+    expect(implicitIdReads).toBe(1);
+    expect(mutations.build).toBe(1);
+    expect(mutations.create).toBe(0);
+    implicitBuild = false;
+
     const build = await client.images.submitBuild({
       source: Image.oci("alpine:3.21"),
       connectionId,
     });
 
     await runtime.runner.tick();
-    expect(mutations.build).toBe(1);
+    expect(mutations.build).toBe(2);
     expect(mutations.create).toBe(0);
     expect(
       (await runtime.store.getOperation(projectId, build.reference.operationId!))?.status,
@@ -812,7 +840,7 @@ test("Daytona service reconnects and observes lost exec, write and delete withou
       .parse(await (await client.recover(build.reference)).wait());
 
     expect(built.prepared).toMatchObject({ value: "built-1", provider: "daytona", connectionId });
-    expect(mutations.build).toBe(1);
+    expect(mutations.build).toBe(2);
 
     const create = await client.sandboxes.submitCreate({
       environment: Image.prepared(built.prepared),
@@ -870,7 +898,7 @@ test("Daytona service reconnects and observes lost exec, write and delete withou
     await request(`${base}/operations/${destroy.id}/reconcile`, "POST", {});
     await runtime.runner.tick();
     expect((await runtime.store.getOperation(projectId, destroy.id))?.status).toBe("succeeded");
-    expect(mutations).toEqual({ build: 1, create: 1, exec: 1, upload: 1, write: 1, destroy: 1 });
+    expect(mutations).toEqual({ build: 2, create: 1, exec: 1, upload: 1, write: 1, destroy: 1 });
   } finally {
     await runtime.close();
     await rm(directory, { recursive: true, force: true });

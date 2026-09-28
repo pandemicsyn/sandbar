@@ -837,3 +837,52 @@ test("tokenless image recovery reports scoped possible retention without certify
     await client.close();
   }
 });
+
+test.each(["unavailable", "throw", "existing"] as const)(
+  "image build preflight is effect-free: %s",
+  async (mode) => {
+    let posts = 0;
+
+    const fetchImpl: typeof fetch = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+
+        if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (path === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (path === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (init?.method === "POST") posts++;
+
+        if (mode === "throw") throw new Error("preflight unavailable");
+
+        return new Response(null, { status: mode === "existing" ? 200 : 503 });
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(fetchImpl),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+    try {
+      await expect(client.images.build({ source: Image.oci("alpine:3.21") })).rejects.toMatchObject(
+        { code: "UNAVAILABLE", effect: "none" },
+      );
+      await expect(
+        client.sandboxes.create({
+          environment: Image.oci("alpine:3.21"),
+          networkPolicy: "blocked",
+        }),
+      ).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+      expect(posts).toBe(0);
+    } finally {
+      await client.close();
+    }
+  },
+);

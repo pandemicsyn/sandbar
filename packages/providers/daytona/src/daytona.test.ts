@@ -2138,3 +2138,58 @@ test.each([{ id: "other" }, { organizationId: "other" }, { target: "other" }])(
     expect(deletes).toBe(0);
   },
 );
+
+test.each(["name", "imageName", "lost-read", "failed-read"] as const)(
+  "OCI create reports possible retention when build metadata omits %s",
+  async (missing) => {
+    let builds = 0;
+    let creates = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions") return Response.json([region()]);
+
+      if (path === "/api/snapshots" && init?.method === "POST") {
+        builds++;
+
+        return Response.json({
+          id: "possible-retained",
+          name: missing === "name" ? undefined : "sandbar-image-incomplete-create",
+          imageName: missing === "imageName" ? undefined : "alpine:3.21",
+          organizationId: "org-1",
+          state: "building",
+        });
+      }
+
+      if (path === "/api/snapshots/possible-retained") {
+        if (missing === "lost-read") throw new Error("read lost");
+
+        return new Response(null, { status: 503 });
+      }
+
+      if (init?.method === "POST") creates++;
+
+      return new Response(null, { status: 404 });
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+    const result = await provider.driver.create({
+      scope: provider.scope,
+      identity: identity("incomplete-create"),
+      image: "alpine:3.21",
+      imageKind: "oci",
+      networkPolicy: "blocked",
+    });
+
+    expect(result).toMatchObject({
+      status: "unknown",
+      reason: expect.stringContaining("snapshot possible-retained"),
+    });
+    expect(builds).toBe(1);
+    expect(creates).toBe(0);
+  },
+);
