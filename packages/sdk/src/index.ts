@@ -24,6 +24,7 @@ export {
   Image,
   outputText,
   SandbarError,
+  UnsupportedFeatureError,
   OutcomeUnknownError,
   WaitAbortedError,
   NonzeroExitError,
@@ -42,3 +43,21 @@ export type {
   RecoveryReference,
   SandbarClient,
 } from "./resource";
+
+export {
+  ResourceReference,
+  ResourceKind,
+  validateResourceReference,
+  assertResourceScope,
+  assertResourceIdentity,
+  SnapshotRequest,
+} from "sandbar-adapter";
+
+export type {
+  Support,
+  Capabilities,
+  SnapshotPlan,
+  SnapshotProfile,
+  SandboxState,
+  CreatePlan,
+} from "sandbar-adapter";

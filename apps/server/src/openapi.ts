@@ -1,5 +1,9 @@
 import { z } from "zod";
 import {
+  Capabilities,
+  CreateCheck,
+  SnapshotCheck,
+  SnapshotRequest,
   AcceptedExecution,
   AcceptedOperation,
   CreateProjectRequest,
@@ -30,6 +34,10 @@ import {
 } from "./http-contracts";
 
 const schemas = {
+  Capabilities,
+  CreateCheck,
+  SnapshotCheck,
+  SnapshotRequest,
   AcceptedExecution,
   AcceptedOperation,
   CreateProjectRequest,
@@ -303,6 +311,34 @@ export const openApiDocument = {
         operationId: "verifyProviderConnection",
         parameters: cookieMutationHeaders,
         responses: ordinary("ProviderConnection"),
+      },
+    },
+    "/v1/projects/{projectId}/capabilities": {
+      parameters: [projectParameter],
+      get: {
+        operationId: "getCapabilities",
+        parameters: [{ name: "connectionId", in: "query", schema: { type: "string" } }],
+        responses: ordinary("Capabilities"),
+      },
+    },
+    "/v1/projects/{projectId}/sandboxes/check-create": {
+      parameters: [projectParameter],
+      post: {
+        operationId: "checkCreate",
+        requestBody: { required: true, ...json("CreateSandboxRequest") },
+        responses: ordinary("CreateCheck"),
+      },
+    },
+    "/v1/projects/{projectId}/sandboxes/{sandboxId}/capabilities": {
+      parameters: [projectParameter, sandboxParameter],
+      get: { operationId: "getSandboxCapabilities", responses: ordinary("Capabilities") },
+    },
+    "/v1/projects/{projectId}/sandboxes/{sandboxId}/check-snapshot": {
+      parameters: [projectParameter, sandboxParameter],
+      post: {
+        operationId: "checkSnapshot",
+        requestBody: { required: true, ...json("SnapshotRequest") },
+        responses: ordinary("SnapshotCheck"),
       },
     },
     "/v1/projects/{projectId}/sandboxes": {

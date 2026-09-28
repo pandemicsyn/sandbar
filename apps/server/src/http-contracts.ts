@@ -469,3 +469,5 @@ export type Execution = z.infer<typeof Execution>;
 export type Project = z.infer<typeof Project>;
 
 export type ProviderConnection = z.infer<typeof ProviderConnection>;
+
+export { Capabilities, SnapshotCheck, CreateCheck, SnapshotRequest } from "sandbar-adapter";

@@ -445,6 +445,199 @@
         }
       }
     },
+    "/v1/projects/{projectId}/capabilities": {
+      "parameters": [
+        {
+          "name": "projectId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getCapabilities",
+        "parameters": [
+          {
+            "name": "connectionId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{projectId}/sandboxes/check-create": {
+      "parameters": [
+        {
+          "name": "projectId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "checkCreate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSandboxRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateCheck"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{projectId}/sandboxes/{sandboxId}/capabilities": {
+      "parameters": [
+        {
+          "name": "projectId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        {
+          "name": "sandboxId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getSandboxCapabilities",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{projectId}/sandboxes/{sandboxId}/check-snapshot": {
+      "parameters": [
+        {
+          "name": "projectId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        {
+          "name": "sandboxId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "checkSnapshot",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotCheck"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/projects/{projectId}/sandboxes": {
       "parameters": [
         {
@@ -1290,6 +1483,742 @@
       }
     },
     "schemas": {
+      "Capabilities": {
+        "type": "object",
+        "properties": {
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["argv", "shell"]
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["prepared", "oci"]
+            }
+          },
+          "network": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exec": {
+            "type": "boolean"
+          },
+          "inspect": {
+            "type": "boolean"
+          },
+          "inventory": {
+            "type": "boolean"
+          },
+          "readFile": {
+            "type": "boolean"
+          },
+          "writeFile": {
+            "type": "boolean"
+          },
+          "maxOutputBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "maxFileBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "snapshots": {
+            "type": "object",
+            "properties": {
+              "capture": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "supported"
+                      },
+                      "value": {
+                        "type": "object",
+                        "properties": {
+                          "profiles": {
+                            "maxItems": 128,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 128
+                                },
+                                "preserve": {
+                                  "type": "string",
+                                  "enum": ["filesystem", "filesystem+memory"]
+                                },
+                                "sourceStates": {
+                                  "minItems": 1,
+                                  "maxItems": 8,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": [
+                                      "creating",
+                                      "running",
+                                      "stopped",
+                                      "suspended",
+                                      "restoring",
+                                      "destroying",
+                                      "destroyed",
+                                      "unknown"
+                                    ]
+                                  }
+                                },
+                                "interruption": {
+                                  "type": "string",
+                                  "enum": ["none", "pause", "stop", "terminate"]
+                                },
+                                "sourceAfter": {
+                                  "type": "string",
+                                  "enum": ["unchanged", "stopped", "destroyed"]
+                                },
+                                "connections": {
+                                  "type": "string",
+                                  "enum": ["preserved", "dropped", "unknown"]
+                                },
+                                "consistency": {
+                                  "type": "string",
+                                  "enum": ["crash-consistent", "caller-quiesced"]
+                                },
+                                "mountHandling": {
+                                  "type": "string",
+                                  "enum": ["none", "excluded", "unknown"]
+                                },
+                                "minimumRetentionSeconds": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "preserve",
+                                "sourceStates",
+                                "interruption",
+                                "sourceAfter",
+                                "connections",
+                                "consistency",
+                                "mountHandling"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": ["profiles"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["status", "value"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "unsupported"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                      }
+                    },
+                    "required": ["status", "reason"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "unavailable"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                      }
+                    },
+                    "required": ["status", "reason"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "unknown"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                      }
+                    },
+                    "required": ["status", "reason"],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "restore": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "const": "unsupported"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": ["status", "reason"],
+                "additionalProperties": false
+              },
+              "inspect": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "const": "unsupported"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": ["status", "reason"],
+                "additionalProperties": false
+              },
+              "list": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "const": "unsupported"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": ["status", "reason"],
+                "additionalProperties": false
+              },
+              "delete": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "const": "unsupported"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": ["status", "reason"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["capture", "restore", "inspect", "list", "delete"],
+            "additionalProperties": false
+          },
+          "volumes": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "unsupported"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "required": ["status", "reason"],
+            "additionalProperties": false
+          },
+          "suspension": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "unsupported"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "required": ["status", "reason"],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "commands",
+          "images",
+          "network",
+          "exec",
+          "inspect",
+          "inventory",
+          "readFile",
+          "writeFile",
+          "maxOutputBytes",
+          "maxFileBytes",
+          "observedAt",
+          "snapshots",
+          "volumes",
+          "suspension"
+        ],
+        "additionalProperties": false
+      },
+      "CreateCheck": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "supported"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "image": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": ["prepared", "oci"]
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["kind", "value"],
+                    "additionalProperties": false
+                  },
+                  "networkPolicy": {
+                    "type": "string"
+                  },
+                  "snapshot": {
+                    "type": "object",
+                    "properties": {
+                      "profile": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          },
+                          "preserve": {
+                            "type": "string",
+                            "enum": ["filesystem", "filesystem+memory"]
+                          },
+                          "sourceStates": {
+                            "minItems": 1,
+                            "maxItems": 8,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "creating",
+                                "running",
+                                "stopped",
+                                "suspended",
+                                "restoring",
+                                "destroying",
+                                "destroyed",
+                                "unknown"
+                              ]
+                            }
+                          },
+                          "interruption": {
+                            "type": "string",
+                            "enum": ["none", "pause", "stop", "terminate"]
+                          },
+                          "sourceAfter": {
+                            "type": "string",
+                            "enum": ["unchanged", "stopped", "destroyed"]
+                          },
+                          "connections": {
+                            "type": "string",
+                            "enum": ["preserved", "dropped", "unknown"]
+                          },
+                          "consistency": {
+                            "type": "string",
+                            "enum": ["crash-consistent", "caller-quiesced"]
+                          },
+                          "mountHandling": {
+                            "type": "string",
+                            "enum": ["none", "excluded", "unknown"]
+                          },
+                          "minimumRetentionSeconds": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "preserve",
+                          "sourceStates",
+                          "interruption",
+                          "sourceAfter",
+                          "connections",
+                          "consistency",
+                          "mountHandling"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "sourceState": {
+                        "type": "string",
+                        "enum": [
+                          "creating",
+                          "running",
+                          "stopped",
+                          "suspended",
+                          "restoring",
+                          "destroying",
+                          "destroyed",
+                          "unknown"
+                        ]
+                      },
+                      "retention": {
+                        "type": "object",
+                        "properties": {
+                          "minimumSeconds": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "cleanup": {
+                            "type": "string",
+                            "const": "manual"
+                          }
+                        },
+                        "required": ["minimumSeconds", "cleanup"],
+                        "additionalProperties": false
+                      },
+                      "restoreRestrictions": {
+                        "type": "string",
+                        "const": "unknown"
+                      }
+                    },
+                    "required": ["profile", "sourceState", "retention", "restoreRestrictions"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["image", "networkPolicy"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["status", "value"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "unsupported"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "required": ["status", "reason"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "unavailable"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "required": ["status", "reason"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "unknown"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "required": ["status", "reason"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "SnapshotCheck": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "supported"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "profile": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      },
+                      "preserve": {
+                        "type": "string",
+                        "enum": ["filesystem", "filesystem+memory"]
+                      },
+                      "sourceStates": {
+                        "minItems": 1,
+                        "maxItems": 8,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "creating",
+                            "running",
+                            "stopped",
+                            "suspended",
+                            "restoring",
+                            "destroying",
+                            "destroyed",
+                            "unknown"
+                          ]
+                        }
+                      },
+                      "interruption": {
+                        "type": "string",
+                        "enum": ["none", "pause", "stop", "terminate"]
+                      },
+                      "sourceAfter": {
+                        "type": "string",
+                        "enum": ["unchanged", "stopped", "destroyed"]
+                      },
+                      "connections": {
+                        "type": "string",
+                        "enum": ["preserved", "dropped", "unknown"]
+                      },
+                      "consistency": {
+                        "type": "string",
+                        "enum": ["crash-consistent", "caller-quiesced"]
+                      },
+                      "mountHandling": {
+                        "type": "string",
+                        "enum": ["none", "excluded", "unknown"]
+                      },
+                      "minimumRetentionSeconds": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "preserve",
+                      "sourceStates",
+                      "interruption",
+                      "sourceAfter",
+                      "connections",
+                      "consistency",
+                      "mountHandling"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "sourceState": {
+                    "type": "string",
+                    "enum": [
+                      "creating",
+                      "running",
+                      "stopped",
+                      "suspended",
+                      "restoring",
+                      "destroying",
+                      "destroyed",
+                      "unknown"
+                    ]
+                  },
+                  "retention": {
+                    "type": "object",
+                    "properties": {
+                      "minimumSeconds": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "cleanup": {
+                        "type": "string",
+                        "const": "manual"
+                      }
+                    },
+                    "required": ["minimumSeconds", "cleanup"],
+                    "additionalProperties": false
+                  },
+                  "restoreRestrictions": {
+                    "type": "string",
+                    "const": "unknown"
+                  }
+                },
+                "required": ["profile", "sourceState", "retention", "restoreRestrictions"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["status", "value"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "unsupported"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "required": ["status", "reason"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "unavailable"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "required": ["status", "reason"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "unknown"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "required": ["status", "reason"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "SnapshotRequest": {
+        "type": "object",
+        "properties": {
+          "preserve": {
+            "type": "string",
+            "enum": ["filesystem", "filesystem+memory"]
+          },
+          "maxInterruption": {
+            "type": "string",
+            "enum": ["none", "pause", "stop", "terminate"]
+          },
+          "sourceAfter": {
+            "type": "string",
+            "enum": ["unchanged", "stopped", "destroyed"]
+          },
+          "consistency": {
+            "type": "string",
+            "enum": ["crash-consistent", "caller-quiesced"]
+          },
+          "retention": {
+            "type": "object",
+            "properties": {
+              "minimumSeconds": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "cleanupAfterSeconds": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["preserve"],
+        "additionalProperties": false
+      },
       "AcceptedExecution": {
         "type": "object",
         "properties": {
@@ -1380,6 +2309,19 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "feature": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "unmetRequirements": {
+                    "maxItems": 128,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 1024
+                    }
                   }
                 },
                 "required": ["code", "message", "effect", "retry"]
@@ -1900,6 +2842,19 @@
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "feature": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      },
+                      "unmetRequirements": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "maxLength": 1024
+                        }
                       }
                     },
                     "required": ["code", "message", "effect", "retry"]
@@ -2036,6 +2991,19 @@
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "feature": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      },
+                      "unmetRequirements": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "maxLength": 1024
+                        }
                       }
                     },
                     "required": ["code", "message", "effect", "retry"]
@@ -2172,6 +3140,19 @@
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "feature": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      },
+                      "unmetRequirements": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "maxLength": 1024
+                        }
                       }
                     },
                     "required": ["code", "message", "effect", "retry"]
@@ -2311,6 +3292,19 @@
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "feature": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      },
+                      "unmetRequirements": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "maxLength": 1024
+                        }
                       }
                     },
                     "required": ["code", "message", "effect", "retry"]
@@ -2462,6 +3456,19 @@
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "feature": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      },
+                      "unmetRequirements": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "maxLength": 1024
+                        }
                       }
                     },
                     "required": ["code", "message", "effect", "retry"]
@@ -3042,6 +4049,52 @@
               }
             ]
           },
+          "requirements": {
+            "type": "object",
+            "properties": {
+              "snapshot": {
+                "type": "object",
+                "properties": {
+                  "preserve": {
+                    "type": "string",
+                    "enum": ["filesystem", "filesystem+memory"]
+                  },
+                  "maxInterruption": {
+                    "type": "string",
+                    "enum": ["none", "pause", "stop", "terminate"]
+                  },
+                  "sourceAfter": {
+                    "type": "string",
+                    "enum": ["unchanged", "stopped", "destroyed"]
+                  },
+                  "consistency": {
+                    "type": "string",
+                    "enum": ["crash-consistent", "caller-quiesced"]
+                  },
+                  "retention": {
+                    "type": "object",
+                    "properties": {
+                      "minimumSeconds": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cleanupAfterSeconds": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["preserve"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["snapshot"],
+            "additionalProperties": false
+          },
           "region": {
             "type": "string",
             "minLength": 1,
@@ -3205,6 +4258,19 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
+              },
+              "feature": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "unmetRequirements": {
+                "maxItems": 128,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 1024
+                }
               }
             },
             "required": ["code", "message", "effect", "retry"]
@@ -3487,6 +4553,19 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "feature": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "unmetRequirements": {
+                    "maxItems": 128,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 1024
+                    }
                   }
                 },
                 "required": ["code", "message", "effect", "retry"]
@@ -3618,6 +4697,19 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "feature": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "unmetRequirements": {
+                    "maxItems": 128,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 1024
+                    }
                   }
                 },
                 "required": ["code", "message", "effect", "retry"]
@@ -3749,6 +4841,19 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "feature": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "unmetRequirements": {
+                    "maxItems": 128,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 1024
+                    }
                   }
                 },
                 "required": ["code", "message", "effect", "retry"]
@@ -3883,6 +4988,19 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "feature": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "unmetRequirements": {
+                    "maxItems": 128,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 1024
+                    }
                   }
                 },
                 "required": ["code", "message", "effect", "retry"]
@@ -4029,6 +5147,19 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "feature": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "unmetRequirements": {
+                    "maxItems": 128,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 1024
+                    }
                   }
                 },
                 "required": ["code", "message", "effect", "retry"]

@@ -23,7 +23,7 @@ export class AdapterProviderDriver {
     readonly connection: AdapterDirectClient,
   ) {}
   async capabilities() {
-    const caps = this.connection.capabilities();
+    const caps = await this.connection.capabilities();
 
     return {
       provider: this.name,

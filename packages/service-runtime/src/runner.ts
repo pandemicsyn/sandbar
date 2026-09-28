@@ -7,7 +7,7 @@ import {
   type Sandbox,
 } from "sandbar-adapter";
 import { z } from "zod";
-import type { AdvancedOperationResult as RuntimeResult } from "sandbar-sdk";
+import { SandbarError, type AdvancedOperationResult as RuntimeResult } from "sandbar-sdk";
 import type { SandboxRef, NativeScope, DriverResult } from "@sandbar/provider-spi";
 import { ProviderReadError } from "@sandbar/provider-spi";
 import { ExecRequest } from "sandbar-adapter/portable";
@@ -202,6 +202,7 @@ export class DurableRunner {
         network: request.network,
         region: request.region,
         labels: request.labels,
+        requirements: request.requirements,
       });
 
       const binding = z
@@ -251,6 +252,7 @@ export class DurableRunner {
         networkPolicy: plan.networkPolicy,
         region: plan.region,
         labels: plan.labels,
+        requirements: plan.requirements,
       };
     } else if (op.kind === "exec") {
       const envelope = z
@@ -294,7 +296,7 @@ export class DurableRunner {
       });
     } catch (error) {
       if (
-        error instanceof AdapterError &&
+        (error instanceof AdapterError || error instanceof SandbarError) &&
         ["INVALID_ARGUMENT", "UNSUPPORTED", "CAPACITY", "CONFLICT"].includes(error.code)
       ) {
         await store.failWithoutEffect(claim, {

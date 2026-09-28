@@ -1,3 +1,4 @@
+import { checkCreate, SnapshotRequest } from "./state";
 import { z } from "zod";
 import { CreateSandboxInput, ExecRequest, FilePath } from "./portable";
 import {
@@ -54,6 +55,7 @@ export type PreparedOperation = {
   readonly kind: OperationKind;
   readonly input: unknown;
   readonly operation: Mutation<unknown, unknown, unknown>;
+  readonly revalidate?: (signal: AbortSignal) => Promise<RuntimeResult | null>;
 };
 
 export type RuntimeResult =
@@ -77,6 +79,7 @@ const CreateInputSchema = z.strictObject({
   networkPolicy: z.string().min(1).max(128),
   region: z.string().min(1).max(128).optional(),
   labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
+  requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
 });
 
 const ImageBuildInputSchema = z.strictObject({
@@ -467,6 +470,19 @@ export async function prepareOperation(
     throw error;
   }
 
+  if (kind === "create") {
+    const result = await checkCreate(session, CreateInputSchema.parse(checkedInput), {
+      signal,
+      deadline: Date.now() + 30_000,
+    });
+
+    if (result.status !== "supported")
+      throw new AdapterError(
+        result.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
+        result.reason,
+      );
+  }
+
   const parts = operationParts(operation);
 
   if (parts.recovery) checkedRecoveryVersion(parts.recovery.version);
@@ -475,7 +491,32 @@ export async function prepareOperation(
     ? await prepareBeforeDeadline(parts.prepare, structuredClone(checkedInput), signal)
     : structuredClone(checkedInput);
 
-  return { kind, input: prepared, operation };
+  const createInput =
+    kind === "create" && CreateInputSchema.parse(checkedInput).requirements
+      ? structuredClone(CreateInputSchema.parse(checkedInput))
+      : undefined;
+
+  return {
+    kind,
+    input: prepared,
+    operation,
+    revalidate: createInput
+      ? async (signal) => {
+          const result = await checkCreate(session, createInput, {
+            signal,
+            deadline: Date.now() + 30_000,
+          });
+
+          return result.status === "supported"
+            ? null
+            : {
+                kind: "rejected",
+                code: result.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
+                message: result.reason,
+              };
+        }
+      : undefined,
+  };
 }
 
 function prepareBeforeDeadline<I, P>(
@@ -571,6 +612,9 @@ export async function submitOperation(
   signal: AbortSignal,
   maxOutputBytes = MAX_OUTPUT,
 ): Promise<RuntimeResult> {
+  const rejected = await prepared.revalidate?.(signal);
+
+  if (rejected) return rejected;
   const parts = operationParts(prepared.operation);
 
   const context = createAttemptContext({ ...identity, signal }, parts.recovery?.token);
@@ -592,6 +636,7 @@ export async function observeOperation(
     operationId: string;
     submissionId: string;
     sandbox?: Sandbox;
+    resource?: import("./state").ResourceReference;
     token?: Json;
     version?: number;
   },

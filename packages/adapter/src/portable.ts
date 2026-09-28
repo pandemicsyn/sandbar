@@ -1,3 +1,4 @@
+import { SnapshotRequest } from "./state";
 import { z } from "zod";
 
 export const Id = z
@@ -17,6 +18,7 @@ export const NetworkSelection = z.strictObject({ policy: z.string().min(1).max(1
 
 export const CreateSandboxInput = z.strictObject({
   environment: ImageSource,
+  requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
   region: z.string().min(1).max(128).optional(),
   network: NetworkSelection.optional(),
   labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
@@ -76,6 +78,8 @@ export const SafeError = z.object({
   effect: Effect,
   retry: z.enum(["never", "same_invocation", "observe_only", "new_invocation_with_risk"]),
   retryAfterSeconds: z.number().int().nonnegative().optional(),
+  feature: z.string().min(1).max(128).optional(),
+  unmetRequirements: z.array(z.string().max(1024)).max(128).optional(),
 });
 
 export type CreateSandboxInput = z.infer<typeof CreateSandboxInput>;

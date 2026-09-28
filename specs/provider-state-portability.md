@@ -1,6 +1,6 @@
 # Provider state portability
 
-Next implementation work · Direction accepted September 28, 2026 · Not implemented
+Direction accepted September 28, 2026 · Foundations implemented; resource mutations remain planned
 
 This specifies the next SDK and adapter extensions for snapshots, volumes, and lifecycle control. Daytona, E2B, Vercel Sandbox, and Tensorlake inform the portable contracts; implementing the future Vercel and Tensorlake adapters is separate work to specify later. Existing exports remain the authority for implemented behavior. These signatures are design sketches, not compilable examples of today's SDK.
 
@@ -260,3 +260,11 @@ Sources: [Daytona snapshots](https://www.daytona.io/docs/en/snapshots/), [Dayton
 Required tests include unsupported-before-mutation; profile combinations that must reject; filesystem-only on a memory-only adapter; stopped source despite failed capture; lost capture/restore/delete responses; expired or foreign references; no implicit fresh sandbox on resume; incompatible policy before memory restore; unpinned external mounts; readonly enforcement; concurrent writers and version identity; unknown ownership; no-replay recovery; and direct/service parity. Qualification must also inspect native retry/auto-resume behavior, not just callback counts. Paid live qualification requires separate authorization.
 
 Decisions proposed for review: public name `snapshot`; required exact `preserve`; default pause-only capture with unchanged source lifecycle; explicit restore networking; no automatic degradation; native create-time mounts first; and durability-required destruction for writable mounts. No production exports or provider behavior change with this document.
+
+## Foundation implementation decisions
+
+The first bounded slice exports a version-1 resource reference schema and scope/identity checks, read-only snapshot-profile evaluation, asynchronous capability observations, and create-time snapshot requirements through direct and service clients. Reference ownership is explicit; generations are opaque native evidence and must be supplied for reusable locators. Existing sandbox/image identity APIs and recovery-reference version 2 remain intact. The adapter mutation resource constraint accepts resource references while retaining the legacy sandbox observation field; artifact operation kinds and result dispatch wait for their feature slice.
+
+An optional typed `snapshotCapture` declaration gates the read-only `snapshotProfiles` hook. No public capture method or native capture implementation is added. Other snapshot operations, volumes and suspension remain unsupported. Profiles include mount handling and minimum retention evidence; resolved plans report restore restrictions as unknown, because restore restrictions need the next slice's inspected artifact evidence. Cleanup preferences are manual in this slice. A check is not a reservation. Required creation checks evaluate the selected environment for a future running source and require the adapter to return unknown if class evidence cannot be established without effects. Unsupported creation throws effect-free `UNSUPPORTED`; unavailable and unknown requirements block creation with `UNAVAILABLE`, retaining distinct statuses in the read-only check. Persisted requirements are rechecked in the service runner before submission.
+
+The direct capability getter is now asynchronous. Service connection observations select the first verified installed connection in creation order; a scoped prepared-image binding selects its connection for request evaluation. No placement/filtering engine is added. Built-in provider support is unchanged and has no state-operation qualification claim.

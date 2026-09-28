@@ -567,7 +567,7 @@ export const asyncAcme = defineAdapter({
 `;
 
 const customSource = `
-import { Sandbar, Image } from "sandbar-sdk";
+import { Sandbar, Image, ResourceReference, assertResourceScope } from "sandbar-sdk";
 import { acme, metrics } from "@acme/sandbar-adapter";
 const client = await Sandbar.connect({
   adapter: acme,
@@ -576,6 +576,16 @@ const client = await Sandbar.connect({
 });
 try {
   const box = await client.sandboxes.create({ environment: Image.prepared("image-1") });
+  const caps = await client.capabilities();
+  if (caps.snapshots.capture.status !== "unsupported" || caps.volumes.status !== "unsupported") throw Error("Unimplemented state support was advertised");
+  if ((await box.checkSnapshot({ preserve: "filesystem" })).status !== "unsupported") throw Error("Snapshot support mismatch");
+  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { preserve: "filesystem" } } };
+  if ((await client.sandboxes.checkCreate(required)).status !== "unsupported") throw Error("Required snapshot was accepted");
+  try { await client.sandboxes.create(required); throw Error("Required snapshot allocated compute"); } catch (error) { if (error.code !== "UNSUPPORTED" || error.effect !== "none") throw error; }
+  for (const kind of ["snapshot", "volume", "mount", "session"]) {
+    const ref = ResourceReference.parse({ version: 1, kind, provider: "example.acme", scope: client.scope, nativeId: "native-1", generation: "g1", ownership: "unknown" });
+    assertResourceScope(JSON.parse(JSON.stringify(ref)), { provider: "example.acme", scope: client.scope });
+  }
   if (box.supports("exec")) throw Error("Unsupported operation was advertised");
   await box.destroy();
 } finally { await client.close(); }
@@ -637,6 +647,10 @@ try {
     const target = new URL(String(url));
     return fetch(origin + target.pathname + target.search, init);
   }, { preconnect() {} }) });
+  if ((await client.capabilities()).snapshots.capture.status !== "unsupported") throw Error("Service advertised capture");
+  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { preserve: "filesystem" } } };
+  if ((await client.sandboxes.checkCreate(required)).status !== "unsupported") throw Error("Service check accepted capture");
+  try { await client.sandboxes.create(required); throw Error("Service allocated required capture"); } catch (error) { if (error.code !== "UNSUPPORTED" || error.effect !== "none") throw error; }
   const build = await client.images.submitBuild({ source: Image.oci("fixture/image:1"), connectionId: conn.body.id });
   await until(async () => metrics.builds === 1 && (await request(\`/v1/projects/\${projectId}/operations/\${build.reference.operationId}\`)).body.status === "running");
   const admitted = await request(\`/v1/projects/\${projectId}/sandboxes\`, "POST", {
