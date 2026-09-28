@@ -371,6 +371,7 @@ async function reconcileLocked(
         { scenario: "confirm-cleanup", status: "passed" },
       ];
     }
+
     const deadline = Date.now() + waitMs;
 
     while (Date.now() <= deadline) {

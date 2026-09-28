@@ -288,6 +288,7 @@ test("lost destroy acknowledgement is observed without replay across reconciles"
   const fixture = access({
     async observeDestroy() {
       observations++;
+
       return stopped;
     },
     sandbox() {
