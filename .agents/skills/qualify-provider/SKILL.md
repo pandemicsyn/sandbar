@@ -52,3 +52,10 @@ Extend the existing scenario runner and report schema only as needed. Keep prepa
 Keep earlier passes as dated historical evidence; a newer failure for the same configuration supersedes the older pass. After fundamental behavior changes, an old pass remains evidence for its old commit, not certification of the changed behavior. Until the authorized rerun succeeds, describe the affected new behavior as not yet live-qualified. Missing keys or approval means not-run; unsupported is not passed; unresolved cleanup means an incomplete run.
 
 Hand off the run trigger, tested scope, exact evidence, cleanup result, remaining unsupported/blocked operations and untested configurations. Merged implementation, deterministic fixture coverage, packed distribution checks and live certification are separate facts.
+
+
+## Current network and snapshot boundaries
+
+The E2B `live-network` profile uses a finite two-sandbox internet/blocked pair, with successful TCP hostname/direct-IPv4 controls before and after the blocked probe. Read the harness README for the concrete native lifetime, exercise/cleanup budget and pair reconciliation. Request authorization for this budget separately from a one-sandbox prepared baseline. Preserve probe observations in sanitized evidence; missing controls and incomplete cleanup cannot certify blocked egress. A pass covers only the measured IPv4 TCP destinations. Do not generalize it to DNS isolation, UDP, IPv6, ingress, metadata access or tenant isolation. Daytona currently lacks the internet-mode capability needed by this profile; it requires its own explicit control design.
+
+The current public SDK has no snapshot capture/restore API. Mark `snapshot-roundtrip` unsupported until implementation exists. A provider-native snapshot feature or borrowed prepared-image selector does not establish a public Sandbar snapshot abstraction.

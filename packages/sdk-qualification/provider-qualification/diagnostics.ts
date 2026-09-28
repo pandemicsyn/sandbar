@@ -63,6 +63,7 @@ export const failureDiagnosticSchema = z.strictObject({
   actualStderr: text.optional(),
   exitCode: z.number().int().nullable().optional(),
   outputTruncated: z.boolean().optional(),
+  networkPhase: z.enum(["before", "blocked", "after"]).optional(),
   expectedState: text.optional(),
   actualState: text.optional(),
 });
@@ -173,6 +174,9 @@ export class FailureCapture {
   ) {}
   at(stage: DiagnosticStage) {
     this.stage = stage;
+  }
+  networkPhase(phase: "before" | "blocked" | "after") {
+    this.details.networkPhase = phase;
   }
   file(expected: Uint8Array, overwrite: boolean) {
     this.at("write");

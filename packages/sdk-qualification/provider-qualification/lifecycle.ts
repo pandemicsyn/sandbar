@@ -10,6 +10,7 @@ import {
 import { LedgerStore } from "./ledger";
 import type { Scenario } from "./report";
 import { boundedRead } from "./bounds";
+import type { NetworkEvidence } from "./network-probe";
 import {
   FailureCapture,
   envdSchema,
@@ -29,6 +30,7 @@ export type Step = {
   status: "passed" | "failed" | "not-run" | "unsupported" | "blocked";
   issue?: string;
   diagnostic?: FailureDiagnostic;
+  networkEvidence?: NetworkEvidence;
 };
 
 export async function recordReference(
@@ -107,6 +109,7 @@ export async function runPrepared(
     selectedScenarios?: ReadonlySet<Scenario>;
     redactions?: readonly string[];
     envdVersion?: (ownedSandboxId: string, signal?: AbortSignal) => Promise<string | undefined>;
+    networkCheck?: (sandbox: AdapterSandbox, capture: FailureCapture) => Promise<NetworkEvidence>;
   },
 ): Promise<Step[]> {
   return ledger.withLock(() => runPreparedLocked(factory, ledger, imageId, options));
@@ -235,6 +238,18 @@ async function runPreparedLocked(
     }
 
     const sandbox = box;
+
+    if (options.networkCheck) {
+      const scenario = options.network === "internet" ? "network-internet" : "network-blocked";
+      await step(scenario, async (capture) => {
+        capture.at("exec");
+        const evidence = await options.networkCheck!(sandbox, capture);
+        await ledger.update((value) => ({ ...value, networkEvidence: evidence }));
+      });
+      const result = steps.find((entry) => entry.scenario === scenario);
+
+      if (result) result.networkEvidence = (await ledger.read()).networkEvidence;
+    }
 
     if (options.envdVersion) {
       let envd;

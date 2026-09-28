@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import type { AdapterRecoveryReference } from "sandbar-sdk";
 import { z } from "zod";
 import { envdSchema, failureDiagnosticSchema } from "./diagnostics";
+import { networkEvidenceSchema } from "./network-probe";
 
 const ledgerSchema = z.strictObject({
   version: z.literal(1),
@@ -32,6 +33,9 @@ const ledgerSchema = z.strictObject({
     ])
     .optional(),
   fileRoot: z.enum(["/tmp", "/home/user"]).optional(),
+  companionRunId: z.uuid().optional(),
+  networkPolicy: z.enum(["internet", "blocked"]).optional(),
+  networkEvidence: networkEvidenceSchema.optional(),
   envd: envdSchema.optional(),
   diagnostics: z
     .array(failureDiagnosticSchema.extend({ scenario: z.string().max(80) }))
@@ -101,6 +105,27 @@ export class LedgerStore {
   async withLock<T>(work: () => Promise<T>): Promise<T> {
     await this.read();
     const lockPath = `${this.path}.lock`;
+    const lock = await open(lockPath, "wx", 0o600);
+
+    try {
+      await lock.writeFile(JSON.stringify({ pid: process.pid, host: hostname() }));
+      await lock.sync();
+
+      return await work();
+    } finally {
+      await lock.close();
+      await unlink(lockPath);
+    }
+  }
+
+  /** Serialize a paired network exercise and reconciliation before either resource is touched. */
+  async withAdmissionLock<T>(work: () => Promise<T>, companion?: LedgerStore): Promise<T> {
+    if (
+      companion &&
+      (dirname(this.path) !== dirname(companion.path) || this.runId === companion.runId)
+    )
+      throw new Error("Invalid companion ledger");
+    const lockPath = `${[this.path, companion?.path ?? this.path].sort()[0]}.admission.lock`;
     const lock = await open(lockPath, "wx", 0o600);
 
     try {

@@ -9,6 +9,7 @@ import { loadCredentials } from "./credentials";
 import { e2bConfiguration, e2bConnection, e2bEnvdVersion } from "./e2b-profile";
 import { LedgerStore, requirePrivateDirectory } from "./ledger";
 import { reconcileConnection, runPrepared, type Step } from "./lifecycle";
+import { runNetworkPair, type NetworkRun } from "./network-profile";
 import { parseReport, publicIssue, scenarios, type Scenario } from "./report";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -59,13 +60,13 @@ function within(directory: string, parent: string): boolean {
   return directory === parent || directory.startsWith(`${parent}${sep}`);
 }
 
-if (action !== "live-prepared" && action !== "reconcile")
-  throw new Error("Usage: bun manual.ts live-prepared | reconcile <run UUID>");
+if (action !== "live-prepared" && action !== "live-network" && action !== "reconcile")
+  throw new Error("Usage: bun manual.ts live-prepared | live-network | reconcile <run UUID>");
 
 if (required("SANDBAR_QUAL_PROVIDER") !== "e2b")
   throw new Error("Only E2B is wired; Daytona awaits its merged native lifetime/cleanup profile");
 
-if (action === "live-prepared") {
+if (action !== "reconcile") {
   if (process.env.CI)
     throw new Error("CI live runs require an off-runner checkpoint; local-only profile");
 
@@ -113,6 +114,29 @@ const config = e2bConfiguration.parse(
   },
 );
 
+if (action === "live-network" && config.templateId !== "base")
+  throw new Error("The bounded network profile requires the public base template");
+
+const paired = action === "live-network" || Boolean(saved?.companionRunId);
+
+const companion = paired
+  ? new LedgerStore(directory, saved?.companionRunId ?? crypto.randomUUID())
+  : undefined;
+
+if (saved && companion) {
+  const other = await companion.read();
+
+  if (
+    other.companionRunId !== ledger.runId ||
+    other.provider !== saved.provider ||
+    JSON.stringify(other.connection) !== JSON.stringify(saved.connection) ||
+    !saved.networkPolicy ||
+    !other.networkPolicy ||
+    saved.networkPolicy === other.networkPolicy
+  )
+    throw new Error("Companion ledger routing mismatch");
+}
+
 const fileRoot = z
   .enum(["/tmp", "/home/user"])
   .parse(
@@ -124,12 +148,12 @@ const fileRoot = z
 const selected = action === "live-prepared" ? selectedScenarios() : undefined;
 
 const requestedEvidenceRef =
-  action === "live-prepared"
+  action !== "reconcile"
     ? required("SANDBAR_QUAL_EVIDENCE_REF")
     : process.env.SANDBAR_QUAL_EVIDENCE_REF;
 
 const revisions =
-  action === "live-prepared"
+  action !== "reconcile"
     ? qualificationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "origin/main")
     : requestedEvidenceRef
       ? reconciliationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "origin/main")
@@ -194,11 +218,6 @@ const redactions = [apiKey, process.env.SANDBAR_DAYTONA_API_KEY ?? ""];
 
 const factory = e2bConnection(config, apiKey);
 
-if (action === "live-prepared") {
-  await ledger.initialize("e2b", { kind: "borrowed-prepared", class: "prepared" }, config);
-  await ledger.update((value) => ({ ...value, fileRoot }));
-}
-
 const controller = new AbortController();
 
 const timer = setTimeout(() => controller.abort("qualification exercise time limit"), 240_000);
@@ -209,10 +228,38 @@ process.once("SIGINT", interrupt);
 
 process.once("SIGTERM", interrupt);
 
-try {
-  let steps: Step[];
+const exercise = async () => {
+  if (action !== "reconcile") {
+    await ledger.initialize("e2b", { kind: "borrowed-prepared", class: "prepared" }, config);
+    await ledger.update((value) => ({
+      ...value,
+      fileRoot,
+      companionRunId: companion?.runId,
+      networkPolicy: companion ? "internet" : "blocked",
+    }));
 
-  if (action === "live-prepared")
+    if (companion) {
+      await companion.initialize("e2b", { kind: "borrowed-prepared", class: "prepared" }, config);
+      await companion.update((value) => ({
+        ...value,
+        companionRunId: ledger.runId,
+        networkPolicy: "blocked",
+      }));
+    }
+  }
+
+  let steps: Step[];
+  let networkRuns: NetworkRun[] | undefined;
+
+  if (action === "live-network") {
+    networkRuns = await runNetworkPair(factory, ledger, companion!, config.templateId, {
+      signal: controller.signal,
+      cleanupWaitMs: 60_000,
+      redactions,
+      envdVersion: e2bEnvdVersion(apiKey),
+    });
+    steps = networkRuns.flatMap((run) => run.steps);
+  } else if (action === "live-prepared")
     steps = await runPrepared(factory, ledger, config.templateId, {
       network: "blocked",
       fileRoot,
@@ -224,17 +271,47 @@ try {
     });
   else {
     steps = await reconcileConnection(factory, ledger, 60_000, redactions);
+
+    if (companion) {
+      const companionSteps = await reconcileConnection(factory, companion, 60_000, redactions);
+      networkRuns = [
+        { policy: saved!.networkPolicy!, ledger, steps },
+        {
+          policy: saved!.networkPolicy === "internet" ? "blocked" : "internet",
+          ledger: companion,
+          steps: companionSteps,
+        },
+      ];
+      steps = [...steps, ...companionSteps];
+    }
   }
 
   const state = await ledger.read();
+  const companionState = companion ? await companion.read() : undefined;
+
+  const cleanupComplete = [state, companionState]
+    .filter(Boolean)
+    .every((value) => value!.cleanup === "confirmed" || value!.cleanup === "not-required");
 
   if (evidenceRef) {
-    const records = steps.map((step) => ({
+    const sourcedSteps = networkRuns
+      ? networkRuns.flatMap((run) =>
+          run.steps.map((step) => ({
+            step,
+            policy: run.policy,
+            envd: run.policy === state.networkPolicy ? state.envd : companionState?.envd,
+          })),
+        )
+      : steps.map((step) => ({ step, policy: "blocked" as const, envd: state.envd }));
+
+    const records = sourcedSteps.map(({ step, policy, envd }) => ({
       ...metadata,
+      configuration: { ...metadata.configuration, network: `${policy}-requested` },
       scenario: step.scenario,
       status: step.status,
-      runCleanup:
-        state.cleanup === "not-required"
+      runCleanup: !cleanupComplete
+        ? ("incomplete" as const)
+        : state.cleanup === "not-required"
           ? ("not-required" as const)
           : state.cleanup === "confirmed"
             ? ("confirmed" as const)
@@ -242,10 +319,11 @@ try {
       timestamp: new Date().toISOString(),
       issue: publicIssue(step.issue),
       diagnostic: step.diagnostic,
-      envd: state.envd ?? { status: "not-collected" as const },
+      networkEvidence: step.networkEvidence,
+      envd: envd ?? { status: "not-collected" as const },
     }));
 
-    const originalPath = `${ledger.path}.public.json`;
+    const originalPath = `${saved?.networkPolicy === "blocked" && companion ? companion.path : ledger.path}.public.json`;
     let previous;
 
     if (action === "reconcile") {
@@ -260,8 +338,9 @@ try {
       ? [
           ...previous.records.map((record) => ({
             ...record,
-            runCleanup:
-              state.cleanup === "not-required"
+            runCleanup: !cleanupComplete
+              ? ("incomplete" as const)
+              : state.cleanup === "not-required"
                 ? ("not-required" as const)
                 : state.cleanup === "confirmed"
                   ? ("confirmed" as const)
@@ -274,7 +353,13 @@ try {
     if (!previous)
       for (const scenario of scenarios)
         if (!combined.some((record) => record.scenario === scenario))
-          combined.push({ ...records[0]!, scenario, status: "not-run", issue: "not-selected" });
+          combined.push({
+            ...records[0]!,
+            scenario,
+            status: scenario === "snapshot-roundtrip" ? "unsupported" : "not-run",
+            issue: scenario === "snapshot-roundtrip" ? "unsupported-capability" : "not-selected",
+            networkEvidence: undefined,
+          });
     const report = parseReport({ schemaVersion: 1, records: combined });
 
     const publicPath =
@@ -287,10 +372,14 @@ try {
   } else console.log(`Run ${runId}: cleanup ${state.cleanup}; private ledger ${ledger.path}`);
 
   if (
-    (state.cleanup !== "confirmed" && state.cleanup !== "not-required") ||
+    !cleanupComplete ||
     steps.some((step) => step.status === "failed" || step.status === "blocked")
   )
     process.exitCode = 1;
+};
+
+try {
+  await ledger.withAdmissionLock(exercise, companion);
 } finally {
   clearTimeout(timer);
   process.off("SIGINT", interrupt);

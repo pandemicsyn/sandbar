@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { envdSchema, failureDiagnosticSchema } from "./diagnostics";
+import { networkEvidenceSchema, requireBlocked, requireInternet } from "./network-probe";
 
 export const scenarios = [
   "connect",
@@ -16,6 +17,9 @@ export const scenarios = [
   "confirm-cleanup",
   "close",
   "build-oci",
+  "network-internet",
+  "network-blocked",
+  "snapshot-roundtrip",
 ] as const;
 
 const safeLabel = z
@@ -46,6 +50,7 @@ export const recordSchema = z.strictObject({
   nativeVersion: safeLabel.optional(),
   envd: envdSchema.optional(),
   diagnostic: failureDiagnosticSchema.optional(),
+  networkEvidence: networkEvidenceSchema.optional(),
   runtime: safeLabel,
   platform: safeLabel,
   timestamp: z.iso.datetime({ offset: true }),
@@ -80,6 +85,41 @@ export const reportSchema = z
   })
   .superRefine((report, ctx) => {
     for (const [index, record] of report.records.entries()) {
+      if (record.scenario === "snapshot-roundtrip" && record.status === "passed")
+        ctx.addIssue({
+          code: "custom",
+          path: ["records", index, "status"],
+          message: "Snapshot capture/restore is unavailable in the current public SDK",
+        });
+
+      if (record.status === "passed" && record.scenario.startsWith("network-")) {
+        try {
+          const samples = record.networkEvidence?.samples;
+
+          if (
+            !samples ||
+            samples.map((sample) => sample.phase).join(",") !== "before,blocked,after"
+          )
+            throw new Error("Network passes require the paired before/blocked/after observations");
+          requireInternet(samples[0]!);
+          requireInternet(samples[2]!);
+
+          if (record.scenario === "network-blocked") requireBlocked(samples[1]!);
+
+          const expected =
+            record.scenario === "network-blocked" ? "blocked-requested" : "internet-requested";
+
+          if (record.configuration.network !== expected)
+            throw new Error("Network scenario policy mismatch");
+        } catch (error) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["records", index, "networkEvidence"],
+            message: error instanceof Error ? error.message : "Invalid network evidence",
+          });
+        }
+      }
+
       if (
         record.mode === "live" &&
         record.provider === "e2b" &&
@@ -196,6 +236,8 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
     "Daytona and E2B are the qualification targets. This table reports measured operations only; distribution status is not a live pass.",
     "",
     "These results cover only the stated image, requested network policy and region classes. A blocked-requested policy is a create setting, not a measured egress-isolation result. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.",
+    "",
+    "Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot capture/restore is unsupported by the current public SDK; a prepared-image create is not snapshot qualification.",
     "",
   ];
 
