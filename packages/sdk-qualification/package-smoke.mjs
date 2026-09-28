@@ -306,7 +306,7 @@ import { createDaytonaAdapter } from "@sandbar/provider-daytona";
 let name = "", mutations = 0, snapshotName = "";
 const files = new Map([["/file", Uint8Array.from([0,255])]]);
 const origin = "https://proxy.app.daytona.io/toolbox";
-const native = (state = "started") => ({ id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
+const native = (state = "started") => ({ labels: {}, id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
 const mock = async (input, init = {}) => {
   const url = new URL(String(input));
   const json = value => Response.json(value);

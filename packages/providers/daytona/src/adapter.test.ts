@@ -742,6 +742,17 @@ test("exec receipt deadline starts after a slow preflight and survives reconnect
     };
 
     expect((await client.operations.observe(attempt))?.kind).toBe("pending");
+
+    const tokenless = await client.operations.observe({
+      ...attempt,
+      token: undefined,
+      tokenVersion: undefined,
+    });
+
+    expect(tokenless).toMatchObject({
+      kind: "unknown",
+      reason: "Daytona execution receipt is incomplete",
+    });
     now = submittedAt + 15_000;
     expect((await client.operations.observe(attempt))?.kind).toBe("unknown");
     expect(executes).toBe(1);

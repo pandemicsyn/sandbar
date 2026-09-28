@@ -29,6 +29,7 @@ const apiUrl = "https://app.daytona.io/api";
 const toolboxOrigin = "https://proxy.app.daytona.io";
 
 const native = (name: string, state = "started") => ({
+  labels: {},
   id: "native-1",
   name,
   organizationId: "org-1",
@@ -2009,5 +2010,48 @@ test.each(["exec", "write"] as const)(
         rmSync(directory, { recursive: true, force: true });
       }
     }
+  },
+);
+
+test.each(["confirmed", "lost"] as const)(
+  "omitted pre-delete labels remain unknown while cleanup proceeds: %s",
+  async (mode) => {
+    let deletes = 0;
+    let state = "started";
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions") return Response.json([region()]);
+
+      if (path === "/api/sandbox/native-1") {
+        if (init?.method === "DELETE") {
+          deletes++;
+          state = "destroyed";
+
+          if (mode === "lost") throw new Error("response lost");
+        }
+
+        return Response.json({ ...native("box", state), labels: undefined });
+      }
+
+      throw new Error("Unexpected fixture request");
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+    expect(await provider.driver.destroyRetainedResources(sandbox)).toBeUndefined();
+    expect(
+      (await provider.driver.destroy({ sandbox, identity: identity("missing-pre-delete-labels") }))
+        .status,
+    ).toBe("unknown");
+    const observed = await provider.driver.observeDestroy(sandbox, "missing-pre-delete-labels");
+    expect(observed).toMatchObject({
+      status: "unknown",
+      reason: "Daytona compute is stopped but retained resource evidence is unavailable",
+    });
+    expect(deletes).toBe(1);
   },
 );

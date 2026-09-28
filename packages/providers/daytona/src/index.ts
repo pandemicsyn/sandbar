@@ -1473,9 +1473,12 @@ export class DaytonaDriver implements ProviderDriver {
       },
     };
   }
-  async destroyRetainedResources(sandbox: SandboxRef): Promise<string[]> {
+  async destroyRetainedResources(sandbox: SandboxRef): Promise<string[] | undefined> {
     this.sameScope(sandbox);
     const value = await this.sandbox(sandbox.nativeId);
+
+    if (!value?.labels) return undefined;
+
     const snapshotId = value?.labels?.["sandbar.imageSnapshot"];
 
     return snapshotId ? [`daytona:snapshot:${snapshotId}`] : [];
@@ -1491,11 +1494,13 @@ export class DaytonaDriver implements ProviderDriver {
     if (input.signal?.aborted)
       return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
 
-    let retainedResources: string[];
+    let retainedResources: string[] | undefined;
 
     try {
       retainedResources =
-        input.retainedResources ?? (await this.destroyRetainedResources(input.sandbox));
+        "retainedResources" in input
+          ? input.retainedResources
+          : await this.destroyRetainedResources(input.sandbox);
     } catch {
       return {
         status: "rejected",
@@ -1526,6 +1531,18 @@ export class DaytonaDriver implements ProviderDriver {
         value.state !== "destroyed"
       )
         return unknown(input.identity.submissionId, "Daytona deletion not confirmed");
+
+      if (retainedResources === undefined && value.labels) {
+        const snapshotId = value.labels["sandbar.imageSnapshot"];
+
+        retainedResources = snapshotId ? [`daytona:snapshot:${snapshotId}`] : [];
+      }
+
+      if (retainedResources === undefined)
+        return unknown(
+          input.identity.submissionId,
+          "Daytona compute is stopped but retained resource evidence is unavailable",
+        );
 
       return {
         status: "completed",

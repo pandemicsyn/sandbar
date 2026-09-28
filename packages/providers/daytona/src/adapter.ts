@@ -322,7 +322,7 @@ export function createDaytonaAdapter(
         destroy: {
           recovery: { version: 1, token: DestroyToken },
           async submit(box, ctx) {
-            let retainedResources: string[];
+            let retainedResources: string[] | undefined;
 
             try {
               retainedResources = await driver.destroyRetainedResources(native(box.id));
@@ -339,9 +339,13 @@ export function createDaytonaAdapter(
 
             const value = destroyValue(result);
 
-            return (
-              value ?? ctx.pending({ sandboxId: box.id, retainedResources }, { pollAfterMs: 500 })
-            );
+            if (value) return value;
+
+            const token: z.infer<typeof DestroyToken> = { sandboxId: box.id };
+
+            if (retainedResources !== undefined) token.retainedResources = retainedResources;
+
+            return ctx.pending(token, { pollAfterMs: 500 });
           },
           async observe(attempt, ctx) {
             const token = attempt.token ? DestroyToken.safeParse(attempt.token) : null;
