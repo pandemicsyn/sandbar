@@ -11,6 +11,21 @@ import {
   type ProviderDriver,
 } from "@sandbar/provider-spi";
 import { ExecRequest, type ExecCommand } from "sandbar-adapter/portable";
+import type { ImageBuildValue } from "sandbar-adapter";
+
+type ImageBuildResult =
+  | { status: "completed"; value: ImageBuildValue }
+  | { status: "unknown"; reason: string };
+
+function fixedImage(image: string): boolean {
+  return (
+    image.length <= 512 &&
+    /^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/.test(image) &&
+    (/@sha256:[0-9a-fA-F]{64}$/.test(image) ||
+      (/:[A-Za-z0-9._-]+$/.test(image) && !image.includes("@"))) &&
+    !/:(latest|lts|stable)$/i.test(image)
+  );
+}
 
 // Daytona API and toolbox OpenAPI v0.218; see README for the pinned sources.
 const CurrentKey = z.object({ organizationId: z.string().min(1) });
@@ -444,15 +459,8 @@ export class DaytonaDriver implements ProviderDriver {
 
     if (input.image.kind === "oci") {
       const image = input.image.value;
-      const digest = /@sha256:[0-9a-fA-F]{64}$/.test(image);
-      const tagged = /:[A-Za-z0-9._-]+$/.test(image) && !image.includes("@");
 
-      if (
-        image.length > 512 ||
-        !/^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/.test(image) ||
-        (!digest && !tagged) ||
-        /:(latest|lts|stable)$/i.test(image)
-      )
+      if (!fixedImage(image))
         return { supported: false, reason: "OCI image needs a fixed tag or digest" };
 
       // Building a snapshot is a paid mutation and belongs to submit, never prepare.
@@ -487,6 +495,103 @@ export class DaytonaDriver implements ProviderDriver {
       };
 
     return { supported: true, effectiveImage: snapshot.id };
+  }
+  prepareImage(image: string): boolean {
+    return fixedImage(image);
+  }
+  async observeImageBuild(submissionId: string): Promise<ImageBuildResult | null> {
+    const name = `sandbar-image-${submissionId}`;
+    const response = await this.request("GET", `/snapshots/${encodeURIComponent(name)}`);
+
+    if (!response.ok) return null;
+    const snapshot = await boundedJson(response, Snapshot);
+
+    if (
+      snapshot.name !== name ||
+      snapshot.organizationId !== this.scope.accountId ||
+      !/^[A-Za-z0-9._:-]{1,128}$/.test(snapshot.id)
+    )
+      return null;
+
+    if (
+      snapshot.state !== "active" ||
+      !snapshot.regionIds?.includes(this.scope.region!) ||
+      !["container", "linux-vm"].includes(snapshot.sandboxClass ?? "")
+    )
+      return {
+        status: "unknown",
+        reason: `Daytona snapshot ${snapshot.id} is not confirmed ready`,
+      };
+
+    return {
+      status: "completed",
+      value: {
+        preparedId: snapshot.id,
+        retainedResources: [
+          { kind: "daytona-snapshot", id: snapshot.id, ownership: "unknown", cleanup: "manual" },
+        ],
+      },
+    };
+  }
+  async buildImage(input: {
+    submissionId: string;
+    image: string;
+    signal: AbortSignal;
+  }): Promise<ImageBuildResult> {
+    const name = `sandbar-image-${input.submissionId}`;
+
+    try {
+      const prior = await this.request("GET", `/snapshots/${encodeURIComponent(name)}`);
+
+      if (prior.status !== 404 || input.signal.aborted)
+        return { status: "unknown", reason: "Daytona image build was not submitted; observe only" };
+
+      const snapshot = await this.json("POST", "/snapshots", Snapshot, {
+        name,
+        imageName: input.image,
+        regionId: this.scope.region,
+        sandboxClass: "container",
+      });
+
+      if (
+        snapshot.name !== name ||
+        snapshot.imageName !== input.image ||
+        snapshot.organizationId !== this.scope.accountId
+      )
+        return { status: "unknown", reason: "Daytona image build response mismatched" };
+
+      const deadline = Date.now() + 600_000;
+
+      for (;;) {
+        if (input.signal.aborted || Date.now() >= deadline)
+          return { status: "unknown", reason: "Daytona image build wait ended; observe only" };
+
+        const result = await this.observeImageBuild(input.submissionId);
+
+        if (result?.status === "completed")
+          return result.value.preparedId === snapshot.id
+            ? result
+            : { status: "unknown", reason: "Daytona image build identity mismatched" };
+
+        const response = await this.request("GET", `/snapshots/${encodeURIComponent(snapshot.id)}`);
+
+        if (!response.ok) break;
+        const current = await boundedJson(response, Snapshot);
+
+        if (
+          current.id !== snapshot.id ||
+          current.organizationId !== this.scope.accountId ||
+          current.imageName !== input.image ||
+          ["active", "error", "build_failed", "removing", "inactive"].includes(current.state)
+        )
+          break;
+        await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+      }
+    } catch {
+      // Native build submission is never replayed after an unavailable response.
+    }
+
+    return { status: "unknown", reason: "Daytona image build outcome unavailable; observe only" };
   }
   async create(input: {
     scope: NativeScope;

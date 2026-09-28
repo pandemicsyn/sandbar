@@ -193,6 +193,30 @@ export function createDaytonaAdapter(
           exec: { commands: ["argv", "shell"], maxOutputBytes: caps.maxOutputBytes },
           fileWrite: { overwrite: true, noClobber: true },
         },
+        imageBuild: {
+          async prepare(input) {
+            if (!driver.prepareImage(input.source.value))
+              throw new AdapterError("UNSUPPORTED", "OCI image needs a fixed tag or digest");
+
+            return input;
+          },
+          async submit(input, ctx) {
+            const result = await driver.buildImage({
+              submissionId: ctx.submissionId,
+              image: input.source.value,
+              signal: ctx.signal,
+            });
+
+            return result.status === "completed" ? result.value : ctx.unknown(result.reason);
+          },
+          async observe(attempt, ctx) {
+            const result = await driver.observeImageBuild(attempt.submissionId);
+
+            if (!result) return null;
+
+            return result.status === "completed" ? result.value : ctx.unknown(result.reason);
+          },
+        },
         create: {
           recovery: { version: 1, token: Token },
           async prepare(input) {
