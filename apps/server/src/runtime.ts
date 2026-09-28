@@ -21,6 +21,7 @@ import {
   type ModalProviderOptions,
   type ModalTransport,
 } from "@sandbar/provider-modal";
+import { createE2BAdapter, type E2BTransport } from "sandbar-sdk/e2b";
 
 export interface RuntimeConfig {
   databaseUrl: string;
@@ -32,6 +33,7 @@ export interface RuntimeConfig {
   daytonaFetch?: typeof fetch;
   daytonaTrustedEndpoints?: DaytonaEndpointPair[];
   modalTransportFactory?: (options: ModalProviderOptions) => ModalTransport;
+  e2bTransportFactory?: (options: { apiKey: string }) => E2BTransport;
   publicOrigin?: string;
   webDist?: string;
   startRunner?: boolean;
@@ -98,6 +100,7 @@ export async function openDomainRuntime(config: RuntimeConfig) {
     const registry = new ProviderRegistry(store, secrets, [
       createDaytonaAdapter(config.daytonaFetch, config.daytonaTrustedEndpoints),
       createModalAdapter(config.modalTransportFactory),
+      createE2BAdapter(config.e2bTransportFactory),
       ...(fakeAdapter ? [fakeAdapter] : []),
       ...(config.adapters ?? []),
     ]);

@@ -9,7 +9,7 @@ export const Id = z
 export const InvocationKey = z.uuidv7();
 
 export const ImageSource = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("prepared"), imageId: Id }),
+  z.strictObject({ kind: z.literal("prepared"), imageId: z.string().min(1).max(512) }),
   z.strictObject({ kind: z.literal("oci"), reference: z.string().min(1).max(1024) }),
 ]);
 

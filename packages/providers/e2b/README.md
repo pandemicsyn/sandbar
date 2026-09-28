@@ -1,0 +1,47 @@
+# E2B built-in adapter
+
+Install `sandbar-sdk` and import the built-in subpath:
+
+```ts
+import { Sandbar, Image } from "sandbar-sdk";
+import { e2b } from "sandbar-sdk/e2b";
+
+const client = await Sandbar.connect(
+  e2b({
+    apiKey: process.env.E2B_API_KEY!,
+    teamId: process.env.E2B_TEAM_ID!,
+    templateId: process.env.E2B_TEMPLATE_ID!,
+  }),
+);
+
+const box = await client.sandboxes.create({
+  environment: Image.prepared(process.env.E2B_TEMPLATE_ID!),
+  networkPolicy: "blocked",
+});
+
+await box.writeFile("/tmp/data.bin", Uint8Array.from([0, 255, 129]), { overwrite: false });
+const data = await box.readFile("/tmp/data.bin");
+const result = await box.exec({ command: { kind: "argv", argv: ["wc", "-c", "/tmp/data.bin"] } });
+await box.destroy();
+await client.close();
+```
+
+To build an OCI image as a separate, recoverable operation, use the common image API and pass its scoped prepared result to create:
+
+```ts
+const built = await client.images.build({ source: Image.oci("node:24") });
+const box = await client.sandboxes.create({
+  environment: Image.prepared(built.prepared),
+  networkPolicy: "blocked",
+});
+```
+
+`built.retainedResources` identifies the E2B template and reports ownership as `unknown` with manual cleanup disposition. This metadata does not grant deletion authority. The prepared handle is bound to the verified E2B provider and connection scope. A handle from another scope is rejected before provider IO; a raw prepared template ID still requires native team verification. The service persists image builds as operations without creating a sandbox record and uses the same invocation, submission marker and encrypted recovery-token machinery. Image-build observation reads the correlated E2B build name and never retries a native allocation or trigger stage. If either native POST is interrupted before readiness can be confirmed, the outcome remains unknown and may retain a template.
+
+The factory performs no provider IO. `Sandbar.connect` checks the team with an authenticated E2B team metrics read and checks that the configured team has a ready template. The connection scope includes that team and configured template; create can use another ready template after verifying that it belongs to the same team. The adapter uses only the public `sandbar-adapter` contract; the optional service registers the same definition explicitly and keeps the API key in its normal encrypted credential store.
+
+Prepared images use the verified template ID. An OCI reference runs E2B's `Template().fromImage(reference)` build inside the create submission, then creates a sandbox from the ready E2B template. OCI builds are paid effects and retain the built template after sandbox destruction; the destroy result names it as a retained resource. Public registry images are the supported input; private registry credentials have no common Sandbar input yet. Network modes are `internet` and `blocked` through E2B's `allowInternetAccess` control. Region selection is unsupported. Command forms are argv and Bash shell, with cwd and environment. E2B's command API decodes process output as text, so the adapter redirects each stream to a sandbox file and reads the bytes through E2B's streaming file API. Combined stdout and stderr are capped at 1 MiB; file reads and writes are capped at 1 MiB. A no-clobber write uploads to a temporary file in the destination directory and links it to the exact destination atomically with GNU `ln -T --`. Images without that utility fail without a fallback write; this path has not been qualified live across custom E2B images.
+
+The pinned `e2b@2.51.0` SDK retries rate limited control requests by default. This adapter passes `retries: 0` for sandbox and build mutations. Creation embeds Sandbar submission and operation IDs in E2B metadata. After a lost create response, observation searches that metadata without creating another sandbox. OCI builds use a name derived from the submission ID. If a build succeeds but sandbox creation is not confirmed, observation reports the retained template and the original create remains unknown; reconnecting with that template ID and issuing a new prepared-image create is the recovery path. Exec completion is recorded in sandbox files for observation after a lost response. Uncertain file writes retain a bounded digest token: observation checks the final bytes, and for no-clobber it also checks that the staged file and destination have the same inode. Observation does not remove the staged file; the sandbox TTL bounds its lifetime. Uncertain destroy outcomes retain the template identity and confirm sandbox absence without retrying termination. A crash before a recovery token is saved can still leave an unknown outcome. Aborting local waits or closing the client does not terminate remote compute; destroy confirms absence before reporting `computeStopped`.
+
+Deterministic fixtures and packed Node/Bun consumers qualify this integration. No live E2B account, paid sandbox or production network policy has been exercised.

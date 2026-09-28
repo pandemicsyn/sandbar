@@ -13,6 +13,96 @@ test("packaged SDK entry points share error class identity", () => {
   expect(packagedRoot.OutcomeUnknownError).toBe(packagedRemote.OutcomeUnknownError);
 });
 
+test("remote image build recovers a lost admission and binds its prepared result to create", async () => {
+  const base = {
+    projectId: "project_1",
+    status: "succeeded",
+    phase: "completed",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    effect: "applied",
+    recovery: [],
+  };
+
+  const scope = { authority: { kind: "team", id: `team:${"a".repeat(507)}` }, partition: {} };
+  const templateId = `template:${"t".repeat(503)}`;
+
+  const build = {
+    ...base,
+    id: "op_build",
+    kind: "image_build",
+    result: {
+      kind: "image_build",
+      prepared: {
+        kind: "prepared",
+        value: templateId,
+        provider: "e2b",
+        scope,
+        connectionId: "conn_1",
+      },
+      retainedResources: [
+        { kind: "template", id: templateId, ownership: "unknown", cleanup: "manual" },
+      ],
+    },
+  };
+
+  const create = {
+    ...base,
+    id: "op_create",
+    kind: "create",
+    sandboxId: "box_1",
+    result: { kind: "create", sandboxId: "box_1" },
+  };
+
+  let buildPosts = 0;
+  let createBody: unknown;
+
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname;
+
+    if (path.endsWith("/images/builds") && init?.method === "POST") {
+      expect(JSON.parse(String(init.body))).toMatchObject({ connectionId: "conn_1" });
+      buildPosts++;
+      throw new TypeError("admission response lost");
+    }
+
+    if (path.endsWith("/sandboxes") && init?.method === "POST") {
+      createBody = JSON.parse(String(init.body));
+
+      return Response.json({ operation: create }, { status: 202 });
+    }
+
+    if (path.includes("/invocations/")) return Response.json(build);
+
+    if (path.endsWith("/operations/op_build")) return Response.json(build);
+
+    throw new Error(`Unexpected path: ${path}`);
+  };
+
+  const client = RemoteSandbar.connect({
+    url: "https://sandbar.example/",
+    token: "secret",
+    projectId: "project_1",
+    fetch: fetcher,
+  });
+
+  const result = await client.images.build({
+    source: RemoteImage.oci("registry.example/image:1"),
+    connectionId: "conn_1",
+  });
+
+  expect(buildPosts).toBe(1);
+  expect(result.prepared).toEqual(build.result.prepared);
+  expect(result.retainedResources).toEqual(build.result.retainedResources);
+
+  await client.sandboxes.submitCreate({ environment: RemoteImage.prepared(result.prepared) });
+  expect(createBody).toMatchObject({
+    environment: { kind: "prepared", imageId: templateId },
+    connectionId: "conn_1",
+    preparedBinding: { provider: "e2b", scope, connectionId: "conn_1" },
+  });
+});
+
 test("remote lost acceptance is resolved by invocation lookup under one key", async () => {
   let posts = 0;
   let key = "";
@@ -72,7 +162,7 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   });
 
   for (const invalid of [
-    { environment: RemoteImage.prepared("invalid id") },
+    { environment: RemoteImage.prepared("x".repeat(513)) },
     { environment: RemoteImage.oci("x".repeat(1025)) },
     { environment: RemoteImage.prepared("fake-starter"), labels: { long: "x".repeat(257) } },
   ]) {

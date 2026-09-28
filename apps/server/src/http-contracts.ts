@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // Inputs are strict so a misspelled security or lifecycle setting cannot be ignored.
 // Outputs intentionally strip additive fields when decoded by older clients.
-import { Id, CreateSandboxInput, Effect, SafeError } from "sandbar-adapter/portable";
+import { Id, ImageSource, CreateSandboxInput, Effect, SafeError } from "sandbar-adapter/portable";
 
 export {
   Id,
@@ -28,10 +28,44 @@ export const SandboxPath = ProjectPath.extend({ sandboxId: Id });
 
 export const OperationPath = ProjectPath.extend({ operationId: Id });
 
-export const CreateSandboxRequest = CreateSandboxInput.extend({ connectionId: Id.optional() });
+export const BuildScope = z.strictObject({
+  authority: z.strictObject({ kind: z.string().min(1).max(64), id: z.string().min(1).max(512) }),
+  partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
+});
+
+export const PreparedBinding = z.strictObject({
+  provider: z.string().min(1).max(128),
+  scope: BuildScope,
+  connectionId: Id.optional(),
+});
+
+export const CreateSandboxRequest = CreateSandboxInput.extend({
+  connectionId: Id.optional(),
+  preparedBinding: PreparedBinding.optional(),
+});
+
+export const ImageBuildRequest = z.strictObject({
+  source: z.strictObject({ kind: z.literal("oci"), value: z.string().min(1).max(1024) }),
+  connectionId: Id.optional(),
+});
+
+export const RetainedArtifact = z.strictObject({
+  kind: z.string().min(1).max(128),
+  id: z.string().min(1).max(512),
+  ownership: z.enum(["verified", "unknown"]),
+  cleanup: z.enum(["manual", "provider_expiry", "none_known"]),
+});
+
+export const PreparedImage = z.strictObject({
+  kind: z.literal("prepared"),
+  value: ImageSource.options[0].shape.imageId,
+  provider: z.string().min(1).max(128),
+  scope: BuildScope,
+  connectionId: Id,
+});
 
 const ImageSourceResponse = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("prepared"), imageId: Id }),
+  z.object({ kind: z.literal("prepared"), imageId: ImageSource.options[0].shape.imageId }),
   z.object({ kind: z.literal("oci"), reference: z.string().min(1).max(1024) }),
 ]);
 
@@ -65,11 +99,18 @@ const DestroyOperationResult = z.object({
 
 const FileWriteOperationResult = z.object({ kind: z.literal("file_write"), receipt: FileReceipt });
 
+const ImageBuildOperationResult = z.object({
+  kind: z.literal("image_build"),
+  prepared: PreparedImage,
+  retainedResources: z.array(RetainedArtifact).max(128),
+});
+
 export const OperationResult = z.discriminatedUnion("kind", [
   CreateOperationResult,
   ExecOperationResult,
   DestroyOperationResult,
   FileWriteOperationResult,
+  ImageBuildOperationResult,
 ]);
 
 const OperationBase = z.object({
@@ -106,12 +147,18 @@ const FileWriteOperation = OperationBase.extend({
   result: FileWriteOperationResult.optional(),
 });
 
+const ImageBuildOperation = OperationBase.extend({
+  kind: z.literal("image_build"),
+  result: ImageBuildOperationResult.optional(),
+});
+
 export const Operation = z
   .discriminatedUnion("kind", [
     CreateOperation,
     ExecOperation,
     DestroyOperation,
     FileWriteOperation,
+    ImageBuildOperation,
   ])
   .superRefine((operation, context) => {
     if (operation.status === "succeeded" && (!operation.result || operation.error)) {

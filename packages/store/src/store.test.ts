@@ -247,7 +247,7 @@ for (const dialect of dialects)
         await expect(
           store.admitExec({
             projectId: project.id,
-            sandboxId: terminal.operation.sandbox_id,
+            sandboxId: terminal.operation.sandbox_id!,
             endpoint: "POST /executions",
             key: Bun.randomUUIDv7(),
             intentHash: "overflow-exec",
@@ -258,7 +258,7 @@ for (const dialect of dialects)
         await expect(
           store.admitFileWrite({
             projectId: project.id,
-            sandboxId: terminal.operation.sandbox_id,
+            sandboxId: terminal.operation.sandbox_id!,
             endpoint: "PUT /files",
             key: Bun.randomUUIDv7(),
             intentHash: "overflow-file",

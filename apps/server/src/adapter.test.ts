@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import { defineAdapter } from "sandbar-adapter";
 import { ProviderConfigurationError, SecretBox } from "@sandbar/service-runtime";
 import { Sandbar } from "../../../packages/sdk/src/index";
+import { Operation } from "./http-contracts";
 import { openDomainRuntime } from "./runtime";
 
 test("custom adapter catalog, encrypted structured connection, and pending restart observation", async () => {
@@ -22,6 +23,8 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
   let observations = 0;
   let destroys = 0;
   let endpoint = "cluster-a";
+  const nativeImage = `image:${"i".repeat(506)}`;
+  const nativeAuthority = `account:${"a".repeat(504)}`;
 
   const adapter = defineAdapter({
     name: "example.custom",
@@ -35,14 +38,30 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
 
       return {
         scope: {
-          authority: { kind: "account", id: "account-1" },
+          authority: { kind: "account", id: nativeAuthority },
           partition: { region: config.region, endpoint },
         },
         supports: { images: ["prepared"], network: ["blocked"] },
+        imageBuild: {
+          async submit() {
+            return {
+              preparedId: nativeImage,
+              retainedResources: [
+                {
+                  kind: "image",
+                  id: nativeImage,
+                  ownership: "unknown" as const,
+                  cleanup: "manual" as const,
+                },
+              ],
+            };
+          },
+        },
         create: {
           recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
           async submit(input, ctx) {
             expect(input.networkPolicy).toBe("blocked");
+            expect(input.image.value).toBe(nativeImage);
             submissions++;
 
             return ctx.pending({ jobId: "job-1" });
@@ -140,13 +159,43 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
 
     expect(verified.status).toBe(200);
 
+    const build = await request(
+      `/v1/projects/${projectId}/images/builds`,
+      "POST",
+      {
+        source: { kind: "oci", value: "fixture/image:1" },
+        connectionId,
+      },
+      Bun.randomUUIDv7(),
+    );
+
+    expect(build.status).toBe(202);
+    const buildId = z.object({ id: z.string() }).parse(build.body.operation).id;
+
+    expect(await runtime.runner.tick()).toBe(true);
+    const buildOutcome = await request(`/v1/projects/${projectId}/operations/${buildId}`);
+    const buildResult = Operation.parse(buildOutcome.body);
+
+    if (buildResult.kind !== "image_build" || !buildResult.result)
+      throw new Error("Missing image build result");
+    const image = buildResult.result;
+
+    expect(image.prepared.value).toBe(nativeImage);
+    expect(image.prepared.scope.authority.id).toBe(nativeAuthority);
+    expect(image.retainedResources[0]?.id).toBe(nativeImage);
+
     const create = await request(
       `/v1/projects/${projectId}/sandboxes`,
       "POST",
       {
-        environment: { kind: "prepared", imageId: "image-1" },
+        environment: { kind: "prepared", imageId: image.prepared.value },
         network: { policy: "blocked" },
         connectionId,
+        preparedBinding: {
+          provider: image.prepared.provider,
+          scope: image.prepared.scope,
+          connectionId,
+        },
       },
       Bun.randomUUIDv7(),
     );

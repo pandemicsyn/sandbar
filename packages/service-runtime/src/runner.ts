@@ -3,6 +3,7 @@ import {
   type CreateInput,
   type ExecInput,
   type FileWriteInput,
+  type ImageBuildInput,
   type Sandbox,
 } from "sandbar-adapter";
 import { z } from "zod";
@@ -132,9 +133,13 @@ export class DurableRunner {
   private async processAdapter(claim: Claimed, lease: AdapterProviderLease): Promise<void> {
     const { store, secrets } = this.options;
     const op = claim.operation;
-    const box = await store.getSandbox(op.project_id, op.sandbox_id);
 
-    if (!box) throw new Error("Sandbox record vanished");
+    const box =
+      op.kind === "image_build" || !op.sandbox_id
+        ? undefined
+        : await store.getSandbox(op.project_id, op.sandbox_id);
+
+    if (op.kind !== "image_build" && !box) throw new Error("Sandbox record vanished");
 
     if (claim.observeOnly) {
       let token: { version: number; token: z.infer<ReturnType<typeof z.json>> } | undefined;
@@ -156,7 +161,10 @@ export class DurableRunner {
         kind: op.kind,
         operationId: op.id,
         submissionId: op.provider_token,
-        sandboxId: op.kind === "create" ? undefined : (box.native_id ?? undefined),
+        sandboxId:
+          op.kind === "create" || op.kind === "image_build"
+            ? undefined
+            : (box?.native_id ?? undefined),
         token: token?.token,
         tokenVersion: token?.version,
       });
@@ -170,18 +178,74 @@ export class DurableRunner {
 
     if (!key) throw new Error("Durable invocation identity is missing");
 
-    if (op.kind !== "create" && !box.native_id) {
+    if (op.kind !== "create" && op.kind !== "image_build" && !box?.native_id) {
       if (op.kind === "destroy" && (await store.completeDestroyWithoutNative(claim))) return;
       await store.reschedule(claim, "waiting_for_sandbox", 2_000);
 
       return;
     }
 
-    let input: CreateInput | ExecInput | FileWriteInput | Sandbox;
+    let input: CreateInput | ImageBuildInput | ExecInput | FileWriteInput | Sandbox;
     let maxOutputBytes: number | undefined;
 
-    if (op.kind === "create") {
-      const plan = normalizeCreate(JSON.parse(op.request_json));
+    if (op.kind === "image_build") {
+      input = z
+        .strictObject({
+          source: z.strictObject({ kind: z.literal("oci"), value: z.string().min(1).max(1024) }),
+        })
+        .parse(JSON.parse(op.request_json));
+    } else if (op.kind === "create") {
+      const request = JSON.parse(op.request_json);
+
+      const plan = normalizeCreate({
+        environment: request.environment,
+        network: request.network,
+        region: request.region,
+        labels: request.labels,
+      });
+
+      const binding = z
+        .object({
+          preparedBinding: z
+            .object({
+              provider: z.string(),
+              connectionId: z.string().optional(),
+              scope: z.object({
+                authority: z.object({ kind: z.string(), id: z.string() }),
+                partition: z.record(z.string(), z.string()),
+              }),
+            })
+            .optional(),
+        })
+        .parse(request).preparedBinding;
+
+      if (binding) {
+        const canonical = (scope: typeof binding.scope) =>
+          JSON.stringify({
+            authority: scope.authority,
+            partition: Object.fromEntries(
+              Object.entries(scope.partition).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+            ),
+          });
+
+        if (
+          plan.image.kind !== "prepared" ||
+          binding.connectionId !== op.connection_id ||
+          binding.provider !== lease.scope.provider ||
+          !lease.scope.adapterScope ||
+          canonical(binding.scope) !== canonical(lease.scope.adapterScope)
+        ) {
+          await store.failWithoutEffect(claim, {
+            code: "CONFLICT",
+            message: "Prepared image scope differs from provider connection",
+            effect: "none",
+            retry: "never",
+          });
+
+          return;
+        }
+      }
+
       input = {
         image: plan.image,
         networkPolicy: plan.networkPolicy,
@@ -195,11 +259,11 @@ export class DurableRunner {
 
       const plan = normalizeExec(
         JSON.parse(
-          await secrets.open("execution-request", `${box.id}:${key}`, envelope.encryptedRequest),
+          await secrets.open("execution-request", `${box!.id}:${key}`, envelope.encryptedRequest),
         ),
       );
 
-      input = { sandbox: { id: box.native_id! }, ...plan };
+      input = { sandbox: { id: box!.native_id! }, ...plan };
       maxOutputBytes = plan.maxOutputBytes;
     } else if (op.kind === "file_write") {
       const request = z
@@ -208,18 +272,18 @@ export class DurableRunner {
 
       const base64 = await secrets.open(
         "file-write-input",
-        `${box.id}:${key}`,
+        `${box!.id}:${key}`,
         request.encryptedBytes,
       );
 
       input = {
-        sandbox: { id: box.native_id! },
+        sandbox: { id: box!.native_id! },
         path: request.path,
         overwrite: request.overwrite,
         bytes: Uint8Array.from(Buffer.from(base64, "base64")),
       };
     } else {
-      input = { id: box.native_id! };
+      input = { id: box!.native_id! };
     }
 
     let prepared;
@@ -322,6 +386,27 @@ export class DurableRunner {
     const observedAt = new Date().toISOString();
     let wrapped: DriverResult;
 
+    if (op.kind === "image_build" && "preparedId" in value) {
+      if (!scope.adapterScope) throw new Error("Image build has no verified adapter scope");
+      await store.complete(claim, {
+        effect: "applied",
+        value: {
+          kind: "image_build",
+          observation: {
+            preparedId: value.preparedId,
+            retainedResources: value.retainedResources,
+            provider: scope.provider,
+            scope: scope.adapterScope,
+          },
+        },
+        observedAt: Date.parse(observedAt),
+      });
+
+      return;
+    }
+
+    if (!op.sandbox_id) throw new Error("Sandbox identity missing");
+
     if (op.kind === "create" && "id" in value) {
       wrapped = {
         status: "completed",
@@ -418,6 +503,9 @@ export class DurableRunner {
     result: DriverResult,
     scope: NativeScope,
   ): Promise<void> {
+    if (claim.operation.kind === "image_build")
+      throw new Error("Image build results use the adapter result path");
+
     const { store, secrets } = this.options;
 
     if (result.status !== "completed") {
@@ -474,6 +562,7 @@ export class DurableRunner {
       return;
     }
 
+    if (!claim.operation.sandbox_id) throw new Error("Sandbox identity missing");
     const box = await store.getSandbox(claim.operation.project_id, claim.operation.sandbox_id);
 
     if (!box) throw new Error("Sandbox identity missing");

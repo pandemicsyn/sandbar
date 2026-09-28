@@ -25,6 +25,7 @@ Protected service operations accept a Bearer token or a session cookie unless an
 | POST | `/v1/projects/{projectId}/provider-connections/{connectionId}/verify` | `verifyProviderConnection` | `projectId` (path, required)<br>`connectionId` (path, required)<br>`Origin` (header)<br>`X-CSRF-Token` (header) | 200 | — |
 | GET | `/v1/projects/{projectId}/sandboxes` | `listSandboxes` | `projectId` (path, required)<br>`cursor` (query)<br>`limit` (query)<br>`connectionId` (query)<br>`state` (query)<br>`q` (query) | 200 | — |
 | POST | `/v1/projects/{projectId}/sandboxes` | `submitCreate` | `projectId` (path, required)<br>`Idempotency-Key` (header, required)<br>`Origin` (header)<br>`X-CSRF-Token` (header) | 202 | CreateSandboxRequest |
+| POST | `/v1/projects/{projectId}/images/builds` | `submitImageBuild` | `projectId` (path, required)<br>`Idempotency-Key` (header, required)<br>`Origin` (header)<br>`X-CSRF-Token` (header) | 202 | ImageBuildRequest |
 | GET | `/v1/projects/{projectId}/sandboxes/{sandboxId}` | `getSandbox` | `projectId` (path, required)<br>`sandboxId` (path, required) | 200 | — |
 | DELETE | `/v1/projects/{projectId}/sandboxes/{sandboxId}` | `submitDestroy` | `projectId` (path, required)<br>`sandboxId` (path, required)<br>`Idempotency-Key` (header, required)<br>`Origin` (header)<br>`X-CSRF-Token` (header) | 202 | — |
 | POST | `/v1/projects/{projectId}/sandboxes/{sandboxId}/executions` | `submitExec` | `projectId` (path, required)<br>`sandboxId` (path, required)<br>`Idempotency-Key` (header, required)<br>`Origin` (header)<br>`X-CSRF-Token` (header) | 202 | ExecRequest |
@@ -49,6 +50,7 @@ The following names are derived from the same OpenAPI document. Use the [full JS
 - `Execution`
 - `FileReceipt`
 - `Id`
+- `ImageBuildRequest`
 - `InvocationKey`
 - `Operation`
 - `OperationResult`

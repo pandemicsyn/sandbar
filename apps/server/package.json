@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "sandbar-adapter": "workspace:*",
+    "sandbar-sdk": "workspace:*",
     "@sandbar/core": "workspace:*",
     "@sandbar/provider-spi": "workspace:*",
     "@sandbar/provider-fake": "workspace:*",

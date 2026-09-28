@@ -1240,7 +1240,7 @@ test("advanced preparation reports invalid arguments before provider preparation
   const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
   await expect(
     client.operations.prepare("create", {
-      image: { kind: "prepared", value: "bad/image" },
+      image: { kind: "prepared", value: "x".repeat(513) },
       networkPolicy: "blocked",
     }),
   ).rejects.toMatchObject({ name: "SandbarError", code: "INVALID_ARGUMENT" });

@@ -24,21 +24,27 @@
     "./modal": {
       "types": "./dist/modal.d.ts",
       "import": "./dist/modal.js"
+    },
+    "./e2b": {
+      "types": "./dist/e2b.d.ts",
+      "import": "./dist/e2b.js"
     }
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts src/service-support.ts src/daytona.ts src/modal.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external modal --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts src/service-support.ts src/daytona.ts src/modal.ts src/e2b.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external modal --external e2b --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
   },
   "dependencies": {
     "sandbar-adapter": "workspace:*",
     "zod": "4.6.5",
-    "modal": "0.10.1"
+    "modal": "0.10.1",
+    "e2b": "2.51.0"
   },
   "devDependencies": {
     "@sandbar/provider-fake": "workspace:*",
     "@sandbar/provider-daytona": "workspace:*",
-    "@sandbar/provider-modal": "workspace:*"
+    "@sandbar/provider-modal": "workspace:*",
+    "@sandbar/provider-e2b": "workspace:*"
   },
   "license": "Apache-2.0",
   "repository": {
