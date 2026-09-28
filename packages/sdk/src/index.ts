@@ -32,6 +32,8 @@ export {
 
 export type {
   ImageInput,
+  PreparedImage,
+  ImageBuildResult,
   CreateInput,
   ExecInput,
   ExecOutput,

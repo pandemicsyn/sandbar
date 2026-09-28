@@ -322,6 +322,12 @@ describe("public contract", () => {
             result: { properties: { kind: { const: "file_write" } } },
           },
         },
+        {
+          properties: {
+            kind: { const: "image_build" },
+            result: { properties: { kind: { const: "image_build" } } },
+          },
+        },
       ],
     });
     expect(openApiDocument.components.schemas.Operation).toHaveProperty(

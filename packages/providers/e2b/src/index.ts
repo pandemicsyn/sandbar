@@ -1,0 +1,666 @@
+import { z } from "zod";
+import { createHash } from "node:crypto";
+import { AdapterError, defineAdapter, type ExecValue } from "sandbar-adapter";
+import {
+  createSdkTransport,
+  E2B_ENDPOINT,
+  MAX_BYTES,
+  shellQuote,
+  type E2BRecord,
+  type E2BTransport,
+} from "./transport";
+
+const Configuration = z.strictObject({
+  teamId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9_-]+$/),
+  templateId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9_-]+$/),
+  timeoutSeconds: z.number().int().min(60).max(3600).default(300),
+});
+
+const Credentials = z.strictObject({ apiKey: z.string().min(1) });
+
+const ExecToken = z.strictObject({ maxOutputBytes: z.number().int().min(0).max(MAX_BYTES) });
+
+const WriteToken = z.strictObject({
+  path: z.string().max(4096),
+  staged: z.string().max(4096).optional(),
+  bytesWritten: z.number().int().min(0).max(MAX_BYTES),
+  digest: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+type WriteTokenData = z.infer<typeof WriteToken>;
+
+const DestroyToken = z.strictObject({ retainedTemplateId: z.string().max(128).optional() });
+
+const nativeId = /^[A-Za-z0-9_-]{1,128}$/;
+
+const ownerKeys = [
+  "sandbar_scope",
+  "sandbar_submission",
+  "sandbar_operation",
+  "sandbar_template",
+  "sandbar_build",
+];
+
+function buildName(submissionId: string): string {
+  return `sandbar-${createHash("sha256").update(submissionId).digest("hex").slice(0, 40)}`;
+}
+
+function requirePath(path: string): void {
+  if (!path.startsWith("/") || path.includes("\0") || path.length > 4096)
+    throw new AdapterError("INVALID_ARGUMENT", "E2B requires a bounded absolute path");
+}
+
+function executionPaths(submissionId: string) {
+  if (!nativeId.test(submissionId))
+    throw new AdapterError("INVALID_ARGUMENT", "Invalid submission ID");
+  const base = `/tmp/.sandbar-${submissionId}`;
+
+  return { stdout: `${base}.stdout`, stderr: `${base}.stderr`, status: `${base}.status` };
+}
+
+/** The E2B definition uses the same public adapter contract as external adapters. */
+export function createE2BAdapter(transportFactory?: (options: { apiKey: string }) => E2BTransport) {
+  return defineAdapter({
+    name: "e2b",
+    displayName: "E2B",
+    config: Configuration,
+    credentials: Credentials,
+    async connect({ config, credentials, host }) {
+      const transport = transportFactory?.(credentials) ?? createSdkTransport(credentials.apiKey);
+      host.onClose(() => transport.close());
+      await transport.verifyTeam(config.teamId);
+      await transport.verifyTemplate(config.teamId, config.templateId);
+
+      const scopeMarker = `${config.teamId}:${config.templateId}`;
+
+      const owned = (record: E2BRecord) =>
+        record.metadata.sandbar_scope === scopeMarker &&
+        record.metadata.sandbar_template === record.templateId;
+
+      const find = async (id: string): Promise<E2BRecord | null> => {
+        if (!nativeId.test(id))
+          throw new AdapterError("INVALID_ARGUMENT", "Invalid E2B sandbox ID");
+        await transport.verifyTeam(config.teamId);
+        const record = await transport.get(id);
+
+        return record && owned(record) ? record : null;
+      };
+
+      const requireRunning = async (id: string): Promise<E2BRecord> => {
+        const record = await find(id);
+
+        if (!record)
+          throw new AdapterError("NOT_FOUND", "E2B sandbox is outside the verified scope");
+
+        if (record.state !== "running")
+          throw new AdapterError("UNAVAILABLE", "E2B sandbox is paused");
+
+        return record;
+      };
+
+      const cleanup = async (id: string, paths: ReturnType<typeof executionPaths>) => {
+        await Promise.allSettled(Object.values(paths).map((path) => transport.remove(id, path)));
+      };
+
+      const readExecution = async (
+        id: string,
+        paths: ReturnType<typeof executionPaths>,
+        maxOutputBytes: number,
+      ): Promise<ExecValue | null> => {
+        let status: { bytes: Uint8Array; truncated: boolean };
+
+        try {
+          status = await transport.read(id, paths.status, 16);
+        } catch {
+          return null;
+        }
+
+        const code = new TextDecoder("utf-8", { fatal: true }).decode(status.bytes);
+
+        if (status.truncated || !/^(?:0|[1-9][0-9]{0,2})$/.test(code))
+          throw new Error("E2B command completion marker is invalid");
+        const stdout = await transport.read(id, paths.stdout, maxOutputBytes);
+        const remaining = maxOutputBytes - stdout.bytes.length;
+        const stderr = await transport.read(id, paths.stderr, remaining);
+
+        return {
+          exitCode: Number(code),
+          stdout: stdout.bytes,
+          stderr: stderr.bytes,
+          truncated: stdout.truncated || stderr.truncated,
+        };
+      };
+
+      return {
+        scope: {
+          authority: { kind: "team", id: config.teamId },
+          partition: { endpoint: E2B_ENDPOINT, template: config.templateId },
+        },
+        supports: {
+          images: ["prepared", "oci"],
+          network: ["internet", "blocked"],
+          exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_BYTES },
+          fileWrite: { overwrite: true, noClobber: true },
+        },
+        imageBuild: {
+          async prepare(input) {
+            await transport.verifyTeam(config.teamId);
+
+            return input;
+          },
+          async submit(input, ctx) {
+            if (!nativeId.test(ctx.submissionId))
+              return ctx.reject("INVALID_ARGUMENT", "Invalid E2B build submission ID");
+
+            const name = buildName(ctx.submissionId);
+
+            try {
+              if (await transport.findBuild(config.teamId, name))
+                return ctx.unknown(`E2B image build ${name} already exists; no build was replayed`);
+
+              if (ctx.signal.aborted)
+                return ctx.unknown(`E2B image build ${name} was not submitted after cancellation`);
+
+              const build = await transport.buildImage(input.source.value, name);
+
+              if (!nativeId.test(build.templateId))
+                return ctx.unknown(`E2B image build ${name} returned an invalid template ID`);
+
+              if (ctx.signal.aborted)
+                return ctx.unknown(`E2B image build ${name} outcome after cancellation is unknown`);
+
+              const observed = await transport.findBuild(config.teamId, name);
+
+              if (
+                !observed ||
+                observed.templateId !== build.templateId ||
+                observed.status !== "ready"
+              )
+                return ctx.unknown(`E2B image build ${name} could not be confirmed ready`);
+
+              return {
+                preparedId: build.templateId,
+                retainedResources: [
+                  {
+                    kind: "e2b-template",
+                    id: build.templateId,
+                    ownership: "unknown" as const,
+                    cleanup: "manual" as const,
+                  },
+                ],
+              };
+            } catch {
+              return ctx.unknown(`E2B image build ${name} outcome unavailable; observe only`);
+            }
+          },
+          async observe(attempt, ctx) {
+            await transport.verifyTeam(config.teamId);
+            const build = await transport.findBuild(config.teamId, buildName(attempt.submissionId));
+
+            if (!build) return null;
+
+            if (build.status !== "ready")
+              return ctx.unknown(`E2B image build ${build.templateId} is ${build.status}`);
+
+            return {
+              preparedId: build.templateId,
+              retainedResources: [
+                {
+                  kind: "e2b-template",
+                  id: build.templateId,
+                  ownership: "unknown" as const,
+                  cleanup: "manual" as const,
+                },
+              ],
+            };
+          },
+        },
+        create: {
+          async prepare(input) {
+            if (input.region)
+              throw new AdapterError("UNSUPPORTED", "E2B region selection is unavailable");
+
+            if (input.networkPolicy !== "internet" && input.networkPolicy !== "blocked")
+              throw new AdapterError("UNSUPPORTED", "E2B network policy is unsupported");
+
+            if (input.labels && Object.keys(input.labels).some((key) => ownerKeys.includes(key)))
+              throw new AdapterError("INVALID_ARGUMENT", "Reserved E2B metadata key");
+            await transport.verifyTeam(config.teamId);
+
+            if (input.image.kind === "prepared")
+              await transport.verifyTemplate(config.teamId, input.image.value);
+
+            return input;
+          },
+          async submit(input, ctx) {
+            if (!nativeId.test(ctx.submissionId) || !nativeId.test(ctx.operationId))
+              return ctx.reject("INVALID_ARGUMENT", "Invalid E2B correlation ID");
+
+            let templateId =
+              input.image.kind === "prepared" ? input.image.value : config.templateId;
+
+            const name = input.image.kind === "oci" ? buildName(ctx.submissionId) : undefined;
+
+            if (name) {
+              try {
+                if (await transport.findBuild(config.teamId, name))
+                  return ctx.unknown(
+                    `E2B image build name ${name} already exists; no build was resubmitted`,
+                  );
+
+                if (ctx.signal.aborted)
+                  return ctx.unknown(
+                    `E2B image build ${name} was not submitted after cancellation`,
+                  );
+
+                const build = await transport.buildImage(input.image.value, name);
+
+                if (!nativeId.test(build.templateId))
+                  return ctx.unknown(`E2B image build ${name} returned an invalid template ID`);
+
+                if (ctx.signal.aborted)
+                  return ctx.unknown(
+                    `E2B image build ${name} outcome after cancellation is unknown`,
+                  );
+
+                const observed = await transport.findBuild(config.teamId, name);
+
+                if (
+                  !observed ||
+                  observed.templateId !== build.templateId ||
+                  observed.status !== "ready"
+                )
+                  return ctx.unknown(`E2B image build ${name} could not be confirmed ready`);
+                templateId = build.templateId;
+              } catch {
+                return ctx.unknown(
+                  `E2B image build ${name} outcome unavailable; inspect template before a new create`,
+                );
+              }
+            }
+
+            if (ctx.signal.aborted)
+              return ctx.unknown("E2B sandbox create was not submitted after cancellation");
+
+            try {
+              const metadata = {
+                ...input.labels,
+                sandbar_scope: scopeMarker,
+                sandbar_submission: ctx.submissionId,
+                sandbar_operation: ctx.operationId,
+                sandbar_template: templateId,
+              };
+
+              if (name) Object.assign(metadata, { sandbar_build: name });
+
+              const id = await transport.create({
+                templateId,
+                timeoutMs: config.timeoutSeconds * 1000,
+                allowInternetAccess: input.networkPolicy === "internet",
+                metadata,
+              });
+
+              if (!nativeId.test(id)) return ctx.unknown("E2B create returned an invalid ID");
+              const record = await transport.get(id);
+
+              if (
+                !record ||
+                !owned(record) ||
+                record.metadata.sandbar_submission !== ctx.submissionId ||
+                record.metadata.sandbar_operation !== ctx.operationId
+              )
+                return ctx.unknown("E2B create identity could not be verified");
+
+              return {
+                id,
+                state: record.state === "running" ? ("running" as const) : ("unknown" as const),
+              };
+            } catch {
+              return ctx.unknown(
+                `E2B create response unavailable; observe without replay${name ? `; retained template ${templateId}` : ""}`,
+              );
+            }
+          },
+          async observe(attempt, ctx) {
+            await transport.verifyTeam(config.teamId);
+
+            const page = await transport.list(
+              {
+                sandbar_scope: scopeMarker,
+                sandbar_submission: attempt.submissionId,
+                sandbar_operation: attempt.operationId,
+              },
+              2,
+            );
+
+            const matches = page.items.filter(
+              (record) =>
+                owned(record) &&
+                record.metadata.sandbar_submission === attempt.submissionId &&
+                record.metadata.sandbar_operation === attempt.operationId,
+            );
+
+            if (matches.length !== 1 || page.nextToken) {
+              const build = await transport.findBuild(
+                config.teamId,
+                buildName(attempt.submissionId),
+              );
+
+              return build
+                ? ctx.unknown(
+                    `E2B image build ${build.templateId} is ${build.status}; no sandbox was confirmed`,
+                  )
+                : null;
+            }
+
+            const record = matches[0]!;
+
+            return {
+              id: record.id,
+              state: record.state === "running" ? ("running" as const) : ("unknown" as const),
+            };
+          },
+        },
+        destroy: {
+          recovery: { version: 1, token: DestroyToken },
+          async prepare(box) {
+            const record = await find(box.id);
+
+            if (!record)
+              throw new AdapterError("NOT_FOUND", "E2B sandbox is outside the verified scope");
+
+            return box;
+          },
+          async submit(box, ctx) {
+            const record = await find(box.id);
+
+            if (!record)
+              return ctx.reject("NOT_FOUND", "E2B sandbox is outside the verified scope");
+
+            if (ctx.signal.aborted)
+              return ctx.unknown("E2B termination was not submitted after cancellation");
+
+            const token: Record<string, string> = {};
+
+            if (record.metadata.sandbar_build) token.retainedTemplateId = record.templateId;
+
+            try {
+              await transport.kill(box.id);
+
+              if ((await transport.get(box.id)) === null)
+                return {
+                  computeStopped: true,
+                  retainedResources: token.retainedTemplateId
+                    ? [`e2b-template:${token.retainedTemplateId}`]
+                    : [],
+                };
+            } catch {
+              // An absent sandbox may still be confirmed by read-only observation.
+            }
+
+            return ctx.pending(token, { pollAfterMs: 1000 });
+          },
+          async observe(attempt, ctx) {
+            if (!attempt.sandbox) return null;
+            const token = DestroyToken.safeParse(attempt.token);
+
+            if (!token.success) return ctx.unknown("E2B destroy lacks retained-resource evidence");
+            await transport.verifyTeam(config.teamId);
+            const record = await transport.get(attempt.sandbox.id);
+
+            if (record) {
+              if (!owned(record)) return ctx.unknown("E2B destroy scope no longer matches");
+
+              return ctx.pending(token.data, { pollAfterMs: 1000 });
+            }
+
+            return {
+              computeStopped: true,
+              retainedResources: token.data.retainedTemplateId
+                ? [`e2b-template:${token.data.retainedTemplateId}`]
+                : [],
+            };
+          },
+        },
+        async inspect(box) {
+          const record = await find(box.id);
+
+          return record
+            ? {
+                id: record.id,
+                state: record.state === "running" ? ("running" as const) : ("unknown" as const),
+              }
+            : null;
+        },
+        async inventory(input) {
+          await transport.verifyTeam(config.teamId);
+
+          const page = await transport.list(
+            { sandbar_scope: scopeMarker },
+            input.limit,
+            input.cursor,
+          );
+
+          const items = page.items.filter(owned).map((record) => ({
+            id: record.id,
+            state: record.state === "running" ? ("running" as const) : ("unknown" as const),
+          }));
+
+          return { items, nextCursor: page.nextToken };
+        },
+        exec: {
+          recovery: {
+            version: 1,
+            token: ExecToken,
+          },
+          async prepare(input) {
+            await requireRunning(input.sandbox.id);
+
+            if (
+              input.command.kind === "argv" &&
+              (!input.command.argv.length || input.command.argv.some((part) => part.includes("\0")))
+            )
+              throw new AdapterError("INVALID_ARGUMENT", "E2B argv is invalid");
+
+            if (input.command.kind === "shell" && input.command.script.includes("\0"))
+              throw new AdapterError("INVALID_ARGUMENT", "E2B shell script is invalid");
+
+            if (input.cwd) requirePath(input.cwd);
+
+            if (input.maxOutputBytes > MAX_BYTES)
+              throw new AdapterError("CAPACITY", "E2B command output bound exceeded");
+
+            return input;
+          },
+          async submit(input, ctx) {
+            const paths = executionPaths(ctx.submissionId);
+
+            if (ctx.signal.aborted)
+              return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+
+            const command =
+              input.command.kind === "argv"
+                ? `/bin/bash -c 'exec "$@"' sandbar ${input.command.argv.map(shellQuote).join(" ")}`
+                : `/bin/bash -c ${shellQuote(input.command.script)}`;
+
+            const script = `${command} >${shellQuote(paths.stdout)} 2>${shellQuote(paths.stderr)}; printf '%s' "$?" >${shellQuote(paths.status)}`;
+
+            try {
+              await transport.run(input.sandbox.id, script, {
+                cwd: input.cwd,
+                env: input.env,
+                timeoutMs: Math.max(1, Math.min(input.deadlineSeconds * 1000, 86_400_000)),
+              });
+
+              if (ctx.signal.aborted)
+                return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+
+              const result = await readExecution(input.sandbox.id, paths, input.maxOutputBytes);
+
+              if (!result)
+                return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+
+              if (ctx.signal.aborted)
+                return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+
+              await cleanup(input.sandbox.id, paths);
+
+              return result;
+            } catch {
+              return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+            }
+          },
+          async observe(attempt) {
+            if (!attempt.sandbox) return null;
+
+            const token = ExecToken.safeParse(attempt.token);
+
+            if (!token.success) return null;
+            await requireRunning(attempt.sandbox.id);
+            const paths = executionPaths(attempt.submissionId);
+
+            return readExecution(attempt.sandbox.id, paths, token.data.maxOutputBytes);
+          },
+        },
+        files: {
+          maxBytes: MAX_BYTES,
+          async read(input) {
+            requirePath(input.path);
+            await requireRunning(input.sandbox.id);
+            const result = await transport.read(input.sandbox.id, input.path, MAX_BYTES);
+
+            if (result.truncated)
+              throw new AdapterError("CAPACITY", "E2B file exceeds the read bound");
+
+            return result.bytes;
+          },
+          write: {
+            recovery: { version: 1, token: WriteToken },
+            async prepare(input) {
+              requirePath(input.path);
+              await requireRunning(input.sandbox.id);
+
+              if (input.bytes.length > MAX_BYTES)
+                throw new AdapterError("CAPACITY", "E2B file write exceeds the byte bound");
+
+              return input;
+            },
+            async submit(input, ctx) {
+              if (!nativeId.test(ctx.submissionId))
+                return ctx.reject("INVALID_ARGUMENT", "Invalid E2B write submission ID");
+
+              if (ctx.signal.aborted)
+                return ctx.unknown("E2B file write was not submitted after cancellation");
+
+              const parent = input.path.slice(0, input.path.lastIndexOf("/")) || "/";
+
+              const staged = input.overwrite
+                ? undefined
+                : `${parent}/.sandbar-write-${ctx.submissionId}`;
+
+              if (staged === input.path)
+                return ctx.reject(
+                  "INVALID_ARGUMENT",
+                  "E2B destination conflicts with write staging",
+                );
+
+              const token: WriteTokenData = {
+                path: input.path,
+                bytesWritten: input.bytes.length,
+                digest: createHash("sha256").update(input.bytes).digest("hex"),
+              };
+
+              if (staged) token.staged = staged;
+
+              try {
+                if (input.overwrite) {
+                  await transport.write(input.sandbox.id, input.path, input.bytes);
+                } else {
+                  await transport.write(input.sandbox.id, staged!, input.bytes);
+
+                  if (ctx.signal.aborted) return ctx.pending(token, { pollAfterMs: 1000 });
+
+                  const answer = await transport.run(
+                    input.sandbox.id,
+                    `if ln -T -- ${shellQuote(staged!)} ${shellQuote(input.path)} 2>/dev/null; then printf 'CREATED'; elif test -e ${shellQuote(input.path)}; then printf 'EXISTS'; else printf 'FAILED'; fi`,
+                    { timeoutMs: 30_000 },
+                  );
+
+                  if (ctx.signal.aborted) return ctx.pending(token, { pollAfterMs: 1000 });
+
+                  if (answer === "EXISTS") {
+                    await transport.remove(input.sandbox.id, staged!).catch(() => {});
+
+                    return ctx.reject("CONFLICT", "E2B file already exists");
+                  }
+
+                  if (answer !== "CREATED") return ctx.pending(token, { pollAfterMs: 1000 });
+
+                  await transport.remove(input.sandbox.id, staged!).catch(() => {});
+                }
+
+                return { bytesWritten: input.bytes.length };
+              } catch {
+                return ctx.pending(token, { pollAfterMs: 1000 });
+              }
+            },
+            async observe(attempt, ctx) {
+              if (!attempt.sandbox) return null;
+              const token = WriteToken.safeParse(attempt.token);
+
+              if (!token.success) return ctx.unknown("E2B file write lacks recovery evidence");
+              await requireRunning(attempt.sandbox.id);
+              const { path, staged, bytesWritten, digest } = token.data;
+              requirePath(path);
+
+              if (staged) {
+                const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+
+                if (staged !== `${parent}/.sandbar-write-${attempt.submissionId}`)
+                  return ctx.unknown("E2B no-clobber stage does not match the submission");
+
+                const same = await transport.run(
+                  attempt.sandbox.id,
+                  `if test ${shellQuote(staged)} -ef ${shellQuote(path)}; then printf 'SAME'; else printf 'DIFFERENT'; fi`,
+                  { timeoutMs: 30_000 },
+                );
+
+                if (same !== "SAME")
+                  return ctx.unknown("E2B no-clobber write has no matching native inode");
+              }
+
+              let result: { bytes: Uint8Array; truncated: boolean };
+
+              try {
+                result = await transport.read(attempt.sandbox.id, path, MAX_BYTES);
+              } catch {
+                return ctx.unknown("E2B written file could not be confirmed");
+              }
+
+              if (
+                result.truncated ||
+                result.bytes.length !== bytesWritten ||
+                createHash("sha256").update(result.bytes).digest("hex") !== digest
+              )
+                return ctx.unknown("E2B written bytes differ from the submitted content");
+
+              return { bytesWritten };
+            },
+          },
+        },
+      };
+    },
+  });
+}
+
+export const e2bAdapter = createE2BAdapter();
+
+export { E2B_ENDPOINT, MAX_BYTES, type E2BTransport } from "./transport";

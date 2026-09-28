@@ -9,7 +9,7 @@
     "packages/providers/*"
   ],
   "scripts": {
-    "build:packages": "bun run --cwd packages/adapter build && bun run --cwd packages/provider-spi build && bun run --cwd packages/core build && bun run --cwd packages/providers/fake build && bun run --cwd packages/providers/daytona build && bun run --cwd packages/providers/modal build && bun run --cwd packages/sdk build && bun run --cwd packages/service build",
+    "build:packages": "bun run --cwd packages/adapter build && bun run --cwd packages/provider-spi build && bun run --cwd packages/core build && bun run --cwd packages/providers/fake build && bun run --cwd packages/providers/daytona build && bun run --cwd packages/providers/modal build && bun run --cwd packages/providers/e2b build && bun run --cwd packages/sdk build && bun run --cwd packages/service build",
     "check": "bun run build:packages && bun run --filter '@sandbar/*' check && bun run --cwd packages/adapter check && bun run --cwd packages/sdk check && bun run --cwd packages/service check",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",

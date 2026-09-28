@@ -398,7 +398,10 @@ export async function openMysqlBackend(url: string): Promise<Backend> {
 
 /** Apply committed SQL migrations in order. Existing version checksums are preserved. */
 export async function migrate(backend: Backend, migrationSql: string): Promise<void> {
-  const migrations = [{ version: "0001_control", source: migrationSql }];
+  const migrations = [
+    { version: "0001_control", source: migrationSql },
+    { version: "0002_image_build", source: bundledMigration(backend.dialect, "0002_image_build") },
+  ];
 
   for (const migration of migrations) {
     const digest = await crypto.subtle.digest(
@@ -434,11 +437,21 @@ export async function migrate(backend: Backend, migrationSql: string): Promise<v
           .map((part) => part.trim())
           .filter(Boolean))
           await tx.run(sql.raw(statement));
+
+        if ((await tx.rows(sql.raw("PRAGMA foreign_key_check"))).length)
+          throw new Error(`Foreign-key integrity check failed at ${migration.version}`);
+
+        // Rebuilding the parent leaves deferred DROP counters even after the
+        // replacement restores every reference. Validate the final graph first.
+        await tx.run(sql.raw("PRAGMA defer_foreign_keys = OFF"));
+
         await tx.run(
           sql`INSERT INTO _sandbar_migrations (version,checksum) VALUES (${migration.version},${checksum})`,
         );
       });
     } else {
+      // MySQL DDL commits independently. Each migration must be safe to repeat
+      // if the process stops after DDL but before its checksum is recorded.
       await backend.run(
         sql.raw(
           "CREATE TABLE IF NOT EXISTS _sandbar_migrations (version varchar(128) COLLATE utf8mb4_bin PRIMARY KEY, checksum char(64) COLLATE utf8mb4_bin NOT NULL) ENGINE=InnoDB",
@@ -469,9 +482,9 @@ export async function migrate(backend: Backend, migrationSql: string): Promise<v
   }
 }
 
-export function bundledMigration(dialect: Dialect): string {
-  const source = join(import.meta.dir, `../migrations/${dialect}/0001_control.sql`);
-  const bundled = join(import.meta.dir, `migrations/${dialect}/0001_control.sql`);
+export function bundledMigration(dialect: Dialect, version = "0001_control"): string {
+  const source = join(import.meta.dir, `../migrations/${dialect}/${version}.sql`);
+  const bundled = join(import.meta.dir, `migrations/${dialect}/${version}.sql`);
 
   return readFileSync(existsSync(source) ? source : bundled, "utf8");
 }

@@ -107,7 +107,7 @@ test("advanced preparation validates portable limits before provider hooks", asy
       session,
       "create",
       {
-        image: { kind: "prepared", value: "bad/name" },
+        image: { kind: "prepared", value: "x".repeat(513) },
         networkPolicy: "blocked",
       },
       signal,

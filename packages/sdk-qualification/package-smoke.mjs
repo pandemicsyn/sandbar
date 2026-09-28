@@ -15,6 +15,7 @@ const packages = [
   ["@sandbar/provider-fake", "packages/providers/fake"],
   ["@sandbar/provider-daytona", "packages/providers/daytona"],
   ["sandbar-modal", "packages/providers/modal"],
+  ["@sandbar/provider-e2b", "packages/providers/e2b"],
   ["sandbar-sdk", "packages/sdk"],
   ["sandbar-service", "packages/service"],
 ];
@@ -170,16 +171,43 @@ async function flow() {
 }
 void flow;
 `;
+  else if (mode === "e2b")
+    source = `
+import { Sandbar, Image } from "sandbar-sdk";
+import { e2b, createE2BAdapter } from "sandbar-sdk/e2b";
+async function flow() {
+  const client = await Sandbar.connect(e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" }));
+  const built = await client.images.build({ source: Image.oci("node:24") });
+  const prepared = Image.prepared(built.prepared);
+  const builtBox = await client.sandboxes.create({ environment: prepared, networkPolicy: "blocked" });
+  await builtBox.destroy();
+  const box = await client.sandboxes.create({ environment: Image.prepared("template_1"), networkPolicy: "blocked" });
+  const output = await box.exec({ command: { kind: "argv", argv: ["printf", "test"] } });
+  const bytes: Uint8Array = await box.readFile("/tmp/file");
+  await box.writeFile("/tmp/file", bytes, { overwrite: false });
+  await client.close();
+  return output;
+}
+// @ts-expect-error E2B requires a team ID
+void e2b({ apiKey: "fixture", templateId: "template_1" });
+void createE2BAdapter;
+void flow;
+`;
   else if (mode === "builtins")
     source = `
 import { Sandbar } from "sandbar-sdk";
 import { daytona } from "sandbar-sdk/daytona";
+import { e2b } from "sandbar-sdk/e2b";
 async function flow() {
   const daytonaClient = await Sandbar.connect(daytona({ apiKey: "fixture", target: "us" }));
+  const e2bClient = await Sandbar.connect(e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" }));
   await daytonaClient.close();
+  await e2bClient.close();
 }
 // @ts-expect-error Daytona requires an API key
 void daytona({ target: "us" });
+// @ts-expect-error E2B requires a template ID
+void e2b({ apiKey: "fixture", teamId: "team_1" });
 void flow;
 `;
   else if (mode === "direct")
@@ -204,6 +232,9 @@ void flow;
 import { Sandbar, Image } from "sandbar-service/client";
 async function flow() {
   const client = Sandbar.connect({ url: "https://sandbar.example", token: "example-token-123456", projectId: "project_1" });
+  const image = await client.images.build({ source: Image.oci("fixture/image:1"), connectionId: "conn_1" });
+  const builtBox = await client.sandboxes.create({ environment: Image.prepared(image.prepared) });
+  await builtBox.destroy();
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
   const argv = ["fixture"] as const;
   const result = await box.exec(argv);
@@ -358,14 +389,75 @@ if (closed !== 1) throw Error("Owned provider was not released");
 process.stdout.write("packed Modal fixture flow passed\\n");
 `;
 
+const e2bSource = `
+import { Sandbar, Image } from "sandbar-sdk";
+import { createE2BAdapter } from "sandbar-sdk/e2b";
+let creates = 0, kills = 0, closes = 0, buildName = "", retained = "";
+let record;
+const files = new Map();
+const binary = Uint8Array.from([0, 255, 129]);
+const transport = {
+  async verifyTeam(id) { if (id !== "team_1") throw Error("Wrong team"); },
+  async verifyTemplate(team, template) { if (team !== "team_1" || !["template_1", "template_oci"].includes(template)) throw Error("Wrong template"); },
+  async buildImage(reference, name) { if (reference !== "node:24") throw Error("Wrong OCI reference"); buildName = name; return { templateId: "template_oci", buildId: "build_1" }; },
+  async findBuild(_team, name) { return name === buildName ? { templateId: "template_oci", buildId: "build_1", status: "ready" } : null; },
+  async create(input) {
+    if (!["template_1", "template_oci"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
+    creates++;
+    record = { id: "sb_" + creates, templateId: input.templateId, metadata: input.metadata, state: "running" };
+    return record.id;
+  },
+  async get(id) { return record?.id === id ? record : null; },
+  async list(metadata) { return { items: record && Object.entries(metadata).every(([k,v]) => record.metadata[k] === v) ? [record] : [] }; },
+  async kill(id) { if (id !== record?.id) throw Error("Wrong kill"); retained = record.metadata.sandbar_build ? record.templateId : ""; kills++; record = undefined; return true; },
+  async run(_id, script) {
+    if (script.includes("ln -T --")) { const staged = [...files.keys()].find((path) => path.includes(".sandbar-write-")); if (!staged) throw Error("Missing staged file"); files.set("/tmp/no-clobber.bin", files.get(staged)); return "CREATED"; }
+    if (script.includes(".status")) {
+      const stdout = script.match(/\\/tmp\\/\\.sandbar-[A-Za-z0-9_-]+\\.stdout/)?.[0];
+      if (!stdout) throw Error("Missing command correlation path");
+      files.set(stdout, binary);
+      files.set(stdout.replace(".stdout", ".stderr"), Uint8Array.of(254));
+      files.set(stdout.replace(".stdout", ".status"), new TextEncoder().encode("0"));
+    }
+    return "";
+  },
+  async read(_id, path, max) { const bytes = files.get(path); if (!bytes) throw Error("Missing binary file " + path); return { bytes: bytes.slice(0,max), truncated: bytes.length > max }; },
+  async write(_id, path, bytes) { files.set(path, bytes); },
+  async remove(_id, path) { files.delete(path); },
+  close() { closes++; },
+};
+const client = await Sandbar.connect({ adapter: createE2BAdapter(() => transport), config: { teamId: "team_1", templateId: "template_1" }, credentials: { apiKey: "fixture" } });
+try {
+  const box = await client.sandboxes.create({ environment: Image.prepared("template_1"), networkPolicy: "blocked" });
+  const result = await box.exec({ command: { kind: "argv", argv: ["printf", "test"] }, maxOutputBytes: 8 });
+  if (result.stdout[0] !== 0 || result.stdout[1] !== 255 || result.stderr[0] !== 254) throw Error("Binary command output changed");
+  await box.writeFile("/tmp/packed.bin", binary, { overwrite: true });
+  await box.writeFile("/tmp/no-clobber.bin", binary, { overwrite: false });
+  const loaded = await box.readFile("/tmp/packed.bin");
+  if (loaded.some((byte, i) => byte !== binary[i])) throw Error("Binary file changed");
+  await box.destroy();
+  const oci = await client.sandboxes.create({ environment: Image.oci("node:24"), networkPolicy: "blocked" });
+  await oci.destroy();
+  if (!buildName || retained !== "template_oci") throw Error("OCI retained template was hidden");
+  const built = await client.images.build({ source: Image.oci("node:24") });
+  if (built.prepared.value !== "template_oci" || built.prepared.provider !== "e2b" || built.retainedResources[0]?.ownership !== "unknown") throw Error("Scoped image build result mismatch");
+  const fromBuild = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
+  await fromBuild.destroy();
+} finally { await client.close(); }
+if (creates !== 3 || kills !== 3 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
+process.stdout.write("packed E2B fixture flow passed\\n");
+`;
+
 const builtinsSource = `
 import { daytona } from "sandbar-sdk/daytona";
+import { e2b } from "sandbar-sdk/e2b";
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw Error("Factory construction performed provider I/O"); };
 try {
   const daytonaAdapter = daytona({ apiKey: "fixture", target: "us" });
-  if (daytonaAdapter.name !== "daytona") throw Error("Built-in factory identity mismatch");
-  if (!daytonaAdapter.bound) throw Error("Built-in factory did not bind public adapter contract");
+  const e2bAdapter = e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" });
+  if (daytonaAdapter.name !== "daytona" || e2bAdapter.name !== "e2b") throw Error("Built-in factory identity mismatch");
+  if (!daytonaAdapter.bound || !e2bAdapter.bound) throw Error("Built-in factory did not bind public adapter contract");
   process.stdout.write("packed built-in SDK subpaths passed\\n");
 } finally { globalThis.fetch = originalFetch; }
 `;
@@ -373,7 +465,7 @@ try {
 const externalAdapterSource = `
 import { z } from "zod";
 import { defineAdapter } from "sandbar-adapter";
-export const metrics = { creates: 0, destroys: 0, closes: 0, observes: 0 };
+export const metrics = { creates: 0, destroys: 0, closes: 0, observes: 0, builds: 0 };
 export const acme = defineAdapter({
   name: "example.acme",
   config: z.strictObject({ region: z.string().min(1) }),
@@ -406,6 +498,14 @@ export const asyncAcme = defineAdapter({
     return {
       scope: { authority: { kind: "account", id: "fixture-account" }, partition: { region: config.region } },
       supports: { images: ["prepared"], network: ["blocked"] },
+      imageBuild: {
+        recovery: { version: 1, token: z.strictObject({ buildId: z.string() }) },
+        async submit(_input, ctx) { metrics.builds++; return ctx.pending({ buildId: "build-1" }, { pollAfterMs: 1000 }); },
+        async observe(attempt) {
+          if (z.strictObject({ buildId: z.string() }).parse(attempt.token).buildId !== "build-1") throw Error("Wrong image recovery token");
+          return { preparedId: "image-1", retainedResources: [{ kind: "template", id: "image-1", ownership: "unknown", cleanup: "manual" }] };
+        },
+      },
       create: {
         recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
         async submit(_input, ctx) { metrics.creates++; return ctx.pending({ jobId: "job-1" }, { pollAfterMs: 1000 }); },
@@ -440,6 +540,7 @@ process.stdout.write("packed external adapter flow passed\\n");
 
 const serviceSource = `
 import { createService } from "sandbar-service";
+import { Sandbar, Image } from "sandbar-service/client";
 import { asyncAcme, metrics } from "@acme/sandbar-adapter";
 import { writeFile, chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -487,6 +588,12 @@ try {
   if (conn.status !== 201) throw Error("Connection failed: " + JSON.stringify(conn));
   const verified = await request(\`/v1/projects/\${projectId}/provider-connections/\${conn.body.id}/verify\`, "POST");
   if (verified.status !== 200) throw Error("Verification failed");
+  const client = Sandbar.connect({ url: origin, token: bearer, projectId, fetch: Object.assign(async (url, init) => {
+    const target = new URL(String(url));
+    return fetch(origin + target.pathname + target.search, init);
+  }, { preconnect() {} }) });
+  const build = await client.images.submitBuild({ source: Image.oci("fixture/image:1"), connectionId: conn.body.id });
+  await until(async () => metrics.builds === 1 && (await request(\`/v1/projects/\${projectId}/operations/\${build.reference.operationId}\`)).body.status === "running");
   const admitted = await request(\`/v1/projects/\${projectId}/sandboxes\`, "POST", {
     environment: { kind: "prepared", imageId: "image-1" }, network: { policy: "blocked" }, connectionId: conn.body.id,
   }, Bun.randomUUIDv7());
@@ -499,9 +606,13 @@ try {
   await service.close();
   service = await createService(options);
   await start();
+  await request(\`/v1/projects/\${projectId}/operations/\${build.reference.operationId}/reconcile\`, "POST");
   await request(\`/v1/projects/\${projectId}/operations/\${operationId}/reconcile\`, "POST");
   await until(async () => (await request(\`/v1/projects/\${projectId}/operations/\${operationId}\`)).body.status === "succeeded");
   if (metrics.creates !== 1 || metrics.observes < 1) throw Error("Packed service replayed an effect or skipped observation");
+  const image = await (await client.recover(JSON.parse(JSON.stringify(build.reference)))).wait();
+  if (metrics.builds !== 1 || image.prepared.value !== "image-1" || image.prepared.connectionId !== conn.body.id || image.prepared.provider !== "example.async-acme" || image.retainedResources[0]?.ownership !== "unknown") throw Error("Packed service image-build recovery or scope mismatch");
+  await client.close();
   process.stdout.write("packed service HTTP restart flow passed\\n");
 } finally { await service.close(); await rm(directory, { recursive: true, force: true }); }
 `;
@@ -592,11 +703,14 @@ try {
     "sandbar-modal": archiveOverrides["sandbar-modal"],
   };
 
+  const e2bDeps = { ...sdkDeps };
+
   const remote = join(temporary, "remote-consumer");
   const custom = join(temporary, "custom-consumer");
   const direct = join(temporary, "direct-consumer");
   const daytona = join(temporary, "daytona-consumer");
   const modal = join(temporary, "modal-consumer");
+  const e2b = join(temporary, "e2b-consumer");
   const builtins = join(temporary, "builtins-consumer");
   const service = join(temporary, "service-consumer");
   await consumer(remote, remoteDeps, archiveOverrides, remoteSource);
@@ -604,6 +718,7 @@ try {
   await consumer(direct, directDeps, archiveOverrides, directSource);
   await consumer(daytona, daytonaDeps, archiveOverrides, daytonaSource);
   await consumer(modal, modalDeps, archiveOverrides, modalSource);
+  await consumer(e2b, e2bDeps, archiveOverrides, e2bSource);
   await consumer(builtins, sdkDeps, archiveOverrides, builtinsSource);
   await consumer(
     service,
@@ -623,6 +738,7 @@ try {
   await checkTypes(direct, "direct");
   await checkTypes(daytona, "daytona");
   await checkTypes(modal, "modal");
+  await checkTypes(e2b, "e2b");
   await checkTypes(builtins, "builtins");
   await checkTypes(remote, "remote");
   const serviceGraph = inspectGraph(remote, ["sandbar-service"]);
@@ -630,6 +746,7 @@ try {
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
   inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);
   const modalGraph = inspectGraph(modal, ["sandbar-sdk", "sandbar-modal"]);
+  inspectGraph(e2b, ["sandbar-sdk"]);
   const publicSdkGraph = inspectGraph(builtins, ["sandbar-sdk"]);
 
   if (publicSdkGraph.some((name) => name.startsWith("@sandbar/")))
@@ -701,6 +818,9 @@ try {
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], modal)}`);
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], e2b)}`);
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], builtins)}`);

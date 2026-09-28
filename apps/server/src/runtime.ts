@@ -16,6 +16,7 @@ import {
 } from "@sandbar/service-runtime";
 import { createFakeAdapter } from "@sandbar/provider-fake";
 import { createDaytonaAdapter, type DaytonaEndpointPair } from "@sandbar/provider-daytona";
+import { createE2BAdapter, type E2BTransport } from "sandbar-sdk/e2b";
 
 export interface RuntimeConfig {
   databaseUrl: string;
@@ -26,6 +27,7 @@ export interface RuntimeConfig {
   adapters?: readonly InstalledAdapter[];
   daytonaFetch?: typeof fetch;
   daytonaTrustedEndpoints?: DaytonaEndpointPair[];
+  e2bTransportFactory?: (options: { apiKey: string }) => E2BTransport;
   publicOrigin?: string;
   webDist?: string;
   startRunner?: boolean;
@@ -91,6 +93,7 @@ export async function openDomainRuntime(config: RuntimeConfig) {
 
     const registry = new ProviderRegistry(store, secrets, [
       createDaytonaAdapter(config.daytonaFetch, config.daytonaTrustedEndpoints),
+      createE2BAdapter(config.e2bTransportFactory),
       ...(fakeAdapter ? [fakeAdapter] : []),
       ...(config.adapters ?? []),
     ]);
