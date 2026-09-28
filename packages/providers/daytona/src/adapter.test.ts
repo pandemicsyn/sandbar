@@ -10,12 +10,15 @@ test.each([
   "unknown-id",
   "unnamed-active",
   "unnamed-pending",
+  "incomplete-name",
+  "incomplete-source",
   "wrong-id",
   "wrong-scope",
   "lost",
   "wrong-source",
 ] as const)("explicit image build is scoped and never creates a sandbox: %s", async (mode) => {
   const lost = mode === "lost" || mode === "wrong-source";
+  const incomplete = mode === "incomplete-name" || mode === "incomplete-source";
   let idReads = 0;
   let builds = 0;
   let creates = 0;
@@ -52,7 +55,11 @@ test.each([
 
         if (lost) throw new Error("lost build response");
 
-        return Response.json(snapshot());
+        return Response.json({
+          ...snapshot(),
+          name: mode === "incomplete-name" ? undefined : name,
+          imageName: mode === "incomplete-source" ? undefined : "alpine:3.21",
+        });
       }
 
       if (url.pathname === "/api/snapshots/built-1") {
@@ -201,6 +208,11 @@ test.each([
     if (lost) {
       expect(observations).toBe(1);
       expect(idReads).toBe(4);
+    }
+
+    if (incomplete) {
+      expect(idReads).toBeGreaterThan(0);
+      expect(observations).toBe(0);
     }
 
     if (["unknown-id", "wrong-id", "wrong-scope"].includes(mode)) {

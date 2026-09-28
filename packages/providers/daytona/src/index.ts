@@ -604,14 +604,19 @@ export class DaytonaDriver implements ProviderDriver {
       });
 
       if (
-        snapshot.name !== name ||
-        snapshot.imageName !== input.image ||
         snapshot.organizationId !== this.scope.accountId ||
         !/^[A-Za-z0-9._:-]{1,128}$/.test(snapshot.id)
       )
         return { status: "unknown", reason: "Daytona image build response mismatched" };
 
       snapshotId = snapshot.id;
+
+      if (snapshot.name !== name || snapshot.imageName !== input.image)
+        return {
+          status: "unknown",
+          reason: "Daytona image build response metadata mismatched or unavailable",
+          snapshotId,
+        };
 
       if (input.signal.aborted)
         return {
