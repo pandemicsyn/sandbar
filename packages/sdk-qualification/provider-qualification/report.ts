@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { envdSchema, failureDiagnosticSchema } from "./diagnostics";
 
 export const scenarios = [
   "connect",
@@ -43,6 +44,8 @@ export const recordSchema = z.strictObject({
     .optional(),
   sdkVersion: safeLabel,
   nativeVersion: safeLabel.optional(),
+  envd: envdSchema.optional(),
+  diagnostic: failureDiagnosticSchema.optional(),
   runtime: safeLabel,
   platform: safeLabel,
   timestamp: z.iso.datetime({ offset: true }),

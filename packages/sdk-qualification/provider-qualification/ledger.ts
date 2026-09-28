@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import type { AdapterRecoveryReference } from "sandbar-sdk";
 import { z } from "zod";
+import { envdSchema, failureDiagnosticSchema } from "./diagnostics";
 
 const ledgerSchema = z.strictObject({
   version: z.literal(1),
@@ -29,6 +30,11 @@ const ledgerSchema = z.strictObject({
         timeoutSeconds: z.literal(300),
       }),
     ])
+    .optional(),
+  envd: envdSchema.optional(),
+  diagnostics: z
+    .array(failureDiagnosticSchema.extend({ scenario: z.string().max(80) }))
+    .max(64)
     .optional(),
   createIntent: z.boolean(),
   createReference: z.unknown().optional(),

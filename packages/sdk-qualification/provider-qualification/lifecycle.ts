@@ -10,15 +10,25 @@ import {
 import { LedgerStore } from "./ledger";
 import type { Scenario } from "./report";
 import { boundedRead } from "./bounds";
+import {
+  FailureCapture,
+  envdSchema,
+  errorDiagnostic,
+  sensitiveValues,
+  type FailureDiagnostic,
+} from "./diagnostics";
 
 export type ConnectionFactory = (
   onReference: (reference: AdapterRecoveryReference) => Promise<void>,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the public SDK external-error diagnostic boundary; the callback performs field-only redaction.
+  onDiagnostic?: (error: unknown) => void,
 ) => Promise<AdapterDirectClient>;
 
 export type Step = {
   scenario: Scenario;
   status: "passed" | "failed" | "not-run" | "unsupported" | "blocked";
   issue?: string;
+  diagnostic?: FailureDiagnostic;
 };
 
 export async function recordReference(
@@ -59,6 +69,8 @@ export async function runPrepared(
     cleanupWaitMs?: number;
     signal?: AbortSignal;
     selectedScenarios?: ReadonlySet<Scenario>;
+    redactions?: readonly string[];
+    envdVersion?: (ownedSandboxId: string, signal?: AbortSignal) => Promise<string | undefined>;
   },
 ): Promise<Step[]> {
   return ledger.withLock(() => runPreparedLocked(factory, ledger, imageId, options));
@@ -74,10 +86,12 @@ async function runPreparedLocked(
   let client: AdapterDirectClient | undefined;
   let box: AdapterSandbox | undefined;
   let createFailed = false;
+  const diagnosticJobs: Promise<FailureDiagnostic>[] = [];
+  const releaseErrors: unknown[] = [];
 
   const step = async (
     scenario: Scenario,
-    work: () => Promise<void>,
+    work: (capture: FailureCapture) => Promise<void>,
     prerequisites: readonly Scenario[] = [],
   ) => {
     if (
@@ -108,22 +122,48 @@ async function runPreparedLocked(
       return;
     }
 
+    const stage =
+      scenario === "create-prepared"
+        ? "create"
+        : scenario.startsWith("exec-")
+          ? "exec"
+          : scenario.startsWith("file-")
+            ? "write"
+            : scenario === "connect" ||
+                scenario === "inspect" ||
+                scenario === "inventory" ||
+                scenario === "close"
+              ? scenario
+              : "checkpoint";
+
+    const capture = new FailureCapture(ledger, scenario, stage, options.redactions);
+
     try {
-      await work();
+      await work(capture);
       steps.push({ scenario, status: "passed" });
     } catch (error) {
+      const diagnostic = await capture.failure(error);
       await recordRecoveryError(ledger, error);
       steps.push({
         scenario,
         status: outcome(error),
         issue: error instanceof SandbarError ? error.code : "assertion-failed",
+        diagnostic,
       });
     }
   };
 
   try {
     await step("connect", async () => {
-      const opening = factory((reference) => recordReference(ledger, reference));
+      const opening = factory(
+        (reference) => recordReference(ledger, reference),
+        (error) => {
+          releaseErrors.push(error);
+          diagnosticJobs.push(
+            new FailureCapture(ledger, "close", "close", options.redactions).failure(error),
+          );
+        },
+      );
 
       try {
         client = await boundedRead(opening, options.signal);
@@ -137,7 +177,7 @@ async function runPreparedLocked(
     if (!client) return steps;
     const connected = client;
     await ledger.update((value) => ({ ...value, createIntent: true }));
-    await step("create-prepared", async () => {
+    await step("create-prepared", async (capture) => {
       box = await connected.sandboxes.create(
         {
           environment: Image.prepared(imageId),
@@ -147,6 +187,7 @@ async function runPreparedLocked(
         },
         { signal: options.signal },
       );
+      capture.at("checkpoint");
       await ledger.update((value) => ({ ...value, sandboxId: box!.id }));
     });
 
@@ -157,11 +198,36 @@ async function runPreparedLocked(
     }
 
     const sandbox = box;
-    await step("inspect", async () => {
-      if ((await boundedRead(sandbox.inspect(), options.signal)).state !== "running")
-        throw new Error("Not running");
+
+    if (options.envdVersion) {
+      let envd;
+
+      try {
+        const version = await boundedRead(
+          options.envdVersion(sandbox.id, options.signal),
+          options.signal,
+        );
+
+        envd = envdSchema.parse(
+          version === undefined ? { status: "unavailable" } : { status: "available", version },
+        );
+      } catch (error) {
+        envd = {
+          status: "unavailable" as const,
+          error: errorDiagnostic(error, await sensitiveValues(ledger, options.redactions ?? [])),
+        };
+      }
+
+      await ledger.update((value) => ({ ...value, envd }));
+    }
+
+    await step("inspect", async (capture) => {
+      const state = (await boundedRead(sandbox.inspect(), options.signal)).state;
+      capture.state(state, "running");
+
+      if (state !== "running") throw new Error("Not running");
     });
-    await step("exec-argv", async () => {
+    await step("exec-argv", async (capture) => {
       const result = await sandbox.exec(
         {
           command: {
@@ -182,10 +248,12 @@ async function runPreparedLocked(
         { signal: options.signal },
       );
 
+      capture.output(result, "argument with spaces|argv-ok", "err");
+
       if (result.stdoutText() !== "argument with spaces|argv-ok" || result.stderrText() !== "err")
         throw new Error("Output mismatch");
     });
-    await step("exec-shell", async () => {
+    await step("exec-shell", async (capture) => {
       const result = await sandbox.exec(
         {
           command: { kind: "shell", script: "printf '%s' \"$QUAL_VALUE\"" },
@@ -197,14 +265,18 @@ async function runPreparedLocked(
         { signal: options.signal },
       );
 
+      capture.output(result, "shell-ok", "");
+
       if (result.stdoutText() !== "shell-ok") throw new Error("Output mismatch");
     });
-    await step("exec-nonzero", async () => {
+    await step("exec-nonzero", async (capture) => {
       try {
-        await sandbox.exec(
+        const result = await sandbox.exec(
           { command: { kind: "shell", script: "printf fail >&2; exit 7" }, deadlineSeconds: 20 },
           { signal: options.signal },
         );
+
+        capture.output(result, "", "fail");
         throw new Error("Nonzero command unexpectedly passed");
       } catch (error) {
         if (
@@ -218,25 +290,29 @@ async function runPreparedLocked(
     const path = `/tmp/sandbar-qualification-${ledger.runId}`;
     const first = new Uint8Array([0, 255, 1, 128]);
     const second = new Uint8Array([2, 254, 0]);
-    await step("file-binary", async () => {
+    await step("file-binary", async (capture) => {
+      capture.file(first, true);
       await sandbox.writeFile(path, first, { overwrite: true, signal: options.signal });
-
-      if (!equal(await boundedRead(sandbox.readFile(path), options.signal), first))
-        throw new Error("File bytes differ");
+      capture.at("read");
+      const actual = await boundedRead(sandbox.readFile(path), options.signal);
+      capture.compareBytes(actual, first);
     });
     await step(
       "file-overwrite",
-      async () => {
+      async (capture) => {
+        capture.file(second, true);
         await sandbox.writeFile(path, second, { overwrite: true, signal: options.signal });
-
-        if (!equal(await boundedRead(sandbox.readFile(path), options.signal), second))
-          throw new Error("Overwrite bytes differ");
+        capture.at("read");
+        const actual = await boundedRead(sandbox.readFile(path), options.signal);
+        capture.compareBytes(actual, second);
       },
       ["file-binary"],
     );
     await step(
       "file-no-clobber",
-      async () => {
+      async (capture) => {
+        capture.file(first, false);
+
         try {
           await sandbox.writeFile(path, first, { overwrite: false, signal: options.signal });
           throw new Error("No-clobber unexpectedly passed");
@@ -244,12 +320,13 @@ async function runPreparedLocked(
           if (!(error instanceof SandbarError) || error.code !== "CONFLICT") throw error;
         }
 
-        if (!equal(await boundedRead(sandbox.readFile(path), options.signal), second))
-          throw new Error("Conflict changed file");
+        capture.at("read");
+        const actual = await boundedRead(sandbox.readFile(path), options.signal);
+        capture.compareBytes(actual, second);
       },
       ["file-binary", "file-overwrite"],
     );
-    await step("inventory", async () => {
+    await step("inventory", async (capture) => {
       let cursor: string | undefined;
 
       for (let page = 0; page < 10; page++) {
@@ -258,7 +335,13 @@ async function runPreparedLocked(
           options.signal,
         );
 
-        if (listed.items.some((item) => item.id === sandbox.id && item.state === "running")) return;
+        const found = listed.items.some(
+          (item) => item.id === sandbox.id && item.state === "running",
+        );
+
+        capture.inventory(page + 1, listed.items.length, found);
+
+        if (found) return;
         cursor = listed.nextCursor;
 
         if (!cursor) break;
@@ -273,16 +356,30 @@ async function runPreparedLocked(
           publicCleanupAccess(client, ledger),
           ledger,
           options.cleanupWaitMs ?? 60_000,
+          options.redactions,
         );
 
         steps.push(...result);
-      } catch {
+      } catch (error) {
+        const diagnostic = await new FailureCapture(
+          ledger,
+          "destroy",
+          "checkpoint",
+          options.redactions,
+        ).failure(error);
+
         steps.push(
-          { scenario: "destroy", status: "failed", issue: "cleanup-failed" },
+          { scenario: "destroy", status: "failed", issue: "cleanup-failed", diagnostic },
           { scenario: "confirm-cleanup", status: "blocked", issue: "cleanup-unconfirmed" },
         );
       } finally {
-        await step("close", () => client!.close());
+        await step("close", async () => {
+          await client!.close();
+          await Promise.all(diagnosticJobs);
+
+          if (releaseErrors.length)
+            throw new Error("SDK connection release failed", { cause: releaseErrors[0] });
+        });
       }
     } else if (!(await ledger.read()).createReference) {
       await ledger.update((value) => ({ ...value, cleanup: "not-required", lastIssue: undefined }));
@@ -291,6 +388,8 @@ async function runPreparedLocked(
         { scenario: "confirm-cleanup", status: "not-run" },
       );
     }
+
+    await Promise.all(diagnosticJobs);
 
     if (createFailed)
       for (const scenario of [
@@ -307,10 +406,6 @@ async function runPreparedLocked(
   }
 
   return steps;
-}
-
-function equal(a: Uint8Array, b: Uint8Array): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 export type CleanupAccess = {
@@ -357,8 +452,9 @@ export async function reconcile(
   access: CleanupAccess,
   ledger: LedgerStore,
   waitMs = 60_000,
+  redactions: readonly string[] = [],
 ): Promise<Step[]> {
-  return ledger.withLock(() => reconcileLocked(access, ledger, waitMs));
+  return ledger.withLock(() => reconcileLocked(access, ledger, waitMs, redactions));
 }
 
 /** Standalone recovery acquires the same run lock before authenticating or reading the provider. */
@@ -366,19 +462,37 @@ export async function reconcileConnection(
   factory: ConnectionFactory,
   ledger: LedgerStore,
   waitMs = 60_000,
+  redactions: readonly string[] = [],
 ): Promise<Step[]> {
   return ledger.withLock(async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort("cleanup connection time limit"), waitMs);
     const deadline = Date.now() + waitMs;
-    const opening = factory((reference) => recordReference(ledger, reference));
+    const releaseErrors: unknown[] = [];
+    const diagnosticJobs: Promise<FailureDiagnostic>[] = [];
+
+    const opening = factory(
+      (reference) => recordReference(ledger, reference),
+      (error) => {
+        releaseErrors.push(error);
+        diagnosticJobs.push(
+          new FailureCapture(ledger, "close", "close", redactions).failure(error),
+        );
+      },
+    );
+
     let client: AdapterDirectClient;
 
     try {
       client = await boundedRead(opening, controller.signal);
     } catch (error) {
       void opening.then((connected) => connected.close()).catch(() => undefined);
-      throw error;
+
+      const diagnostic = await new FailureCapture(ledger, "connect", "connect", redactions).failure(
+        error,
+      );
+
+      return [{ scenario: "connect", status: "failed", issue: "assertion-failed", diagnostic }];
     } finally {
       clearTimeout(timer);
     }
@@ -391,14 +505,29 @@ export async function reconcileConnection(
           publicCleanupAccess(client, ledger),
           ledger,
           Math.max(1, deadline - Date.now()),
+          redactions,
         )),
       );
     } finally {
       try {
         await client.close();
-        steps.push({ scenario: "close", status: "passed" });
-      } catch {
-        steps.push({ scenario: "close", status: "failed", issue: "close-failed" });
+        await Promise.all(diagnosticJobs);
+
+        if (releaseErrors.length) {
+          const diagnostic = await new FailureCapture(ledger, "close", "close", redactions).failure(
+            new Error("SDK connection release failed", { cause: releaseErrors[0] }),
+          );
+
+          steps.push({ scenario: "close", status: "failed", issue: "close-failed", diagnostic });
+        } else {
+          steps.push({ scenario: "close", status: "passed" });
+        }
+      } catch (error) {
+        const diagnostic = await new FailureCapture(ledger, "close", "close", redactions).failure(
+          error,
+        );
+
+        steps.push({ scenario: "close", status: "failed", issue: "close-failed", diagnostic });
       }
     }
 
@@ -410,8 +539,10 @@ async function reconcileLocked(
   access: CleanupAccess,
   ledger: LedgerStore,
   waitMs: number,
+  redactions: readonly string[] = [],
 ): Promise<Step[]> {
   const state = await ledger.read();
+  const capture = new FailureCapture(ledger, "destroy", "checkpoint", redactions);
 
   // The awaited pre-submit checkpoint must exist before a native create can be dispatched.
   if (!state.createReference) {
@@ -442,6 +573,7 @@ async function reconcileLocked(
     await access.verifyReference(state.createReference);
 
     if (!id) {
+      capture.at("recover-create");
       const result = await access.observeCreate(state.createReference, signal);
 
       if (result) {
@@ -453,6 +585,8 @@ async function reconcileLocked(
     if (!id) throw new Error("Create outcome remains unknown");
     const box = access.sandbox(id);
 
+    capture.at("inspect");
+
     if ((await boundedRead(box.inspect(), signal)).state === "destroyed") {
       await ledger.update((value) => ({ ...value, cleanup: "confirmed", lastIssue: undefined }));
 
@@ -463,6 +597,7 @@ async function reconcileLocked(
     }
 
     let terminationConfirmed = false;
+    capture.at("destroy");
 
     if (state.destroyReference) {
       if (state.destroyReference.kind !== "destroy" || state.destroyReference.sandboxId !== id)
@@ -482,6 +617,8 @@ async function reconcileLocked(
         { scenario: "confirm-cleanup", status: "passed" },
       ];
     }
+
+    capture.at("confirm-cleanup");
 
     while (Date.now() < deadline) {
       const current = await ledger.read();
@@ -514,11 +651,14 @@ async function reconcileLocked(
       lastIssue: "confirmation-failed",
     }));
 
+    const diagnostic = await capture.failure(new Error("Cleanup confirmation timed out"));
+
     return [
-      { scenario: "destroy", status: "blocked", issue: "cleanup-unconfirmed" },
-      { scenario: "confirm-cleanup", status: "failed", issue: "cleanup-unconfirmed" },
+      { scenario: "destroy", status: "blocked", issue: "cleanup-unconfirmed", diagnostic },
+      { scenario: "confirm-cleanup", status: "failed", issue: "cleanup-unconfirmed", diagnostic },
     ];
   } catch (error) {
+    const diagnostic = await capture.failure(error);
     await recordRecoveryError(ledger, error);
     await ledger.update((value) => ({
       ...value,
@@ -531,6 +671,7 @@ async function reconcileLocked(
         scenario: "destroy",
         status: id ? "failed" : "blocked",
         issue: id ? "cleanup-failed" : "outcome-unknown",
+        diagnostic,
       },
       { scenario: "confirm-cleanup", status: "blocked", issue: "cleanup-unconfirmed" },
     ];

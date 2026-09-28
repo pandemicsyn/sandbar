@@ -5,7 +5,7 @@ import { isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { qualificationRevisions } from "./revisions";
 import { loadCredentials } from "./credentials";
-import { e2bConfiguration, e2bConnection } from "./e2b-profile";
+import { e2bConfiguration, e2bConnection, e2bEnvdVersion } from "./e2b-profile";
 import { LedgerStore, requirePrivateDirectory } from "./ledger";
 import { reconcileConnection, runPrepared, type Step } from "./lifecycle";
 import { parseReport, scenarios, type Scenario } from "./report";
@@ -166,7 +166,11 @@ if (evidenceRef)
 // All routing/run gates precede secret loading, connection and native mutation.
 await loadCredentials();
 
-const factory = e2bConnection(config, required("E2B_API_KEY"));
+const apiKey = required("E2B_API_KEY");
+
+const redactions = [apiKey, process.env.SANDBAR_DAYTONA_API_KEY ?? ""];
+
+const factory = e2bConnection(config, apiKey);
 
 if (action === "live-prepared")
   await ledger.initialize("e2b", { kind: "borrowed-prepared", class: "prepared" }, config);
@@ -190,9 +194,11 @@ try {
       signal: controller.signal,
       cleanupWaitMs: 60_000,
       selectedScenarios: selected,
+      redactions,
+      envdVersion: e2bEnvdVersion(apiKey),
     });
   else {
-    steps = await reconcileConnection(factory, ledger, 60_000);
+    steps = await reconcileConnection(factory, ledger, 60_000, redactions);
   }
 
   const state = await ledger.read();
@@ -210,6 +216,8 @@ try {
             : ("incomplete" as const),
       timestamp: new Date().toISOString(),
       issue: publicIssue(step.issue),
+      diagnostic: step.diagnostic,
+      envd: state.envd ?? { status: "not-collected" as const },
     }));
 
     const originalPath = `${ledger.path}.public.json`;
