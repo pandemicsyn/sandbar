@@ -4,6 +4,8 @@ Initial design draft · September 28, 2026 · Not implemented; follows state por
 
 Extend the current bounded `exec`, `readFile` and `writeFile` API with interactive processes and scoped network access. This draft starts the contracts; it does not select native transports, promise provider parity, or authorize implementation before [state portability](provider-state-portability.md).
 
+This draft targets the direct SDK. Service transports, remote-client parity, durable service metadata, and management workflows wait for the [distant service milestone](../plans/implementation-plan.md#distant-milestone-optional-service); they do not gate these features. Preserve existing service behavior when shared contracts change.
+
 ## Scope and resource model
 
 | Resource | Meaning | Proposed surface |
@@ -103,7 +105,7 @@ Endpoints default to authenticated access. Public access requires an explicit re
 
 Expose transport limitations such as HTTP-only access, WebSocket support, or raw TCP independently. An HTTP preview URL is not a TCP tunnel. Endpoint deletion must report which access is confirmed disabled; it cannot claim revocation of untracked native URLs. Port readiness is separate from endpoint provisioning. An existing endpoint does not prove a server is listening.
 
-Tunnel listeners live in the SDK caller's Node.js/Bun process and bind loopback by default. A non-loopback bind is explicit. A remote service client must use an authorized service/provider session, never receive account-wide provider credentials. Stream authorization must bind to the project, sandbox generation, port and session lifetime; metadata permission alone does not grant byte access.
+Tunnel listeners live in the SDK caller's Node.js/Bun process and bind loopback by default. A non-loopback bind is explicit. Access must bind to the verified provider scope, sandbox generation, port and session lifetime; metadata permission alone does not grant byte access. A future service relay requires its own authorization design and must never expose account-wide provider credentials.
 
 Closing a listener releases its local socket. Closing a tunnel also releases its native session where applicable, reporting uncertain remote closure. Neither destroys compute or stops the server process. A library must not advertise revocation guarantees stronger than the native transport can establish.
 
@@ -115,13 +117,13 @@ Unsupported requests fail before mutation with `UNSUPPORTED`. Failed eligibility
 
 Snapshot/suspend/restore can interrupt processes, subscriptions and access sessions. Bind attachments to execution generations and expose interruption rather than silently reconnecting to a different workload. A memory restore may contain a process, but does not automatically restore its former authenticated stream or endpoint grants. Reauthorize and verify identity before attachment. Reads and reattachment must not auto-resume a sandbox; use the explicit lifecycle API.
 
-Both direct and service clients use the same adapter contracts. The service may persist operation and access metadata, but an open socket is not restart-durable. Expose retained replay only where actual stored output/native evidence supports it. Durable start admission does not make the running process immortal.
+The direct SDK uses the public adapter contracts. An open local socket is not restart-durable. Expose retained replay only where actual stored output/native evidence supports it. Persisting a start reference does not make the running process immortal. Service integration is deferred.
 
 ## Work needed before implementation
 
 1. Verify pinned native process/PTY/access APIs and retry behavior for the adapters in scope. Publish a per-operation matrix; this draft makes no provider support claims.
-2. Set output buffer/capture limits, cursor retention and slow-consumer behavior; choose the service wire transport and its authorization/reconnect rules.
+2. Set output buffer/capture limits, cursor retention and slow-consumer behavior; define the direct SDK subscription and authorization/reconnect rules. Service wire transport is out of scope.
 3. Finalize process exit/input/signal receipts and generation-bound references. Decide which mutations can be observed after a lost acknowledgment and which must remain unknown.
-4. Specify endpoint-grant expiry/revocation and tunnel closure guarantees, including what survives service or client restart.
+4. Specify endpoint-grant expiry/revocation and tunnel closure guarantees, including what survives client restart.
 
-Acceptance fixtures must cover one start after lost response, binary output and stream gaps, bounded slow consumers, stdin uncertainty without replay, EOF, unsupported/acknowledged signals, PTY resize/closure, expired cursors, PID/generation reuse, unauthorized attachments, scoped grants, failed revocation, and snapshot/suspend interruption. Run direct/service parity and native-boundary attempt counts. Provider specs, UI work, broad filesystem expansion and observability are outside this draft.
+Acceptance fixtures must cover one start after lost response, binary output and stream gaps, bounded slow consumers, stdin uncertainty without replay, EOF, unsupported/acknowledged signals, PTY resize/closure, expired cursors, PID/generation reuse, unauthorized attachments, scoped grants, failed revocation, and snapshot/suspend interruption. Test direct SDK behavior and native-boundary attempt counts; maintain existing service regression checks without adding new feature parity. Provider specs, UI work, broad filesystem expansion and observability are outside this draft.

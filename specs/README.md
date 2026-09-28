@@ -2,13 +2,15 @@
 
 Keep this directory for focused implementation specs and a small set of current engineering contracts. Public usage belongs in [the docs site](../apps/docs/README.md), qualification belongs [with its harness](../packages/sdk-qualification/README.md), and sequencing belongs in [plans](../plans/implementation-plan.md).
 
+New features target the direct SDK and public adapter API. Service expansion is deferred until the SDK is mature and several provider integrations are established; see the [delivery rule](../plans/implementation-plan.md#delivery-rule). Preserve existing service behavior and regression coverage, without requiring new feature parity.
+
 ## Next implementation
 
 - [Provider state portability](provider-state-portability.md) — snapshots, volumes, mounts and lifecycle control, with explicit guarantees when provider support differs. This is the next coding work; the APIs are not implemented yet.
 
 ## Planned observability
 
-- [SDK observability and diagnostics](sdk-observability.md) — application-owned OpenTelemetry tracing, actionable error correlation, service/recovery continuity, and qualified Sentry/Datadog recipes. Planned; not implemented. This is separate from accounting and does not expand the current state-portability unit.
+- [SDK observability and diagnostics](sdk-observability.md) — application-owned OpenTelemetry tracing, actionable SDK error/recovery correlation, and qualified Sentry/Datadog recipes. Implementation is in flight; service tracing is deferred. This is separate from accounting and does not expand the current state-portability unit.
 
 ## Later design work
 
