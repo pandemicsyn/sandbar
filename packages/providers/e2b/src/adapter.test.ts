@@ -136,11 +136,14 @@ test("E2B public adapter passes managed compute conformance at its native bounda
   let releaseHeld = () => {};
 
   const adapter = createE2BAdapter((): E2BTransport => ({
+    async verifyAuth() {},
     async verifyTeam(teamId) {
       if (!teamId.startsWith("team_")) throw new Error("unverified team");
     },
     async verifyTemplate(_teamId, templateId) {
       if (templateId !== "template_1") throw new Error("unverified template");
+
+      return templateId;
     },
     async buildImage() {
       return { templateId: "template_1", buildId: "build_1" };
@@ -306,13 +309,21 @@ test("E2B exec and file operations preserve binary content and no-clobber intent
   const record: E2BRecord = {
     id: "sandbox_1",
     templateId: "template_1",
-    metadata: { sandbar_scope: "team_one:template_1", sandbar_template: "template_1" },
+    metadata: {
+      sandbar_scope: "team_one:template_1",
+      sandbar_template: "template_1",
+      sandbar_submission: "sub_seed",
+      sandbar_operation: "op_seed",
+    },
     state: "running",
   };
 
   const adapter = createE2BAdapter((): E2BTransport => ({
+    async verifyAuth() {},
     async verifyTeam() {},
-    async verifyTemplate() {},
+    async verifyTemplate(_team, id) {
+      return id;
+    },
     async buildImage() {
       return { templateId: "template_1", buildId: "build_1" };
     },
@@ -453,8 +464,11 @@ test("OCI create builds a correlated E2B template inside submit and reports it a
   let record: E2BRecord | null = null;
 
   const adapter = createE2BAdapter((): E2BTransport => ({
+    async verifyAuth() {},
     async verifyTeam() {},
-    async verifyTemplate() {},
+    async verifyTemplate(_team, id) {
+      return id;
+    },
     async buildImage(reference, name) {
       expect(reference).toBe("docker.io/library/node:24");
       buildName = name;
@@ -565,8 +579,11 @@ test("lost OCI build response observes the retained template without submitting 
   let creates = 0;
 
   const adapter = createE2BAdapter((): E2BTransport => ({
+    async verifyAuth() {},
     async verifyTeam() {},
-    async verifyTemplate() {},
+    async verifyTemplate(_team, id) {
+      return id;
+    },
     async buildImage(_reference, name) {
       builtName = name;
       throw new Error("build response lost");
@@ -671,10 +688,13 @@ test("shared image build returns a scoped prepared handle for one native create"
   const createdRecords: E2BRecord[] = [];
 
   const adapter = createE2BAdapter((): E2BTransport => ({
+    async verifyAuth() {},
     async verifyTeam() {},
     async verifyTemplate(_team, templateId) {
       if (!["template_1", "built_template"].includes(templateId))
         throw new Error("template outside team");
+
+      return templateId;
     },
     async buildImage(_reference, name) {
       builtName = name;
@@ -774,8 +794,11 @@ test("SDK abort settles a stalled E2B build and late outcomes never create a san
     });
 
     const adapter = createE2BAdapter((): E2BTransport => ({
+      async verifyAuth() {},
       async verifyTeam() {},
-      async verifyTemplate() {},
+      async verifyTemplate(_team, id) {
+        return id;
+      },
       async buildImage() {
         started = true;
 
@@ -856,8 +879,11 @@ test("SDK abort settles a stalled E2B exec after one native dispatch", async () 
   });
 
   const adapter = createE2BAdapter((): E2BTransport => ({
+    async verifyAuth() {},
     async verifyTeam() {},
-    async verifyTemplate() {},
+    async verifyTemplate(_team, id) {
+      return id;
+    },
     async buildImage() {
       throw new Error("not used");
     },
@@ -950,6 +976,8 @@ test("uncertain writes and destroy reconcile after reconnect without replay", as
     metadata: {
       sandbar_scope: "team_one:template_1",
       sandbar_template: "built_template",
+      sandbar_submission: "sub_seed",
+      sandbar_operation: "op_seed",
       sandbar_build: "sandbar-build",
     },
     state: "running",
@@ -960,8 +988,11 @@ test("uncertain writes and destroy reconcile after reconnect without replay", as
   let kills = 0;
 
   const adapter = createE2BAdapter((): E2BTransport => ({
+    async verifyAuth() {},
     async verifyTeam() {},
-    async verifyTemplate() {},
+    async verifyTemplate(_team, id) {
+      return id;
+    },
     async buildImage() {
       throw new Error("not used");
     },

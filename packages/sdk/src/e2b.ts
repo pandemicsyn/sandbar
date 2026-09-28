@@ -4,8 +4,8 @@ import type { AdapterDefinition, AdapterSession } from "sandbar-adapter";
 import { bindAdapter, type BoundAdapter } from "./bound";
 
 const Configuration = z.strictObject({
-  teamId: z.string().min(1),
-  templateId: z.string().min(1),
+  teamId: z.string().min(1).optional(),
+  templateId: z.string().min(1).default("base"),
   timeoutSeconds: z.number().int().min(60).max(3600).default(300),
 });
 
@@ -13,11 +13,12 @@ const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
 /** Injectable E2B native boundary for deterministic qualification. */
 export interface E2BTransport {
+  verifyAuth(): Promise<void>;
   verifyTeam(teamId: string): Promise<void>;
-  verifyTemplate(teamId: string, templateId: string): Promise<void>;
+  verifyTemplate(teamId: string | undefined, templateId: string): Promise<string>;
   buildImage(reference: string, name: string): Promise<{ templateId: string; buildId: string }>;
   findBuild(
-    teamId: string,
+    teamId: string | undefined,
     name: string,
   ): Promise<{ templateId: string; buildId: string; status: string } | null>;
   create(input: {
@@ -68,11 +69,11 @@ export function createE2BAdapter(
   return createPrivateE2BAdapter(transportFactory);
 }
 
-/** First-party E2B adapter bound to a verified team and ready template. */
+/** E2B adapter with API-key scope and default base template; optional verified team scope. */
 export function e2b(options: {
   apiKey: string;
-  teamId: string;
-  templateId: string;
+  teamId?: string;
+  templateId?: string;
   timeoutSeconds?: number;
 }): BoundAdapter {
   return bindAdapter(

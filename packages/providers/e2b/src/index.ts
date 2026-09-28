@@ -15,12 +15,14 @@ const Configuration = z.strictObject({
     .string()
     .min(1)
     .max(128)
-    .regex(/^[A-Za-z0-9_-]+$/),
+    .regex(/^[A-Za-z0-9_-]+$/)
+    .optional(),
   templateId: z
     .string()
     .min(1)
     .max(128)
-    .regex(/^[A-Za-z0-9_-]+$/),
+    .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
+    .default("base"),
   timeoutSeconds: z.number().int().min(60).max(3600).default(300),
 });
 
@@ -76,19 +78,43 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
     async connect({ config, credentials, host }) {
       const transport = transportFactory?.(credentials) ?? createSdkTransport(credentials.apiKey);
       host.onClose(() => transport.close());
-      await transport.verifyTeam(config.teamId);
-      await transport.verifyTemplate(config.teamId, config.templateId);
 
-      const scopeMarker = `${config.teamId}:${config.templateId}`;
+      const verifyAuthority = () =>
+        config.teamId ? transport.verifyTeam(config.teamId) : transport.verifyAuth();
+
+      await verifyAuthority();
+
+      if (config.templateId !== "base")
+        await transport.verifyTemplate(config.teamId, config.templateId);
+
+      // The authenticated read proves this credential works, not its native team identity.
+      const authority = config.teamId
+        ? { kind: "team", id: config.teamId }
+        : {
+            kind: "api-key",
+            id: createHash("sha256")
+              .update("sandbar:e2b:api-key-scope:v1\0")
+              .update(credentials.apiKey)
+              .digest("hex"),
+          };
+
+      const scopeMarker = config.teamId
+        ? `${config.teamId}:${config.templateId}`
+        : `api-key:${authority.id}:${config.templateId}`;
 
       const owned = (record: E2BRecord) =>
+        nativeId.test(record.id) &&
+        nativeId.test(record.templateId) &&
         record.metadata.sandbar_scope === scopeMarker &&
-        record.metadata.sandbar_template === record.templateId;
+        nativeId.test(record.metadata.sandbar_submission ?? "") &&
+        nativeId.test(record.metadata.sandbar_operation ?? "") &&
+        (record.metadata.sandbar_template === record.templateId ||
+          (record.metadata.sandbar_template === "base" && !record.metadata.sandbar_build));
 
       const find = async (id: string): Promise<E2BRecord | null> => {
         if (!nativeId.test(id))
           throw new AdapterError("INVALID_ARGUMENT", "Invalid E2B sandbox ID");
-        await transport.verifyTeam(config.teamId);
+        await verifyAuthority();
         const record = await transport.get(id);
 
         return record && owned(record) ? record : null;
@@ -141,7 +167,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
       return {
         scope: {
-          authority: { kind: "team", id: config.teamId },
+          authority,
           partition: { endpoint: E2B_ENDPOINT, template: config.templateId },
         },
         supports: {
@@ -152,7 +178,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         },
         imageBuild: {
           async prepare(input) {
-            await transport.verifyTeam(config.teamId);
+            await verifyAuthority();
 
             return input;
           },
@@ -202,7 +228,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             }
           },
           async observe(attempt, ctx) {
-            await transport.verifyTeam(config.teamId);
+            await verifyAuthority();
             const build = await transport.findBuild(config.teamId, buildName(attempt.submissionId));
 
             if (!build) return null;
@@ -233,10 +259,16 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
             if (input.labels && Object.keys(input.labels).some((key) => ownerKeys.includes(key)))
               throw new AdapterError("INVALID_ARGUMENT", "Reserved E2B metadata key");
-            await transport.verifyTeam(config.teamId);
+            await verifyAuthority();
 
-            if (input.image.kind === "prepared")
-              await transport.verifyTemplate(config.teamId, input.image.value);
+            if (input.image.kind === "prepared" && input.image.value !== "base") {
+              const templateId = await transport.verifyTemplate(config.teamId, input.image.value);
+
+              if (!nativeId.test(templateId))
+                throw new AdapterError("INVALID_ARGUMENT", "E2B returned an invalid template ID");
+
+              return { ...input, image: { ...input.image, value: templateId } };
+            }
 
             return input;
           },
@@ -330,7 +362,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             }
           },
           async observe(attempt, ctx) {
-            await transport.verifyTeam(config.teamId);
+            await verifyAuthority();
 
             const page = await transport.list(
               {
@@ -413,7 +445,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             const token = DestroyToken.safeParse(attempt.token);
 
             if (!token.success) return ctx.unknown("E2B destroy lacks retained-resource evidence");
-            await transport.verifyTeam(config.teamId);
+            await verifyAuthority();
             const record = await transport.get(attempt.sandbox.id);
 
             if (record) {
@@ -441,7 +473,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             : null;
         },
         async inventory(input) {
-          await transport.verifyTeam(config.teamId);
+          await verifyAuthority();
 
           const page = await transport.list(
             { sandbar_scope: scopeMarker },

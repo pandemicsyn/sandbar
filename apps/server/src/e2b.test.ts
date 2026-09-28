@@ -15,7 +15,7 @@ type FixtureJson =
   | FixtureJson[]
   | { [key: string]: FixtureJson };
 
-test("service persists E2B credentials and observes lost creation after restart without replay", async () => {
+async function verifyE2BService(mode: "team" | "api-key") {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-e2b-service-"));
   const keyFile = join(directory, "key");
   const setupTokenFile = join(directory, "setup");
@@ -34,12 +34,18 @@ test("service persists E2B credentials and observes lost creation after restart 
   const binary = Uint8Array.from([0, 255, 128]);
 
   const transport: E2BTransport = {
+    async verifyAuth() {},
     async verifyTeam(id) {
       if (id !== "team_one") throw new Error("wrong team");
     },
     async verifyTemplate(team, template) {
-      if (team !== "team_one" || !["template_one", "template_built"].includes(template))
+      if (
+        (team !== undefined && team !== "team_one") ||
+        !["template_one", "template_built"].includes(template)
+      )
         throw new Error("wrong template");
+
+      return template;
     },
     async buildImage(reference, name) {
       expect(reference).toBe("node:24");
@@ -56,7 +62,7 @@ test("service persists E2B credentials and observes lost creation after restart 
       creates++;
       record = {
         id: `sb_${creates}`,
-        templateId: input.templateId,
+        templateId: input.templateId === "base" ? "native_base_id" : input.templateId,
         metadata: input.metadata,
         state: "running",
       };
@@ -171,7 +177,7 @@ test("service persists E2B credentials and observes lost creation after restart 
     const connection = await request(`${path}/provider-connections`, "POST", token, {
       provider: "e2b",
       name: "E2B team",
-      configuration: { teamId: "team_one", templateId: "template_one" },
+      configuration: mode === "team" ? { teamId: "team_one", templateId: "template_one" } : {},
       credentials: { apiKey: "e2b-private-key" },
     });
 
@@ -193,8 +199,8 @@ test("service persists E2B credentials and observes lost creation after restart 
     expect(verified.value).toMatchObject({
       nativeScope: {
         adapterScope: {
-          authority: { kind: "team", id: "team_one" },
-          partition: { template: "template_one" },
+          authority: mode === "team" ? { kind: "team", id: "team_one" } : { kind: "api-key" },
+          partition: { template: mode === "team" ? "template_one" : "base" },
         },
       },
     });
@@ -205,7 +211,7 @@ test("service persists E2B credentials and observes lost creation after restart 
       token,
       {
         connectionId,
-        environment: { kind: "prepared", imageId: "template_one" },
+        environment: { kind: "prepared", imageId: mode === "team" ? "template_one" : "base" },
         network: { policy: "blocked" },
       },
       Bun.randomUUIDv7(),
@@ -316,4 +322,9 @@ test("service persists E2B credentials and observes lost creation after restart 
     await runtime.close();
     await rm(directory, { recursive: true, force: true });
   }
-});
+}
+
+test.each(["team", "api-key"] as const)(
+  "service E2B %s scope observes lost creation after restart without replay",
+  verifyE2BService,
+);
