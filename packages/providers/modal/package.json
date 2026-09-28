@@ -1,10 +1,11 @@
 {
-  "name": "@sandbar/provider-modal",
+  "name": "sandbar-modal",
   "version": "0.0.0",
-  "private": true,
+  "private": false,
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "type": "module",
   "exports": {
@@ -15,18 +16,31 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external '@sandbar/*' --external sandbar-adapter --external modal --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs",
+    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external sandbar-adapter --external modal --external @grpc/grpc-js --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs",
     "test:live": "bun live/conformance.mjs"
   },
   "dependencies": {
+    "@grpc/grpc-js": "1.14.5",
     "@bufbuild/protobuf": "2.0.0",
-    "@sandbar/provider-spi": "workspace:*",
     "modal": "0.10.1",
     "zod": "4.6.5",
     "sandbar-adapter": "workspace:*"
   },
   "devDependencies": {
-    "@grpc/grpc-js": "1.14.5",
     "sandbar-sdk": "workspace:*"
-  }
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pandemicsyn/sandbar.git",
+    "directory": "packages/providers/modal"
+  },
+  "description": "Experimental Modal sandbox adapter for Sandbar.",
+  "bugs": {
+    "url": "https://github.com/pandemicsyn/sandbar/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "types": "./dist/index.d.ts"
 }

@@ -39,7 +39,6 @@
         "@sandbar/provider-daytona": "workspace:*",
         "@sandbar/provider-e2b": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
-        "@sandbar/provider-modal": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
         "@sandbar/service-runtime": "workspace:*",
         "@sandbar/store": "workspace:*",
@@ -50,6 +49,7 @@
       "devDependencies": {
         "drizzle-orm": "1.0.0-beta.22",
         "oxfmt": "0.70.0",
+        "sandbar-modal": "workspace:*",
       },
     },
     "apps/web": {
@@ -128,17 +128,16 @@
       },
     },
     "packages/providers/modal": {
-      "name": "@sandbar/provider-modal",
+      "name": "sandbar-modal",
       "version": "0.0.0",
       "dependencies": {
         "@bufbuild/protobuf": "2.0.0",
-        "@sandbar/provider-spi": "workspace:*",
+        "@grpc/grpc-js": "1.14.5",
         "modal": "0.10.1",
         "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
-        "@grpc/grpc-js": "1.14.5",
         "sandbar-sdk": "workspace:*",
       },
     },
@@ -147,7 +146,6 @@
       "version": "0.0.0",
       "dependencies": {
         "e2b": "2.51.0",
-        "modal": "0.10.1",
         "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
@@ -155,7 +153,6 @@
         "@sandbar/provider-daytona": "workspace:*",
         "@sandbar/provider-e2b": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
-        "@sandbar/provider-modal": "workspace:*",
       },
     },
     "packages/sdk-qualification": {
@@ -171,7 +168,6 @@
       "name": "sandbar-service",
       "version": "0.0.0",
       "dependencies": {
-        "modal": "0.10.1",
         "sandbar-adapter": "workspace:*",
         "sandbar-sdk": "workspace:*",
         "zod": "4.6.5",
@@ -675,8 +671,6 @@
     "@sandbar/provider-e2b": ["@sandbar/provider-e2b@workspace:packages/providers/e2b"],
 
     "@sandbar/provider-fake": ["@sandbar/provider-fake@workspace:packages/providers/fake"],
-
-    "@sandbar/provider-modal": ["@sandbar/provider-modal@workspace:packages/providers/modal"],
 
     "@sandbar/provider-spi": ["@sandbar/provider-spi@workspace:packages/provider-spi"],
 
@@ -1323,6 +1317,8 @@
     "safer-buffer": ["safer-buffer@2.1.2", "", {}, "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg=="],
 
     "sandbar-adapter": ["sandbar-adapter@workspace:packages/adapter"],
+
+    "sandbar-modal": ["sandbar-modal@workspace:packages/providers/modal"],
 
     "sandbar-sdk": ["sandbar-sdk@workspace:packages/sdk"],
 
