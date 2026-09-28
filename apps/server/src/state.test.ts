@@ -3,7 +3,7 @@ import { mkdtemp, chmod, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { defineAdapter, type SnapshotProfile } from "sandbar-adapter";
+import { AdapterError, defineAdapter, type SnapshotProfile } from "sandbar-adapter";
 import { Sandbar as Direct, Image } from "sandbar-sdk";
 import { Sandbar } from "../../../packages/service/src/client";
 import { openDomainRuntime } from "./runtime";
@@ -28,6 +28,9 @@ test("service and direct read checks agree, admission and runtime reject before 
   let reason = "fixture evidence";
   let watchedOperation: { projectId: string; id: string } | undefined;
   let capabilityReadsAfterMarker = 0;
+  let rejectRevalidation = false;
+  let revalidationReads = 0;
+  let prepareFailure: string | undefined;
 
   const adapter = defineAdapter({
     name: "fixture.state",
@@ -38,6 +41,11 @@ test("service and direct read checks agree, admission and runtime reject before 
         scope: { authority: { kind: "account", id: "one" }, partition: {} },
         supports: { images: ["prepared"], network: ["blocked"] },
         create: {
+          async prepare(input) {
+            if (prepareFailure) throw new AdapterError("UNSUPPORTED", prepareFailure);
+
+            return input;
+          },
           recovery: { version: 1, token: z.strictObject({ job: z.string() }) },
           async submit(_input, ctx) {
             creates++;
@@ -57,6 +65,9 @@ test("service and direct read checks agree, admission and runtime reject before 
           return { id: box.id, state: "running" };
         },
         async snapshotProfiles() {
+          if (rejectRevalidation && ++revalidationReads === 2)
+            return { status: "unsupported", reason };
+
           if (
             watchedOperation &&
             (await runtime.store.getOperation(watchedOperation.projectId, watchedOperation.id))
@@ -211,12 +222,56 @@ test("service and direct read checks agree, admission and runtime reject before 
     status = "supported";
     const unsupported = await client.sandboxes.submitCreate(input);
     status = "unsupported";
+    reason = "x".repeat(1024);
     await runtime.runner.tick();
     const failed = await runtime.store.getOperation(projectId, unsupported.reference.operationId!);
     expect(failed).toMatchObject({ status: "failed", effect: "none", submission_possible: 0 });
-    await expect(unsupported.wait()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+    expect(JSON.parse(failed!.error_json!)).toMatchObject({
+      feature: "create",
+      unmetRequirements: [reason],
+    });
+    await expect(unsupported.wait()).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      effect: "none",
+      feature: "create",
+      unmetRequirements: [reason],
+    });
     expect(creates).toBe(0);
     status = "supported";
+    const revalidated = await client.sandboxes.submitCreate(input);
+    rejectRevalidation = true;
+    await runtime.runner.tick();
+    rejectRevalidation = false;
+
+    const rejected = await runtime.store.getOperation(
+      projectId,
+      revalidated.reference.operationId!,
+    );
+
+    expect(rejected).toMatchObject({ status: "failed", effect: "none", submission_possible: 0 });
+    expect(JSON.parse(rejected!.error_json!)).toMatchObject({
+      feature: "create",
+      unmetRequirements: [reason],
+    });
+    await expect(revalidated.observe()).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      effect: "none",
+      feature: "create",
+      unmetRequirements: [reason],
+    });
+    expect(creates).toBe(0);
+    reason = "fixture evidence";
+    const nativeRejected = await client.sandboxes.submitCreate(input);
+    prepareFailure = "y".repeat(1025);
+    await runtime.runner.tick();
+    prepareFailure = undefined;
+    await expect(nativeRejected.observe()).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      effect: "none",
+      feature: "create",
+      unmetRequirements: ["y".repeat(1024)],
+    });
+    expect(creates).toBe(0);
     const operation = await client.sandboxes.submitCreate(input);
     watchedOperation = { projectId, id: operation.reference.operationId! };
     await runtime.runner.tick();

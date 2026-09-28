@@ -125,7 +125,7 @@ class RemoteOperation<T> implements OperationHandle<T> {
       operation.effect === "none"
     )
       throw new UnsupportedFeatureError(
-        this.reference.kind,
+        operation.error.feature ?? this.reference.kind,
         operation.error.unmetRequirements ?? [operation.error.message],
       );
 
