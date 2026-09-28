@@ -326,7 +326,7 @@ const mock = async (input, init = {}) => {
   if (url.pathname.endsWith("/process/execute")) {
     mutations++;
     const command = JSON.parse(init.body).command;
-    if (command.startsWith("mkdir -m 700 -- ")) return json({ exitCode: 0, result: "" });
+    if ((command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))) return json({ exitCode: 0, result: "" });
     if (command.startsWith("cat ")) {
       const match = /^cat '([^']+)' > '([^']+)'/.exec(command);
       if (!match) throw Error("Invalid packed Daytona write command");

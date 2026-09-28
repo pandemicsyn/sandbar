@@ -8,6 +8,8 @@ test.each([
   "normal",
   "pending-id",
   "unknown-id",
+  "unnamed-active",
+  "unnamed-pending",
   "wrong-id",
   "wrong-scope",
   "lost",
@@ -61,14 +63,16 @@ test.each([
           id: mode === "wrong-id" && idReads === 1 ? "other-id" : "built-1",
           organizationId: mode === "wrong-scope" && idReads === 1 ? "other-org" : "org-1",
           state:
-            mode === "unknown-id" && idReads === 1
-              ? "error"
-              : mode === "pending-id" && idReads < 4
-                ? "pulling"
-                : lost
-                  ? (["building", "pending", "pulling", "active"][observations + idReads - 1] ??
-                    "active")
-                  : "active",
+            mode === "unnamed-pending" && idReads < 3
+              ? "pending"
+              : mode === "unknown-id" && idReads === 1
+                ? "error"
+                : mode === "pending-id" && idReads < 4
+                  ? "pulling"
+                  : lost
+                    ? (["building", "pending", "pulling", "active"][observations + idReads - 1] ??
+                      "active")
+                    : "active",
         });
       }
 
@@ -427,10 +431,10 @@ test("lost exec, write and destroy responses recover by read-only evidence after
           .object({ command: z.string() })
           .parse(JSON.parse(String(init?.body))).command;
 
-        if (command.startsWith("mkdir -m 700 -- "))
+        if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
           return Response.json({ exitCode: 0, result: "" });
 
-        if (command.startsWith("{ ")) {
+        if (command.includes("SANDBAR-EXEC-V1")) {
           mutations.exec++;
           const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(command)?.[1];
           expect(receipt).toBeDefined();

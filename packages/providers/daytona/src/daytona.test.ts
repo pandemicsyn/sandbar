@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import type { ExecCommand } from "sandbar-adapter/portable";
 import { daytonaProvider, daytonaRegistration, createDaytonaAdapter } from "./index";
@@ -412,7 +412,8 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
         .object({ command: z.string() })
         .parse(JSON.parse(String(init?.body))).command;
 
-      if (command.startsWith("mkdir -m 700 -- ")) return Response.json({ exitCode: 0, result: "" });
+      if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
+        return Response.json({ exitCode: 0, result: "" });
 
       if (command.startsWith("cat ")) {
         const match = /^cat '([^']+)' > '([^']+)'/.exec(command);
@@ -1069,7 +1070,7 @@ test.each(["absent", "file", "directory", "symlink"] as const)(
           .object({ command: z.string() })
           .parse(JSON.parse(String(init?.body))).command;
 
-        if (command.startsWith("mkdir -m 700 -- "))
+        if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
           return Response.json({ exitCode: 0, result: "" });
         links++;
 
@@ -1159,7 +1160,8 @@ test("lost staging upload response is read back and committed without another up
         .object({ command: z.string() })
         .parse(JSON.parse(String(init?.body))).command;
 
-      if (command.startsWith("mkdir -m 700 -- ")) return Response.json({ exitCode: 0, result: "" });
+      if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
+        return Response.json({ exitCode: 0, result: "" });
       commits++;
 
       const link = /^ln -T -- '([^']+)' '([^']+)'/.exec(command);
@@ -1208,7 +1210,8 @@ test("lost exec and upload responses remain unknown after one submission each", 
         .object({ command: z.string() })
         .parse(JSON.parse(String(init?.body))).command;
 
-      if (command.startsWith("mkdir -m 700 -- ")) return Response.json({ exitCode: 0, result: "" });
+      if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
+        return Response.json({ exitCode: 0, result: "" });
       executes++;
       throw new Error("response lost");
     }
@@ -1388,7 +1391,8 @@ test("POSIX capture wrapper drains a noisy command while retaining only bounded 
       expect(command.error).toBeUndefined();
       const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(script)?.[1];
 
-      if (receipt) rmSync(receipt, { force: true });
+      if (receipt)
+        rmSync(receipt.slice(0, receipt.lastIndexOf("/")), { recursive: true, force: true });
 
       return Response.json({ exitCode: command.status, result: command.stdout });
     }
@@ -1442,7 +1446,8 @@ test("generated capture wrapper isolates utilities from requested PATH and prese
       expect(execution.error).toBeUndefined();
       const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(body.command)?.[1];
 
-      if (receipt) rmSync(receipt, { force: true });
+      if (receipt)
+        rmSync(receipt.slice(0, receipt.lastIndexOf("/")), { recursive: true, force: true });
 
       return Response.json({ exitCode: execution.status, result: execution.stdout });
     }
@@ -1635,7 +1640,8 @@ test("local capture utility failure leaves an incomplete frame that stays unknow
       expect(execution.error).toBeUndefined();
       const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(failedCapture)?.[1];
 
-      if (receipt) rmSync(receipt, { force: true });
+      if (receipt)
+        rmSync(receipt.slice(0, receipt.lastIndexOf("/")), { recursive: true, force: true });
       expect(execution.status).toBe(0);
 
       return Response.json({ exitCode: execution.status, result: execution.stdout });
@@ -1705,7 +1711,7 @@ test("write receipt is atomically published before recovery from a lost response
         .object({ command: z.string() })
         .parse(JSON.parse(String(init?.body))).command;
 
-      if (command.startsWith("mkdir -m 700 -- ")) {
+      if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1")) {
         const reserved = spawnSync("sh", ["-c", command], { encoding: "utf8" });
 
         return Response.json({ exitCode: reserved.status, result: reserved.stdout });
@@ -1757,7 +1763,8 @@ test("write receipt is atomically published before recovery from a lost response
   } finally {
     rmSync(directory, { recursive: true, force: true });
 
-    if (receiptPath) rmSync(receiptPath, { force: true });
+    if (receiptPath)
+      rmSync(receiptPath.slice(0, receiptPath.lastIndexOf("/")), { recursive: true, force: true });
   }
 });
 
@@ -1853,7 +1860,7 @@ test.each(["file", "directory", "lost-reservation"] as const)(
           .object({ command: z.string() })
           .parse(JSON.parse(String(init?.body))).command;
 
-        const match = /^mkdir -m 700 -- '([^']+)'$/.exec(command);
+        const match = /^mkdir -m 700 -- '([^']+)'/.exec(command);
         expect(match).not.toBeNull();
         stage = match![1]!;
 
@@ -1901,6 +1908,106 @@ test.each(["file", "directory", "lost-reservation"] as const)(
       expect(uploads).toBe(0);
     } finally {
       rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["exec", "write"] as const)(
+  "private %s receipt reservations preserve caller files and symlinks",
+  async (kind) => {
+    for (const collision of ["file", "directory", "symlink"] as const) {
+      const directory = mkdtempSync("/tmp/sandbar-receipt-collision-");
+      const victim = `${directory}/caller-owned`;
+      writeFileSync(victim, "caller-owned");
+      let receiptDirectory = "";
+      let executes = 0;
+      let uploads = 0;
+
+      const fetchImpl = fixtureFetch(async (input, init) => {
+        const url = new URL(String(input));
+
+        if (url.pathname === "/api/api-keys/current")
+          return Response.json({ organizationId: "org-1" });
+
+        if (url.pathname === "/api/regions") return Response.json([region()]);
+
+        if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+        if (url.pathname.endsWith("/files/upload-v2")) {
+          uploads++;
+          throw new Error("Upload must not occur");
+        }
+
+        if (url.pathname.endsWith("/process/execute")) {
+          executes++;
+
+          const command = z
+            .object({ command: z.string() })
+            .parse(JSON.parse(String(init?.body))).command;
+
+          const match = /mkdir -m 700 -- '(\/tmp\/\.sandbar-(?:exec|write)-[^']+)'/.exec(command);
+          expect(match).not.toBeNull();
+          receiptDirectory = match![1]!;
+
+          if (collision === "file") writeFileSync(receiptDirectory, "caller-owned");
+
+          if (collision === "directory") {
+            mkdirSync(receiptDirectory);
+            writeFileSync(`${receiptDirectory}/receipt`, "caller-owned");
+          }
+
+          if (collision === "symlink") symlinkSync(victim, receiptDirectory);
+          writeFileSync(`${receiptDirectory}.tmp`, "caller-owned-temp");
+          const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+          expect(result.status).toBe(126);
+
+          return Response.json({ exitCode: result.status, result: result.stdout });
+        }
+
+        throw new Error("Unexpected fixture request");
+      });
+
+      try {
+        const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+        const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+        const invocation = identity(directory.split("/").at(-1)!);
+
+        const result =
+          kind === "exec"
+            ? await provider.driver.exec({
+                sandbox,
+                identity: invocation,
+                command: { kind: "shell", script: `printf corrupt > '${victim}'` },
+                deadlineSeconds: 5,
+                maxOutputBytes: 10,
+              })
+            : await provider.driver.writeFile({
+                sandbox,
+                identity: invocation,
+                path: `${directory}/target`,
+                bytes: new Uint8Array([0, 255]),
+                overwrite: true,
+              });
+
+        expect(result).toMatchObject({ status: "rejected", effect: "none" });
+        expect(readFileSync(victim, "utf8")).toBe("caller-owned");
+        expect(
+          readFileSync(
+            collision === "directory" ? `${receiptDirectory}/receipt` : receiptDirectory,
+            "utf8",
+          ),
+        ).toBe("caller-owned");
+        expect(readFileSync(`${receiptDirectory}.tmp`, "utf8")).toBe("caller-owned-temp");
+        expect(executes).toBe(1);
+        expect(uploads).toBe(0);
+      } finally {
+        if (receiptDirectory) {
+          rmSync(receiptDirectory, { recursive: true, force: true });
+          rmSync(`${receiptDirectory}.tmp`, { force: true });
+        }
+
+        rmSync(directory, { recursive: true, force: true });
+      }
     }
   },
 );

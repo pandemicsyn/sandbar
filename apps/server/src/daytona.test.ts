@@ -675,9 +675,10 @@ test("Daytona service reconnects and observes lost exec, write and delete withou
         .object({ command: z.string() })
         .parse(JSON.parse(String(init?.body))).command;
 
-      if (command.startsWith("mkdir -m 700 -- ")) return Response.json({ exitCode: 0, result: "" });
+      if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
+        return Response.json({ exitCode: 0, result: "" });
 
-      if (command.startsWith("{ ")) {
+      if (command.includes("SANDBAR-EXEC-V1")) {
         mutations.exec++;
         const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(command)?.[1];
         expect(receipt).toBeDefined();

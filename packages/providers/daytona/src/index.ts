@@ -197,7 +197,7 @@ function quote(value: string): string {
 async function receiptPath(kind: "exec" | "write", submissionId: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(submissionId));
 
-  return `/tmp/.sandbar-${kind}-${Buffer.from(digest).toString("hex")}`;
+  return `/tmp/.sandbar-${kind}-${Buffer.from(digest).toString("hex")}/receipt`;
 }
 
 function validPath(path: string): void {
@@ -517,9 +517,10 @@ export class DaytonaDriver implements ProviderDriver {
   private imageBuildResult(
     snapshot: z.infer<typeof Snapshot>,
     name: string,
+    allowMissingName = false,
   ): ImageBuildResult | null {
     if (
-      snapshot.name !== name ||
+      (snapshot.name !== name && !(allowMissingName && snapshot.name === undefined)) ||
       snapshot.organizationId !== this.scope.accountId ||
       !/^[A-Za-z0-9._:-]{1,128}$/.test(snapshot.id)
     )
@@ -568,7 +569,7 @@ export class DaytonaDriver implements ProviderDriver {
     if ((snapshotId && snapshot.id !== snapshotId) || snapshot.imageName !== image)
       return { status: "unknown", reason: "Daytona image build source mismatched" };
 
-    return this.imageBuildResult(snapshot, name);
+    return this.imageBuildResult(snapshot, name, snapshotId !== undefined);
   }
   async buildImage(input: {
     submissionId: string;
@@ -624,7 +625,7 @@ export class DaytonaDriver implements ProviderDriver {
         return { status: "unknown", reason: "Daytona image build identity mismatched", snapshotId };
 
       return (
-        this.imageBuildResult(current, name) ?? {
+        this.imageBuildResult(current, name, true) ?? {
           status: "unknown",
           reason: "Daytona image build scope mismatched",
           snapshotId,
@@ -1011,7 +1012,8 @@ export class DaytonaDriver implements ProviderDriver {
     const max = Math.min(input.maxOutputBytes, 1_048_576);
     const capture = `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PATH; d=$(mktemp -d) || exit 125; trap 'rm -rf "$d"' EXIT; mkfifo "$d/fo" "$d/fe" || exit 125; (exec 3<"$d/fo"; head -c ${max + 1} <&3 >"$d/o"; cat <&3 >/dev/null) & p1=$!; (exec 3<"$d/fe"; head -c ${max + 1} <&3 >"$d/e"; cat <&3 >/dev/null) & p2=$!; (${exports} ${command}) >"$d/fo" 2>"$d/fe"; rc=$?; wait "$p1"; wait "$p2"; o=$(wc -c <"$d/o"); e=$(wc -c <"$d/e"); o=$((o)); e=$((e)); a=$((o<${max}?o:${max})); b=$((e<${max}-a?e:${max}-a)); printf 'SANDBAR-EXEC-V1\\n%s\\n%s\\n%s\\n' "$rc" "$o" "$e"; if [ "$a" -gt 0 ]; then head -c "$a" "$d/o" | od -An -tx1 -v; fi; printf 'SANDBAR-STDERR\\n'; if [ "$b" -gt 0 ]; then head -c "$b" "$d/e" | od -An -tx1 -v; fi; printf 'SANDBAR-END\\n'`;
     const framePath = await receiptPath("exec", input.identity.submissionId);
-    const script = `{ ${capture}; } > ${quote(framePath)}; cat ${quote(framePath)}`;
+    const receiptDirectory = framePath.slice(0, framePath.lastIndexOf("/"));
+    const script = `mkdir -m 700 -- ${quote(receiptDirectory)} || exit 126; { ${capture}; } > ${quote(framePath)}; cat ${quote(framePath)}`;
 
     if (input.signal?.aborted)
       return unknown(input.identity.submissionId, "Daytona execution wait was aborted");
@@ -1027,6 +1029,18 @@ export class DaytonaDriver implements ProviderDriver {
         native,
         (input.deadlineSeconds + 10) * 1000,
       );
+
+      if (response.exitCode === 126)
+        return {
+          status: "rejected",
+          effect: "none",
+          error: {
+            code: "unavailable",
+            message: "Daytona private execution receipt directory could not be reserved",
+            effect: "none",
+            retry: "never",
+          },
+        };
 
       if (response.exitCode !== 0)
         return unknown(input.identity.submissionId, "Daytona capture wrapper failed");
@@ -1247,11 +1261,17 @@ export class DaytonaDriver implements ProviderDriver {
       return unknown(input.identity.submissionId, "Daytona file write wait was aborted");
 
     try {
+      const markerPath = await receiptPath("write", input.identity.submissionId);
+      const receiptDirectory = markerPath.slice(0, markerPath.lastIndexOf("/"));
+
       const reserved = await this.json(
         "POST",
         "/process/execute",
         CommandResponse,
-        { command: `mkdir -m 700 -- ${quote(stageDirectory)}`, timeout: 30 },
+        {
+          command: `mkdir -m 700 -- ${quote(stageDirectory)} || exit 126; mkdir -m 700 -- ${quote(receiptDirectory)} || { rmdir -- ${quote(stageDirectory)}; exit 126; }`,
+          timeout: 30,
+        },
         native,
       );
 
@@ -1324,7 +1344,6 @@ export class DaytonaDriver implements ProviderDriver {
         bytesWritten: input.bytes.length,
       });
 
-      const markerPath = await receiptPath("write", input.identity.submissionId);
       const markerStage = `${markerPath}.tmp`;
       const command = `${action}; rc=$?; if [ "$rc" -eq 0 ]; then (printf '%s' ${quote(marker)} > ${quote(markerStage)} && mv -f -- ${quote(markerStage)} ${quote(markerPath)}) || rc=125; fi; rm -f ${quote(temporaryPath)} ${quote(markerStage)} || rc=125; rmdir -- ${quote(stageDirectory)} || rc=125; exit "$rc"`;
 
