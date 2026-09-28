@@ -630,9 +630,134 @@ test("lost OCI build response observes the retained template without submitting 
     const observed = await observeOperation(connection.session, "create", identity, signal);
     expect(observed?.kind).toBe("unknown");
     expect(JSON.stringify(observed)).toContain("retained_template");
+
+    const buildIdentity = {
+      operationId: "op_build_lost",
+      submissionId: "sub_build_lost",
+      invocationKey: "inv_build_lost",
+    };
+
+    const build = await prepareOperation(
+      connection.session,
+      "image_build",
+      { source: { kind: "oci", value: "node:24" } },
+      signal,
+    );
+
+    const buildResult = await submitOperation(build, buildIdentity, signal);
+    expect(buildResult.kind).toBe("unknown");
+
+    const observedBuild = await observeOperation(
+      connection.session,
+      "image_build",
+      buildIdentity,
+      signal,
+    );
+
+    expect(observedBuild).toMatchObject({
+      kind: "completed",
+      value: { preparedId: "retained_template" },
+    });
     expect(creates).toBe(0);
   } finally {
     await connection.close();
+  }
+});
+
+test("shared image build returns a scoped prepared handle for one native create", async () => {
+  let builtName = "";
+  let creates = 0;
+  let record: E2BRecord | null = null;
+  const createdRecords: E2BRecord[] = [];
+
+  const adapter = createE2BAdapter((): E2BTransport => ({
+    async verifyTeam() {},
+    async verifyTemplate(_team, templateId) {
+      if (!["template_1", "built_template"].includes(templateId))
+        throw new Error("template outside team");
+    },
+    async buildImage(_reference, name) {
+      builtName = name;
+
+      return { templateId: "built_template", buildId: "build_one" };
+    },
+    async findBuild(_team, name) {
+      return name === builtName
+        ? { templateId: "built_template", buildId: "build_one", status: "ready" }
+        : null;
+    },
+    async create(input) {
+      creates++;
+      record = {
+        id: `sandbox_${creates}`,
+        templateId: input.templateId,
+        metadata: input.metadata,
+        state: "running",
+      };
+      createdRecords.push(record);
+
+      return record.id;
+    },
+    async get(id) {
+      return record?.id === id ? record : null;
+    },
+    async list() {
+      return { items: record ? [record] : [] };
+    },
+    async kill() {
+      record = null;
+
+      return true;
+    },
+    async run() {
+      return "";
+    },
+    async read() {
+      return { bytes: new Uint8Array(), truncated: false };
+    },
+    async write() {},
+    async remove() {},
+    close() {},
+  }));
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: { teamId: "team_one", templateId: "template_1" },
+    credentials: { apiKey: "secret" },
+  });
+
+  try {
+    const built = await client.images.build({ source: Image.oci("node:24") });
+    expect(built.prepared).toMatchObject({
+      kind: "prepared",
+      value: "built_template",
+      provider: "e2b",
+      scope: client.scope,
+    });
+    expect(built.retainedResources).toEqual([
+      {
+        kind: "e2b-template",
+        id: "built_template",
+        ownership: "unknown",
+        cleanup: "manual",
+      },
+    ]);
+    expect(creates).toBe(0);
+
+    await expect(
+      client.sandboxes.create({
+        environment: Image.prepared({ ...built.prepared, provider: "another-provider" }),
+      }),
+    ).rejects.toThrow("scope differs");
+    expect(creates).toBe(0);
+
+    const box = await client.sandboxes.create({ environment: Image.prepared(built.prepared) });
+    expect(box.id).toBe("sandbox_1");
+    expect(createdRecords[0]?.templateId).toBe("built_template");
+    await box.destroy();
+    expect(creates).toBe(1);
+  } finally {
+    await client.close();
   }
 });
 

@@ -1,4 +1,5 @@
 import type { AdapterRecoveryReference } from "./adapter-direct";
+import type { RetainedArtifact, Scope } from "sandbar-adapter";
 import { z } from "zod";
 import {
   CreateSandboxInput,
@@ -10,13 +11,45 @@ import {
   type SafeError,
 } from "sandbar-adapter/portable";
 
-export type ImageInput = { kind: "prepared"; value: string } | { kind: "oci"; value: string };
+export type PreparedImage = {
+  kind: "prepared";
+  value: string;
+  provider: string;
+  scope: Scope;
+  connectionId?: string;
+};
+
+export type ImageBuildResult = {
+  prepared: PreparedImage;
+  retainedResources: RetainedArtifact[];
+};
+
+export type OciImage = { kind: "oci"; value: string };
+
+export type ImageInput =
+  | {
+      kind: "prepared";
+      value: string;
+      binding?: { provider: string; scope: Scope; connectionId?: string };
+    }
+  | OciImage;
 
 export const Image = {
-  prepared(value: string): ImageInput {
-    return { kind: "prepared", value };
+  prepared(value: string | PreparedImage): ImageInput {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The public overload intentionally accepts either a raw template ID or a scoped result.
+    return typeof value === "string"
+      ? { kind: "prepared", value }
+      : {
+          kind: "prepared",
+          value: value.value,
+          binding: {
+            provider: value.provider,
+            scope: structuredClone(value.scope),
+            connectionId: value.connectionId,
+          },
+        };
   },
-  oci(value: string): ImageInput {
+  oci(value: string): OciImage {
     return { kind: "oci", value };
   },
 };
@@ -48,7 +81,7 @@ export type ExecOutput = {
 export type RecoveryReference = {
   version: 2;
   mode: "remote";
-  kind: "create" | "exec" | "destroy" | "file_write";
+  kind: "create" | "exec" | "destroy" | "file_write" | "image_build";
   invocationKey: string;
   operationId?: string;
   resourceId?: string;
@@ -84,6 +117,16 @@ export interface SandboxHandle {
 }
 
 export interface SandbarClient {
+  readonly images: {
+    build(
+      input: { source: { kind: "oci"; value: string } },
+      options?: { signal?: AbortSignal },
+    ): Promise<ImageBuildResult>;
+    submitBuild(
+      input: { source: { kind: "oci"; value: string } },
+      options?: { signal?: AbortSignal },
+    ): Promise<OperationHandle<ImageBuildResult>>;
+  };
   readonly sandboxes: {
     create(input: CreateInput, options?: { signal?: AbortSignal }): Promise<SandboxHandle>;
     submitCreate(
@@ -205,7 +248,23 @@ export function validateCreate(input: CreateInput): CreateInput {
   const parsed = z
     .strictObject({
       environment: z.discriminatedUnion("kind", [
-        z.strictObject({ kind: z.literal("prepared"), value: z.string().min(1) }),
+        z.strictObject({
+          kind: z.literal("prepared"),
+          value: z.string().min(1),
+          binding: z
+            .strictObject({
+              provider: z.string().min(1).max(128),
+              connectionId: z.string().min(1).max(128).optional(),
+              scope: z.strictObject({
+                authority: z.strictObject({
+                  kind: z.string().min(1).max(64),
+                  id: z.string().min(1).max(512),
+                }),
+                partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
+              }),
+            })
+            .optional(),
+        }),
         z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
       ]),
       networkPolicy: z.string().min(1).max(128).optional(),
@@ -266,7 +325,7 @@ export function validateReference(value: RecoveryReference): RecoveryReference {
   const schema = z.strictObject({
     version: z.literal(2),
     mode: z.literal("remote"),
-    kind: z.enum(["create", "exec", "destroy", "file_write"]),
+    kind: z.enum(["create", "exec", "destroy", "file_write", "image_build"]),
     invocationKey: InvocationKey,
     operationId: Id.optional(),
     resourceId: Id.optional(),
@@ -288,7 +347,7 @@ export function validateReference(value: RecoveryReference): RecoveryReference {
 
   if (
     (ref.kind === "file_write") !== !!ref.file ||
-    (ref.kind === "create" ? !!ref.resourceId : !ref.resourceId)
+    (ref.kind === "create" || ref.kind === "image_build" ? !!ref.resourceId : !ref.resourceId)
   )
     throw new SandbarError("INVALID_ARGUMENT", "Recovery fields do not match operation kind");
 

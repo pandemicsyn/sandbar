@@ -6,6 +6,7 @@ import {
   ExecRequest,
   Execution,
   FileReceipt,
+  ImageBuildRequest,
   Id,
   Operation,
   Sandbox,
@@ -19,6 +20,7 @@ import {
   type CreateInput,
   type ExecInput,
   type ExecOutput,
+  type ImageBuildResult,
   type OperationHandle,
   type RecoveryReference,
   type SandboxHandle,
@@ -450,6 +452,16 @@ export class RemoteClient implements SandbarClient {
     submitCreate: (input: CreateInput, options: { signal?: AbortSignal } = {}) =>
       this.submitCreate(input, options),
   };
+  readonly images = {
+    build: async (
+      input: { source: { kind: "oci"; value: string } },
+      options: { signal?: AbortSignal } = {},
+    ) => (await this.submitBuild(input, options)).wait(options),
+    submitBuild: (
+      input: { source: { kind: "oci"; value: string } },
+      options: { signal?: AbortSignal } = {},
+    ) => this.submitBuild(input, options),
+  };
   private readonly endpoint: URL;
   readonly #token: string;
   private readonly fetcher: typeof fetch;
@@ -625,7 +637,8 @@ export class RemoteClient implements SandbarClient {
     try {
       const headers = new Headers({ "Idempotency-Key": key });
 
-      if (kind === "create" || kind === "exec") headers.set("Content-Type", "application/json");
+      if (kind === "create" || kind === "exec" || kind === "image_build")
+        headers.set("Content-Type", "application/json");
 
       const response = await this.raw(path, {
         method,
@@ -689,6 +702,11 @@ export class RemoteClient implements SandbarClient {
     throwIfAborted(options.signal);
     input = validateCreate(input);
 
+    const binding = input.environment.kind === "prepared" ? input.environment.binding : undefined;
+
+    if (binding && !binding.connectionId)
+      throw new SandbarError("FORBIDDEN", "Scoped prepared image lacks a service connection");
+
     const body = CreateSandboxRequest.parse({
       environment:
         input.environment.kind === "prepared"
@@ -697,6 +715,8 @@ export class RemoteClient implements SandbarClient {
       region: input.region,
       network: { policy: input.networkPolicy ?? "blocked" },
       labels: input.labels,
+      connectionId: binding?.connectionId,
+      preparedBinding: binding,
     });
 
     let dispatched: RecoveryReference | undefined;
@@ -735,6 +755,46 @@ export class RemoteClient implements SandbarClient {
       },
     );
   }
+  async submitBuild(
+    input: { source: { kind: "oci"; value: string } },
+    options: { signal?: AbortSignal } = {},
+  ): Promise<OperationHandle<ImageBuildResult>> {
+    throwIfAborted(options.signal);
+    const body = ImageBuildRequest.parse(input);
+    let dispatched: RecoveryReference | undefined;
+
+    const { operation, reference } = await awaitSubmission(
+      this[mutateOperation](
+        "image_build",
+        undefined,
+        "images/builds",
+        "POST",
+        JSON.stringify(body),
+        AcceptedOperation,
+        undefined,
+        (value) => {
+          dispatched = value;
+        },
+      ),
+      this.closedSignal,
+      options.signal,
+      () => dispatched,
+    );
+
+    return new RemoteOperation(
+      { ...reference, operationId: operation.id },
+      this,
+      async (current) => {
+        if (current.result?.kind !== "image_build")
+          throw new OutcomeUnknownError(reference, "Image build result is missing");
+
+        return {
+          prepared: current.result.prepared,
+          retainedResources: current.result.retainedResources,
+        };
+      },
+    );
+  }
   async create(input: CreateInput, options: { signal?: AbortSignal } = {}) {
     throwIfAborted(options.signal);
     const operation = await this.submitCreate(input, options);
@@ -765,6 +825,16 @@ export class RemoteClient implements SandbarClient {
         await box.inspect();
 
         return box;
+      }
+
+      if (reference.kind === "image_build") {
+        if (op.result?.kind !== "image_build")
+          throw new OutcomeUnknownError(reference, "Image build result is missing");
+
+        return {
+          prepared: op.result.prepared,
+          retainedResources: op.result.retainedResources,
+        };
       }
 
       if (reference.kind === "exec") {

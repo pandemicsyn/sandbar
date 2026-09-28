@@ -16,7 +16,7 @@ export class StoreError extends Error {
   }
 }
 
-export type Kind = "create" | "exec" | "destroy" | "file_write";
+export type Kind = "create" | "exec" | "destroy" | "file_write" | "image_build";
 
 export type OperationStatus = "queued" | "running" | "succeeded" | "failed" | "unknown";
 
@@ -70,7 +70,7 @@ export interface OperationRow {
   id: string;
   project_id: string;
   kind: Kind;
-  sandbox_id: string;
+  sandbox_id: string | null;
   execution_id: string | null;
   connection_id: string;
   status: OperationStatus;
@@ -344,7 +344,7 @@ export class ControlStore {
   }
   private async checkUnresolvedQuota(tx: QueryConnection, projectId: string): Promise<void> {
     const row = await tx.row<{ n: number }>(
-      sql`SELECT COUNT(*) AS n FROM operations WHERE project_id=${projectId} AND kind IN ('create','exec','file_write') AND status IN ('queued','running','unknown')`,
+      sql`SELECT COUNT(*) AS n FROM operations WHERE project_id=${projectId} AND kind IN ('create','exec','file_write','image_build') AND status IN ('queued','running','unknown')`,
     );
 
     if (Number(row?.n ?? 0) >= 100)
@@ -422,6 +422,74 @@ export class ControlStore {
           sql`SELECT * FROM operations WHERE id=${operationId}`,
         ))!,
         sandbox: (await tx.row<SandboxRow>(sql`SELECT * FROM sandboxes WHERE id=${sandboxId}`))!,
+        repeated: false,
+      };
+    });
+  }
+
+  async admitImageBuild(input: {
+    projectId: string;
+    endpoint: string;
+    key: string;
+    intentHash: string;
+    request: { source: { kind: "oci"; value: string } };
+    connectionId?: string;
+    providerAvailable?: ProviderAvailable;
+  }): Promise<{ operation: OperationRow; repeated: boolean }> {
+    return this.backend.transaction(async (tx) => {
+      await this.lockProject(tx, input.projectId);
+
+      const previous = await tx.row<{ intent_hash: string; operation_id: string }>(
+        sql`SELECT intent_hash,operation_id FROM invocation_keys WHERE project_id=${input.projectId} AND endpoint=${input.endpoint} AND ${sql.raw("`key`")}=${input.key}`,
+      );
+
+      if (previous) {
+        if (previous.intent_hash !== input.intentHash)
+          throw new StoreError("CONFLICT", "Idempotency-Key was used with different input");
+
+        const operation = await tx.row<OperationRow>(
+          sql`SELECT * FROM operations WHERE id=${previous.operation_id} AND project_id=${input.projectId}`,
+        );
+
+        if (!operation || operation.kind !== "image_build")
+          throw new StoreError("CONFLICT", "Image-build invocation does not match");
+
+        return { operation, repeated: true };
+      }
+
+      this.checkNewKey(input.key);
+      await this.checkUnresolvedQuota(tx, input.projectId);
+
+      const connections = input.connectionId
+        ? await tx.rows<ConnectionRow>(
+            sql`SELECT * FROM provider_connections WHERE project_id=${input.projectId} AND id=${input.connectionId} AND status='verified'`,
+          )
+        : await tx.rows<ConnectionRow>(
+            sql`SELECT * FROM provider_connections WHERE project_id=${input.projectId} AND status='verified' ORDER BY created_at,id`,
+          );
+
+      const connection = connections.find(
+        (candidate) => !input.providerAvailable || input.providerAvailable(candidate.provider),
+      );
+
+      if (!connection)
+        throw new StoreError("CONFLICT", "No verified provider connection is available");
+
+      const operationId = id("op");
+      const submissionId = id("sub");
+      const time = now();
+
+      await tx.run(
+        sql`INSERT INTO operations (id,project_id,kind,sandbox_id,execution_id,connection_id,status,phase,effect,request_json,result_json,error_json,provider_token,submission_possible,lease_owner,lease_generation,lease_expires_at,next_attempt_at,observed_at,created_at,updated_at) VALUES (${operationId},${input.projectId},'image_build',NULL,NULL,${connection.id},'queued','accepted','none',${JSON.stringify(input.request)},NULL,NULL,${submissionId},0,NULL,0,NULL,${time},NULL,${time},${time})`,
+      );
+      await tx.run(
+        sql`INSERT INTO invocation_keys (project_id,endpoint,${sql.raw("`key`")},intent_hash,operation_id,accepted_at) VALUES (${input.projectId},${input.endpoint},${input.key},${input.intentHash},${operationId},${time})`,
+      );
+
+      return {
+        operation: (await tx.row<OperationRow>(
+          sql`SELECT * FROM operations WHERE id=${operationId}`,
+        ))!,
         repeated: false,
       };
     });
@@ -1146,12 +1214,14 @@ export class ControlStore {
         );
       }
 
-      await tx.run(
-        sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${op.project_id},${op.sandbox_id},${op.id},${`${op.kind}.completed`},${JSON.stringify({ effect: result.effect })},${observedAt},${observedAt},${time})`,
-      );
-      await tx.run(
-        sql`INSERT INTO usage_evidence (id,project_id,sandbox_id,operation_id,kind,source_key,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("ue")},${op.project_id},${op.sandbox_id},${op.id},${`${op.kind}.observed`},${`${op.id}:completed`},${JSON.stringify({ effect: result.effect })},${observedAt},${observedAt},${time})`,
-      );
+      if (op.kind !== "image_build") {
+        await tx.run(
+          sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${op.project_id},${op.sandbox_id},${op.id},${`${op.kind}.completed`},${JSON.stringify({ effect: result.effect })},${observedAt},${observedAt},${time})`,
+        );
+        await tx.run(
+          sql`INSERT INTO usage_evidence (id,project_id,sandbox_id,operation_id,kind,source_key,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("ue")},${op.project_id},${op.sandbox_id},${op.id},${`${op.kind}.observed`},${`${op.id}:completed`},${JSON.stringify({ effect: result.effect })},${observedAt},${observedAt},${time})`,
+        );
+      }
     });
   }
   async failWithoutEffect(
@@ -1223,9 +1293,10 @@ export class ControlStore {
         );
       }
 
-      await tx.run(
-        sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${op.project_id},${op.sandbox_id},${op.id},'operation.rejected',${JSON.stringify({ code: error.code })},NULL,NULL,${time})`,
-      );
+      if (op.kind !== "image_build")
+        await tx.run(
+          sql`INSERT INTO resource_events (id,project_id,sandbox_id,operation_id,kind,payload_json,effective_at,observed_at,recorded_at) VALUES (${id("evt")},${op.project_id},${op.sandbox_id},${op.id},'operation.rejected',${JSON.stringify({ code: error.code })},NULL,NULL,${time})`,
+        );
     });
   }
 }

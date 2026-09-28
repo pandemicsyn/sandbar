@@ -11,6 +11,17 @@ export type Sandbox = { readonly id: string };
 
 export type Image = { kind: "prepared" | "oci"; value: string };
 
+export type ImageBuildInput = { source: { kind: "oci"; value: string } };
+
+export type RetainedArtifact = {
+  kind: string;
+  id: string;
+  ownership: "verified" | "unknown";
+  cleanup: "manual" | "provider_expiry" | "none_known";
+};
+
+export type ImageBuildValue = { preparedId: string; retainedResources: RetainedArtifact[] };
+
 export type CreateInput = {
   image: Image;
   networkPolicy: string;
@@ -173,6 +184,7 @@ export type AdapterSession<
   scope: Scope;
   supports: Guarantees<C>;
   create: Mutation<CreateInput, CreateValue, CP, CT, undefined>;
+  imageBuild?: Mutation<ImageBuildInput, ImageBuildValue, ImageBuildInput, Json, undefined>;
   destroy: Mutation<Sandbox, DestroyValue, DP, Json, Sandbox>;
   inspect?: (
     box: Sandbox,

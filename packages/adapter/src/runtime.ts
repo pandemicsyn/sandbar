@@ -14,6 +14,8 @@ import {
   type ExecInput,
   type ExecValue,
   type FileWriteInput,
+  type ImageBuildInput,
+  type ImageBuildValue,
   type Json,
   type Mutation,
   type Pending,
@@ -22,8 +24,12 @@ import {
   type Unknown,
 } from "./index";
 
-export type RuntimeSession = Omit<AdapterSession, "create" | "destroy" | "exec" | "files"> & {
+export type RuntimeSession = Omit<
+  AdapterSession,
+  "create" | "destroy" | "exec" | "files" | "imageBuild"
+> & {
   create: unknown;
+  imageBuild?: unknown;
   destroy: unknown;
   exec?: unknown;
   files?: {
@@ -33,7 +39,7 @@ export type RuntimeSession = Omit<AdapterSession, "create" | "destroy" | "exec" 
   };
 };
 
-export type OperationKind = "create" | "destroy" | "exec" | "file_write";
+export type OperationKind = "create" | "destroy" | "exec" | "file_write" | "image_build";
 
 export type SpecialOutcome = Pending | Unknown | Rejected;
 
@@ -41,6 +47,7 @@ export type OperationResult =
   | { id: string; state: "running" | "unknown" }
   | DestroyValue
   | ExecValue
+  | ImageBuildValue
   | { bytesWritten: number };
 
 export type PreparedOperation = {
@@ -76,6 +83,10 @@ const CreateInputSchema = z.strictObject({
   labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
 });
 
+const ImageBuildInputSchema = z.strictObject({
+  source: z.strictObject({ kind: z.literal("oci"), value: z.string().min(1).max(1024) }),
+});
+
 const ExecInputSchema = z.strictObject({
   sandbox: SandboxSchema,
   command: z.discriminatedUnion("kind", [
@@ -99,6 +110,20 @@ const FileWriteInputSchema = z.strictObject({
 });
 
 const CreateValueSchema = z.strictObject({ id: Id, state: z.enum(["running", "unknown"]) });
+
+const ImageBuildValueSchema = z.strictObject({
+  preparedId: Id,
+  retainedResources: z
+    .array(
+      z.strictObject({
+        kind: z.string().min(1).max(128),
+        id: Id,
+        ownership: z.enum(["verified", "unknown"]),
+        cleanup: z.enum(["manual", "provider_expiry", "none_known"]),
+      }),
+    )
+    .max(128),
+});
 
 const DestroyValueSchema = z.strictObject({
   computeStopped: z.boolean(),
@@ -245,6 +270,8 @@ async function validateValue(
 
   if (kind === "create") return CreateValueSchema.parse(value);
 
+  if (kind === "image_build") return ImageBuildValueSchema.parse(value);
+
   if (kind === "destroy") return DestroyValueSchema.parse(value);
 
   if (kind === "file_write") return WriteValueSchema.parse(value);
@@ -338,6 +365,9 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
     case "create":
       op = session.create;
       break;
+    case "image_build":
+      op = session.imageBuild;
+      break;
     case "destroy":
       op = session.destroy;
       break;
@@ -358,8 +388,10 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
 function checkCapability(
   session: RuntimeSession,
   kind: OperationKind,
-  input: CreateInput | ExecInput | FileWriteInput | Sandbox,
-): CreateInput | ExecInput | FileWriteInput | Sandbox {
+  input: CreateInput | ImageBuildInput | ExecInput | FileWriteInput | Sandbox,
+): CreateInput | ImageBuildInput | ExecInput | FileWriteInput | Sandbox {
+  if (kind === "image_build") return ImageBuildInputSchema.parse(input);
+
   if (kind === "create") {
     const request = CreateInputSchema.parse(input);
     CreateSandboxInput.parse({
@@ -425,11 +457,11 @@ function checkCapability(
 export async function prepareOperation(
   session: RuntimeSession,
   kind: OperationKind,
-  input: CreateInput | ExecInput | FileWriteInput | Sandbox,
+  input: CreateInput | ImageBuildInput | ExecInput | FileWriteInput | Sandbox,
   signal: AbortSignal,
 ): Promise<PreparedOperation> {
   const operation = select(session, kind);
-  let checkedInput: CreateInput | ExecInput | FileWriteInput | Sandbox;
+  let checkedInput: CreateInput | ImageBuildInput | ExecInput | FileWriteInput | Sandbox;
 
   try {
     checkedInput = checkCapability(session, kind, input);

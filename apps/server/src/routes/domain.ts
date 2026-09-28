@@ -13,6 +13,7 @@ import {
   ExecRequest,
   Execution,
   FileReceipt,
+  ImageBuildRequest,
   FileWriteQuery,
   Id,
   InvocationKey,
@@ -208,13 +209,25 @@ function opDto(row: OperationRow) {
           effect: row.effect,
         },
       };
+
+    if (row.kind === "image_build")
+      result = {
+        kind: "image_build",
+        prepared: {
+          kind: "prepared",
+          value: native.observation.preparedId,
+          provider: native.observation.provider,
+          scope: native.observation.scope,
+          connectionId: row.connection_id,
+        },
+        retainedResources: native.observation.retainedResources,
+      };
   }
 
   const dto = {
     id: row.id,
     projectId: row.project_id,
     kind: row.kind,
-    sandboxId: row.sandbox_id,
     status: row.status,
     phase: row.phase,
     createdAt: new Date(Number(row.created_at)).toISOString(),
@@ -222,6 +235,8 @@ function opDto(row: OperationRow) {
     effect: row.effect,
     recovery: row.status === "unknown" ? ["check_again"] : [],
   };
+
+  if (row.sandbox_id) Object.assign(dto, { sandboxId: row.sandbox_id });
 
   if (row.execution_id) Object.assign(dto, { executionId: row.execution_id });
 
@@ -697,12 +712,61 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       const body = await parseBody(c, CreateSandboxRequest);
 
+      if (body.preparedBinding) {
+        if (
+          body.environment.kind !== "prepared" ||
+          !body.connectionId ||
+          body.connectionId !== body.preparedBinding.connectionId
+        )
+          throw new AdapterError("CONFLICT", "Prepared image connection does not match");
+
+        const connection = await deps.store.getConnection(projectId, body.connectionId);
+        const scope = connection?.scope ? publicScope(connection.scope).adapterScope : undefined;
+
+        const canonical = (value: NonNullable<typeof scope>) =>
+          JSON.stringify({
+            authority: value.authority,
+            partition: Object.fromEntries(
+              Object.entries(value.partition).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+            ),
+          });
+
+        if (
+          !connection ||
+          connection.status !== "verified" ||
+          connection.provider !== body.preparedBinding.provider ||
+          !scope ||
+          canonical(scope) !== canonical(body.preparedBinding.scope)
+        )
+          throw new AdapterError("CONFLICT", "Prepared image scope differs from connection");
+      }
+
       const admission = await deps.store.admitCreate({
         projectId,
         endpoint: "POST /sandboxes",
         key,
         intentHash: await intentSha256(body),
         request: body,
+        connectionId: body.connectionId,
+        providerAvailable: (provider) => providerAvailable(deps, provider),
+      });
+
+      return accepted(c, admission.operation);
+    }),
+  );
+  app.post(
+    "/v1/projects/:projectId/images/builds",
+    protect(deps, true, async (c) => {
+      const projectId = idParam(c, "projectId");
+      const key = InvocationKey.parse(c.req.header("idempotency-key"));
+      const body = await parseBody(c, ImageBuildRequest);
+
+      const admission = await deps.store.admitImageBuild({
+        projectId,
+        endpoint: "POST /images/builds",
+        key,
+        intentHash: await intentSha256(body),
+        request: { source: body.source },
         connectionId: body.connectionId,
         providerAvailable: (provider) => providerAvailable(deps, provider),
       });
@@ -870,12 +934,12 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       const kind = params.get("kind"),
         sandboxIdValue = params.get("sandboxId");
 
-      if (!kind || !["create", "exec", "destroy", "file_write"].includes(kind))
+      if (!kind || !["create", "exec", "destroy", "file_write", "image_build"].includes(kind))
         throw new SyntaxError("Invalid invocation kind");
 
       if (
-        (kind === "create" && sandboxIdValue !== null) ||
-        (kind !== "create" && sandboxIdValue === null)
+        ((kind === "create" || kind === "image_build") && sandboxIdValue !== null) ||
+        (kind !== "create" && kind !== "image_build" && sandboxIdValue === null)
       )
         throw new SyntaxError("Invalid invocation sandbox");
       const sandboxId = sandboxIdValue === null ? undefined : Id.parse(sandboxIdValue);
@@ -885,6 +949,9 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       switch (kind) {
         case "create":
           endpoint = "POST /sandboxes";
+          break;
+        case "image_build":
+          endpoint = "POST /images/builds";
           break;
         case "exec":
           endpoint = `POST /sandboxes/${sandboxId}/executions`;

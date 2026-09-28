@@ -26,6 +26,7 @@ Import from `sandbar-sdk`.
 | `ExecInput`                | type      |
 | `ExecOutput`               | type      |
 | `Image`                    | re-export |
+| `ImageBuildResult`         | type      |
 | `ImageInput`               | type      |
 | `NoExitCodeError`          | re-export |
 | `NonzeroExitError`         | re-export |
@@ -33,6 +34,7 @@ Import from `sandbar-sdk`.
 | `OutcomeUnknownError`      | re-export |
 | `outputText`               | re-export |
 | `PreparedAdapterAttempt`   | re-export |
+| `PreparedImage`            | type      |
 | `RecoveryReference`        | type      |
 | `Sandbar`                  | value     |
 | `SandbarClient`            | type      |
@@ -86,6 +88,8 @@ Import from `sandbar-adapter`.
 | `Guarantees`                   | type      |
 | `HostContext`                  | type      |
 | `Image`                        | type      |
+| `ImageBuildInput`              | type      |
+| `ImageBuildValue`              | type      |
 | `isOutcome`                    | function  |
 | `Json`                         | type      |
 | `Mutation`                     | type      |
@@ -102,6 +106,7 @@ Import from `sandbar-adapter`.
 | `ReadContext`                  | type      |
 | `RecoveryAttempt`              | type      |
 | `Rejected`                     | type      |
+| `RetainedArtifact`             | type      |
 | `RuntimeResult`                | type      |
 | `RuntimeSession`               | type      |
 | `SafeError`                    | re-export |

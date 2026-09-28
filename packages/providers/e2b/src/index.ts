@@ -83,9 +83,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
       const owned = (record: E2BRecord) =>
         record.metadata.sandbar_scope === scopeMarker &&
-        record.metadata.sandbar_template === record.templateId &&
-        (record.templateId === config.templateId ||
-          record.metadata.sandbar_build?.startsWith("sandbar-"));
+        record.metadata.sandbar_template === record.templateId;
 
       const find = async (id: string): Promise<E2BRecord | null> => {
         if (!nativeId.test(id))
@@ -152,11 +150,81 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_BYTES },
           fileWrite: { overwrite: true, noClobber: true },
         },
+        imageBuild: {
+          async prepare(input) {
+            await transport.verifyTeam(config.teamId);
+
+            return input;
+          },
+          async submit(input, ctx) {
+            if (!nativeId.test(ctx.submissionId))
+              return ctx.reject("INVALID_ARGUMENT", "Invalid E2B build submission ID");
+
+            const name = buildName(ctx.submissionId);
+
+            try {
+              if (await transport.findBuild(config.teamId, name))
+                return ctx.unknown(`E2B image build ${name} already exists; no build was replayed`);
+
+              if (ctx.signal.aborted)
+                return ctx.unknown(`E2B image build ${name} was not submitted after cancellation`);
+
+              const build = await transport.buildImage(input.source.value, name);
+
+              if (!nativeId.test(build.templateId))
+                return ctx.unknown(`E2B image build ${name} returned an invalid template ID`);
+
+              if (ctx.signal.aborted)
+                return ctx.unknown(`E2B image build ${name} outcome after cancellation is unknown`);
+
+              const observed = await transport.findBuild(config.teamId, name);
+
+              if (
+                !observed ||
+                observed.templateId !== build.templateId ||
+                observed.status !== "ready"
+              )
+                return ctx.unknown(`E2B image build ${name} could not be confirmed ready`);
+
+              return {
+                preparedId: build.templateId,
+                retainedResources: [
+                  {
+                    kind: "e2b-template",
+                    id: build.templateId,
+                    ownership: "unknown" as const,
+                    cleanup: "manual" as const,
+                  },
+                ],
+              };
+            } catch {
+              return ctx.unknown(`E2B image build ${name} outcome unavailable; observe only`);
+            }
+          },
+          async observe(attempt, ctx) {
+            await transport.verifyTeam(config.teamId);
+            const build = await transport.findBuild(config.teamId, buildName(attempt.submissionId));
+
+            if (!build) return null;
+
+            if (build.status !== "ready")
+              return ctx.unknown(`E2B image build ${build.templateId} is ${build.status}`);
+
+            return {
+              preparedId: build.templateId,
+              retainedResources: [
+                {
+                  kind: "e2b-template",
+                  id: build.templateId,
+                  ownership: "unknown" as const,
+                  cleanup: "manual" as const,
+                },
+              ],
+            };
+          },
+        },
         create: {
           async prepare(input) {
-            if (input.image.kind === "prepared" && input.image.value !== config.templateId)
-              throw new AdapterError("UNSUPPORTED", "Use the verified E2B template ID");
-
             if (input.region)
               throw new AdapterError("UNSUPPORTED", "E2B region selection is unavailable");
 
@@ -168,7 +236,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             await transport.verifyTeam(config.teamId);
 
             if (input.image.kind === "prepared")
-              await transport.verifyTemplate(config.teamId, config.templateId);
+              await transport.verifyTemplate(config.teamId, input.image.value);
 
             return input;
           },
@@ -176,7 +244,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             if (!nativeId.test(ctx.submissionId) || !nativeId.test(ctx.operationId))
               return ctx.reject("INVALID_ARGUMENT", "Invalid E2B correlation ID");
 
-            let templateId = config.templateId;
+            let templateId =
+              input.image.kind === "prepared" ? input.image.value : config.templateId;
+
             const name = input.image.kind === "oci" ? buildName(ctx.submissionId) : undefined;
 
             if (name) {

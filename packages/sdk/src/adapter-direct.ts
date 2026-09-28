@@ -11,6 +11,7 @@ import {
   type CreateInput as AdapterCreateInput,
   type ExecInput as AdapterExecInput,
   type FileWriteInput,
+  type ImageBuildInput,
   type Json,
   type OperationKind,
   type PreparedOperation,
@@ -35,6 +36,7 @@ import {
   type CreateInput,
   type ExecInput,
   type ExecOutput,
+  type ImageBuildResult,
 } from "./resource";
 import type { BoundAdapter } from "./bound";
 
@@ -44,7 +46,7 @@ const ReferenceSchema = z.strictObject({
   version: z.literal(2),
   mode: z.literal("direct"),
   provider: z.string().min(1).max(128),
-  kind: z.enum(["create", "destroy", "exec", "file_write"]),
+  kind: z.enum(["create", "destroy", "exec", "file_write", "image_build"]),
   scope: z.strictObject({
     authority: z.strictObject({ kind: z.string().min(1).max(64), id: z.string().min(1).max(512) }),
     partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
@@ -600,7 +602,7 @@ export class AdapterDirectClient {
     }>;
     prepare: (
       kind: OperationKind,
-      input: AdapterCreateInput | AdapterExecInput | FileWriteInput | Sandbox,
+      input: AdapterCreateInput | ImageBuildInput | AdapterExecInput | FileWriteInput | Sandbox,
       options?: { signal?: AbortSignal; maxOutputBytes?: number },
     ) => Promise<PreparedAdapterAttempt>;
     observe: (
@@ -615,6 +617,16 @@ export class AdapterDirectClient {
       input: CreateInput,
       options?: { signal?: AbortSignal },
     ) => Promise<AdapterOperation<AdapterSandbox>>;
+  };
+  readonly images: {
+    build: (
+      input: ImageBuildInput,
+      options?: { signal?: AbortSignal },
+    ) => Promise<ImageBuildResult>;
+    submitBuild: (
+      input: ImageBuildInput,
+      options?: { signal?: AbortSignal },
+    ) => Promise<AdapterOperation<ImageBuildResult>>;
   };
   constructor(
     readonly provider: string,
@@ -699,7 +711,7 @@ export class AdapterDirectClient {
         const checked = z
           .strictObject({
             scope: ReferenceSchema.shape.scope,
-            kind: z.enum(["create", "destroy", "exec", "file_write"]),
+            kind: z.enum(["create", "destroy", "exec", "file_write", "image_build"]),
             operationId: z.string().min(1).max(128),
             submissionId: z.string().min(1).max(128),
             sandboxId: z.string().min(1).max(512).optional(),
@@ -715,8 +727,8 @@ export class AdapterDirectClient {
           );
 
         if (
-          (checked.kind === "create" && checked.sandboxId) ||
-          (checked.kind !== "create" && !checked.sandboxId)
+          ((checked.kind === "create" || checked.kind === "image_build") && checked.sandboxId) ||
+          (checked.kind !== "create" && checked.kind !== "image_build" && !checked.sandboxId)
         )
           throw new SandbarError("INVALID_ARGUMENT", "Observation sandbox binding is invalid");
 
@@ -763,6 +775,10 @@ export class AdapterDirectClient {
         (await this.submitCreate(input, options)).wait(options),
       submitCreate: (input, options = {}) => this.submitCreate(input, options),
     };
+    this.images = {
+      build: async (input, options = {}) => (await this.submitBuild(input, options)).wait(options),
+      submitBuild: (input, options = {}) => this.submitBuild(input, options),
+    };
   }
   isClosed() {
     return this.closed || this.signal.aborted;
@@ -793,10 +809,18 @@ export class AdapterDirectClient {
   ): Promise<AdapterOperation<AdapterSandbox>> {
     const request = validateCreate(input);
 
+    if (
+      request.environment.kind === "prepared" &&
+      request.environment.binding &&
+      (request.environment.binding.provider !== this.provider ||
+        canonicalScope(request.environment.binding.scope) !== canonicalScope(this.scope))
+    )
+      throw new SandbarError("FORBIDDEN", "Prepared image scope differs from this connection");
+
     return this.submit(
       "create",
       {
-        image: request.environment,
+        image: { kind: request.environment.kind, value: request.environment.value },
         networkPolicy: request.networkPolicy ?? "blocked",
         region: request.region,
         labels: request.labels,
@@ -809,9 +833,34 @@ export class AdapterDirectClient {
       options,
     );
   }
+  async submitBuild(
+    input: ImageBuildInput,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<AdapterOperation<ImageBuildResult>> {
+    if (!this.session.imageBuild) unsupported("image build");
+
+    return this.submit(
+      "image_build",
+      input,
+      (result, ref) => {
+        if (result.kind !== "completed" || !("preparedId" in result.value)) throw asUnknown(ref);
+
+        return {
+          prepared: {
+            kind: "prepared",
+            value: result.value.preparedId,
+            provider: this.provider,
+            scope: structuredClone(this.scope),
+          },
+          retainedResources: result.value.retainedResources,
+        };
+      },
+      options,
+    );
+  }
   async submit<T>(
     kind: OperationKind,
-    input: AdapterCreateInput | AdapterExecInput | FileWriteInput | Sandbox,
+    input: AdapterCreateInput | ImageBuildInput | AdapterExecInput | FileWriteInput | Sandbox,
     decode: (result: RuntimeResult, ref: AdapterRecoveryReference) => T,
     options: {
       signal?: AbortSignal;
@@ -880,10 +929,10 @@ export class AdapterDirectClient {
     )
       throw new SandbarError("FORBIDDEN", "Recovery scope does not match the verified connection");
 
-    if (reference.kind === "create" && reference.sandboxId)
+    if ((reference.kind === "create" || reference.kind === "image_build") && reference.sandboxId)
       throw new SandbarError("INVALID_ARGUMENT", "Create reference cannot have a sandbox");
 
-    if (reference.kind !== "create" && !reference.sandboxId)
+    if (reference.kind !== "create" && reference.kind !== "image_build" && !reference.sandboxId)
       throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox is missing");
 
     return new AdapterOperation(this, reference, (result, ref) => {
@@ -891,6 +940,17 @@ export class AdapterDirectClient {
       const value = result.value;
 
       if (ref.kind === "create" && "id" in value) return new AdapterSandbox(this, value.id);
+
+      if (ref.kind === "image_build" && "preparedId" in value)
+        return {
+          prepared: {
+            kind: "prepared",
+            value: value.preparedId,
+            provider: this.provider,
+            scope: structuredClone(this.scope),
+          },
+          retainedResources: value.retainedResources,
+        };
 
       if (
         ref.kind === "exec" &&

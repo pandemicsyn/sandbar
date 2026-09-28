@@ -173,6 +173,10 @@ import { Sandbar, Image } from "sandbar-sdk";
 import { e2b, createE2BAdapter } from "sandbar-sdk/e2b";
 async function flow() {
   const client = await Sandbar.connect(e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" }));
+  const built = await client.images.build({ source: Image.oci("node:24") });
+  const prepared = Image.prepared(built.prepared);
+  const builtBox = await client.sandboxes.create({ environment: prepared, networkPolicy: "blocked" });
+  await builtBox.destroy();
   const box = await client.sandboxes.create({ environment: Image.prepared("template_1"), networkPolicy: "blocked" });
   const output = await box.exec({ command: { kind: "argv", argv: ["printf", "test"] } });
   const bytes: Uint8Array = await box.readFile("/tmp/file");
@@ -369,7 +373,7 @@ const files = new Map();
 const binary = Uint8Array.from([0, 255, 129]);
 const transport = {
   async verifyTeam(id) { if (id !== "team_1") throw Error("Wrong team"); },
-  async verifyTemplate(team, template) { if (team !== "team_1" || template !== "template_1") throw Error("Wrong template"); },
+  async verifyTemplate(team, template) { if (team !== "team_1" || !["template_1", "template_oci"].includes(template)) throw Error("Wrong template"); },
   async buildImage(reference, name) { if (reference !== "node:24") throw Error("Wrong OCI reference"); buildName = name; return { templateId: "template_oci", buildId: "build_1" }; },
   async findBuild(_team, name) { return name === buildName ? { templateId: "template_oci", buildId: "build_1", status: "ready" } : null; },
   async create(input) {
@@ -410,8 +414,12 @@ try {
   const oci = await client.sandboxes.create({ environment: Image.oci("node:24"), networkPolicy: "blocked" });
   await oci.destroy();
   if (!buildName || retained !== "template_oci") throw Error("OCI retained template was hidden");
+  const built = await client.images.build({ source: Image.oci("node:24") });
+  if (built.prepared.value !== "template_oci" || built.prepared.provider !== "e2b" || built.retainedResources[0]?.ownership !== "unknown") throw Error("Scoped image build result mismatch");
+  const fromBuild = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
+  await fromBuild.destroy();
 } finally { await client.close(); }
-if (creates !== 2 || kills !== 2 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
+if (creates !== 3 || kills !== 3 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
 process.stdout.write("packed E2B fixture flow passed\\n");
 `;
 
@@ -434,7 +442,7 @@ try {
 const externalAdapterSource = `
 import { z } from "zod";
 import { defineAdapter } from "sandbar-adapter";
-export const metrics = { creates: 0, destroys: 0, closes: 0, observes: 0 };
+export const metrics = { creates: 0, destroys: 0, closes: 0, observes: 0, builds: 0 };
 export const acme = defineAdapter({
   name: "example.acme",
   config: z.strictObject({ region: z.string().min(1) }),
@@ -467,6 +475,14 @@ export const asyncAcme = defineAdapter({
     return {
       scope: { authority: { kind: "account", id: "fixture-account" }, partition: { region: config.region } },
       supports: { images: ["prepared"], network: ["blocked"] },
+      imageBuild: {
+        recovery: { version: 1, token: z.strictObject({ buildId: z.string() }) },
+        async submit(_input, ctx) { metrics.builds++; return ctx.pending({ buildId: "build-1" }, { pollAfterMs: 1000 }); },
+        async observe(attempt) {
+          if (z.strictObject({ buildId: z.string() }).parse(attempt.token).buildId !== "build-1") throw Error("Wrong image recovery token");
+          return { preparedId: "image-1", retainedResources: [{ kind: "template", id: "image-1", ownership: "unknown", cleanup: "manual" }] };
+        },
+      },
       create: {
         recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
         async submit(_input, ctx) { metrics.creates++; return ctx.pending({ jobId: "job-1" }, { pollAfterMs: 1000 }); },
@@ -501,6 +517,7 @@ process.stdout.write("packed external adapter flow passed\\n");
 
 const serviceSource = `
 import { createService } from "sandbar-service";
+import { Sandbar, Image } from "sandbar-service/client";
 import { asyncAcme, metrics } from "@acme/sandbar-adapter";
 import { writeFile, chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -548,6 +565,12 @@ try {
   if (conn.status !== 201) throw Error("Connection failed: " + JSON.stringify(conn));
   const verified = await request(\`/v1/projects/\${projectId}/provider-connections/\${conn.body.id}/verify\`, "POST");
   if (verified.status !== 200) throw Error("Verification failed");
+  const client = Sandbar.connect({ url: origin, token: bearer, projectId, fetch: Object.assign(async (url, init) => {
+    const target = new URL(String(url));
+    return fetch(origin + target.pathname + target.search, init);
+  }, { preconnect() {} }) });
+  const build = await client.images.submitBuild({ source: Image.oci("fixture/image:1") });
+  await until(async () => metrics.builds === 1 && (await request(\`/v1/projects/\${projectId}/operations/\${build.reference.operationId}\`)).body.status === "running");
   const admitted = await request(\`/v1/projects/\${projectId}/sandboxes\`, "POST", {
     environment: { kind: "prepared", imageId: "image-1" }, network: { policy: "blocked" }, connectionId: conn.body.id,
   }, Bun.randomUUIDv7());
@@ -560,9 +583,13 @@ try {
   await service.close();
   service = await createService(options);
   await start();
+  await request(\`/v1/projects/\${projectId}/operations/\${build.reference.operationId}/reconcile\`, "POST");
   await request(\`/v1/projects/\${projectId}/operations/\${operationId}/reconcile\`, "POST");
   await until(async () => (await request(\`/v1/projects/\${projectId}/operations/\${operationId}\`)).body.status === "succeeded");
   if (metrics.creates !== 1 || metrics.observes < 1) throw Error("Packed service replayed an effect or skipped observation");
+  const image = await (await client.recover(JSON.parse(JSON.stringify(build.reference)))).wait();
+  if (metrics.builds !== 1 || image.prepared.value !== "image-1" || image.prepared.connectionId !== conn.body.id || image.prepared.provider !== "example.async-acme" || image.retainedResources[0]?.ownership !== "unknown") throw Error("Packed service image-build recovery or scope mismatch");
+  await client.close();
   process.stdout.write("packed service HTTP restart flow passed\\n");
 } finally { await service.close(); await rm(directory, { recursive: true, force: true }); }
 `;

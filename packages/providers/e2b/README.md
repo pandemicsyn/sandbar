@@ -26,7 +26,19 @@ await box.destroy();
 await client.close();
 ```
 
-The factory performs no provider IO. `Sandbar.connect` checks the team with an authenticated E2B team metrics read and checks that the configured team has a ready template. Each connection is confined to that team and template. The adapter uses only the public `sandbar-adapter` contract; the optional service registers the same definition explicitly and keeps the API key in its normal encrypted credential store.
+To build an OCI image as a separate, recoverable operation, use the common image API and pass its scoped prepared result to create:
+
+```ts
+const built = await client.images.build({ source: Image.oci("node:24") });
+const box = await client.sandboxes.create({
+  environment: Image.prepared(built.prepared),
+  networkPolicy: "blocked",
+});
+```
+
+`built.retainedResources` identifies the E2B template and reports ownership as `unknown` with manual cleanup disposition. This metadata does not grant deletion authority. The prepared handle is bound to the verified E2B provider and connection scope. A handle from another scope is rejected before provider IO; a raw prepared template ID still requires native team verification. The service persists image builds as operations without creating a sandbox record and uses the same invocation, submission marker and encrypted recovery-token machinery. Image-build observation reads the correlated E2B build name and never retries a native allocation or trigger stage. If either native POST is interrupted before readiness can be confirmed, the outcome remains unknown and may retain a template.
+
+The factory performs no provider IO. `Sandbar.connect` checks the team with an authenticated E2B team metrics read and checks that the configured team has a ready template. The connection scope includes that team and configured template; create can use another ready template after verifying that it belongs to the same team. The adapter uses only the public `sandbar-adapter` contract; the optional service registers the same definition explicitly and keeps the API key in its normal encrypted credential store.
 
 Prepared images use the verified template ID. An OCI reference runs E2B's `Template().fromImage(reference)` build inside the create submission, then creates a sandbox from the ready E2B template. OCI builds are paid effects and retain the built template after sandbox destruction; the destroy result names it as a retained resource. Public registry images are the supported input; private registry credentials have no common Sandbar input yet. Network modes are `internet` and `blocked` through E2B's `allowInternetAccess` control. Region selection is unsupported. Command forms are argv and Bash shell, with cwd and environment. E2B's command API decodes process output as text, so the adapter redirects each stream to a sandbox file and reads the bytes through E2B's streaming file API. Combined stdout and stderr are capped at 1 MiB; file reads and writes are capped at 1 MiB. A no-clobber write uploads to a temporary file in the destination directory and links it to the exact destination atomically with GNU `ln -T --`. Images without that utility fail without a fallback write; this path has not been qualified live across custom E2B images.
 
