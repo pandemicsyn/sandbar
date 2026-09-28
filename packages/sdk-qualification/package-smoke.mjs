@@ -176,7 +176,7 @@ void flow;
 import { Sandbar, Image } from "sandbar-sdk";
 import { e2b, createE2BAdapter } from "sandbar-sdk/e2b";
 async function flow() {
-  const client = await Sandbar.connect(e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" }));
+  const client = await Sandbar.connect(e2b({ apiKey: "fixture" }));
   const built = await client.images.build({ source: Image.oci("node:24") });
   const prepared = Image.prepared(built.prepared);
   const builtBox = await client.sandboxes.create({ environment: prepared, networkPolicy: "blocked" });
@@ -188,7 +188,6 @@ async function flow() {
   await client.close();
   return output;
 }
-// @ts-expect-error E2B requires a team ID
 void e2b({ apiKey: "fixture", templateId: "template_1" });
 void createE2BAdapter;
 void flow;
@@ -206,8 +205,8 @@ async function flow() {
 }
 // @ts-expect-error Daytona requires an API key
 void daytona({ target: "us" });
-// @ts-expect-error E2B requires a template ID
 void e2b({ apiKey: "fixture", teamId: "team_1" });
+void e2b({ apiKey: "fixture" });
 void flow;
 `;
   else if (mode === "direct")
@@ -397,14 +396,15 @@ let record;
 const files = new Map();
 const binary = Uint8Array.from([0, 255, 129]);
 const transport = {
+  async verifyAuth() {},
   async verifyTeam(id) { if (id !== "team_1") throw Error("Wrong team"); },
-  async verifyTemplate(team, template) { if (team !== "team_1" || !["template_1", "template_oci"].includes(template)) throw Error("Wrong template"); },
+  async verifyTemplate(team, template) { if ((team !== undefined && team !== "team_1") || !["template_1", "template_oci"].includes(template)) throw Error("Wrong template"); return template; },
   async buildImage(reference, name) { if (reference !== "node:24") throw Error("Wrong OCI reference"); buildName = name; return { templateId: "template_oci", buildId: "build_1" }; },
   async findBuild(_team, name) { return name === buildName ? { templateId: "template_oci", buildId: "build_1", status: "ready" } : null; },
   async create(input) {
-    if (!["template_1", "template_oci"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
+    if (!["base", "template_1", "template_oci"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
     creates++;
-    record = { id: "sb_" + creates, templateId: input.templateId, metadata: input.metadata, state: "running" };
+    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId, metadata: input.metadata, state: "running" };
     return record.id;
   },
   async get(id) { return record?.id === id ? record : null; },
@@ -426,9 +426,9 @@ const transport = {
   async remove(_id, path) { files.delete(path); },
   close() { closes++; },
 };
-const client = await Sandbar.connect({ adapter: createE2BAdapter(() => transport), config: { teamId: "team_1", templateId: "template_1" }, credentials: { apiKey: "fixture" } });
+const client = await Sandbar.connect({ adapter: createE2BAdapter(() => transport), config: {}, credentials: { apiKey: "fixture" } });
 try {
-  const box = await client.sandboxes.create({ environment: Image.prepared("template_1"), networkPolicy: "blocked" });
+  const box = await client.sandboxes.create({ environment: Image.prepared("base"), networkPolicy: "blocked" });
   const result = await box.exec({ command: { kind: "argv", argv: ["printf", "test"] }, maxOutputBytes: 8 });
   if (result.stdout[0] !== 0 || result.stdout[1] !== 255 || result.stderr[0] !== 254) throw Error("Binary command output changed");
   await box.writeFile("/tmp/packed.bin", binary, { overwrite: true });
@@ -455,7 +455,7 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw Error("Factory construction performed provider I/O"); };
 try {
   const daytonaAdapter = daytona({ apiKey: "fixture", target: "us" });
-  const e2bAdapter = e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" });
+  const e2bAdapter = e2b({ apiKey: "fixture" });
   if (daytonaAdapter.name !== "daytona" || e2bAdapter.name !== "e2b") throw Error("Built-in factory identity mismatch");
   if (!daytonaAdapter.bound || !e2bAdapter.bound) throw Error("Built-in factory did not bind public adapter contract");
   process.stdout.write("packed built-in SDK subpaths passed\\n");

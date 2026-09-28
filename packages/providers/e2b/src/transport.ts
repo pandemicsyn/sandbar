@@ -5,14 +5,20 @@ export const E2B_ENDPOINT = "https://api.e2b.app";
 
 export const MAX_BYTES = 1_048_576;
 
-const Templates = z.array(
-  z.object({
-    templateID: z.string(),
-    buildID: z.string(),
-    buildStatus: z.string(),
-    names: z.array(z.string()),
-  }),
-);
+const Templates = z
+  .array(
+    z.object({
+      templateID: z
+        .string()
+        .min(1)
+        .max(128)
+        .regex(/^[A-Za-z0-9_-]+$/),
+      buildID: z.string().min(1).max(128),
+      buildStatus: z.enum(["building", "waiting", "ready", "error"]),
+      names: z.array(z.string().min(1).max(256)).max(100),
+    }),
+  )
+  .max(100);
 
 export type E2BRecord = {
   id: string;
@@ -22,11 +28,12 @@ export type E2BRecord = {
 };
 
 export type E2BTransport = {
+  verifyAuth(): Promise<void>;
   verifyTeam(teamId: string): Promise<void>;
-  verifyTemplate(teamId: string, templateId: string): Promise<void>;
+  verifyTemplate(teamId: string | undefined, templateId: string): Promise<string>;
   buildImage(reference: string, name: string): Promise<{ templateId: string; buildId: string }>;
   findBuild(
-    teamId: string,
+    teamId: string | undefined,
     name: string,
   ): Promise<{ templateId: string; buildId: string; status: string } | null>;
   create(input: {
@@ -126,18 +133,31 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     });
   }
 
-  async function* teamTemplates(teamId: string) {
+  async function readTemplates(response: Response) {
+    if (!response.body) throw new Error("E2B returned no template data");
+    const body = await collectBounded(response.body, MAX_BYTES);
+
+    if (body.truncated) throw new Error("E2B template response exceeded its byte bound");
+
+    return Templates.parse(
+      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body.bytes)),
+    );
+  }
+
+  async function* teamTemplates(teamId: string | undefined) {
     let nextToken: string | undefined;
     const seen = new Set<string>();
 
     do {
-      const query = new URLSearchParams({ teamID: teamId, limit: "100" });
+      const query = new URLSearchParams({ limit: "100" });
+
+      if (teamId) query.set("teamID", teamId);
 
       if (nextToken) query.set("nextToken", nextToken);
       const response = await controlGet(`/v2/templates?${query}`);
 
       if (!response.ok) throw new Error(`E2B template listing failed (${response.status})`);
-      yield Templates.parse(await response.json());
+      yield await readTemplates(response);
       nextToken = response.headers.get("X-Next-Token") ?? undefined;
 
       if (nextToken) {
@@ -149,6 +169,14 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
   }
 
   return {
+    async verifyAuth() {
+      const response = await controlGet("/v2/templates?limit=1");
+
+      if (!response.ok) throw new Error(`E2B authentication failed (${response.status})`);
+      const templates = await readTemplates(response);
+
+      if (templates.length > 1) throw new Error("E2B authentication exceeded its item bound");
+    },
     async verifyTeam(teamId) {
       const response = await controlGet(
         `/teams/${encodeURIComponent(teamId)}/metrics/max?metric=concurrent_sandboxes`,
@@ -158,14 +186,33 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       await response.body?.cancel();
     },
     async verifyTemplate(teamId, templateId) {
+      let resolved: string | undefined;
+
       for await (const templates of teamTemplates(teamId)) {
-        if (
-          templates.some(
-            (value) => value.templateID === templateId && value.buildStatus === "ready",
-          )
-        )
-          return;
+        for (const value of templates) {
+          const matches =
+            value.templateID === templateId ||
+            value.names.some((name) => {
+              if (name.includes(":") && !name.endsWith(":default")) return false;
+              const localName = name.slice(name.lastIndexOf("/") + 1);
+
+              return [
+                name,
+                localName,
+                name.replace(/:default$/, ""),
+                localName.replace(/:default$/, ""),
+              ].includes(templateId);
+            });
+
+          if (!matches || value.buildStatus !== "ready") continue;
+
+          if (resolved && resolved !== value.templateID)
+            throw new Error("E2B template selector is ambiguous");
+          resolved = value.templateID;
+        }
       }
+
+      if (resolved) return resolved;
 
       throw new Error("E2B template is not a ready template in the verified team");
     },
