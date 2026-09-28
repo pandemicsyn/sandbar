@@ -194,6 +194,7 @@ export function createDaytonaAdapter(
           fileWrite: { overwrite: true, noClobber: true },
         },
         imageBuild: {
+          recovery: { version: 1, token: Token },
           async prepare(input) {
             if (!driver.prepareImage(input.source.value))
               throw new AdapterError("UNSUPPORTED", "OCI image needs a fixed tag or digest");
@@ -207,12 +208,18 @@ export function createDaytonaAdapter(
               signal: ctx.signal,
             });
 
+            if (result.status === "pending")
+              return ctx.pending({ submissionId: ctx.submissionId }, { pollAfterMs: 500 });
+
             return result.status === "completed" ? result.value : ctx.unknown(result.reason);
           },
           async observe(attempt, ctx) {
             const result = await driver.observeImageBuild(attempt.submissionId);
 
             if (!result) return null;
+
+            if (result.status === "pending")
+              return ctx.pending({ submissionId: attempt.submissionId }, { pollAfterMs: 500 });
 
             return result.status === "completed" ? result.value : ctx.unknown(result.reason);
           },

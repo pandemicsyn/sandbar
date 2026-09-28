@@ -11,6 +11,7 @@ test.each([false, true])(
     let creates = 0;
     let name = "";
     let sandboxName = "";
+    let observations = 0;
 
     const snapshot = () => ({
       id: "built-1",
@@ -44,11 +45,17 @@ test.each([false, true])(
           return Response.json(snapshot());
         }
 
-        if (url.pathname.startsWith("/api/snapshots/"))
-          return name &&
-            [name, "built-1"].includes(decodeURIComponent(url.pathname.split("/").at(-1)!))
-            ? Response.json(snapshot())
-            : new Response(null, { status: 404 });
+        if (url.pathname === "/api/snapshots/built-1") return Response.json(snapshot());
+
+        if (url.pathname.startsWith("/api/snapshots/")) {
+          // A normal build can complete by ID before its name index catches up.
+          if (!name || !lost) return new Response(null, { status: 404 });
+          observations++;
+
+          const states = ["building", "pending", "pulling", "active"];
+
+          return Response.json({ ...snapshot(), state: states[observations - 1] ?? "active" });
+        }
 
         if (url.pathname === "/api/sandbox" && init?.method === "POST") {
           creates++;
@@ -143,6 +150,8 @@ test.each([false, true])(
       });
       expect(builds).toBe(1);
       expect(creates).toBe(1);
+
+      if (lost) expect(observations).toBe(4);
     } finally {
       await client.close();
     }
