@@ -46,7 +46,7 @@ async function ledger() {
 }
 
 async function run(
-  phase: "write" | "read" | "compare" | "destroy" | "close" | "no-clobber",
+  phase: "write" | "write-read" | "read" | "compare" | "destroy" | "close" | "no-clobber",
   metadataFails = false,
 ) {
   const store = await ledger();
@@ -92,7 +92,7 @@ async function run(
             async submit(input, ctx) {
               writes++;
 
-              if (phase === "write" && writes === 2)
+              if ((phase === "write" || phase === "write-read") && writes === 2)
                 return ctx.reject(
                   "UNAUTHENTICATED",
                   `Permission denied ${secret} sandbox ${owned}`,
@@ -108,7 +108,7 @@ async function run(
           async read() {
             reads++;
 
-            if (phase === "read" && reads === 2)
+            if ((phase === "read" || phase === "write-read") && reads === 2)
               throw Object.assign(new Error(`Read denied ${secret} ${owned}`), {
                 name: "FilesystemError",
                 code: "EACCES",
@@ -160,7 +160,11 @@ for (const phase of ["write", "read", "compare"] as const)
       expect(failed.diagnostic?.error.name).toBe(
         phase === "read" ? "FilesystemError" : "SandbarError",
       );
-      expect(failed.diagnostic?.actualBytes).toBeUndefined();
+
+      if (phase === "write") {
+        expect(failed.diagnostic?.actualBytes).toEqual([0, 255, 1, 128]);
+        expect(failed.diagnostic?.actualLength).toBe(4);
+      } else expect(failed.diagnostic?.actualBytes).toBeUndefined();
     }
 
     expect(result.steps.find((entry) => entry.scenario === "file-no-clobber")?.status).toBe(
@@ -540,3 +544,13 @@ for (const reconcileOnly of [false, true])
       true,
     );
   });
+
+test("failed diagnostic readback preserves the original write failure and dependency block", async () => {
+  const { steps, writes, destroys } = await run("write-read");
+  const failed = steps.find((entry) => entry.scenario === "file-overwrite");
+  expect(failed?.diagnostic).toMatchObject({ stage: "write", error: { code: "UNAUTHENTICATED" } });
+  expect(failed?.diagnostic?.actualBytes).toBeUndefined();
+  expect(steps.find((entry) => entry.scenario === "file-no-clobber")?.status).toBe("blocked");
+  expect(writes).toBe(2);
+  expect(destroys).toBe(1);
+});

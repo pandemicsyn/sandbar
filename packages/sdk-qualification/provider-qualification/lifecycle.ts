@@ -337,7 +337,28 @@ async function runPreparedLocked(
       "file-overwrite",
       async (capture) => {
         capture.file(second, true);
-        await sandbox.writeFile(path, second, { overwrite: true, signal: options.signal });
+
+        try {
+          await sandbox.writeFile(path, second, { overwrite: true, signal: options.signal });
+        } catch (error) {
+          // Read only our fixed fixture, with a separate bound; retain the original write error.
+          if (!options.signal?.aborted) {
+            try {
+              const signal = options.signal
+                ? AbortSignal.any([options.signal, AbortSignal.timeout(5000)])
+                : AbortSignal.timeout(5000);
+
+              const actual = await boundedRead(sandbox.readFile(path), signal);
+              capture.observeBytes(actual, second);
+            } catch {
+              // Readback can also fail. The write exception remains the primary evidence.
+            }
+          }
+
+          capture.at("write");
+          throw error;
+        }
+
         capture.at("read");
         const actual = await boundedRead(sandbox.readFile(path), options.signal);
         capture.compareBytes(actual, second);

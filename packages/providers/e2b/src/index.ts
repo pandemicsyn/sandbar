@@ -10,6 +10,8 @@ import {
   type E2BTransport,
 } from "./transport";
 
+import { classifyWriteFailure, WriteFailure, writeFailureReason } from "./write-failure";
+
 const Configuration = z.strictObject({
   teamId: z
     .string()
@@ -35,6 +37,7 @@ const WriteToken = z.strictObject({
   staged: z.string().max(4096).optional(),
   bytesWritten: z.number().int().min(0).max(MAX_BYTES),
   digest: z.string().regex(/^[a-f0-9]{64}$/),
+  failure: WriteFailure.optional(),
 });
 
 type WriteTokenData = z.infer<typeof WriteToken>;
@@ -612,6 +615,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
               if (staged) token.staged = staged;
 
+              let stage: "unknown" | "link" = "unknown";
+
               try {
                 if (input.overwrite) {
                   await transport.write(input.sandbox.id, input.path, input.bytes);
@@ -619,6 +624,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                   await transport.write(input.sandbox.id, staged!, input.bytes);
 
                   if (ctx.signal.aborted) return ctx.pending(token, { pollAfterMs: 1000 });
+
+                  stage = "link";
 
                   const answer = await transport.run(
                     input.sandbox.id,
@@ -640,7 +647,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 }
 
                 return { bytesWritten: input.bytes.length };
-              } catch {
+              } catch (error) {
+                token.failure = classifyWriteFailure(error, stage);
+
                 return ctx.pending(token, { pollAfterMs: 1000 });
               }
             },
@@ -650,7 +659,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
               if (!token.success) return ctx.unknown("E2B file write lacks recovery evidence");
               await requireRunning(attempt.sandbox.id);
-              const { path, staged, bytesWritten, digest } = token.data;
+              const { path, staged, bytesWritten, digest, failure } = token.data;
               requirePath(path);
 
               if (staged) {
@@ -666,7 +675,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 );
 
                 if (same !== "SAME")
-                  return ctx.unknown("E2B no-clobber write has no matching native inode");
+                  return ctx.unknown(
+                    writeFailureReason(
+                      "E2B no-clobber write has no matching native inode",
+                      failure,
+                    ),
+                  );
               }
 
               let result: { bytes: Uint8Array; truncated: boolean };
@@ -674,15 +688,21 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               try {
                 result = await transport.read(attempt.sandbox.id, path, MAX_BYTES);
               } catch {
-                return ctx.unknown("E2B written file could not be confirmed");
+                return ctx.unknown(
+                  writeFailureReason("E2B written file could not be confirmed", failure),
+                );
               }
 
-              if (
-                result.truncated ||
-                result.bytes.length !== bytesWritten ||
-                createHash("sha256").update(result.bytes).digest("hex") !== digest
-              )
-                return ctx.unknown("E2B written bytes differ from the submitted content");
+              const digestMatches =
+                createHash("sha256").update(result.bytes).digest("hex") === digest;
+
+              if (result.truncated || result.bytes.length !== bytesWritten || !digestMatches)
+                return ctx.unknown(
+                  writeFailureReason(
+                    `E2B written bytes differ from the submitted content; expectedLength=${bytesWritten}, actualLength=${result.bytes.length}, truncated=${result.truncated}, digestMatches=${digestMatches}`,
+                    failure,
+                  ),
+                );
 
               return { bytesWritten };
             },
