@@ -1,5 +1,6 @@
 import {
   SnapshotRequest,
+  MountSpec,
   type Capabilities,
   type Support,
   type SnapshotPlan,
@@ -64,6 +65,7 @@ export const Image = {
 export type CreateInput = {
   environment: ImageInput;
   requirements?: { snapshot: SnapshotRequest };
+  mounts?: MountSpec[];
   networkPolicy?: string;
   region?: string;
   labels?: Record<string, string>;
@@ -290,6 +292,7 @@ export function validateCreate(input: CreateInput): CreateInput {
         z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
       ]),
       requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
+      mounts: z.array(MountSpec).max(32).optional(),
       networkPolicy: z.string().min(1).max(128).optional(),
       region: z.string().min(1).max(128).optional(),
       labels: z.record(z.string(), z.string()).optional(),

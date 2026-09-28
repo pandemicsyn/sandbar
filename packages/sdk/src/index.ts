@@ -56,8 +56,24 @@ export {
 export type {
   Support,
   Capabilities,
+  DirectCapabilities,
   SnapshotPlan,
   SnapshotProfile,
   SandboxState,
   CreatePlan,
 } from "sandbar-adapter";
+
+export { AdapterSnapshot, AdapterVolume } from "./resources";
+
+export type { SnapshotResult, WaitOptions } from "./resources";
+
+export {
+  MountSpec,
+  SnapshotInfo,
+  VolumeInfo,
+  RestoreRequest,
+  VolumeCreateInput,
+  ArtifactDeletionResult,
+} from "sandbar-adapter";
+
+export type { MountCapabilities, VolumeCapabilities, RestoreCapabilities } from "sandbar-adapter";

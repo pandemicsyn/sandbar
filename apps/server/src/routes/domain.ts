@@ -1,5 +1,28 @@
 import { AdapterSandbox, SandbarError, UnsupportedFeatureError } from "sandbar-sdk";
-import { AdapterError } from "sandbar-adapter";
+import { AdapterError, type DirectCapabilities } from "sandbar-adapter";
+
+/** Keep the existing HTTP contract scoped to operations that the service exposes. */
+function serviceCapabilities(input: DirectCapabilities) {
+  const { mounts: _mounts, ...caps } = input;
+
+  const absent = {
+    status: "unsupported" as const,
+    reason: "Operation is not implemented",
+  };
+
+  return Capabilities.parse({
+    ...caps,
+    snapshots: {
+      ...caps.snapshots,
+      restore: absent,
+      inspect: absent,
+      list: absent,
+      delete: absent,
+    },
+    volumes: absent,
+  });
+}
+
 import { timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
@@ -773,7 +796,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
       const row = await selectConnection(idParam(c, "projectId"), c.req.query("connectionId"));
 
       return withProvider(deps, row, async ({ adapterConnection }) =>
-        c.json(Capabilities.parse(await adapterConnection.capabilities())),
+        c.json(serviceCapabilities(await adapterConnection.capabilities())),
       );
     }),
   );
@@ -798,7 +821,7 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
 
       return withProvider(deps, row, async ({ adapterConnection }) =>
         c.json(
-          Capabilities.parse(
+          serviceCapabilities(
             await new AdapterSandbox(adapterConnection, box.native_id!).capabilities(),
           ),
         ),

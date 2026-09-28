@@ -30,6 +30,8 @@ export const ResourceReference = z.strictObject({
   // Required evidence when the adapter's native locator can be reused; never synthesized.
   generation: z.string().min(1).max(512).optional(),
   ownership: z.enum(["borrowed", "verified-created", "unknown"]),
+  /** Bounded adapter evidence, verified by the adapter; never a native generation or SDK authority. */
+  receipt: z.string().min(1).max(4096).optional(),
   service: z
     .strictObject({
       url: z.url().refine((value) => {
@@ -171,6 +173,192 @@ export const SnapshotProfile = z.strictObject({
 
 export type SnapshotProfile = z.infer<typeof SnapshotProfile>;
 
+export const MountSpec = z.strictObject({
+  volume: ResourceReference.refine((ref) => ref.kind === "volume"),
+  path: z
+    .string()
+    .min(2)
+    .max(4096)
+    .refine(
+      (path) =>
+        path.startsWith("/") &&
+        !path.includes("\0") &&
+        !path.includes("//") &&
+        !path.endsWith("/") &&
+        !path.split("/").some((part) => part === "." || part === "..") &&
+        !["proc", "sys", "dev", "boot", "etc", "bin", "sbin", "lib", "lib64"].includes(
+          path.split("/")[1]!,
+        ),
+    ),
+  access: z.enum(["read-write", "read-only"]).default("read-write"),
+  subpath: z
+    .string()
+    .min(1)
+    .max(4096)
+    .refine(
+      (path) =>
+        !path.startsWith("/") &&
+        !path.includes("\0") &&
+        !path.includes("//") &&
+        !path.split("/").some((part) => part === "." || part === ".."),
+    )
+    .optional(),
+});
+
+export type MountSpec = z.infer<typeof MountSpec>;
+
+export const VolumeCreateInput = z.strictObject({
+  name: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9_-]+$/),
+});
+
+export type VolumeCreateInput = z.infer<typeof VolumeCreateInput>;
+
+export const VolumeInfo = z.strictObject({
+  reference: ResourceReference.refine((ref) => ref.kind === "volume"),
+  name: z.string().min(1).max(128),
+  state: z.enum(["creating", "ready", "deleting", "unknown"]),
+  filesystem: z.literal("object-backed"),
+  visibility: z.enum(["immediate", "unknown"]),
+  durability: z.literal("unknown"),
+  locking: z.literal("unknown"),
+  rename: z.literal("unknown"),
+  conflicts: z.enum(["last-writer-wins", "unknown"]),
+});
+
+export type VolumeInfo = z.infer<typeof VolumeInfo>;
+
+export const RestoreRequest = z.strictObject({
+  networkPolicy: z.string().min(1).max(128),
+  requireIndependentLifecycle: z.boolean().optional(),
+  resources: z
+    .strictObject({
+      vcpu: z.number().int().positive().optional(),
+      memoryMiB: z.number().int().positive().optional(),
+      diskMiB: z.number().int().positive().optional(),
+    })
+    .optional(),
+  mounts: z
+    .record(
+      z.string(),
+      z.discriminatedUnion("action", [
+        z.strictObject({ action: z.literal("omit") }),
+        z.strictObject({ action: z.literal("share") }),
+        z.strictObject({ action: z.literal("replace"), mount: MountSpec }),
+      ]),
+    )
+    .optional(),
+});
+
+export type RestoreRequest = z.infer<typeof RestoreRequest>;
+
+export const SnapshotInfo = z.strictObject({
+  reference: ResourceReference.refine((ref) => ref.kind === "snapshot"),
+  preserve: z.enum(["filesystem", "filesystem+memory"]).nullable(),
+  source: z
+    .strictObject({ id: z.string().min(1).max(512), class: z.string().min(1).max(128) })
+    .nullable(),
+  state: z.enum(["creating", "ready", "deleting", "unknown"]),
+  createdAt: z.iso.datetime().nullable(),
+  expiration: z.literal("unknown"),
+  excludedPaths: z.array(z.string().max(4096)).max(128).nullable(),
+  mounts: z.array(MountSpec).max(32),
+  mountHandling: z.enum(["none", "unknown", "excluded"]),
+  restore: z.strictObject({
+    networkPolicies: z.array(z.string()).max(32),
+    resources: z.boolean(),
+    mounts: z.boolean(),
+    independentLifecycle: z.boolean(),
+  }),
+  dependencies: z.array(ResourceReference).max(128),
+});
+
+export type SnapshotInfo = z.infer<typeof SnapshotInfo>;
+
+export const SnapshotCaptureInput = z.strictObject({
+  sandbox: z.strictObject({ id: z.string().min(1).max(512) }),
+  request: SnapshotRequest,
+});
+
+export type SnapshotCaptureInput = z.infer<typeof SnapshotCaptureInput>;
+
+export const SnapshotCaptureValue = z.strictObject({
+  snapshot: SnapshotInfo,
+  source: z.strictObject({ state: SandboxState, connections: SnapshotProfile.shape.connections }),
+  retainedResources: z.array(ResourceReference).max(128),
+});
+
+export type SnapshotCaptureValue = z.infer<typeof SnapshotCaptureValue>;
+
+export const SnapshotRestoreInput = z.strictObject({
+  snapshot: ResourceReference.refine((ref) => ref.kind === "snapshot"),
+  request: RestoreRequest,
+});
+
+export type SnapshotRestoreInput = z.infer<typeof SnapshotRestoreInput>;
+
+export const ArtifactDeletionResult = z.strictObject({
+  deleted: z.literal(true),
+  reference: ResourceReference,
+});
+
+export type ArtifactDeletionResult = z.infer<typeof ArtifactDeletionResult>;
+
+export const MountCapabilities = z.strictObject({
+  timing: z.literal("create"),
+  access: z
+    .array(z.enum(["read-write", "read-only"]))
+    .min(1)
+    .max(2),
+  subpaths: z.boolean(),
+  versions: z.literal(false),
+  durability: z.literal("unknown"),
+  compatibility: z.array(z.string()).max(32),
+});
+
+export type MountCapabilities = z.infer<typeof MountCapabilities>;
+
+export const RestoreCapabilities = z.strictObject({
+  networkPolicies: z.array(z.string()).max(32),
+  resources: z.boolean(),
+  mounts: z.boolean(),
+  independentLifecycle: z.boolean(),
+});
+
+export type RestoreCapabilities = z.infer<typeof RestoreCapabilities>;
+
+export const VolumeCapabilities = z.strictObject({
+  create: z.boolean(),
+  inspect: z.boolean(),
+  list: z.boolean(),
+  delete: z.boolean(),
+});
+
+export type VolumeCapabilities = z.infer<typeof VolumeCapabilities>;
+
+export const InventoryInput = z.strictObject({
+  limit: z.number().int().min(1).max(100),
+  cursor: z.string().max(4096).optional(),
+});
+
+export type InventoryInput = z.infer<typeof InventoryInput>;
+
+export const DestroyInput = z.strictObject({
+  id: z.string().min(1).max(512),
+  storage: z.enum(["require-durable", "allow-unconfirmed"]).optional(),
+});
+
+export type DestroyInput = z.infer<typeof DestroyInput>;
+
+export const MountDurability = z.strictObject({
+  volume: ResourceReference,
+  path: z.string(),
+  status: z.enum(["durable", "unconfirmed"]),
+});
+
 export const SnapshotSupport = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("supported"),
@@ -197,12 +385,13 @@ export type CreatePlan = {
 export type StateCapabilities = {
   snapshots: {
     capture: Support<{ profiles: SnapshotProfile[] }>;
-    restore: Support<never>;
-    inspect: Support<never>;
-    list: Support<never>;
-    delete: Support<never>;
+    restore: Support<RestoreCapabilities>;
+    inspect: Support<{}>;
+    list: Support<{ coverage: "provider-scope" | "sandbar-managed" }>;
+    delete: Support<{}>;
   };
-  volumes: Support<never>;
+  volumes: Support<VolumeCapabilities>;
+  mounts: Support<MountCapabilities>;
   suspension: Support<never>;
 };
 
@@ -275,15 +464,39 @@ export async function stateCapabilities(
         )
       : unsupportedState();
 
+  const resources = session.resourceCapabilities
+    ? await readBeforeDeadline(
+        (ctx) => session.resourceCapabilities!(structuredClone(target), ctx),
+        context,
+      )
+    : { restore: unsupportedState(), volumes: unsupportedState(), mounts: unsupportedState() };
+
+  const implemented = (yes: boolean): Support<{}> =>
+    yes ? { status: "supported", value: {} } : unsupportedState();
+
   return {
     snapshots: {
       capture,
-      restore: unsupportedState(),
-      inspect: unsupportedState(),
-      list: unsupportedState(),
-      delete: unsupportedState(),
+      restore: session.snapshotRestore ? resources.restore : unsupportedState(),
+      inspect: implemented(!!session.snapshotInspect),
+      list: session.snapshotList
+        ? { status: "supported", value: { coverage: "provider-scope" } }
+        : unsupportedState(),
+      delete: implemented(!!session.snapshotDelete),
     },
-    volumes: unsupportedState(),
+    volumes:
+      resources.volumes.status === "supported"
+        ? {
+            status: "supported",
+            value: {
+              create: resources.volumes.value.create && !!session.volumeCreate,
+              inspect: resources.volumes.value.inspect && !!session.volumeInspect,
+              list: resources.volumes.value.list && !!session.volumeList,
+              delete: resources.volumes.value.delete && !!session.volumeDelete,
+            },
+          }
+        : resources.volumes,
+    mounts: session.checkMounts ? resources.mounts : unsupportedState(),
     suspension: unsupportedState(),
   };
 }
@@ -373,6 +586,21 @@ export async function checkCreate(
     !session.supports.network.includes(input.networkPolicy)
   )
     return { status: "unsupported", reason: "Requested image or network policy is unsupported" };
+
+  if (input.mounts?.length) {
+    const mounts = z.array(MountSpec).max(32).parse(input.mounts);
+
+    if (!session.checkMounts)
+      return { status: "unsupported", reason: "Create-time mounts are not implemented" };
+
+    const result = await readBeforeDeadline(
+      (ctx) => session.checkMounts!({ ...input, mounts }, ctx),
+      context,
+    );
+
+    if (result.status !== "supported") return result;
+  }
+
   let snapshot: SnapshotPlan | undefined;
 
   if (input.requirements?.snapshot) {
@@ -398,6 +626,46 @@ const AbsentSupport = z.strictObject({
   reason: z.string().min(1).max(1024),
 });
 
+const supportSchema = <S extends z.ZodType>(value: S) =>
+  z.discriminatedUnion("status", [
+    z.strictObject({ status: z.literal("supported"), value }),
+    ...(["unsupported", "unavailable", "unknown"] as const).map((status) =>
+      z.strictObject({ status: z.literal(status), reason: z.string().min(1).max(1024) }),
+    ),
+  ]);
+
+export const DirectCapabilities = z.strictObject({
+  commands: z.array(z.enum(["argv", "shell"])),
+  images: z.array(z.enum(["prepared", "oci"])),
+  network: z.array(z.string()),
+  exec: z.boolean(),
+  inspect: z.boolean(),
+  inventory: z.boolean(),
+  readFile: z.boolean(),
+  writeFile: z.boolean(),
+  maxOutputBytes: z.number().int().nonnegative(),
+  maxFileBytes: z.number().int().nonnegative(),
+  observedAt: z.iso.datetime(),
+  snapshots: z.strictObject({
+    capture: SnapshotSupport,
+    restore: supportSchema(RestoreCapabilities),
+    inspect: supportSchema(z.strictObject({})),
+    list: supportSchema(
+      z.strictObject({ coverage: z.enum(["provider-scope", "sandbar-managed"]) }),
+    ),
+    delete: supportSchema(z.strictObject({})),
+  }),
+  volumes: supportSchema(VolumeCapabilities),
+  mounts: supportSchema(MountCapabilities).optional(),
+  suspension: AbsentSupport,
+});
+
+export type DirectCapabilities = Omit<
+  z.infer<typeof DirectCapabilities>,
+  "snapshots" | "volumes" | "suspension"
+> &
+  Omit<StateCapabilities, "mounts"> & { mounts?: Support<MountCapabilities> };
+
 export const Capabilities = z.strictObject({
   commands: z.array(z.enum(["argv", "shell"])),
   images: z.array(z.enum(["prepared", "oci"])),
@@ -421,11 +689,7 @@ export const Capabilities = z.strictObject({
   suspension: AbsentSupport,
 });
 
-export type Capabilities = Omit<
-  z.infer<typeof Capabilities>,
-  "snapshots" | "volumes" | "suspension"
-> &
-  StateCapabilities;
+export type Capabilities = z.infer<typeof Capabilities>;
 
 const SnapshotPlanSchema = z.strictObject({
   profile: SnapshotProfile,

@@ -29,17 +29,28 @@ export type RetainedArtifact = {
 
 export type ImageBuildValue = { preparedId: string; retainedResources: RetainedArtifact[] };
 
+export * from "./resources";
+
 export type CreateInput = {
   image: Image;
   networkPolicy: string;
   region?: string;
   labels?: Record<string, string>;
   requirements?: { snapshot: SnapshotRequest };
+  mounts?: import("./resources").MountSpec[];
 };
 
-export type CreateValue = { id: string; state: "running" | "unknown" };
+export type CreateValue = {
+  id: string;
+  state: "running" | "unknown";
+  mounts?: import("./state").MountSpec[];
+};
 
-export type DestroyValue = { computeStopped: boolean; retainedResources: string[] };
+export type DestroyValue = {
+  computeStopped: boolean;
+  retainedResources: string[];
+  mountDurability?: z.infer<typeof import("./resources").MountDurability>[];
+};
 
 export type Command = { kind: "argv"; argv: string[] } | { kind: "shell"; script: string };
 
@@ -142,6 +153,7 @@ export type RecoveryAttempt<
   readonly submissionId: string;
   readonly sandbox: S;
   readonly resource?: ResourceReference;
+  readonly mounts?: import("./state").MountSpec[];
   readonly token?: T;
 };
 
@@ -186,15 +198,55 @@ export type AdapterSession<
     target: { sandbox?: Sandbox; create?: CreateInput },
     ctx: ReadContext,
   ) => Promise<Support<{ profiles: SnapshotProfile[] }>>;
-  /** Foundation declaration; public snapshot submission is delivered in the next feature slice. */
   snapshotCapture?: Mutation<
-    { sandbox: Sandbox; request: SnapshotRequest },
-    { snapshot: ResourceReference<"snapshot">; sourceState: import("./state").SandboxState }
+    import("./resources").SnapshotCaptureInput,
+    import("./resources").SnapshotCaptureValue
   >;
+  snapshotRestore?: Mutation<import("./resources").SnapshotRestoreInput, CreateValue>;
+  snapshotDelete?: Mutation<ResourceReference, import("./resources").ArtifactDeletionResult>;
+  snapshotInspect?: (
+    ref: ResourceReference,
+    ctx: ReadContext,
+  ) => Promise<import("./resources").SnapshotInfo>;
+  snapshotList?: (
+    input: import("./resources").InventoryInput,
+    ctx: ReadContext,
+  ) => Promise<{
+    items: import("./resources").SnapshotInfo[];
+    nextCursor?: string;
+    coverage: "provider-scope" | "sandbar-managed";
+  }>;
+  volumeCreate?: Mutation<
+    import("./resources").VolumeCreateInput,
+    import("./resources").VolumeInfo
+  >;
+  volumeDelete?: Mutation<ResourceReference, import("./resources").ArtifactDeletionResult>;
+  volumeInspect?: (
+    ref: ResourceReference,
+    ctx: ReadContext,
+  ) => Promise<import("./resources").VolumeInfo>;
+  volumeList?: (
+    input: import("./resources").InventoryInput,
+    ctx: ReadContext,
+  ) => Promise<{
+    items: import("./resources").VolumeInfo[];
+    nextCursor?: string;
+    coverage: "provider-scope" | "sandbar-managed";
+  }>;
+  resourceCapabilities?: (
+    target: { sandbox?: Sandbox; create?: CreateInput },
+    ctx: ReadContext,
+  ) => Promise<{
+    restore: Support<import("./resources").RestoreCapabilities>;
+    volumes: Support<import("./resources").VolumeCapabilities>;
+    mounts: Support<import("./resources").MountCapabilities>;
+  }>;
+  checkMounts?: (input: CreateInput, ctx: ReadContext) => Promise<Support<{}>>;
+
   supports: Guarantees<C>;
   create: Mutation<CreateInput, CreateValue, CP, CT, undefined>;
   imageBuild?: Mutation<ImageBuildInput, ImageBuildValue, ImageBuildInput, Json, undefined>;
-  destroy: Mutation<Sandbox, DestroyValue, DP, Json, Sandbox>;
+  destroy: Mutation<import("./resources").DestroyInput, DestroyValue, DP, Json, Sandbox>;
   inspect?: (
     box: Sandbox,
     ctx: ReadContext,
@@ -560,7 +612,13 @@ export async function connectAdapter<
 
 export { prepareOperation, submitOperation, observeOperation } from "./runtime";
 
-export type { OperationKind, PreparedOperation, RuntimeResult, RuntimeSession } from "./runtime";
+export type {
+  OperationKind,
+  OperationInput,
+  PreparedOperation,
+  RuntimeResult,
+  RuntimeSession,
+} from "./runtime";
 
 export function validateAdapterConfiguration<C extends z.ZodType, K extends z.ZodType>(
   definition: Pick<AdapterDefinition<C, K>, "config" | "credentials">,

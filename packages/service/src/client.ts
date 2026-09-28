@@ -749,6 +749,12 @@ export class RemoteClient implements SandbarClient {
   }
   async checkCreate(input: CreateInput): Promise<Support<CreatePlan>> {
     input = validateCreate(input);
+
+    if (input.mounts?.length)
+      throw new SandbarError(
+        "UNSUPPORTED",
+        "State resource mounts require a direct SDK connection",
+      );
     const binding = input.environment.kind === "prepared" ? input.environment.binding : undefined;
 
     if (binding && !binding.connectionId)
@@ -777,6 +783,12 @@ export class RemoteClient implements SandbarClient {
   ): Promise<OperationHandle<SandboxHandle>> {
     throwIfAborted(options.signal);
     input = validateCreate(input);
+
+    if (input.mounts?.length)
+      throw new SandbarError(
+        "UNSUPPORTED",
+        "State resource mounts require a direct SDK connection",
+      );
 
     const binding = input.environment.kind === "prepared" ? input.environment.binding : undefined;
 

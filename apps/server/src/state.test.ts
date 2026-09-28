@@ -3,7 +3,7 @@ import { mkdtemp, chmod, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { AdapterError, defineAdapter, type SnapshotProfile } from "sandbar-adapter";
+import { AdapterError, defineAdapter, Capabilities, type SnapshotProfile } from "sandbar-adapter";
 import { Sandbar as Direct, Image } from "sandbar-sdk";
 import { Sandbar } from "../../../packages/service/src/client";
 import { openDomainRuntime } from "./runtime";
@@ -178,7 +178,11 @@ test("service and direct read checks agree, admission and runtime reject before 
 
     const remoteCaps = await client.capabilities();
     const directCaps = await direct.capabilities();
-    expect({ ...remoteCaps, observedAt: "dated" }).toEqual({ ...directCaps, observedAt: "dated" });
+    const { mounts: _mounts, ...legacyDirectCaps } = directCaps;
+    expect({ ...remoteCaps, observedAt: "dated" }).toEqual({
+      ...Capabilities.parse(legacyDirectCaps),
+      observedAt: "dated",
+    });
     expect(await client.sandboxes.checkCreate(input)).toEqual(
       await direct.sandboxes.checkCreate(input),
     );

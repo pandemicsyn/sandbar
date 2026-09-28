@@ -7,9 +7,22 @@ import {
   type SnapshotRequest,
   type SnapshotPlan,
   type CreatePlan,
-  type Capabilities,
+  type DirectCapabilities,
 } from "sandbar-adapter";
 import { z } from "zod";
+import {
+  resourceManagers,
+  AdapterSnapshot,
+  decodeResourceResult,
+  type SnapshotResult,
+  type WaitOptions,
+} from "./resources";
+import {
+  ResourceReference,
+  MountSpec as importMountSpec,
+  assertResourceScope,
+  type OperationInput,
+} from "sandbar-adapter";
 import {
   AdapterError,
   connectAdapter,
@@ -20,8 +33,6 @@ import {
   type AdapterDefinition,
   type RuntimeSession,
   type CreateInput as AdapterCreateInput,
-  type ExecInput as AdapterExecInput,
-  type FileWriteInput,
   type ImageBuildInput,
   type Json,
   type OperationKind,
@@ -58,7 +69,18 @@ const ReferenceSchema = z.strictObject({
   version: z.literal(2),
   mode: z.literal("direct"),
   provider: z.string().min(1).max(128),
-  kind: z.enum(["create", "destroy", "exec", "file_write", "image_build"]),
+  kind: z.enum([
+    "create",
+    "destroy",
+    "exec",
+    "file_write",
+    "image_build",
+    "snapshot_capture",
+    "snapshot_restore",
+    "snapshot_delete",
+    "volume_create",
+    "volume_delete",
+  ]),
   scope: z.strictObject({
     authority: z.strictObject({ kind: z.string().min(1).max(64), id: z.string().min(1).max(512) }),
     partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
@@ -67,6 +89,8 @@ const ReferenceSchema = z.strictObject({
   submissionId: z.string().min(1).max(128),
   invocationKey: z.string().min(1).max(128),
   sandboxId: z.string().min(1).max(512).optional(),
+  resource: ResourceReference.optional(),
+  mounts: z.array(importMountSpec).max(32).optional(),
   file: z
     .strictObject({
       path: z.string().min(1).max(4096),
@@ -153,7 +177,7 @@ async function readWhileOpen<T>(client: AdapterDirectClient, work: Promise<T>): 
   }
 }
 
-export type AdapterCapabilities = Capabilities;
+export type AdapterCapabilities = DirectCapabilities;
 
 export class AdapterOperation<T> {
   readonly durability = "process" as const;
@@ -208,6 +232,8 @@ export class AdapterOperation<T> {
             operationId: this.reference.operationId,
             submissionId: this.reference.submissionId,
             sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+            resource: this.reference.resource,
+            mounts: this.reference.mounts,
             token: this.reference.token,
             version: this.reference.tokenVersion,
           },
@@ -319,6 +345,58 @@ export class AdapterSandbox {
     private readonly client: AdapterDirectClient,
     readonly id: string,
   ) {}
+  async submitSnapshot(
+    request: SnapshotRequest,
+    options: WaitOptions = {},
+  ): Promise<AdapterOperation<SnapshotResult>> {
+    const plan = await this.checkSnapshot(request);
+
+    if (plan.status !== "supported")
+      throw new SandbarError(
+        plan.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
+        plan.reason,
+      );
+
+    return this.client.submit(
+      "snapshot_capture",
+      { sandbox: { id: this.id }, request },
+      (result, ref) => {
+        if (result.kind !== "completed" || !("snapshot" in result.value)) throw asUnknown(ref);
+        assertResourceScope(result.value.snapshot.reference, {
+          provider: this.client.provider,
+          scope: this.client.scope,
+        });
+        const capture = result.value;
+
+        if (
+          capture.snapshot.preserve !== plan.value.profile.preserve ||
+          capture.snapshot.source?.id !== this.id ||
+          capture.snapshot.mountHandling !== plan.value.profile.mountHandling ||
+          capture.source.state !==
+            (plan.value.profile.sourceAfter === "unchanged"
+              ? plan.value.sourceState
+              : plan.value.profile.sourceAfter) ||
+          capture.source.connections !== plan.value.profile.connections
+        )
+          throw asUnknown(ref);
+
+        for (const retained of capture.retainedResources)
+          assertResourceScope(retained, {
+            provider: this.client.provider,
+            scope: this.client.scope,
+          });
+
+        return {
+          ...result.value,
+          snapshot: new AdapterSnapshot(this.client, result.value.snapshot.reference),
+        };
+      },
+      { ...options, sandboxId: this.id },
+    );
+  }
+  async snapshot(request: SnapshotRequest, options: WaitOptions = {}): Promise<SnapshotResult> {
+    return (await this.submitSnapshot(request, options)).wait(options);
+  }
   capabilities(): Promise<AdapterCapabilities> {
     return this.client.capabilities({ sandbox: { id: this.id } });
   }
@@ -494,10 +572,12 @@ export class AdapterSandbox {
 
     await op.wait(options);
   }
-  async destroy(options: { signal?: AbortSignal } = {}): Promise<void> {
-    const op = await this.client.submit(
+  async submitDestroy(
+    options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
+  ): Promise<AdapterOperation<import("sandbar-adapter").DestroyValue>> {
+    const op = await this.client.submit<import("sandbar-adapter").DestroyValue>(
       "destroy",
-      { id: this.id },
+      { id: this.id, storage: options.storage },
       (result, ref) => {
         if (
           result.kind !== "completed" ||
@@ -505,11 +585,18 @@ export class AdapterSandbox {
           !result.value.computeStopped
         )
           throw asUnknown(ref, "Compute termination was not confirmed");
+
+        return result.value;
       },
       { ...options, sandboxId: this.id },
     );
 
-    await op.wait(options);
+    return op;
+  }
+  async destroy(
+    options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
+  ): Promise<import("sandbar-adapter").DestroyValue> {
+    return (await this.submitDestroy(options)).wait(options);
   }
 }
 
@@ -528,6 +615,8 @@ export type AdvancedObservation = {
   operationId: string;
   submissionId: string;
   sandboxId?: string;
+  resource?: ResourceReference;
+  mounts?: import("sandbar-adapter").MountSpec[];
   token?: Json;
   tokenVersion?: number;
 };
@@ -638,7 +727,7 @@ export class AdapterDirectClient {
     }>;
     prepare: (
       kind: OperationKind,
-      input: AdapterCreateInput | ImageBuildInput | AdapterExecInput | FileWriteInput | Sandbox,
+      input: OperationInput,
       options?: { signal?: AbortSignal; maxOutputBytes?: number },
     ) => Promise<PreparedAdapterAttempt>;
     observe: (
@@ -655,6 +744,8 @@ export class AdapterDirectClient {
       options?: { signal?: AbortSignal },
     ) => Promise<AdapterOperation<AdapterSandbox>>;
   };
+  readonly snapshots: ReturnType<typeof resourceManagers>["snapshots"];
+  readonly volumes: ReturnType<typeof resourceManagers>["volumes"];
   readonly images: {
     build: (
       input: ImageBuildInput,
@@ -670,6 +761,9 @@ export class AdapterDirectClient {
     private readonly connection: AdapterConnection<RuntimeSession>,
     private readonly onReference?: (reference: AdapterRecoveryReference) => void | Promise<void>,
   ) {
+    const managers = resourceManagers(this);
+    this.snapshots = managers.snapshots;
+    this.volumes = managers.volumes;
     this.session = connection.session;
     this.scope = connection.scope;
     this.signal = connection.signal;
@@ -716,6 +810,21 @@ export class AdapterDirectClient {
           ? AbortSignal.any([this.signal, options.signal])
           : this.signal;
 
+        if ("snapshot" in input)
+          assertResourceScope(ResourceReference.parse(input.snapshot), {
+            provider: this.provider,
+            scope: this.scope,
+          });
+
+        if ("kind" in input && ["snapshot", "volume"].includes(input.kind))
+          assertResourceScope(ResourceReference.parse(input), {
+            provider: this.provider,
+            scope: this.scope,
+          });
+
+        if ("mounts" in input)
+          for (const mount of input.mounts ?? [])
+            assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
         let prepared: PreparedOperation;
 
         try {
@@ -753,10 +862,23 @@ export class AdapterDirectClient {
         const checked = z
           .strictObject({
             scope: ReferenceSchema.shape.scope,
-            kind: z.enum(["create", "destroy", "exec", "file_write", "image_build"]),
+            kind: z.enum([
+              "create",
+              "destroy",
+              "exec",
+              "file_write",
+              "image_build",
+              "snapshot_capture",
+              "snapshot_restore",
+              "snapshot_delete",
+              "volume_create",
+              "volume_delete",
+            ]),
             operationId: z.string().min(1).max(128),
             submissionId: z.string().min(1).max(128),
             sandboxId: z.string().min(1).max(512).optional(),
+            resource: ResourceReference.optional(),
+            mounts: z.array(importMountSpec).max(32).optional(),
             token: z.json().optional(),
             tokenVersion: z.number().int().positive().optional(),
           })
@@ -768,9 +890,23 @@ export class AdapterDirectClient {
             "Observation scope differs from the verified connection",
           );
 
+        if (checked.resource)
+          assertResourceScope(checked.resource, { provider: this.provider, scope: this.scope });
+
         if (
-          ((checked.kind === "create" || checked.kind === "image_build") && checked.sandboxId) ||
-          (checked.kind !== "create" && checked.kind !== "image_build" && !checked.sandboxId)
+          ([
+            "create",
+            "image_build",
+            "volume_create",
+            "snapshot_restore",
+            "snapshot_delete",
+            "volume_delete",
+          ].includes(checked.kind) &&
+            checked.sandboxId) ||
+          (["destroy", "exec", "file_write", "snapshot_capture"].includes(checked.kind) &&
+            !checked.sandboxId) ||
+          (["snapshot_restore", "snapshot_delete", "volume_delete"].includes(checked.kind) &&
+            !checked.resource)
         )
           throw new SandbarError("INVALID_ARGUMENT", "Observation sandbox binding is invalid");
 
@@ -785,6 +921,8 @@ export class AdapterDirectClient {
                 operationId: checked.operationId,
                 submissionId: checked.submissionId,
                 sandbox: checked.sandboxId ? { id: checked.sandboxId } : undefined,
+                resource: checked.resource,
+                mounts: checked.mounts,
                 token: checked.token,
                 version: checked.tokenVersion,
               },
@@ -869,6 +1007,9 @@ export class AdapterDirectClient {
     const request = validateCreate(input);
     this.checkImageBinding(request);
 
+    for (const mount of request.mounts ?? [])
+      assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
+
     return readWhileOpen(
       this,
       checkCreate(
@@ -879,6 +1020,7 @@ export class AdapterDirectClient {
           region: request.region,
           labels: request.labels,
           requirements: request.requirements,
+          mounts: request.mounts,
         },
         { signal, deadline: Date.now() + 30_000 },
       ),
@@ -899,6 +1041,9 @@ export class AdapterDirectClient {
   ): Promise<AdapterOperation<AdapterSandbox>> {
     const request = validateCreate(input);
     this.checkImageBinding(request);
+
+    for (const mount of request.mounts ?? [])
+      assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
     this.ensureOpen();
     assertSignal(options.signal);
     const signal = options.signal ? AbortSignal.any([this.signal, options.signal]) : this.signal;
@@ -931,13 +1076,21 @@ export class AdapterDirectClient {
         region: request.region,
         labels: request.labels,
         requirements: request.requirements,
+        mounts: request.mounts,
       },
       (result, ref) => {
         if (result.kind !== "completed" || !("id" in result.value)) throw asUnknown(ref);
 
+        if (
+          request.mounts?.length &&
+          (result.value.state !== "running" ||
+            JSON.stringify(result.value.mounts) !== JSON.stringify(request.mounts))
+        )
+          throw asUnknown(ref, "Requested native mounts are not confirmed ready");
+
         return new AdapterSandbox(this, result.value.id);
       },
-      options,
+      { ...options, mounts: request.mounts },
     );
   }
   async submitBuild(
@@ -967,11 +1120,13 @@ export class AdapterDirectClient {
   }
   async submit<T>(
     kind: OperationKind,
-    input: AdapterCreateInput | ImageBuildInput | AdapterExecInput | FileWriteInput | Sandbox,
+    input: OperationInput,
     decode: (result: RuntimeResult, ref: AdapterRecoveryReference) => T,
     options: {
       signal?: AbortSignal;
       sandboxId?: string;
+      resource?: ResourceReference;
+      mounts?: import("sandbar-adapter").MountSpec[];
       file?: { path: string; bytes: number };
       maxOutputBytes?: number;
     } = {},
@@ -991,6 +1146,8 @@ export class AdapterDirectClient {
       scope: this.connection.scope,
       ...ids,
       sandboxId: options.sandboxId,
+      resource: options.resource,
+      mounts: options.mounts,
       file: options.file,
       maxOutputBytes: options.maxOutputBytes,
     });
@@ -1044,17 +1201,58 @@ export class AdapterDirectClient {
     )
       throw new SandbarError("FORBIDDEN", "Recovery scope does not match the verified connection");
 
-    if ((reference.kind === "create" || reference.kind === "image_build") && reference.sandboxId)
+    if (
+      ["snapshot_restore", "snapshot_delete", "volume_delete"].includes(reference.kind) &&
+      !reference.resource
+    )
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery resource is missing");
+
+    if (reference.resource)
+      assertResourceScope(reference.resource, { provider: this.provider, scope: this.scope });
+
+    if (
+      [
+        "create",
+        "image_build",
+        "volume_create",
+        "snapshot_restore",
+        "snapshot_delete",
+        "volume_delete",
+      ].includes(reference.kind) &&
+      reference.sandboxId
+    )
       throw new SandbarError("INVALID_ARGUMENT", "Create reference cannot have a sandbox");
 
-    if (reference.kind !== "create" && reference.kind !== "image_build" && !reference.sandboxId)
+    if (
+      ["destroy", "exec", "file_write", "snapshot_capture"].includes(reference.kind) &&
+      !reference.sandboxId
+    )
       throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox is missing");
 
     return new AdapterOperation(this, reference, (result, ref) => {
       if (result.kind !== "completed") throw asUnknown(ref);
       const value = result.value;
 
-      if (ref.kind === "create" && "id" in value) return new AdapterSandbox(this, value.id);
+      if (
+        [
+          "snapshot_capture",
+          "snapshot_restore",
+          "snapshot_delete",
+          "volume_create",
+          "volume_delete",
+        ].includes(ref.kind)
+      )
+        return decodeResourceResult(this, result, ref);
+
+      if (ref.kind === "create" && "id" in value) {
+        if (
+          ref.mounts?.length &&
+          (value.state !== "running" || JSON.stringify(value.mounts) !== JSON.stringify(ref.mounts))
+        )
+          throw asUnknown(ref, "Recovered mounts not confirmed ready");
+
+        return new AdapterSandbox(this, value.id);
+      }
 
       if (ref.kind === "image_build" && "preparedId" in value)
         return {
@@ -1075,7 +1273,7 @@ export class AdapterDirectClient {
       )
         return checkExec(execOutput(value.exitCode, value.stdout, value.stderr, value.truncated));
 
-      if (ref.kind === "destroy" && "computeStopped" in value && value.computeStopped) return;
+      if (ref.kind === "destroy" && "computeStopped" in value && value.computeStopped) return value;
 
       if (
         ref.kind === "file_write" &&
