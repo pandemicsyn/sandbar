@@ -1384,7 +1384,7 @@ export class DaytonaDriver implements ProviderDriver {
       );
 
       if (committed.exitCode !== 0) {
-        if (!input.overwrite && committed.exitCode !== 125) {
+        if (!input.overwrite && committed.exitCode !== undefined && committed.exitCode !== 125) {
           try {
             await this.readFile({ sandbox: input.sandbox, path: input.path });
 

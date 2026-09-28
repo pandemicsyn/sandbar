@@ -1027,7 +1027,7 @@ test("generic 404 after a lost delete does not certify compute termination", asy
   expect(deletes).toBe(1);
 });
 
-test.each(["absent", "file", "directory", "symlink"] as const)(
+test.each(["absent", "file", "directory", "symlink", "missing-exit"] as const)(
   "atomic no-clobber preserves destination: %s",
   async (existing) => {
     const files = new Map<string, Uint8Array>();
@@ -1080,12 +1080,15 @@ test.each(["absent", "file", "directory", "symlink"] as const)(
         const source = match![1]!;
         const target = match![2]!;
         expect(command).toContain(`rm -f '${source}'`);
-        const conflict = existing !== "absent";
+        const conflict = existing !== "absent" && existing !== "missing-exit";
 
         if (!conflict) files.set(target, files.get(source)!);
         files.delete(source);
 
-        return Response.json({ result: "", exitCode: conflict ? 1 : 0 });
+        return Response.json({
+          result: "",
+          exitCode: existing === "missing-exit" ? undefined : conflict ? 1 : 0,
+        });
       }
 
       throw new Error(`Unexpected fixture route ${url.pathname}`);
@@ -1107,19 +1110,22 @@ test.each(["absent", "file", "directory", "symlink"] as const)(
         file: "rejected",
         directory: "unknown",
         symlink: "unknown",
+        "missing-exit": "unknown",
       } as const
     )[existing];
 
     expect(result.status).toBe(expectedStatus);
 
-    if (existing === "absent" || existing === "file")
+    if (existing === "absent" || existing === "file" || existing === "missing-exit")
       expect(Array.from(files.get("/target")!)).toEqual(existing === "file" ? [9] : [0, 255]);
     else expect(files.has("/target")).toBe(false);
 
     expect(uploads).toBe(1);
     expect(links).toBe(1);
     expect([...files.keys()]).toEqual(
-      existing === "file" || existing === "absent" ? ["/target"] : [],
+      existing === "file" || existing === "absent" || existing === "missing-exit"
+        ? ["/target"]
+        : [],
     );
   },
 );
