@@ -1,6 +1,12 @@
 import type { LedgerStore } from "./ledger";
 import { runPrepared, type ConnectionFactory, type Step } from "./lifecycle";
-import { probeNetwork, requireBlocked, requireInternet, type NetworkSample } from "./network-probe";
+import {
+  probeNetwork,
+  networkProbeId,
+  requireBlocked,
+  requireInternet,
+  type NetworkSample,
+} from "./network-probe";
 
 export type NetworkRun = { policy: "internet" | "blocked"; ledger: LedgerStore; steps: Step[] };
 
@@ -22,7 +28,7 @@ export async function runNetworkPair(
   const samples: NetworkSample[] = [];
 
   const evidence = () => ({
-    probe: "cloudflare-tcp443-hostname-ipv4-v1" as const,
+    probe: networkProbeId,
     samples: [...samples],
   });
 

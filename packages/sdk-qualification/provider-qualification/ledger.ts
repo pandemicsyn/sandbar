@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { AdapterRecoveryReference } from "sandbar-sdk";
 import { z } from "zod";
 import { envdSchema, failureDiagnosticSchema } from "./diagnostics";
-import { networkEvidenceSchema } from "./network-probe";
+import { networkEvidenceSchema, networkProbeId } from "./network-probe";
 
 const ledgerSchema = z.strictObject({
   version: z.literal(1),
@@ -35,6 +35,7 @@ const ledgerSchema = z.strictObject({
   fileRoot: z.enum(["/tmp", "/home/user"]).optional(),
   companionRunId: z.uuid().optional(),
   networkPolicy: z.enum(["internet", "blocked"]).optional(),
+  networkProbe: z.literal(networkProbeId).optional(),
   networkEvidence: networkEvidenceSchema.optional(),
   envd: envdSchema.optional(),
   diagnostics: z

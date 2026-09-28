@@ -10,6 +10,7 @@ import { e2bConfiguration, e2bConnection, e2bEnvdVersion } from "./e2b-profile";
 import { LedgerStore, requirePrivateDirectory, reportedCleanup } from "./ledger";
 import { reconcileConnection, runPrepared, type Step } from "./lifecycle";
 import { runNetworkPair, type NetworkRun } from "./network-profile";
+import { networkProbeId } from "./network-probe";
 import { parseReport, publicIssue, scenarios, type Scenario } from "./report";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -190,6 +191,7 @@ const metadata = {
       config.templateId === "base" ? ("public-base" as const) : ("borrowed-template" as const),
     authorityClass: config.teamId ? ("verified-team" as const) : ("api-key" as const),
     network: "blocked-requested",
+    networkProbe: paired ? (saved?.networkProbe ?? networkProbeId) : undefined,
     regionClass: "provider-default",
   },
   evidenceRef,
@@ -236,6 +238,7 @@ const exercise = async () => {
       fileRoot,
       companionRunId: companion?.runId,
       networkPolicy: companion ? "internet" : "blocked",
+      networkProbe: companion ? networkProbeId : undefined,
     }));
 
     if (companion) {
@@ -244,6 +247,7 @@ const exercise = async () => {
         ...value,
         companionRunId: ledger.runId,
         networkPolicy: "blocked",
+        networkProbe: networkProbeId,
       }));
     }
   }

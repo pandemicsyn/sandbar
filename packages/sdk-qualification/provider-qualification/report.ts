@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { envdSchema, failureDiagnosticSchema } from "./diagnostics";
-import { networkEvidenceSchema, requireBlocked, requireInternet } from "./network-probe";
+import {
+  networkEvidenceSchema,
+  networkProbeId,
+  requireBlocked,
+  requireInternet,
+} from "./network-probe";
 
 export const scenarios = [
   "connect",
@@ -60,6 +65,7 @@ export const recordSchema = z.strictObject({
     templateClass: z.enum(["public-base", "borrowed-template"]).optional(),
     authorityClass: z.enum(["api-key", "verified-team"]).optional(),
     network: safeLabel,
+    networkProbe: z.literal(networkProbeId).optional(),
     regionClass: safeLabel,
   }),
   evidenceRef: evidence.optional(),
@@ -103,6 +109,12 @@ export const reportSchema = z
             throw new Error("Network passes require the paired before/blocked/after observations");
           requireInternet(samples[0]!);
           requireInternet(samples[2]!);
+
+          if (
+            record.configuration.networkProbe &&
+            record.configuration.networkProbe !== record.networkEvidence?.probe
+          )
+            throw new Error("Network evidence does not match the intended probe");
 
           if (record.scenario === "network-blocked") requireBlocked(samples[1]!);
 
@@ -182,7 +194,7 @@ function key(record: QualificationRecord): string {
     record.configuration.network,
     record.configuration.regionClass,
     record.scenario.startsWith("network-")
-      ? (record.networkEvidence?.probe ?? "not-recorded")
+      ? (record.configuration.networkProbe ?? record.networkEvidence?.probe ?? "not-recorded")
       : "—",
     record.scenario.startsWith("file-") ? (record.configuration.fileRoot ?? "not-recorded") : "—",
     record.runtime,
@@ -250,7 +262,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
     record.configuration.imageClass,
     `${record.configuration.templateClass ?? "unspecified"} / ${record.configuration.authorityClass ?? "unspecified"}`,
     record.scenario.startsWith("network-")
-      ? `${record.configuration.network} / ${record.networkEvidence?.probe ?? "not recorded"}`
+      ? `${record.configuration.network} / ${record.configuration.networkProbe ?? record.networkEvidence?.probe ?? "not recorded"}`
       : record.configuration.network,
     record.configuration.regionClass,
     record.scenario.startsWith("file-") ? (record.configuration.fileRoot ?? "not recorded") : "—",

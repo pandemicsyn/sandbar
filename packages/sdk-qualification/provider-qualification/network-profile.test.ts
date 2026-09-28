@@ -377,6 +377,7 @@ test("measured network proof cannot supersede an unrecorded probe scope", () => 
     },
     evidenceRef: "specs/older-probe.md",
   };
+
   const measured = {
     ...record,
     timestamp: "2026-09-28T00:00:00Z",
@@ -390,10 +391,61 @@ test("measured network proof cannot supersede an unrecorded probe scope", () => 
       ],
     },
   };
+
   const rendered = renderLiveMatrix([
     parseReport({ schemaVersion: 1, records: [record, measured] }),
   ]);
+
   expect(rendered).toContain("specs/older-probe.md");
   expect(rendered).toContain("specs/measured-probe.md");
+  expect(rendered).toContain("blocked-requested / cloudflare-tcp443-hostname-ipv4-v1");
+});
+
+test("same intended probe failure supersedes an older pass even without captured samples", () => {
+  const probe = "cloudflare-tcp443-hostname-ipv4-v1";
+
+  const record = {
+    schemaVersion: 1,
+    provider: "e2b",
+    scenario: "network-blocked",
+    mode: "live",
+    status: "passed",
+    sdkCommit: "a".repeat(40),
+    harnessCommit: "b".repeat(40),
+    sdkVersion: "0.0.0",
+    nativeVersion: "e2b 2.51.0",
+    runCleanup: "confirmed",
+    runtime: "Bun",
+    platform: "fixture",
+    timestamp: "2026-09-27T00:00:00Z",
+    configuration: {
+      imageClass: "prepared",
+      templateClass: "public-base",
+      authorityClass: "api-key",
+      network: "blocked-requested",
+      networkProbe: probe,
+      regionClass: "provider-default",
+    },
+    evidenceRef: "specs/older-pass.md",
+    networkEvidence: {
+      probe,
+      samples: [
+        { ...outcomes(true), phase: "before" },
+        { ...outcomes(false), phase: "blocked" },
+        { ...outcomes(true), phase: "after" },
+      ],
+    },
+  };
+
+  const failed = {
+    ...record,
+    timestamp: "2026-09-28T00:00:00Z",
+    status: "failed",
+    networkEvidence: undefined,
+    evidenceRef: "specs/latest-failure.md",
+  };
+  const rendered = renderLiveMatrix([parseReport({ schemaVersion: 1, records: [record, failed] })]);
+  expect(rendered).toContain("specs/latest-failure.md");
+  expect(rendered).not.toContain("specs/older-pass.md");
   expect(rendered).toContain("blocked-requested / cloudflare-tcp443-hostname-ipv4-v1");
 });

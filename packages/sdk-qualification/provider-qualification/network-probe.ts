@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { AdapterSandbox } from "sandbar-sdk";
 import type { FailureCapture } from "./diagnostics";
 
+export const networkProbeId = "cloudflare-tcp443-hostname-ipv4-v1" as const;
+
 const attempt = z
   .strictObject({
     target: z.enum(["hostname", "ipv4"]),
@@ -21,7 +23,7 @@ export const networkSampleSchema = z
   );
 
 export const networkEvidenceSchema = z.strictObject({
-  probe: z.literal("cloudflare-tcp443-hostname-ipv4-v1"),
+  probe: z.literal(networkProbeId),
   samples: z.array(networkSampleSchema).min(1).max(3),
 });
 
