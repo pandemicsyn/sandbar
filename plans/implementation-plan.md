@@ -8,11 +8,22 @@ Implement the [state portability spec](../specs/provider-state-portability.md): 
 
 Daytona and E2B are the current built-ins. Vercel and Tensorlake inform the abstraction; their adapter specs and implementations are later work.
 
+## Planned: SDK observability and diagnostics
+
+Follow the [observability spec](../specs/sdk-observability.md) as a separately scheduled workstream after the state-portability foundations settle. It does not expand that task or replace the next snapshot feature slice.
+
+1. Direct SDK operation/phase tracing, safe error correlation, and application-owned OpenTelemetry setup.
+2. Service propagation and linked recovery/runner episodes, preserving no-replay semantics.
+3. Tested Sentry, Datadog, and plain OpenTelemetry recipes with separate Node/Bun and local/vendor evidence.
+4. Bounded metrics and structured diagnostic events after tracing is stable.
+
+The first unit delivers useful direct traces and diagnostics; the complete integration story requires the service and vendor qualification units. Accounting remains separate and deferred.
+
 ## Later
 
 - Develop the [interactive execution/access draft](../specs/interactive-execution-and-access.md) after the state contracts settle.
 - Specify Vercel and Tensorlake adapters separately when they become implementation work.
-- Observability/accounting is deferred. There is no active management-feature spec, and Rust is not on the roadmap.
+- Accounting is deferred. There is no active management-feature spec, and Rust is not on the roadmap.
 - Effect remains parked and is not an implementation or release gate.
 
 ## Existing implementation and evidence
