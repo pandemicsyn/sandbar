@@ -581,3 +581,154 @@ test("lost exec, write and destroy responses recover by read-only evidence after
   expect(mutations).toEqual({ exec: 1, upload: 1, write: 1, destroy: 1 });
   await afterDestroy.close();
 });
+
+test("destroy preflight failure rejects without attempting DELETE", async () => {
+  let deletes = 0;
+
+  const fetchImpl: typeof fetch = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions")
+        return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+      if (path === "/api/organizations/org-1")
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+      if (init?.method === "DELETE") deletes++;
+      throw new Error("preflight unavailable");
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const client = await Sandbar.connect({
+    adapter: createDaytonaAdapter(fetchImpl),
+    config: { target: "us" },
+    credentials: { apiKey: "fixture" },
+  });
+
+  try {
+    const prepared = await client.operations.prepare("destroy", { id: "native-1" });
+
+    const result = await prepared.submit(
+      {
+        operationId: "op-preflight-delete",
+        submissionId: "preflight-delete",
+        invocationKey: "key-preflight-delete",
+      },
+      { beforeSubmit: async () => true },
+    );
+
+    expect(result).toMatchObject({ kind: "rejected", code: "UNAVAILABLE" });
+    expect(deletes).toBe(0);
+  } finally {
+    await client.close();
+  }
+});
+
+test("exec receipt deadline starts after a slow preflight and survives reconnect", async () => {
+  const originalNow = Date.now;
+  let now = originalNow();
+  let submittedAt = 0;
+  let executes = 0;
+
+  const fetchImpl: typeof fetch = Object.assign(
+    async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions")
+        return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+      if (path === "/api/organizations/org-1")
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+      if (path === "/api/sandbox/native-1") {
+        if (!executes) now += 20_000;
+
+        return Response.json({
+          id: "native-1",
+          name: "box",
+          organizationId: "org-1",
+          target: "us",
+          state: "started",
+          public: false,
+          networkBlockAll: true,
+          toolboxProxyUrl: "https://proxy.app.daytona.io/toolbox",
+        });
+      }
+
+      if (path.endsWith("/process/execute")) {
+        executes++;
+        submittedAt = now;
+        throw new Error("response lost");
+      }
+
+      if (path.endsWith("/files/download")) return new Response("SANDBAR-EXEC-V1\n");
+      throw new Error("Unexpected fixture request");
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const connect = () =>
+    Sandbar.connect({
+      adapter: createDaytonaAdapter(fetchImpl),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+  let client = await connect();
+
+  try {
+    Date.now = () => now;
+
+    const prepared = await client.operations.prepare(
+      "exec",
+      {
+        sandbox: { id: "native-1" },
+        command: { kind: "shell", script: "true" },
+        deadlineSeconds: 5,
+        maxOutputBytes: 10,
+      },
+      { maxOutputBytes: 10 },
+    );
+
+    const result = await prepared.submit(
+      {
+        operationId: "op-slow-preflight",
+        submissionId: "slow-preflight",
+        invocationKey: "key-slow-preflight",
+      },
+      { beforeSubmit: async () => true },
+    );
+
+    expect(result?.kind).toBe("pending");
+
+    if (result?.kind !== "pending") throw new Error("Expected pending execution");
+    expect(result.token).toMatchObject({ receiptDeadline: submittedAt + 15_000 });
+    await client.close();
+    client = await connect();
+    now += 1000;
+
+    const attempt = {
+      scope: client.scope,
+      kind: "exec" as const,
+      operationId: "op-slow-preflight",
+      submissionId: "slow-preflight",
+      sandboxId: "native-1",
+      token: result.token,
+      tokenVersion: result.version,
+    };
+
+    expect((await client.operations.observe(attempt))?.kind).toBe("pending");
+    now = submittedAt + 15_000;
+    expect((await client.operations.observe(attempt))?.kind).toBe("unknown");
+    expect(executes).toBe(1);
+  } finally {
+    Date.now = originalNow;
+    await client.close();
+  }
+});

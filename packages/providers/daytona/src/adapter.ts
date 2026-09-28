@@ -309,7 +309,13 @@ export function createDaytonaAdapter(
         destroy: {
           recovery: { version: 1, token: DestroyToken },
           async submit(box, ctx) {
-            const retainedResources = await driver.destroyRetainedResources(native(box.id));
+            let retainedResources: string[];
+
+            try {
+              retainedResources = await driver.destroyRetainedResources(native(box.id));
+            } catch {
+              return ctx.reject("UNAVAILABLE", "Daytona inspection failed before deletion");
+            }
 
             const result = await driver.destroy({
               sandbox: native(box.id),
@@ -369,7 +375,7 @@ export function createDaytonaAdapter(
         exec: {
           recovery: { version: 1, token: ExecToken },
           async submit(input, ctx) {
-            const receiptDeadline = Date.now() + (input.deadlineSeconds + 10) * 1000;
+            let receiptDeadline: number | undefined;
 
             const result = await driver.exec({
               sandbox: native(input.sandbox.id),
@@ -380,6 +386,9 @@ export function createDaytonaAdapter(
               deadlineSeconds: input.deadlineSeconds,
               maxOutputBytes: input.maxOutputBytes,
               signal: ctx.signal,
+              onSubmit() {
+                receiptDeadline = Date.now() + (input.deadlineSeconds + 10) * 1000;
+              },
             });
 
             const value = executionValue(result);
@@ -388,14 +397,14 @@ export function createDaytonaAdapter(
 
             if (result.status === "rejected") return failure(result, ctx);
 
-            return ctx.pending(
-              {
-                submissionId: ctx.submissionId,
-                maxOutputBytes: input.maxOutputBytes,
-                receiptDeadline,
-              },
-              { pollAfterMs: 500 },
-            );
+            const token: z.infer<typeof ExecToken> = {
+              submissionId: ctx.submissionId,
+              maxOutputBytes: input.maxOutputBytes,
+            };
+
+            if (receiptDeadline !== undefined) token.receiptDeadline = receiptDeadline;
+
+            return ctx.pending(token, { pollAfterMs: 500 });
           },
           async observe(attempt, ctx) {
             const token = attempt.token ? ExecToken.safeParse(attempt.token) : null;

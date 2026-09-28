@@ -949,6 +949,7 @@ export class DaytonaDriver implements ProviderDriver {
     deadlineSeconds: number;
     maxOutputBytes: number;
     signal?: AbortSignal;
+    onSubmit?: () => void;
   }): Promise<DriverResult> {
     let native: Sandbox;
 
@@ -1002,6 +1003,8 @@ export class DaytonaDriver implements ProviderDriver {
       return unknown(input.identity.submissionId, "Daytona execution wait was aborted");
 
     try {
+      input.onSubmit?.();
+
       const response = await this.json(
         "POST",
         `/process/execute`,
@@ -1430,10 +1433,25 @@ export class DaytonaDriver implements ProviderDriver {
     if (input.signal?.aborted)
       return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
 
-    try {
-      const retainedResources =
-        input.retainedResources ?? (await this.destroyRetainedResources(input.sandbox));
+    let retainedResources: string[];
 
+    try {
+      retainedResources =
+        input.retainedResources ?? (await this.destroyRetainedResources(input.sandbox));
+    } catch {
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code: "unavailable",
+          message: "Daytona inspection failed before deletion",
+          effect: "none",
+          retry: "never",
+        },
+      };
+    }
+
+    try {
       if (input.signal?.aborted)
         return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
 
