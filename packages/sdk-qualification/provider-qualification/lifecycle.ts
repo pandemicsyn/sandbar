@@ -100,6 +100,7 @@ export async function runPrepared(
   imageId: string,
   options: {
     network: string;
+    fileRoot?: "/tmp" | "/home/user";
     region?: string;
     cleanupWaitMs?: number;
     signal?: AbortSignal;
@@ -323,7 +324,7 @@ async function runPreparedLocked(
           throw error;
       }
     });
-    const path = `/tmp/sandbar-qualification-${ledger.runId}`;
+    const path = `${options.fileRoot ?? "/tmp"}/sandbar-qualification-${ledger.runId}`;
     const first = new Uint8Array([0, 255, 1, 128]);
     const second = new Uint8Array([2, 254, 0]);
     await step("file-binary", async (capture) => {

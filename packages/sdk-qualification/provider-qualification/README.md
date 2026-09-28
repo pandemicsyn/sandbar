@@ -72,3 +72,8 @@ bun packages/sdk-qualification/provider-qualification/render.ts --check
 Before a later authorized live run, qualify the merged profiles through relevant offline fixtures and packed consumers on that exact commit. The existing partial provider live scripts do not supply this acceptance record.
 
 The live gate checks that SDK sources and dependency pins match `origin/main` (or `SANDBAR_QUAL_SDK_REF`, which must be an ancestor of `origin/main`). A clean, independently reviewed harness branch can run against those unchanged merged sources; both revisions are recorded. Cleanup reconciliation remains available without this gate. Refresh `origin/main` before selecting the SDK revision.
+
+
+## E2B file workspace
+
+The default E2B baseline uses `/home/user`, matching the [documented default user/workdir](https://docs.e2b.dev/template/user-and-workdir) and [upload example](https://docs.e2b.dev/quickstart/upload-download-files). `SANDBAR_QUAL_FILE_ROOT` may explicitly select `/home/user` or `/tmp`; custom templates require an appropriate confirmed workdir. The private ledger and public configuration retain the selected file root. File evidence groups by root so a home-directory pass cannot supersede a `/tmp` failure. Historical records lacking this field remain unchanged and display “not recorded”; their handoffs retain the original `/tmp` path. The earlier native sticky-directory limitation remains documented. This is a test-workspace correction, not a provider write workaround or broader overwrite claim.

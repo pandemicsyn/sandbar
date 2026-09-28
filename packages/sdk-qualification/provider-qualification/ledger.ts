@@ -31,6 +31,7 @@ const ledgerSchema = z.strictObject({
       }),
     ])
     .optional(),
+  fileRoot: z.enum(["/tmp", "/home/user"]).optional(),
   envd: envdSchema.optional(),
   diagnostics: z
     .array(failureDiagnosticSchema.extend({ scenario: z.string().max(80) }))

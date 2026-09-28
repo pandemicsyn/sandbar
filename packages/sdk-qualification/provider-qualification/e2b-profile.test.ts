@@ -26,11 +26,15 @@ async function fixture(
   let record: Awaited<ReturnType<E2BTransport["get"]>> = null;
   const counters = { create: 0, kill: 0, close: 0, build: 0 };
   let writes = 0;
+  const filePaths: string[] = [];
 
   const path = (value: string) => {
-    if (!value.startsWith("/tmp/")) throw new Error("Fixture path must be in /tmp");
+    const prefix = value.startsWith("/home/user/") ? "/home/user/" : "/tmp/";
 
-    return join(directory, value.slice(5));
+    if (!value.startsWith(prefix))
+      throw new Error("Fixture path must be in the selected file root");
+
+    return join(directory, value.slice(prefix.length));
   };
 
   const transport: E2BTransport = {
@@ -87,6 +91,7 @@ async function fixture(
 
       const rewritten = script
         .replaceAll("/tmp/", `${directory}/`)
+        .replaceAll("/home/user/", `${directory}/`)
         .replace("ln -T --", `${link} -T --`);
 
       const result = Bun.spawnSync({
@@ -108,6 +113,7 @@ async function fixture(
     },
     async write(_id, filename, bytes) {
       writes++;
+      filePaths.push(filename);
 
       if (options.failOverwrite && writes === 2) return;
       await writeFile(path(filename), bytes);
@@ -124,6 +130,7 @@ async function fixture(
     ledger,
     counters,
     writes: () => writes,
+    filePaths,
     stop: () => {
       record = null;
     },
@@ -131,17 +138,20 @@ async function fixture(
   };
 }
 
-test("E2B prepared profile qualifies public SDK lifecycle with one native TTL sandbox", async () => {
+test("E2B prepared profile qualifies documented home-directory file workflow with one native TTL sandbox", async () => {
   const native = await fixture();
   expect(config).toEqual({ templateId: "base", timeoutSeconds: 300 });
 
   const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
     network: "blocked",
+    fileRoot: "/home/user",
     cleanupWaitMs: 100,
   });
 
   expect(steps.every((step) => step.status === "passed")).toBe(true);
   expect(native.counters).toEqual({ create: 1, kill: 1, close: 1, build: 0 });
+  expect(native.filePaths.length).toBe(3);
+  expect(native.filePaths.every((path) => path.startsWith("/home/user/"))).toBe(true);
   expect((await native.ledger.read()).cleanup).toBe("confirmed");
   expect((await native.ledger.read()).connection).toEqual(config);
 });

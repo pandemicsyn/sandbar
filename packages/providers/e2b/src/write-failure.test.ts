@@ -248,14 +248,34 @@ test("write recovery retains sanitized failure across restart and distinguishes 
     delete legacy.failure;
     expect(await observe(legacy)).toEqual({ kind: "completed", value: { bytesWritten: 3 } });
     afterEffect = true;
-    const acknowledgedLate = await submitOperation(prepared, identity, signal);
+
+    const lateIdentity = {
+      ...identity,
+      operationId: "op_late",
+      submissionId: "sub_late",
+      invocationKey: "inv_late",
+    };
+
+    const latePrepared = await prepareOperation(
+      connection.session,
+      "file_write",
+      { sandbox: lateIdentity.sandbox, path: "/tmp/late", bytes: submitted, overwrite: true },
+      signal,
+    );
+
+    const writesBefore = writes;
+    const acknowledgedLate = await submitOperation(latePrepared, lateIdentity, signal);
 
     if (acknowledgedLate.kind !== "pending") throw new Error("Expected lost acknowledgement");
-    expect(await observe(acknowledgedLate.token)).toEqual({
-      kind: "completed",
-      value: { bytesWritten: 3 },
-    });
-    expect(writes).toBe(2);
+    expect(
+      await observeOperation(
+        connection.session,
+        "file_write",
+        { ...lateIdentity, token: acknowledgedLate.token, version: acknowledgedLate.version },
+        signal,
+      ),
+    ).toEqual({ kind: "completed", value: { bytesWritten: 3 } });
+    expect(writes - writesBefore).toBe(1);
 
     observed = original;
     const client = await Sandbar.connect({ adapter, config, credentials });

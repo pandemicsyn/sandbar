@@ -51,6 +51,7 @@ export const recordSchema = z.strictObject({
   timestamp: z.iso.datetime({ offset: true }),
   configuration: z.strictObject({
     imageClass: z.enum(["prepared", "oci", "none"]),
+    fileRoot: z.enum(["/tmp", "/home/user"]).optional(),
     templateClass: z.enum(["public-base", "borrowed-template"]).optional(),
     authorityClass: z.enum(["api-key", "verified-team"]).optional(),
     network: safeLabel,
@@ -140,6 +141,7 @@ function key(record: QualificationRecord): string {
     record.configuration.authorityClass ?? "unspecified",
     record.configuration.network,
     record.configuration.regionClass,
+    record.scenario.startsWith("file-") ? (record.configuration.fileRoot ?? "not-recorded") : "—",
     record.runtime,
     record.platform,
   ].join("|");
@@ -204,6 +206,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
     `${record.configuration.templateClass ?? "unspecified"} / ${record.configuration.authorityClass ?? "unspecified"}`,
     record.configuration.network,
     record.configuration.regionClass,
+    record.scenario.startsWith("file-") ? (record.configuration.fileRoot ?? "not recorded") : "—",
     `${record.runtime} ${record.platform}`,
     `${record.sdkVersion} (${record.sdkCommit.slice(0, 8)}) / ${record.nativeVersion ?? "—"}`,
     record.runCleanup === "incomplete" && record.status === "passed"
@@ -222,6 +225,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
         "Template / authority",
         "Network",
         "Region class",
+        "File root",
         "Runtime",
         "SDK / native",
         "Latest live result",
@@ -230,7 +234,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
       ],
       tableRows.length
         ? tableRows
-        : [["—", "—", "—", "—", "—", "—", "—", "—", "No live evidence recorded", "—", "—"]],
+        : [["—", "—", "—", "—", "—", "—", "—", "—", "—", "No live evidence recorded", "—", "—"]],
     ),
   );
   lines.push(

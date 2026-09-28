@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { z } from "zod";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, resolve, sep } from "node:path";
@@ -112,6 +113,14 @@ const config = e2bConfiguration.parse(
   },
 );
 
+const fileRoot = z
+  .enum(["/tmp", "/home/user"])
+  .parse(
+    action === "reconcile"
+      ? (saved?.fileRoot ?? "/tmp")
+      : (process.env.SANDBAR_QUAL_FILE_ROOT ?? "/home/user"),
+  );
+
 const selected = action === "live-prepared" ? selectedScenarios() : undefined;
 
 const requestedEvidenceRef =
@@ -152,6 +161,7 @@ const metadata = {
   platform: `${process.platform}-${process.arch}`,
   configuration: {
     imageClass: "prepared" as const,
+    fileRoot,
     templateClass:
       config.templateId === "base" ? ("public-base" as const) : ("borrowed-template" as const),
     authorityClass: config.teamId ? ("verified-team" as const) : ("api-key" as const),
@@ -184,8 +194,10 @@ const redactions = [apiKey, process.env.SANDBAR_DAYTONA_API_KEY ?? ""];
 
 const factory = e2bConnection(config, apiKey);
 
-if (action === "live-prepared")
+if (action === "live-prepared") {
   await ledger.initialize("e2b", { kind: "borrowed-prepared", class: "prepared" }, config);
+  await ledger.update((value) => ({ ...value, fileRoot }));
+}
 
 const controller = new AbortController();
 
@@ -203,6 +215,7 @@ try {
   if (action === "live-prepared")
     steps = await runPrepared(factory, ledger, config.templateId, {
       network: "blocked",
+      fileRoot,
       signal: controller.signal,
       cleanupWaitMs: 60_000,
       selectedScenarios: selected,

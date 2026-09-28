@@ -554,3 +554,53 @@ test("only latest live evidence is rendered; fixtures cannot make green cells", 
 
   expect(renderLiveMatrix([sameInstant])).toMatch(/\| failed\s+\| 2026-09-27/);
 });
+
+test("home-directory file evidence cannot supersede a sticky-tmp failure", () => {
+  const base = {
+    schemaVersion: 1,
+    provider: "e2b",
+    scenario: "file-overwrite",
+    mode: "live",
+    runCleanup: "confirmed",
+    sdkCommit: "a".repeat(40),
+    harnessCommit: "b".repeat(40),
+    sdkVersion: "0.0.0",
+    nativeVersion: "e2b 2.51.0",
+    runtime: "Bun 1.3.14",
+    platform: "darwin-arm64",
+    evidenceRef: "evidence/e2b-file-root.json",
+    configuration: {
+      imageClass: "prepared",
+      templateClass: "public-base",
+      authorityClass: "api-key",
+      network: "blocked-requested",
+      regionClass: "provider-default",
+    },
+  };
+
+  const report = parseReport({
+    schemaVersion: 1,
+    records: [
+      {
+        ...base,
+        status: "failed",
+        timestamp: "2026-09-27T00:00:00Z",
+        configuration: { ...base.configuration, fileRoot: "/tmp" },
+      },
+      {
+        ...base,
+        status: "passed",
+        timestamp: "2026-09-28T00:00:00Z",
+        configuration: { ...base.configuration, fileRoot: "/home/user" },
+      },
+    ],
+  });
+
+  const rows = renderLiveMatrix([report])
+    .split("\n")
+    .filter((row) => row.includes("file-overwrite"));
+
+  expect(rows).toHaveLength(2);
+  expect(rows.some((row) => row.includes("/tmp") && row.includes("failed"))).toBe(true);
+  expect(rows.some((row) => row.includes("/home/user") && row.includes("passed"))).toBe(true);
+});
