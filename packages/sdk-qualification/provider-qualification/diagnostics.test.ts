@@ -529,6 +529,9 @@ for (const reconcileOnly of [false, true])
 
     expect(released).toBe(true);
     expect(steps.find((entry) => entry.scenario === "connect")?.status).toBe("failed");
+    expect(publicIssue(steps.find((entry) => entry.scenario === "connect")?.issue)).toBe(
+      "interrupted",
+    );
     expect(steps.find((entry) => entry.scenario === "close")).toMatchObject({
       status: "failed",
       diagnostic: { error: { message: "Late release failed [REDACTED]" } },

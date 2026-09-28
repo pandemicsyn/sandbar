@@ -551,7 +551,12 @@ export async function reconcileConnection(
       const releaseDiagnostics = await Promise.all(diagnosticJobs);
 
       const failedSteps: Step[] = [
-        { scenario: "connect", status: "failed", issue: "assertion-failed", diagnostic },
+        {
+          scenario: "connect",
+          status: "failed",
+          issue: error instanceof SandbarError ? error.code : "assertion-failed",
+          diagnostic,
+        },
       ];
 
       if (releaseDiagnostics.length)
