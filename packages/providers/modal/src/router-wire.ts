@@ -313,7 +313,8 @@ export class ModalRouterWire {
           message(field(1, taskId), field(2, execId)),
           signal,
         ),
-        Promise.all([collect(0), collect(1)]),
+        // Modal FileDescriptor enum: stdout = 1, stderr = 2 (0 is unspecified).
+        Promise.all([collect(1), collect(2)]),
       ]);
 
       const wait = parse(waitBytes);

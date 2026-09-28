@@ -36,6 +36,8 @@ let loseStdin = false;
 
 let firstStream: "stdout" | "stderr" | undefined;
 
+let waitReply = message(field(1, 7));
+
 const seen: Buffer[] = [];
 
 server.addService(
@@ -78,22 +80,23 @@ server.addService(
       // SAFETY: The fixture asserted the protobuf exec ID field is bytes.
       expect(new TextDecoder().decode(id as Uint8Array)).toBe("submission-1");
 
-      if (holdWait) setTimeout(() => callback(null, message(field(1, 7))), 100);
-      else callback(null, message(field(1, 7)));
+      if (holdWait) setTimeout(() => callback(null, waitReply), 100);
+      else callback(null, waitReply);
     },
     taskExecStdioRead(call: grpc.ServerWritableStream<Buffer, Buffer>) {
       const descriptor = parse(call.request).get(4);
+      expect(descriptor === 1 || descriptor === 2).toBe(true);
 
       const emit = () => {
         call.write(
           message(
-            field(1, descriptor === 0 ? Uint8Array.from([0, 255, 129]) : Uint8Array.from([42])),
+            field(1, descriptor === 1 ? Uint8Array.from([0, 255, 129]) : Uint8Array.from([42])),
           ),
         );
         call.end();
       };
 
-      if (firstStream) setTimeout(emit, (descriptor === 0) === (firstStream === "stdout") ? 0 : 20);
+      if (firstStream) setTimeout(emit, (descriptor === 1) === (firstStream === "stdout") ? 0 : 20);
       else emit();
     },
   },
@@ -194,6 +197,31 @@ test("binary stdin uses exact offsets and bounded output truncates", async () =>
     expect(result.stdout.length + result.stderr.length).toBe(2);
     expect(result.truncated).toBe(true);
   } finally {
+    wire.close();
+  }
+});
+
+test("optional native exit code accepts explicit zero and rejects missing status without replay", async () => {
+  starts = 0;
+  const wire = router();
+
+  try {
+    await wire.start({
+      sandboxId: "sb-fixture",
+      execId: "submission-1",
+      command: ["true"],
+      timeoutSeconds: 5,
+    });
+    // Modal 0.10.1 encodes optional code=0 as a present varint, not an omitted default.
+    waitReply = message(field(1, 0));
+    expect((await wire.result("sb-fixture", "submission-1", 4)).exitCode).toBe(0);
+    waitReply = message(field(2, 9));
+    expect((await wire.result("sb-fixture", "submission-1", 4)).exitCode).toBe(137);
+    waitReply = Buffer.alloc(0);
+    await expect(wire.result("sb-fixture", "submission-1", 4)).rejects.toThrow("unavailable");
+    expect(starts).toBe(1);
+  } finally {
+    waitReply = message(field(1, 7));
     wire.close();
   }
 });
