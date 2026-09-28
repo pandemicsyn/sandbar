@@ -10,6 +10,7 @@ import {
 import { LedgerStore } from "./ledger";
 import type { Scenario } from "./report";
 import { boundedRead } from "./bounds";
+import { AdapterError } from "sandbar-adapter";
 import type { NetworkEvidence } from "./network-probe";
 import {
   FailureCapture,
@@ -57,7 +58,10 @@ async function recordRecoveryError(ledger: LedgerStore, error: unknown): Promise
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Caught provider errors are narrowed to SandbarError before reading a code.
 function outcome(error: unknown): Step["status"] {
-  return error instanceof SandbarError && error.code === "UNSUPPORTED" ? "unsupported" : "failed";
+  return (error instanceof SandbarError || error instanceof AdapterError) &&
+    error.code === "UNSUPPORTED"
+    ? "unsupported"
+    : "failed";
 }
 
 /** Join late read-only connection release without extending cleanup indefinitely. */
@@ -187,7 +191,10 @@ async function runPreparedLocked(
       steps.push({
         scenario,
         status: outcome(error),
-        issue: error instanceof SandbarError ? error.code : "assertion-failed",
+        issue:
+          error instanceof SandbarError || error instanceof AdapterError
+            ? error.code
+            : "assertion-failed",
         diagnostic,
       });
     }

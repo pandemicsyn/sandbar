@@ -18,6 +18,19 @@ const ledgerSchema = z.strictObject({
   connection: z
     .union([
       z.strictObject({
+        target: z
+          .string()
+          .min(1)
+          .max(128)
+          .regex(/^[A-Za-z0-9_-]+$/),
+        snapshotId: z
+          .string()
+          .min(1)
+          .max(128)
+          .regex(/^[A-Za-z0-9_-]+$/),
+        ttlMinutes: z.literal(15),
+      }),
+      z.strictObject({
         target: z.string().min(1).max(128),
         region: z.string().min(1).max(128),
         timeoutSeconds: z.number().int().min(60).max(3600),

@@ -6,6 +6,7 @@ import { isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { qualificationRevisions, reconciliationRevisions } from "./revisions";
 import { loadCredentials } from "./credentials";
+import { daytonaConfiguration, daytonaConnection } from "./daytona-profile";
 import { e2bConfiguration, e2bConnection, e2bEnvdVersion } from "./e2b-profile";
 import { LedgerStore, requirePrivateDirectory, reportedCleanup } from "./ledger";
 import { reconcileConnection, runPrepared, type Step } from "./lifecycle";
@@ -64,8 +65,10 @@ function within(directory: string, parent: string): boolean {
 if (action !== "live-prepared" && action !== "live-network" && action !== "reconcile")
   throw new Error("Usage: bun manual.ts live-prepared | live-network | reconcile <run UUID>");
 
-if (required("SANDBAR_QUAL_PROVIDER") !== "e2b")
-  throw new Error("Only E2B is wired; Daytona awaits its merged native lifetime/cleanup profile");
+const provider = z.enum(["e2b", "daytona"]).parse(required("SANDBAR_QUAL_PROVIDER"));
+
+if (action === "live-network" && provider !== "e2b")
+  throw new Error("The paired network profile requires E2B internet-mode support");
 
 if (action !== "reconcile") {
   if (process.env.CI)
@@ -104,21 +107,41 @@ const ledger = new LedgerStore(directory, runId);
 
 const saved = action === "reconcile" ? await ledger.read() : undefined;
 
-if (saved && (saved.provider !== "e2b" || saved.image.kind !== "borrowed-prepared"))
-  throw new Error("Ledger provider/ownership does not match the E2B prepared profile");
+if (saved && (saved.provider !== provider || saved.image.kind !== "borrowed-prepared"))
+  throw new Error("Ledger provider/ownership does not match the selected prepared profile");
 
-const config = e2bConfiguration.parse(
-  saved?.connection ?? {
-    teamId: process.env.SANDBAR_E2B_TEAM_ID,
-    templateId: process.env.SANDBAR_E2B_TEMPLATE_ID,
-    timeoutSeconds: 300,
-  },
-);
+const e2bConfig =
+  provider === "e2b"
+    ? e2bConfiguration.parse(
+        saved?.connection ?? {
+          teamId: process.env.SANDBAR_E2B_TEAM_ID,
+          templateId: process.env.SANDBAR_E2B_TEMPLATE_ID,
+          timeoutSeconds: 300,
+        },
+      )
+    : undefined;
 
-if (action === "live-network" && config.templateId !== "base")
+const daytonaConfig =
+  provider === "daytona"
+    ? daytonaConfiguration.parse(
+        saved?.connection ?? {
+          target: required("SANDBAR_DAYTONA_TARGET"),
+          snapshotId: required("SANDBAR_DAYTONA_SNAPSHOT_ID"),
+          ttlMinutes: 15,
+        },
+      )
+    : undefined;
+
+const config = e2bConfig ?? daytonaConfig!;
+
+const imageId = e2bConfig?.templateId ?? daytonaConfig!.snapshotId;
+
+if (action === "live-network" && imageId !== "base")
   throw new Error("The bounded network profile requires the public base template");
 
 const paired = action === "live-network" || Boolean(saved?.companionRunId);
+
+if (paired && provider !== "e2b") throw new Error("Companion runs require E2B");
 
 const companion = paired
   ? new LedgerStore(directory, saved?.companionRunId ?? crypto.randomUUID())
@@ -143,7 +166,7 @@ const fileRoot = z
   .parse(
     action === "reconcile"
       ? (saved?.fileRoot ?? "/tmp")
-      : (process.env.SANDBAR_QUAL_FILE_ROOT ?? "/home/user"),
+      : (process.env.SANDBAR_QUAL_FILE_ROOT ?? (provider === "e2b" ? "/home/user" : "/tmp")),
   );
 
 const selected = action === "live-prepared" ? selectedScenarios() : undefined;
@@ -177,22 +200,29 @@ const sdk = JSON.parse(await readFile(resolve(root, "packages/sdk/package.json")
 
 const metadata = {
   schemaVersion: 1 as const,
-  provider: "e2b" as const,
+  provider,
   mode: "live" as const,
   ...(revisions ?? { sdkCommit: commit, harnessCommit: commit }),
   sdkVersion: sdk.version,
-  nativeVersion: `e2b ${sdk.dependencies.e2b}`,
+  nativeVersion: provider === "e2b" ? `e2b ${sdk.dependencies.e2b}` : "Daytona REST 0.218",
   runtime: `Bun ${process.versions.bun ?? "unknown"}`,
   platform: `${process.platform}-${process.arch}`,
   configuration: {
     imageClass: "prepared" as const,
     fileRoot,
-    templateClass:
-      config.templateId === "base" ? ("public-base" as const) : ("borrowed-template" as const),
-    authorityClass: config.teamId ? ("verified-team" as const) : ("api-key" as const),
+    templateClass: e2bConfig
+      ? e2bConfig.templateId === "base"
+        ? ("public-base" as const)
+        : ("borrowed-template" as const)
+      : ("borrowed-snapshot" as const),
+    authorityClass: e2bConfig
+      ? e2bConfig.teamId
+        ? ("verified-team" as const)
+        : ("api-key" as const)
+      : ("verified-organization" as const),
     network: "blocked-requested",
     networkProbe: paired ? (saved?.networkProbe ?? networkProbeId) : undefined,
-    regionClass: "provider-default",
+    regionClass: daytonaConfig?.target ?? "provider-default",
   },
   evidenceRef,
 };
@@ -214,11 +244,18 @@ if (evidenceRef)
 // All routing/run gates precede secret loading, connection and native mutation.
 await loadCredentials();
 
-const apiKey = required("E2B_API_KEY");
+const apiKey = required(provider === "e2b" ? "E2B_API_KEY" : "SANDBAR_DAYTONA_API_KEY");
 
-const redactions = [apiKey, process.env.SANDBAR_DAYTONA_API_KEY ?? ""];
+const redactions = [
+  apiKey,
+  process.env.SANDBAR_DAYTONA_API_KEY ?? "",
+  process.env.E2B_API_KEY ?? "",
+  daytonaConfig?.snapshotId ?? "",
+];
 
-const factory = e2bConnection(config, apiKey);
+const factory = e2bConfig
+  ? e2bConnection(e2bConfig, apiKey)
+  : daytonaConnection(daytonaConfig!, apiKey);
 
 const controller = new AbortController();
 
@@ -232,7 +269,7 @@ process.once("SIGTERM", interrupt);
 
 const exercise = async () => {
   if (action !== "reconcile") {
-    await ledger.initialize("e2b", { kind: "borrowed-prepared", class: "prepared" }, config);
+    await ledger.initialize(provider, { kind: "borrowed-prepared", class: "prepared" }, config);
     await ledger.update((value) => ({
       ...value,
       fileRoot,
@@ -256,22 +293,22 @@ const exercise = async () => {
   let networkRuns: NetworkRun[] | undefined;
 
   if (action === "live-network") {
-    networkRuns = await runNetworkPair(factory, ledger, companion!, config.templateId, {
+    networkRuns = await runNetworkPair(factory, ledger, companion!, imageId, {
       signal: controller.signal,
       cleanupWaitMs: 60_000,
       redactions,
-      envdVersion: e2bEnvdVersion(apiKey),
+      envdVersion: provider === "e2b" ? e2bEnvdVersion(apiKey) : undefined,
     });
     steps = networkRuns.flatMap((run) => run.steps);
   } else if (action === "live-prepared")
-    steps = await runPrepared(factory, ledger, config.templateId, {
+    steps = await runPrepared(factory, ledger, imageId, {
       network: "blocked",
       fileRoot,
       signal: controller.signal,
       cleanupWaitMs: 60_000,
       selectedScenarios: selected,
       redactions,
-      envdVersion: e2bEnvdVersion(apiKey),
+      envdVersion: provider === "e2b" ? e2bEnvdVersion(apiKey) : undefined,
     });
   else {
     steps = await reconcileConnection(factory, ledger, 60_000, redactions);

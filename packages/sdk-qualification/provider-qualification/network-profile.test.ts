@@ -444,6 +444,7 @@ test("same intended probe failure supersedes an older pass even without captured
     networkEvidence: undefined,
     evidenceRef: "specs/latest-failure.md",
   };
+
   const rendered = renderLiveMatrix([parseReport({ schemaVersion: 1, records: [record, failed] })]);
   expect(rendered).toContain("specs/latest-failure.md");
   expect(rendered).not.toContain("specs/older-pass.md");

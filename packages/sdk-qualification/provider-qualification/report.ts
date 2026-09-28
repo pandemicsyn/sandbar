@@ -62,8 +62,8 @@ export const recordSchema = z.strictObject({
   configuration: z.strictObject({
     imageClass: z.enum(["prepared", "oci", "none"]),
     fileRoot: z.enum(["/tmp", "/home/user"]).optional(),
-    templateClass: z.enum(["public-base", "borrowed-template"]).optional(),
-    authorityClass: z.enum(["api-key", "verified-team"]).optional(),
+    templateClass: z.enum(["public-base", "borrowed-template", "borrowed-snapshot"]).optional(),
+    authorityClass: z.enum(["api-key", "verified-team", "verified-organization"]).optional(),
     network: safeLabel,
     networkProbe: z.literal(networkProbeId).optional(),
     regionClass: safeLabel,
