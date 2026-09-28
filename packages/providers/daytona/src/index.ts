@@ -303,7 +303,12 @@ async function boundedJson<T extends z.ZodType>(
 
 type DaytonaRequestBody = Record<
   string,
-  string | number | boolean | Record<string, string> | undefined
+  | string
+  | number
+  | boolean
+  | Record<string, string>
+  | { volumeId: string; mountPath: string; subpath?: string }[]
+  | undefined
 >;
 
 /** One HTTP attempt per request. No upstream SDK retry middleware is in the mutation path. */
@@ -697,6 +702,7 @@ export class DaytonaDriver implements ProviderDriver {
     imageKind?: "prepared" | "oci";
     networkPolicy: string;
     labels?: Record<string, string>;
+    mounts?: import("sandbar-adapter").MountSpec[];
     signal?: AbortSignal;
   }): Promise<DriverResult> {
     this.sameScope(input.scope);
@@ -832,6 +838,11 @@ export class DaytonaDriver implements ProviderDriver {
         target: this.scope.region,
         public: false,
         labels,
+        volumes: input.mounts?.map((mount) => ({
+          volumeId: mount.volume.nativeId,
+          mountPath: mount.path,
+          subpath: mount.subpath,
+        })),
         ttlMinutes: this.config.configuration.ttlMinutes,
       };
 
@@ -841,6 +852,39 @@ export class DaytonaDriver implements ProviderDriver {
 
       if (value.snapshot && value.snapshot !== snapshotId)
         return uncertain("Daytona returned a different snapshot");
+
+      if (input.mounts?.length) {
+        const actual = await this.request("GET", `/sandbox/${encodeURIComponent(value.id)}`);
+
+        const checked = await boundedJson(
+          actual,
+          z.object({
+            id: z.string(),
+            volumes: z.array(
+              z.object({
+                volumeId: z.string(),
+                mountPath: z.string(),
+                subpath: z.string().optional(),
+              }),
+            ),
+          }),
+        );
+
+        if (
+          checked.id !== value.id ||
+          input.mounts.some(
+            (mount) =>
+              !checked.volumes.some(
+                (attached) =>
+                  attached.volumeId === mount.volume.nativeId &&
+                  attached.mountPath === mount.path &&
+                  attached.subpath === mount.subpath,
+              ),
+          )
+        )
+          return uncertain("Native mount readiness/identity is unconfirmed");
+      }
+
       const observation = observed(this.scope, value, this.config.configuration.networkPolicy);
 
       if (["destroyed", "error", "build_failed"].includes(value.state))

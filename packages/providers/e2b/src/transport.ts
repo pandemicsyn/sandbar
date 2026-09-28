@@ -1,4 +1,4 @@
-import { Sandbox, SandboxNotFoundError, Template } from "e2b";
+import { Sandbox, SandboxNotFoundError, Template, Volume } from "e2b";
 import { z } from "zod";
 import { classifyWriteFailure, E2BWriteFailure } from "./write-failure";
 
@@ -26,9 +26,32 @@ export type E2BRecord = {
   templateId: string;
   metadata: Record<string, string>;
   state: "running" | "paused";
+  envdVersion?: string;
+  volumeMounts?: { name: string; path: string }[];
+};
+
+export type E2BStateTransport = {
+  tags(id: string): Promise<{ tag: string; buildId: string }[]>;
+  capture(
+    id: string,
+    name?: string,
+    signal?: AbortSignal,
+  ): Promise<{ snapshotId: string; names: string[] }>;
+  snapshots(input: {
+    limit: number;
+    name?: string;
+    sandboxId?: string;
+    cursor?: string;
+  }): Promise<{ items: { snapshotId: string; names: string[] }[]; nextCursor?: string }>;
+  deleteSnapshot(id: string, signal?: AbortSignal): Promise<boolean>;
+  createVolume(name: string, signal?: AbortSignal): Promise<{ volumeId: string; name: string }>;
+  volume(id: string): Promise<{ volumeId: string; name: string }>;
+  volumes(): Promise<{ volumeId: string; name: string }[]>;
+  deleteVolume(id: string, signal?: AbortSignal): Promise<boolean>;
 };
 
 export type E2BTransport = {
+  state?: E2BStateTransport;
   verifyAuth(): Promise<void>;
   verifyTeam(teamId: string): Promise<void>;
   verifyTemplate(teamId: string | undefined, templateId: string): Promise<string>;
@@ -42,6 +65,8 @@ export type E2BTransport = {
     metadata: Record<string, string>;
     timeoutMs: number;
     allowInternetAccess: boolean;
+    volumeMounts?: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<string>;
   get(id: string): Promise<E2BRecord | null>;
   list(
@@ -120,6 +145,8 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         templateId: info.templateId,
         metadata: info.metadata,
         state: info.state,
+        envdVersion: info.envdVersion,
+        volumeMounts: info.volumeMounts,
       };
     } catch (error) {
       if (error instanceof SandboxNotFoundError) return null;
@@ -134,16 +161,21 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     });
   }
 
-  async function readTemplates(response: Response) {
-    if (!response.body) throw new Error("E2B returned no template data");
+  async function readNative<S extends z.ZodType>(
+    response: Response,
+    schema: S,
+  ): Promise<z.output<S>> {
+    if (!response.ok) throw new Error(`E2B state read failed (${response.status})`);
+
+    if (!response.body) throw new Error("E2B returned no native data");
     const body = await collectBounded(response.body, MAX_BYTES);
 
-    if (body.truncated) throw new Error("E2B template response exceeded its byte bound");
+    if (body.truncated) throw new Error("E2B native response exceeded its byte bound");
 
-    return Templates.parse(
-      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body.bytes)),
-    );
+    return schema.parse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body.bytes)));
   }
+
+  const readTemplates = (response: Response) => readNative(response, Templates);
 
   async function* teamTemplates(teamId: string | undefined) {
     let nextToken: string | undefined;
@@ -170,6 +202,56 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
   }
 
   return {
+    state: {
+      async tags(id) {
+        const tags = await readNative(
+          await controlGet(`/templates/${encodeURIComponent(id)}/tags`),
+          z
+            .array(
+              z.object({ tag: z.string().min(1).max(128), buildID: z.string().min(1).max(128) }),
+            )
+            .max(100),
+        );
+
+        return tags.map((tag) => ({ tag: tag.tag, buildId: tag.buildID }));
+      },
+      capture: (id, name, signal) => Sandbox.createSnapshot(id, { ...opts, name, signal }),
+      async snapshots(input) {
+        const page = Sandbox.listSnapshots({
+          ...opts,
+          limit: input.limit,
+          name: input.name,
+          sandboxId: input.sandboxId,
+          nextToken: input.cursor,
+        });
+
+        return { items: await page.nextItems(), nextCursor: page.nextToken };
+      },
+      deleteSnapshot: (id, signal) => Sandbox.deleteSnapshot(id, { ...opts, signal }),
+      async createVolume(name, signal) {
+        const v = await Volume.create(name, { ...opts, signal });
+
+        return { volumeId: v.volumeId, name: v.name };
+      },
+      async volume(id) {
+        const v = await Volume.getInfo(id, opts);
+
+        return { volumeId: v.volumeId, name: v.name };
+      },
+      async volumes() {
+        const values = await readNative(
+          await controlGet("/volumes"),
+          z
+            .array(
+              z.object({ volumeID: z.string().min(1).max(128), name: z.string().min(1).max(128) }),
+            )
+            .max(100),
+        );
+
+        return values.map((value) => ({ volumeId: value.volumeID, name: value.name }));
+      },
+      deleteVolume: (id, signal) => Volume.destroy(id, { ...opts, signal }),
+    },
     async verifyAuth() {
       const response = await controlGet("/v2/templates?limit=1");
 
@@ -248,6 +330,8 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         metadata: input.metadata,
         timeoutMs: input.timeoutMs,
         allowInternetAccess: input.allowInternetAccess,
+        volumeMounts: input.volumeMounts,
+        signal: input.signal,
       });
 
       return sandbox.sandboxId;
@@ -261,6 +345,8 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         templateId: info.templateId,
         metadata: info.metadata,
         state: info.state,
+        envdVersion: info.envdVersion,
+        volumeMounts: info.volumeMounts,
       }));
 
       return { items, nextToken: paginator.nextToken };

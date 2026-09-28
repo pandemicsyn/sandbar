@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { daytonaState } from "./state-native";
+import { MountDurability as importMountDurability, type ResourceReference } from "sandbar-adapter";
 import {
   AdapterError,
   defineAdapter,
@@ -43,7 +45,8 @@ const WriteToken = z.strictObject({
 const DestroyToken = z.strictObject({
   sandboxId: z.string().min(1).max(512),
   deletionAccepted: z.boolean().optional(),
-  retainedResources: z.array(z.string().min(1).max(512)).max(1).optional(),
+  retainedResources: z.array(z.string().min(1).max(512)).max(128).optional(),
+  mountDurability: z.array(importMountDurability).max(32).optional(),
 });
 
 const errorCodes = {
@@ -204,7 +207,112 @@ export function createDaytonaAdapter(
       if (config.networkPolicy === "daytona-default")
         Object.assign(partition, { networkPolicy: config.networkPolicy });
 
+      const resourceState = daytonaState({
+        scope: { authority: { kind: "organization", id: scope.accountId! }, partition },
+        apiUrl: config.apiUrl,
+        apiKey: credentials.apiKey,
+        target: config.target,
+        fetch: fetchImpl ?? fetch,
+      });
+
+      const createMutation = {
+        recovery: { version: 1, token: Token },
+        async prepare(
+          input: import("sandbar-adapter").SnapshotRestoreInput,
+          ctx: import("sandbar-adapter").ReadContext,
+        ) {
+          const info = await resourceState.inspectSnapshot(input.snapshot, ctx);
+
+          if (
+            info.mountHandling !== "none" ||
+            info.state !== "ready" ||
+            info.preserve !== "filesystem" ||
+            input.request.resources ||
+            Object.keys(input.request.mounts ?? {}).length
+          )
+            throw new AdapterError(
+              "UNSUPPORTED",
+              "Only mount-free container cold restore is mapped",
+            );
+
+          const plan = await driver.prepare({
+            scope,
+            image: { kind: "prepared", value: input.snapshot.nativeId },
+            networkPolicy: input.request.networkPolicy,
+          });
+
+          if (!plan.supported || !plan.effectiveImage)
+            throw new AdapterError("UNSUPPORTED", plan.reason ?? "Restore unsupported");
+
+          return input;
+        },
+        async submit(input: import("sandbar-adapter").SnapshotRestoreInput, ctx: AttemptContext) {
+          const info = await resourceState.inspectSnapshot(input.snapshot, {
+            signal: ctx.signal,
+            deadline: Date.now() + 30000,
+          });
+
+          if (
+            info.state !== "ready" ||
+            info.mountHandling !== "none" ||
+            info.preserve !== "filesystem"
+          )
+            return ctx.reject("UNAVAILABLE", "Snapshot provenance changed before restore");
+
+          if (ctx.signal.aborted)
+            return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
+
+          return createResult(
+            await driver.create({
+              scope,
+              identity: identity(ctx),
+              image: input.snapshot.nativeId,
+              imageKind: "prepared",
+              networkPolicy: input.request.networkPolicy,
+              signal: ctx.signal,
+            }),
+            ctx,
+          );
+        },
+        async observe(attempt: import("sandbar-adapter").RecoveryAttempt, ctx: ObserveContext) {
+          const value = await driver.observe({
+            scope,
+            submissionId: attempt.submissionId,
+            operationId: attempt.operationId,
+          });
+
+          return value ? observedCreate(value, ctx, attempt.submissionId) : null;
+        },
+      };
+
       return {
+        ...resourceState.fields,
+        snapshotRestore: createMutation,
+        async snapshotInspect(ref: ResourceReference, ctx: import("sandbar-adapter").ReadContext) {
+          const info = await resourceState.inspectSnapshot(ref, ctx);
+          info.restore.networkPolicies = [...caps.networkPolicies];
+
+          return info;
+        },
+        async resourceCapabilities() {
+          const fields = await resourceState.fields.resourceCapabilities!(
+            {},
+            { signal: new AbortController().signal, deadline: Date.now() + 30000 },
+          );
+
+          return {
+            ...fields,
+            restore: {
+              status: "supported" as const,
+              value: {
+                networkPolicies: [...caps.networkPolicies],
+                resources: false,
+                mounts: false,
+                independentLifecycle: true,
+              },
+            },
+          };
+        },
         scope: {
           authority: { kind: "organization", id: scope.accountId! },
           partition,
@@ -322,10 +430,11 @@ export function createDaytonaAdapter(
               imageKind: input.image.kind,
               networkPolicy: input.networkPolicy,
               labels: input.labels,
+              mounts: input.mounts,
             };
           },
           async submit(input, ctx) {
-            return createResult(
+            const result = createResult(
               await driver.create({
                 scope,
                 identity: identity(ctx),
@@ -333,10 +442,34 @@ export function createDaytonaAdapter(
                 imageKind: input.imageKind,
                 networkPolicy: input.networkPolicy,
                 labels: input.labels,
+                mounts: input.mounts,
                 signal: ctx.signal,
               }),
               ctx,
             );
+
+            if (!("id" in result) || !input.mounts?.length) return result;
+
+            const detail = await resourceState.box(result.id, {
+              signal: ctx.signal,
+              deadline: Date.now() + 30000,
+            });
+
+            if (
+              detail.state !== "started" ||
+              input.mounts.some(
+                (mount) =>
+                  !detail.volumes.some(
+                    (actual) =>
+                      actual.volumeId === mount.volume.nativeId &&
+                      actual.mountPath === mount.path &&
+                      actual.subpath === mount.subpath,
+                  ),
+              )
+            )
+              return ctx.unknown("Create-time mounts are not ready");
+
+            return { ...result, mounts: input.mounts };
           },
           async observe(attempt, ctx) {
             const result = await driver.observe({
@@ -345,12 +478,57 @@ export function createDaytonaAdapter(
               operationId: attempt.operationId,
             });
 
-            return result ? observedCreate(result, ctx, attempt.submissionId) : null;
+            const value = result ? observedCreate(result, ctx, attempt.submissionId) : null;
+
+            if (!value || !("id" in value) || !attempt.mounts?.length) return value;
+            const detail = await resourceState.box(value.id, ctx);
+
+            if (
+              detail.state !== "started" ||
+              attempt.mounts.some(
+                (mount) =>
+                  !detail.volumes.some(
+                    (actual) =>
+                      actual.volumeId === mount.volume.nativeId &&
+                      actual.mountPath === mount.path &&
+                      actual.subpath === mount.subpath,
+                  ),
+              )
+            )
+              return ctx.unknown("Recovered create-time mounts are not ready");
+
+            return { ...value, mounts: attempt.mounts };
           },
         },
         destroy: {
           recovery: { version: 1, token: DestroyToken },
+          async prepare(box, ctx) {
+            let nativeBox;
+
+            try {
+              nativeBox = await resourceState.box(box.id, ctx);
+            } catch {
+              throw new AdapterError("UNAVAILABLE", "Daytona inspection failed before deletion");
+            }
+
+            if (nativeBox.volumes.length && box.storage !== "allow-unconfirmed")
+              throw new AdapterError(
+                "UNSUPPORTED",
+                "Writable mount shutdown durability is unverified; select allow-unconfirmed for compute cleanup",
+              );
+
+            return box;
+          },
           async submit(box, ctx) {
+            const mounts = (
+              await resourceState.box(box.id, { signal: ctx.signal, deadline: Date.now() + 30000 })
+            ).volumes;
+
+            if (mounts.length && box.storage !== "allow-unconfirmed")
+              return ctx.reject(
+                "UNSUPPORTED",
+                "Writable mount cleanup requires explicit allow-unconfirmed",
+              );
             let retainedResources: string[] | undefined;
 
             try {
@@ -368,9 +546,42 @@ export function createDaytonaAdapter(
 
             const value = destroyValue(result);
 
-            if (value) return value;
+            if (value)
+              return {
+                ...value,
+                retainedResources: [
+                  ...value.retainedResources,
+                  ...mounts.map((mount) => `daytona-volume:${mount.volumeId}`),
+                ],
+                mountDurability: mounts.map((mount) => ({
+                  volume: {
+                    version: 1 as const,
+                    kind: "volume" as const,
+                    provider: "daytona",
+                    scope: { authority: { kind: "organization", id: scope.accountId! }, partition },
+                    nativeId: mount.volumeId,
+                    ownership: "unknown" as const,
+                  },
+                  path: mount.mountPath,
+                  status: "unconfirmed" as const,
+                })),
+              };
 
-            const token: z.infer<typeof DestroyToken> = { sandboxId: box.id };
+            const token: z.infer<typeof DestroyToken> = {
+              sandboxId: box.id,
+              mountDurability: mounts.map((mount) => ({
+                volume: {
+                  version: 1,
+                  kind: "volume",
+                  provider: "daytona",
+                  scope: { authority: { kind: "organization", id: scope.accountId! }, partition },
+                  nativeId: mount.volumeId,
+                  ownership: "unknown",
+                },
+                path: mount.mountPath,
+                status: "unconfirmed",
+              })),
+            };
 
             if (retainedResources !== undefined) token.retainedResources = retainedResources;
 
@@ -397,7 +608,10 @@ export function createDaytonaAdapter(
             if (!result) return null;
 
             if (result.status === "pending") {
-              const recovery: z.infer<typeof DestroyToken> = { sandboxId: attempt.sandbox.id };
+              const recovery: z.infer<typeof DestroyToken> = {
+                sandboxId: attempt.sandbox.id,
+                mountDurability: token?.success ? token.data.mountDurability : undefined,
+              };
 
               if (token?.success && token.data.retainedResources)
                 recovery.retainedResources = token.data.retainedResources;
@@ -407,8 +621,24 @@ export function createDaytonaAdapter(
               return ctx.pending(recovery, { pollAfterMs: result.observeAfterMs });
             }
 
+            const completed = destroyValue(result);
+
+            if (completed)
+              return {
+                ...completed,
+                mountDurability: token?.success ? token.data.mountDurability : undefined,
+                retainedResources: [
+                  ...completed.retainedResources,
+                  ...(token?.success
+                    ? (token.data.mountDurability?.map(
+                        (mount) => `daytona-volume:${mount.volume.nativeId}`,
+                      ) ?? [])
+                    : []),
+                ],
+              };
+
             return (
-              destroyValue(result) ??
+              completed ??
               ctx.unknown(
                 result.status === "unknown" ? result.reason : "Daytona deletion is unconfirmed",
               )
@@ -418,7 +648,13 @@ export function createDaytonaAdapter(
         async inspect(box) {
           const result = await driver.inspect(native(box.id));
 
-          return result ? { id: result.ref.nativeId, state: result.state } : null;
+          if (!result) return null;
+          const detail = await resourceState.box(box.id);
+
+          return {
+            id: box.id,
+            state: detail.state === "stopped" ? ("stopped" as const) : result.state,
+          };
         },
         async inventory(input) {
           const page = await driver.inventory({ scope, cursor: input.cursor, limit: input.limit });

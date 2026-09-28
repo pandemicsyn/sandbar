@@ -640,18 +640,10 @@ test("destroy preflight failure rejects without attempting DELETE", async () => 
   });
 
   try {
-    const prepared = await client.operations.prepare("destroy", { id: "native-1" });
-
-    const result = await prepared.submit(
-      {
-        operationId: "op-preflight-delete",
-        submissionId: "preflight-delete",
-        invocationKey: "key-preflight-delete",
-      },
-      { beforeSubmit: async () => true },
-    );
-
-    expect(result).toMatchObject({ kind: "rejected", code: "UNAVAILABLE" });
+    await expect(client.operations.prepare("destroy", { id: "native-1" })).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+      effect: "none",
+    });
     expect(deletes).toBe(0);
   } finally {
     await client.close();
