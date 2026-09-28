@@ -6,11 +6,15 @@ Keep this directory for focused implementation specs and a small set of current 
 
 - [Provider state portability](provider-state-portability.md) — snapshots, volumes, mounts and lifecycle control, with explicit guarantees when provider support differs. This is the next coding work; the APIs are not implemented yet.
 
+## Planned observability
+
+- [SDK observability and diagnostics](sdk-observability.md) — application-owned OpenTelemetry tracing, actionable error correlation, service/recovery continuity, and qualified Sentry/Datadog recipes. Planned; not implemented. This is separate from accounting and does not expand the current state-portability unit.
+
 ## Later design work
 
 - [Interactive execution and access](interactive-execution-and-access.md) — initial process, streaming, terminal, endpoint and tunnel contracts. Not an implementation commitment or a prerequisite for state portability.
 
-Vercel and Tensorlake adapter specs will be written later. Observability/accounting is deferred; management feature plans are not maintained here. Rust is not on the roadmap.
+Vercel and Tensorlake adapter specs will be written later. Accounting is deferred; management feature plans are not maintained here. Rust is not on the roadmap.
 
 ## Current engineering contracts
 
