@@ -1,23 +1,35 @@
-# Sandbar working agreements
+# Working in Sandbar
 
-## Current implementation
+Sandbar is a TypeScript SDK for working with sandbox providers, with an optional service and management UI.
 
-PRs #1–#8 are merged: fake-provider service and management UI, portable core, direct/remote TypeScript SDK, runtime qualification, and the public documentation source. Preserve current-version safety guarantees. The user-approved SDK-first refactor may replace unpublished APIs without compatibility layers. Provider implementation and isolated Effect research are coordinated by manager chat `01a0db94-f78d-70f3-83dd-106d28e38da3`; Effect research is parked: do not wake, monitor, repair or merge it as part of the active SDK and release work.
+## Find your way
 
-Follow the accepted [package and adapter conventions](specs/package-conventions.md) for public names, imports and provider scope. E2B and additional providers are plans, not new implementation authorization.
+- `packages/sdk` — public SDK and built-in provider entrypoints.
+- `packages/adapter` — public adapter authoring API and conformance helpers.
+- `packages/providers/*` — provider implementations and native-boundary fixtures.
+- `packages/service`, `packages/service-runtime`, `packages/store` — optional service and persistence.
+- `apps/server`, `apps/web`, `apps/docs` — HTTP server, management UI and public documentation.
+- [specs/README.md](specs/README.md) — contracts and proposals; [package conventions](specs/package-conventions.md) — public names and boundaries. Archives are historical context.
+- [.agents/skills](.agents/skills) — task guidance, including [adding built-in or external providers](.agents/skills/add-provider/SKILL.md).
 
-Read [specs/README.md](specs/README.md) for current contracts and clearly marked proposals, and [plans/implementation-plan.md](plans/implementation-plan.md) for sequencing. Public documentation lives in `apps/docs`. Historical drafts and completed handoffs live under `specs/archive` and `plans/archive`; they do not override current executable contracts or user decisions.
+## Make changes
 
-## Ownership and integration
+Read the relevant package, nearby tests and docs before editing. Use tested examples for available behavior; proposals do not authorize new features.
 
-Keep changes in the assigned checkout. Coordinate shared root files and final parent commits through the manager; do not rebase active author branches onto provisional work. Direct mode must not depend on the service, SQL storage or a hidden bridge. Service authentication, durable scheduling and credential custody remain outside the portable core.
+Keep changes focused. Preserve unrelated edits and coordinate shared files. Keep the SDK independent of the service; follow the linked contracts rather than duplicating architecture rules here.
 
-The manager performs sequential implementation merges only after the authorized review, validation, CI and GitHub feedback gates clear. Authors do not merge independently. No package publication, production deployment or paid/live provider operation is authorized by these working agreements. Preserve user files and archive completed author chats after handoff.
+## Validate and hand off
 
-## Mandatory PR review gate
+Use the Bun version in `package.json` and install with `bun install --frozen-lockfile`. Root scripts provide:
 
-Before creating **any** PR, including a draft, run an independent static code review using a subagent with model `gpt-6-luna` and `reasoning_effort: high`. Give the reviewer the spec, worktree paths, base ref and SHA, complete diff, validation results, and ask it to inspect the code independently. Review agents are read-only.
+- `bun run check` — package builds and TypeScript checks.
+- `bun run test` — builds and tests; use focused tests during iteration.
+- `bun run lint` and `bun run format:check` — source checks.
+- `bun run package:smoke` — packed consumer qualification for package/API changes.
+- `bun run docs:check` — public docs, generated references and examples.
 
-Address **every actionable finding**, regardless of severity, rerun relevant checks, and request another independent review of the complete resulting diff. Repeat until the final reviewer reports **zero remaining actionable findings**. Do not self-waive findings or create a PR if reviewer access or findings are unresolved. Any subsequent rebase, integration, or code change requires a fresh review of the changed result before PR creation.
+Run relevant checks and required CI gates. Run shared builds sequentially; avoid repository-wide formatting for small changes.
 
-Record each review round, reviewer model and effort, findings and fixes, test results, and final reviewed HEAD and base SHAs in a local review report. Summarize that provenance in the PR body. Commit and push are allowed before this gate; PR creation is not.
+Review the diff, update affected docs/tests, and report results and untested behavior. Follow task-specific review and merge requirements; no particular editor, agent or model is required by this file.
+
+Use deterministic fixtures. Live provider calls, paid resources, publication and deployment require explicit authorization. Never commit secrets or erase user data during setup/testing.

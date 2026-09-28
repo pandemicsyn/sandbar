@@ -9,3 +9,6 @@ node_modules/
 coverage/
 **/.astro/
 **/.wrangler/
+
+# Local Claude launch configuration
+/.claude/launch.json
