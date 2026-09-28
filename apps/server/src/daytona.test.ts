@@ -782,7 +782,7 @@ test("Daytona service reconnects and observes lost exec, write and delete withou
     expect(mutations.create).toBe(0);
     expect(
       (await runtime.store.getOperation(projectId, build.reference.operationId!))?.status,
-    ).toBe("unknown");
+    ).toBe("running");
     await runtime.close();
     runtime = await openDomainRuntime(config);
     await request(`${base}/operations/${build.reference.operationId}/reconcile`, "POST", {});

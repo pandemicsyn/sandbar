@@ -848,76 +848,85 @@ test("mutable OCI tags reject before mutation", async () => {
   ]);
 });
 
-test("OCI snapshot build occurs inside submission and feeds one sandbox create", async () => {
-  const mutations: { path: string; body: Record<string, FixtureJson> }[] = [];
+test.each(["container", "windows", undefined] as const)(
+  "OCI validates active snapshot class before sandbox creation: %s",
+  async (sandboxClass) => {
+    const mutations: { path: string; body: Record<string, FixtureJson> }[] = [];
 
-  const fetchImpl = fixtureFetch(async (input, init) => {
-    const url = new URL(String(input));
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const url = new URL(String(input));
 
-    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
 
-    if (url.pathname === "/api/regions") return Response.json([region()]);
+      if (url.pathname === "/api/regions") return Response.json([region()]);
 
-    if (url.pathname === "/api/snapshots/sandbar-image-oci-1")
-      return new Response(null, { status: 404 });
+      if (url.pathname === "/api/snapshots/sandbar-image-oci-1")
+        return new Response(null, { status: 404 });
 
-    if (url.pathname === "/api/snapshots" && init?.method === "POST") {
-      const body = JSON.parse(String(init.body));
-      mutations.push({ path: url.pathname, body });
+      if (url.pathname === "/api/snapshots" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        mutations.push({ path: url.pathname, body });
 
-      return Response.json({
-        id: "built-snapshot",
-        name: body.name,
-        imageName: body.imageName,
-        organizationId: "org-1",
-        state: "active",
-        regionIds: ["us"],
+        return Response.json({
+          id: "built-snapshot",
+          name: body.name,
+          imageName: body.imageName,
+          organizationId: "org-1",
+          state: "active",
+          regionIds: ["us"],
+          sandboxClass,
+        });
+      }
+
+      if (url.pathname === "/api/sandbox" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        mutations.push({ path: url.pathname, body });
+
+        return Response.json({
+          ...native(body.name),
+          snapshot: body.snapshot,
+          labels: body.labels,
+        });
+      }
+
+      throw new Error(`Unexpected fixture route ${url.pathname}`);
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+    const prepared = await provider.driver.prepare({
+      scope: provider.scope,
+      image: { kind: "oci", value: "alpine:3.21" },
+      networkPolicy: "blocked",
+    });
+
+    expect(prepared).toEqual({ supported: true, effectiveImage: "alpine:3.21" });
+    expect(mutations).toHaveLength(0);
+
+    const result = await provider.driver.create({
+      scope: provider.scope,
+      identity: identity("oci-1"),
+      image: "alpine:3.21",
+      imageKind: "oci",
+      networkPolicy: "blocked",
+    });
+
+    expect(result.status).toBe(sandboxClass === "container" ? "completed" : "unknown");
+    expect(mutations).toHaveLength(sandboxClass === "container" ? 2 : 1);
+    expect(mutations[0]).toEqual({
+      path: "/api/snapshots",
+      body: {
+        name: "sandbar-image-oci-1",
+        imageName: "alpine:3.21",
+        regionId: "us",
         sandboxClass: "container",
-      });
-    }
+      },
+    });
 
-    if (url.pathname === "/api/sandbox" && init?.method === "POST") {
-      const body = JSON.parse(String(init.body));
-      mutations.push({ path: url.pathname, body });
-
-      return Response.json({ ...native(body.name), snapshot: body.snapshot, labels: body.labels });
-    }
-
-    throw new Error(`Unexpected fixture route ${url.pathname}`);
-  });
-
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
-
-  const prepared = await provider.driver.prepare({
-    scope: provider.scope,
-    image: { kind: "oci", value: "alpine:3.21" },
-    networkPolicy: "blocked",
-  });
-
-  expect(prepared).toEqual({ supported: true, effectiveImage: "alpine:3.21" });
-  expect(mutations).toHaveLength(0);
-
-  const result = await provider.driver.create({
-    scope: provider.scope,
-    identity: identity("oci-1"),
-    image: "alpine:3.21",
-    imageKind: "oci",
-    networkPolicy: "blocked",
-  });
-
-  expect(result.status).toBe("completed");
-  expect(mutations).toHaveLength(2);
-  expect(mutations[0]).toEqual({
-    path: "/api/snapshots",
-    body: {
-      name: "sandbar-image-oci-1",
-      imageName: "alpine:3.21",
-      regionId: "us",
-      sandboxClass: "container",
-    },
-  });
-  expect(mutations[1]!.body.snapshot).toBe("built-snapshot");
-});
+    if (sandboxClass === "container") expect(mutations[1]!.body.snapshot).toBe("built-snapshot");
+  },
+);
 
 test("lost OCI build response remains unknown with no sandbox submission", async () => {
   let builds = 0;

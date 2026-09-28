@@ -4,9 +4,10 @@ import { adapterSuite } from "sandbar-adapter/testing";
 import { createDaytonaAdapter } from "./adapter";
 import { Sandbar, Image } from "sandbar-sdk";
 
-test.each([false, true])(
-  "explicit image build is scoped and never creates a sandbox: lost=%s",
-  async (lost) => {
+test.each(["normal", "lost", "wrong-source"] as const)(
+  "explicit image build is scoped and never creates a sandbox: %s",
+  async (mode) => {
+    const lost = mode !== "normal";
     let builds = 0;
     let creates = 0;
     let name = "";
@@ -16,7 +17,7 @@ test.each([false, true])(
     const snapshot = () => ({
       id: "built-1",
       name,
-      imageName: "alpine:3.21",
+      imageName: mode === "wrong-source" ? "other:1" : "alpine:3.21",
       organizationId: "org-1",
       state: "active",
       regionIds: ["us"],
@@ -94,12 +95,32 @@ test.each([false, true])(
         client.images.build({ source: Image.oci("alpine:latest") }),
       ).rejects.toMatchObject({ code: "UNSUPPORTED" });
       expect(builds).toBe(0);
+      await expect(
+        client.sandboxes.create({
+          environment: Image.prepared("built-1"),
+          labels: { "sandbar.imageSnapshot": "borrowed" },
+          networkPolicy: "blocked",
+        }),
+      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+      expect(builds).toBe(0);
+      expect(creates).toBe(0);
       const build = await client.images.submitBuild({ source: Image.oci("alpine:3.21") });
 
       if (lost) {
-        await expect(build.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+        expect(await build.observe()).toBeNull();
+
         await client.close();
         client = await connect();
+      }
+
+      if (mode === "wrong-source") {
+        await expect((await client.recover(build.reference)).wait()).rejects.toMatchObject({
+          code: "OUTCOME_UNKNOWN",
+        });
+        expect(builds).toBe(1);
+        expect(creates).toBe(0);
+
+        return;
       }
 
       const result = lost
@@ -301,6 +322,7 @@ test("Daytona public adapter passes managed-compute scenarios with one native PO
 test("lost exec, write and destroy responses recover by read-only evidence after reconnect", async () => {
   const files = new Map<string, Uint8Array>();
   let state = "started";
+  let execReads = 0;
   const mutations = { exec: 0, upload: 0, write: 0, destroy: 0 };
 
   const fetchImpl = Object.assign(
@@ -332,7 +354,7 @@ test("lost exec, write and destroy responses recover by read-only evidence after
 
         if (init?.method === "DELETE") {
           mutations.destroy++;
-          state = "destroyed";
+          state = "destroying";
           throw new Error("delete response lost");
         }
 
@@ -354,6 +376,12 @@ test("lost exec, write and destroy responses recover by read-only evidence after
       }
 
       if (path.endsWith("/files/download")) {
+        if (url.searchParams.get("path")?.startsWith("/tmp/.sandbar-exec-")) {
+          execReads++;
+
+          if (execReads <= 2) return new Response("SANDBAR-EXEC-V1\n");
+        }
+
         const bytes = files.get(url.searchParams.get("path")!);
 
         return bytes ? new Response(new Uint8Array(bytes)) : new Response(null, { status: 404 });
@@ -446,13 +474,30 @@ test("lost exec, write and destroy responses recover by read-only evidence after
 
   const reopened = await connect();
 
+  if (exec.kind !== "pending") throw new Error("Expected pending exec");
+
+  const expired = await reopened.operations.observe({
+    scope: reopened.scope,
+    kind: "exec",
+    operationId: "op-lost-exec",
+    submissionId: "lost-exec",
+    sandboxId: "native-1",
+    token: {
+      ...z.object({ submissionId: z.string(), maxOutputBytes: z.number() }).parse(exec.token),
+      receiptDeadline: 0,
+    },
+    tokenVersion: exec.version,
+  });
+
+  expect(expired?.kind).toBe("unknown");
+
   for (const [kind, result, submissionId] of [
     ["exec", exec, "lost-exec"],
     ["file_write", write, "lost-write"],
   ] as const) {
     if (result.kind !== "pending") throw new Error("Expected pending operation");
 
-    const observed = await reopened.operations.observe({
+    const attempt = {
       scope: reopened.scope,
       kind,
       operationId: `op-${submissionId}`,
@@ -460,7 +505,14 @@ test("lost exec, write and destroy responses recover by read-only evidence after
       sandboxId: "native-1",
       token: result.token,
       tokenVersion: result.version,
-    });
+    };
+
+    let observed = await reopened.operations.observe(attempt);
+
+    if (kind === "exec") {
+      expect(observed?.kind).toBe("pending");
+      observed = await reopened.operations.observe(attempt);
+    }
 
     expect(observed?.kind).toBe("completed");
   }
@@ -471,15 +523,19 @@ test("lost exec, write and destroy responses recover by read-only evidence after
 
   if (destroy.kind !== "pending") throw new Error("Expected pending destroy");
 
-  const termination = await afterDestroy.operations.observe({
+  const destroyAttempt = {
     scope: afterDestroy.scope,
-    kind: "destroy",
+    kind: "destroy" as const,
     operationId: "op-lost-destroy",
     submissionId: "lost-destroy",
     sandboxId: "native-1",
     token: destroy.token,
     tokenVersion: destroy.version,
-  });
+  };
+
+  expect((await afterDestroy.operations.observe(destroyAttempt))?.kind).toBe("pending");
+  state = "destroyed";
+  const termination = await afterDestroy.operations.observe(destroyAttempt);
 
   expect(termination?.kind).toBe("completed");
   expect(mutations).toEqual({ exec: 1, upload: 1, write: 1, destroy: 1 });

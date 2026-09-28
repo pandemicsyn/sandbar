@@ -533,13 +533,18 @@ export class DaytonaDriver implements ProviderDriver {
       },
     };
   }
-  async observeImageBuild(submissionId: string): Promise<ImageBuildResult | null> {
+  async observeImageBuild(submissionId: string, image: string): Promise<ImageBuildResult | null> {
     const name = `sandbar-image-${submissionId}`;
     const response = await this.request("GET", `/snapshots/${encodeURIComponent(name)}`);
 
     if (!response.ok) return null;
 
-    return this.imageBuildResult(await boundedJson(response, Snapshot), name);
+    const snapshot = await boundedJson(response, Snapshot);
+
+    if (snapshot.imageName !== image)
+      return { status: "unknown", reason: "Daytona image build source mismatched" };
+
+    return this.imageBuildResult(snapshot, name);
   }
   async buildImage(input: {
     submissionId: string;
@@ -604,6 +609,18 @@ export class DaytonaDriver implements ProviderDriver {
     signal?: AbortSignal;
   }): Promise<DriverResult> {
     this.sameScope(input.scope);
+
+    if ("sandbar.imageSnapshot" in (input.labels ?? {}))
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code: "invalid",
+          message: "Reserved Daytona snapshot label",
+          effect: "none",
+          retry: "never",
+        },
+      };
 
     if (input.networkPolicy !== "blocked")
       return {
@@ -682,7 +699,10 @@ export class DaytonaDriver implements ProviderDriver {
             );
         }
 
-        if (!current.regionIds?.includes(this.scope.region!))
+        if (
+          !current.regionIds?.includes(this.scope.region!) ||
+          !["container", "linux-vm"].includes(current.sandboxClass ?? "")
+        )
           return unknown(
             input.identity.submissionId,
             "Daytona snapshot unavailable in target region",
@@ -1071,6 +1091,14 @@ export class DaytonaDriver implements ProviderDriver {
         await boundedBytes(response, 4_194_304),
       );
 
+      if (!frame.includes("SANDBAR-END"))
+        return {
+          status: "pending",
+          effect: "possible",
+          submissionId: input.submissionId,
+          observeAfterMs: 500,
+        };
+
       return this.parseExecFrame(
         input.sandbox,
         input.submissionId,
@@ -1407,7 +1435,12 @@ export class DaytonaDriver implements ProviderDriver {
     this.sameScope(sandbox);
     const value = await this.sandbox(sandbox.nativeId);
 
-    if (!value || value.state !== "destroyed") return null;
+    if (!value) return null;
+
+    if (value.state === "destroying")
+      return { status: "pending", effect: "possible", submissionId, observeAfterMs: 500 };
+
+    if (value.state !== "destroyed") return null;
 
     return {
       status: "completed",

@@ -19,9 +19,12 @@ const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
 const Token = z.strictObject({ submissionId: z.string().min(1).max(128) });
 
+const ImageToken = Token.extend({ image: z.string().min(1).max(512) });
+
 const ExecToken = z.strictObject({
   submissionId: z.string().min(1).max(128),
   maxOutputBytes: z.number().int().nonnegative().max(1_048_576),
+  receiptDeadline: z.number().int().nonnegative().optional(),
 });
 
 const WriteToken = z.strictObject({
@@ -194,7 +197,7 @@ export function createDaytonaAdapter(
           fileWrite: { overwrite: true, noClobber: true },
         },
         imageBuild: {
-          recovery: { version: 1, token: Token },
+          recovery: { version: 1, token: ImageToken },
           async prepare(input) {
             if (!driver.prepareImage(input.source.value))
               throw new AdapterError("UNSUPPORTED", "OCI image needs a fixed tag or digest");
@@ -208,18 +211,25 @@ export function createDaytonaAdapter(
               signal: ctx.signal,
             });
 
-            if (result.status === "pending")
-              return ctx.pending({ submissionId: ctx.submissionId }, { pollAfterMs: 500 });
+            if (result.status !== "completed")
+              return ctx.pending(
+                { submissionId: ctx.submissionId, image: input.source.value },
+                { pollAfterMs: 500 },
+              );
 
-            return result.status === "completed" ? result.value : ctx.unknown(result.reason);
+            return result.value;
           },
           async observe(attempt, ctx) {
-            const result = await driver.observeImageBuild(attempt.submissionId);
+            const token = ImageToken.safeParse(attempt.token);
+
+            if (!token.success || token.data.submissionId !== attempt.submissionId)
+              return ctx.unknown("Daytona image build source evidence is unavailable");
+
+            const result = await driver.observeImageBuild(attempt.submissionId, token.data.image);
 
             if (!result) return null;
 
-            if (result.status === "pending")
-              return ctx.pending({ submissionId: attempt.submissionId }, { pollAfterMs: 500 });
+            if (result.status === "pending") return ctx.pending(token.data, { pollAfterMs: 500 });
 
             return result.status === "completed" ? result.value : ctx.unknown(result.reason);
           },
@@ -227,6 +237,9 @@ export function createDaytonaAdapter(
         create: {
           recovery: { version: 1, token: Token },
           async prepare(input) {
+            if ("sandbar.imageSnapshot" in (input.labels ?? {}))
+              throw new AdapterError("INVALID_ARGUMENT", "Reserved Daytona snapshot label");
+
             const result = await driver.prepare({
               scope,
               image: input.image,
@@ -300,6 +313,12 @@ export function createDaytonaAdapter(
 
             if (!result) return null;
 
+            if (result.status === "pending")
+              return ctx.pending(
+                { sandboxId: attempt.sandbox.id },
+                { pollAfterMs: result.observeAfterMs },
+              );
+
             return destroyValue(result) ?? ctx.unknown("Daytona deletion is unconfirmed");
           },
         },
@@ -319,6 +338,8 @@ export function createDaytonaAdapter(
         exec: {
           recovery: { version: 1, token: ExecToken },
           async submit(input, ctx) {
+            const receiptDeadline = Date.now() + (input.deadlineSeconds + 10) * 1000;
+
             const result = await driver.exec({
               sandbox: native(input.sandbox.id),
               identity: identity(ctx),
@@ -337,7 +358,11 @@ export function createDaytonaAdapter(
             if (result.status === "rejected") return failure(result, ctx);
 
             return ctx.pending(
-              { submissionId: ctx.submissionId, maxOutputBytes: input.maxOutputBytes },
+              {
+                submissionId: ctx.submissionId,
+                maxOutputBytes: input.maxOutputBytes,
+                receiptDeadline,
+              },
               { pollAfterMs: 500 },
             );
           },
@@ -357,6 +382,15 @@ export function createDaytonaAdapter(
             });
 
             if (!result) return null;
+
+            if (
+              result.status === "pending" &&
+              token?.success &&
+              token.data.receiptDeadline &&
+              Date.now() < token.data.receiptDeadline
+            )
+              return ctx.pending(token.data, { pollAfterMs: result.observeAfterMs });
+
             const value = executionValue(result);
 
             return value ?? ctx.unknown("Daytona execution receipt is incomplete");
