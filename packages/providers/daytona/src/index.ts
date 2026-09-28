@@ -361,7 +361,7 @@ export class DaytonaDriver implements ProviderDriver {
 
     return boundedJson(response, schema);
   }
-  private async sandbox(id: string): Promise<Sandbox | null> {
+  private async sandboxDetail(id: string): Promise<Sandbox | null> {
     const response = await this.request("GET", `/sandbox/${encodeURIComponent(id)}`);
 
     if (response.status === 404) return null;
@@ -369,8 +369,19 @@ export class DaytonaDriver implements ProviderDriver {
     if (!response.ok) throw new Error(`Daytona HTTP ${response.status}`);
     const sandbox = await boundedJson(response, NativeSandbox);
 
-    if (sandbox.id !== id) throw new Error("Daytona returned another sandbox ID");
-    observed(this.scope, sandbox);
+    if (
+      sandbox.id !== id ||
+      sandbox.organizationId !== this.scope.accountId ||
+      sandbox.target !== this.scope.region
+    )
+      throw new Error("Daytona sandbox identity or scope mismatch");
+
+    return sandbox;
+  }
+  private async sandbox(id: string): Promise<Sandbox | null> {
+    const sandbox = await this.sandboxDetail(id);
+
+    if (sandbox) observed(this.scope, sandbox);
 
     return sandbox;
   }
@@ -1475,7 +1486,7 @@ export class DaytonaDriver implements ProviderDriver {
   }
   async destroyRetainedResources(sandbox: SandboxRef): Promise<string[] | undefined> {
     this.sameScope(sandbox);
-    const value = await this.sandbox(sandbox.nativeId);
+    const value = await this.sandboxDetail(sandbox.nativeId);
 
     if (!value?.labels) return undefined;
 
@@ -1570,7 +1581,7 @@ export class DaytonaDriver implements ProviderDriver {
     retainedResources?: string[],
   ): Promise<DriverResult | null> {
     this.sameScope(sandbox);
-    const value = await this.sandbox(sandbox.nativeId);
+    const value = await this.sandboxDetail(sandbox.nativeId);
 
     if (!value) return null;
 

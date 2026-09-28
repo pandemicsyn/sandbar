@@ -2055,3 +2055,86 @@ test.each(["confirmed", "lost"] as const)(
     expect(deletes).toBe(1);
   },
 );
+
+test.each([{ public: true }, { networkBlockAll: false }])(
+  "destroy permits policy drift while preserving scope checks: %j",
+  async (drift) => {
+    let state = "started";
+    let deletes = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions") return Response.json([region()]);
+
+      if (path === "/api/sandbox/native-1") {
+        if (init?.method === "DELETE") {
+          deletes++;
+          state = "destroying";
+          throw new Error("response lost");
+        }
+
+        return Response.json({
+          ...native("box", state),
+          ...drift,
+          labels: { "sandbar.imageSnapshot": "snap-retained" },
+        });
+      }
+
+      throw new Error("Unexpected request");
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+
+    expect(await provider.driver.destroyRetainedResources(sandbox)).toEqual([
+      "daytona:snapshot:snap-retained",
+    ]);
+    expect((await provider.driver.destroy({ sandbox, identity: identity("drift") })).status).toBe(
+      "unknown",
+    );
+    expect((await provider.driver.observeDestroy(sandbox, "drift"))?.status).toBe("pending");
+    state = "destroyed";
+    expect(await provider.driver.observeDestroy(sandbox, "drift")).toMatchObject({
+      status: "completed",
+      value: {
+        observation: {
+          computeStopped: true,
+          retainedResources: ["daytona:snapshot:snap-retained"],
+        },
+      },
+    });
+    expect(deletes).toBe(1);
+  },
+);
+
+test.each([{ id: "other" }, { organizationId: "other" }, { target: "other" }])(
+  "destroy refuses mismatched native identity or scope: %j",
+  async (mismatch) => {
+    let deletes = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions") return Response.json([region()]);
+
+      if (init?.method === "DELETE") deletes++;
+
+      return Response.json({ ...native("box", "destroyed"), ...mismatch, public: true });
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+
+    expect(await provider.driver.destroy({ sandbox, identity: identity("scope") })).toMatchObject({
+      status: "rejected",
+      effect: "none",
+    });
+    await expect(provider.driver.observeDestroy(sandbox, "scope")).rejects.toThrow();
+    expect(deletes).toBe(0);
+  },
+);
