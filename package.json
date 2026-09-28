@@ -25,7 +25,8 @@
     "version:packages": "changeset version",
     "release:check-manifests": "bun scripts/release.mjs check",
     "release:refresh-lock": "bun scripts/refresh-workspace-lock.mjs",
-    "release:fixture": "bun scripts/release-fixture.mjs"
+    "release:fixture": "bun scripts/release-fixture.mjs",
+    "observability:check": "bun run --cwd packages/sdk-qualification check && bun packages/sdk-qualification/observability/run.mjs"
   },
   "devDependencies": {
     "@changesets/changelog-github": "1.0.0",
@@ -35,6 +36,14 @@
     "drizzle-kit": "1.0.0-beta.22",
     "oxfmt": "0.70.0",
     "oxlint": "1.85.0",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "@opentelemetry/sdk-trace-node": "2.11.0",
+    "@opentelemetry/sdk-trace-base": "2.11.0",
+    "@opentelemetry/context-async-hooks": "2.11.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.222.0",
+    "@sentry/node": "11.1.0",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/instrumentation-http": "0.222.0",
+    "@sentry/bun": "11.1.0"
   }
 }

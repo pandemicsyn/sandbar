@@ -113,7 +113,21 @@ async function consumer(directory, dependencies, overrides, source) {
 async function checkTypes(directory, mode) {
   let source;
 
-  if (mode === "service")
+  if (mode === "observability")
+    source = `
+import { type TracerProvider } from "@opentelemetry/api";
+import { Sandbar, type ObservabilityOptions, diagnosticContext } from "sandbar-sdk";
+import { acme } from "@acme/sandbar-adapter";
+async function flow(provider: TracerProvider) {
+  const options: ObservabilityOptions = { tracing: { tracerProvider: provider } };
+  const client = await Sandbar.connect({ adapter: acme, config: { region: "us" }, credentials: { token: "fixture" }, ...options });
+  const safe = diagnosticContext(new Error("private"));
+  await client.close();
+  return safe.recoveryAvailable;
+}
+void flow;
+`;
+  else if (mode === "service")
     source = `
 import { createService, type ServiceHandle } from "sandbar-service";
 import { asyncAcme } from "@acme/sandbar-adapter";
@@ -772,6 +786,23 @@ try {
   const e2b = join(temporary, "e2b-consumer");
   const builtins = join(temporary, "builtins-consumer");
   const service = join(temporary, "service-consumer");
+  const observability = join(temporary, "observability-consumer");
+  await consumer(
+    observability,
+    {
+      ...customDeps,
+      "@opentelemetry/api": "1.9.1",
+      "@opentelemetry/context-async-hooks": "2.11.0",
+      "@opentelemetry/sdk-trace-node": "2.11.0",
+      "@opentelemetry/sdk-trace-base": "2.11.0",
+    },
+    archiveOverrides,
+    await readFile(join(root, "packages/sdk-qualification/observability/packed.mjs"), "utf8"),
+  );
+  await checkTypes(observability, "observability");
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], observability)}`);
   await consumer(remote, remoteDeps, archiveOverrides, remoteSource);
   await consumer(custom, customDeps, archiveOverrides, customSource);
   await consumer(direct, directDeps, archiveOverrides, directSource);

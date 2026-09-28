@@ -1,6 +1,6 @@
 # SDK observability and diagnostics
 
-Accepted direction · September 28, 2026 · Planned; not implemented
+Accepted direction · September 28, 2026 · Direct tracing/diagnostics and recipes implemented in this branch; metrics/events and service tracing deferred
 
 Make Sandbar operations understandable inside the application's existing observability tools. This is a fresh SDK design, independent of the removed observability/accounting proposal. It adds no billing, management UI, or Effect requirement. This document specifies future behavior; current exports remain the authority for implemented APIs.
 

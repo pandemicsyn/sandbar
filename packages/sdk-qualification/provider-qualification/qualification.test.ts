@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defineAdapter } from "../../adapter/src/index";
+import { defineAdapter } from "sandbar-adapter";
 import { Image, Sandbar } from "sandbar-sdk";
 import { z } from "zod";
 import { LedgerStore } from "./ledger";
