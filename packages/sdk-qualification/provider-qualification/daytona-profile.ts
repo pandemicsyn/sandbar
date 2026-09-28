@@ -14,6 +14,7 @@ export const daytonaConfiguration = z.strictObject({
     .max(128)
     .regex(/^[A-Za-z0-9_-]+$/),
   ttlMinutes: z.literal(15).default(15),
+  networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
 });
 
 export type DaytonaConfiguration = z.infer<typeof daytonaConfiguration>;
@@ -28,7 +29,12 @@ export function daytonaConnection(configuration: DaytonaConfiguration, apiKey: s
     onDiagnostic?: (error: unknown) => void,
   ) =>
     Sandbar.connect({
-      adapter: daytona({ apiKey, target: config.target, ttlMinutes: config.ttlMinutes }),
+      adapter: daytona({
+        apiKey,
+        target: config.target,
+        ttlMinutes: config.ttlMinutes,
+        networkPolicy: config.networkPolicy,
+      }),
       config: {},
       credentials: {},
       onReference,

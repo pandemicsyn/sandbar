@@ -49,8 +49,8 @@ export async function loadCredentials(
   const daytona =
     environment.SANDBAR_DAYTONA_API_KEY ??
     environment.DAYTONA_API_KEY ??
-    parsed.SANDBAR_DAYTONA_API_KEY ??
-    parsed.DAYTONA_API_KEY;
+    parsed.DAYTONA_API_KEY ??
+    parsed.SANDBAR_DAYTONA_API_KEY;
 
   const e2b =
     environment.E2B_API_KEY ??

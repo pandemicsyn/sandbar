@@ -13,6 +13,7 @@ test("credential file imports only keys and preserves injected environment", asy
       file,
       [
         "DAYTONA_API_KEY=fixture-daytona",
+        "SANDBAR_DAYTONA_API_KEY=fixture-old",
         "E2B_API_KEY='fixture-e2b'",
         "SANDBAR_QUAL_LIVE_AUTHORIZED=yes",
         "SANDBAR_DAYTONA_LIVE=1",

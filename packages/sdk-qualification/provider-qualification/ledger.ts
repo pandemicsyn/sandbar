@@ -29,6 +29,7 @@ const ledgerSchema = z.strictObject({
           .max(128)
           .regex(/^[A-Za-z0-9_-]+$/),
         ttlMinutes: z.literal(15),
+        networkPolicy: z.enum(["blocked", "daytona-default"]).optional(),
       }),
       z.strictObject({
         target: z.string().min(1).max(128),
@@ -47,7 +48,7 @@ const ledgerSchema = z.strictObject({
     .optional(),
   fileRoot: z.enum(["/tmp", "/home/user"]).optional(),
   companionRunId: z.uuid().optional(),
-  networkPolicy: z.enum(["internet", "blocked"]).optional(),
+  networkPolicy: z.enum(["internet", "blocked", "daytona-default"]).optional(),
   networkProbe: z.literal(networkProbeId).optional(),
   networkEvidence: networkEvidenceSchema.optional(),
   envd: envdSchema.optional(),

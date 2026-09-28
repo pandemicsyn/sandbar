@@ -128,6 +128,7 @@ const daytonaConfig =
           target: required("SANDBAR_DAYTONA_TARGET"),
           snapshotId: required("SANDBAR_DAYTONA_SNAPSHOT_ID"),
           ttlMinutes: 15,
+          networkPolicy: process.env.SANDBAR_DAYTONA_NETWORK_POLICY ?? "blocked",
         },
       )
     : undefined;
@@ -156,6 +157,8 @@ if (saved && companion) {
     JSON.stringify(other.connection) !== JSON.stringify(saved.connection) ||
     !saved.networkPolicy ||
     !other.networkPolicy ||
+    !["internet", "blocked"].includes(saved.networkPolicy) ||
+    !["internet", "blocked"].includes(other.networkPolicy) ||
     saved.networkPolicy === other.networkPolicy
   )
     throw new Error("Companion ledger routing mismatch");
@@ -220,7 +223,7 @@ const metadata = {
         ? ("verified-team" as const)
         : ("api-key" as const)
       : ("verified-organization" as const),
-    network: "blocked-requested",
+    network: `${daytonaConfig?.networkPolicy ?? "blocked"}-requested`,
     networkProbe: paired ? (saved?.networkProbe ?? networkProbeId) : undefined,
     regionClass: daytonaConfig?.target ?? "provider-default",
   },
@@ -274,7 +277,7 @@ const exercise = async () => {
       ...value,
       fileRoot,
       companionRunId: companion?.runId,
-      networkPolicy: companion ? "internet" : "blocked",
+      networkPolicy: companion ? "internet" : (daytonaConfig?.networkPolicy ?? "blocked"),
       networkProbe: companion ? networkProbeId : undefined,
     }));
 
@@ -302,7 +305,7 @@ const exercise = async () => {
     steps = networkRuns.flatMap((run) => run.steps);
   } else if (action === "live-prepared")
     steps = await runPrepared(factory, ledger, imageId, {
-      network: "blocked",
+      network: daytonaConfig?.networkPolicy ?? "blocked",
       fileRoot,
       signal: controller.signal,
       cleanupWaitMs: 60_000,
@@ -316,7 +319,7 @@ const exercise = async () => {
     if (companion) {
       const companionSteps = await reconcileConnection(factory, companion, 60_000, redactions);
       networkRuns = [
-        { policy: saved!.networkPolicy!, ledger, steps },
+        { policy: z.enum(["internet", "blocked"]).parse(saved!.networkPolicy), ledger, steps },
         {
           policy: saved!.networkPolicy === "internet" ? "blocked" : "internet",
           ledger: companion,
@@ -342,7 +345,11 @@ const exercise = async () => {
             envd: run.policy === state.networkPolicy ? state.envd : companionState?.envd,
           })),
         )
-      : steps.map((step) => ({ step, policy: "blocked" as const, envd: state.envd }));
+      : steps.map((step) => ({
+          step,
+          policy: state.networkPolicy ?? daytonaConfig?.networkPolicy ?? "blocked",
+          envd: state.envd,
+        }));
 
     const records = sourcedSteps.map(({ step, policy, envd }) => ({
       ...metadata,

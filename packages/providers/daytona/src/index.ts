@@ -46,6 +46,7 @@ const Region = z.object({
 });
 
 const Snapshot = z.object({
+  general: z.boolean().default(false),
   id: z.string().min(1),
   name: z.string().optional(),
   imageName: z.string().optional(),
@@ -93,6 +94,7 @@ const Input = z.strictObject({
     apiUrl: z.url().default("https://app.daytona.io/api"),
     toolboxOrigin: z.url().default("https://proxy.app.daytona.io"),
     target: z.string().min(1),
+    networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
     ttlMinutes: z.coerce.number().int().min(1).max(1440).default(60),
   }),
 });
@@ -105,6 +107,7 @@ export type DaytonaInput = {
   toolboxOrigin?: string;
   target: string;
   ttlMinutes?: number;
+  networkPolicy?: "blocked" | "daytona-default";
   fetch?: typeof fetch;
   trustedEndpoints?: DaytonaEndpointPair[];
 };
@@ -216,11 +219,15 @@ function ref(scope: NativeScope, id: string): SandboxRef {
   return { scope, nativeId: id, kind: "sandbox" };
 }
 
-function observed(scope: NativeScope, sandbox: Sandbox): SandboxObservation {
+function observed(
+  scope: NativeScope,
+  sandbox: Sandbox,
+  networkPolicy: "blocked" | "daytona-default",
+): SandboxObservation {
   if (
     sandbox.organizationId !== scope.accountId ||
     sandbox.target !== scope.region ||
-    !sandbox.networkBlockAll ||
+    sandbox.networkBlockAll !== (networkPolicy === "blocked") ||
     sandbox.public
   )
     throw new Error(
@@ -383,7 +390,7 @@ export class DaytonaDriver implements ProviderDriver {
   private async sandbox(id: string): Promise<Sandbox | null> {
     const sandbox = await this.sandboxDetail(id);
 
-    if (sandbox) observed(this.scope, sandbox);
+    if (sandbox) observed(this.scope, sandbox, this.config.configuration.networkPolicy);
 
     return sandbox;
   }
@@ -436,7 +443,8 @@ export class DaytonaDriver implements ProviderDriver {
   }
   async capabilities(scope: NativeScope) {
     this.sameScope(scope);
-    const blockedEgress = await this.supportsBlockedEgress();
+    const networkPolicy = this.config.configuration.networkPolicy;
+    const blockedEgress = networkPolicy === "blocked" && (await this.supportsBlockedEgress());
 
     return DriverCapabilities.parse({
       provider: "daytona",
@@ -445,7 +453,12 @@ export class DaytonaDriver implements ProviderDriver {
       supports: { argv: true, shell: true, fileBytes: true, inventory: true },
       maxFileBytes: 1_048_576,
       maxOutputBytes: 1_048_576,
-      networkPolicies: blockedEgress ? ["blocked"] : [],
+      networkPolicies:
+        networkPolicy === "daytona-default"
+          ? ["daytona-default"]
+          : blockedEgress
+            ? ["blocked"]
+            : [],
     });
   }
   async prepare(input: {
@@ -456,8 +469,11 @@ export class DaytonaDriver implements ProviderDriver {
   }) {
     this.sameScope(input.scope);
 
-    if (input.networkPolicy !== "blocked")
-      return { supported: false, reason: "Daytona adapter currently enforces only blocked egress" };
+    if (input.networkPolicy !== this.config.configuration.networkPolicy)
+      return {
+        supported: false,
+        reason: "Requested network policy differs from the Daytona connection policy",
+      };
 
     if (input.region && input.region !== this.scope.region)
       return {
@@ -465,7 +481,7 @@ export class DaytonaDriver implements ProviderDriver {
         reason: "Daytona connection target differs from requested region",
       };
 
-    if (!(await this.supportsBlockedEgress()))
+    if (input.networkPolicy === "blocked" && !(await this.supportsBlockedEgress()))
       return {
         supported: false,
         reason: "Verified Daytona organization does not support strict blocked egress",
@@ -492,14 +508,14 @@ export class DaytonaDriver implements ProviderDriver {
     const snapshot = await boundedJson(response, Snapshot);
 
     if (
-      snapshot.id !== input.image.value ||
-      snapshot.organizationId !== this.scope.accountId ||
+      (snapshot.id !== input.image.value && snapshot.name !== input.image.value) ||
+      (snapshot.organizationId !== this.scope.accountId && !snapshot.general) ||
       snapshot.state !== "active" ||
       !snapshot.regionIds?.includes(this.scope.region!)
     )
       return {
         supported: false,
-        reason: "Snapshot is not active in the verified organization and region",
+        reason: "Snapshot is not active and available to the verified organization and region",
       };
 
     if (!["linux-vm", "container"].includes(snapshot.sandboxClass ?? ""))
@@ -697,13 +713,13 @@ export class DaytonaDriver implements ProviderDriver {
         },
       };
 
-    if (input.networkPolicy !== "blocked")
+    if (input.networkPolicy !== this.config.configuration.networkPolicy)
       return {
         status: "rejected",
         effect: "none",
         error: {
           code: "unsupported",
-          message: "Only blocked network policy is supported",
+          message: "Requested network policy differs from the Daytona connection policy",
           effect: "none",
           retry: "never",
         },
@@ -809,21 +825,23 @@ export class DaytonaDriver implements ProviderDriver {
     if (input.signal?.aborted) return uncertain("Daytona creation wait was aborted");
 
     try {
-      const value = await this.json("POST", "/sandbox", NativeSandbox, {
+      const body = {
         name,
         snapshot: snapshotId,
+        networkBlockAll: input.networkPolicy === "blocked" ? true : undefined,
         target: this.scope.region,
-        networkBlockAll: true,
         public: false,
         labels,
         ttlMinutes: this.config.configuration.ttlMinutes,
-      });
+      };
+
+      const value = await this.json("POST", "/sandbox", NativeSandbox, body);
 
       if (value.name !== name) return uncertain("Daytona returned a different sandbox name");
 
       if (value.snapshot && value.snapshot !== snapshotId)
         return uncertain("Daytona returned a different snapshot");
-      const observation = observed(this.scope, value);
+      const observation = observed(this.scope, value, this.config.configuration.networkPolicy);
 
       if (["destroyed", "error", "build_failed"].includes(value.state))
         return uncertain("Daytona sandbox did not reach running state");
@@ -858,7 +876,7 @@ export class DaytonaDriver implements ProviderDriver {
     this.sameScope(value);
     const sandbox = await this.sandbox(value.nativeId);
 
-    return sandbox ? observed(this.scope, sandbox) : null;
+    return sandbox ? observed(this.scope, sandbox, this.config.configuration.networkPolicy) : null;
   }
   async inventory(input: { scope: NativeScope; cursor?: string; limit: number }) {
     this.sameScope(input.scope);
@@ -884,7 +902,7 @@ export class DaytonaDriver implements ProviderDriver {
         detail.labels?.["sandbar.submission"] === listed.labels["sandbar.submission"] &&
         detail.labels?.["sandbar.operation"] === listed.labels["sandbar.operation"]
       )
-        result.items.push(observed(this.scope, detail));
+        result.items.push(observed(this.scope, detail, this.config.configuration.networkPolicy));
     }
 
     if (page.nextCursor) result.nextCursor = page.nextCursor;
@@ -963,7 +981,7 @@ export class DaytonaDriver implements ProviderDriver {
     )
       return null;
 
-    const observation = observed(this.scope, detail);
+    const observation = observed(this.scope, detail, this.config.configuration.networkPolicy);
 
     if (["destroyed", "error", "build_failed"].includes(detail.state))
       return unknown(input.submissionId, "Daytona sandbox did not reach running state");
@@ -1757,6 +1775,7 @@ export async function daytonaProvider(input: DaytonaInput) {
       apiUrl: input.apiUrl ?? "https://app.daytona.io/api",
       toolboxOrigin: input.toolboxOrigin ?? "https://proxy.app.daytona.io",
       target: input.target,
+      networkPolicy: input.networkPolicy ?? "blocked",
       ttlMinutes: String(input.ttlMinutes ?? 60),
     },
   });
@@ -1764,7 +1783,7 @@ export async function daytonaProvider(input: DaytonaInput) {
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(
-      `${config.configuration.apiUrl}|${config.configuration.target}|${config.configuration.toolboxOrigin}`,
+      `${config.configuration.apiUrl}|${config.configuration.target}|${config.configuration.toolboxOrigin}${config.configuration.networkPolicy === "daytona-default" ? "|daytona-default" : ""}`,
     ),
   );
 

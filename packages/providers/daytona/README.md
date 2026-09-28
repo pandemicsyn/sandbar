@@ -59,3 +59,24 @@ Receipts remain in the sandbox's `/tmp` until that sandbox is destroyed or its f
 Daytona sandboxes use a 60-minute native TTL by default (configurable to 1–1440 minutes through the public factory or adapter configuration). The existing opt-in prepared-snapshot live test fixes it to 15 minutes and attempts explicit cleanup. It requires `SANDBAR_DAYTONA_LIVE=1`, `SANDBAR_DAYTONA_API_KEY`, `SANDBAR_DAYTONA_TARGET`, `SANDBAR_DAYTONA_SNAPSHOT_ID`, and `SANDBAR_DAYTONA_BUDGET_ACK=yes`. The acknowledgement is not an automatic USD spending cap. OCI live testing needs a separate bounded build and newly owned snapshot deletion plan. No live test has run for this implementation.
 
 Sources inspected September 26–27, 2026: [Daytona TypeScript SDK reference](https://www.daytona.io/docs/en/typescript-sdk/), [snapshots and OCI creation](https://www.daytona.io/docs/snapshots/), [Process reference](https://www.daytona.io/docs/en/typescript-sdk/process/), [network tier restrictions](https://www.daytona.io/docs/en/network-limits/), [platform OpenAPI v0.218](https://www.daytona.io/docs/openapi.json), [toolbox OpenAPI v0.218](https://www.daytona.io/docs/toolbox-openapi.json), published `@daytona/sdk@0.218.0` source, and [public server v0.190.0 organization override enforcement](https://github.com/daytonaio/daytona/blob/01c502bb1f1ff8f2885d0cd490e043736083dca8/apps/api/src/sandbox/controllers/sandbox.controller.ts#L1110). The historical server code links the organization flag to override eligibility; applying that signal to v0.218 is an inference from the current OpenAPI field and current network tier documentation. This is fixture-tested integration, not a claim of live correctness or observed network isolation.
+
+## Explicit Daytona default networking
+
+Tier 1 and Tier 2 accounts use Daytona's organization-managed default firewall, where essential services remain reachable. Select `daytona-default` explicitly on both the connection and create request:
+
+```ts
+const sandbar = await Sandbar.connect(daytona({
+  apiKey: process.env.DAYTONA_API_KEY!,
+  target: 'us',
+  ttlMinutes: 15,
+  networkPolicy: 'daytona-default',
+}));
+const sandbox = await sandbar.sandboxes.create({
+  environment: Image.prepared('daytona-small'),
+  networkPolicy: 'daytona-default',
+});
+```
+
+This mode omits sandbox network overrides and verifies that native block-all is unset. It verifies sandbox organization, region and private previews as before. It performs no organization-management request; normal API-key identity and region reads remain mandatory. Prepared inputs may be an owned snapshot or an explicitly public/general borrowed snapshot, matched by ID or name, active in the verified region and Linux-compatible. Public snapshots are never owned cleanup targets.
+
+Omitting the policy still selects strict `blocked`; there is no automatic fallback. Strict block-all is unavailable on Tier 1/2 according to [Daytona network limits](https://www.daytona.io/docs/en/network-limits/). The current blocked-policy eligibility probe remains unavailable for ordinary API keys because it uses an organization-management endpoint; a 401 is not proof of account tier. Default and blocked connections have different recovery scope, so observations cannot certify one as the other. This default mode does not promise unrestricted internet or zero egress.

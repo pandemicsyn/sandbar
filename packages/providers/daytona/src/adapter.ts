@@ -12,6 +12,7 @@ const Configuration = z.strictObject({
   apiUrl: z.url().default("https://app.daytona.io/api"),
   toolboxOrigin: z.url().default("https://proxy.app.daytona.io"),
   target: z.string().min(1),
+  networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
   ttlMinutes: z.coerce.number().int().min(1).max(1440).default(60),
 });
 
@@ -152,6 +153,7 @@ export function createDaytonaAdapter(
           apiUrl: value.apiUrl,
           toolboxOrigin: value.toolboxOrigin,
           target: value.target,
+          networkPolicy: value.networkPolicy,
           ttlMinutes: String(value.ttlMinutes),
         },
       });
@@ -175,6 +177,7 @@ export function createDaytonaAdapter(
         apiUrl: config.apiUrl,
         toolboxOrigin: config.toolboxOrigin,
         target: config.target,
+        networkPolicy: config.networkPolicy,
         ttlMinutes: config.ttlMinutes,
         fetch: fetchImpl,
         trustedEndpoints,
@@ -191,14 +194,19 @@ export function createDaytonaAdapter(
 
       const caps = await driver.capabilities(scope);
 
+      const partition = {
+        region: config.target,
+        endpoint: config.apiUrl,
+        toolboxOrigin: config.toolboxOrigin,
+      };
+
+      if (config.networkPolicy === "daytona-default")
+        Object.assign(partition, { networkPolicy: config.networkPolicy });
+
       return {
         scope: {
           authority: { kind: "organization", id: scope.accountId! },
-          partition: {
-            region: config.target,
-            endpoint: config.apiUrl,
-            toolboxOrigin: config.toolboxOrigin,
-          },
+          partition,
         },
         supports: {
           images: ["prepared", "oci"],
