@@ -9,8 +9,8 @@ Daytona and E2B are the qualification targets. This table reports measured opera
 
 These results cover only the stated image, requested network policy and region classes. A blocked-requested policy is a create setting, not a measured egress-isolation result. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.
 
-| Provider | Scenario | Image | Network | Region class | Runtime | SDK / native | Latest live result        | Date | Evidence |
-| -------- | -------- | ----- | ------- | ------------ | ------- | ------------ | ------------------------- | ---- | -------- |
-| —        | —        | —     | —       | —            | —       | —            | No live evidence recorded | —    | —        |
+| Provider | Scenario | Image | Template / authority | Network | Region class | Runtime | SDK / native | Latest live result        | Date | Evidence |
+| -------- | -------- | ----- | -------------------- | ------- | ------------ | ------- | ------------ | ------------------------- | ---- | -------- |
+| —        | —        | —     | —                    | —       | —            | —       | —            | No live evidence recorded | —    | —        |
 
 A missing row means no validated live result is recorded. Unsupported and blocked operations are not passes.

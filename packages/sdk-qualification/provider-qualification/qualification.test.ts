@@ -467,6 +467,39 @@ test("only latest live evidence is rendered; fixtures cannot make green cells", 
     }),
   ).toThrow("Live records require the exact harness commit");
 
+  const profiles = parseReport({
+    schemaVersion: 1,
+    records: [
+      {
+        ...report.records[1],
+        provider: "e2b",
+        configuration: {
+          ...base.configuration,
+          templateClass: "public-base",
+          authorityClass: "api-key",
+        },
+      },
+      {
+        ...report.records[2],
+        provider: "e2b",
+        configuration: {
+          ...base.configuration,
+          templateClass: "borrowed-template",
+          authorityClass: "verified-team",
+        },
+      },
+    ],
+  });
+
+  const distinct = renderLiveMatrix([profiles]);
+  expect(distinct).toContain("public-base / api-key");
+  expect(distinct).toContain("borrowed-template / verified-team");
+  expect(distinct).toMatch(/\| passed\s+\| 2026-09-26/);
+  expect(distinct).toMatch(/\| failed\s+\| 2026-09-27/);
+  expect(() =>
+    parseReport({ schemaVersion: 1, records: [{ ...report.records[1], provider: "e2b" }] }),
+  ).toThrow("E2B live records require template and authority classes");
+
   const matrix = renderLiveMatrix([report]);
   expect(matrix).toMatch(/\| failed\s+\| 2026-09-27/);
   expect(matrix).not.toMatch(/\| passed\s+\| 2026-09-26/);

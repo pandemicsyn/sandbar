@@ -16,13 +16,13 @@ The local E2B profile creates at most one sandbox from an existing borrowed temp
 
 Create a stable owner-only ledger directory outside the repository and temporary storage. Live preflight checks run before secret loading and connection: selected provider, explicit run-enable flag, local-only execution, clean exact SDK commit, routing, valid scenario dependencies and safe evidence reference.
 
-After separate approval, the prepared E2B command is:
+After separate approval, export `SANDBAR_QUAL_EVIDENCE_REF` with a real, resolvable evidence artifact or review reference prepared for this run. Verify the target first; do not substitute an invented run URL. Then the prepared E2B command is:
 
 ```sh
 SANDBAR_QUAL_PROVIDER=e2b \
 SANDBAR_QUAL_LIVE_AUTHORIZED=yes \
 SANDBAR_QUAL_LEDGER_DIR=/absolute/stable/private/qualification-ledgers \
-SANDBAR_QUAL_EVIDENCE_REF=https://github.com/pandemicsyn/sandbar/blob/main/specs/provider-evidence/e2b-run-1.md \
+SANDBAR_QUAL_EVIDENCE_REF="${SANDBAR_QUAL_EVIDENCE_REF:?Set a resolvable evidence reference first}" \
 bun packages/sdk-qualification/provider-qualification/manual.ts live-prepared
 ```
 
@@ -48,7 +48,7 @@ On completion, failure or interruption, the lifecycle attempts owned-sandbox tea
 
 Exercise and reconciliation hold an exclusive per-run lock across all mutations. A second process fails before mutations. A killed process can leave `<run UUID>.json.lock`; inspect its private host/PID metadata and prove that process has stopped before manually removing only that lock and resuming cleanup. Never remove a lock held by an active process. The recovery ledger remains intact; stale locks are never stolen automatically.
 
-Only reviewed sanitized JSON belongs in `results/`. Records contain provider/scenario, mode (`live`, `fixture`, `packed`), exact merged SDK commit/version and harness commit, pinned native version, runtime/platform, timestamp, tested image/network/region class, evidence reference and cleanup state. Private ledgers can contain resource IDs and recovery references; never publish them, credentials or native logs.
+Only reviewed sanitized JSON belongs in `results/`. Records contain provider/scenario, mode (`live`, `fixture`, `packed`), exact merged SDK commit/version and harness commit, pinned native version, runtime/platform, timestamp, tested image/template/authority/network/region classes, evidence reference and cleanup state. Private ledgers can contain resource IDs and recovery references; never publish them, credentials or native logs.
 
 The normal docs build reads only committed JSON and never contacts providers. The generated page uses live evidence only. A newer failure supersedes an older pass for the same configuration. Scenario successes with incomplete cleanup remain incomplete. Missing credentials or approval means not-run. No live records are committed yet.
 

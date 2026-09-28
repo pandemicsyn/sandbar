@@ -140,6 +140,9 @@ const metadata = {
   platform: `${process.platform}-${process.arch}`,
   configuration: {
     imageClass: "prepared" as const,
+    templateClass:
+      config.templateId === "base" ? ("public-base" as const) : ("borrowed-template" as const),
+    authorityClass: config.teamId ? ("verified-team" as const) : ("api-key" as const),
     network: "blocked-requested",
     regionClass: "provider-default",
   },

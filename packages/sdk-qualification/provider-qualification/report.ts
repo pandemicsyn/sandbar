@@ -48,6 +48,8 @@ export const recordSchema = z.strictObject({
   timestamp: z.iso.datetime({ offset: true }),
   configuration: z.strictObject({
     imageClass: z.enum(["prepared", "oci", "none"]),
+    templateClass: z.enum(["public-base", "borrowed-template"]).optional(),
+    authorityClass: z.enum(["api-key", "verified-team"]).optional(),
     network: safeLabel,
     regionClass: safeLabel,
   }),
@@ -74,6 +76,17 @@ export const reportSchema = z
   })
   .superRefine((report, ctx) => {
     for (const [index, record] of report.records.entries()) {
+      if (
+        record.mode === "live" &&
+        record.provider === "e2b" &&
+        (!record.configuration.templateClass || !record.configuration.authorityClass)
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["records", index, "configuration"],
+          message: "E2B live records require template and authority classes",
+        });
+
       if (record.mode === "live" && !record.evidenceRef)
         ctx.addIssue({
           code: "custom",
@@ -120,6 +133,8 @@ function key(record: QualificationRecord): string {
     record.provider,
     record.scenario,
     record.configuration.imageClass,
+    record.configuration.templateClass ?? "unspecified",
+    record.configuration.authorityClass ?? "unspecified",
     record.configuration.network,
     record.configuration.regionClass,
     record.runtime,
@@ -183,6 +198,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
     record.provider,
     record.scenario,
     record.configuration.imageClass,
+    `${record.configuration.templateClass ?? "unspecified"} / ${record.configuration.authorityClass ?? "unspecified"}`,
     record.configuration.network,
     record.configuration.regionClass,
     `${record.runtime} ${record.platform}`,
@@ -200,6 +216,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
         "Provider",
         "Scenario",
         "Image",
+        "Template / authority",
         "Network",
         "Region class",
         "Runtime",
@@ -210,7 +227,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
       ],
       tableRows.length
         ? tableRows
-        : [["—", "—", "—", "—", "—", "—", "—", "No live evidence recorded", "—", "—"]],
+        : [["—", "—", "—", "—", "—", "—", "—", "—", "No live evidence recorded", "—", "—"]],
     ),
   );
   lines.push(
