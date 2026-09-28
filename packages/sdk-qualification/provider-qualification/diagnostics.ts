@@ -63,6 +63,7 @@ export const failureDiagnosticSchema = z.strictObject({
   actualStderr: text.optional(),
   exitCode: z.number().int().nullable().optional(),
   outputTruncated: z.boolean().optional(),
+  readbackError: errorDiagnosticSchema.optional(),
   networkPhase: z.enum(["before", "blocked", "after"]).optional(),
   expectedState: text.optional(),
   actualState: text.optional(),
@@ -177,6 +178,9 @@ export class FailureCapture {
   }
   networkPhase(phase: "before" | "blocked" | "after") {
     this.details.networkPhase = phase;
+  }
+  readbackFailure(error: FailureDiagnostic["error"]) {
+    this.details.readbackError = error;
   }
   file(expected: Uint8Array, overwrite: boolean) {
     this.at("write");

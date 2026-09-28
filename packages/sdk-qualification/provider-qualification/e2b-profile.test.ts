@@ -17,7 +17,13 @@ afterEach(async () => {
 });
 
 async function fixture(
-  options: { loseCreate?: boolean; pendingDestroy?: boolean; failOverwrite?: boolean } = {},
+  options: {
+    loseCreate?: boolean;
+    pendingDestroy?: boolean;
+    failOverwrite?: boolean;
+    failNoClobber?: boolean;
+    failReadAfterNoClobber?: boolean;
+  } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-e2b-qualification-"));
   directories.push(directory);
@@ -85,8 +91,12 @@ async function fixture(
 
       return true;
     },
-    async run(id, script, options) {
+    async run(id, script, execution) {
       expect(id).toBe("sandbox_fixture");
+
+      if (options.failNoClobber && script.includes("ln -T --"))
+        throw new Error("offline native link failure");
+
       const link = process.platform === "darwin" ? "gln" : "ln";
 
       const rewritten = script
@@ -97,7 +107,7 @@ async function fixture(
       const result = Bun.spawnSync({
         cmd: ["/bin/sh", "-c", rewritten],
         cwd: directory,
-        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...options.env },
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...execution.env },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -107,6 +117,8 @@ async function fixture(
       return new TextDecoder().decode(result.stdout);
     },
     async read(_id, filename, maxBytes) {
+      if (options.failReadAfterNoClobber && writes >= 3)
+        throw new Error("offline readback failure");
       const bytes = new Uint8Array(await readFile(path(filename)));
 
       return { bytes: bytes.slice(0, maxBytes), truncated: bytes.length > maxBytes };
@@ -254,5 +266,48 @@ test("failed overwrite blocks no-clobber without another write and still confirm
     issue: "dependency-failed",
   });
   expect(native.writes()).toBe(2);
+  expect((await native.ledger.read()).cleanup).toBe("confirmed");
+});
+
+test("uncertain no-clobber preserves original write failure and observes unchanged bytes without replay", async () => {
+  const native = await fixture({ failNoClobber: true });
+
+  const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
+    network: "blocked",
+    cleanupWaitMs: 100,
+  });
+
+  const failed = steps.find((step) => step.scenario === "file-no-clobber");
+  expect(failed?.status).toBe("failed");
+  expect(failed?.diagnostic?.stage).toBe("write");
+  expect(failed?.diagnostic?.error.code).toBe("OUTCOME_UNKNOWN");
+  expect(failed?.diagnostic?.writeBytes).toEqual([0, 255, 1, 128]);
+  expect(failed?.diagnostic?.expectedBytes).toEqual([2, 254, 0]);
+  expect(failed?.diagnostic?.actualBytes).toEqual([2, 254, 0]);
+  expect(failed?.diagnostic?.actualLength).toBe(3);
+  expect(native.writes()).toBe(3);
+  expect((await native.ledger.read()).cleanup).toBe("confirmed");
+});
+
+test("failed no-clobber diagnostic read is captured separately while retaining write failure", async () => {
+  const native = await fixture({ failNoClobber: true, failReadAfterNoClobber: true });
+
+  const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
+    network: "blocked",
+    cleanupWaitMs: 100,
+  });
+
+  const failed = steps.find((step) => step.scenario === "file-no-clobber");
+  expect(failed?.diagnostic?.stage).toBe("write");
+  expect(failed?.diagnostic?.error.code).toBe("OUTCOME_UNKNOWN");
+  expect(failed?.diagnostic?.readbackError).toBeDefined();
+  expect(failed?.diagnostic?.actualBytes).toBeUndefined();
+  expect(
+    (await native.ledger.read()).diagnostics?.some(
+      (entry) => entry.scenario === "file-no-clobber" && entry.stage === "read",
+    ),
+  ).toBe(true);
+  expect(steps.find((step) => step.scenario === "close")?.status).toBe("passed");
+  expect(native.writes()).toBe(3);
   expect((await native.ledger.read()).cleanup).toBe("confirmed");
 });

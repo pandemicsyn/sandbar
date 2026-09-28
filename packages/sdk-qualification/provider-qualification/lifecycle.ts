@@ -392,7 +392,30 @@ async function runPreparedLocked(
           await sandbox.writeFile(path, first, { overwrite: false, signal: options.signal });
           writeAccepted = true;
         } catch (error) {
-          if (!(error instanceof SandbarError) || error.code !== "CONFLICT") throw error;
+          if (!(error instanceof SandbarError) || error.code !== "CONFLICT") {
+            if (!options.signal?.aborted) {
+              try {
+                const signal = options.signal
+                  ? AbortSignal.any([options.signal, AbortSignal.timeout(5000)])
+                  : AbortSignal.timeout(5000);
+
+                const actual = await boundedRead(sandbox.readFile(path), signal);
+                capture.observeBytes(actual, second);
+              } catch (readError) {
+                const diagnostic = await new FailureCapture(
+                  ledger,
+                  "file-no-clobber",
+                  "read",
+                  options.redactions,
+                ).failure(readError);
+
+                capture.readbackFailure(diagnostic.error);
+              }
+            }
+
+            capture.at("write");
+            throw error;
+          }
         }
 
         capture.at("read");
