@@ -75,7 +75,11 @@ async function runPreparedLocked(
   let box: AdapterSandbox | undefined;
   let createFailed = false;
 
-  const step = async (scenario: Scenario, work: () => Promise<void>) => {
+  const step = async (
+    scenario: Scenario,
+    work: () => Promise<void>,
+    prerequisites: readonly Scenario[] = [],
+  ) => {
     if (
       options.selectedScenarios &&
       !options.selectedScenarios.has(scenario) &&
@@ -84,6 +88,16 @@ async function runPreparedLocked(
       scenario !== "close"
     ) {
       steps.push({ scenario, status: "not-run", issue: "not-selected" });
+
+      return;
+    }
+
+    if (
+      prerequisites.some(
+        (id) => !steps.some((entry) => entry.scenario === id && entry.status === "passed"),
+      )
+    ) {
+      steps.push({ scenario, status: "blocked", issue: "dependency-failed" });
 
       return;
     }
@@ -210,23 +224,31 @@ async function runPreparedLocked(
       if (!equal(await boundedRead(sandbox.readFile(path), options.signal), first))
         throw new Error("File bytes differ");
     });
-    await step("file-overwrite", async () => {
-      await sandbox.writeFile(path, second, { overwrite: true, signal: options.signal });
+    await step(
+      "file-overwrite",
+      async () => {
+        await sandbox.writeFile(path, second, { overwrite: true, signal: options.signal });
 
-      if (!equal(await boundedRead(sandbox.readFile(path), options.signal), second))
-        throw new Error("Overwrite bytes differ");
-    });
-    await step("file-no-clobber", async () => {
-      try {
-        await sandbox.writeFile(path, first, { overwrite: false, signal: options.signal });
-        throw new Error("No-clobber unexpectedly passed");
-      } catch (error) {
-        if (!(error instanceof SandbarError) || error.code !== "CONFLICT") throw error;
-      }
+        if (!equal(await boundedRead(sandbox.readFile(path), options.signal), second))
+          throw new Error("Overwrite bytes differ");
+      },
+      ["file-binary"],
+    );
+    await step(
+      "file-no-clobber",
+      async () => {
+        try {
+          await sandbox.writeFile(path, first, { overwrite: false, signal: options.signal });
+          throw new Error("No-clobber unexpectedly passed");
+        } catch (error) {
+          if (!(error instanceof SandbarError) || error.code !== "CONFLICT") throw error;
+        }
 
-      if (!equal(await boundedRead(sandbox.readFile(path), options.signal), second))
-        throw new Error("Conflict changed file");
-    });
+        if (!equal(await boundedRead(sandbox.readFile(path), options.signal), second))
+          throw new Error("Conflict changed file");
+      },
+      ["file-binary", "file-overwrite"],
+    );
     await step("inventory", async () => {
       let cursor: string | undefined;
 

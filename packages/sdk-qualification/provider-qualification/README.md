@@ -1,6 +1,6 @@
 # Provider qualification
 
-The qualification targets are **Daytona and E2B**. The E2B borrowed prepared-template profile uses the merged public SDK factory with a 300-second native sandbox lifetime. Daytona's manual profile remains blocked pending its merged native lifetime/cleanup enhancements. The common lifecycle, private cleanup ledger, offline fixtures and generated evidence page do not constitute a live certification claim. The dated E2B `base` record is partial qualification: overwrite and no-clobber failed, while owned cleanup was confirmed. See `results/e2b-2026-09-28-base.json` and `specs/provider-evidence/e2b-2026-09-28.md` from the repository root.
+The qualification targets are **Daytona and E2B**. The E2B borrowed prepared-template profile uses the merged public SDK factory with a 300-second native sandbox lifetime. Daytona's manual profile remains blocked pending its merged native lifetime/cleanup enhancements. The common lifecycle, private cleanup ledger, offline fixtures and generated evidence page do not constitute a live certification claim. The dated E2B `base` record is partial qualification: overwrite failed and no-clobber is blocked by that failed prerequisite, while owned cleanup was confirmed. See `results/e2b-2026-09-28-base.json` and `specs/provider-evidence/e2b-2026-09-28.md` from the repository root.
 
 ## When to run
 
@@ -26,7 +26,7 @@ SANDBAR_QUAL_EVIDENCE_REF="${SANDBAR_QUAL_EVIDENCE_REF:?Set a resolvable evidenc
 bun packages/sdk-qualification/provider-qualification/manual.ts live-prepared
 ```
 
-`SANDBAR_QUAL_SCENARIOS` optionally selects comma-separated `inspect,exec-argv,exec-shell,exec-nonzero,file-binary,file-overwrite,file-no-clobber,inventory`. Connect, one create, teardown confirmation and close always run; unselected rows are not-run. File overwrite requires file-binary; no-clobber requires both earlier file scenarios. E2B requests blocked internet and uses the provider's default region. This profile does not probe egress and does not certify network isolation; records use `blocked-requested`.
+`SANDBAR_QUAL_SCENARIOS` optionally selects comma-separated `inspect,exec-argv,exec-shell,exec-nonzero,file-binary,file-overwrite,file-no-clobber,inventory`. Connect, one create, teardown confirmation and close always run; unselected rows are not-run. File overwrite requires file-binary; no-clobber requires both earlier file scenarios. If a prerequisite fails, its dependent scenario is blocked without another write. E2B requests blocked internet and uses the provider's default region. This profile does not probe egress and does not certify network isolation; records use `blocked-requested`.
 
 Cleanup after interruption needs only the saved run UUID/private routing and the same valid API key. In the default authenticated API-key scope, rotating the key changes recovery authority; an API-key ID cannot replace the original credential. It does not require the live-enable flag, clean checkout, template/team environment variables or public evidence reference:
 
@@ -50,7 +50,7 @@ Exercise and reconciliation hold an exclusive per-run lock across all mutations.
 
 Only reviewed sanitized JSON belongs in `results/`. Records contain provider/scenario, mode (`live`, `fixture`, `packed`), exact merged SDK commit/version and harness commit, pinned native version, runtime/platform, timestamp, tested image/template/authority/network/region classes, evidence reference and cleanup state. Private ledgers can contain resource IDs and recovery references; never publish them, credentials or native logs.
 
-The normal docs build reads only committed JSON and never contacts providers. The generated page uses live evidence only. A newer failure supersedes an older pass for the same configuration. Scenario successes with incomplete cleanup remain incomplete. Missing credentials or approval means not-run. The current dated E2B record preserves its failed file scenarios and confirmed cleanup; it is not a provider-wide pass.
+The normal docs build reads only committed JSON and never contacts providers. The generated page uses live evidence only. A newer failure supersedes an older pass for the same configuration. Scenario successes with incomplete cleanup remain incomplete. Missing credentials or approval means not-run. The current dated E2B record preserves the overwrite failure, dependent no-clobber blockage and confirmed cleanup; it is not a provider-wide pass.
 
 ```sh
 bun test packages/sdk-qualification/provider-qualification

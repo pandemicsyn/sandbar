@@ -16,13 +16,16 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
 });
 
-async function fixture(options: { loseCreate?: boolean; pendingDestroy?: boolean } = {}) {
+async function fixture(
+  options: { loseCreate?: boolean; pendingDestroy?: boolean; failOverwrite?: boolean } = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-e2b-qualification-"));
   directories.push(directory);
   const ledger = new LedgerStore(directory, crypto.randomUUID());
   await ledger.initialize("e2b", { kind: "borrowed-prepared", class: "prepared" }, config);
   let record: Awaited<ReturnType<E2BTransport["get"]>> = null;
   const counters = { create: 0, kill: 0, close: 0, build: 0 };
+  let writes = 0;
 
   const path = (value: string) => {
     if (!value.startsWith("/tmp/")) throw new Error("Fixture path must be in /tmp");
@@ -104,6 +107,9 @@ async function fixture(options: { loseCreate?: boolean; pendingDestroy?: boolean
       return { bytes: bytes.slice(0, maxBytes), truncated: bytes.length > maxBytes };
     },
     async write(_id, filename, bytes) {
+      writes++;
+
+      if (options.failOverwrite && writes === 2) return;
       await writeFile(path(filename), bytes);
     },
     async remove(_id, filename) {
@@ -117,6 +123,7 @@ async function fixture(options: { loseCreate?: boolean; pendingDestroy?: boolean
   return {
     ledger,
     counters,
+    writes: () => writes,
     stop: () => {
       record = null;
     },
@@ -219,4 +226,23 @@ test("manual run rejects missing authorization and CI before operator credential
     expect(error).toMatch(/SANDBAR_QUAL_LIVE_AUTHORIZED|off-runner checkpoint/);
     expect(error).not.toContain("Unable to read Sandbar credential file");
   }
+});
+
+test("failed overwrite blocks no-clobber without another write and still confirms teardown", async () => {
+  const native = await fixture({ failOverwrite: true });
+
+  const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
+    network: "blocked",
+    cleanupWaitMs: 100,
+  });
+
+  expect(steps.find((step) => step.scenario === "file-binary")?.status).toBe("passed");
+  expect(steps.find((step) => step.scenario === "file-overwrite")?.status).toBe("failed");
+  expect(steps.find((step) => step.scenario === "file-no-clobber")).toEqual({
+    scenario: "file-no-clobber",
+    status: "blocked",
+    issue: "dependency-failed",
+  });
+  expect(native.writes()).toBe(2);
+  expect((await native.ledger.read()).cleanup).toBe("confirmed");
 });

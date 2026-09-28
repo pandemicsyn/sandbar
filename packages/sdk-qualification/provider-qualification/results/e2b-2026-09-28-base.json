@@ -191,7 +191,7 @@
       "provider": "e2b",
       "scenario": "file-no-clobber",
       "mode": "live",
-      "status": "failed",
+      "status": "blocked",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
       "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
@@ -208,7 +208,7 @@
         "regionClass": "provider-default"
       },
       "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19",
-      "issue": "assertion-failed"
+      "issue": "dependency-failed"
     },
     {
       "schemaVersion": 1,
