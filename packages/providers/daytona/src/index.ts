@@ -607,12 +607,13 @@ export class DaytonaDriver implements ProviderDriver {
       const current = await boundedJson(response, Snapshot);
 
       if (current.id !== snapshot.id || current.imageName !== input.image)
-        return { status: "unknown", reason: "Daytona image build identity mismatched" };
+        return { status: "unknown", reason: "Daytona image build identity mismatched", snapshotId };
 
       return (
         this.imageBuildResult(current, name) ?? {
           status: "unknown",
           reason: "Daytona image build scope mismatched",
+          snapshotId,
         }
       );
     } catch {

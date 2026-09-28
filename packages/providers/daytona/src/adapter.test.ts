@@ -4,209 +4,214 @@ import { adapterSuite } from "sandbar-adapter/testing";
 import { createDaytonaAdapter } from "./adapter";
 import { Sandbar, Image } from "sandbar-sdk";
 
-test.each(["normal", "pending-id", "unknown-id", "lost", "wrong-source"] as const)(
-  "explicit image build is scoped and never creates a sandbox: %s",
-  async (mode) => {
-    const lost = mode === "lost" || mode === "wrong-source";
-    let idReads = 0;
-    let builds = 0;
-    let creates = 0;
-    let name = "";
-    let sandboxName = "";
-    let observations = 0;
+test.each([
+  "normal",
+  "pending-id",
+  "unknown-id",
+  "wrong-id",
+  "wrong-scope",
+  "lost",
+  "wrong-source",
+] as const)("explicit image build is scoped and never creates a sandbox: %s", async (mode) => {
+  const lost = mode === "lost" || mode === "wrong-source";
+  let idReads = 0;
+  let builds = 0;
+  let creates = 0;
+  let name = "";
+  let sandboxName = "";
+  let observations = 0;
 
-    const snapshot = () => ({
-      id: "built-1",
-      name,
-      imageName: mode === "wrong-source" ? "other:1" : "alpine:3.21",
-      organizationId: "org-1",
-      state: "active",
-      regionIds: ["us"],
-      sandboxClass: "container",
-    });
+  const snapshot = () => ({
+    id: "built-1",
+    name,
+    imageName: mode === "wrong-source" ? "other:1" : "alpine:3.21",
+    organizationId: "org-1",
+    state: "active",
+    regionIds: ["us"],
+    sandboxClass: "container",
+  });
 
-    const fetchImpl: typeof fetch = Object.assign(
-      async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = new URL(String(input));
+  const fetchImpl: typeof fetch = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
 
-        if (url.pathname === "/api/api-keys/current")
-          return Response.json({ organizationId: "org-1" });
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
 
-        if (url.pathname === "/api/regions")
-          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+      if (url.pathname === "/api/regions")
+        return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
 
-        if (url.pathname === "/api/organizations/org-1")
-          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+      if (url.pathname === "/api/organizations/org-1")
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
 
-        if (url.pathname === "/api/snapshots" && init?.method === "POST") {
-          builds++;
-          name = z.object({ name: z.string() }).parse(JSON.parse(String(init.body))).name;
+      if (url.pathname === "/api/snapshots" && init?.method === "POST") {
+        builds++;
+        name = z.object({ name: z.string() }).parse(JSON.parse(String(init.body))).name;
 
-          if (lost) throw new Error("lost build response");
+        if (lost) throw new Error("lost build response");
 
-          return Response.json(snapshot());
-        }
-
-        if (url.pathname === "/api/snapshots/built-1") {
-          idReads++;
-
-          return Response.json({
-            ...snapshot(),
-            state:
-              mode === "unknown-id" && idReads === 1
-                ? "error"
-                : mode === "pending-id" && idReads < 4
-                  ? "pulling"
-                  : lost
-                    ? (["building", "pending", "pulling", "active"][observations + idReads - 1] ??
-                      "active")
-                    : "active",
-          });
-        }
-
-        if (url.pathname.startsWith("/api/snapshots/")) {
-          // A normal build can complete by ID before its name index catches up.
-          if (!name || !lost) return new Response(null, { status: 404 });
-          observations++;
-
-          const states = ["building", "pending", "pulling", "active"];
-
-          return Response.json({ ...snapshot(), state: states[observations - 1] ?? "active" });
-        }
-
-        if (url.pathname === "/api/sandbox" && init?.method === "POST") {
-          creates++;
-
-          const request = z
-            .object({ name: z.string(), snapshot: z.literal("built-1") })
-            .parse(JSON.parse(String(init.body)));
-
-          sandboxName = request.name;
-
-          return Response.json({
-            id: "native-built",
-            name: sandboxName,
-            organizationId: "org-1",
-            target: "us",
-            state: "started",
-            networkBlockAll: true,
-            public: false,
-          });
-        }
-
-        throw new Error("Unexpected fixture request");
-      },
-      { preconnect: fetch.preconnect },
-    );
-
-    const adapter = createDaytonaAdapter(fetchImpl);
-
-    const connect = () =>
-      Sandbar.connect({ adapter, config: { target: "us" }, credentials: { apiKey: "fixture" } });
-
-    let client = await connect();
-
-    try {
-      await expect(
-        client.images.build({ source: Image.oci("alpine:latest") }),
-      ).rejects.toMatchObject({ code: "UNSUPPORTED" });
-      expect(builds).toBe(0);
-      await expect(
-        client.sandboxes.create({
-          environment: Image.prepared("built-1"),
-          labels: { "sandbar.imageSnapshot": "borrowed" },
-          networkPolicy: "blocked",
-        }),
-      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
-      expect(builds).toBe(0);
-      expect(creates).toBe(0);
-      const build = await client.images.submitBuild({ source: Image.oci("alpine:3.21") });
-
-      if (lost) {
-        expect(await build.observe()).toBeNull();
-
-        await client.close();
-        client = await connect();
+        return Response.json(snapshot());
       }
 
-      if (mode === "wrong-source") {
-        await expect((await client.recover(build.reference)).wait()).rejects.toMatchObject({
-          code: "OUTCOME_UNKNOWN",
+      if (url.pathname === "/api/snapshots/built-1") {
+        idReads++;
+
+        return Response.json({
+          ...snapshot(),
+          id: mode === "wrong-id" && idReads === 1 ? "other-id" : "built-1",
+          organizationId: mode === "wrong-scope" && idReads === 1 ? "other-org" : "org-1",
+          state:
+            mode === "unknown-id" && idReads === 1
+              ? "error"
+              : mode === "pending-id" && idReads < 4
+                ? "pulling"
+                : lost
+                  ? (["building", "pending", "pulling", "active"][observations + idReads - 1] ??
+                    "active")
+                  : "active",
         });
-        expect(builds).toBe(1);
-        expect(creates).toBe(0);
-
-        return;
       }
 
-      const result = lost
-        ? await (await client.recover(build.reference)).wait()
-        : await build.wait();
+      if (url.pathname.startsWith("/api/snapshots/")) {
+        // A normal build can complete by ID before its name index catches up.
+        if (!name || !lost) return new Response(null, { status: 404 });
+        observations++;
 
-      const image = z
-        .object({
-          prepared: z.object({
-            kind: z.literal("prepared"),
-            value: z.string(),
-            provider: z.string(),
-            scope: z.object({
-              authority: z.object({ kind: z.string(), id: z.string() }),
-              partition: z.record(z.string(), z.string()),
-            }),
-          }),
-          retainedResources: z.array(
-            z.object({
-              kind: z.string(),
-              id: z.string(),
-              ownership: z.literal("unknown"),
-              cleanup: z.literal("manual"),
-            }),
-          ),
-        })
-        .parse(result);
+        const states = ["building", "pending", "pulling", "active"];
 
-      expect(image.prepared).toMatchObject({
-        value: "built-1",
-        provider: "daytona",
-        scope: client.scope,
-      });
-      expect(image.retainedResources).toEqual([
-        { kind: "daytona-snapshot", id: "built-1", ownership: "unknown", cleanup: "manual" },
-      ]);
-      expect(creates).toBe(0);
-      await expect(
-        client.sandboxes.create({
-          environment: Image.prepared({ ...image.prepared, provider: "other" }),
-          networkPolicy: "blocked",
-        }),
-      ).rejects.toThrow("scope differs");
-      expect(creates).toBe(0);
-      await client.sandboxes.create({
-        environment: Image.prepared(image.prepared),
+        return Response.json({ ...snapshot(), state: states[observations - 1] ?? "active" });
+      }
+
+      if (url.pathname === "/api/sandbox" && init?.method === "POST") {
+        creates++;
+
+        const request = z
+          .object({ name: z.string(), snapshot: z.literal("built-1") })
+          .parse(JSON.parse(String(init.body)));
+
+        sandboxName = request.name;
+
+        return Response.json({
+          id: "native-built",
+          name: sandboxName,
+          organizationId: "org-1",
+          target: "us",
+          state: "started",
+          networkBlockAll: true,
+          public: false,
+        });
+      }
+
+      throw new Error("Unexpected fixture request");
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const adapter = createDaytonaAdapter(fetchImpl);
+
+  const connect = () =>
+    Sandbar.connect({ adapter, config: { target: "us" }, credentials: { apiKey: "fixture" } });
+
+  let client = await connect();
+
+  try {
+    await expect(client.images.build({ source: Image.oci("alpine:latest") })).rejects.toMatchObject(
+      { code: "UNSUPPORTED" },
+    );
+    expect(builds).toBe(0);
+    await expect(
+      client.sandboxes.create({
+        environment: Image.prepared("built-1"),
+        labels: { "sandbar.imageSnapshot": "borrowed" },
         networkPolicy: "blocked",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(builds).toBe(0);
+    expect(creates).toBe(0);
+    const build = await client.images.submitBuild({ source: Image.oci("alpine:3.21") });
+
+    if (lost) {
+      expect(await build.observe()).toBeNull();
+
+      await client.close();
+      client = await connect();
+    }
+
+    if (mode === "wrong-source") {
+      await expect((await client.recover(build.reference)).wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
       });
       expect(builds).toBe(1);
-      expect(creates).toBe(1);
+      expect(creates).toBe(0);
 
-      if (lost) {
-        expect(observations).toBe(1);
-        expect(idReads).toBe(4);
-      }
-
-      if (mode === "unknown-id") {
-        expect(idReads).toBe(3);
-        expect(observations).toBe(0);
-      }
-
-      if (mode === "pending-id") {
-        expect(idReads).toBe(5);
-        expect(observations).toBe(0);
-      }
-    } finally {
-      await client.close();
+      return;
     }
-  },
-);
+
+    const result = lost ? await (await client.recover(build.reference)).wait() : await build.wait();
+
+    const image = z
+      .object({
+        prepared: z.object({
+          kind: z.literal("prepared"),
+          value: z.string(),
+          provider: z.string(),
+          scope: z.object({
+            authority: z.object({ kind: z.string(), id: z.string() }),
+            partition: z.record(z.string(), z.string()),
+          }),
+        }),
+        retainedResources: z.array(
+          z.object({
+            kind: z.string(),
+            id: z.string(),
+            ownership: z.literal("unknown"),
+            cleanup: z.literal("manual"),
+          }),
+        ),
+      })
+      .parse(result);
+
+    expect(image.prepared).toMatchObject({
+      value: "built-1",
+      provider: "daytona",
+      scope: client.scope,
+    });
+    expect(image.retainedResources).toEqual([
+      { kind: "daytona-snapshot", id: "built-1", ownership: "unknown", cleanup: "manual" },
+    ]);
+    expect(creates).toBe(0);
+    await expect(
+      client.sandboxes.create({
+        environment: Image.prepared({ ...image.prepared, provider: "other" }),
+        networkPolicy: "blocked",
+      }),
+    ).rejects.toThrow("scope differs");
+    expect(creates).toBe(0);
+    await client.sandboxes.create({
+      environment: Image.prepared(image.prepared),
+      networkPolicy: "blocked",
+    });
+    expect(builds).toBe(1);
+    expect(creates).toBe(1);
+
+    if (lost) {
+      expect(observations).toBe(1);
+      expect(idReads).toBe(4);
+    }
+
+    if (["unknown-id", "wrong-id", "wrong-scope"].includes(mode)) {
+      expect(idReads).toBe(3);
+      expect(observations).toBe(0);
+    }
+
+    if (mode === "pending-id") {
+      expect(idReads).toBe(5);
+      expect(observations).toBe(0);
+    }
+  } finally {
+    await client.close();
+  }
+});
 
 test("Daytona public adapter passes managed-compute scenarios with one native POST", async () => {
   const effects = { create: 0, destroy: 0, release: 0 };
