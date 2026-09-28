@@ -145,8 +145,12 @@ export function e2bState(input: {
     if (value.volumeId !== reference.nativeId)
       throw new AdapterError("CONFLICT", "Volume identity differs");
     const info = volumeInfo(value, reference.ownership);
+    const evidence = receipts.read(reference);
 
-    if (receipts.read(reference)) info.reference.receipt = reference.receipt;
+    if (evidence && evidence.name !== value.name)
+      throw new AdapterError("CONFLICT", "Volume native name differs from acknowledged identity");
+
+    if (evidence) info.reference.receipt = reference.receipt;
 
     return info;
   }
@@ -201,6 +205,7 @@ export function e2bState(input: {
     | "snapshotProfiles"
     | "snapshotCapture"
     | "snapshotInspect"
+    | "snapshotListCoverage"
     | "snapshotList"
     | "snapshotDelete"
     | "snapshotRestore"
@@ -298,7 +303,7 @@ export function e2bState(input: {
       async observe(attempt, ctx) {
         const token = CaptureToken.safeParse(attempt.token);
 
-        if (!token.success || token.data.sourceId !== attempt.sandbox?.id)
+        if (!token.success || !token.data.generation || token.data.sourceId !== attempt.sandbox?.id)
           return ctx.unknown(
             "Capture may retain storage; no acknowledged artifact identity; do not replay",
           );
@@ -333,6 +338,7 @@ export function e2bState(input: {
       },
     },
     snapshotInspect,
+    snapshotListCoverage: "provider-scope",
     async snapshotList(page) {
       const values = await need().snapshots({ limit: page.limit, cursor: page.cursor });
       const items: SnapshotInfo[] = [];
@@ -572,6 +578,10 @@ export function e2bState(input: {
       return reference;
     },
     async submit(reference, ctx) {
+      check(reference);
+      receipts.owned(reference);
+      await (kind === "snapshot" ? snapshotInspect(reference) : volumeInspect(reference));
+
       if (ctx.signal.aborted)
         return ctx.reject("UNAVAILABLE", "Deletion cancelled before dispatch");
       let accepted = false;

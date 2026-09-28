@@ -564,8 +564,11 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
             if (record.metadata.sandbar_build) token.retainedTemplateId = record.templateId;
 
+            if (ctx.signal.aborted)
+              return ctx.unknown("E2B termination was not submitted after cancellation");
+
             try {
-              await transport.kill(box.id);
+              await transport.kill(box.id, ctx.signal);
 
               if ((await transport.get(box.id)) === null) return destroyValue(token);
             } catch {

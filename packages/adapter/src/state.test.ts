@@ -280,3 +280,28 @@ test("capability reads enforce their deadline and abort stalled hooks", async ()
   await expect(checking).rejects.toThrow("Caller aborted");
   expect(readSignal?.aborted).toBe(true);
 });
+
+test("snapshot list capabilities retain managed-only coverage and unknown declarations", async () => {
+  const session: RuntimeSession = {
+    scope,
+    supports: { images: [], network: [] },
+    async create() {
+      throw new Error("No effects");
+    },
+    async destroy() {
+      throw new Error("No effects");
+    },
+    async snapshotList() {
+      return { items: [], coverage: "sandbar-managed" };
+    },
+    snapshotListCoverage: "sandbar-managed",
+  };
+
+  const context = { signal: new AbortController().signal, deadline: Date.now() + 1000 };
+  expect((await stateCapabilities(session, {}, context)).snapshots.list).toEqual({
+    status: "supported",
+    value: { coverage: "sandbar-managed" },
+  });
+  delete session.snapshotListCoverage;
+  expect((await stateCapabilities(session, {}, context)).snapshots.list.status).toBe("unknown");
+});

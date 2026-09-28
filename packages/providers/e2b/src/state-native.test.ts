@@ -8,6 +8,8 @@ function fixture() {
   const snapshots = new Map<string, { snapshotId: string; names: string[] }>();
   const volumes = new Map<string, { volumeId: string; name: string }>();
   let generation = "build_one";
+  let extraTag = false;
+  let inventoryBarrier: (() => Promise<void>) | undefined;
 
   const calls = {
     create: 0,
@@ -18,7 +20,13 @@ function fixture() {
     kill: 0,
   };
 
-  const modes = { loseCapture: false, loseDelete: false, omitMounts: false, betaDenied: false };
+  const modes = {
+    loseCapture: false,
+    loseDelete: false,
+    omitMounts: false,
+    betaDenied: false,
+    tagsDenied: false,
+  };
 
   const transport: E2BTransport = {
     async verifyAuth() {},
@@ -76,7 +84,12 @@ function fixture() {
     close() {},
     state: {
       async tags() {
-        return [{ tag: "default", buildId: generation }];
+        if (modes.tagsDenied) throw new Error("Native tag evidence unavailable");
+
+        return [
+          { tag: "default", buildId: generation },
+          ...(extraTag ? [{ tag: "shared", buildId: generation }] : []),
+        ];
       },
       async capture(_id, name) {
         calls.capture++;
@@ -118,6 +131,8 @@ function fixture() {
         return volume;
       },
       async volumes() {
+        await inventoryBarrier?.();
+
         if (modes.betaDenied) throw new Error("403 private beta");
 
         return [...volumes.values()];
@@ -130,11 +145,12 @@ function fixture() {
     },
   };
 
-  const connect = (apiKey = "fixture-key") =>
+  const connect = (apiKey = "fixture-key", onReference?: (ref: { kind: string }) => void) =>
     Sandbar.connect({
       adapter: createE2BAdapter(() => transport),
       config: {},
       credentials: { apiKey },
+      onReference,
     });
 
   return {
@@ -144,6 +160,12 @@ function fixture() {
     volumes,
     calls,
     modes,
+    inventoryBarrier(value: () => Promise<void>) {
+      inventoryBarrier = value;
+    },
+    shareTemplate() {
+      extraTag = true;
+    },
     replaceBuild() {
       generation = "build_two";
     },
@@ -309,4 +331,87 @@ test("pinned native volume/tag inventory is byte bounded before parsing", async 
   await expect(transport.state!.volumes()).rejects.toThrow("byte bound");
   await expect(transport.state!.tags("raw_id")).rejects.toThrow("byte bound");
   expect(cancelled).toBe(2);
+});
+
+test("E2B mounted destroy cannot dispatch kill after abort during inventory", async () => {
+  const f = fixture();
+  const client = await f.connect();
+  const volume = await client.volumes.create({ name: "fixture_abort" });
+
+  const box = await client.sandboxes.create({
+    environment: Image.prepared("base"),
+    mounts: [{ volume: volume.reference, path: "/mnt/data", access: "read-write" }],
+  });
+
+  let entered!: () => void;
+  let release!: () => void;
+
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  f.inventoryBarrier(async () => {
+    entered();
+    await barrier;
+  });
+  const controller = new AbortController();
+  const destroying = box.submitDestroy({ storage: "allow-unconfirmed", signal: controller.signal });
+  await started;
+  controller.abort();
+  release();
+  await expect(destroying).rejects.toMatchObject({ code: "WAIT_ABORTED" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(f.calls.kill).toBe(0);
+  expect(f.boxes.has(box.id)).toBe(true);
+  await client.close();
+});
+
+test("E2B deletion revalidates native generation after the durable barrier", async () => {
+  const f = fixture();
+
+  const client = await f.connect("fixture-key", (ref) => {
+    if (ref.kind === "snapshot_delete") f.replaceBuild();
+  });
+
+  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+  const result = await source.snapshot({ preserve: "filesystem+memory" });
+  await expect(result.snapshot.delete()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  expect(f.calls.snapshotDelete).toBe(0);
+  expect(f.snapshots.size).toBe(1);
+  await client.close();
+});
+
+test("E2B deletion refuses a newly shared native template after the durable barrier", async () => {
+  const f = fixture();
+
+  const client = await f.connect("fixture-key", (ref) => {
+    if (ref.kind === "snapshot_delete") f.shareTemplate();
+  });
+
+  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+  const result = await source.snapshot({ preserve: "filesystem+memory" });
+  await expect(result.snapshot.delete()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  expect(f.calls.snapshotDelete).toBe(0);
+  await client.close();
+});
+
+test("E2B recovery cannot invent capture generation when first tag evidence was unavailable", async () => {
+  const f = fixture();
+  const client = await f.connect();
+  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+  f.modes.tagsDenied = true;
+  const operation = await source.submitSnapshot({ preserve: "filesystem+memory" });
+  await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  f.modes.tagsDenied = false;
+  f.replaceBuild();
+  await expect((await client.recover(operation.reference)).wait()).rejects.toBeInstanceOf(
+    OutcomeUnknownError,
+  );
+  expect(f.calls.capture).toBe(1);
+  expect(f.calls.snapshotDelete).toBe(0);
+  await client.close();
 });

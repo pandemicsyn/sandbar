@@ -59,6 +59,7 @@ type Fields = Pick<
   | "snapshotProfiles"
   | "snapshotCapture"
   | "snapshotInspect"
+  | "snapshotListCoverage"
   | "snapshotList"
   | "snapshotDelete"
   | "volumeCreate"
@@ -231,6 +232,15 @@ export function daytonaState(input: {
     const evidence = receipts.read(ref);
 
     if (
+      evidence &&
+      (v.general ||
+        v.organizationId !== scope.authority.id ||
+        evidence.sourceId !== v.sourceSandboxId ||
+        evidence.sourceClass !== v.sandboxClass)
+    )
+      throw new AdapterError("CONFLICT", "Snapshot ownership or provenance changed");
+
+    if (
       evidence?.kind === "snapshot" &&
       evidence.preserve === "filesystem" &&
       evidence.sourceClass === "container" &&
@@ -254,8 +264,12 @@ export function daytonaState(input: {
 
     if (v.id !== ref.nativeId) throw new AdapterError("CONFLICT", "Volume identity differs");
     const info = volumeInfo(v, ref.ownership);
+    const evidence = receipts.read(ref);
 
-    if (receipts.read(ref)) info.reference.receipt = ref.receipt;
+    if (evidence && evidence.name !== v.name)
+      throw new AdapterError("CONFLICT", "Volume native name differs from acknowledged identity");
+
+    if (evidence) info.reference.receipt = ref.receipt;
 
     return info;
   }
@@ -360,6 +374,8 @@ export function daytonaState(input: {
     async submit(ref, ctx) {
       check(ref);
       receipts.owned(ref);
+      const context = { signal: ctx.signal, deadline: Date.now() + 30000 };
+      await (kind === "snapshot" ? inspectSnapshot(ref, context) : inspectVolume(ref, context));
 
       if (ctx.signal.aborted)
         return ctx.reject("UNAVAILABLE", "Deletion cancelled before dispatch");
@@ -410,6 +426,7 @@ export function daytonaState(input: {
   const fields: Fields = {
     snapshotProfiles: profiles,
     snapshotInspect: inspectSnapshot,
+    snapshotListCoverage: "provider-scope",
     async snapshotList(page, ctx) {
       const index = page.cursor ? Number(page.cursor) : 1;
 
@@ -472,6 +489,22 @@ export function daytonaState(input: {
 
         if (source.sandboxClass !== "container" || source.volumes.length)
           return ctx.reject("UNSUPPORTED", "Capture class/mounts changed");
+
+        const plan = resolveSnapshot(
+          await profiles({ sandbox: value.sandbox }, context),
+          value.request,
+          source.state === "started"
+            ? "running"
+            : source.state === "stopped"
+              ? "stopped"
+              : "unknown",
+        );
+
+        if (plan.status !== "supported")
+          return ctx.reject(
+            plan.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
+            plan.reason,
+          );
 
         if (source.state === "started") {
           try {

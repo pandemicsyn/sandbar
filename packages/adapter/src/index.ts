@@ -208,6 +208,8 @@ export type AdapterSession<
     ref: ResourceReference,
     ctx: ReadContext,
   ) => Promise<import("./resources").SnapshotInfo>;
+  /** Inventory coverage established by this adapter; omit when unknown. */
+  snapshotListCoverage?: "provider-scope" | "sandbar-managed";
   snapshotList?: (
     input: import("./resources").InventoryInput,
     ctx: ReadContext,

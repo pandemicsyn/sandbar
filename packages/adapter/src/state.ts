@@ -480,7 +480,9 @@ export async function stateCapabilities(
       restore: session.snapshotRestore ? resources.restore : unsupportedState(),
       inspect: implemented(!!session.snapshotInspect),
       list: session.snapshotList
-        ? { status: "supported", value: { coverage: "provider-scope" } }
+        ? session.snapshotListCoverage
+          ? { status: "supported", value: { coverage: session.snapshotListCoverage } }
+          : { status: "unknown", reason: "Snapshot inventory coverage is not established" }
         : unsupportedState(),
       delete: implemented(!!session.snapshotDelete),
     },

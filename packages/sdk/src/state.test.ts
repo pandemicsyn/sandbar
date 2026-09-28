@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
 import { AdapterError, defineAdapter, type SnapshotProfile } from "sandbar-adapter";
-import { Sandbar, Image, UnsupportedFeatureError } from "./index";
+import { Sandbar, Image, UnsupportedFeatureError, OutcomeUnknownError } from "./index";
 
 const profile: SnapshotProfile = {
   id: "memory",
@@ -438,4 +438,101 @@ for (const mode of ["direct", "advanced"] as const) {
       }
     });
   }
+}
+
+for (const contradiction of [
+  "preserve",
+  "source",
+  "state",
+  "mounts",
+  "connections",
+  "retained-scope",
+] as const) {
+  test(`capture recovery preserves accepted expectations: ${contradiction}`, async () => {
+    const scope = { authority: { kind: "account", id: "one" }, partition: {} };
+
+    const reference = {
+      version: 1 as const,
+      kind: "snapshot" as const,
+      provider: "fixture.capture",
+      scope,
+      nativeId: "artifact",
+      ownership: "unknown" as const,
+    };
+
+    const adapter = defineAdapter({
+      name: "fixture.capture",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        const capture = () => ({
+          snapshot: {
+            reference,
+            preserve:
+              contradiction === "preserve"
+                ? ("filesystem" as const)
+                : ("filesystem+memory" as const),
+            source: { id: contradiction === "source" ? "other" : "box", class: "fixture" },
+            state: "ready" as const,
+            createdAt: null,
+            expiration: "unknown" as const,
+            excludedPaths: null,
+            mounts: [],
+            mountHandling: contradiction === "mounts" ? ("excluded" as const) : ("none" as const),
+            restore: {
+              networkPolicies: ["blocked"],
+              resources: false,
+              mounts: false,
+              independentLifecycle: true,
+            },
+            dependencies: [],
+          },
+          source: {
+            state: contradiction === "state" ? ("stopped" as const) : ("running" as const),
+            connections:
+              contradiction === "connections" ? ("preserved" as const) : ("dropped" as const),
+          },
+          retainedResources: [
+            contradiction === "retained-scope" ? { ...reference, provider: "other" } : reference,
+          ],
+        });
+
+        return {
+          scope,
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async create() {
+            return { id: "box", state: "running" };
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+          async inspect(box) {
+            return { id: box.id, state: "running" };
+          },
+          async snapshotProfiles() {
+            return { status: "supported", value: { profiles: [profile] } };
+          },
+          snapshotCapture: {
+            recovery: { version: 1, token: z.strictObject({}) },
+            async submit() {
+              return capture();
+            },
+            async observe() {
+              return capture();
+            },
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+    const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await box.submitSnapshot({ preserve: "filesystem+memory" });
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    const saved = JSON.parse(JSON.stringify(operation.reference));
+    expect(saved.capture).toEqual({ profile, sourceState: "running" });
+    const recovered = await client.recover(saved);
+    await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    await client.close();
+  });
 }

@@ -89,7 +89,7 @@ function fixture() {
     { preconnect() {} },
   ) as typeof fetch;
 
-  const connect = () => {
+  const connect = (onReference?: (ref: { kind: string }) => void) => {
     const resource = daytonaState({
       scope,
       apiUrl: "https://fixture.invalid",
@@ -122,14 +122,21 @@ function fixture() {
       }),
       config: {},
       credentials: {},
+      onReference,
     });
   };
 
   return {
     connect,
     calls,
+    setState(value: string) {
+      state = value;
+    },
     mount() {
       mounted = true;
+    },
+    shareSnapshot() {
+      if (snapshot) snapshot.general = true;
     },
     failDelete() {
       failedDelete = true;
@@ -201,5 +208,47 @@ test("Daytona absence cannot turn a failed delete into successful correlated cle
   const recovered = await client.recover(operation.reference);
   await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
   expect(f.calls.delete).toBe(1);
+  await client.close();
+});
+
+test("Daytona capture revalidates unchanged stopped source after the durable barrier", async () => {
+  const f = fixture();
+  f.setState("stopped");
+
+  const client = await f.connect((ref) => {
+    if (ref.kind === "snapshot_capture") f.setState("started");
+  });
+
+  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+  await expect(
+    source.snapshot({
+      preserve: "filesystem",
+      sourceAfter: "unchanged",
+      consistency: "caller-quiesced",
+    }),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  expect(f.calls.stop).toBe(0);
+  expect(f.calls.capture).toBe(0);
+  await client.close();
+});
+
+test("Daytona deletion refuses changed shared ownership after the durable barrier", async () => {
+  const f = fixture();
+
+  const client = await f.connect((ref) => {
+    if (ref.kind === "snapshot_delete") f.shareSnapshot();
+  });
+
+  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+
+  const result = await source.snapshot({
+    preserve: "filesystem",
+    maxInterruption: "stop",
+    sourceAfter: "stopped",
+    consistency: "caller-quiesced",
+  });
+
+  await expect(result.snapshot.delete()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  expect(f.calls.delete).toBe(0);
   await client.close();
 });

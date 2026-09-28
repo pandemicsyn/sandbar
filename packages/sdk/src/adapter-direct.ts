@@ -12,8 +12,9 @@ import {
 import { z } from "zod";
 import {
   resourceManagers,
-  AdapterSnapshot,
   decodeResourceResult,
+  decodeCapture,
+  CaptureExpectation,
   type SnapshotResult,
   type WaitOptions,
 } from "./resources";
@@ -89,6 +90,7 @@ const ReferenceSchema = z.strictObject({
   submissionId: z.string().min(1).max(128),
   invocationKey: z.string().min(1).max(128),
   sandboxId: z.string().min(1).max(512).optional(),
+  capture: CaptureExpectation.optional(),
   resource: ResourceReference.optional(),
   mounts: z.array(importMountSpec).max(32).optional(),
   file: z
@@ -362,36 +364,14 @@ export class AdapterSandbox {
       { sandbox: { id: this.id }, request },
       (result, ref) => {
         if (result.kind !== "completed" || !("snapshot" in result.value)) throw asUnknown(ref);
-        assertResourceScope(result.value.snapshot.reference, {
-          provider: this.client.provider,
-          scope: this.client.scope,
-        });
-        const capture = result.value;
 
-        if (
-          capture.snapshot.preserve !== plan.value.profile.preserve ||
-          capture.snapshot.source?.id !== this.id ||
-          capture.snapshot.mountHandling !== plan.value.profile.mountHandling ||
-          capture.source.state !==
-            (plan.value.profile.sourceAfter === "unchanged"
-              ? plan.value.sourceState
-              : plan.value.profile.sourceAfter) ||
-          capture.source.connections !== plan.value.profile.connections
-        )
-          throw asUnknown(ref);
-
-        for (const retained of capture.retainedResources)
-          assertResourceScope(retained, {
-            provider: this.client.provider,
-            scope: this.client.scope,
-          });
-
-        return {
-          ...result.value,
-          snapshot: new AdapterSnapshot(this.client, result.value.snapshot.reference),
-        };
+        return decodeCapture(this.client, result.value, ref);
       },
-      { ...options, sandboxId: this.id },
+      {
+        ...options,
+        sandboxId: this.id,
+        capture: { profile: plan.value.profile, sourceState: plan.value.sourceState },
+      },
     );
   }
   async snapshot(request: SnapshotRequest, options: WaitOptions = {}): Promise<SnapshotResult> {
@@ -1126,6 +1106,7 @@ export class AdapterDirectClient {
       signal?: AbortSignal;
       sandboxId?: string;
       resource?: ResourceReference;
+      capture?: z.infer<typeof CaptureExpectation>;
       mounts?: import("sandbar-adapter").MountSpec[];
       file?: { path: string; bytes: number };
       maxOutputBytes?: number;
@@ -1147,6 +1128,7 @@ export class AdapterDirectClient {
       ...ids,
       sandboxId: options.sandboxId,
       resource: options.resource,
+      capture: options.capture,
       mounts: options.mounts,
       file: options.file,
       maxOutputBytes: options.maxOutputBytes,
@@ -1206,6 +1188,9 @@ export class AdapterDirectClient {
       !reference.resource
     )
       throw new SandbarError("INVALID_ARGUMENT", "Recovery resource is missing");
+
+    if (reference.kind === "snapshot_capture" && !reference.capture)
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery capture expectations are missing");
 
     if (reference.resource)
       assertResourceScope(reference.resource, { provider: this.provider, scope: this.scope });

@@ -74,7 +74,7 @@ export type E2BTransport = {
     limit: number,
     nextToken?: string,
   ): Promise<{ items: E2BRecord[]; nextToken?: string }>;
-  kill(id: string): Promise<boolean>;
+  kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
     id: string,
     script: string,
@@ -351,8 +351,8 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
       return { items, nextToken: paginator.nextToken };
     },
-    async kill(id) {
-      return Sandbox.kill(id, opts);
+    async kill(id, signal) {
+      return Sandbox.kill(id, { ...opts, signal });
     },
     async run(id, script, options) {
       const sandbox = await Sandbox.connect(id, opts);

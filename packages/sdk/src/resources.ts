@@ -5,6 +5,8 @@ import {
   assertResourceIdentity,
   MountSpec,
   SnapshotInfo,
+  SnapshotProfile,
+  SandboxState,
   VolumeInfo,
   RestoreRequest,
   VolumeCreateInput,
@@ -321,6 +323,39 @@ export function resourceManagers(client: AdapterDirectClient) {
   return { snapshots, volumes };
 }
 
+export const CaptureExpectation = z.strictObject({
+  profile: SnapshotProfile,
+  sourceState: SandboxState,
+});
+
+export function decodeCapture(
+  client: AdapterDirectClient,
+  value: SnapshotCaptureValue,
+  ref: AdapterRecoveryReference,
+): SnapshotResult {
+  const expected = ref.capture;
+
+  if (!expected || !ref.sandboxId) throw new OutcomeUnknownError(ref);
+  checkedResource(client, value.snapshot.reference, "snapshot");
+
+  if (
+    value.snapshot.preserve !== expected.profile.preserve ||
+    value.snapshot.source?.id !== ref.sandboxId ||
+    value.snapshot.mountHandling !== expected.profile.mountHandling ||
+    value.source.state !==
+      (expected.profile.sourceAfter === "unchanged"
+        ? expected.sourceState
+        : expected.profile.sourceAfter) ||
+    value.source.connections !== expected.profile.connections
+  )
+    throw new OutcomeUnknownError(ref);
+
+  for (const retained of value.retainedResources)
+    assertResourceScope(retained, { provider: client.provider, scope: client.scope });
+
+  return { ...value, snapshot: new AdapterSnapshot(client, value.snapshot.reference) };
+}
+
 export function decodeResourceResult(
   client: AdapterDirectClient,
   result: import("sandbar-adapter").RuntimeResult,
@@ -330,9 +365,7 @@ export function decodeResourceResult(
   const value = result.value;
 
   if (ref.kind === "snapshot_capture" && "snapshot" in value) {
-    checkedResource(client, value.snapshot.reference, "snapshot");
-
-    return { ...value, snapshot: new AdapterSnapshot(client, value.snapshot.reference) };
+    return decodeCapture(client, value, ref);
   }
 
   if (ref.kind === "snapshot_restore" && "id" in value && value.state === "running")
