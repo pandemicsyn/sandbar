@@ -51,3 +51,19 @@ test("oversized credential file is rejected without importing partial keys", asy
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("credential file rejects group-readable secrets before importing keys", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-credential-mode-fixture-"));
+
+  try {
+    const file = join(directory, "sandbar.env");
+    await writeFile(file, "E2B_API_KEY=fixture\n", { mode: 0o640 });
+    const environment: NodeJS.ProcessEnv = {};
+    await expect(loadCredentials(file, environment)).rejects.toThrow(
+      "Unable to read Sandbar credential file",
+    );
+    expect(environment).toEqual({});
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

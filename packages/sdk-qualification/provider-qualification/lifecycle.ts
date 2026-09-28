@@ -262,6 +262,12 @@ async function runPreparedLocked(
       } finally {
         await step("close", () => client!.close());
       }
+    } else if (!(await ledger.read()).createReference) {
+      await ledger.update((value) => ({ ...value, cleanup: "not-required", lastIssue: undefined }));
+      steps.push(
+        { scenario: "destroy", status: "not-run" },
+        { scenario: "confirm-cleanup", status: "not-run" },
+      );
     }
 
     if (createFailed)

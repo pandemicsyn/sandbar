@@ -365,6 +365,24 @@ test("an interrupted run before connect makes no native request", async () => {
   expect(steps[0]?.status).toBe("blocked");
   expect(connects).toBe(0);
   expect((await store.read()).createIntent).toBe(false);
+  expect((await store.read()).cleanup).toBe("not-required");
+});
+
+test("failed read-only connection needs no sandbox cleanup", async () => {
+  const store = await ledger();
+
+  const steps = await runPrepared(
+    async () => {
+      throw new Error("connection failed");
+    },
+    store,
+    "borrowed-image",
+    { network: "blocked" },
+  );
+
+  expect(steps[0]?.status).toBe("failed");
+  expect((await store.read()).cleanup).toBe("not-required");
+  expect(steps.find((step) => step.scenario === "destroy")?.status).toBe("not-run");
 });
 
 test("a failed exercise confirms SDK termination even when inspect remains unknown", async () => {
@@ -424,6 +442,7 @@ test("only latest live evidence is rendered; fixtures cannot make green cells", 
     scenario: "exec-argv",
     runCleanup: "confirmed",
     sdkCommit: "a".repeat(40),
+    harnessCommit: "b".repeat(40),
     sdkVersion: "0.0.0",
     nativeVersion: "0.10.1",
     runtime: "Bun 1.3.14",
@@ -440,6 +459,13 @@ test("only latest live evidence is rendered; fixtures cannot make green cells", 
       { ...base, mode: "live", status: "failed", timestamp: "2026-09-27T00:00:00Z" },
     ],
   });
+
+  expect(() =>
+    parseReport({
+      schemaVersion: 1,
+      records: [{ ...report.records[1], harnessCommit: undefined }],
+    }),
+  ).toThrow("Live records require the exact harness commit");
 
   const matrix = renderLiveMatrix([report]);
   expect(matrix).toMatch(/\| failed\s+\| 2026-09-27/);

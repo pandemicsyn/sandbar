@@ -81,6 +81,13 @@ export const reportSchema = z
           message: "Live records require evidence",
         });
 
+      if (record.mode === "live" && !record.harnessCommit)
+        ctx.addIssue({
+          code: "custom",
+          path: ["records", index, "harnessCommit"],
+          message: "Live records require the exact harness commit",
+        });
+
       if (record.mode === "live" && !record.nativeVersion)
         ctx.addIssue({
           code: "custom",

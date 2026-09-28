@@ -17,6 +17,11 @@ export async function loadCredentials(
     try {
       const info = await file.stat();
 
+      if ((info.mode & 0o077) !== 0 || (process.getuid && info.uid !== process.getuid()))
+        throw new Error(
+          "Credential file must be owned by the current user with owner-only permissions",
+        );
+
       if (!info.isFile() || info.size > 65_536)
         throw new Error("Credential file must be a regular file within the size limit");
       const buffer = Buffer.alloc(65_537);

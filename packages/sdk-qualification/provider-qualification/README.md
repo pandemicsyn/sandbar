@@ -10,7 +10,7 @@ The common lifecycle covers connect, one borrowed prepared-image create, inspect
 
 ## Credentials and profile gates
 
-The manual entrypoint reads `~/.config/sandbar.env` (override with `SANDBAR_CREDENTIALS_FILE`). It imports only Daytona/E2B API keys, accepts `DAYTONA_API_KEY` or `SANDBAR_DAYTONA_API_KEY` and `E2B_API_KEY` or `SANDBAR_E2B_API_KEY`, and preserves injected environment values. It never imports live-enable flags. Offline tests use synthetic credentials and never load the operator file.
+The manual entrypoint reads `~/.config/sandbar.env` (override with `SANDBAR_CREDENTIALS_FILE`). The file must belong to the current user and have owner-only permissions (`chmod 600 ~/.config/sandbar.env`). It imports only Daytona/E2B API keys, accepts `DAYTONA_API_KEY` or `SANDBAR_DAYTONA_API_KEY` and `E2B_API_KEY` or `SANDBAR_E2B_API_KEY`, and preserves injected environment values. It never imports live-enable flags. Offline tests use synthetic credentials and never load the operator file.
 
 The local E2B profile creates at most one sandbox from an existing borrowed team-owned template. Native timeout is fixed at 300 seconds, exercise waits are aborted after 240 seconds, and cleanup has a separate 60-second budget. No image builds occur and the borrowed template is never deleted. Before approving a live run, review native pricing/account limits and the template's prerequisites; lifetime is not a dollar ceiling. Approval must cover the exact resource budget. A credential file or enable flag does not grant authorization.
 
