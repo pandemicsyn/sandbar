@@ -1,9 +1,14 @@
+import { AdapterSandbox, SandbarError, UnsupportedFeatureError } from "sandbar-sdk";
 import { AdapterError } from "sandbar-adapter";
 import { timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
 import {
+  Capabilities,
+  SnapshotCheck,
+  CreateCheck,
+  SnapshotRequest,
   AcceptedExecution,
   AcceptedOperation,
   CreateProjectRequest,
@@ -74,6 +79,19 @@ function safeError(code: string, message: string, effect: "none" | "possible" = 
 }
 
 function errorResponse(c: Context, error: Error | z.ZodError): Response {
+  if (error instanceof SandbarError)
+    return c.json(
+      ErrorResponse.parse({
+        error: {
+          ...safeError(error.code, error.message.slice(0, 1024)),
+          feature: error instanceof UnsupportedFeatureError ? error.feature : undefined,
+          unmetRequirements:
+            error instanceof UnsupportedFeatureError ? [...error.unmetRequirements] : undefined,
+        },
+      }),
+      error.code === "FORBIDDEN" ? 403 : error.code === "UNSUPPORTED" ? 422 : 400,
+    );
+
   if (error instanceof AdapterError)
     return c.json(
       ErrorResponse.parse({
@@ -704,6 +722,109 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
     }),
   );
 
+  const selectConnection = async (projectId: string, connectionId?: string) => {
+    const rows = connectionId
+      ? [await deps.store.getConnection(projectId, connectionId)]
+      : await deps.store.listConnections(projectId);
+
+    const row = rows
+      .filter((row): row is ConnectionRow => !!row)
+      .sort((a, b) => Number(a.created_at) - Number(b.created_at) || a.id.localeCompare(b.id))
+      .find((row) => row.status === "verified" && deps.registry.has(row.provider));
+
+    if (!row) throw new StoreError("CONFLICT", "No verified provider connection is available");
+
+    return row;
+  };
+
+  const checkCreateBody = async (projectId: string, body: z.infer<typeof CreateSandboxRequest>) => {
+    const connection = await selectConnection(projectId, body.connectionId);
+
+    return withProvider(deps, connection, async ({ adapterConnection }) => {
+      if (
+        body.preparedBinding &&
+        (body.environment.kind !== "prepared" ||
+          body.preparedBinding.connectionId !== connection.id)
+      )
+        throw new AdapterError("CONFLICT", "Prepared image connection does not match");
+
+      return adapterConnection.sandboxes.checkCreate({
+        environment:
+          body.environment.kind === "prepared"
+            ? {
+                kind: "prepared",
+                value: body.environment.imageId,
+                binding: body.preparedBinding
+                  ? { provider: body.preparedBinding.provider, scope: body.preparedBinding.scope }
+                  : undefined,
+              }
+            : { kind: "oci", value: body.environment.reference },
+        networkPolicy: body.network?.policy,
+        region: body.region,
+        labels: body.labels,
+        requirements: body.requirements,
+      });
+    });
+  };
+
+  app.get(
+    "/v1/projects/:projectId/capabilities",
+    protect(deps, false, async (c) => {
+      const row = await selectConnection(idParam(c, "projectId"), c.req.query("connectionId"));
+
+      return withProvider(deps, row, async ({ adapterConnection }) =>
+        c.json(Capabilities.parse(await adapterConnection.capabilities())),
+      );
+    }),
+  );
+  app.post(
+    "/v1/projects/:projectId/sandboxes/check-create",
+    protect(deps, false, async (c) =>
+      c.json(
+        CreateCheck.parse(
+          await checkCreateBody(idParam(c, "projectId"), await parseBody(c, CreateSandboxRequest)),
+        ),
+      ),
+    ),
+  );
+  app.get(
+    "/v1/projects/:projectId/sandboxes/:sandboxId/capabilities",
+    protect(deps, false, async (c) => {
+      const projectId = idParam(c, "projectId");
+      const box = await deps.store.getSandbox(projectId, idParam(c, "sandboxId"));
+
+      if (!box?.native_id) throw new StoreError("CONFLICT", "Sandbox is not available");
+      const row = await selectConnection(projectId, box.connection_id);
+
+      return withProvider(deps, row, async ({ adapterConnection }) =>
+        c.json(
+          Capabilities.parse(
+            await new AdapterSandbox(adapterConnection, box.native_id!).capabilities(),
+          ),
+        ),
+      );
+    }),
+  );
+  app.post(
+    "/v1/projects/:projectId/sandboxes/:sandboxId/check-snapshot",
+    protect(deps, false, async (c) => {
+      const projectId = idParam(c, "projectId");
+      const request = await parseBody(c, SnapshotRequest);
+      const box = await deps.store.getSandbox(projectId, idParam(c, "sandboxId"));
+
+      if (!box?.native_id) throw new StoreError("CONFLICT", "Sandbox is not available");
+      const row = await selectConnection(projectId, box.connection_id);
+
+      return withProvider(deps, row, async ({ adapterConnection }) =>
+        c.json(
+          SnapshotCheck.parse(
+            await new AdapterSandbox(adapterConnection, box.native_id!).checkSnapshot(request),
+          ),
+        ),
+      );
+    }),
+  );
+
   app.post(
     "/v1/projects/:projectId/sandboxes",
     protect(deps, true, async (c) => {
@@ -739,6 +860,18 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
           canonical(scope) !== canonical(body.preparedBinding.scope)
         )
           throw new AdapterError("CONFLICT", "Prepared image scope differs from connection");
+      }
+
+      if (
+        body.requirements &&
+        !(await deps.store.lookupInvocation(projectId, "POST /sandboxes", key))
+      ) {
+        const check = await checkCreateBody(projectId, body);
+
+        if (check.status === "unsupported")
+          throw new UnsupportedFeatureError("create", [check.reason]);
+
+        if (check.status !== "supported") throw new AdapterError("UNAVAILABLE", check.reason);
       }
 
       const admission = await deps.store.admitCreate({

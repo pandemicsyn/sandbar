@@ -1,3 +1,10 @@
+import {
+  SnapshotRequest,
+  type Capabilities,
+  type Support,
+  type SnapshotPlan,
+  type CreatePlan,
+} from "sandbar-adapter";
 import type { AdapterRecoveryReference } from "./adapter-direct";
 import type { RetainedArtifact, Scope } from "sandbar-adapter";
 import { z } from "zod";
@@ -56,6 +63,7 @@ export const Image = {
 
 export type CreateInput = {
   environment: ImageInput;
+  requirements?: { snapshot: SnapshotRequest };
   networkPolicy?: string;
   region?: string;
   labels?: Record<string, string>;
@@ -98,6 +106,8 @@ export interface OperationHandle<T> {
 
 export interface SandboxHandle {
   readonly id: string;
+  capabilities(): Promise<Capabilities>;
+  checkSnapshot(request: SnapshotRequest): Promise<Support<SnapshotPlan>>;
   inspect(): Promise<{ state: string; observedAt?: string }>;
   exec(
     input: ExecInput | readonly string[],
@@ -117,6 +127,7 @@ export interface SandboxHandle {
 }
 
 export interface SandbarClient {
+  capabilities(): Promise<Capabilities>;
   readonly images: {
     build(
       input: { source: { kind: "oci"; value: string } },
@@ -128,6 +139,7 @@ export interface SandbarClient {
     ): Promise<OperationHandle<ImageBuildResult>>;
   };
   readonly sandboxes: {
+    checkCreate(input: CreateInput): Promise<Support<CreatePlan>>;
     create(input: CreateInput, options?: { signal?: AbortSignal }): Promise<SandboxHandle>;
     submitCreate(
       input: CreateInput,
@@ -146,6 +158,16 @@ export class SandbarError extends Error {
   ) {
     super(message);
     this.name = "SandbarError";
+  }
+}
+
+export class UnsupportedFeatureError extends SandbarError {
+  constructor(
+    readonly feature: string,
+    readonly unmetRequirements: readonly string[],
+  ) {
+    super("UNSUPPORTED", `${feature} is unsupported: ${unmetRequirements.join("; ")}`, "none");
+    this.name = "UnsupportedFeatureError";
   }
 }
 
@@ -267,6 +289,7 @@ export function validateCreate(input: CreateInput): CreateInput {
         }),
         z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
       ]),
+      requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
       networkPolicy: z.string().min(1).max(128).optional(),
       region: z.string().min(1).max(128).optional(),
       labels: z.record(z.string(), z.string()).optional(),
@@ -282,6 +305,7 @@ export function validateCreate(input: CreateInput): CreateInput {
         ? { kind: "prepared", imageId: parsed.data.environment.value }
         : { kind: "oci", reference: parsed.data.environment.value },
     network: { policy: parsed.data.networkPolicy ?? "blocked" },
+    requirements: parsed.data.requirements,
     region: parsed.data.region,
     labels: parsed.data.labels,
   });

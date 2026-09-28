@@ -23,6 +23,10 @@ Protected service operations accept a Bearer token or a session cookie unless an
 | GET | `/v1/projects/{projectId}/provider-connections` | `listProviderConnections` | `projectId` (path, required) | 200 | — |
 | POST | `/v1/projects/{projectId}/provider-connections` | `createProviderConnection` | `projectId` (path, required)<br>`Origin` (header)<br>`X-CSRF-Token` (header) | 201 | CreateProviderConnectionRequest |
 | POST | `/v1/projects/{projectId}/provider-connections/{connectionId}/verify` | `verifyProviderConnection` | `projectId` (path, required)<br>`connectionId` (path, required)<br>`Origin` (header)<br>`X-CSRF-Token` (header) | 200 | — |
+| GET | `/v1/projects/{projectId}/capabilities` | `getCapabilities` | `projectId` (path, required)<br>`connectionId` (query) | 200 | — |
+| POST | `/v1/projects/{projectId}/sandboxes/check-create` | `checkCreate` | `projectId` (path, required) | 200 | CreateSandboxRequest |
+| GET | `/v1/projects/{projectId}/sandboxes/{sandboxId}/capabilities` | `getSandboxCapabilities` | `projectId` (path, required)<br>`sandboxId` (path, required) | 200 | — |
+| POST | `/v1/projects/{projectId}/sandboxes/{sandboxId}/check-snapshot` | `checkSnapshot` | `projectId` (path, required)<br>`sandboxId` (path, required) | 200 | SnapshotRequest |
 | GET | `/v1/projects/{projectId}/sandboxes` | `listSandboxes` | `projectId` (path, required)<br>`cursor` (query)<br>`limit` (query)<br>`connectionId` (query)<br>`state` (query)<br>`q` (query) | 200 | — |
 | POST | `/v1/projects/{projectId}/sandboxes` | `submitCreate` | `projectId` (path, required)<br>`Idempotency-Key` (header, required)<br>`Origin` (header)<br>`X-CSRF-Token` (header) | 202 | CreateSandboxRequest |
 | POST | `/v1/projects/{projectId}/images/builds` | `submitImageBuild` | `projectId` (path, required)<br>`Idempotency-Key` (header, required)<br>`Origin` (header)<br>`X-CSRF-Token` (header) | 202 | ImageBuildRequest |
@@ -42,6 +46,8 @@ The following names are derived from the same OpenAPI document. Use the [full JS
 
 - `AcceptedExecution`
 - `AcceptedOperation`
+- `Capabilities`
+- `CreateCheck`
 - `CreateProjectRequest`
 - `CreateProviderConnectionRequest`
 - `CreateSandboxRequest`
@@ -65,4 +71,6 @@ The following names are derived from the same OpenAPI document. Use the [full JS
 - `SessionRequest`
 - `SessionResponse`
 - `SetupRequest`
+- `SnapshotCheck`
+- `SnapshotRequest`
 - `StreamFrame`

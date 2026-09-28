@@ -17,6 +17,7 @@ export interface CreatePlan {
   networkPolicy: string;
   region?: string;
   labels?: Record<string, string>;
+  requirements?: CreateSandboxInputInput["requirements"];
 }
 
 export interface ExecPlan {
@@ -40,6 +41,7 @@ export function normalizeCreate(input: CreateSandboxInputInput): CreatePlan {
     networkPolicy: request.network?.policy ?? "blocked",
     region: request.region,
     labels: request.labels,
+    requirements: request.requirements,
   };
 }
 

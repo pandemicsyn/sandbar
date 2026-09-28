@@ -1,4 +1,13 @@
 import {
+  Capabilities,
+  CreateCheck,
+  SnapshotCheck,
+  type Support,
+  type SnapshotRequest,
+  type SnapshotPlan,
+  type CreatePlan,
+} from "sandbar-adapter";
+import {
   AcceptedExecution,
   AcceptedOperation,
   CreateSandboxRequest,
@@ -14,6 +23,7 @@ import {
 import type { z } from "zod";
 import {
   SandbarError,
+  UnsupportedFeatureError,
   OutcomeUnknownError,
   NoExitCodeError,
   NonzeroExitError,
@@ -45,6 +55,7 @@ import {
 export {
   Image,
   SandbarError,
+  UnsupportedFeatureError,
   OutcomeUnknownError,
   WaitAbortedError,
   NonzeroExitError,
@@ -108,6 +119,16 @@ class RemoteOperation<T> implements OperationHandle<T> {
         "Service recorded an unknown provider outcome; use service reconciliation",
       );
 
+    if (
+      operation.status === "failed" &&
+      operation.error?.code === "UNSUPPORTED" &&
+      operation.effect === "none"
+    )
+      throw new UnsupportedFeatureError(
+        operation.error.feature ?? this.reference.kind,
+        operation.error.unmetRequirements ?? [operation.error.message],
+      );
+
     if (operation.status === "failed")
       throw new SandbarError(
         operation.error?.code ?? "OPERATION_FAILED",
@@ -162,6 +183,23 @@ class RemoteSandbox implements SandboxHandle {
     private readonly client: RemoteClient,
     readonly id: string,
   ) {}
+  capabilities(): Promise<Capabilities> {
+    return this.client.request(
+      `sandboxes/${encodeURIComponent(this.id)}/capabilities`,
+      Capabilities,
+    );
+  }
+  checkSnapshot(request: SnapshotRequest): Promise<Support<SnapshotPlan>> {
+    return this.client.request(
+      `sandboxes/${encodeURIComponent(this.id)}/check-snapshot`,
+      SnapshotCheck,
+      {
+        method: "POST",
+        body: JSON.stringify(request),
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }
   async inspect() {
     const box = await this.client.request(`sandboxes/${encodeURIComponent(this.id)}`, Sandbox);
 
@@ -447,6 +485,7 @@ class RemoteSandbox implements SandboxHandle {
 export class RemoteClient implements SandbarClient {
   readonly projectId: string;
   readonly sandboxes = {
+    checkCreate: (input: CreateInput) => this.checkCreate(input),
     create: (input: CreateInput, options: { signal?: AbortSignal } = {}) =>
       this.create(input, options),
     submitCreate: (input: CreateInput, options: { signal?: AbortSignal } = {}) =>
@@ -537,6 +576,16 @@ export class RemoteClient implements SandbarClient {
   async throwResponse(response: Response): Promise<never> {
     const raw: unknown = await response.json().catch(() => undefined);
     const parsed = ErrorResponse.safeParse(raw);
+
+    if (
+      parsed.success &&
+      parsed.data.error.code === "UNSUPPORTED" &&
+      parsed.data.error.effect === "none"
+    )
+      throw new UnsupportedFeatureError(
+        parsed.data.error.feature ?? "request",
+        parsed.data.error.unmetRequirements ?? [parsed.data.error.message],
+      );
 
     if (parsed.success)
       throw new SandbarError(
@@ -695,6 +744,33 @@ export class RemoteClient implements SandbarClient {
 
     return { operation, reference };
   }
+  capabilities(): Promise<Capabilities> {
+    return this.request("capabilities", Capabilities);
+  }
+  async checkCreate(input: CreateInput): Promise<Support<CreatePlan>> {
+    input = validateCreate(input);
+    const binding = input.environment.kind === "prepared" ? input.environment.binding : undefined;
+
+    if (binding && !binding.connectionId)
+      throw new SandbarError("FORBIDDEN", "Scoped prepared image lacks a service connection");
+
+    return this.request("sandboxes/check-create", CreateCheck, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        environment:
+          input.environment.kind === "prepared"
+            ? { kind: "prepared", imageId: input.environment.value }
+            : { kind: "oci", reference: input.environment.value },
+        network: { policy: input.networkPolicy },
+        region: input.region,
+        labels: input.labels,
+        requirements: input.requirements,
+        connectionId: binding?.connectionId,
+        preparedBinding: binding,
+      }),
+    });
+  }
   async submitCreate(
     input: CreateInput,
     options: { signal?: AbortSignal } = {},
@@ -713,6 +789,7 @@ export class RemoteClient implements SandbarClient {
           ? { kind: "prepared", imageId: input.environment.value }
           : { kind: "oci", reference: input.environment.value },
       region: input.region,
+      requirements: input.requirements,
       network: { policy: input.networkPolicy ?? "blocked" },
       labels: input.labels,
       connectionId: binding?.connectionId,

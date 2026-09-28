@@ -29,6 +29,8 @@ type CreateIntent = { environment: object; network?: object; labels?: Record<str
 type ProviderAvailable = (provider: string) => boolean;
 
 type OperationFailure = {
+  feature?: string;
+  unmetRequirements?: string[];
   code: string;
   message: string;
   effect: string;

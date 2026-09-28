@@ -4,7 +4,7 @@ Updated September 28, 2026. This tracks selected work, not every idea previously
 
 ## Next: provider state portability
 
-Implement the [state portability spec](../specs/provider-state-portability.md): capability evaluation and scoped resource references, snapshot/restore/cleanup, native volumes and mounts, then lifecycle control and optional versions/forks. Follow its detailed sequencing and acceptance cases. Use the existing direct/service operation machinery and preserve no-replay recovery.
+State portability foundations now provide resource reference descriptors, read-only capability/profile checks, and effect-free create requirement gates. Next, implement snapshot capture → inspect → restore → delete from the [state portability spec](../specs/provider-state-portability.md): capability evaluation and scoped resource references, snapshot/restore/cleanup, native volumes and mounts, then lifecycle control and optional versions/forks. Follow its detailed sequencing and acceptance cases. Use the existing direct/service operation machinery and preserve no-replay recovery.
 
 Daytona and E2B are the current built-ins. Vercel and Tensorlake inform the abstraction; their adapter specs and implementations are later work.
 

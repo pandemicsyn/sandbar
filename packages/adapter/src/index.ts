@@ -1,3 +1,8 @@
+import { AdapterError } from "./errors";
+
+export { AdapterError } from "./errors";
+
+import type { SnapshotRequest, SnapshotProfile, Support, ResourceReference } from "./state";
 import { z } from "zod";
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -8,6 +13,8 @@ export type Scope = {
 };
 
 export type Sandbox = { readonly id: string };
+
+export type RecoveryResource = Sandbox | ResourceReference;
 
 export type Image = { kind: "prepared" | "oci"; value: string };
 
@@ -27,6 +34,7 @@ export type CreateInput = {
   networkPolicy: string;
   region?: string;
   labels?: Record<string, string>;
+  requirements?: { snapshot: SnapshotRequest };
 };
 
 export type CreateValue = { id: string; state: "running" | "unknown" };
@@ -111,16 +119,6 @@ const AdapterErrorCodeSchema = z.enum([
 
 const OutcomeTextSchema = z.string().max(1024);
 
-export class AdapterError extends Error {
-  constructor(
-    readonly code: AdapterErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "AdapterError";
-  }
-}
-
 export type AttemptContext<T extends Json = Json> = {
   readonly operationId: string;
   readonly submissionId: string;
@@ -138,11 +136,12 @@ export type ObserveContext<T extends Json = Json> = ReadContext & {
 
 export type RecoveryAttempt<
   T extends Json = Json,
-  S extends Sandbox | undefined = Sandbox | undefined,
+  S extends RecoveryResource | undefined = Sandbox | undefined,
 > = {
   readonly operationId: string;
   readonly submissionId: string;
   readonly sandbox: S;
+  readonly resource?: ResourceReference;
   readonly token?: T;
 };
 
@@ -151,7 +150,7 @@ export type Mutation<
   V,
   P = I,
   T extends Json = Json,
-  S extends Sandbox | undefined = Sandbox | undefined,
+  S extends RecoveryResource | undefined = Sandbox | undefined,
 > =
   | (P extends I
       ? (input: P, ctx: AttemptContext<T>) => Promise<V | Pending | Unknown | Rejected>
@@ -182,6 +181,16 @@ export type AdapterSession<
   CT extends Json = Json,
 > = {
   scope: Scope;
+  /** Read-only evidence, scoped to the checked class or sandbox. Never allocate probe resources. */
+  snapshotProfiles?: (
+    target: { sandbox?: Sandbox; create?: CreateInput },
+    ctx: ReadContext,
+  ) => Promise<Support<{ profiles: SnapshotProfile[] }>>;
+  /** Foundation declaration; public snapshot submission is delivered in the next feature slice. */
+  snapshotCapture?: Mutation<
+    { sandbox: Sandbox; request: SnapshotRequest },
+    { snapshot: ResourceReference<"snapshot">; sourceState: import("./state").SandboxState }
+  >;
   supports: Guarantees<C>;
   create: Mutation<CreateInput, CreateValue, CP, CT, undefined>;
   imageBuild?: Mutation<ImageBuildInput, ImageBuildValue, ImageBuildInput, Json, undefined>;
@@ -189,7 +198,7 @@ export type AdapterSession<
   inspect?: (
     box: Sandbox,
     ctx: ReadContext,
-  ) => Promise<{ id: string; state: "running" | "destroyed" | "unknown" } | null>;
+  ) => Promise<{ id: string; state: import("./state").SandboxState } | null>;
   exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox>;
   files?: {
     maxBytes: number;
@@ -373,7 +382,7 @@ export function createObserveContext(
   return { ...input, pending: attempt.pending, unknown: attempt.unknown };
 }
 
-export type OperationParts<I, V, P, T extends Json, S extends Sandbox | undefined> = {
+export type OperationParts<I, V, P, T extends Json, S extends RecoveryResource | undefined> = {
   prepare?: (input: I, ctx: ReadContext) => Promise<P>;
   submit: (input: P, ctx: AttemptContext<T>) => Promise<V | Pending | Unknown | Rejected>;
   observe?: (
@@ -383,7 +392,7 @@ export type OperationParts<I, V, P, T extends Json, S extends Sandbox | undefine
   recovery?: { version: number; token: z.ZodType<T> };
 };
 
-export function operationParts<I, V, P, T extends Json, S extends Sandbox | undefined>(
+export function operationParts<I, V, P, T extends Json, S extends RecoveryResource | undefined>(
   mutation: Mutation<I, V, P, T, S>,
 ): OperationParts<I, V, P, T, S> {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Mutation is the declared function-or-object union; this selects its function branch.
@@ -564,3 +573,5 @@ export function validateAdapterConfiguration<C extends z.ZodType, K extends z.Zo
 }
 
 export { ExecCommand, ExecRequest, CreateSandboxInput, SafeError } from "./portable";
+
+export * from "./state";

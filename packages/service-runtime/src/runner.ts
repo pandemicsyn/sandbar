@@ -7,7 +7,11 @@ import {
   type Sandbox,
 } from "sandbar-adapter";
 import { z } from "zod";
-import type { AdvancedOperationResult as RuntimeResult } from "sandbar-sdk";
+import {
+  SandbarError,
+  UnsupportedFeatureError,
+  type AdvancedOperationResult as RuntimeResult,
+} from "sandbar-sdk";
 import type { SandboxRef, NativeScope, DriverResult } from "@sandbar/provider-spi";
 import { ProviderReadError } from "@sandbar/provider-spi";
 import { ExecRequest } from "sandbar-adapter/portable";
@@ -202,6 +206,7 @@ export class DurableRunner {
         network: request.network,
         region: request.region,
         labels: request.labels,
+        requirements: request.requirements,
       });
 
       const binding = z
@@ -251,6 +256,7 @@ export class DurableRunner {
         networkPolicy: plan.networkPolicy,
         region: plan.region,
         labels: plan.labels,
+        requirements: plan.requirements,
       };
     } else if (op.kind === "exec") {
       const envelope = z
@@ -294,14 +300,25 @@ export class DurableRunner {
       });
     } catch (error) {
       if (
-        error instanceof AdapterError &&
+        (error instanceof AdapterError || error instanceof SandbarError) &&
         ["INVALID_ARGUMENT", "UNSUPPORTED", "CAPACITY", "CONFLICT"].includes(error.code)
       ) {
         await store.failWithoutEffect(claim, {
           code: error.code,
-          message: "Adapter cannot prepare this request",
+          message:
+            error instanceof UnsupportedFeatureError
+              ? error.message.slice(0, 1024)
+              : "Adapter cannot prepare this request",
           effect: "none",
           retry: "never",
+          feature:
+            error instanceof UnsupportedFeatureError
+              ? (error.feature || op.kind).slice(0, 128)
+              : undefined,
+          unmetRequirements:
+            error instanceof UnsupportedFeatureError
+              ? error.unmetRequirements.slice(0, 128).map((reason) => reason.slice(0, 1024))
+              : undefined,
         });
       } else {
         await store.reschedule(claim, "prepare_failed", 5_000, "ADAPTER_PREPARE_FAILED");
@@ -372,9 +389,14 @@ export class DurableRunner {
         claim,
         {
           code: result.code,
-          message: "Adapter rejected the request before acceptance",
+          message:
+            result.code === "UNSUPPORTED"
+              ? result.message.slice(0, 1024)
+              : "Adapter rejected the request before acceptance",
           effect: "none",
           retry: "never",
+          feature: result.code === "UNSUPPORTED" ? op.kind : undefined,
+          unmetRequirements: result.code === "UNSUPPORTED" ? [result.message] : undefined,
         },
         true,
       );
