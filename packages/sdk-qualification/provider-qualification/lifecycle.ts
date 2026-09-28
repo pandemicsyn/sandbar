@@ -58,6 +58,41 @@ function outcome(error: unknown): Step["status"] {
   return error instanceof SandbarError && error.code === "UNSUPPORTED" ? "unsupported" : "failed";
 }
 
+/** Join late read-only connection release without extending cleanup indefinitely. */
+async function finishLateConnection(
+  opening: Promise<AdapterDirectClient>,
+  ledger: LedgerStore,
+  diagnostics: Promise<FailureDiagnostic>[],
+  redactions: readonly string[] = [],
+): Promise<boolean> {
+  const closing = opening.then(
+    async (connected) => {
+      try {
+        await connected.close();
+      } catch (error) {
+        diagnostics.push(new FailureCapture(ledger, "close", "close", redactions).failure(error));
+      }
+
+      return true;
+    },
+    () => false,
+  );
+
+  try {
+    return await boundedRead(closing, AbortSignal.timeout(5000));
+  } catch (error) {
+    diagnostics.push(
+      new FailureCapture(ledger, "close", "close", redactions).failure(
+        new Error("Late connection release did not complete within its 5-second budget", {
+          cause: error,
+        }),
+      ),
+    );
+
+    return false;
+  }
+}
+
 /** One borrowed prepared image and at most one created sandbox. No mutation is retried. */
 export async function runPrepared(
   factory: ConnectionFactory,
@@ -86,6 +121,7 @@ async function runPreparedLocked(
   let client: AdapterDirectClient | undefined;
   let box: AdapterSandbox | undefined;
   let createFailed = false;
+  let lateOpening: Promise<AdapterDirectClient> | undefined;
   const diagnosticJobs: Promise<FailureDiagnostic>[] = [];
   const releaseErrors: unknown[] = [];
 
@@ -169,7 +205,7 @@ async function runPreparedLocked(
         client = await boundedRead(opening, options.signal);
       } catch (error) {
         // A late read-only connection must close; no create may follow an interrupted connect.
-        void opening.then((connected) => connected.close()).catch(() => undefined);
+        lateOpening = opening;
         throw error;
       }
     });
@@ -397,6 +433,10 @@ async function runPreparedLocked(
       );
     }
 
+    const lateReleased = lateOpening
+      ? await finishLateConnection(lateOpening, ledger, diagnosticJobs, options.redactions)
+      : false;
+
     const releaseDiagnostics = await Promise.all(diagnosticJobs);
 
     if (!client && releaseDiagnostics.length)
@@ -406,6 +446,7 @@ async function runPreparedLocked(
         issue: "close-failed",
         diagnostic: releaseDiagnostics[0],
       });
+    else if (!client && lateReleased) steps.push({ scenario: "close", status: "passed" });
 
     if (createFailed)
       for (const scenario of [
@@ -502,12 +543,11 @@ export async function reconcileConnection(
     try {
       client = await boundedRead(opening, controller.signal);
     } catch (error) {
-      void opening.then((connected) => connected.close()).catch(() => undefined);
-
       const diagnostic = await new FailureCapture(ledger, "connect", "connect", redactions).failure(
         error,
       );
 
+      const lateReleased = await finishLateConnection(opening, ledger, diagnosticJobs, redactions);
       const releaseDiagnostics = await Promise.all(diagnosticJobs);
 
       const failedSteps: Step[] = [
@@ -521,6 +561,7 @@ export async function reconcileConnection(
           issue: "close-failed",
           diagnostic: releaseDiagnostics[0],
         });
+      else if (lateReleased) failedSteps.push({ scenario: "close", status: "passed" });
 
       return failedSteps;
     } finally {

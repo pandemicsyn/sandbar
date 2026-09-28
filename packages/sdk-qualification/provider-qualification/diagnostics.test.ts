@@ -484,3 +484,56 @@ test("sandbox-info stops and cancels an oversized response before parsing", asyn
   );
   expect(cancelled).toBe(true);
 });
+
+for (const reconcileOnly of [false, true])
+  test(`aborted late connection awaits and captures release failure (${reconcileOnly ? "reconcile" : "exercise"})`, async () => {
+    const store = await ledger();
+    const controller = new AbortController();
+    let released = false;
+
+    const adapter = defineAdapter({
+      name: "late-connect-release-fixture",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect({ host }) {
+        host.onClose(() => {
+          released = true;
+          throw new Error(`Late release failed ${secret}`);
+        });
+        controller.abort();
+        await new Promise((resolve) => setTimeout(resolve, 25));
+
+        return {
+          scope: { authority: { kind: "fixture", id: "scope" }, partition: {} },
+          supports: { images: ["prepared"] as const, network: ["blocked"] as const },
+          async create() {
+            throw new Error("Must not create after aborted connect");
+          },
+          async destroy() {
+            throw new Error("Must not destroy after aborted connect");
+          },
+        };
+      },
+    });
+
+    const factory: import("./lifecycle").ConnectionFactory = (onReference, onDiagnostic) =>
+      Sandbar.connect({ adapter, config: {}, credentials: {}, onReference, onDiagnostic });
+
+    const steps = reconcileOnly
+      ? await reconcileConnection(factory, store, 5, [secret])
+      : await runPrepared(factory, store, "base", {
+          network: "blocked",
+          signal: controller.signal,
+          redactions: [secret],
+        });
+
+    expect(released).toBe(true);
+    expect(steps.find((entry) => entry.scenario === "connect")?.status).toBe("failed");
+    expect(steps.find((entry) => entry.scenario === "close")).toMatchObject({
+      status: "failed",
+      diagnostic: { error: { message: "Late release failed [REDACTED]" } },
+    });
+    expect((await store.read()).diagnostics?.some((entry) => entry.scenario === "close")).toBe(
+      true,
+    );
+  });
