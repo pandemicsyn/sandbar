@@ -749,16 +749,16 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
         throw new AdapterError("CONFLICT", "Prepared image connection does not match");
 
       return adapterConnection.sandboxes.checkCreate({
-        environment: {
-          kind: body.environment.kind,
-          value:
-            body.environment.kind === "prepared"
-              ? body.environment.imageId
-              : body.environment.reference,
-          binding: body.preparedBinding
-            ? { provider: body.preparedBinding.provider, scope: body.preparedBinding.scope }
-            : undefined,
-        },
+        environment:
+          body.environment.kind === "prepared"
+            ? {
+                kind: "prepared",
+                value: body.environment.imageId,
+                binding: body.preparedBinding
+                  ? { provider: body.preparedBinding.provider, scope: body.preparedBinding.scope }
+                  : undefined,
+              }
+            : { kind: "oci", value: body.environment.reference },
         networkPolicy: body.network?.policy,
         region: body.region,
         labels: body.labels,

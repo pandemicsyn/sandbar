@@ -39,7 +39,7 @@ test("service and direct read checks agree, admission and runtime reject before 
     async connect() {
       return {
         scope: { authority: { kind: "account", id: "one" }, partition: {} },
-        supports: { images: ["prepared"], network: ["blocked"] },
+        supports: { images: ["prepared", "oci"], network: ["blocked"] },
         create: {
           async prepare(input) {
             if (prepareFailure) throw new AdapterError("UNSUPPORTED", prepareFailure);
@@ -167,6 +167,13 @@ test("service and direct read checks agree, admission and runtime reject before 
       requirements: { snapshot: { preserve: "filesystem+memory" as const } },
     };
 
+    const ociInput = { ...input, environment: Image.oci("registry.test/base:stable") };
+    for (const request of [ociInput, { environment: ociInput.environment }]) {
+      expect(await client.sandboxes.checkCreate(request)).toEqual(
+        await direct.sandboxes.checkCreate(request),
+      );
+      expect((await client.sandboxes.checkCreate(request)).status).toBe("supported");
+    }
     const remoteCaps = await client.capabilities();
     const directCaps = await direct.capabilities();
     expect({ ...remoteCaps, observedAt: "dated" }).toEqual({ ...directCaps, observedAt: "dated" });
@@ -272,7 +279,7 @@ test("service and direct read checks agree, admission and runtime reject before 
       unmetRequirements: ["y".repeat(1024)],
     });
     expect(creates).toBe(0);
-    const operation = await client.sandboxes.submitCreate(input);
+    const operation = await client.sandboxes.submitCreate(ociInput);
     watchedOperation = { projectId, id: operation.reference.operationId! };
     await runtime.runner.tick();
     expect(capabilityReadsAfterMarker).toBe(0);
