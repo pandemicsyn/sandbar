@@ -1,54 +1,38 @@
-# Provider qualification prototype
+# Provider qualification
 
-This is a bounded manual acceptance check, not a live certification claim. The normal docs build reads only reviewed JSON records in `results/`; it does not contact providers. `bun packages/sdk-qualification/provider-qualification/render.ts --check` detects generated-page drift. No live records are committed yet. Fixture tests verify the ledger, cleanup and renderer without creating provider resources.
+The qualification targets are **Daytona and E2B**. This branch provides the common public SDK lifecycle, private cleanup ledger, offline fixtures and generated evidence page. Their live entrypoint profiles are **blocked pending merged public factories and verified native lifetime/teardown semantics**. `manual.ts` validates the selected provider, loads the operator credential file, then fails before any provider import, connection or mutation. This scaffold is not a live certification claim.
 
-## Profiles and current gate
+## When to run
 
-Run live acceptance tests when adding a provider or changing a fundamental public guarantee. Routine changes use offline fixtures and packed checks. The repository skill in `.agents/skills/qualify-provider/SKILL.md` explains scenario selection, extending coverage and certifying docs evidence. These tests are manual and require explicit authorization for the specific resource budget; do not schedule routine live CI runs.
+Run live acceptance tests when adding a provider or changing a fundamental public guarantee. Routine changes use offline fixtures and packed checks. The repository skill in `.agents/skills/qualify-provider/SKILL.md` explains scenario selection, extending coverage and certifying docs evidence. Runs are manual and require explicit authorization for their specific resource budget. Do not schedule routine paid CI runs.
 
-The prepared-image prototype runs through `Sandbar.connect` with the public `sandbar-sdk/modal` factory available on this base commit. Modal is planned as an external experimental adapter and this prototype is not a 1.0 launch gate. Daytona and E2B are the intended 1.0 built-in profiles; their manual wiring awaits merged public factories and native teardown evidence. The common lifecycle covers connect, one create, inspect, argv and shell commands with cwd/env and stdout/stderr, a nonzero exit, binary file write/read/overwrite, no-clobber conflict, inventory, destroy confirmation and close. Unsupported core operations are recorded as `unsupported`, never passed. OCI/image-build is separate and **blocked**: an image/template/snapshot can outlive sandbox TTL, and ownership/deletion of all possible build outcomes is not yet proven.
+The common lifecycle covers connect, one borrowed prepared-image create, inspect, argv and shell commands with cwd/env and stdout/stderr, nonzero exit, binary file write/read/overwrite, no-clobber conflict, inventory, destroy confirmation and close. Unsupported operations are recorded as `unsupported`, never passed. OCI/image-build is separately blocked until ownership and deletion of every retained artifact are proven; sandbox TTL does not expire retained storage.
 
-For a locally authorized Modal run, use a borrowed, existing prepared `im-*` image. The harness never deletes it. The exact operator command is:
+## Credentials and profile gates
 
-```sh
-SANDBAR_QUAL_PROVIDER=modal \
-SANDBAR_QUAL_LIVE_AUTHORIZED=yes \
-SANDBAR_QUAL_LEDGER_DIR=/absolute/stable/private/qualification-ledgers \
-SANDBAR_QUAL_EVIDENCE_REF=https://github.com/pandemicsyn/sandbar/blob/main/specs/provider-evidence/modal-run-1.md \
-SANDBAR_MODAL_APP=existing-app \
-SANDBAR_MODAL_ENVIRONMENT=main \
-SANDBAR_MODAL_REGION=chosen-region \
-SANDBAR_MODAL_IMAGE_ID=im-borrowed-prepared-id \
-MODAL_TOKEN_ID=... MODAL_TOKEN_SECRET=... \
-bun packages/sdk-qualification/provider-qualification/manual.ts live-prepared
-```
+The manual entrypoint reads `~/.config/sandbar.env` (override with `SANDBAR_CREDENTIALS_FILE`). It imports only Daytona/E2B API keys, accepts `DAYTONA_API_KEY` or `SANDBAR_DAYTONA_API_KEY` and `E2B_API_KEY` or `SANDBAR_E2B_API_KEY`, and preserves injected environment values. It never imports live-enable flags. Offline tests use synthetic credentials and never load the operator file.
 
-The environment flag is a guard, **not authorization**. Obtain separate approval for the specific live run and resource budget first. Inject keys through the operator's secret store or environment, never chat, shell history or committed files. Preflight checks every required value before connect or create. This prototype is local only; it rejects `CI` because there is no configured durable off-runner checkpoint. Do not use a temporary ledger directory.
-
-The manual live/cleanup entrypoint also reads `~/.config/sandbar.env` (override with `SANDBAR_CREDENTIALS_FILE`). It imports only Daytona/E2B API key variables, accepts `DAYTONA_API_KEY` or `SANDBAR_DAYTONA_API_KEY`, and accepts `E2B_API_KEY` or `SANDBAR_E2B_API_KEY`. Already injected environment values take precedence. Live-enable flags are never imported from this file, and ordinary offline tests never load it. Daytona/E2B profile wiring remains pending their merged public APIs.
-
-`SANDBAR_QUAL_SCENARIOS` can select a comma-separated subset of `inspect,exec-argv,exec-shell,exec-nonzero,file-binary,file-overwrite,file-no-clobber,inventory`. Connect, one create, cleanup confirmation and close always run. Unselected rows are recorded `not-run`. File overwrite requires file-binary; no-clobber requires both file-binary and file-overwrite.
-
-At most one sandbox is created. Modal's public factory is configured for a 300-second native sandbox timeout. The harness aborts test work after 240 seconds, then attempts cleanup for up to 60 seconds. The borrowed prepared image may already carry costs outside this run; the harness does not own it. No image builds occur. The native billing model and account limits must be reviewed before authorization; a time limit is not a dollar ceiling.
+Before enabling either live profile, use its merged public SDK factory, prove scoped create correlation and termination semantics, configure a native lifetime for at most one sandbox, bound exercise and cleanup waits, and establish cleanup of all owned artifacts. Require a clean exact SDK commit, explicit run authorization, selected scenarios and a stable owner-only ledger directory outside the repository and temporary storage. Cleanup after interruption must need only the saved ledger and fresh credentials. CI live runs remain blocked without an off-runner checkpoint that acknowledges intent/reference before dispatch and an independent janitor; final artifact upload is insufficient.
 
 ## Ownership and recovery
 
-The private JSON ledger records a run UUID, borrowed-image classification and nonsecret connection routing before any paid create. It then durably records create intent; the public SDK `onReference` callback saves each scoped create, exec, write and destroy identity **before submit**. Returned sandbox ID is checkpointed promptly. The SDK must not submit if that checkpoint rejects. Ledger files have owner-only permissions and can contain scope IDs and recovery references, so keep them private and off the public docs path. Credentials are never written there. Public reports contain only allowlisted metadata and no raw IDs, credentials, native logs or recovery refs. Review a sanitized report before copying it into `results/`.
+`runPrepared` and `reconcile` use the public SDK. The private ledger stores the run UUID, borrowed-image classification, nonsecret routing and create intent. The awaited SDK `onReference` callback journals scoped create, exec, write and destroy references before dispatch. Checkpoint failure prevents the mutation. Returned sandbox identity is saved promptly. Borrowed images are never deletion targets.
 
-On normal completion, failure or SIGINT/SIGTERM, the harness attempts destroy and checks `inspect` for `destroyed`. It marks cleanup confirmed only after that observation. If create outcome or termination is uncertain, the run remains incomplete and the ledger remains actionable. An API acknowledgement or absence without scoped proof is insufficient. To retry an incomplete run after a crash, set the same environment and run:
+On completion, failure or interruption, the lifecycle attempts owned-sandbox teardown. Confirmed cleanup requires a correlated public SDK `computeStopped` completion or scoped inspect state `destroyed`. Unknown state, uncorrelated absence and mere acknowledgement do not confirm cleanup. Unknown creates are observed without resubmission; a saved destroy is observed without another destroy. Unresolved resources remain private, durable and actionable. Never use account-wide name matching or create another sandbox to resolve uncertainty.
+
+## Evidence and offline checks
+
+Exercise and reconciliation hold an exclusive per-run lock across all mutations. A second process fails before provider calls. A killed process can leave `<run UUID>.json.lock`; inspect its private host/PID metadata and prove that process has stopped before manually removing only that lock and resuming cleanup. Never remove a lock held by an active process. The recovery ledger remains intact; stale locks are never stolen automatically.
+
+Only reviewed sanitized JSON belongs in `results/`. Records contain provider/scenario, mode (`live`, `fixture`, `packed`), exact SDK commit/version, pinned native version, runtime/platform, timestamp, tested image/network/region class, evidence reference and cleanup state. Private ledgers can contain resource IDs and recovery references; never publish them, credentials or native logs.
+
+The normal docs build reads only committed JSON and never contacts providers. The generated page uses live evidence only. A newer failure supersedes an older pass for the same configuration. Scenario successes with incomplete cleanup remain incomplete. Missing credentials or approval means not-run. No live records are committed yet.
 
 ```sh
-bun packages/sdk-qualification/provider-qualification/manual.ts reconcile RUN_UUID
+bun test packages/sdk-qualification/provider-qualification
+bun run --cwd packages/sdk-qualification check
+bun packages/sdk-qualification/provider-qualification/render.ts
+bun packages/sdk-qualification/provider-qualification/render.ts --check
 ```
 
-Reconcile validates the saved create reference against the verified connection, observes a lost create without resubmission, and destroys only the positively identified sandbox from this run. If a destroy was submitted but its result or readback is uncertain, reconcile observes that original destroy and **does not submit another**. A borrowed image is never a deletion target. Unresolved state requires provider-side inspection; do not start another create to resolve it or delete a name match. If ownership cannot be proved, leave it for manual audit.
-
-The cleanup command does not require the borrowed image ID, scenario selection, clean checkout or live-run authorization flag. It needs the saved ledger and provider connection credentials. If `SANDBAR_QUAL_EVIDENCE_REF` is omitted, cleanup still runs and updates the private ledger; no public report is written.
-
-An independent backstop for local use is the provider-native sandbox expiry plus a separately invoked janitor that enumerates incomplete ledgers from the stable private directory and calls `reconcile` with fresh credentials. Such a janitor is not installed or scheduled by this prototype. Before enabling CI live runs, provide an off-runner durable checkpoint that acknowledges each intent/reference before dispatch; a post-job artifact upload is insufficient if the runner dies. Its janitor must discover incomplete ledgers independently of the runner. Checkpoint failure must prevent native effects. Provider outage or revoked credentials can still leave resources unresolved; these cases must be reported, never called green. Native TTL only bounds compute and does not clean retained built images.
-
-## Evidence and status
-
-Each result records provider/scenario, mode (`live`, `fixture`, `packed`), status, exact SDK commit/version, pinned native version, runtime/platform, timestamp, tested image/network/region class and evidence reference. The generated page uses only live records. A newer failure supersedes an older pass for the same runtime and configuration; older records remain in dated JSON history. Missing credentials or authorization mean `not-run`, not a fabricated pass. Only a run with confirmed cleanup can be proposed as a complete live qualification, and an operator must review the private ledger and sanitized result before committing evidence.
-
-Before actual live qualification, verify the provider's pinned native TTL, create correlation, scoped readback and termination semantics against the merged adapter and official API; run the packed consumer gate on that exact commit. The current older live scripts in provider packages cover partial paths and are not this acceptance record.
+Before a later authorized live run, qualify the merged profiles through relevant offline fixtures and packed consumers on that exact commit. The existing partial provider live scripts do not supply this acceptance record.

@@ -49,6 +49,15 @@ export async function runPrepared(
     selectedScenarios?: ReadonlySet<Scenario>;
   },
 ): Promise<Step[]> {
+  return ledger.withLock(() => runPreparedLocked(factory, ledger, imageId, options));
+}
+
+async function runPreparedLocked(
+  factory: ConnectionFactory,
+  ledger: LedgerStore,
+  imageId: string,
+  options: Parameters<typeof runPrepared>[3],
+): Promise<Step[]> {
   const steps: Step[] = [];
   let client: AdapterDirectClient | undefined;
   let box: AdapterSandbox | undefined;
@@ -210,7 +219,7 @@ export async function runPrepared(
   } finally {
     if (client) {
       try {
-        const result = await reconcile(
+        const result = await reconcileLocked(
           publicCleanupAccess(client),
           ledger,
           options.cleanupWaitMs ?? 60_000,
@@ -251,7 +260,7 @@ function equal(a: Uint8Array, b: Uint8Array): boolean {
 export type CleanupAccess = {
   verifyReference(reference: AdapterRecoveryReference): Promise<void>;
   observeCreate(reference: AdapterRecoveryReference): Promise<{ id: string } | null>;
-  observeDestroy(reference: AdapterRecoveryReference): Promise<void>;
+  observeDestroy(reference: AdapterRecoveryReference): Promise<boolean>;
   sandbox(id: string): Pick<AdapterSandbox, "inspect" | "destroy">;
 };
 
@@ -266,7 +275,8 @@ export function publicCleanupAccess(client: AdapterDirectClient): CleanupAccess 
       return result instanceof AdapterSandbox ? { id: result.id } : null;
     },
     async observeDestroy(reference) {
-      await (await client.recover(reference)).observe();
+      // The SDK decodes confirmed compute termination as undefined; pending is null.
+      return (await (await client.recover(reference)).observe()) === undefined;
     },
     sandbox(id) {
       return new AdapterSandbox(client, id);
@@ -279,6 +289,14 @@ export async function reconcile(
   access: CleanupAccess,
   ledger: LedgerStore,
   waitMs = 60_000,
+): Promise<Step[]> {
+  return ledger.withLock(() => reconcileLocked(access, ledger, waitMs));
+}
+
+async function reconcileLocked(
+  access: CleanupAccess,
+  ledger: LedgerStore,
+  waitMs: number,
 ): Promise<Step[]> {
   const state = await ledger.read();
 
@@ -333,8 +351,26 @@ export async function reconcile(
       ];
     }
 
-    if (state.destroyReference) await access.observeDestroy(state.destroyReference);
-    else await box.destroy();
+    let terminationConfirmed = false;
+
+    if (state.destroyReference) {
+      if (state.destroyReference.kind !== "destroy" || state.destroyReference.sandboxId !== id)
+        throw new Error("Saved destroy does not belong to the owned sandbox");
+      terminationConfirmed = await access.observeDestroy(state.destroyReference);
+    } else {
+      // Public destroy resolves only for a correlated computeStopped completion.
+      await box.destroy();
+      terminationConfirmed = true;
+    }
+
+    if (terminationConfirmed) {
+      await ledger.update((value) => ({ ...value, cleanup: "confirmed", lastIssue: undefined }));
+
+      return [
+        { scenario: "destroy", status: "passed" },
+        { scenario: "confirm-cleanup", status: "passed" },
+      ];
+    }
     const deadline = Date.now() + waitMs;
 
     while (Date.now() <= deadline) {

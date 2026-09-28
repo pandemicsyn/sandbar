@@ -20,7 +20,7 @@ async function ledger(checkpoint?: ConstructorParameters<typeof LedgerStore>[2])
   const directory = await mkdtemp(join(tmpdir(), "sandbar-qualification-test-"));
   directories.push(directory);
   const store = new LedgerStore(directory, crypto.randomUUID(), checkpoint);
-  await store.initialize("modal", { kind: "borrowed-prepared", class: "base-template" });
+  await store.initialize("daytona", { kind: "borrowed-prepared", class: "base-template" });
 
   return store;
 }
@@ -31,23 +31,33 @@ test("private ledger retains nonsecret connection routing for crash cleanup", as
   const runId = crypto.randomUUID();
   const store = new LedgerStore(directory, runId);
   await store.initialize(
-    "modal",
+    "daytona",
     { kind: "borrowed-prepared", class: "prepared" },
-    { appName: "fixture-app", environment: "test", region: "us", timeoutSeconds: 300 },
+    { target: "fixture-app", region: "us", timeoutSeconds: 300 },
   );
   const reopened = new LedgerStore(directory, runId);
   expect((await reopened.read()).connection).toEqual({
-    appName: "fixture-app",
-    environment: "test",
+    target: "fixture-app",
     region: "us",
     timeoutSeconds: 300,
   });
 });
 
+test("a second process store cannot reconcile while the run lock is held", async () => {
+  const store = await ledger();
+  const second = new LedgerStore(join(store.path, ".."), store.runId);
+
+  await store.withLock(async () => {
+    await expect(second.withLock(async () => {})).rejects.toMatchObject({ code: "EEXIST" });
+  });
+
+  await second.withLock(async () => {});
+});
+
 const reference = {
   version: 2,
   mode: "direct",
-  provider: "modal",
+  provider: "daytona",
   kind: "create",
   scope: { authority: { kind: "app", id: "fixture" }, partition: {} },
   operationId: "op",
@@ -64,7 +74,9 @@ function access(overrides: Partial<CleanupAccess> = {}) {
     async observeCreate() {
       return { id: "owned-sandbox" };
     },
-    async observeDestroy() {},
+    async observeDestroy() {
+      return false;
+    },
     sandbox(id) {
       expect(id).toBe("owned-sandbox");
 
@@ -276,11 +288,12 @@ test("lost destroy acknowledgement is observed without replay across reconciles"
   const fixture = access({
     async observeDestroy() {
       observations++;
+      return stopped;
     },
     sandbox() {
       return {
         async inspect() {
-          return { state: stopped ? ("destroyed" as const) : ("running" as const) };
+          return { state: stopped ? ("unknown" as const) : ("running" as const) };
         },
         async destroy() {
           throw new Error("unknown destroy must never be replayed");
@@ -319,7 +332,7 @@ test("an interrupted run before connect makes no native request", async () => {
   expect((await store.read()).createIntent).toBe(false);
 });
 
-test("a failed exercise still destroys and confirms its one owned sandbox", async () => {
+test("a failed exercise confirms SDK termination even when inspect remains unknown", async () => {
   const store = await ledger();
   let running = true;
   let destroys = 0;
@@ -346,7 +359,7 @@ test("a failed exercise still destroys and confirms its one owned sandbox", asyn
           return { computeStopped: true, retainedResources: [] };
         },
         async inspect() {
-          return { id: "owned", state: running ? ("running" as const) : ("destroyed" as const) };
+          return { id: "owned", state: running ? ("running" as const) : ("unknown" as const) };
         },
         async exec() {
           throw new Error("fixture command failed");
@@ -372,7 +385,7 @@ test("a failed exercise still destroys and confirms its one owned sandbox", asyn
 test("only latest live evidence is rendered; fixtures cannot make green cells", () => {
   const base = {
     schemaVersion: 1,
-    provider: "modal",
+    provider: "daytona",
     scenario: "exec-argv",
     runCleanup: "confirmed",
     sdkCommit: "a".repeat(40),
@@ -381,7 +394,7 @@ test("only latest live evidence is rendered; fixtures cannot make green cells", 
     runtime: "Bun 1.3.14",
     platform: "macos-arm64",
     configuration: { imageClass: "prepared", network: "blocked", regionClass: "us" },
-    evidenceRef: "evidence/modal-1.json",
+    evidenceRef: "evidence/daytona-1.json",
   };
 
   const report = parseReport({
@@ -414,4 +427,14 @@ test("only latest live evidence is rendered; fixtures cannot make green cells", 
   });
 
   expect(renderLiveMatrix([incomplete])).toContain("incomplete (scenario passed)");
+
+  const offsets = parseReport({
+    schemaVersion: 1,
+    records: [
+      { ...base, mode: "live", status: "passed", timestamp: "2026-09-27T00:00:00+02:00" },
+      { ...base, mode: "live", status: "failed", timestamp: "2026-09-26T23:00:00Z" },
+    ],
+  });
+
+  expect(renderLiveMatrix([offsets])).toMatch(/\| failed\s+\| 2026-09-26/);
 });

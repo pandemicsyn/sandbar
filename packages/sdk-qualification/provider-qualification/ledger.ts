@@ -1,4 +1,5 @@
-import { lstat, mkdir, open, readFile, rename } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import type { AdapterRecoveryReference } from "sandbar-sdk";
 import { z } from "zod";
@@ -6,7 +7,7 @@ import { z } from "zod";
 const ledgerSchema = z.strictObject({
   version: z.literal(1),
   runId: z.uuid(),
-  provider: z.enum(["daytona", "modal", "e2b"]),
+  provider: z.enum(["daytona", "e2b"]),
   createdAt: z.iso.datetime(),
   image: z.strictObject({
     kind: z.enum(["borrowed-prepared", "owned-built"]),
@@ -14,8 +15,7 @@ const ledgerSchema = z.strictObject({
   }),
   connection: z
     .strictObject({
-      appName: z.string().min(1).max(128),
-      environment: z.string().min(1).max(128),
+      target: z.string().min(1).max(128),
       region: z.string().min(1).max(128),
       timeoutSeconds: z.number().int().min(60).max(3600),
     })
@@ -65,6 +65,23 @@ export class LedgerStore {
     if (value.runId !== this.runId) throw new Error("Ledger run ID mismatch");
 
     return value;
+  }
+
+  /** One process may exercise or reconcile a run at a time. Crash locks fail closed. */
+  async withLock<T>(work: () => Promise<T>): Promise<T> {
+    await this.read();
+    const lockPath = `${this.path}.lock`;
+    const lock = await open(lockPath, "wx", 0o600);
+
+    try {
+      await lock.writeFile(JSON.stringify({ pid: process.pid, host: hostname() }));
+      await lock.sync();
+
+      return await work();
+    } finally {
+      await lock.close();
+      await unlink(lockPath);
+    }
   }
 
   async initialize(
