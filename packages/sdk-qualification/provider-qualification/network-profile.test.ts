@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Sandbar } from "sandbar-sdk";
 import { defineAdapter } from "../../adapter/src/index";
 import { z } from "zod";
-import { LedgerStore } from "./ledger";
+import { LedgerStore, reportedCleanup } from "./ledger";
 import { runNetworkPair } from "./network-profile";
 import { parseReport } from "./report";
 import {
@@ -342,4 +342,13 @@ test("snapshot pass cannot enter evidence while capture/restore has no public AP
       ],
     }),
   ).toThrow("Snapshot capture/restore");
+});
+
+test("paired cleanup report is independent of which UUID reconciles the pair", () => {
+  const confirmed = { cleanup: "confirmed" as const };
+  const unused = { cleanup: "not-required" as const };
+  expect(reportedCleanup([confirmed, unused])).toBe("confirmed");
+  expect(reportedCleanup([unused, confirmed])).toBe("confirmed");
+  expect(reportedCleanup([confirmed, { cleanup: "unresolved" }])).toBe("incomplete");
+  expect(reportedCleanup([unused, unused])).toBe("not-required");
 });

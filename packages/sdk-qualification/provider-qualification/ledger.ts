@@ -56,6 +56,15 @@ export type RunLedger = z.infer<typeof ledgerSchema> & {
   operationReferences?: AdapterRecoveryReference[];
 };
 
+export function reportedCleanup(states: readonly Pick<RunLedger, "cleanup">[]) {
+  if (states.some((state) => state.cleanup !== "confirmed" && state.cleanup !== "not-required"))
+    return "incomplete" as const;
+
+  return states.some((state) => state.cleanup === "confirmed")
+    ? ("confirmed" as const)
+    : ("not-required" as const);
+}
+
 export async function requirePrivateDirectory(directory: string): Promise<void> {
   const info = await lstat(directory);
 

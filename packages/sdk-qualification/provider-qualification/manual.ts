@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { qualificationRevisions, reconciliationRevisions } from "./revisions";
 import { loadCredentials } from "./credentials";
 import { e2bConfiguration, e2bConnection, e2bEnvdVersion } from "./e2b-profile";
-import { LedgerStore, requirePrivateDirectory } from "./ledger";
+import { LedgerStore, requirePrivateDirectory, reportedCleanup } from "./ledger";
 import { reconcileConnection, runPrepared, type Step } from "./lifecycle";
 import { runNetworkPair, type NetworkRun } from "./network-profile";
 import { parseReport, publicIssue, scenarios, type Scenario } from "./report";
@@ -289,9 +289,8 @@ const exercise = async () => {
   const state = await ledger.read();
   const companionState = companion ? await companion.read() : undefined;
 
-  const cleanupComplete = [state, companionState]
-    .filter(Boolean)
-    .every((value) => value!.cleanup === "confirmed" || value!.cleanup === "not-required");
+  const cleanup = reportedCleanup(companionState ? [state, companionState] : [state]);
+  const cleanupComplete = cleanup !== "incomplete";
 
   if (evidenceRef) {
     const sourcedSteps = networkRuns
@@ -309,13 +308,7 @@ const exercise = async () => {
       configuration: { ...metadata.configuration, network: `${policy}-requested` },
       scenario: step.scenario,
       status: step.status,
-      runCleanup: !cleanupComplete
-        ? ("incomplete" as const)
-        : state.cleanup === "not-required"
-          ? ("not-required" as const)
-          : state.cleanup === "confirmed"
-            ? ("confirmed" as const)
-            : ("incomplete" as const),
+      runCleanup: cleanup,
       timestamp: new Date().toISOString(),
       issue: publicIssue(step.issue),
       diagnostic: step.diagnostic,
@@ -338,13 +331,7 @@ const exercise = async () => {
       ? [
           ...previous.records.map((record) => ({
             ...record,
-            runCleanup: !cleanupComplete
-              ? ("incomplete" as const)
-              : state.cleanup === "not-required"
-                ? ("not-required" as const)
-                : state.cleanup === "confirmed"
-                  ? ("confirmed" as const)
-                  : ("incomplete" as const),
+            runCleanup: cleanup,
           })),
           ...records,
         ]
