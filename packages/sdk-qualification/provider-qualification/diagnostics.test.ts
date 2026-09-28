@@ -466,3 +466,21 @@ test("sandbox-info refuses a redirect without forwarding the API key to another 
     await destination.stop(true);
   }
 });
+
+test("sandbox-info stops and cancels an oversized response before parsing", async () => {
+  let cancelled = false;
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(64 * 1024 + 1).fill(32));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  await expect(e2bEnvdVersion(secret, async () => new Response(stream))(owned)).rejects.toThrow(
+    "64 KiB diagnostic limit",
+  );
+  expect(cancelled).toBe(true);
+});

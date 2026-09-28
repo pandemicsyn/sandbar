@@ -69,6 +69,32 @@ export function e2bEnvdVersion(
       throw new Error(`E2B sandbox-info failed (HTTP ${response.status})`);
     }
 
+    if (!response.body) throw new Error("E2B sandbox-info response body missing");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    let bytes = 0;
+
+    try {
+      while (true) {
+        const chunk = await reader.read();
+
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+
+        if (bytes > 64 * 1024) {
+          await reader.cancel();
+          throw new Error("E2B sandbox-info exceeded 64 KiB diagnostic limit");
+        }
+
+        body += decoder.decode(chunk.value, { stream: true });
+      }
+
+      body += decoder.decode();
+    } finally {
+      reader.releaseLock();
+    }
+
     const info = z
       .object({
         envdVersion: z
@@ -77,7 +103,7 @@ export function e2bEnvdVersion(
           .regex(/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/)
           .optional(),
       })
-      .parse(await response.json());
+      .parse(JSON.parse(body));
 
     return info.envdVersion;
   };
