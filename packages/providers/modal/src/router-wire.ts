@@ -104,14 +104,23 @@ export class ModalRouterWire {
 
   constructor(private readonly modal: ModalClient) {}
 
+  private assertActive(signal?: AbortSignal): void {
+    if (this.closed) throw new Error("Modal transport is closed");
+    signal?.throwIfAborted();
+  }
+
   private async connect(
     sandboxId: string,
+    signal?: AbortSignal,
   ): Promise<{ taskId: string; client: Client; metadata: Metadata }> {
-    if (this.closed) throw new Error("Modal transport is closed");
+    this.assertActive(signal);
     const task = await this.modal.cpClient.sandboxGetTaskIdV2({ sandboxId });
+    this.assertActive(signal);
 
     if (!task.taskId) throw new Error("Modal sandbox has no task ID");
+    this.assertActive(signal);
     const access = await this.modal.cpClient.sandboxGetCommandRouterAccess({ sandboxId });
+    this.assertActive(signal);
     const url = new URL(access.url);
 
     const fixture =
@@ -119,6 +128,8 @@ export class ModalRouterWire {
 
     if ((!fixture && url.protocol !== "https:") || !url.hostname || !access.jwt)
       throw new Error("Invalid Modal command-router access");
+
+    this.assertActive(signal);
 
     const client = new Client(
       `${url.hostname}:${url.port || "443"}`,
@@ -145,6 +156,7 @@ export class ModalRouterWire {
     signal?: AbortSignal,
   ): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
+      this.assertActive(signal);
       const onAbort = () => call.cancel();
 
       const call = client.makeUnaryRequest(
@@ -171,7 +183,7 @@ export class ModalRouterWire {
   }
 
   async start(input: RouterRun, signal?: AbortSignal): Promise<void> {
-    const { taskId, client, metadata } = await this.connect(input.sandboxId);
+    const { taskId, client, metadata } = await this.connect(input.sandboxId, signal);
 
     try {
       const env = Object.entries(input.env ?? {}).map(([key, value]) =>
@@ -205,7 +217,7 @@ export class ModalRouterWire {
     bytes: Uint8Array,
     signal?: AbortSignal,
   ): Promise<void> {
-    const { taskId, client, metadata } = await this.connect(sandboxId);
+    const { taskId, client, metadata } = await this.connect(sandboxId, signal);
 
     try {
       // Unary writes carry exact offsets; a lost acknowledgement is never retried.
@@ -242,11 +254,12 @@ export class ModalRouterWire {
     maxBytes: number,
     signal?: AbortSignal,
   ): Promise<{ exitCode: number; stdout: Uint8Array; stderr: Uint8Array; truncated: boolean }> {
-    const { taskId, client, metadata } = await this.connect(sandboxId);
+    const { taskId, client, metadata } = await this.connect(sandboxId, signal);
 
     try {
       const collect = (descriptor: number): Promise<{ bytes: Uint8Array; truncated: boolean }> =>
         new Promise((resolve, reject) => {
+          this.assertActive(signal);
           const chunks: Uint8Array[] = [];
           let remaining = maxBytes;
           let truncated = false;

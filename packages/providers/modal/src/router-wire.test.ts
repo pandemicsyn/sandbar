@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
 import { ModalClient } from "modal";
 import { field, message, ModalRouterWire, parse } from "./router-wire";
@@ -109,7 +109,7 @@ beforeAll(async () => {
 
 afterAll(() => server.forceShutdown());
 
-function router() {
+function router(lookups?: { task?: () => Promise<void>; access?: () => Promise<void> }) {
   const previous = process.env.MODAL_SERVER_URL;
   process.env.MODAL_SERVER_URL = `http://127.0.0.1:${port}`;
 
@@ -119,9 +119,13 @@ function router() {
     // SAFETY: The fixture supplies only the two control-plane reads exercised by ModalRouterWire.
     cpClient: {
       async sandboxGetTaskIdV2() {
+        await lookups?.task?.();
+
         return { taskId: "ta-fixture" };
       },
       async sandboxGetCommandRouterAccess() {
+        await lookups?.access?.();
+
         return { url: `http://127.0.0.1:${port}`, jwt: "fixture-jwt" };
       },
     } as never,
@@ -280,5 +284,104 @@ test("lost binary stdin acknowledgement is not retried and observation never sta
   } finally {
     loseStdin = false;
     wire.close();
+  }
+});
+
+test("abort or close during either control lookup prevents new channels and router requests", async () => {
+  starts = 0;
+  stdinWrites = 0;
+  const channels = spyOn(grpc.credentials, "createInsecure");
+
+  try {
+    for (const stage of ["initial", "task", "access"] as const) {
+      for (const stop of ["abort", "close"] as const) {
+        for (const operation of ["start", "stdin", "result"] as const) {
+          let releaseLookup = () => {};
+
+          let enteredLookup = () => {};
+
+          const blocked = new Promise<void>((resolve) => {
+            releaseLookup = resolve;
+          });
+
+          const entered = new Promise<void>((resolve) => {
+            enteredLookup = resolve;
+          });
+
+          let taskReads = 0;
+          let accessReads = 0;
+
+          const wire = router({
+            async task() {
+              taskReads++;
+
+              if (stage === "task") {
+                enteredLookup();
+                await blocked;
+              }
+            },
+            async access() {
+              accessReads++;
+
+              if (stage === "access") {
+                enteredLookup();
+                await blocked;
+              }
+            },
+          });
+
+          channels.mockClear();
+          const controller = new AbortController();
+          const cancel = () => (stop === "abort" ? controller.abort() : wire.close());
+
+          if (stage === "initial") cancel();
+
+          const operations = {
+            start: () =>
+              wire.start(
+                {
+                  sandboxId: "sb-fixture",
+                  execId: "submission-1",
+                  command: ["cat"],
+                  timeoutSeconds: 5,
+                },
+                controller.signal,
+              ),
+            stdin: () =>
+              wire.stdin(
+                "sb-fixture",
+                "submission-1",
+                Uint8Array.from([0, 255]),
+                controller.signal,
+              ),
+            result: () => wire.result("sb-fixture", "submission-1", 4, controller.signal),
+          };
+
+          const pending = operations[operation]();
+
+          // Attach rejection handling before releasing the deferred native lookup.
+          const rejected = pending.then(
+            () => false,
+            () => true,
+          );
+
+          if (stage !== "initial") {
+            await entered;
+            cancel();
+            releaseLookup();
+          }
+
+          expect(await rejected).toBe(true);
+          expect(taskReads).toBe(stage === "initial" ? 0 : 1);
+          expect(accessReads).toBe(stage === "access" ? 1 : 0);
+          expect(channels).not.toHaveBeenCalled();
+          expect(starts).toBe(0);
+          expect(stdinWrites).toBe(0);
+          wire.close();
+        }
+      }
+    }
+  } finally {
+    channels.mockRestore();
   }
 });
