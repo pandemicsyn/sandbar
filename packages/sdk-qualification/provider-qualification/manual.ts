@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
 import { modal } from "sandbar-sdk/modal";
 import { LedgerStore } from "./ledger";
+import { loadCredentials } from "./credentials";
 import {
   publicCleanupAccess,
   reconcile,
@@ -159,6 +160,8 @@ function factory(config: Awaited<ReturnType<typeof preflight>>["config"]): Conne
 
 if (action !== "live-prepared" && action !== "reconcile")
   throw new Error("Usage: bun manual.ts live-prepared | reconcile <run UUID>");
+
+await loadCredentials();
 
 const settings = await preflight(action);
 
