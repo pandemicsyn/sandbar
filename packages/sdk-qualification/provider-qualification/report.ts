@@ -145,7 +145,9 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
         Date.parse(record.timestamp) > Date.parse(previous.timestamp) ||
         (Date.parse(record.timestamp) === Date.parse(previous.timestamp) &&
           ((previous.status === "passed" && record.status !== "passed") ||
-            (previous.runCleanup === "incomplete" && record.runCleanup === "confirmed")))
+            (previous.status === record.status &&
+              previous.runCleanup === "incomplete" &&
+              record.runCleanup === "confirmed")))
       )
         latest.set(id, record);
     }

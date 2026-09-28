@@ -438,4 +438,26 @@ test("only latest live evidence is rendered; fixtures cannot make green cells", 
   });
 
   expect(renderLiveMatrix([offsets])).toMatch(/\| failed\s+\| 2026-09-26/);
+
+  const sameInstant = parseReport({
+    schemaVersion: 1,
+    records: [
+      {
+        ...base,
+        mode: "live",
+        status: "failed",
+        runCleanup: "incomplete",
+        timestamp: "2026-09-27T00:00:00Z",
+      },
+      {
+        ...base,
+        mode: "live",
+        status: "passed",
+        runCleanup: "confirmed",
+        timestamp: "2026-09-27T00:00:00Z",
+      },
+    ],
+  });
+
+  expect(renderLiveMatrix([sameInstant])).toMatch(/\| failed\s+\| 2026-09-27/);
 });

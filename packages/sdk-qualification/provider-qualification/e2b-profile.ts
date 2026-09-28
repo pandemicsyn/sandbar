@@ -1,0 +1,35 @@
+import { Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
+import { e2b, createE2BAdapter, type E2BTransport } from "sandbar-sdk/e2b";
+import { z } from "zod";
+
+export const e2bConfiguration = z.strictObject({
+  teamId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  templateId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  timeoutSeconds: z.literal(300),
+});
+
+export type E2BConfiguration = z.infer<typeof e2bConfiguration>;
+
+/** Production uses the bound public factory; offline qualification uses its public native boundary. */
+export function e2bConnection(
+  configuration: E2BConfiguration,
+  apiKey: string,
+  transportFactory?: (options: { apiKey: string }) => E2BTransport,
+) {
+  const config = e2bConfiguration.parse(configuration);
+
+  return (onReference: (reference: AdapterRecoveryReference) => Promise<void>) =>
+    transportFactory
+      ? Sandbar.connect({
+          adapter: createE2BAdapter(transportFactory),
+          config,
+          credentials: { apiKey },
+          onReference,
+        })
+      : Sandbar.connect({
+          adapter: e2b({ ...config, apiKey }),
+          config: {},
+          credentials: {},
+          onReference,
+        });
+}

@@ -14,11 +14,18 @@ const ledgerSchema = z.strictObject({
     class: z.string().min(1).max(80),
   }),
   connection: z
-    .strictObject({
-      target: z.string().min(1).max(128),
-      region: z.string().min(1).max(128),
-      timeoutSeconds: z.number().int().min(60).max(3600),
-    })
+    .union([
+      z.strictObject({
+        target: z.string().min(1).max(128),
+        region: z.string().min(1).max(128),
+        timeoutSeconds: z.number().int().min(60).max(3600),
+      }),
+      z.strictObject({
+        teamId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+        templateId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+        timeoutSeconds: z.literal(300),
+      }),
+    ])
     .optional(),
   createIntent: z.boolean(),
   createReference: z.unknown().optional(),
