@@ -326,6 +326,7 @@ const mock = async (input, init = {}) => {
   if (url.pathname.endsWith("/process/execute")) {
     mutations++;
     const command = JSON.parse(init.body).command;
+    if (command.startsWith("mkdir -m 700 -- ")) return json({ exitCode: 0, result: "" });
     if (command.startsWith("cat ")) {
       const match = /^cat '([^']+)' > '([^']+)'/.exec(command);
       if (!match) throw Error("Invalid packed Daytona write command");
@@ -358,7 +359,7 @@ try {
   const bytes = await box.readFile("/file");
   if (bytes[0] !== 0 || bytes[1] !== 255) throw new Error("Binary file mismatch");
   await box.destroy();
-  if (mutations !== 6) throw new Error("Mutation replay in packed consumer: " + mutations);
+  if (mutations !== 7) throw new Error("Mutation replay in packed consumer: " + mutations);
   process.stdout.write("packed Daytona fixture flow passed\\n");
 } finally { await client.close(); }
 `;

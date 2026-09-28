@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import type { ExecCommand } from "sandbar-adapter/portable";
 import { daytonaProvider, daytonaRegistration, createDaytonaAdapter } from "./index";
@@ -412,6 +412,8 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
         .object({ command: z.string() })
         .parse(JSON.parse(String(init?.body))).command;
 
+      if (command.startsWith("mkdir -m 700 -- ")) return Response.json({ exitCode: 0, result: "" });
+
       if (command.startsWith("cat ")) {
         const match = /^cat '([^']+)' > '([^']+)'/.exec(command);
 
@@ -481,7 +483,7 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
   await sandbox.destroy();
   expect(calls.filter((value) => value === "POST /api/sandbox")).toHaveLength(1);
   expect(snapshotReads).toBe(1);
-  expect(calls.filter((value) => value.endsWith("/process/execute"))).toHaveLength(2);
+  expect(calls.filter((value) => value.endsWith("/process/execute"))).toHaveLength(3);
   expect(calls.filter((value) => value.endsWith("/files/upload-v2"))).toHaveLength(1);
   await client.close();
 });
@@ -1063,11 +1065,13 @@ test.each(["absent", "file", "directory", "symlink"] as const)(
       }
 
       if (url.pathname.endsWith("/process/execute")) {
-        links++;
-
         const command = z
           .object({ command: z.string() })
           .parse(JSON.parse(String(init?.body))).command;
+
+        if (command.startsWith("mkdir -m 700 -- "))
+          return Response.json({ exitCode: 0, result: "" });
+        links++;
 
         const match = /^ln -T -- '([^']+)' '([^']+)'/.exec(command);
         expect(match).not.toBeNull();
@@ -1151,11 +1155,12 @@ test("lost staging upload response is read back and committed without another up
     }
 
     if (url.pathname.endsWith("/process/execute")) {
-      commits++;
-
       const command = z
         .object({ command: z.string() })
         .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("mkdir -m 700 -- ")) return Response.json({ exitCode: 0, result: "" });
+      commits++;
 
       const link = /^ln -T -- '([^']+)' '([^']+)'/.exec(command);
 
@@ -1189,7 +1194,7 @@ test("lost exec and upload responses remain unknown after one submission each", 
   let executes = 0,
     uploads = 0;
 
-  const fetchImpl = fixtureFetch(async (input: RequestInfo | URL) => {
+  const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
 
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
@@ -1199,6 +1204,11 @@ test("lost exec and upload responses remain unknown after one submission each", 
     if (url.pathname === "/api/sandbox/native-1") return Response.json(native("sandbar-existing"));
 
     if (url.pathname.endsWith("/process/execute")) {
+      const command = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("mkdir -m 700 -- ")) return Response.json({ exitCode: 0, result: "" });
       executes++;
       throw new Error("response lost");
     }
@@ -1691,11 +1701,17 @@ test("write receipt is atomically published before recovery from a lost response
     }
 
     if (url.pathname.endsWith("/process/execute")) {
-      commits++;
-
       const command = z
         .object({ command: z.string() })
         .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("mkdir -m 700 -- ")) {
+        const reserved = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+
+        return Response.json({ exitCode: reserved.status, result: reserved.stdout });
+      }
+
+      commits++;
 
       const publish = /mv -f -- '([^']+)' '([^']+)'/.exec(command);
       expect(publish).not.toBeNull();
@@ -1806,3 +1822,85 @@ test("native destroy preflight read failure is effect-free", async () => {
   });
   expect(deletes).toBe(0);
 });
+
+test.each(["file", "directory", "lost-reservation"] as const)(
+  "private staging preserves caller data and never replays reservation: %s",
+  async (mode) => {
+    const directory = mkdtempSync("/tmp/sandbar-stage-collision-");
+    let stage = "";
+    let reservations = 0;
+    let uploads = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+      if (url.pathname.endsWith("/files/upload-v2")) {
+        uploads++;
+        throw new Error("Upload must not occur");
+      }
+
+      if (url.pathname.endsWith("/process/execute")) {
+        reservations++;
+
+        const command = z
+          .object({ command: z.string() })
+          .parse(JSON.parse(String(init?.body))).command;
+
+        const match = /^mkdir -m 700 -- '([^']+)'$/.exec(command);
+        expect(match).not.toBeNull();
+        stage = match![1]!;
+
+        if (mode === "file") writeFileSync(stage, "caller-owned");
+
+        if (mode === "directory") {
+          mkdirSync(stage);
+          writeFileSync(`${stage}/payload`, "caller-owned");
+        }
+
+        const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+
+        if (mode === "lost-reservation") {
+          expect(result.status).toBe(0);
+          throw new Error("reservation response lost");
+        }
+
+        expect(result.status).not.toBe(0);
+
+        return Response.json({ exitCode: result.status, result: result.stdout });
+      }
+
+      throw new Error("Unexpected fixture request");
+    });
+
+    try {
+      const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+      const result = await provider.driver.writeFile({
+        sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+        identity: identity("predictable-stage"),
+        path: `${directory}/target`,
+        bytes: new Uint8Array([0, 255]),
+        overwrite: false,
+      });
+
+      expect(result.status).toBe(mode === "lost-reservation" ? "unknown" : "rejected");
+
+      if (mode !== "lost-reservation")
+        expect(readFileSync(mode === "file" ? stage : `${stage}/payload`, "utf8")).toBe(
+          "caller-owned",
+        );
+      expect(() => readFileSync(`${directory}/target`)).toThrow();
+      expect(reservations).toBe(1);
+      expect(uploads).toBe(0);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);

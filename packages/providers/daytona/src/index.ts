@@ -500,6 +500,20 @@ export class DaytonaDriver implements ProviderDriver {
   prepareImage(image: string): boolean {
     return fixedImage(image);
   }
+  async imageBuildCandidate(submissionId: string): Promise<string | null> {
+    const name = `sandbar-image-${submissionId}`;
+    const response = await this.request("GET", `/snapshots/${encodeURIComponent(name)}`);
+
+    if (!response.ok) return null;
+
+    const snapshot = await boundedJson(response, Snapshot);
+
+    return snapshot.name === name &&
+      snapshot.organizationId === this.scope.accountId &&
+      /^[A-Za-z0-9._:-]{1,128}$/.test(snapshot.id)
+      ? snapshot.id
+      : null;
+  }
   private imageBuildResult(
     snapshot: z.infer<typeof Snapshot>,
     name: string,
@@ -1207,11 +1221,13 @@ export class DaytonaDriver implements ProviderDriver {
       };
     }
 
-    const temporaryPath = `${input.path.slice(0, input.path.lastIndexOf("/") + 1)}.sandbar-${Buffer.from(
+    const stageDirectory = `${input.path.slice(0, input.path.lastIndexOf("/") + 1)}.sandbar-${Buffer.from(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.identity.submissionId)),
     )
       .toString("hex")
       .slice(0, 32)}`;
+
+    const temporaryPath = `${stageDirectory}/payload`;
 
     if (temporaryPath.length > 4096)
       return {
@@ -1231,6 +1247,29 @@ export class DaytonaDriver implements ProviderDriver {
       return unknown(input.identity.submissionId, "Daytona file write wait was aborted");
 
     try {
+      const reserved = await this.json(
+        "POST",
+        "/process/execute",
+        CommandResponse,
+        { command: `mkdir -m 700 -- ${quote(stageDirectory)}`, timeout: 30 },
+        native,
+      );
+
+      if (reserved.exitCode !== 0)
+        return {
+          status: "rejected",
+          effect: "none",
+          error: {
+            code: "unavailable",
+            message: "Daytona private staging directory could not be reserved",
+            effect: "none",
+            retry: "never",
+          },
+        };
+
+      if (input.signal?.aborted)
+        return unknown(input.identity.submissionId, "Daytona file write wait was aborted");
+
       let response: Response | null = null;
 
       try {
@@ -1287,7 +1326,7 @@ export class DaytonaDriver implements ProviderDriver {
 
       const markerPath = await receiptPath("write", input.identity.submissionId);
       const markerStage = `${markerPath}.tmp`;
-      const command = `${action}; rc=$?; if [ "$rc" -eq 0 ]; then (printf '%s' ${quote(marker)} > ${quote(markerStage)} && mv -f -- ${quote(markerStage)} ${quote(markerPath)}) || rc=125; fi; rm -f ${quote(temporaryPath)} ${quote(markerStage)} || rc=125; exit "$rc"`;
+      const command = `${action}; rc=$?; if [ "$rc" -eq 0 ]; then (printf '%s' ${quote(marker)} > ${quote(markerStage)} && mv -f -- ${quote(markerStage)} ${quote(markerPath)}) || rc=125; fi; rm -f ${quote(temporaryPath)} ${quote(markerStage)} || rc=125; rmdir -- ${quote(stageDirectory)} || rc=125; exit "$rc"`;
 
       const committed = await this.json(
         "POST",
@@ -1503,6 +1542,12 @@ export class DaytonaDriver implements ProviderDriver {
       return { status: "pending", effect: "possible", submissionId, observeAfterMs: 500 };
 
     if (value.state !== "destroyed") return null;
+
+    if (retainedResources === undefined && value.labels === undefined)
+      return unknown(
+        submissionId,
+        "Daytona compute is stopped but retained resource evidence is unavailable",
+      );
 
     return {
       status: "completed",

@@ -236,8 +236,21 @@ export function createDaytonaAdapter(
           async observe(attempt, ctx) {
             const token = ImageToken.safeParse(attempt.token);
 
-            if (!token.success || token.data.submissionId !== attempt.submissionId)
-              return ctx.unknown("Daytona image build source evidence is unavailable");
+            if (!token.success || token.data.submissionId !== attempt.submissionId) {
+              let candidate: string | null = null;
+
+              try {
+                candidate = await driver.imageBuildCandidate(attempt.submissionId);
+              } catch {
+                // Unreadable evidence cannot certify build completion.
+              }
+
+              return ctx.unknown(
+                candidate
+                  ? `Daytona image build source evidence is unavailable; possible retained resource daytona:snapshot:${candidate}, ownership unknown, manual cleanup`
+                  : "Daytona image build source evidence is unavailable; a retained snapshot may exist under the submission name",
+              );
+            }
 
             const result = await driver.observeImageBuild(
               attempt.submissionId,
@@ -356,7 +369,12 @@ export function createDaytonaAdapter(
               return ctx.pending(recovery, { pollAfterMs: result.observeAfterMs });
             }
 
-            return destroyValue(result) ?? ctx.unknown("Daytona deletion is unconfirmed");
+            return (
+              destroyValue(result) ??
+              ctx.unknown(
+                result.status === "unknown" ? result.reason : "Daytona deletion is unconfirmed",
+              )
+            );
           },
         },
         async inspect(box) {

@@ -427,6 +427,9 @@ test("lost exec, write and destroy responses recover by read-only evidence after
           .object({ command: z.string() })
           .parse(JSON.parse(String(init?.body))).command;
 
+        if (command.startsWith("mkdir -m 700 -- "))
+          return Response.json({ exitCode: 0, result: "" });
+
         if (command.startsWith("{ ")) {
           mutations.exec++;
           const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(command)?.[1];
@@ -572,6 +575,17 @@ test("lost exec, write and destroy responses recover by read-only evidence after
 
   expect((await afterDestroy.operations.observe(destroyAttempt))?.kind).toBe("pending");
   state = "destroyed";
+
+  const tokenless = await afterDestroy.operations.observe({
+    ...destroyAttempt,
+    token: undefined,
+    tokenVersion: undefined,
+  });
+
+  expect(tokenless).toMatchObject({
+    kind: "unknown",
+    reason: "Daytona compute is stopped but retained resource evidence is unavailable",
+  });
   const termination = await afterDestroy.operations.observe(destroyAttempt);
 
   expect(termination?.kind).toBe("completed");
@@ -729,6 +743,70 @@ test("exec receipt deadline starts after a slow preflight and survives reconnect
     expect(executes).toBe(1);
   } finally {
     Date.now = originalNow;
+    await client.close();
+  }
+});
+
+test("tokenless image recovery reports scoped possible retention without certifying source", async () => {
+  let mutations = 0;
+  let reads = 0;
+
+  const fetchImpl: typeof fetch = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+
+      if (init?.method === "POST") mutations++;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions")
+        return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+      if (path === "/api/organizations/org-1")
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+      if (path === "/api/snapshots/sandbar-image-crash-build") {
+        reads++;
+
+        return Response.json({
+          id: "possibly-retained",
+          name: "sandbar-image-crash-build",
+          organizationId: "org-1",
+          imageName: "unproven:1",
+          state: "active",
+          regionIds: ["us"],
+          sandboxClass: "container",
+        });
+      }
+
+      throw new Error("Unexpected fixture request");
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const client = await Sandbar.connect({
+    adapter: createDaytonaAdapter(fetchImpl),
+    config: { target: "us" },
+    credentials: { apiKey: "fixture" },
+  });
+
+  try {
+    const result = await client.operations.observe({
+      scope: client.scope,
+      kind: "image_build",
+      operationId: "op-crash-build",
+      submissionId: "crash-build",
+    });
+
+    expect(result?.kind).toBe("unknown");
+
+    if (result?.kind === "unknown")
+      expect(result.reason).toContain(
+        "possible retained resource daytona:snapshot:possibly-retained",
+      );
+    expect(reads).toBe(1);
+    expect(mutations).toBe(0);
+  } finally {
     await client.close();
   }
 });
