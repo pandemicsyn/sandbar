@@ -57,6 +57,7 @@ export function e2bEnvdVersion(
       `https://api.e2b.app/sandboxes/${encodeURIComponent(ownedSandboxId)}`,
       {
         headers: { "X-API-Key": apiKey, Accept: "application/json" },
+        redirect: "error",
         signal: signal
           ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
           : AbortSignal.timeout(5000),

@@ -8,8 +8,8 @@ import { Sandbar } from "sandbar-sdk";
 import { LedgerStore } from "./ledger";
 import { FailureCapture, redactDiagnostic } from "./diagnostics";
 import { e2bEnvdVersion } from "./e2b-profile";
-import { runPrepared } from "./lifecycle";
-import { parseReport } from "./report";
+import { reconcileConnection, runPrepared } from "./lifecycle";
+import { parseReport, publicIssue } from "./report";
 
 const directories: string[] = [];
 
@@ -46,7 +46,7 @@ async function ledger() {
 }
 
 async function run(
-  phase: "write" | "read" | "compare" | "destroy" | "close",
+  phase: "write" | "read" | "compare" | "destroy" | "close" | "no-clobber",
   metadataFails = false,
 ) {
   const store = await ledger();
@@ -337,4 +337,132 @@ test("command mismatch captures bounded output and exit status", async () => {
   expect(diagnostic.outputTruncated).toBe(true);
   expect(JSON.stringify(diagnostic)).not.toContain(secret);
   expect(JSON.stringify(diagnostic)).not.toContain(owned);
+});
+
+for (const reconcileOnly of [false, true])
+  test(`failed authentication retains separate release failure (${reconcileOnly ? "reconcile" : "exercise"})`, async () => {
+    const store = await ledger();
+
+    const adapter = defineAdapter({
+      name: "failed-connect-release-fixture",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect({ host }) {
+        host.onClose(() => {
+          throw new Error(`Release denied ${secret}`);
+        });
+        throw new Error(`Authentication denied ${secret}`);
+      },
+    });
+
+    const factory: import("./lifecycle").ConnectionFactory = (onReference, onDiagnostic) =>
+      Sandbar.connect({ adapter, config: {}, credentials: {}, onReference, onDiagnostic });
+
+    const steps = reconcileOnly
+      ? await reconcileConnection(factory, store, 1000, [secret])
+      : await runPrepared(factory, store, "base", { network: "blocked", redactions: [secret] });
+
+    expect(steps.find((entry) => entry.scenario === "connect")).toMatchObject({
+      status: "failed",
+      diagnostic: { stage: "connect", error: { message: "Authentication denied [REDACTED]" } },
+    });
+    expect(steps.find((entry) => entry.scenario === "close")).toMatchObject({
+      status: "failed",
+      diagnostic: { stage: "close", error: { message: "Release denied [REDACTED]" } },
+    });
+    expect((await store.read()).diagnostics?.map((entry) => entry.scenario).sort()).toEqual([
+      "close",
+      "connect",
+    ]);
+  });
+
+test("sanitized evidence preserves uncertain mutation classification", async () => {
+  const store = await ledger();
+
+  const diagnostic = await new FailureCapture(store, "file-overwrite", "write").failure(
+    Object.assign(new Error("Observe submitted mutation without replay"), {
+      code: "OUTCOME_UNKNOWN",
+    }),
+  );
+
+  const report = parseReport({
+    schemaVersion: 1,
+    records: [
+      {
+        schemaVersion: 1,
+        provider: "e2b",
+        scenario: "file-overwrite",
+        mode: "fixture",
+        status: "failed",
+        issue: publicIssue(diagnostic.error.code),
+        sdkCommit: "a".repeat(40),
+        sdkVersion: "0.0.0",
+        runtime: "Bun",
+        platform: "fixture",
+        timestamp: new Date().toISOString(),
+        configuration: { imageClass: "prepared", network: "blocked", regionClass: "fixture" },
+        diagnostic,
+      },
+    ],
+  });
+
+  expect(report.records[0]?.issue).toBe("outcome-unknown");
+  expect(report.records[0]?.diagnostic?.error.code).toBe("OUTCOME_UNKNOWN");
+});
+
+test("an accepted no-clobber write captures destination bytes before reporting the missing conflict", async () => {
+  const { store, steps, writes, destroys } = await run("no-clobber");
+  expect(steps.find((entry) => entry.scenario === "file-overwrite")?.status).toBe("passed");
+  expect(steps.find((entry) => entry.scenario === "file-no-clobber")).toMatchObject({
+    status: "failed",
+    diagnostic: {
+      stage: "compare",
+      overwrite: false,
+      writeBytes: [0, 255, 1, 128],
+      expectedBytes: [2, 254, 0],
+      expectedLength: 3,
+      actualBytes: [0, 255, 1, 128],
+      actualLength: 4,
+      error: { message: "No-clobber unexpectedly passed" },
+    },
+  });
+  expect(writes).toBe(3);
+  expect(destroys).toBe(1);
+  expect((await store.read()).cleanup).toBe("confirmed");
+});
+
+test("sandbox-info refuses a redirect without forwarding the API key to another origin", async () => {
+  let forwarded = 0;
+  let authenticated = 0;
+
+  const destination = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch() {
+      forwarded++;
+
+      return Response.json({ envdVersion: "0.5.8" });
+    },
+  });
+
+  const origin = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      if (request.headers.get("X-API-Key") === secret) authenticated++;
+
+      return Response.redirect(destination.url, 302);
+    },
+  });
+
+  try {
+    await expect(
+      e2bEnvdVersion(secret, (_url, options) => fetch(origin.url, options))(owned),
+    ).rejects.toThrow();
+    expect(authenticated).toBe(1);
+    expect(forwarded).toBe(0);
+  } finally {
+    await origin.stop(true);
+    await destination.stop(true);
+  }
 });

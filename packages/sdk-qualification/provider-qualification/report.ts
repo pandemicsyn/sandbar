@@ -241,3 +241,24 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
 
   return lines.join("\n");
 }
+
+export function publicIssue(value: string | undefined) {
+  if (!value) return undefined;
+
+  if (value === "OUTCOME_UNKNOWN") return "outcome-unknown";
+
+  if (value === "UNSUPPORTED") return "unsupported-capability";
+
+  if (
+    value === "outcome-unknown" ||
+    value === "cleanup-unconfirmed" ||
+    value === "interrupted" ||
+    value === "dependency-failed" ||
+    value === "not-selected"
+  )
+    return value;
+
+  if (value === "WAIT_ABORTED" || value === "TIMEOUT") return "interrupted";
+
+  return "assertion-failed";
+}

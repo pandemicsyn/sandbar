@@ -313,15 +313,23 @@ async function runPreparedLocked(
       async (capture) => {
         capture.file(first, false);
 
+        let writeAccepted = false;
+
         try {
           await sandbox.writeFile(path, first, { overwrite: false, signal: options.signal });
-          throw new Error("No-clobber unexpectedly passed");
+          writeAccepted = true;
         } catch (error) {
           if (!(error instanceof SandbarError) || error.code !== "CONFLICT") throw error;
         }
 
         capture.at("read");
         const actual = await boundedRead(sandbox.readFile(path), options.signal);
+
+        if (writeAccepted) {
+          capture.observeBytes(actual, second);
+          throw new Error("No-clobber unexpectedly passed");
+        }
+
         capture.compareBytes(actual, second);
       },
       ["file-binary", "file-overwrite"],
@@ -389,7 +397,15 @@ async function runPreparedLocked(
       );
     }
 
-    await Promise.all(diagnosticJobs);
+    const releaseDiagnostics = await Promise.all(diagnosticJobs);
+
+    if (!client && releaseDiagnostics.length)
+      steps.push({
+        scenario: "close",
+        status: "failed",
+        issue: "close-failed",
+        diagnostic: releaseDiagnostics[0],
+      });
 
     if (createFailed)
       for (const scenario of [
@@ -492,7 +508,21 @@ export async function reconcileConnection(
         error,
       );
 
-      return [{ scenario: "connect", status: "failed", issue: "assertion-failed", diagnostic }];
+      const releaseDiagnostics = await Promise.all(diagnosticJobs);
+
+      const failedSteps: Step[] = [
+        { scenario: "connect", status: "failed", issue: "assertion-failed", diagnostic },
+      ];
+
+      if (releaseDiagnostics.length)
+        failedSteps.push({
+          scenario: "close",
+          status: "failed",
+          issue: "close-failed",
+          diagnostic: releaseDiagnostics[0],
+        });
+
+      return failedSteps;
     } finally {
       clearTimeout(timer);
     }

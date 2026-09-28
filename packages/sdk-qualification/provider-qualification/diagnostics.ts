@@ -184,7 +184,7 @@ export class FailureCapture {
       expectedLength: expected.length,
     };
   }
-  compareBytes(actual: Uint8Array, expected: Uint8Array) {
+  observeBytes(actual: Uint8Array, expected: Uint8Array) {
     this.at("compare");
     Object.assign(this.details, {
       expectedBytes: Array.from(expected.slice(0, 32)),
@@ -193,6 +193,9 @@ export class FailureCapture {
       actualLength: actual.length,
       bytesTruncated: actual.length > 32 || expected.length > 32,
     });
+  }
+  compareBytes(actual: Uint8Array, expected: Uint8Array) {
+    this.observeBytes(actual, expected);
 
     if (
       actual.length !== expected.length ||

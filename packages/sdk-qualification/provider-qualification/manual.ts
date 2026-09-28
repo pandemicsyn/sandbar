@@ -8,7 +8,7 @@ import { loadCredentials } from "./credentials";
 import { e2bConfiguration, e2bConnection, e2bEnvdVersion } from "./e2b-profile";
 import { LedgerStore, requirePrivateDirectory } from "./ledger";
 import { reconcileConnection, runPrepared, type Step } from "./lifecycle";
-import { parseReport, scenarios, type Scenario } from "./report";
+import { parseReport, publicIssue, scenarios, type Scenario } from "./report";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 
@@ -270,23 +270,4 @@ try {
   clearTimeout(timer);
   process.off("SIGINT", interrupt);
   process.off("SIGTERM", interrupt);
-}
-
-function publicIssue(value: string | undefined) {
-  if (!value) return undefined;
-
-  if (value === "UNSUPPORTED") return "unsupported-capability";
-
-  if (
-    value === "outcome-unknown" ||
-    value === "cleanup-unconfirmed" ||
-    value === "interrupted" ||
-    value === "dependency-failed" ||
-    value === "not-selected"
-  )
-    return value;
-
-  if (value === "WAIT_ABORTED" || value === "TIMEOUT") return "interrupted";
-
-  return "assertion-failed";
 }
