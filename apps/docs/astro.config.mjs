@@ -21,10 +21,13 @@ const openSearchFromQuery = `addEventListener("DOMContentLoaded", () => {
 export default defineConfig({
   site: "https://sandbarsdk.dev",
   output: "static",
+  // The tab renderer uses a native parser; keep its platform binding beside its package.
+  vite: { ssr: { external: ["satteri"] } },
   integrations: [
     starlight({
       title: "Sandbar",
-      description: "Development documentation for the provider-neutral sandbox API.",
+      description:
+        "The TypeScript SDK for sandboxes. Getting started, provider support, guides, and adapter authoring.",
       favicon: "/favicon.svg",
       head: [
         { tag: "meta", attrs: { name: "robots", content: "noindex, nofollow" } },
@@ -66,31 +69,49 @@ export default defineConfig({
       },
       sidebar: [
         {
-          label: "Start",
+          label: "Getting started",
+          items: [{ slug: "docs", label: "Overview" }, { slug: "docs/direct-quickstart" }],
+        },
+        {
+          label: "Build with an agent",
+          items: [{ slug: "docs/agents/build-with-sdk" }, { slug: "docs/agents/build-a-provider" }],
+        },
+        {
+          label: "Using the SDK",
           items: [
-            { slug: "docs" },
-            { slug: "docs/direct-quickstart" },
-            { slug: "docs/service-quickstart" },
-            { slug: "docs/choose-a-mode" },
+            { slug: "docs/guides/resources" },
+            { slug: "docs/guides/files-and-output" },
+            { slug: "docs/guides/images-and-networking" },
+            { slug: "docs/guides/recovery" },
+            { slug: "docs/guides/troubleshooting" },
           ],
         },
-        { label: "Guides", items: [{ autogenerate: { directory: "docs/guides" } }] },
+        {
+          label: "Providers",
+          items: [
+            { slug: "docs/providers/support" },
+            { slug: "docs/providers/daytona" },
+            { slug: "docs/providers/e2b" },
+            { slug: "docs/providers/live-qualification", label: "Live test evidence" },
+          ],
+        },
+        {
+          label: "Build a provider",
+          collapsed: true,
+          items: [
+            { slug: "docs/guides/write-an-adapter" },
+            { slug: "docs/guides/adapter-capabilities" },
+            { slug: "docs/guides/adapter-recovery" },
+            { slug: "docs/contributing/drivers" },
+          ],
+        },
         {
           label: "Reference",
           items: [
             { slug: "docs/reference/typescript" },
             { slug: "docs/reference/generated-typescript" },
-            { slug: "docs/reference/http" },
           ],
         },
-        {
-          label: "Operate",
-          items: [
-            { autogenerate: { directory: "docs/self-hosting" } },
-            { autogenerate: { directory: "docs/providers" } },
-          ],
-        },
-        { label: "Contribute", items: [{ autogenerate: { directory: "docs/contributing" } }] },
       ],
     }),
   ],

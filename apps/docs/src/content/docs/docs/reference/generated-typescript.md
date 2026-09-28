@@ -50,6 +50,16 @@ Import from `sandbar-sdk/daytona`.
 | --------- | -------- |
 | `daytona` | function |
 
+## E2B adapter
+
+Import from `sandbar-sdk/e2b`.
+
+| Export             | Kind      |
+| ------------------ | --------- |
+| `createE2BAdapter` | function  |
+| `e2b`              | function  |
+| `E2BTransport`     | interface |
+
 ## Experimental Modal adapter
 
 Import from `sandbar-modal`.
@@ -128,37 +138,3 @@ Import from `sandbar-adapter/testing`.
 | `adapterSuite`        | function |
 | `AdapterSuiteFixture` | type     |
 | `AdapterSuiteReport`  | type     |
-
-## Service host
-
-Import from `sandbar-service`.
-
-| Export           | Kind     |
-| ---------------- | -------- |
-| `createService`  | function |
-| `ServiceAdapter` | type     |
-| `ServiceHandle`  | type     |
-| `ServiceOptions` | type     |
-
-## Service HTTP client
-
-Import from `sandbar-service/client`.
-
-| Export                | Kind      |
-| --------------------- | --------- |
-| `CreateInput`         | type      |
-| `ExecInput`           | type      |
-| `ExecOutput`          | type      |
-| `Image`               | re-export |
-| `NoExitCodeError`     | re-export |
-| `NonzeroExitError`    | re-export |
-| `OperationHandle`     | type      |
-| `OutcomeUnknownError` | re-export |
-| `outputText`          | re-export |
-| `RecoveryReference`   | type      |
-| `RemoteClient`        | class     |
-| `RemoteOptions`       | type      |
-| `Sandbar`             | value     |
-| `SandbarError`        | re-export |
-| `SandboxHandle`       | type      |
-| `WaitAbortedError`    | re-export |

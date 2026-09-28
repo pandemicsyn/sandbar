@@ -34,7 +34,7 @@
     "directory": "packages/service"
   },
   "description": "Optional self-hosted Sandbar service and HTTP client.",
-  "homepage": "https://sandbarsdk.dev/docs/service-quickstart/",
+  "homepage": "https://github.com/pandemicsyn/sandbar/tree/main/packages/service",
   "bugs": {
     "url": "https://github.com/pandemicsyn/sandbar/issues"
   },

@@ -1,0 +1,114 @@
+---
+title: Getting started
+description: Install Sandbar in your application and run your first sandbox command.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import daytona from "../../../../examples/getting-started-daytona.ts?raw";
+import e2b from "../../../../examples/getting-started-e2b.ts?raw";
+import modal from "../../../../examples/getting-started-modal.ts?raw";
+
+Run a command in a sandbox from your own TypeScript application. You'll need a provider account and **Bun** to run this example. The SDK also supports server-side [Node.js](/docs/providers/support/#runtimes).
+
+## 1. Install the SDK
+
+Run the install command in your application's directory. Choose a provider; your selection also updates the credentials and example below.
+
+:::note[Pre-release]
+The packages are not published yet. These install commands describe the upcoming package release.
+:::
+
+<Tabs syncKey="quickstart-provider">
+  <TabItem label="Daytona">
+
+```sh
+bun add sandbar-sdk
+```
+
+  </TabItem>
+  <TabItem label="E2B">
+
+```sh
+bun add sandbar-sdk
+```
+
+  </TabItem>
+  <TabItem label="Modal (experimental)">
+
+```sh
+bun add sandbar-sdk sandbar-modal
+```
+
+Modal uses a separately installed adapter. It has offline test coverage but has not been live-qualified. [Compare provider support](/docs/providers/support/).
+
+  </TabItem>
+</Tabs>
+
+## 2. Add your credentials
+
+Create an untracked `.env.local` file in your application's directory:
+
+<Tabs syncKey="quickstart-provider">
+  <TabItem label="Daytona">
+
+```sh title=".env.local"
+DAYTONA_API_KEY="<your-daytona-api-key>"
+```
+
+The example uses the `daytona-small` Linux snapshot in `us`. Select an active snapshot available in your region. `daytona-default` permits Daytona's essential services; it does not mean all egress is blocked.
+
+  </TabItem>
+  <TabItem label="E2B">
+
+```sh title=".env.local"
+E2B_API_KEY="<your-e2b-api-key>"
+```
+
+The example uses E2B's public `base` template. No team ID or custom template is required.
+
+  </TabItem>
+  <TabItem label="Modal (experimental)">
+
+```sh title=".env.local"
+MODAL_TOKEN_ID=your-modal-token-id
+MODAL_TOKEN_SECRET=your-modal-token-secret
+MODAL_APP_NAME=your-existing-app
+MODAL_IMAGE_ID=im-your-existing-image-id
+```
+
+Use an existing Modal App in the `main` environment and an existing prepared image containing `/bin/sh` and standard shell utilities. The example does not create an App or build an image.
+
+  </TabItem>
+</Tabs>
+
+Add `.env.local` to your `.gitignore`. Keep credentials on the server and out of browser code. Running the example creates a sandbox in your provider account and may incur usage charges.
+
+## 3. Run a command
+
+Save the complete example for your provider as `quickstart.ts` in your application:
+
+<Tabs syncKey="quickstart-provider">
+  <TabItem label="Daytona">
+    <Code code={daytona} lang="ts" title="quickstart.ts" />
+  </TabItem>
+  <TabItem label="E2B">
+    <Code code={e2b} lang="ts" title="quickstart.ts" />
+  </TabItem>
+  <TabItem label="Modal (experimental)">
+    <Code code={modal} lang="ts" title="quickstart.ts" />
+  </TabItem>
+</Tabs>
+
+Run it from your application's directory:
+
+```sh
+bun --env-file=.env.local run quickstart.ts
+```
+
+You should see `Hello from Sandbar!`. Each example destroys the sandbox in `finally`, then closes the client. `close()` alone does **not** destroy compute. If creation or cleanup has an uncertain outcome, follow [Errors and recovery](/docs/guides/recovery/) before retrying.
+
+## Next steps
+
+- [Give your agent a Sandbar prompt](/docs/agents/build-with-sdk/) to start building an application.
+- [Read and write files](/docs/guides/files-and-output/) or [configure execution](/docs/guides/resources/).
+- [Check tested provider support](/docs/providers/support/) for live-tested workflows and limits.

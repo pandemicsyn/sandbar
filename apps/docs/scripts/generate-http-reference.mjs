@@ -2,9 +2,7 @@ import { writeFile, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { openApiDocument } from "../../../apps/server/src/openapi.ts";
 
-const destination = fileURLToPath(
-  new URL("../src/content/docs/docs/reference/http.md", import.meta.url),
-);
+const destination = fileURLToPath(new URL("../internal/reference/http.md", import.meta.url));
 
 const lines = [
   "---",
