@@ -71,7 +71,7 @@ export interface E2BTransport {
     }[];
     nextToken?: string;
   }>;
-  kill(id: string): Promise<boolean>;
+  kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
     id: string,
     script: string,
