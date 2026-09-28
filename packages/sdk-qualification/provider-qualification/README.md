@@ -1,6 +1,6 @@
 # Provider qualification
 
-The qualification targets are **Daytona and E2B**. The E2B borrowed prepared-template profile uses the merged public SDK factory with a 300-second native sandbox lifetime. Daytona's manual profile remains blocked pending its merged native lifetime/cleanup enhancements. The common lifecycle, private cleanup ledger, offline fixtures and generated evidence page do not constitute a live certification claim. No live records have been collected.
+The qualification targets are **Daytona and E2B**. The E2B borrowed prepared-template profile uses the merged public SDK factory with a 300-second native sandbox lifetime. Daytona's manual profile remains blocked pending its merged native lifetime/cleanup enhancements. The common lifecycle, private cleanup ledger, offline fixtures and generated evidence page do not constitute a live certification claim. The dated E2B `base` record is partial qualification: overwrite and no-clobber failed, while owned cleanup was confirmed. See `results/e2b-2026-09-28-base.json` and `specs/provider-evidence/e2b-2026-09-28.md` from the repository root.
 
 ## When to run
 
@@ -50,7 +50,7 @@ Exercise and reconciliation hold an exclusive per-run lock across all mutations.
 
 Only reviewed sanitized JSON belongs in `results/`. Records contain provider/scenario, mode (`live`, `fixture`, `packed`), exact merged SDK commit/version and harness commit, pinned native version, runtime/platform, timestamp, tested image/template/authority/network/region classes, evidence reference and cleanup state. Private ledgers can contain resource IDs and recovery references; never publish them, credentials or native logs.
 
-The normal docs build reads only committed JSON and never contacts providers. The generated page uses live evidence only. A newer failure supersedes an older pass for the same configuration. Scenario successes with incomplete cleanup remain incomplete. Missing credentials or approval means not-run. No live records are committed yet.
+The normal docs build reads only committed JSON and never contacts providers. The generated page uses live evidence only. A newer failure supersedes an older pass for the same configuration. Scenario successes with incomplete cleanup remain incomplete. Missing credentials or approval means not-run. The current dated E2B record preserves its failed file scenarios and confirmed cleanup; it is not a provider-wide pass.
 
 ```sh
 bun test packages/sdk-qualification/provider-qualification
