@@ -106,8 +106,8 @@ if (saved && (saved.provider !== "e2b" || saved.image.kind !== "borrowed-prepare
 
 const config = e2bConfiguration.parse(
   saved?.connection ?? {
-    teamId: required("SANDBAR_E2B_TEAM_ID"),
-    templateId: required("SANDBAR_E2B_TEMPLATE_ID"),
+    teamId: process.env.SANDBAR_E2B_TEAM_ID,
+    templateId: process.env.SANDBAR_E2B_TEMPLATE_ID,
     timeoutSeconds: 300,
   },
 );

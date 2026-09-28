@@ -9,11 +9,7 @@ import { publicCleanupAccess, reconcile, recordReference, runPrepared } from "./
 
 const directories: string[] = [];
 
-const config = {
-  teamId: "team_fixture",
-  templateId: "template_fixture",
-  timeoutSeconds: 300 as const,
-};
+const config = e2bConfiguration.parse({});
 
 afterEach(async () => {
   for (const directory of directories.splice(0))
@@ -35,12 +31,12 @@ async function fixture(options: { loseCreate?: boolean; pendingDestroy?: boolean
   };
 
   const transport: E2BTransport = {
-    async verifyTeam(teamId) {
-      expect(teamId).toBe(config.teamId);
+    async verifyAuth() {},
+    async verifyTeam() {
+      throw new Error("API-key/base profile must not require a team");
     },
-    async verifyTemplate(teamId, templateId) {
-      expect(teamId).toBe(config.teamId);
-      expect(templateId).toBe(config.templateId);
+    async verifyTemplate() {
+      throw new Error("Public base is validated by the native create, not a team template list");
     },
     async buildImage() {
       counters.build++;
@@ -130,6 +126,7 @@ async function fixture(options: { loseCreate?: boolean; pendingDestroy?: boolean
 
 test("E2B prepared profile qualifies public SDK lifecycle with one native TTL sandbox", async () => {
   const native = await fixture();
+  expect(config).toEqual({ templateId: "base", timeoutSeconds: 300 });
 
   const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
     network: "blocked",

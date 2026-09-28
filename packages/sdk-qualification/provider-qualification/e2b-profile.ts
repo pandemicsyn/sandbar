@@ -3,9 +3,16 @@ import { e2b, createE2BAdapter, type E2BTransport } from "sandbar-sdk/e2b";
 import { z } from "zod";
 
 export const e2bConfiguration = z.strictObject({
-  teamId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
-  templateId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
-  timeoutSeconds: z.literal(300),
+  teamId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,128}$/)
+    .optional(),
+  templateId: z
+    .string()
+    .max(128)
+    .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
+    .default("base"),
+  timeoutSeconds: z.literal(300).default(300),
 });
 
 export type E2BConfiguration = z.infer<typeof e2bConfiguration>;

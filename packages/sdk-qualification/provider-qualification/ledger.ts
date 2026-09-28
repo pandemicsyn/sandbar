@@ -21,8 +21,11 @@ const ledgerSchema = z.strictObject({
         timeoutSeconds: z.number().int().min(60).max(3600),
       }),
       z.strictObject({
-        teamId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
-        templateId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+        teamId: z
+          .string()
+          .regex(/^[A-Za-z0-9_-]{1,128}$/)
+          .optional(),
+        templateId: z.string().regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/),
         timeoutSeconds: z.literal(300),
       }),
     ])
