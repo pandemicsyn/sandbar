@@ -21,10 +21,6 @@
       "types": "./dist/daytona.d.ts",
       "import": "./dist/daytona.js"
     },
-    "./modal": {
-      "types": "./dist/modal.d.ts",
-      "import": "./dist/modal.js"
-    },
     "./e2b": {
       "types": "./dist/e2b.d.ts",
       "import": "./dist/e2b.js"
@@ -32,18 +28,16 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts src/service-support.ts src/daytona.ts src/modal.ts src/e2b.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external modal --external e2b --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts src/service-support.ts src/daytona.ts src/e2b.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external e2b --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
   },
   "dependencies": {
     "sandbar-adapter": "workspace:*",
     "zod": "4.6.5",
-    "modal": "0.10.1",
     "e2b": "2.51.0"
   },
   "devDependencies": {
     "@sandbar/provider-fake": "workspace:*",
     "@sandbar/provider-daytona": "workspace:*",
-    "@sandbar/provider-modal": "workspace:*",
     "@sandbar/provider-e2b": "workspace:*"
   },
   "license": "Apache-2.0",
@@ -52,7 +46,7 @@
     "url": "git+https://github.com/pandemicsyn/sandbar.git",
     "directory": "packages/sdk"
   },
-  "description": "Sandbar SDK for direct sandbox access with built-in Daytona and Modal adapters.",
+  "description": "Sandbar SDK for direct sandbox access with built-in adapters.",
   "homepage": "https://sandbarsdk.dev/docs/direct-quickstart/",
   "bugs": {
     "url": "https://github.com/pandemicsyn/sandbar/issues"

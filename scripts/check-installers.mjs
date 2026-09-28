@@ -60,20 +60,17 @@ void [definition, suite];
     runtime: `
 import { Sandbar, Image } from ${JSON.stringify(sdkName)};
 import { daytona } from ${JSON.stringify(`${sdkName}/daytona`)};
-import { modal } from ${JSON.stringify(`${sdkName}/modal`)};
 if (typeof Sandbar.connect !== "function" || typeof daytona !== "function" ||
-    typeof modal !== "function" || Image.prepared("fixture").kind !== "prepared")
+    Image.prepared("fixture").kind !== "prepared")
   throw new Error("Packed SDK import failed");
 `,
     types: `
 import { Sandbar, Image } from ${JSON.stringify(sdkName)};
 import { daytona } from ${JSON.stringify(`${sdkName}/daytona`)};
-import { modal } from ${JSON.stringify(`${sdkName}/modal`)};
 const direct: typeof Sandbar.connect = Sandbar.connect;
 const daytonaFactory: typeof daytona = daytona;
-const modalFactory: typeof modal = modal;
 const image = Image.prepared("fixture");
-void [direct, daytonaFactory, modalFactory, image];
+void [direct, daytonaFactory, image];
 `,
   },
   {

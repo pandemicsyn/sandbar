@@ -1,6 +1,6 @@
 # TypeScript resource SDK
 
-`sandbar-sdk` uses an installed adapter in the caller's server-side Node.js or Bun process. Implemented first-party adapter imports are `sandbar-sdk/daytona` and `sandbar-sdk/modal`; both are included in the SDK package and use the same public adapter contract as custom integrations. `sandbar-service/client` uses the Sandbar service over HTTP. The fake provider is a deterministic test fixture. Live provider qualification remains separate from the packaged API shape.
+`sandbar-sdk` uses an installed adapter in the caller's server-side Node.js or Bun process. The implemented built-in Daytona adapter is available from `sandbar-sdk/daytona`. The experimental Modal integration is installed separately as `sandbar-modal` and uses the same public adapter contract as custom integrations. `sandbar-service/client` uses the Sandbar service over HTTP. The fake provider is a deterministic test fixture. Live provider qualification remains separate from the packaged API shape.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
