@@ -695,7 +695,9 @@ test("Daytona service reconnects and observes lost exec, write and delete withou
       files.delete(link![1]!);
       const marker = /printf '%s' '([^']+)' > '([^']+)'/.exec(command);
       expect(marker).not.toBeNull();
-      files.set(marker![2]!, new TextEncoder().encode(marker![1]!));
+      const publish = /mv -f -- '([^']+)' '([^']+)'/.exec(command);
+      expect(publish?.[1]).toBe(marker![2]);
+      files.set(publish![2]!, new TextEncoder().encode(marker![1]!));
       throw new Error("Daytona write response lost");
     }
 

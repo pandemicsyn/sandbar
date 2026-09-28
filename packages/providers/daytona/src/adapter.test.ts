@@ -4,10 +4,11 @@ import { adapterSuite } from "sandbar-adapter/testing";
 import { createDaytonaAdapter } from "./adapter";
 import { Sandbar, Image } from "sandbar-sdk";
 
-test.each(["normal", "lost", "wrong-source"] as const)(
+test.each(["normal", "pending-id", "unknown-id", "lost", "wrong-source"] as const)(
   "explicit image build is scoped and never creates a sandbox: %s",
   async (mode) => {
-    const lost = mode !== "normal";
+    const lost = mode === "lost" || mode === "wrong-source";
+    let idReads = 0;
     let builds = 0;
     let creates = 0;
     let name = "";
@@ -46,7 +47,22 @@ test.each(["normal", "lost", "wrong-source"] as const)(
           return Response.json(snapshot());
         }
 
-        if (url.pathname === "/api/snapshots/built-1") return Response.json(snapshot());
+        if (url.pathname === "/api/snapshots/built-1") {
+          idReads++;
+
+          return Response.json({
+            ...snapshot(),
+            state:
+              mode === "unknown-id" && idReads === 1
+                ? "error"
+                : mode === "pending-id" && idReads < 4
+                  ? "pulling"
+                  : lost
+                    ? (["building", "pending", "pulling", "active"][observations + idReads - 1] ??
+                      "active")
+                    : "active",
+          });
+        }
 
         if (url.pathname.startsWith("/api/snapshots/")) {
           // A normal build can complete by ID before its name index catches up.
@@ -172,7 +188,20 @@ test.each(["normal", "lost", "wrong-source"] as const)(
       expect(builds).toBe(1);
       expect(creates).toBe(1);
 
-      if (lost) expect(observations).toBe(4);
+      if (lost) {
+        expect(observations).toBe(1);
+        expect(idReads).toBe(4);
+      }
+
+      if (mode === "unknown-id") {
+        expect(idReads).toBe(3);
+        expect(observations).toBe(0);
+      }
+
+      if (mode === "pending-id") {
+        expect(idReads).toBe(5);
+        expect(observations).toBe(0);
+      }
     } finally {
       await client.close();
     }
@@ -347,6 +376,7 @@ test("lost exec, write and destroy responses recover by read-only evidence after
           organizationId: "org-1",
           target: "us",
           state,
+          labels: state === "started" ? { "sandbar.imageSnapshot": "retained-1" } : undefined,
           networkBlockAll: true,
           public: false,
           toolboxProxyUrl: "https://proxy.app.daytona.io/toolbox",
@@ -412,7 +442,9 @@ test("lost exec, write and destroy responses recover by read-only evidence after
         files.delete(link![1]!);
         const marker = /printf '%s' '([^']+)' > '([^']+)'/.exec(command);
         expect(marker).not.toBeNull();
-        files.set(marker![2]!, new TextEncoder().encode(marker![1]!));
+        const publish = /mv -f -- '([^']+)' '([^']+)'/.exec(command);
+        expect(publish?.[1]).toBe(marker![2]);
+        files.set(publish![2]!, new TextEncoder().encode(marker![1]!));
         throw new Error("write response lost");
       }
 
@@ -538,6 +570,9 @@ test("lost exec, write and destroy responses recover by read-only evidence after
   const termination = await afterDestroy.operations.observe(destroyAttempt);
 
   expect(termination?.kind).toBe("completed");
+
+  if (termination?.kind === "completed")
+    expect(termination.value).toMatchObject({ retainedResources: ["daytona:snapshot:retained-1"] });
   expect(mutations).toEqual({ exec: 1, upload: 1, write: 1, destroy: 1 });
   await afterDestroy.close();
 });

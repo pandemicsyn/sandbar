@@ -15,8 +15,8 @@ import type { ImageBuildValue } from "sandbar-adapter";
 
 type ImageBuildResult =
   | { status: "completed"; value: ImageBuildValue }
-  | { status: "pending" }
-  | { status: "unknown"; reason: string };
+  | { status: "pending"; snapshotId: string }
+  | { status: "unknown"; reason: string; snapshotId?: string };
 
 function fixedImage(image: string): boolean {
   return (
@@ -511,7 +511,8 @@ export class DaytonaDriver implements ProviderDriver {
     )
       return null;
 
-    if (["building", "pending", "pulling"].includes(snapshot.state)) return { status: "pending" };
+    if (["building", "pending", "pulling"].includes(snapshot.state))
+      return { status: "pending", snapshotId: snapshot.id };
 
     if (
       snapshot.state !== "active" ||
@@ -521,6 +522,7 @@ export class DaytonaDriver implements ProviderDriver {
       return {
         status: "unknown",
         reason: `Daytona snapshot ${snapshot.id} is not confirmed ready`,
+        snapshotId: snapshot.id,
       };
 
     return {
@@ -533,15 +535,23 @@ export class DaytonaDriver implements ProviderDriver {
       },
     };
   }
-  async observeImageBuild(submissionId: string, image: string): Promise<ImageBuildResult | null> {
+  async observeImageBuild(
+    submissionId: string,
+    image: string,
+    snapshotId?: string,
+  ): Promise<ImageBuildResult | null> {
     const name = `sandbar-image-${submissionId}`;
-    const response = await this.request("GET", `/snapshots/${encodeURIComponent(name)}`);
+
+    const response = await this.request(
+      "GET",
+      `/snapshots/${encodeURIComponent(snapshotId ?? name)}`,
+    );
 
     if (!response.ok) return null;
 
     const snapshot = await boundedJson(response, Snapshot);
 
-    if (snapshot.imageName !== image)
+    if ((snapshotId && snapshot.id !== snapshotId) || snapshot.imageName !== image)
       return { status: "unknown", reason: "Daytona image build source mismatched" };
 
     return this.imageBuildResult(snapshot, name);
@@ -552,6 +562,7 @@ export class DaytonaDriver implements ProviderDriver {
     signal: AbortSignal;
   }): Promise<ImageBuildResult> {
     const name = `sandbar-image-${input.submissionId}`;
+    let snapshotId: string | undefined;
 
     try {
       const prior = await this.request("GET", `/snapshots/${encodeURIComponent(name)}`);
@@ -569,18 +580,29 @@ export class DaytonaDriver implements ProviderDriver {
       if (
         snapshot.name !== name ||
         snapshot.imageName !== input.image ||
-        snapshot.organizationId !== this.scope.accountId
+        snapshot.organizationId !== this.scope.accountId ||
+        !/^[A-Za-z0-9._:-]{1,128}$/.test(snapshot.id)
       )
         return { status: "unknown", reason: "Daytona image build response mismatched" };
 
+      snapshotId = snapshot.id;
+
       if (input.signal.aborted)
-        return { status: "unknown", reason: "Daytona image build wait ended; observe only" };
+        return {
+          status: "unknown",
+          reason: "Daytona image build wait ended; observe only",
+          snapshotId,
+        };
 
       // The returned native ID remains authoritative even while the name index is stale.
       const response = await this.request("GET", `/snapshots/${encodeURIComponent(snapshot.id)}`);
 
       if (!response.ok)
-        return { status: "unknown", reason: "Daytona image build could not be read by ID" };
+        return {
+          status: "unknown",
+          reason: "Daytona image build could not be read by ID",
+          snapshotId,
+        };
 
       const current = await boundedJson(response, Snapshot);
 
@@ -597,7 +619,11 @@ export class DaytonaDriver implements ProviderDriver {
       // Native build submission is never replayed after an unavailable response.
     }
 
-    return { status: "unknown", reason: "Daytona image build outcome unavailable; observe only" };
+    return {
+      status: "unknown",
+      reason: "Daytona image build outcome unavailable; observe only",
+      snapshotId,
+    };
   }
   async create(input: {
     scope: NativeScope;
@@ -1256,7 +1282,8 @@ export class DaytonaDriver implements ProviderDriver {
       });
 
       const markerPath = await receiptPath("write", input.identity.submissionId);
-      const command = `${action}; rc=$?; if [ "$rc" -eq 0 ]; then printf '%s' ${quote(marker)} > ${quote(markerPath)} || rc=125; fi; rm -f ${quote(temporaryPath)} || rc=125; exit "$rc"`;
+      const markerStage = `${markerPath}.tmp`;
+      const command = `${action}; rc=$?; if [ "$rc" -eq 0 ]; then (printf '%s' ${quote(marker)} > ${quote(markerStage)} && mv -f -- ${quote(markerStage)} ${quote(markerPath)}) || rc=125; fi; rm -f ${quote(temporaryPath)} ${quote(markerStage)} || rc=125; exit "$rc"`;
 
       const committed = await this.json(
         "POST",
@@ -1384,10 +1411,18 @@ export class DaytonaDriver implements ProviderDriver {
       },
     };
   }
+  async destroyRetainedResources(sandbox: SandboxRef): Promise<string[]> {
+    this.sameScope(sandbox);
+    const value = await this.sandbox(sandbox.nativeId);
+    const snapshotId = value?.labels?.["sandbar.imageSnapshot"];
+
+    return snapshotId ? [`daytona:snapshot:${snapshotId}`] : [];
+  }
   async destroy(input: {
     sandbox: SandboxRef;
     identity: InvocationIdentity;
     signal?: AbortSignal;
+    retainedResources?: string[];
   }): Promise<DriverResult> {
     this.sameScope(input.sandbox);
 
@@ -1395,6 +1430,12 @@ export class DaytonaDriver implements ProviderDriver {
       return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
 
     try {
+      const retainedResources =
+        input.retainedResources ?? (await this.destroyRetainedResources(input.sandbox));
+
+      if (input.signal?.aborted)
+        return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
+
       const value = await this.json(
         "DELETE",
         `/sandbox/${encodeURIComponent(input.sandbox.nativeId)}`,
@@ -1418,9 +1459,7 @@ export class DaytonaDriver implements ProviderDriver {
           observation: {
             sandbox: input.sandbox,
             computeStopped: true,
-            retainedResources: value.labels?.["sandbar.imageSnapshot"]
-              ? [`daytona:snapshot:${value.labels["sandbar.imageSnapshot"]}`]
-              : [],
+            retainedResources,
           },
         },
       };
@@ -1431,7 +1470,11 @@ export class DaytonaDriver implements ProviderDriver {
       );
     }
   }
-  async observeDestroy(sandbox: SandboxRef, submissionId: string): Promise<DriverResult | null> {
+  async observeDestroy(
+    sandbox: SandboxRef,
+    submissionId: string,
+    retainedResources?: string[],
+  ): Promise<DriverResult | null> {
     this.sameScope(sandbox);
     const value = await this.sandbox(sandbox.nativeId);
 
@@ -1451,9 +1494,11 @@ export class DaytonaDriver implements ProviderDriver {
         observation: {
           sandbox,
           computeStopped: true,
-          retainedResources: value.labels?.["sandbar.imageSnapshot"]
-            ? [`daytona:snapshot:${value.labels["sandbar.imageSnapshot"]}`]
-            : [],
+          retainedResources:
+            retainedResources ??
+            (value.labels?.["sandbar.imageSnapshot"]
+              ? [`daytona:snapshot:${value.labels["sandbar.imageSnapshot"]}`]
+              : []),
         },
       },
     };

@@ -19,7 +19,13 @@ const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
 const Token = z.strictObject({ submissionId: z.string().min(1).max(128) });
 
-const ImageToken = Token.extend({ image: z.string().min(1).max(512) });
+const ImageToken = Token.extend({
+  image: z.string().min(1).max(512),
+  snapshotId: z
+    .string()
+    .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+    .optional(),
+});
 
 const ExecToken = z.strictObject({
   submissionId: z.string().min(1).max(128),
@@ -32,7 +38,10 @@ const WriteToken = z.strictObject({
   digest: z.string().regex(/^[0-9a-f]{64}$/),
 });
 
-const DestroyToken = z.strictObject({ sandboxId: z.string().min(1).max(512) });
+const DestroyToken = z.strictObject({
+  sandboxId: z.string().min(1).max(512),
+  retainedResources: z.array(z.string().min(1).max(512)).max(1).optional(),
+});
 
 const errorCodes = {
   invalid: "INVALID_ARGUMENT",
@@ -211,11 +220,16 @@ export function createDaytonaAdapter(
               signal: ctx.signal,
             });
 
-            if (result.status !== "completed")
-              return ctx.pending(
-                { submissionId: ctx.submissionId, image: input.source.value },
-                { pollAfterMs: 500 },
-              );
+            if (result.status !== "completed") {
+              const token: z.infer<typeof ImageToken> = {
+                submissionId: ctx.submissionId,
+                image: input.source.value,
+              };
+
+              if (result.snapshotId) token.snapshotId = result.snapshotId;
+
+              return ctx.pending(token, { pollAfterMs: 500 });
+            }
 
             return result.value;
           },
@@ -225,11 +239,19 @@ export function createDaytonaAdapter(
             if (!token.success || token.data.submissionId !== attempt.submissionId)
               return ctx.unknown("Daytona image build source evidence is unavailable");
 
-            const result = await driver.observeImageBuild(attempt.submissionId, token.data.image);
+            const result = await driver.observeImageBuild(
+              attempt.submissionId,
+              token.data.image,
+              token.data.snapshotId,
+            );
 
             if (!result) return null;
 
-            if (result.status === "pending") return ctx.pending(token.data, { pollAfterMs: 500 });
+            if (result.status === "pending")
+              return ctx.pending(
+                { ...token.data, snapshotId: result.snapshotId },
+                { pollAfterMs: 500 },
+              );
 
             return result.status === "completed" ? result.value : ctx.unknown(result.reason);
           },
@@ -287,15 +309,20 @@ export function createDaytonaAdapter(
         destroy: {
           recovery: { version: 1, token: DestroyToken },
           async submit(box, ctx) {
+            const retainedResources = await driver.destroyRetainedResources(native(box.id));
+
             const result = await driver.destroy({
               sandbox: native(box.id),
               identity: identity(ctx),
               signal: ctx.signal,
+              retainedResources,
             });
 
             const value = destroyValue(result);
 
-            return value ?? ctx.pending({ sandboxId: box.id }, { pollAfterMs: 500 });
+            return (
+              value ?? ctx.pending({ sandboxId: box.id, retainedResources }, { pollAfterMs: 500 })
+            );
           },
           async observe(attempt, ctx) {
             const token = attempt.token ? DestroyToken.safeParse(attempt.token) : null;
@@ -309,15 +336,19 @@ export function createDaytonaAdapter(
             const result = await driver.observeDestroy(
               native(attempt.sandbox.id),
               attempt.submissionId,
+              token?.success ? token.data.retainedResources : undefined,
             );
 
             if (!result) return null;
 
-            if (result.status === "pending")
-              return ctx.pending(
-                { sandboxId: attempt.sandbox.id },
-                { pollAfterMs: result.observeAfterMs },
-              );
+            if (result.status === "pending") {
+              const recovery: z.infer<typeof DestroyToken> = { sandboxId: attempt.sandbox.id };
+
+              if (token?.success && token.data.retainedResources)
+                recovery.retainedResources = token.data.retainedResources;
+
+              return ctx.pending(recovery, { pollAfterMs: result.observeAfterMs });
+            }
 
             return destroyValue(result) ?? ctx.unknown("Daytona deletion is unconfirmed");
           },
