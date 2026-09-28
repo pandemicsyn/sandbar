@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { qualificationRevisions } from "./revisions";
+import { qualificationRevisions, reconciliationRevisions } from "./revisions";
 
 const directories: string[] = [];
 
@@ -32,10 +32,17 @@ test("only unchanged merged SDK sources qualify from a clean harness branch", as
     sdkCommit,
     harnessCommit: git(["rev-parse", "HEAD"]),
   });
+  expect(reconciliationRevisions(root)).toEqual({
+    sdkCommit,
+    harnessCommit: git(["rev-parse", "HEAD"]),
+  });
+  expect(reconciliationRevisions(root, "HEAD")).toBeUndefined();
   expect(() => qualificationRevisions(root, "HEAD")).toThrow("merged origin/main");
   await writeFile(join(root, "packages/sdk/source.ts"), "export const version = 2;\n");
+  expect(reconciliationRevisions(root)).toBeUndefined();
   expect(() => qualificationRevisions(root)).toThrow("clean checkout");
   git(["add", "."]);
   git(["commit", "--quiet", "-m", "unmerged SDK behavior"]);
+  expect(reconciliationRevisions(root)).toBeUndefined();
   expect(() => qualificationRevisions(root)).toThrow("merged origin/main");
 });

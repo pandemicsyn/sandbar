@@ -36,7 +36,7 @@ SANDBAR_QUAL_LEDGER_DIR=/absolute/stable/private/qualification-ledgers \
 bun packages/sdk-qualification/provider-qualification/manual.ts reconcile RUN_UUID
 ```
 
-Without `SANDBAR_QUAL_EVIDENCE_REF`, cleanup updates only the private ledger. With a reference, it writes a new sanitized report preserving original dated scenarios. CI live runs remain blocked without an off-runner checkpoint that acknowledges intent/reference before dispatch and an independent janitor; final artifact upload is insufficient.
+Without `SANDBAR_QUAL_EVIDENCE_REF`, cleanup updates only the private ledger. With a reference and verified clean/merged SDK provenance, it writes a new sanitized report preserving original dated scenarios and separate SDK/harness revisions. Dirty or unverified checkouts suppress the public report while continuing private cleanup. CI live runs remain blocked without an off-runner checkpoint that acknowledges intent/reference before dispatch and an independent janitor; final artifact upload is insufficient.
 
 ## Ownership and recovery
 

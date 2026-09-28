@@ -3,7 +3,7 @@ import { readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { qualificationRevisions } from "./revisions";
+import { qualificationRevisions, reconciliationRevisions } from "./revisions";
 import { loadCredentials } from "./credentials";
 import { e2bConfiguration, e2bConnection, e2bEnvdVersion } from "./e2b-profile";
 import { LedgerStore, requirePrivateDirectory } from "./ledger";
@@ -114,10 +114,24 @@ const config = e2bConfiguration.parse(
 
 const selected = action === "live-prepared" ? selectedScenarios() : undefined;
 
-const evidenceRef =
+const requestedEvidenceRef =
   action === "live-prepared"
     ? required("SANDBAR_QUAL_EVIDENCE_REF")
     : process.env.SANDBAR_QUAL_EVIDENCE_REF;
+
+const revisions =
+  action === "live-prepared"
+    ? qualificationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "origin/main")
+    : requestedEvidenceRef
+      ? reconciliationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "origin/main")
+      : undefined;
+
+const evidenceRef = revisions ? requestedEvidenceRef : undefined;
+
+if (requestedEvidenceRef && !evidenceRef)
+  console.warn(
+    "Cleanup continues privately; public evidence suppressed because checkout provenance is unverified",
+  );
 
 const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 
@@ -131,9 +145,7 @@ const metadata = {
   schemaVersion: 1 as const,
   provider: "e2b" as const,
   mode: "live" as const,
-  ...(action === "live-prepared"
-    ? qualificationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "origin/main")
-    : { sdkCommit: commit, harnessCommit: commit }),
+  ...(revisions ?? { sdkCommit: commit, harnessCommit: commit }),
   sdkVersion: sdk.version,
   nativeVersion: `e2b ${sdk.dependencies.e2b}`,
   runtime: `Bun ${process.versions.bun ?? "unknown"}`,

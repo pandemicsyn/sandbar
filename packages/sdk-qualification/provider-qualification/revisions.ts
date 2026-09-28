@@ -37,3 +37,12 @@ export function qualificationRevisions(root: string, mergedRef = "origin/main") 
 
   return { sdkCommit, harnessCommit };
 }
+
+/** Unverified evidence never blocks owned cleanup; only suppress its public certification report. */
+export function reconciliationRevisions(root: string, mergedRef = "origin/main") {
+  try {
+    return qualificationRevisions(root, mergedRef);
+  } catch {
+    return undefined;
+  }
+}
