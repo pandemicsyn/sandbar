@@ -223,6 +223,14 @@ async function flow() {
   const operation = await box.submitExec(argv);
   await operation.wait();
   const text: string = result.stdoutText();
+  const volume=await client.volumes.create({name:"consumer_state"});
+  const mounted=await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});
+  const captured=await box.snapshot({preserve:"filesystem+memory"});
+  const snapshot=await client.snapshots.get(captured.snapshot.reference);
+  const restored=await snapshot.restore({networkPolicy:"blocked"});
+  await restored.destroy();
+  await mounted.destroy({storage:"allow-unconfirmed"});
+  await snapshot.delete();await volume.delete();
   await client.close();
   return text;
 }
@@ -425,18 +433,20 @@ import { createE2BAdapter } from "sandbar-sdk/e2b";
 let creates = 0, kills = 0, closes = 0, buildName = "", retained = "";
 let record;
 let failWrite = false;
+const snapshots=new Map(),volumes=new Map();
 const files = new Map();
 const binary = Uint8Array.from([0, 255, 129]);
 const transport = {
+  state:{async tags(){return [{tag:"default",buildId:"build_snapshot"}];},async capture(){const value={snapshotId:"snapshot_packed:default",names:[]};snapshots.set(value.snapshotId,value);return value;},async snapshots(input){return {items:[...snapshots.values()].filter(value=>!input.name||value.snapshotId===input.name).slice(0,input.limit)};},async deleteSnapshot(id){return snapshots.delete(id);},async createVolume(name){const value={volumeId:"volume_packed",name};volumes.set(value.volumeId,value);return value;},async volume(id){return volumes.get(id);},async volumes(){return [...volumes.values()];},async deleteVolume(id){return volumes.delete(id);}},
   async verifyAuth() {},
   async verifyTeam(id) { if (id !== "team_1") throw Error("Wrong team"); },
   async verifyTemplate(team, template) { if ((team !== undefined && team !== "team_1") || !["template_1", "template_oci"].includes(template)) throw Error("Wrong template"); return template; },
   async buildImage(reference, name) { if (reference !== "node:24") throw Error("Wrong OCI reference"); buildName = name; return { templateId: "template_oci", buildId: "build_1" }; },
   async findBuild(_team, name) { return name === buildName ? { templateId: "template_oci", buildId: "build_1", status: "ready" } : null; },
   async create(input) {
-    if (!["base", "template_1", "template_oci"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
+    if (!["base", "template_1", "template_oci", "snapshot_packed:default"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
     creates++;
-    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId, metadata: input.metadata, state: "running" };
+    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
     return record.id;
   },
   async get(id) { return record?.id === id ? record : null; },
@@ -480,7 +490,16 @@ try {
   }
   if (!failed) throw Error("Packed E2B native write failure classification lost");
   await box.writeFile("/tmp/packed-lost-ack.bin", binary, {overwrite: true});
+  const capture=await box.snapshot({preserve:"filesystem+memory"});
+  const saved=structuredClone(capture.snapshot.reference);
   await box.destroy();
+  const snapshot=await client.snapshots.get(saved);
+  const restored=await snapshot.restore({networkPolicy:"blocked"});await restored.destroy();await snapshot.delete();
+  const volume=await client.volumes.create({name:"packed_data"});
+  const mounted=await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});
+  const cleanup=await mounted.destroy({storage:"allow-unconfirmed"});
+  if(cleanup.mountDurability?.[0]?.status!=="unconfirmed"||!volumes.size)throw Error("Packed volume custody lost");
+  await volume.delete();if(volumes.size||snapshots.size)throw Error("Packed state artifact cleanup failed");
   const oci = await client.sandboxes.create({ environment: Image.oci("node:24"), networkPolicy: "blocked" });
   await oci.destroy();
   if (!buildName || retained !== "template_oci") throw Error("OCI retained template was hidden");
@@ -489,7 +508,7 @@ try {
   const fromBuild = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
   await fromBuild.destroy();
 } finally { await client.close(); }
-if (creates !== 3 || kills !== 3 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
+if (creates !== 5 || kills !== 5 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
 process.stdout.write("packed E2B fixture flow passed\\n");
 `;
 

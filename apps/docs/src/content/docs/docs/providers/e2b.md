@@ -56,3 +56,9 @@ The adapter supports argument arrays and Bash shell scripts, working directory a
 Prepared templates and explicit OCI builds are implemented. Builds can retain a template after sandbox destruction; see [Images and networking](/docs/guides/images-and-networking/). The adapter supports `blocked` and `internet` policies through E2B's native internet-access setting. Region selection is not supported.
 
 Destroy each sandbox explicitly, then close the client. Native timeout is a fallback, not a cleanup confirmation. The [support matrix](/docs/providers/support/) distinguishes live baseline coverage from image-build and network tests.
+
+## Memory snapshots and private-beta volumes
+
+The direct SDK maps filesystem + RAM snapshots on eligible running sources with envd >= 0.5.0. Capture briefly pauses the source, resumes it running and drops connections. Restore allocates independent compute. The adapter records the newly allocated native template ID and native build ID; default tag reassignment blocks restore/deletion. Writable object-backed volumes attach at create when private-beta access is available. Read-only, subpaths, volume versions and verified shutdown durability are unsupported. Captures with external mounts and restore resource overrides remain unsupported. These workflows are not yet live-qualified. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/).
+
+Native mapping evidence: [E2B snapshots](https://docs.e2b.dev/sandbox/snapshots), [volume mounting](https://docs.e2b.dev/volumes/mount) and [beta limitations](https://docs.e2b.dev/faq/volumes-beta-limitations), checked against pinned e2b 2.51.0.

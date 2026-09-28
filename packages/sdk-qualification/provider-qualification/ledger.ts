@@ -56,6 +56,27 @@ const ledgerSchema = z.strictObject({
     .array(failureDiagnosticSchema.extend({ scenario: z.string().max(80) }))
     .max(64)
     .optional(),
+  stateMode: z.literal("live-state").optional(),
+  stateRole: z.string().max(80).optional(),
+  stateBorrowedVolume: z.unknown().optional(),
+  stateSelection: z
+    .array(z.enum(["snapshot-roundtrip", "volume-persistence"]))
+    .max(2)
+    .optional(),
+  stateMutations: z
+    .array(
+      z.strictObject({
+        role: z.string().max(80),
+        reference: z.unknown(),
+        resource: z.unknown().optional(),
+        sandboxId: z.string().max(512).optional(),
+        cleanup: z.enum(["pending", "confirmed", "borrowed", "not-required"]),
+        creation: z.boolean(),
+      }),
+    )
+    .max(64)
+    .optional(),
+  stateObservations: z.record(z.string().max(80), z.unknown()).optional(),
   createIntent: z.boolean(),
   createReference: z.unknown().optional(),
   destroyReference: z.unknown().optional(),
@@ -173,7 +194,10 @@ export class LedgerStore {
       const previous = await new LedgerStore(dirname(this.path), runId).read();
 
       if (
-        previous.createReference &&
+        (previous.createReference ||
+          previous.stateMutations?.some(
+            (entry) => entry.creation && entry.cleanup === "pending",
+          )) &&
         previous.cleanup !== "confirmed" &&
         previous.cleanup !== "not-required"
       )

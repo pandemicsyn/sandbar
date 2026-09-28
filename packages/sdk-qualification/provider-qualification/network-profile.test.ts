@@ -317,7 +317,7 @@ test("admission lock protects new ledger publication before the first SDK reques
   await second.withAdmissionLock(async () => {}, first);
 });
 
-test("snapshot pass cannot enter evidence while capture/restore has no public API", () => {
+test("snapshot pass cannot enter evidence without explicit workflow observations", () => {
   expect(() =>
     parseReport({
       schemaVersion: 1,
@@ -341,7 +341,7 @@ test("snapshot pass cannot enter evidence while capture/restore has no public AP
         },
       ],
     }),
-  ).toThrow("Snapshot capture/restore");
+  ).toThrow("explicit workflow observations");
 });
 
 test("paired cleanup report is independent of which UUID reconciles the pair", () => {

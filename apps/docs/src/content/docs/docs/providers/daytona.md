@@ -62,3 +62,9 @@ The live baseline uses the prepared `daytona-small` workflow in `us`; it does no
 Deletion can be asynchronous. `destroy()` waits for confirmed termination; if the response becomes uncertain, save its reference and observe instead of issuing another delete. `close()` does not stop compute. Borrowed snapshots remain untouched, and built snapshots need separate owned-artifact cleanup.
 
 See [Tested provider support](/docs/providers/support/) for measured coverage and [Errors and recovery](/docs/guides/recovery/) for handling lost responses.
+
+## Snapshots and retained volumes
+
+The direct SDK maps cold container filesystem capture with explicit stop permission and caller-quiesced writers. The source ends stopped. VM captures, memory capture and external mount capture remain unsupported. Scoped capture receipts support independent restore after source deletion; borrowed image selectors do not become owned snapshot artifacts. Writable object-backed volumes attach at create with optional subpaths. Native readiness is checked; read-only, volume versions and verified shutdown durability are unavailable. These workflows are not yet live-qualified. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/).
+
+Native mapping evidence: [Daytona snapshots](https://www.daytona.io/docs/snapshots/) and [volumes](https://www.daytona.io/docs/en/volumes/), checked against REST 0.218.0 DTOs.

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stateEvidence, assertStateEvidence } from "./state-evidence";
 import { envdSchema, failureDiagnosticSchema } from "./diagnostics";
 import {
   networkEvidenceSchema,
@@ -25,6 +26,7 @@ export const scenarios = [
   "network-internet",
   "network-blocked",
   "snapshot-roundtrip",
+  "volume-persistence",
 ] as const;
 
 const safeLabel = z
@@ -56,6 +58,7 @@ export const recordSchema = z.strictObject({
   envd: envdSchema.optional(),
   diagnostic: failureDiagnosticSchema.optional(),
   networkEvidence: networkEvidenceSchema.optional(),
+  stateEvidence: stateEvidence.optional(),
   runtime: safeLabel,
   platform: safeLabel,
   timestamp: z.iso.datetime({ offset: true }),
@@ -66,6 +69,9 @@ export const recordSchema = z.strictObject({
     authorityClass: z.enum(["api-key", "verified-team", "verified-organization"]).optional(),
     network: safeLabel,
     networkProbe: z.literal(networkProbeId).optional(),
+    stateProbe: z.enum(["snapshot-roundtrip-v1", "volume-persistence-v1"]).optional(),
+    preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
+    volumeOwnership: z.enum(["created", "borrowed"]).optional(),
     regionClass: safeLabel,
   }),
   evidenceRef: evidence.optional(),
@@ -91,12 +97,40 @@ export const reportSchema = z
   })
   .superRefine((report, ctx) => {
     for (const [index, record] of report.records.entries()) {
-      if (record.scenario === "snapshot-roundtrip" && record.status === "passed")
-        ctx.addIssue({
-          code: "custom",
-          path: ["records", index, "status"],
-          message: "Snapshot capture/restore is unavailable in the current public SDK",
-        });
+      if (
+        ["snapshot-roundtrip", "volume-persistence"].includes(record.scenario) &&
+        record.status === "passed"
+      ) {
+        try {
+          if (!record.stateEvidence)
+            throw new Error("State passes require explicit workflow observations");
+          assertStateEvidence(record.scenario, record.stateEvidence);
+
+          if (record.configuration.stateProbe !== record.stateEvidence.probe)
+            throw new Error("State evidence must match its intended probe");
+
+          if (
+            record.stateEvidence.probe === "snapshot-roundtrip-v1" &&
+            record.configuration.preserve !== record.stateEvidence.preserve
+          )
+            throw new Error("Snapshot evidence preservation differs from requested configuration");
+
+          if (
+            record.stateEvidence.probe === "volume-persistence-v1" &&
+            record.configuration.volumeOwnership !== record.stateEvidence.ownership
+          )
+            throw new Error("Volume evidence ownership differs from requested configuration");
+
+          if (record.runCleanup !== "confirmed")
+            throw new Error("State passes require independent confirmed resource teardown");
+        } catch (error) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["records", index, "stateEvidence"],
+            message: error instanceof Error ? error.message : "Invalid state evidence",
+          });
+        }
+      }
 
       if (record.status === "passed" && record.scenario.startsWith("network-")) {
         try {
@@ -197,6 +231,9 @@ function key(record: QualificationRecord): string {
       ? (record.configuration.networkProbe ?? record.networkEvidence?.probe ?? "not-recorded")
       : "—",
     record.scenario.startsWith("file-") ? (record.configuration.fileRoot ?? "not-recorded") : "—",
+    record.configuration.stateProbe ?? "—",
+    record.configuration.preserve ?? "—",
+    record.configuration.volumeOwnership ?? "—",
     record.runtime,
     record.platform,
   ].join("|");
@@ -252,7 +289,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
     "",
     "These results cover only the stated image, requested network policy and region classes. A blocked-requested policy is a create setting, not a measured egress-isolation result. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.",
     "",
-    "Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot capture/restore is unsupported by the current public SDK; a prepared-image create is not snapshot qualification.",
+    "Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot and volume workflows have separate explicit observations and retained-storage teardown. Prepared-image creation does not qualify either feature. New workflows remain not-run until approved merged-source evidence is published.",
     "",
   ];
 

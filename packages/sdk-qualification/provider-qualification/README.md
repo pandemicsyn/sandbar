@@ -89,10 +89,43 @@ The public SDK creates one sandbox with `networkPolicy: "internet"`. Its probe a
 
 This measures TCP egress for the stated public IPv4 destinations, not every destination, UDP, IPv6, DNS confidentiality, ingress, private networks, metadata endpoints or isolation between tenants. The positive controls prevent a dead endpoint from producing a false pass; they do not prove universal firewall correctness. The E2B adapter maps its network policies to the native `allowInternetAccess` flag ([official network API](https://github.com/e2b-dev/E2B/blob/main/spec/openapi.yml)); the probes test the shipped mapping rather than calling native policy APIs directly. Daytona has no internet-mode capability in the current adapter; this paired profile remains unsupported there pending a separately designed reachable control.
 
-## Snapshot coverage boundary
+## Snapshot and volume state profile
 
-Reports explicitly mark `snapshot-roundtrip` unsupported because the current public SDK exposes no capture/restore or volume-version operations. Creating from a borrowed Daytona snapshot qualifies prepared-image creation only. When the public API ships, add the skill's create/write/capture/change/restore/verify workflow and independent retained-artifact cleanup before requesting its storage budget. No native snapshot calls may substitute for the missing abstraction.
+`manual.ts live-state` selects `snapshot-roundtrip,volume-persistence` through public shipped SDK methods. This is a separate paid storage budget, never implied by prepared baseline or credential authorization. The merged-source, clean-tree, local-only and explicit approval gates apply before loading secrets. No live state calls have been authorized or executed for this implementation. New behavior remains pending live qualification.
 
+The default bounded plan for **one provider per approval** is:
+
+| Resource / bound | Daytona | E2B |
+| --- | --- | --- |
+| Compute allocations | At most 6 total, peak 2, no build | At most 6 total, peak 2, no build |
+| Native compute lifetime | 900 seconds each; at most 90 sandbox-minutes | 300 seconds each; at most 30 sandbox-minutes |
+| Retained artifacts | 1 container cold snapshot, 1 new volume | 1 RAM/filesystem snapshot, 1 new volume |
+| Source prerequisites | Exact approved container image ID, Python 3, pinned shell utilities, writers quiesced | Exact approved template ID, Python 3, envd >=0.5.0, volume beta access in native default region |
+| Approved image ceiling | Operator verifies <=2 vCPU, <=2 GiB RAM, <=20 GiB root disk before launch | Operator verifies <=2 vCPU, <=2 GiB RAM, <=20 GiB root disk before launch |
+| Artifact size ceiling | Approved root <=20 GiB; volume probe <128 bytes | Approved root <=20 GiB plus <=2 GiB RAM; volume probe <128 bytes |
+| Exercise / final reconciliation | 240 seconds exercise, 60 seconds final cleanup | 240 seconds exercise, 60 seconds final cleanup |
+| Requests | No creator retries; bounded 100-item inventory; each read <=30 seconds | Same; pinned SDK retries disabled |
+
+The image resource ceilings are **approval prerequisites**, not limits enforced by Sandbar; the launcher does not measure template/root capacities. Stop before approval if the operator cannot verify them for the exact native image ID. Approval must include provider/account pricing, the particular image configuration, retained artifact costs and possible uncertain cleanup. Sandbox TTL does not expire snapshots or volumes. An acknowledgement lost after capture/create may retain storage without safely owned identity; preserve the ledger and arrange native operator investigation instead of deleting by guessed name. There is no claimed dollar ceiling or automatic storage expiry. Inline compute cleanup can use an additional bounded 60 seconds per teardown; at most four such cleanup phases plus the final 60-second reconciliation are attempted, so allow a 540-second operation envelope plus local close time. Native TTL remains fallback after process loss.
+
+The snapshot probe writes captured bytes, captures, checks actual source lifecycle and metadata, changes source bytes where the source remains writable, restores new compute, verifies captured bytes, changes restored bytes, then destroys both computes and restores again to prove the artifact survived source deletion and remained unchanged. RAM profiles additionally observe a UNIX socket process with a random nonce held only in RAM and independent counter progression in source/restored processes. Reconstructing a guest process or reading a nonce file is not a RAM pass.
+
+The volume probe creates and inspects an owned volume (or uses an explicitly approved borrowed scoped reference), writes a unique run path through a finite writer, closes/fsyncs it, reads it back, permits compute cleanup with `storage: "allow-unconfirmed"`, verifies volume existence, then remounts into independent compute and checks identical run bytes. This observes persistence without claiming native durability, locking or atomic rename. Current built-ins explicitly report read-only unsupported, so they use five computes total. If read-only is advertised, the runner creates one additional reader within the six-compute ceiling, requires native EACCES/EPERM/EROFS write rejection, then verifies unchanged bytes. It never simulates read-only with chmod.
+
+After approving this exact plan, use the baseline routing variables plus:
+
+```sh
+SANDBAR_QUAL_PROVIDER=e2b \
+SANDBAR_QUAL_LIVE_AUTHORIZED=yes \
+SANDBAR_QUAL_SCENARIOS=snapshot-roundtrip,volume-persistence \
+SANDBAR_QUAL_LEDGER_DIR=/absolute/stable/private/qualification-ledgers \
+SANDBAR_QUAL_EVIDENCE_REF="${SANDBAR_QUAL_EVIDENCE_REF:?Set a real resolvable evidence reference}" \
+bun packages/sdk-qualification/provider-qualification/manual.ts live-state
+```
+
+For Daytona select an eligible **container** image ID, verified `SANDBAR_DAYTONA_TARGET`, and the expressly approved `SANDBAR_DAYTONA_NETWORK_POLICY`; the prepared profile's Linux VM image does not satisfy this capture profile. `SANDBAR_QUAL_SCENARIOS` may select either state workflow alone. Snapshot-only uses 3 computes/1 snapshot; volume-only uses at most 3 computes/1 volume (2 when read-only is unsupported). `SANDBAR_QUAL_BORROWED_VOLUME_REF` may contain a scoped JSON reference only after explicit approval: no volume allocation/deletion, unique no-clobber run path, unrelated existing bytes untouched, and the run file remains on borrowed storage. Private-beta denial is blocked/unavailable, unsupported guarantees are unsupported, missing approval is not-run.
+
+Each creator and deleter is journaled independently by the awaited pre-dispatch reference hook. Updated native acknowledgement tokens and owned resources are retained after both successful and interrupted waits. Reconciliation observes every creator first, preserves source evidence for unresolved captures, destroys dependent compute before storage, and observes saved deletes without replay. One unresolved retained artifact blocks subsequent allocation in that ledger directory. `manual.ts reconcile RUN_UUID` selects the saved state mode, roles and routing, including scoped borrowed-volume custody. Do not remove custody to bypass admission. Public evidence contains exact probe/preservation/ownership configuration and can pass only after every owned resource has confirmed cleanup; SDK/harness provenance and diagnostics remain separate from fixture coverage.
 
 ## Daytona prepared profile
 
@@ -100,7 +133,7 @@ Select `SANDBAR_QUAL_PROVIDER=daytona` for `manual.ts live-prepared`. Supply `SA
 
 Use the same ledger-directory, explicit run authorization and resolvable evidence-reference gates as E2B, with the provider/target/snapshot variables above. The region ID is recorded as the public region class so evidence for different regions cannot supersede each other. The native boundary is labeled `Daytona REST 0.218`, not a deployed server version. The profile covers the same13 baseline scenarios through public SDK calls, including atomic no-clobber on snapshots with GNU-compatible `ln -T` and hard links. All required shell utilities listed in the provider README must exist in the borrowed snapshot.
 
-The awaited SDK reference hook journals the scoped identity before create/exec/write/delete effects. Read-only preparation verifies snapshot readiness, organization and target. A lost create acknowledgement is observed by the same correlation and never recreated. A lost delete acknowledgement is observed by scoped native state without another DELETE; uncorrelated404 remains unknown. Incomplete cleanup remains actionable in the private ledger. `reconcile RUN_UUID` with `SANDBAR_QUAL_PROVIDER=daytona` reuses saved target/snapshot/TTL routing and the current valid key, without requiring environment target/snapshot variables or live authorization. It can stop owned compute even if current egress eligibility changed. The paired network profile is E2B-only because the Daytona adapter does not support internet mode. Snapshot capture/restore remains unsupported in the public SDK.
+The awaited SDK reference hook journals the scoped identity before create/exec/write/delete effects. Read-only preparation verifies snapshot readiness, organization and target. A lost create acknowledgement is observed by the same correlation and never recreated. A lost delete acknowledgement is observed by scoped native state without another DELETE; uncorrelated404 remains unknown. Incomplete cleanup remains actionable in the private ledger. `reconcile RUN_UUID` with `SANDBAR_QUAL_PROVIDER=daytona` reuses saved target/snapshot/TTL routing and the current valid key, without requiring environment target/snapshot variables or live authorization. It can stop owned compute even if current egress eligibility changed. The paired network profile is E2B-only because the Daytona adapter does not support internet mode. The separately budgeted state profile qualifies implemented capture/restore; prepared baseline does not.
 
 ### Daytona Tier 2 baseline
 
