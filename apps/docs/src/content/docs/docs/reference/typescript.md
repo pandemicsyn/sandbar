@@ -26,7 +26,7 @@ const sandbar = await Sandbar.connect({
 });
 ```
 
-`acme` is the installed adapter definition; `persistReference` is your application's persistence function. Config and credentials follow the adapter's schemas. `onReference` is optional and checkpoints operation references before dispatch and as recovery state changes. See the [tested custom adapter example](/docs/guides/write-an-adapter/).
+`acme` is the installed adapter definition; `persistReference` is your application's persistence function. Config and credentials follow the adapter's schemas. The optional `onReference` callback checkpoints the initial operation reference before provider dispatch. It is not called when recovery tokens change. After each pending `observe()` result, persist the handle's updated `reference` yourself. See [Errors and recovery](/docs/guides/recovery/#persist-references-when-it-matters) and the [tested custom adapter example](/docs/guides/write-an-adapter/).
 
 ## Images
 

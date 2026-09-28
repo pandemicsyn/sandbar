@@ -39,4 +39,6 @@ An adapter may register a release hook for a transport it owns. `close()` invoke
 
 The sample's `saveReference` is your application's persistence function. Await durable writes before moving on. For a checkpoint before native submission, pass `onReference` through the explicit adapter connection options or use the advanced `operations.prepare(...).submit(..., { beforeSubmit })` lifecycle. See [Asynchronous adapter recovery](/docs/guides/adapter-recovery/).
 
+`onReference` runs only for the initial reference before provider dispatch. A pending `observe()` result can add or replace a recovery token on the handle without calling `onReference` again. Persist the updated `operation.reference` after each pending observation. `wait()` observes internally and does not provide checkpoints for those intermediate updates; use explicit `observe()` calls when you need to persist each update. Save the reference carried by `WaitAbortedError` or `OutcomeUnknownError` if waiting stops with either error.
+
 E2B's default scope is tied to the authenticated API key; rotating it changes that scope. Daytona's scope includes its organization, target, endpoint, and selected network policy. Reconnect with matching scope to recover prior operations.
