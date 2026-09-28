@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import type { ExecCommand } from "sandbar-adapter/portable";
 import { daytonaProvider, daytonaRegistration, createDaytonaAdapter } from "./index";
@@ -28,6 +29,7 @@ const apiUrl = "https://app.daytona.io/api";
 const toolboxOrigin = "https://proxy.app.daytona.io";
 
 const native = (name: string, state = "started") => ({
+  labels: {},
   id: "native-1",
   name,
   organizationId: "org-1",
@@ -291,6 +293,8 @@ test.each([
           return Response.json(native("existing", "destroyed"));
         }
 
+        if (url.pathname === "/api/sandbox/native-1") return Response.json(native("existing"));
+
         throw new Error(`Unexpected ${url.pathname}`);
       },
       async () => Response.json(value, { status }),
@@ -365,6 +369,7 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
   const calls: string[] = [];
   let createdName = "";
   let snapshotReads = 0;
+  const files = new Map<string, Uint8Array>([["/file", new Uint8Array([0, 255])]]);
 
   const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -403,16 +408,49 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
 
     if (url.pathname === "/api/sandbox/native-1") return json(native(createdName));
 
-    if (url.pathname.endsWith("/process/execute"))
+    if (url.pathname.endsWith("/process/execute")) {
+      const command = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
+        return Response.json({ exitCode: 0, result: "" });
+
+      if (command.startsWith("cat ")) {
+        const match = /^cat '([^']+)' > '([^']+)'/.exec(command);
+
+        if (!match) throw new Error("Invalid Daytona write command");
+        files.set(match[2]!, files.get(match[1]!)!);
+        files.delete(match[1]!);
+
+        return json({ exitCode: 0, result: "" });
+      }
+
       return json({
         exitCode: 0,
         result: "SANDBAR-EXEC-V1\n7\n2\n1\n 00 ff\nSANDBAR-STDERR\n 7f\nSANDBAR-END\n",
       });
+    }
 
-    if (url.pathname.endsWith("/files/upload-v2"))
-      return json({ name: "file", path: "/file", type: "file" });
+    if (url.pathname.endsWith("/files/upload-v2")) {
+      const path = url.searchParams.get("path")!;
+      const form = init?.body;
 
-    if (url.pathname.endsWith("/files/download")) return new Response(new Uint8Array([0, 255]));
+      if (!(form instanceof FormData)) throw new Error("Expected multipart upload");
+      const file = form.get("file");
+
+      if (!(file instanceof Blob)) throw new Error("Expected uploaded Blob");
+      files.set(path, new Uint8Array(await file.arrayBuffer()));
+
+      return json({ name: "file", path, type: "file" });
+    }
+
+    if (url.pathname.endsWith("/files/download")) {
+      const data = files.get(url.searchParams.get("path")!);
+
+      return data ? new Response(new Uint8Array(data)) : new Response(null, { status: 404 });
+    }
+
     throw new Error(`Unexpected ${url.pathname}`);
   });
 
@@ -447,7 +485,7 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
   await sandbox.destroy();
   expect(calls.filter((value) => value === "POST /api/sandbox")).toHaveLength(1);
   expect(snapshotReads).toBe(1);
-  expect(calls.filter((value) => value.endsWith("/process/execute"))).toHaveLength(1);
+  expect(calls.filter((value) => value.endsWith("/process/execute"))).toHaveLength(3);
   expect(calls.filter((value) => value.endsWith("/files/upload-v2"))).toHaveLength(1);
   await client.close();
 });
@@ -775,7 +813,7 @@ test("lost create response is observed by stable name without replay; scope rota
   expect(rotated.scope.accountId).not.toBe(provider.scope.accountId);
 });
 
-test("unsupported OCI and no-overwrite reject before mutation", async () => {
+test("mutable OCI tags reject before mutation", async () => {
   const calls: string[] = [];
 
   const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -808,15 +846,6 @@ test("unsupported OCI and no-overwrite reject before mutation", async () => {
   ).rejects.toThrow();
   await client.close();
 
-  const write = await provider.driver.writeFile({
-    sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
-    identity: identity("write-1"),
-    path: "/file",
-    bytes: new Uint8Array([1]),
-    overwrite: false,
-  });
-
-  expect(write.status).toBe("rejected");
   expect(calls).toEqual([
     "GET /api/api-keys/current",
     "GET /api/regions",
@@ -825,11 +854,356 @@ test("unsupported OCI and no-overwrite reject before mutation", async () => {
   ]);
 });
 
+test.each(["container", "windows", undefined] as const)(
+  "OCI validates active snapshot class before sandbox creation: %s",
+  async (sandboxClass) => {
+    const mutations: { path: string; body: Record<string, FixtureJson> }[] = [];
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/snapshots/sandbar-image-oci-1")
+        return new Response(null, { status: 404 });
+
+      if (url.pathname === "/api/snapshots" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        mutations.push({ path: url.pathname, body });
+
+        return Response.json({
+          id: "built-snapshot",
+          name: body.name,
+          imageName: body.imageName,
+          organizationId: "org-1",
+          state: "active",
+          regionIds: ["us"],
+          sandboxClass,
+        });
+      }
+
+      if (url.pathname === "/api/sandbox" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        mutations.push({ path: url.pathname, body });
+
+        return Response.json({
+          ...native(body.name),
+          snapshot: body.snapshot,
+          labels: body.labels,
+        });
+      }
+
+      throw new Error(`Unexpected fixture route ${url.pathname}`);
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+    const prepared = await provider.driver.prepare({
+      scope: provider.scope,
+      image: { kind: "oci", value: "alpine:3.21" },
+      networkPolicy: "blocked",
+    });
+
+    expect(prepared).toEqual({ supported: true, effectiveImage: "alpine:3.21" });
+    expect(mutations).toHaveLength(0);
+
+    const result = await provider.driver.create({
+      scope: provider.scope,
+      identity: identity("oci-1"),
+      image: "alpine:3.21",
+      imageKind: "oci",
+      networkPolicy: "blocked",
+    });
+
+    expect(result.status).toBe(sandboxClass === "container" ? "completed" : "unknown");
+    expect(mutations).toHaveLength(sandboxClass === "container" ? 2 : 1);
+    expect(mutations[0]).toEqual({
+      path: "/api/snapshots",
+      body: {
+        name: "sandbar-image-oci-1",
+        imageName: "alpine:3.21",
+        regionId: "us",
+        sandboxClass: "container",
+      },
+    });
+
+    if (sandboxClass === "container") expect(mutations[1]!.body.snapshot).toBe("built-snapshot");
+  },
+);
+
+test("lost OCI build response remains unknown with no sandbox submission", async () => {
+  let builds = 0;
+  let creates = 0;
+  let built = false;
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const path = new URL(String(input)).pathname;
+
+    if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (path === "/api/regions") return Response.json([region()]);
+
+    if (path === "/api/snapshots/sandbar-image-oci-lost")
+      return built
+        ? Response.json({
+            id: "built-lost",
+            name: "sandbar-image-oci-lost",
+            imageName: "alpine:3.21",
+            organizationId: "org-1",
+            state: "active",
+            regionIds: ["us"],
+            sandboxClass: "container",
+          })
+        : new Response(null, { status: 404 });
+
+    if (path === "/api/snapshots" && init?.method === "POST") {
+      builds++;
+      built = true;
+      throw new Error("response lost after snapshot build");
+    }
+
+    if (path === "/api/sandbox" && init?.method !== "POST")
+      return Response.json({ items: [], nextCursor: null });
+
+    if (path === "/api/sandbox" && init?.method === "POST") creates++;
+    throw new Error(`Unexpected fixture route ${path}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+  const result = await provider.driver.create({
+    scope: provider.scope,
+    identity: identity("oci-lost"),
+    image: "alpine:3.21",
+    imageKind: "oci",
+    networkPolicy: "blocked",
+  });
+
+  expect(result.status).toBe("unknown");
+
+  const observed = await provider.driver.observe({
+    scope: provider.scope,
+    submissionId: "oci-lost",
+    operationId: "op_oci-lost",
+  });
+
+  expect(observed?.status).toBe("unknown");
+
+  if (observed?.status === "unknown")
+    expect(observed.reason).toContain("daytona:snapshot:built-lost");
+
+  expect(builds).toBe(1);
+  expect(creates).toBe(0);
+});
+
+test("generic 404 after a lost delete does not certify compute termination", async () => {
+  let deletes = 0;
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const path = new URL(String(input)).pathname;
+
+    if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (path === "/api/regions") return Response.json([region()]);
+
+    if (path === "/api/sandbox/native-1" && init?.method === "DELETE") {
+      deletes++;
+      throw new Error("delete response lost");
+    }
+
+    if (path === "/api/sandbox/native-1") return new Response(null, { status: 404 });
+    throw new Error(`Unexpected fixture route ${path}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const box = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+  expect(
+    (await provider.driver.destroy({ sandbox: box, identity: identity("lost-delete") })).status,
+  ).toBe("unknown");
+  expect(await provider.driver.observeDestroy(box, "lost-delete")).toBeNull();
+  expect(deletes).toBe(1);
+});
+
+test.each(["absent", "file", "directory", "symlink", "missing-exit"] as const)(
+  "atomic no-clobber preserves destination: %s",
+  async (existing) => {
+    const files = new Map<string, Uint8Array>();
+
+    if (existing === "file") files.set("/target", new Uint8Array([9]));
+    let links = 0;
+    let uploads = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+      if (url.pathname.endsWith("/files/upload-v2")) {
+        uploads++;
+        const path = url.searchParams.get("path")!;
+        const data = init?.body;
+
+        if (!(data instanceof FormData)) throw new Error("Expected multipart upload");
+        const file = data.get("file");
+
+        if (!(file instanceof Blob)) throw new Error("Expected uploaded Blob");
+        files.set(path, new Uint8Array(await file.arrayBuffer()));
+
+        return Response.json({ path, name: "blob", type: "file" });
+      }
+
+      if (url.pathname.endsWith("/files/download")) {
+        const bytes = files.get(url.searchParams.get("path")!);
+
+        return bytes ? new Response(new Uint8Array(bytes)) : new Response(null, { status: 404 });
+      }
+
+      if (url.pathname.endsWith("/process/execute")) {
+        const command = z
+          .object({ command: z.string() })
+          .parse(JSON.parse(String(init?.body))).command;
+
+        if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
+          return Response.json({ exitCode: 0, result: "" });
+        links++;
+
+        const match = /^ln -T -- '([^']+)' '([^']+)'/.exec(command);
+        expect(match).not.toBeNull();
+        const source = match![1]!;
+        const target = match![2]!;
+        expect(command).toContain(`rm -f '${source}'`);
+        const conflict = existing !== "absent" && existing !== "missing-exit";
+
+        if (!conflict) files.set(target, files.get(source)!);
+        files.delete(source);
+
+        return Response.json({
+          result: "",
+          exitCode: existing === "missing-exit" ? undefined : conflict ? 1 : 0,
+        });
+      }
+
+      throw new Error(`Unexpected fixture route ${url.pathname}`);
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+    const result = await provider.driver.writeFile({
+      sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+      identity: identity(`no-clobber-${existing}`),
+      path: "/target",
+      bytes: new Uint8Array([0, 255]),
+      overwrite: false,
+    });
+
+    const expectedStatus = (
+      {
+        absent: "completed",
+        file: "rejected",
+        directory: "unknown",
+        symlink: "unknown",
+        "missing-exit": "unknown",
+      } as const
+    )[existing];
+
+    expect(result.status).toBe(expectedStatus);
+
+    if (existing === "absent" || existing === "file" || existing === "missing-exit")
+      expect(Array.from(files.get("/target")!)).toEqual(existing === "file" ? [9] : [0, 255]);
+    else expect(files.has("/target")).toBe(false);
+
+    expect(uploads).toBe(1);
+    expect(links).toBe(1);
+    expect([...files.keys()]).toEqual(
+      existing === "file" || existing === "absent" || existing === "missing-exit"
+        ? ["/target"]
+        : [],
+    );
+  },
+);
+
+test("lost staging upload response is read back and committed without another upload", async () => {
+  const files = new Map<string, Uint8Array>();
+  let uploads = 0;
+  let commits = 0;
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
+
+    if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+    if (url.pathname.endsWith("/files/upload-v2")) {
+      uploads++;
+      const form = init?.body;
+
+      if (!(form instanceof FormData)) throw new Error("Expected multipart upload");
+      const file = form.get("file");
+
+      if (!(file instanceof Blob)) throw new Error("Expected uploaded Blob");
+      files.set(url.searchParams.get("path")!, new Uint8Array(await file.arrayBuffer()));
+      throw new Error("response lost after native staging upload");
+    }
+
+    if (url.pathname.endsWith("/files/download")) {
+      const bytes = files.get(url.searchParams.get("path")!);
+
+      return bytes ? new Response(new Uint8Array(bytes)) : new Response(null, { status: 404 });
+    }
+
+    if (url.pathname.endsWith("/process/execute")) {
+      const command = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
+        return Response.json({ exitCode: 0, result: "" });
+      commits++;
+
+      const link = /^ln -T -- '([^']+)' '([^']+)'/.exec(command);
+
+      if (!link) throw new Error("Expected atomic link");
+      files.set(link[2]!, files.get(link[1]!)!);
+      files.delete(link[1]!);
+
+      return Response.json({ result: "", exitCode: 0 });
+    }
+
+    throw new Error(`Unexpected fixture route ${url.pathname}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+  const result = await provider.driver.writeFile({
+    sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+    identity: identity("lost-stage"),
+    path: "/out",
+    bytes: new Uint8Array([0, 255]),
+    overwrite: false,
+  });
+
+  expect(result.status).toBe("completed");
+  expect(Array.from(files.get("/out")!)).toEqual([0, 255]);
+  expect(uploads).toBe(1);
+  expect(commits).toBe(1);
+});
+
 test("lost exec and upload responses remain unknown after one submission each", async () => {
   let executes = 0,
     uploads = 0;
 
-  const fetchImpl = fixtureFetch(async (input: RequestInfo | URL) => {
+  const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
 
     if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
@@ -839,6 +1213,12 @@ test("lost exec and upload responses remain unknown after one submission each", 
     if (url.pathname === "/api/sandbox/native-1") return Response.json(native("sandbar-existing"));
 
     if (url.pathname.endsWith("/process/execute")) {
+      const command = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
+        return Response.json({ exitCode: 0, result: "" });
       executes++;
       throw new Error("response lost");
     }
@@ -1016,6 +1396,10 @@ test("POSIX capture wrapper drains a noisy command while retaining only bounded 
       });
 
       expect(command.error).toBeUndefined();
+      const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(script)?.[1];
+
+      if (receipt)
+        rmSync(receipt.slice(0, receipt.lastIndexOf("/")), { recursive: true, force: true });
 
       return Response.json({ exitCode: command.status, result: command.stdout });
     }
@@ -1067,6 +1451,10 @@ test("generated capture wrapper isolates utilities from requested PATH and prese
       });
 
       expect(execution.error).toBeUndefined();
+      const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(body.command)?.[1];
+
+      if (receipt)
+        rmSync(receipt.slice(0, receipt.lastIndexOf("/")), { recursive: true, force: true });
 
       return Response.json({ exitCode: execution.status, result: execution.stdout });
     }
@@ -1257,6 +1645,10 @@ test("local capture utility failure leaves an incomplete frame that stays unknow
       });
 
       expect(execution.error).toBeUndefined();
+      const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(failedCapture)?.[1];
+
+      if (receipt)
+        rmSync(receipt.slice(0, receipt.lastIndexOf("/")), { recursive: true, force: true });
       expect(execution.status).toBe(0);
 
       return Response.json({ exitCode: execution.status, result: execution.stdout });
@@ -1284,3 +1676,526 @@ test("local capture utility failure leaves an incomplete frame that stays unknow
 
   expect(posts).toBe(1);
 });
+
+test("write receipt is atomically published before recovery from a lost response", async () => {
+  const directory = mkdtempSync("/tmp/sandbar-write-receipt-");
+  const target = `${directory}/target`;
+  let receiptPath = "";
+  let commits = 0;
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
+
+    if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+    if (url.pathname.endsWith("/files/upload-v2")) {
+      const form = init?.body;
+
+      if (!(form instanceof FormData)) throw new Error("Expected multipart upload");
+      const file = form.get("file");
+
+      if (!(file instanceof Blob)) throw new Error("Expected uploaded Blob");
+      const path = url.searchParams.get("path")!;
+      writeFileSync(path, new Uint8Array(await file.arrayBuffer()));
+
+      return Response.json({ path, name: "blob", type: "file" });
+    }
+
+    if (url.pathname.endsWith("/files/download")) {
+      try {
+        return new Response(new Uint8Array(readFileSync(url.searchParams.get("path")!)));
+      } catch {
+        return new Response(null, { status: 404 });
+      }
+    }
+
+    if (url.pathname.endsWith("/process/execute")) {
+      const command = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1")) {
+        const reserved = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+
+        return Response.json({ exitCode: reserved.status, result: reserved.stdout });
+      }
+
+      commits++;
+
+      const publish = /mv -f -- '([^']+)' '([^']+)'/.exec(command);
+      expect(publish).not.toBeNull();
+      receiptPath = publish![2]!;
+
+      const executed = spawnSync(
+        "sh",
+        [
+          "-c",
+          `mv() { test -s "$3" && test ! -e "$4" || exit 99; /bin/mv "$@" && printf published; }; ${command}`,
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(executed.status).toBe(0);
+      expect(executed.stdout).toBe("published");
+      expect(() => readFileSync(publish![1]!)).toThrow();
+      throw new Error("committed write response lost");
+    }
+
+    throw new Error(`Unexpected fixture route ${url.pathname}`);
+  });
+
+  try {
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+    const submissionId = directory.split("/").at(-1)!;
+    expect(
+      (
+        await provider.driver.writeFile({
+          sandbox,
+          identity: identity(submissionId),
+          path: target,
+          bytes: new Uint8Array([0, 255]),
+          overwrite: true,
+        })
+      ).status,
+    ).toBe("unknown");
+    expect(
+      (await provider.driver.observeWrite({ sandbox, submissionId, path: target }))?.status,
+    ).toBe("completed");
+    expect(commits).toBe(1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+
+    if (receiptPath)
+      rmSync(receiptPath.slice(0, receiptPath.lastIndexOf("/")), { recursive: true, force: true });
+  }
+});
+
+test("immediate destroyed response preserves the snapshot label read before DELETE", async () => {
+  let deletes = 0;
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const path = new URL(String(input)).pathname;
+
+    if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (path === "/api/regions") return Response.json([region()]);
+
+    if (path === "/api/sandbox/native-1") {
+      if (init?.method === "DELETE") {
+        deletes++;
+
+        return Response.json(native("box", "destroyed"));
+      }
+
+      return Response.json({ ...native("box"), labels: { "sandbar.imageSnapshot": "retained-1" } });
+    }
+
+    throw new Error(`Unexpected fixture route ${path}`);
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+  const result = await provider.driver.destroy({ sandbox, identity: identity("destroy-retained") });
+  expect(result.status).toBe("completed");
+
+  if (result.status === "completed" && result.value.kind === "destroy")
+    expect(result.value.observation.retainedResources).toEqual(["daytona:snapshot:retained-1"]);
+  expect(deletes).toBe(1);
+});
+
+test("native destroy preflight read failure is effect-free", async () => {
+  let deletes = 0;
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const path = new URL(String(input)).pathname;
+
+    if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (path === "/api/regions") return Response.json([region()]);
+
+    if (init?.method === "DELETE") deletes++;
+    throw new Error("detail unavailable");
+  });
+
+  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+  const result = await provider.driver.destroy({
+    sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+    identity: identity("preflight-failed"),
+  });
+
+  expect(result).toMatchObject({
+    status: "rejected",
+    effect: "none",
+    error: { code: "unavailable", effect: "none" },
+  });
+  expect(deletes).toBe(0);
+});
+
+test.each(["file", "directory", "lost-reservation"] as const)(
+  "private staging preserves caller data and never replays reservation: %s",
+  async (mode) => {
+    const directory = mkdtempSync("/tmp/sandbar-stage-collision-");
+    let stage = "";
+    let reservations = 0;
+    let uploads = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+      if (url.pathname.endsWith("/files/upload-v2")) {
+        uploads++;
+        throw new Error("Upload must not occur");
+      }
+
+      if (url.pathname.endsWith("/process/execute")) {
+        reservations++;
+
+        const command = z
+          .object({ command: z.string() })
+          .parse(JSON.parse(String(init?.body))).command;
+
+        const match = /^mkdir -m 700 -- '([^']+)'/.exec(command);
+        expect(match).not.toBeNull();
+        stage = match![1]!;
+
+        if (mode === "file") writeFileSync(stage, "caller-owned");
+
+        if (mode === "directory") {
+          mkdirSync(stage);
+          writeFileSync(`${stage}/payload`, "caller-owned");
+        }
+
+        const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+
+        if (mode === "lost-reservation") {
+          expect(result.status).toBe(0);
+          throw new Error("reservation response lost");
+        }
+
+        expect(result.status).not.toBe(0);
+
+        return Response.json({ exitCode: result.status, result: result.stdout });
+      }
+
+      throw new Error("Unexpected fixture request");
+    });
+
+    try {
+      const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+      const result = await provider.driver.writeFile({
+        sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+        identity: identity("predictable-stage"),
+        path: `${directory}/target`,
+        bytes: new Uint8Array([0, 255]),
+        overwrite: false,
+      });
+
+      expect(result.status).toBe(mode === "lost-reservation" ? "unknown" : "rejected");
+
+      if (mode !== "lost-reservation")
+        expect(readFileSync(mode === "file" ? stage : `${stage}/payload`, "utf8")).toBe(
+          "caller-owned",
+        );
+      expect(() => readFileSync(`${directory}/target`)).toThrow();
+      expect(reservations).toBe(1);
+      expect(uploads).toBe(0);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["exec", "write"] as const)(
+  "private %s receipt reservations preserve caller files and symlinks",
+  async (kind) => {
+    for (const collision of ["file", "directory", "symlink"] as const) {
+      const directory = mkdtempSync("/tmp/sandbar-receipt-collision-");
+      const victim = `${directory}/caller-owned`;
+      writeFileSync(victim, "caller-owned");
+      let receiptDirectory = "";
+      let executes = 0;
+      let uploads = 0;
+
+      const fetchImpl = fixtureFetch(async (input, init) => {
+        const url = new URL(String(input));
+
+        if (url.pathname === "/api/api-keys/current")
+          return Response.json({ organizationId: "org-1" });
+
+        if (url.pathname === "/api/regions") return Response.json([region()]);
+
+        if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+        if (url.pathname.endsWith("/files/upload-v2")) {
+          uploads++;
+          throw new Error("Upload must not occur");
+        }
+
+        if (url.pathname.endsWith("/process/execute")) {
+          executes++;
+
+          const command = z
+            .object({ command: z.string() })
+            .parse(JSON.parse(String(init?.body))).command;
+
+          const match = /mkdir -m 700 -- '(\/tmp\/\.sandbar-(?:exec|write)-[^']+)'/.exec(command);
+          expect(match).not.toBeNull();
+          receiptDirectory = match![1]!;
+
+          if (collision === "file") writeFileSync(receiptDirectory, "caller-owned");
+
+          if (collision === "directory") {
+            mkdirSync(receiptDirectory);
+            writeFileSync(`${receiptDirectory}/receipt`, "caller-owned");
+          }
+
+          if (collision === "symlink") symlinkSync(victim, receiptDirectory);
+          writeFileSync(`${receiptDirectory}.tmp`, "caller-owned-temp");
+          const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+          expect(result.status).toBe(126);
+
+          return Response.json({ exitCode: result.status, result: result.stdout });
+        }
+
+        throw new Error("Unexpected fixture request");
+      });
+
+      try {
+        const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+        const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+        const invocation = identity(directory.split("/").at(-1)!);
+
+        const result =
+          kind === "exec"
+            ? await provider.driver.exec({
+                sandbox,
+                identity: invocation,
+                command: { kind: "shell", script: `printf corrupt > '${victim}'` },
+                deadlineSeconds: 5,
+                maxOutputBytes: 10,
+              })
+            : await provider.driver.writeFile({
+                sandbox,
+                identity: invocation,
+                path: `${directory}/target`,
+                bytes: new Uint8Array([0, 255]),
+                overwrite: true,
+              });
+
+        expect(result).toMatchObject({ status: "rejected", effect: "none" });
+        expect(readFileSync(victim, "utf8")).toBe("caller-owned");
+        expect(
+          readFileSync(
+            collision === "directory" ? `${receiptDirectory}/receipt` : receiptDirectory,
+            "utf8",
+          ),
+        ).toBe("caller-owned");
+        expect(readFileSync(`${receiptDirectory}.tmp`, "utf8")).toBe("caller-owned-temp");
+        expect(executes).toBe(1);
+        expect(uploads).toBe(0);
+      } finally {
+        if (receiptDirectory) {
+          rmSync(receiptDirectory, { recursive: true, force: true });
+          rmSync(`${receiptDirectory}.tmp`, { force: true });
+        }
+
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  },
+);
+
+test.each(["confirmed", "lost"] as const)(
+  "omitted pre-delete labels remain unknown while cleanup proceeds: %s",
+  async (mode) => {
+    let deletes = 0;
+    let state = "started";
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions") return Response.json([region()]);
+
+      if (path === "/api/sandbox/native-1") {
+        if (init?.method === "DELETE") {
+          deletes++;
+          state = "destroyed";
+
+          if (mode === "lost") throw new Error("response lost");
+        }
+
+        return Response.json({ ...native("box", state), labels: undefined });
+      }
+
+      throw new Error("Unexpected fixture request");
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+    expect(await provider.driver.destroyRetainedResources(sandbox)).toBeUndefined();
+    expect(
+      (await provider.driver.destroy({ sandbox, identity: identity("missing-pre-delete-labels") }))
+        .status,
+    ).toBe("unknown");
+    const observed = await provider.driver.observeDestroy(sandbox, "missing-pre-delete-labels");
+    expect(observed).toMatchObject({
+      status: "unknown",
+      reason: "Daytona compute is stopped but retained resource evidence is unavailable",
+    });
+    expect(deletes).toBe(1);
+  },
+);
+
+test.each([{ public: true }, { networkBlockAll: false }])(
+  "destroy permits policy drift while preserving scope checks: %j",
+  async (drift) => {
+    let state = "started";
+    let deletes = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions") return Response.json([region()]);
+
+      if (path === "/api/sandbox/native-1") {
+        if (init?.method === "DELETE") {
+          deletes++;
+          state = "destroying";
+          throw new Error("response lost");
+        }
+
+        return Response.json({
+          ...native("box", state),
+          ...drift,
+          labels: { "sandbar.imageSnapshot": "snap-retained" },
+        });
+      }
+
+      throw new Error("Unexpected request");
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+
+    expect(await provider.driver.destroyRetainedResources(sandbox)).toEqual([
+      "daytona:snapshot:snap-retained",
+    ]);
+    expect((await provider.driver.destroy({ sandbox, identity: identity("drift") })).status).toBe(
+      "unknown",
+    );
+    expect((await provider.driver.observeDestroy(sandbox, "drift"))?.status).toBe("pending");
+    state = "destroyed";
+    expect(await provider.driver.observeDestroy(sandbox, "drift")).toMatchObject({
+      status: "completed",
+      value: {
+        observation: {
+          computeStopped: true,
+          retainedResources: ["daytona:snapshot:snap-retained"],
+        },
+      },
+    });
+    expect(deletes).toBe(1);
+  },
+);
+
+test.each([{ id: "other" }, { organizationId: "other" }, { target: "other" }])(
+  "destroy refuses mismatched native identity or scope: %j",
+  async (mismatch) => {
+    let deletes = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions") return Response.json([region()]);
+
+      if (init?.method === "DELETE") deletes++;
+
+      return Response.json({ ...native("box", "destroyed"), ...mismatch, public: true });
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+
+    expect(await provider.driver.destroy({ sandbox, identity: identity("scope") })).toMatchObject({
+      status: "rejected",
+      effect: "none",
+    });
+    await expect(provider.driver.observeDestroy(sandbox, "scope")).rejects.toThrow();
+    expect(deletes).toBe(0);
+  },
+);
+
+test.each(["name", "imageName", "lost-read", "failed-read"] as const)(
+  "OCI create reports possible retention when build metadata omits %s",
+  async (missing) => {
+    let builds = 0;
+    let creates = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions") return Response.json([region()]);
+
+      if (path === "/api/snapshots" && init?.method === "POST") {
+        builds++;
+
+        return Response.json({
+          id: "possible-retained",
+          name: missing === "name" ? undefined : "sandbar-image-incomplete-create",
+          imageName: missing === "imageName" ? undefined : "alpine:3.21",
+          organizationId: "org-1",
+          state: "building",
+        });
+      }
+
+      if (path === "/api/snapshots/possible-retained") {
+        if (missing === "lost-read") throw new Error("read lost");
+
+        return new Response(null, { status: 503 });
+      }
+
+      if (init?.method === "POST") creates++;
+
+      return new Response(null, { status: 404 });
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+    const result = await provider.driver.create({
+      scope: provider.scope,
+      identity: identity("incomplete-create"),
+      image: "alpine:3.21",
+      imageKind: "oci",
+      networkPolicy: "blocked",
+    });
+
+    expect(result).toMatchObject({
+      status: "unknown",
+      reason: expect.stringContaining("snapshot possible-retained"),
+    });
+    expect(builds).toBe(1);
+    expect(creates).toBe(0);
+  },
+);

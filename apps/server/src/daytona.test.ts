@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { z } from "zod";
 import { openDomainRuntime } from "./runtime";
+import { Sandbar, Image } from "../../../packages/service/src/client";
 
 type FixtureJson =
   | null
@@ -553,6 +554,351 @@ test("service encrypts Daytona credentials, verifies native scope and routes cre
 
     expect(file.status).not.toBe(200);
     expect(calls.filter((call) => call.startsWith("GET /toolbox"))).toHaveLength(0);
+  } finally {
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Daytona service reconnects and observes lost exec, write and delete without replay", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sandbar-daytona-recovery-"));
+  const keyFile = join(directory, "key");
+  const setupTokenFile = join(directory, "setup");
+  const databaseUrl = join(directory, "control.sqlite");
+  await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)));
+  await chmod(keyFile, 0o600);
+  await writeFile(setupTokenFile, "long-daytona-recovery-setup-token");
+  await chmod(setupTokenFile, 0o600);
+  const files = new Map<string, Uint8Array>();
+  const mutations = { build: 0, create: 0, exec: 0, upload: 0, write: 0, destroy: 0 };
+  let snapshotName = "";
+  let implicitBuild = true;
+  let implicitIdReads = 0;
+  let state = "started";
+  let name = "";
+  let labels: Record<string, string> = {};
+
+  const box = () => ({
+    id: "native-1",
+    name,
+    organizationId: "org-1",
+    target: "us",
+    state,
+    networkBlockAll: true,
+    public: false,
+    toolboxProxyUrl: "https://proxy.app.daytona.io/toolbox",
+    labels,
+  });
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const url = new URL(String(input));
+    const path = url.pathname;
+
+    if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (path === "/api/regions")
+      return Response.json([
+        { id: "us", name: "US", regionType: "shared", organizationId: "org-1" },
+      ]);
+
+    if (path === "/api/organizations/org-1")
+      return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+    if (path === "/api/snapshots/snap-1")
+      return Response.json({
+        id: "snap-1",
+        organizationId: "org-1",
+        state: "active",
+        regionIds: ["us"],
+        sandboxClass: "container",
+      });
+
+    if (path === "/api/snapshots" && init?.method === "POST") {
+      mutations.build++;
+      snapshotName = z.object({ name: z.string() }).parse(JSON.parse(String(init.body))).name;
+
+      if (implicitBuild)
+        return Response.json({
+          id: "built-1",
+          name: snapshotName,
+          imageName: "alpine:3.21",
+          organizationId: "org-1",
+          state: "building",
+        });
+      throw new Error("snapshot build response lost");
+    }
+
+    if (path.startsWith("/api/snapshots/")) {
+      if (implicitBuild && path === "/api/snapshots/built-1") implicitIdReads++;
+
+      return snapshotName &&
+        [snapshotName, "built-1"].includes(decodeURIComponent(path.split("/").at(-1)!))
+        ? Response.json({
+            id: "built-1",
+            name: snapshotName,
+            imageName: "alpine:3.21",
+            organizationId: "org-1",
+            state: implicitBuild ? "building" : "active",
+            regionIds: ["us"],
+            sandboxClass: "container",
+          })
+        : new Response(null, { status: 404 });
+    }
+
+    if (path === "/api/sandbox" && init?.method === "POST") {
+      mutations.create++;
+      const body = JSON.parse(String(init.body));
+      name = body.name;
+      labels = body.labels;
+
+      return Response.json(box());
+    }
+
+    if (path === "/api/sandbox/native-1") {
+      if (init?.method === "DELETE") {
+        mutations.destroy++;
+        state = "destroyed";
+        throw new Error("Daytona delete response lost");
+      }
+
+      return Response.json(box());
+    }
+
+    if (path.endsWith("/files/upload-v2")) {
+      mutations.upload++;
+      const destination = url.searchParams.get("path")!;
+      const form = init?.body;
+
+      if (!(form instanceof FormData)) throw new Error("Expected multipart upload");
+      const file = form.get("file");
+
+      if (!(file instanceof Blob)) throw new Error("Expected uploaded Blob");
+      files.set(destination, new Uint8Array(await file.arrayBuffer()));
+
+      return Response.json({ path: destination, name: "blob", type: "file" });
+    }
+
+    if (path.endsWith("/files/download")) {
+      const bytes = files.get(url.searchParams.get("path")!);
+
+      return bytes ? new Response(new Uint8Array(bytes)) : new Response(null, { status: 404 });
+    }
+
+    if (path.endsWith("/process/execute")) {
+      const command = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("mkdir -m 700 -- ") && !command.includes("SANDBAR-EXEC-V1"))
+        return Response.json({ exitCode: 0, result: "" });
+
+      if (command.includes("SANDBAR-EXEC-V1")) {
+        mutations.exec++;
+        const receipt = /\}\s*>\s*'([^']+)'; cat/.exec(command)?.[1];
+        expect(receipt).toBeDefined();
+        files.set(
+          receipt!,
+          new TextEncoder().encode(
+            "SANDBAR-EXEC-V1\n0\n2\n0\n 00 ff\nSANDBAR-STDERR\nSANDBAR-END\n",
+          ),
+        );
+        throw new Error("Daytona exec response lost");
+      }
+
+      mutations.write++;
+      const link = /^ln -T -- '([^']+)' '([^']+)'/.exec(command);
+      expect(link).not.toBeNull();
+      files.set(link![2]!, files.get(link![1]!)!);
+      files.delete(link![1]!);
+      const marker = /printf '%s' '([^']+)' > '([^']+)'/.exec(command);
+      expect(marker).not.toBeNull();
+      const publish = /mv -f -- '([^']+)' '([^']+)'/.exec(command);
+      expect(publish?.[1]).toBe(marker![2]);
+      files.set(publish![2]!, new TextEncoder().encode(marker![1]!));
+      throw new Error("Daytona write response lost");
+    }
+
+    throw new Error(`Unexpected Daytona fixture route ${path}`);
+  });
+
+  const config = {
+    databaseUrl,
+    keyFile,
+    setupTokenFile,
+    startRunner: false,
+    daytonaFetch: fetchImpl,
+  };
+
+  let runtime = await openDomainRuntime(config);
+  let bearer = "";
+
+  const request = async (path: string, method = "GET", body?: FixtureJson, key?: string) => {
+    const headers: Record<string, string> = {};
+
+    if (bearer) headers.Authorization = `Bearer ${bearer}`;
+
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+
+    if (key) headers["Idempotency-Key"] = key;
+
+    const response = await runtime.app.request(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    return { status: response.status, value: await response.json() };
+  };
+
+  const id = (value: FixtureJson) =>
+    z
+      .object({ operation: z.object({ id: z.string(), sandboxId: z.string().optional() }) })
+      .parse(value).operation;
+
+  try {
+    bearer = z
+      .object({ token: z.string() })
+      .parse(
+        (await request("/v1/setup", "POST", { setupToken: "long-daytona-recovery-setup-token" }))
+          .value,
+      ).token;
+
+    const projectId = z
+      .object({ id: z.string() })
+      .parse((await request("/v1/projects", "POST", { name: "Daytona recovery" })).value).id;
+
+    const base = `/v1/projects/${projectId}`;
+
+    const connectionId = z.object({ id: z.string() }).parse(
+      (
+        await request(`${base}/provider-connections`, "POST", {
+          provider: "daytona",
+          name: "Daytona fixture",
+          credentials: { apiKey: "fixture-key" },
+          configuration: { target: "us", ttlMinutes: 15 },
+        })
+      ).value,
+    ).id;
+
+    expect(
+      (await request(`${base}/provider-connections/${connectionId}/verify`, "POST")).status,
+    ).toBe(200);
+
+    const client = Sandbar.connect({
+      url: "http://127.0.0.1:12345",
+      projectId,
+      token: bearer,
+      fetch: fixtureFetch(async (url, init) => runtime.app.request(String(url), init)),
+    });
+
+    const implicit = await client.sandboxes.submitCreate({
+      environment: Image.oci("alpine:3.21"),
+      networkPolicy: "blocked",
+    });
+
+    await runtime.runner.tick();
+    expect(
+      (await runtime.store.getOperation(projectId, implicit.reference.operationId!))?.status,
+    ).toBe("unknown");
+    expect(implicitIdReads).toBe(1);
+    expect(mutations.build).toBe(1);
+    expect(mutations.create).toBe(0);
+    implicitBuild = false;
+
+    const build = await client.images.submitBuild({
+      source: Image.oci("alpine:3.21"),
+      connectionId,
+    });
+
+    await runtime.runner.tick();
+    expect(mutations.build).toBe(2);
+    expect(mutations.create).toBe(0);
+    expect(
+      (await runtime.store.getOperation(projectId, build.reference.operationId!))?.status,
+    ).toBe("running");
+    await runtime.close();
+    runtime = await openDomainRuntime(config);
+    await request(`${base}/operations/${build.reference.operationId}/reconcile`, "POST", {});
+    await runtime.runner.tick();
+
+    const built = z
+      .object({
+        prepared: z.object({
+          kind: z.literal("prepared"),
+          value: z.string(),
+          provider: z.string(),
+          scope: z.object({
+            authority: z.object({ kind: z.string(), id: z.string() }),
+            partition: z.record(z.string(), z.string()),
+          }),
+          connectionId: z.string(),
+        }),
+        retainedResources: z.array(
+          z.object({ ownership: z.literal("unknown"), cleanup: z.literal("manual") }),
+        ),
+      })
+      .parse(await (await client.recover(build.reference)).wait());
+
+    expect(built.prepared).toMatchObject({ value: "built-1", provider: "daytona", connectionId });
+    expect(mutations.build).toBe(2);
+
+    const create = await client.sandboxes.submitCreate({
+      environment: Image.prepared(built.prepared),
+      networkPolicy: "blocked",
+    });
+
+    await runtime.runner.tick();
+    expect(
+      (await runtime.store.getOperation(projectId, create.reference.operationId!))?.status,
+    ).toBe("succeeded");
+    const boxId = (await create.wait()).id;
+    await client.close();
+
+    const exec = id(
+      (
+        await request(
+          `${base}/sandboxes/${boxId}/executions`,
+          "POST",
+          { command: { kind: "shell", script: "printf '\\000\\377'" } },
+          Bun.randomUUIDv7(),
+        )
+      ).value,
+    );
+
+    await runtime.runner.tick();
+    expect((await runtime.store.getOperation(projectId, exec.id))?.status).not.toBe("succeeded");
+    await runtime.close();
+    runtime = await openDomainRuntime(config);
+    await request(`${base}/operations/${exec.id}/reconcile`, "POST", {});
+    await runtime.runner.tick();
+    expect((await runtime.store.getOperation(projectId, exec.id))?.status).toBe("succeeded");
+    const data = new Uint8Array([0, 255]);
+
+    const write = await runtime.app.request(`${base}/sandboxes/${boxId}/files?path=%2Fout`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${bearer}`, "Idempotency-Key": Bun.randomUUIDv7() },
+      body: data,
+    });
+
+    expect(write.status).toBe(202);
+    const writeId = id(await write.json()).id;
+    await runtime.close();
+    runtime = await openDomainRuntime(config);
+    await request(`${base}/operations/${writeId}/reconcile`, "POST", {});
+    await runtime.runner.tick();
+    expect((await runtime.store.getOperation(projectId, writeId))?.status).toBe("succeeded");
+
+    const destroy = id(
+      (await request(`${base}/sandboxes/${boxId}`, "DELETE", undefined, Bun.randomUUIDv7())).value,
+    );
+
+    await runtime.runner.tick();
+    await runtime.close();
+    runtime = await openDomainRuntime(config);
+    await request(`${base}/operations/${destroy.id}/reconcile`, "POST", {});
+    await runtime.runner.tick();
+    expect((await runtime.store.getOperation(projectId, destroy.id))?.status).toBe("succeeded");
+    expect(mutations).toEqual({ build: 2, create: 1, exec: 1, upload: 1, write: 1, destroy: 1 });
   } finally {
     await runtime.close();
     await rm(directory, { recursive: true, force: true });
