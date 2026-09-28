@@ -21,6 +21,7 @@ const Token = z.strictObject({ submissionId: z.string().min(1).max(128) });
 
 const ImageToken = Token.extend({
   image: z.string().min(1).max(512),
+  discoveryDeadline: z.number().int().nonnegative().optional(),
   snapshotId: z
     .string()
     .regex(/^[A-Za-z0-9._:-]{1,128}$/)
@@ -214,10 +215,15 @@ export function createDaytonaAdapter(
             return input;
           },
           async submit(input, ctx) {
+            let discoveryDeadline: number | undefined;
+
             const result = await driver.buildImage({
               submissionId: ctx.submissionId,
               image: input.source.value,
               signal: ctx.signal,
+              onSubmit: () => {
+                discoveryDeadline = Date.now() + 600_000;
+              },
             });
 
             if (result.status === "rejected") return ctx.reject("UNAVAILABLE", result.reason);
@@ -229,6 +235,8 @@ export function createDaytonaAdapter(
               };
 
               if (result.snapshotId) token.snapshotId = result.snapshotId;
+
+              if (discoveryDeadline !== undefined) token.discoveryDeadline = discoveryDeadline;
 
               return ctx.pending(token, { pollAfterMs: 500 });
             }
@@ -254,13 +262,23 @@ export function createDaytonaAdapter(
               );
             }
 
-            const result = await driver.observeImageBuild(
-              attempt.submissionId,
-              token.data.image,
-              token.data.snapshotId,
-            );
+            let result: Awaited<ReturnType<typeof driver.observeImageBuild>>;
 
-            if (!result) return null;
+            try {
+              result = await driver.observeImageBuild(
+                attempt.submissionId,
+                token.data.image,
+                token.data.snapshotId,
+              );
+            } catch {
+              result = null;
+            }
+
+            if (!result)
+              return token.data.discoveryDeadline !== undefined &&
+                Date.now() < token.data.discoveryDeadline
+                ? ctx.pending(token.data, { pollAfterMs: 500 })
+                : ctx.unknown("Daytona image build discovery window unavailable or ended");
 
             if (result.status === "pending")
               return ctx.pending(

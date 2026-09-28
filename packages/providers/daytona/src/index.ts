@@ -582,12 +582,18 @@ export class DaytonaDriver implements ProviderDriver {
     if ((snapshotId && snapshot.id !== snapshotId) || snapshot.imageName !== image)
       return { status: "unknown", reason: "Daytona image build source mismatched" };
 
-    return this.imageBuildResult(snapshot, name, snapshotId !== undefined);
+    return (
+      this.imageBuildResult(snapshot, name, snapshotId !== undefined) ?? {
+        status: "unknown",
+        reason: "Daytona image build scope or name mismatched",
+      }
+    );
   }
   async buildImage(input: {
     submissionId: string;
     image: string;
     signal: AbortSignal;
+    onSubmit?: () => void;
   }): Promise<ImageBuildResult> {
     const name = `sandbar-image-${input.submissionId}`;
     let snapshotId: string | undefined;
@@ -605,6 +611,8 @@ export class DaytonaDriver implements ProviderDriver {
     }
 
     try {
+      input.onSubmit?.();
+
       const snapshot = await this.json("POST", "/snapshots", Snapshot, {
         name,
         imageName: input.image,

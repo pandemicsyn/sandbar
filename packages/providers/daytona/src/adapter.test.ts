@@ -886,3 +886,127 @@ test.each(["unavailable", "throw", "existing"] as const)(
     }
   },
 );
+
+test.each(["lost-name", "known-id", "known-id-throw"] as const)(
+  "image build discovery is pending only through the original deadline: %s",
+  async (mode) => {
+    const originalNow = Date.now;
+    let now = originalNow();
+    let submittedAt = 0;
+    let builds = 0;
+    let name = "";
+    let discoverable = false;
+
+    const fetchImpl: typeof fetch = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+
+        if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (path === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (path === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        const snapshot = {
+          id: "discover-1",
+          name,
+          imageName: "alpine:3.21",
+          organizationId: "org-1",
+          state: "active",
+          regionIds: ["us"],
+          sandboxClass: "container",
+        };
+
+        if (path === "/api/snapshots" && init?.method === "POST") {
+          builds++;
+          submittedAt = now;
+          name = z.object({ name: z.string() }).parse(JSON.parse(String(init.body))).name;
+
+          if (mode === "lost-name") throw new Error("build response lost");
+
+          return Response.json({ ...snapshot, name });
+        }
+
+        if (path.startsWith("/api/snapshots/")) {
+          if (!name) {
+            now += 20_000;
+
+            return new Response(null, { status: 404 });
+          }
+
+          if (!discoverable && mode === "known-id-throw") throw new Error("lookup unavailable");
+
+          return discoverable
+            ? Response.json({ ...snapshot, name })
+            : new Response(null, { status: mode === "lost-name" ? 404 : 503 });
+        }
+
+        throw new Error("Unexpected request");
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const connect = () =>
+      Sandbar.connect({
+        adapter: createDaytonaAdapter(fetchImpl),
+        config: { target: "us" },
+        credentials: { apiKey: "fixture" },
+      });
+
+    let client = await connect();
+
+    try {
+      Date.now = () => now;
+
+      const prepared = await client.operations.prepare("image_build", {
+        source: { kind: "oci", value: "alpine:3.21" },
+      });
+
+      const pending = await prepared.submit(
+        { operationId: "op-discover", submissionId: "discover", invocationKey: "key-discover" },
+        { beforeSubmit: async () => true },
+      );
+
+      if (pending?.kind !== "pending") throw new Error("Expected pending build");
+
+      expect(pending.token).toMatchObject({ discoveryDeadline: submittedAt + 600_000 });
+      await client.close();
+      client = await connect();
+
+      const attempt = {
+        scope: client.scope,
+        kind: "image_build" as const,
+        operationId: "op-discover",
+        submissionId: "discover",
+        token: pending.token,
+        tokenVersion: pending.version,
+      };
+
+      expect((await client.operations.observe(attempt))?.kind).toBe("pending");
+
+      const legacyToken = { submissionId: "discover", image: "alpine:3.21" };
+
+      expect(
+        (
+          await client.operations.observe({
+            ...attempt,
+            token: legacyToken,
+          })
+        )?.kind,
+      ).toBe("unknown");
+      now = submittedAt + 600_000;
+      expect((await client.operations.observe(attempt))?.kind).toBe("unknown");
+      discoverable = true;
+      expect(await client.operations.observe(attempt)).toMatchObject({
+        kind: "completed",
+        value: { preparedId: "discover-1" },
+      });
+      expect(builds).toBe(1);
+    } finally {
+      Date.now = originalNow;
+      await client.close();
+    }
+  },
+);
