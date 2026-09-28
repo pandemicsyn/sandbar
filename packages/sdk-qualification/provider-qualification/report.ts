@@ -181,6 +181,9 @@ function key(record: QualificationRecord): string {
     record.configuration.authorityClass ?? "unspecified",
     record.configuration.network,
     record.configuration.regionClass,
+    record.scenario.startsWith("network-")
+      ? (record.networkEvidence?.probe ?? "not-recorded")
+      : "—",
     record.scenario.startsWith("file-") ? (record.configuration.fileRoot ?? "not-recorded") : "—",
     record.runtime,
     record.platform,
@@ -246,7 +249,9 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
     record.scenario,
     record.configuration.imageClass,
     `${record.configuration.templateClass ?? "unspecified"} / ${record.configuration.authorityClass ?? "unspecified"}`,
-    record.configuration.network,
+    record.scenario.startsWith("network-")
+      ? `${record.configuration.network} / ${record.networkEvidence?.probe ?? "not recorded"}`
+      : record.configuration.network,
     record.configuration.regionClass,
     record.scenario.startsWith("file-") ? (record.configuration.fileRoot ?? "not recorded") : "—",
     `${record.runtime} ${record.platform}`,
@@ -265,7 +270,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
         "Scenario",
         "Image",
         "Template / authority",
-        "Network",
+        "Network / probe",
         "Region class",
         "File root",
         "Runtime",

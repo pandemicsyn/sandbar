@@ -11,7 +11,7 @@ These results cover only the stated image, requested network policy and region c
 
 Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot capture/restore is unsupported by the current public SDK; a prepared-image create is not snapshot qualification.
 
-| Provider | Scenario        | Image    | Template / authority  | Network           | Region class     | File root    | Runtime                 | SDK / native                  | Latest live result | Date       | Evidence                                                 |
+| Provider | Scenario        | Image    | Template / authority  | Network / probe   | Region class     | File root    | Runtime                 | SDK / native                  | Latest live result | Date       | Evidence                                                 |
 | -------- | --------------- | -------- | --------------------- | ----------------- | ---------------- | ------------ | ----------------------- | ----------------------------- | ------------------ | ---------- | -------------------------------------------------------- |
 | e2b      | build-oci       | prepared | public-base / api-key | blocked-requested | provider-default | —            | Bun 1.3.14 darwin-arm64 | 0.0.0 (626b47b3) / e2b 2.51.0 | not-run            | 2026-09-28 | [record](https://github.com/pandemicsyn/sandbar/pull/19) |
 | e2b      | close           | prepared | public-base / api-key | blocked-requested | provider-default | —            | Bun 1.3.14 darwin-arm64 | 0.0.0 (626b47b3) / e2b 2.51.0 | passed             | 2026-09-28 | [record](https://github.com/pandemicsyn/sandbar/pull/19) |

@@ -7,7 +7,7 @@ import { defineAdapter } from "../../adapter/src/index";
 import { z } from "zod";
 import { LedgerStore, reportedCleanup } from "./ledger";
 import { runNetworkPair } from "./network-profile";
-import { parseReport } from "./report";
+import { parseReport, renderLiveMatrix } from "./report";
 import {
   networkScript,
   networkSampleSchema,
@@ -351,4 +351,49 @@ test("paired cleanup report is independent of which UUID reconciles the pair", (
   expect(reportedCleanup([unused, confirmed])).toBe("confirmed");
   expect(reportedCleanup([confirmed, { cleanup: "unresolved" }])).toBe("incomplete");
   expect(reportedCleanup([unused, unused])).toBe("not-required");
+});
+
+test("measured network proof cannot supersede an unrecorded probe scope", () => {
+  const record = {
+    schemaVersion: 1,
+    provider: "e2b",
+    scenario: "network-blocked",
+    mode: "live",
+    status: "failed",
+    sdkCommit: "a".repeat(40),
+    harnessCommit: "b".repeat(40),
+    sdkVersion: "0.0.0",
+    nativeVersion: "e2b 2.51.0",
+    runCleanup: "confirmed",
+    runtime: "Bun",
+    platform: "fixture",
+    timestamp: "2026-09-27T00:00:00Z",
+    configuration: {
+      imageClass: "prepared",
+      templateClass: "public-base",
+      authorityClass: "api-key",
+      network: "blocked-requested",
+      regionClass: "provider-default",
+    },
+    evidenceRef: "specs/older-probe.md",
+  };
+  const measured = {
+    ...record,
+    timestamp: "2026-09-28T00:00:00Z",
+    evidenceRef: "specs/measured-probe.md",
+    networkEvidence: {
+      probe: "cloudflare-tcp443-hostname-ipv4-v1",
+      samples: [
+        { ...outcomes(true), phase: "before" },
+        { ...outcomes(true), phase: "blocked" },
+        { ...outcomes(true), phase: "after" },
+      ],
+    },
+  };
+  const rendered = renderLiveMatrix([
+    parseReport({ schemaVersion: 1, records: [record, measured] }),
+  ]);
+  expect(rendered).toContain("specs/older-probe.md");
+  expect(rendered).toContain("specs/measured-probe.md");
+  expect(rendered).toContain("blocked-requested / cloudflare-tcp443-hostname-ipv4-v1");
 });
