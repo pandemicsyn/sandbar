@@ -22,7 +22,7 @@ Third-party authors may use their own names/scopes, for example `@acme/sandbar-a
 
 ## Consumer experience
 
-The accepted target for built-in providers is one installation:
+Built-in providers use one SDK installation:
 
 ```sh
 npm install sandbar-sdk
@@ -40,7 +40,7 @@ const sandbar = await Sandbar.connect(
 );
 ```
 
-This is a target API example, not a live-verified or currently published quickstart. `daytona` packages typed provider configuration and credentials for the common connection path. Constructing it performs no provider IO; `Sandbar.connect` validates and verifies the binding and owns the resulting session. It uses the same engine, configuration schemas, scope verification, host policy and close/recovery semantics as custom adapters. E2B uses the same built-in factory pattern; external adapters use the public binding or definition connection form. Exact options must follow their supported implementations. Keep the general custom-adapter connection form available without forcing custom authors to implement a factory.
+This API shape is implemented; the example does not establish live qualification or publication. `daytona` packages typed provider configuration and credentials for the common connection path. Constructing it performs no provider IO; `Sandbar.connect` validates and verifies the binding and owns the resulting session. It uses the same engine, configuration schemas, scope verification, host policy and close/recovery semantics as custom adapters. E2B uses the same built-in factory pattern; external adapters use the public binding or definition connection form. Exact options must follow their supported implementations. Keep the general custom-adapter connection form available without forcing custom authors to implement a factory.
 
 The service is separately installed with `npm install sandbar-service`. A remote consumer imports `sandbar-service/client`; it does not need a running local service. Service hosting retains its documented runtime/database requirements. The client subpath must run in supported Node and Bun environments without importing Bun-only hosting, SQL or UI code.
 
@@ -66,7 +66,7 @@ There is no public catch-all contracts package. HTTP/project/auth envelopes, rou
 
 Apply the names consistently to manifests, exports, dependency ranges, documentation, generated references, examples, tarball tests and Changesets release configuration. Remove superseded unpublished aliases, including SDK `/direct` and `/remote`, rather than maintaining compatibility layers. Workspace directory names may remain stable; users depend on package names and export paths.
 
-The SDK task implements the package boundaries and currently implemented built-ins on its isolated branch. The release task integrates only after that branch is reviewed and merged, using the final actual distributable graph. Do not include planned providers as releasable packages or phantom exports.
+Release the actual distributable graph. Do not include planned providers as releasable packages or phantom exports. Current implementation sequencing lives in [plans](../plans/implementation-plan.md).
 
 Qualify actual packed artifacts with strict external TypeScript consumers and Node/Bun execution: SDK root plus built-in subpaths; an independently authored adapter; service/client HTTP flows; and service admission/restart/observation without mutation replay. Release qualification additionally exercises npm, pnpm and Bun installation without workspace aliases or extra root dependencies masking missing transitive packages. Verify that SDK imports exclude service/SQL and service/client imports exclude hosting code.
 

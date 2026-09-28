@@ -14,11 +14,11 @@ The npm registry's `beta` tag returned **1.0.0-beta.22** for both `drizzle-orm` 
 
 Sandbar provides a consistent API over Daytona, E2B, Modal, Tensorlake and future providers without hiding differences in security, storage or lifecycle. TypeScript, Rust and Python remain first-class SDKs over HTTP/JSON plus explicit streaming protocols. Handwritten SDK ergonomics wrap generated transport/models.
 
-The refined [contracts](../contract-recommendations.md), [storage/images](../storage-and-images.md), [observability/accounting](../observability-and-accounting.md), [validation](../validation-and-contracts.md), and [management UI](../management-ui.md) define the behavioral requirements.
+The refined [contracts](https://github.com/pandemicsyn/sandbar/blob/3be544646df54a2e1f85a3772d2961eaf69a7cc6/specs/contract-recommendations.md), [storage/images](https://github.com/pandemicsyn/sandbar/blob/3be544646df54a2e1f85a3772d2961eaf69a7cc6/specs/storage-and-images.md), [observability/accounting](https://github.com/pandemicsyn/sandbar/blob/3be544646df54a2e1f85a3772d2961eaf69a7cc6/specs/observability-and-accounting.md), [validation](../validation-and-contracts.md), and [management UI](https://github.com/pandemicsyn/sandbar/blob/3be544646df54a2e1f85a3772d2961eaf69a7cc6/specs/management-ui.md) define the behavioral requirements.
 
 ## Optional direct TypeScript mode
 
-The accepted [direct SDK plan](../direct-typescript-sdk.md) adds direct provider access without a service, database or hidden daemon. The portable `packages/core` now contains shared request normalization, result correlation and bounded output helpers; `packages/service-runtime` owns the store-dependent durable runner and key custody. The direct SDK is the next implementation step and will reuse the portable contracts and provider SPI. Keep the following service topology intact behind the HTTP backend. Administration, durable scheduling, shared fleet/quotas and accounting remain service concerns.
+The accepted [direct SDK plan](https://github.com/pandemicsyn/sandbar/blob/3be544646df54a2e1f85a3772d2961eaf69a7cc6/specs/direct-typescript-sdk.md) adds direct provider access without a service, database or hidden daemon. The portable `packages/core` now contains shared request normalization, result correlation and bounded output helpers; `packages/service-runtime` owns the store-dependent durable runner and key custody. The direct SDK is the next implementation step and will reuse the portable contracts and provider SPI. Keep the following service topology intact behind the HTTP backend. Administration, durable scheduling, shared fleet/quotas and accounting remain service concerns.
 
 ## Topology
 

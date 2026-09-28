@@ -1,31 +1,23 @@
-# Specifications and design decisions
+# Specifications
 
-Public usage documentation lives in [apps/docs](../apps/docs/README.md). Implementation sequencing lives in [plans](../plans/implementation-plan.md).
+Keep this directory for focused implementation specs and a small set of current engineering contracts. Public usage belongs in [the docs site](../apps/docs/README.md), qualification belongs [with its harness](../packages/sdk-qualification/README.md), and sequencing belongs in [plans](../plans/implementation-plan.md).
 
-## Accepted implementation decisions
+## Next implementation
 
-- [Public packages and adapter conventions](package-conventions.md) — selected names, built-in providers, custom integrations and release boundaries.
-- [First-class custom adapter DX](custom-adapters.md) — approved SDK-first refactor; implementation and qualification in progress.
+- [Provider state portability](provider-state-portability.md) — snapshots, volumes, mounts and lifecycle control, with explicit guarantees when provider support differs. This is the next coding work; the APIs are not implemented yet.
 
-## Implemented interfaces and architecture
+## Later design work
 
-- [Public API contract and executable schema sources](api-spec.md)
-- [Architecture and selected stack](design.md)
-- [Direct SDK and optional service-client constraints](direct-typescript-sdk.md)
-- [Measured runtime and package qualification](sdk-runtime-qualification.md)
-- [Validation boundaries](validation-and-contracts.md)
+- [Interactive execution and access](interactive-execution-and-access.md) — initial process, streaming, terminal, endpoint and tunnel contracts. Not an implementation commitment or a prerequisite for state portability.
 
-## Design requirements and future proposals
+Vercel and Tensorlake adapter specs will be written later. Observability/accounting is deferred; management feature plans are not maintained here. Rust is not on the roadmap.
 
-These documents mix accepted behavioral requirements with resource/features beyond the implemented initial slice. They are design context, not support matrices or runnable SDK examples. Current schemas, package READMEs and tested public docs describe available behavior.
+## Current engineering contracts
 
-- [Contract recommendations and review decisions](contract-recommendations.md)
-- [Storage, snapshots and images](storage-and-images.md)
-- [Observability, usage and accounting](observability-and-accounting.md)
-- [Management UI scope](management-ui.md)
-- [Provider research and design targets](provider-drivers.md)
-- [First-class custom adapter DX](custom-adapters.md) — approved implementation direction in progress on its implementation branch.
+- [Architecture](design.md) — the implemented SDK, adapter and optional service boundaries.
+- [Package conventions](package-conventions.md) — public names, dependencies and distribution rules.
+- [Validation](validation-and-contracts.md) — executable schema ownership and boundary requirements.
 
-## Historical material
+For the current API, use the [SDK source](../packages/sdk/src/index.ts), [resource types](../packages/sdk/src/resource.ts), [adapter API](../packages/adapter/src/index.ts), and service [HTTP schemas](../apps/server/src/http-contracts.ts) / [OpenAPI](../apps/server/openapi.json). Do not duplicate their API inventory in a prose spec.
 
-[Archived drafts](archive/README.md) preserve superseded architectures, API sketches and the completed SDK implementation sequence. They are not current implementation instructions. [Archived plans](../plans/archive/README.md) preserve the original roadmap and task handoffs.
+Superseded top-level plans have been removed; Git history preserves them. The pre-existing [historical archive](archive/README.md) is context only and does not establish requirements, provider support, or release gates. New superseded plans should normally be deleted rather than copied into that archive.

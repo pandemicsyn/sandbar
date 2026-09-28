@@ -1,7 +1,7 @@
 # Plans
 
-- [Current implementation sequencing](implementation-plan.md)
-- [Documentation site and launch constraints](documentation-site.md)
-- [Completed and superseded plans](archive/README.md)
+[Current implementation sequence](implementation-plan.md) records selected work and deferrals. State portability is next; interactive execution and access follows later.
 
-Engineering contracts and proposals live in [specs](../specs/README.md); public documentation lives in [apps/docs](../apps/docs/README.md).
+Engineering contracts and proposals live in [specs](../specs/README.md), public documentation in [apps/docs](../apps/docs/README.md), and qualification guidance [with its harness](../packages/sdk-qualification/README.md).
+
+Completed and superseded plans have been removed. Git history preserves them; they do not define current requirements or release gates.
