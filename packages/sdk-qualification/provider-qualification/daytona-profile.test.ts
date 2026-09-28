@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { daytonaConfiguration, daytonaConnection } from "./daytona-profile";
 import { LedgerStore } from "./ledger";
-import { runPrepared, reconcileConnection } from "./lifecycle";
+import { runPrepared, reconcileConnection, recordReference } from "./lifecycle";
+import { Image } from "sandbar-sdk";
 
 const directories: string[] = [];
 
@@ -404,15 +405,28 @@ test("Daytona asynchronous delete acknowledgment survives reconnect and confirms
   });
 
   await native.use(async () => {
-    const steps = await runPrepared(native.factory, native.ledger, native.config.snapshotId, {
-      network: "daytona-default",
-      cleanupWaitMs: 5000,
-      selectedScenarios: new Set(["inspect"]),
+    await native.ledger.update((value) => ({ ...value, createIntent: true }));
+    const client = await native.factory((reference) => recordReference(native.ledger, reference));
+
+    const box = await client.sandboxes.create({
+      environment: Image.prepared(native.config.snapshotId),
+      networkPolicy: "daytona-default",
     });
 
-    expect(steps.find((s) => s.scenario === "destroy")?.status).toBe("passed");
+    await native.ledger.update((value) => ({ ...value, sandboxId: box.id }));
+
+    const deletion = await client.submit("destroy", { id: box.id }, () => undefined, {
+      sandboxId: box.id,
+    });
+
+    expect(await deletion.observe()).toBeNull();
+    await recordReference(native.ledger, deletion.reference);
+    await client.close();
+    await native.ledger.update((value) => ({ ...value, cleanup: "unresolved" }));
+
+    const steps = await reconcileConnection(native.factory, native.ledger, 1000);
+    expect(steps.find((step) => step.scenario === "destroy")?.status).toBe("passed");
     expect((await native.ledger.read()).cleanup).toBe("confirmed");
-    await reconcileConnection(native.factory, native.ledger, 1000);
   });
   expect(native.counters.create).toBe(1);
   expect(native.counters.destroy).toBe(1);

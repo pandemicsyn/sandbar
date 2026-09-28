@@ -622,3 +622,22 @@ test("cleanup waits for eventual create discovery before deleting exactly once",
   expect(observations).toBe(2);
   expect(fixture.calls()).toBe(1);
 });
+
+test("directory admission blocks unrelated runs and unresolved resources before allocation", async () => {
+  const previous = await ledger();
+  const next = new LedgerStore(join(previous.path, ".."), crypto.randomUUID());
+  await previous.withAdmissionLock(async () => {
+    await expect(next.withAdmissionLock(async () => {})).rejects.toMatchObject({ code: "EEXIST" });
+  });
+  await previous.update((value) => ({
+    ...value,
+    createIntent: true,
+    createReference: reference,
+    cleanup: "unresolved",
+  }));
+  await next.withAdmissionLock(async () => {
+    await expect(next.requirePreviousCleanup()).rejects.toThrow("unresolved resources");
+    await previous.update((value) => ({ ...value, cleanup: "confirmed" }));
+    await next.requirePreviousCleanup();
+  });
+});

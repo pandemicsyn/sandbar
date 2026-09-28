@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import type { AdapterRecoveryReference } from "sandbar-sdk";
@@ -142,14 +142,14 @@ export class LedgerStore {
     }
   }
 
-  /** Serialize a paired network exercise and reconciliation before either resource is touched. */
+  /** Serialize all runs in this private ledger directory, including paired reconciliation. */
   async withAdmissionLock<T>(work: () => Promise<T>, companion?: LedgerStore): Promise<T> {
     if (
       companion &&
       (dirname(this.path) !== dirname(companion.path) || this.runId === companion.runId)
     )
       throw new Error("Invalid companion ledger");
-    const lockPath = `${[this.path, companion?.path ?? this.path].sort()[0]}.admission.lock`;
+    const lockPath = join(dirname(this.path), ".admission.lock");
     const lock = await open(lockPath, "wx", 0o600);
 
     try {
@@ -160,6 +160,26 @@ export class LedgerStore {
     } finally {
       await lock.close();
       await unlink(lockPath);
+    }
+  }
+
+  /** Called under directory admission before any new run is initialized. */
+  async requirePreviousCleanup(): Promise<void> {
+    for (const filename of await readdir(dirname(this.path))) {
+      if (!filename.endsWith(".json")) continue;
+      const runId = filename.slice(0, -5);
+
+      if (!z.uuid().safeParse(runId).success) continue;
+      const previous = await new LedgerStore(dirname(this.path), runId).read();
+
+      if (
+        previous.createReference &&
+        previous.cleanup !== "confirmed" &&
+        previous.cleanup !== "not-required"
+      )
+        throw new Error(
+          "An earlier run has unresolved resources; reconcile its private ledger before creating another sandbox",
+        );
     }
   }
 
