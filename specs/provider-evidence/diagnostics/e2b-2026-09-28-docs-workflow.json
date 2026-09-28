@@ -1,0 +1,74 @@
+{
+  "purpose": "user-requested-unmerged-docs-workflow-retest",
+  "fileRoot": "/home/user",
+  "sdkCommit": "966dc4820fa2e94fe55d8ffdf411058b9e43f1a5",
+  "harnessCommit": "966dc4820fa2e94fe55d8ffdf411058b9e43f1a5",
+  "envd": {
+    "status": "available",
+    "version": "0.6.10"
+  },
+  "elapsedMs": 7467,
+  "cleanup": "confirmed",
+  "steps": [
+    {
+      "scenario": "connect",
+      "status": "passed"
+    },
+    {
+      "scenario": "create-prepared",
+      "status": "passed"
+    },
+    {
+      "scenario": "inspect",
+      "status": "passed"
+    },
+    {
+      "scenario": "exec-argv",
+      "status": "passed"
+    },
+    {
+      "scenario": "exec-shell",
+      "status": "passed"
+    },
+    {
+      "scenario": "exec-nonzero",
+      "status": "passed"
+    },
+    {
+      "scenario": "file-binary",
+      "status": "passed"
+    },
+    {
+      "scenario": "file-overwrite",
+      "status": "passed"
+    },
+    {
+      "scenario": "file-no-clobber",
+      "status": "passed"
+    },
+    {
+      "scenario": "inventory",
+      "status": "passed"
+    },
+    {
+      "scenario": "destroy",
+      "status": "passed"
+    },
+    {
+      "scenario": "confirm-cleanup",
+      "status": "passed"
+    },
+    {
+      "scenario": "close",
+      "status": "passed"
+    }
+  ],
+  "driverSha256": "791b29f21a50f06f6124d1cf181669a28be67ec4d133a98bf070bea99cff11be",
+  "documentation": [
+    "https://docs.e2b.dev/template/user-and-workdir",
+    "https://docs.e2b.dev/quickstart/upload-download-files",
+    "https://docs.e2b.dev/sdk-reference/js-sdk/v2.51.0/sandbox-filesystem"
+  ],
+  "supportCertification": false,
+  "buildOCI": "not-run"
+}
