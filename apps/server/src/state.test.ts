@@ -168,12 +168,14 @@ test("service and direct read checks agree, admission and runtime reject before 
     };
 
     const ociInput = { ...input, environment: Image.oci("registry.test/base:stable") };
+
     for (const request of [ociInput, { environment: ociInput.environment }]) {
       expect(await client.sandboxes.checkCreate(request)).toEqual(
         await direct.sandboxes.checkCreate(request),
       );
       expect((await client.sandboxes.checkCreate(request)).status).toBe("supported");
     }
+
     const remoteCaps = await client.capabilities();
     const directCaps = await direct.capabilities();
     expect({ ...remoteCaps, observedAt: "dated" }).toEqual({ ...directCaps, observedAt: "dated" });
