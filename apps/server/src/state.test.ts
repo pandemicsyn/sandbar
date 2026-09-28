@@ -26,6 +26,8 @@ test("service and direct read checks agree, admission and runtime reject before 
   let captures = 0;
   let status: "supported" | "unsupported" | "unknown" | "unavailable" = "supported";
   let reason = "fixture evidence";
+  let watchedOperation: { projectId: string; id: string } | undefined;
+  let capabilityReadsAfterMarker = 0;
 
   const adapter = defineAdapter({
     name: "fixture.state",
@@ -55,6 +57,15 @@ test("service and direct read checks agree, admission and runtime reject before 
           return { id: box.id, state: "running" };
         },
         async snapshotProfiles() {
+          if (
+            watchedOperation &&
+            (await runtime.store.getOperation(watchedOperation.projectId, watchedOperation.id))
+              ?.submission_possible
+          ) {
+            capabilityReadsAfterMarker++;
+            throw new Error("Capability read after persisted service marker");
+          }
+
           return status === "supported"
             ? { status, value: { profiles: [profile] } }
             : { status, reason };
@@ -207,7 +218,10 @@ test("service and direct read checks agree, admission and runtime reject before 
     expect(creates).toBe(0);
     status = "supported";
     const operation = await client.sandboxes.submitCreate(input);
+    watchedOperation = { projectId, id: operation.reference.operationId! };
     await runtime.runner.tick();
+    expect(capabilityReadsAfterMarker).toBe(0);
+    watchedOperation = undefined;
     expect(creates).toBe(1);
     await runtime.close();
     runtime = await openDomainRuntime(config);

@@ -32,7 +32,17 @@ export const ResourceReference = z.strictObject({
   ownership: z.enum(["borrowed", "verified-created", "unknown"]),
   service: z
     .strictObject({
-      url: z.url(),
+      url: z.url().refine((value) => {
+        const url = new URL(value);
+
+        return (
+          !url.username &&
+          !url.password &&
+          !url.search &&
+          !url.hash &&
+          (url.protocol === "https:" || url.protocol === "http:")
+        );
+      }, "Service URL must be an HTTP(S) endpoint without credentials, query, or fragment"),
       projectId: z.string().min(1).max(128),
       connectionId: z.string().min(1).max(128),
     })
@@ -201,6 +211,55 @@ export const unsupportedState = (): Support<never> => ({
   reason: "Operation is not implemented",
 });
 
+function readBeforeDeadline<T>(
+  read: (context: ReadContext) => Promise<T>,
+  context: ReadContext,
+): Promise<T> {
+  const controller = new AbortController();
+  const signal = AbortSignal.any([context.signal, controller.signal]);
+
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+
+      return;
+    }
+
+    let settled = false;
+
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      context.signal.removeEventListener("abort", onAbort);
+      action();
+    };
+
+    const onAbort = () => finish(() => reject(signal.reason));
+
+    const timer = setTimeout(
+      () => {
+        const error = new AdapterError("TIMEOUT", "Adapter capability deadline exceeded");
+        controller.abort(error);
+        finish(() => reject(error));
+      },
+      Math.max(0, context.deadline - Date.now()),
+    );
+
+    context.signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve()
+      .then(() => {
+        if (signal.aborted) throw signal.reason;
+
+        return read({ ...context, signal });
+      })
+      .then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      );
+  });
+}
+
 export async function stateCapabilities(
   session: RuntimeSession,
   target: { sandbox?: Sandbox; create?: CreateInput },
@@ -208,7 +267,12 @@ export async function stateCapabilities(
 ): Promise<StateCapabilities> {
   const capture =
     session.snapshotCapture && session.snapshotProfiles
-      ? SnapshotSupport.parse(await session.snapshotProfiles(structuredClone(target), context))
+      ? SnapshotSupport.parse(
+          await readBeforeDeadline(
+            (readContext) => session.snapshotProfiles!(structuredClone(target), readContext),
+            context,
+          ),
+        )
       : unsupportedState();
 
   return {
@@ -247,7 +311,6 @@ export function resolveSnapshot(
       profile.preserve === input.preserve &&
       interruption.indexOf(profile.interruption) <=
         interruption.indexOf(input.maxInterruption ?? "pause") &&
-      profile.sourceAfter === (input.sourceAfter ?? "unchanged") &&
       profile.consistency === (input.consistency ?? "crash-consistent"),
   );
 
@@ -258,10 +321,24 @@ export function resolveSnapshot(
     };
 
   if (state === "unknown") return { status: "unknown", reason: "Source state is unknown" };
-  const valid = matches.filter((profile) => profile.sourceStates.includes(state));
+  const sources = matches.filter((profile) => profile.sourceStates.includes(state));
+
+  if (!sources.length)
+    return { status: "unavailable", reason: "No matching profile accepts the source state" };
+
+  const requestedAfter = input.sourceAfter ?? "unchanged";
+  const expectedState = requestedAfter === "unchanged" ? state : requestedAfter;
+
+  const valid = sources.filter(
+    (profile) =>
+      (profile.sourceAfter === "unchanged" ? state : profile.sourceAfter) === expectedState,
+  );
 
   if (!valid.length)
-    return { status: "unavailable", reason: "No matching profile accepts the source state" };
+    return {
+      status: "unsupported",
+      reason: "No profile satisfies the requested source lifecycle outcome",
+    };
   const minimum = input.retention?.minimumSeconds ?? 0;
 
   const profile = valid.find(

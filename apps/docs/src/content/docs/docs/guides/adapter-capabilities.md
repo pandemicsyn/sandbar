@@ -35,3 +35,5 @@ if (check.status === "supported") {
 Requirements are rechecked during create preparation and before submission. Unsupported requests fail before allocation; unknown and unavailable requirements also block allocation. The service checks requirements before admission and the runner checks the persisted requirement again. Service connection checks use the first verified installed connection in creation order; a scoped prepared image selects its bound connection for create checks. No automatic provider switching is performed.
 
 These are foundations. Current built-ins report snapshot, volume, and suspension operations as unsupported. Capture, restore, artifact inventory/deletion, volume creation, mounts, and suspension are subsequent feature slices. The asynchronous direct capability getter is an intentional API change; callers must await it.
+
+All requirement reads finish before the durable submission marker. Once it is recorded, dispatch uses the validated preparation; recovery only observes native evidence. For a source already observed as stopped, a profile ending stopped satisfies unchanged lifecycle state.

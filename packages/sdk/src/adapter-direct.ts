@@ -570,13 +570,24 @@ export class PreparedAdapterAttempt {
 
     let permitted: boolean;
 
-    try {
-      if (this.prepared.revalidate) {
-        const rejected = await raceAbort(this.prepared.revalidate(signal), signal);
+    if (this.prepared.revalidate) {
+      let rejected: RuntimeResult | null;
 
-        if (rejected) return rejected;
+      try {
+        rejected = await raceAbort(this.prepared.revalidate(signal), signal);
+      } catch (error) {
+        this.client.ensureOpen();
+        assertSignal(options.signal);
+
+        if (error instanceof AdapterError && error.code === "TIMEOUT")
+          throw new SandbarError(error.code, error.message);
+        throw error;
       }
 
+      if (rejected) return rejected;
+    }
+
+    try {
       permitted = await raceAbort(options.beforeSubmit(), signal);
     } catch (error) {
       this.client.ensureOpen();
@@ -591,8 +602,9 @@ export class PreparedAdapterAttempt {
 
     try {
       return await raceAbort(
+        // Requirements were checked before the durable marker; no read hook may run after it.
         submitOperation(
-          this.prepared,
+          { ...this.prepared, revalidate: undefined },
           checked,
           signal,
           this.kind === "exec" ? this.maxOutputBytes : undefined,
@@ -847,6 +859,12 @@ export class AdapterDirectClient {
     });
   }
   async checkCreate(input: CreateInput): Promise<Support<CreatePlan>> {
+    return this.checkCreateWithSignal(input, this.signal);
+  }
+  private async checkCreateWithSignal(
+    input: CreateInput,
+    signal: AbortSignal,
+  ): Promise<Support<CreatePlan>> {
     this.ensureOpen();
     const request = validateCreate(input);
     this.checkImageBinding(request);
@@ -862,7 +880,7 @@ export class AdapterDirectClient {
           labels: request.labels,
           requirements: request.requirements,
         },
-        { signal: this.signal, deadline: Date.now() + 30_000 },
+        { signal, deadline: Date.now() + 30_000 },
       ),
     );
   }
@@ -881,7 +899,24 @@ export class AdapterDirectClient {
   ): Promise<AdapterOperation<AdapterSandbox>> {
     const request = validateCreate(input);
     this.checkImageBinding(request);
-    const evaluation = await this.checkCreate(request);
+    this.ensureOpen();
+    assertSignal(options.signal);
+    const signal = options.signal ? AbortSignal.any([this.signal, options.signal]) : this.signal;
+    let evaluation: Support<CreatePlan>;
+
+    try {
+      evaluation = await raceAbort(this.checkCreateWithSignal(request, signal), signal);
+    } catch (error) {
+      this.ensureOpen();
+      assertSignal(options.signal);
+
+      if (error instanceof AdapterError && error.code === "TIMEOUT")
+        throw new SandbarError(error.code, error.message);
+      throw error;
+    }
+
+    this.ensureOpen();
+    assertSignal(options.signal);
 
     if (evaluation.status === "unsupported")
       throw new UnsupportedFeatureError("create", [evaluation.reason]);
@@ -961,6 +996,7 @@ export class AdapterDirectClient {
     });
 
     let first: RuntimeResult;
+    let barrierStarted = false;
     const signals = options.signal ? [this.signal, options.signal] : [this.signal];
     const waiting = AbortSignal.any(signals);
 
@@ -969,6 +1005,7 @@ export class AdapterDirectClient {
         prepared
           .submit(ids, {
             beforeSubmit: async () => {
+              barrierStarted = true;
               await this.onReference?.(reference);
 
               return true;
@@ -983,6 +1020,12 @@ export class AdapterDirectClient {
         waiting,
       );
     } catch (error) {
+      if (!barrierStarted) {
+        this.ensureOpen();
+        assertSignal(options.signal);
+        throw error;
+      }
+
       if (error instanceof BeforeSubmitError) throw error.original;
 
       if (waiting.aborted) abortWaiting(reference, waiting.reason);

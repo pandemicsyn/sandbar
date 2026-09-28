@@ -173,3 +173,110 @@ test("absent mutation cannot advertise capture and read checks propagate unavail
     expect((await stateCapabilities(session, {}, context)).snapshots.capture.status).toBe(status);
   }
 });
+
+test("service references reject credentials, query strings, fragments and non-HTTP endpoints", () => {
+  const reference = {
+    version: 1 as const,
+    kind: "snapshot" as const,
+    provider: "fixture",
+    scope,
+    nativeId: "snapshot",
+    ownership: "unknown" as const,
+  };
+
+  for (const url of [
+    "https://user:secret@example.test/",
+    "https://user@example.test/",
+    "https://example.test/?token=secret",
+    "https://example.test/?region=us",
+    "https://example.test/#secret",
+    "ftp://example.test/",
+  ]) {
+    expect(
+      ResourceReference.safeParse({
+        ...reference,
+        service: { url, projectId: "p1", connectionId: "c1" },
+      }).success,
+    ).toBe(false);
+  }
+
+  for (const url of ["https://example.test/api/", "http://127.0.0.1:3000/"]) {
+    expect(
+      ResourceReference.safeParse({
+        ...reference,
+        service: { url, projectId: "p1", connectionId: "c1" },
+      }).success,
+    ).toBe(true);
+  }
+});
+
+test("unchanged source lifecycle is resolved against the observed state", () => {
+  const support = { status: "supported" as const, value: { profiles: [profile] } };
+  const request = { preserve: "filesystem" as const, maxInterruption: "stop" as const };
+  expect(resolveSnapshot(support, request, "stopped")).toMatchObject({
+    status: "supported",
+    value: { sourceState: "stopped", profile: { sourceAfter: "stopped" } },
+  });
+  expect(resolveSnapshot(support, request, "running").status).toBe("unsupported");
+  expect(resolveSnapshot(support, request, "unknown").status).toBe("unknown");
+  expect(resolveSnapshot(support, { ...request, sourceAfter: "stopped" }, "running").status).toBe(
+    "supported",
+  );
+  expect(resolveSnapshot(support, { ...request, sourceAfter: "destroyed" }, "stopped").status).toBe(
+    "unsupported",
+  );
+  expect(
+    resolveSnapshot(
+      { status: "supported", value: { profiles: [{ ...profile, sourceAfter: "unchanged" }] } },
+      { ...request, sourceAfter: "stopped" },
+      "stopped",
+    ).status,
+  ).toBe("supported");
+});
+
+test("capability reads enforce their deadline and abort stalled hooks", async () => {
+  let readSignal: AbortSignal | undefined;
+
+  const session: RuntimeSession = {
+    scope,
+    supports: { images: ["prepared"], network: ["blocked"] },
+    create: async () => ({ id: "box", state: "running" }),
+    destroy: async () => ({ computeStopped: true, retainedResources: [] }),
+    snapshotCapture: async () => {
+      throw new Error("Must not capture");
+    },
+    snapshotProfiles: async (_target, context) => {
+      readSignal = context.signal;
+
+      return new Promise(() => {});
+    },
+  };
+
+  await expect(
+    stateCapabilities(
+      session,
+      {},
+      {
+        signal: new AbortController().signal,
+        deadline: Date.now() + 20,
+      },
+    ),
+  ).rejects.toMatchObject({ code: "TIMEOUT" });
+  expect(readSignal?.aborted).toBe(true);
+
+  const controller = new AbortController();
+
+  const checking = stateCapabilities(
+    session,
+    {},
+    {
+      signal: controller.signal,
+      deadline: Date.now() + 30_000,
+    },
+  );
+
+  await Promise.resolve();
+  controller.abort(new Error("Caller aborted"));
+  await expect(checking).rejects.toThrow("Caller aborted");
+  expect(readSignal?.aborted).toBe(true);
+});
