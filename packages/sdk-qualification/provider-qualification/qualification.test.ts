@@ -158,7 +158,7 @@ test("uncertain create remains actionable without guessing an ID", async () => {
     },
   });
 
-  expect((await reconcile(fixture.result, store))[0]?.status).toBe("blocked");
+  expect((await reconcile(fixture.result, store, 0))[0]?.status).toBe("blocked");
   expect((await store.read()).cleanup).toBe("unresolved");
 });
 
@@ -603,4 +603,22 @@ test("home-directory file evidence cannot supersede a sticky-tmp failure", () =>
   expect(rows).toHaveLength(2);
   expect(rows.some((row) => row.includes("/tmp") && row.includes("failed"))).toBe(true);
   expect(rows.some((row) => row.includes("/home/user") && row.includes("passed"))).toBe(true);
+});
+
+test("cleanup waits for eventual create discovery before deleting exactly once", async () => {
+  const store = await ledger();
+  await store.update((value) => ({ ...value, createIntent: true, createReference: reference }));
+  let observations = 0;
+
+  const fixture = access({
+    async observeCreate() {
+      observations++;
+
+      return observations < 2 ? null : { id: "owned-sandbox" };
+    },
+  });
+
+  expect((await reconcile(fixture.result, store, 2000))[1]?.status).toBe("passed");
+  expect(observations).toBe(2);
+  expect(fixture.calls()).toBe(1);
 });

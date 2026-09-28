@@ -704,6 +704,7 @@ async function reconcileLocked(
     ];
 
   let id = state.sandboxId;
+  let deletionFailure: FailureDiagnostic | undefined;
   const controller = new AbortController();
   const signal = waitMs > 0 ? controller.signal : undefined;
 
@@ -717,27 +718,30 @@ async function reconcileLocked(
 
     if (!id) {
       capture.at("recover-create");
-      const result = await access.observeCreate(state.createReference, signal);
 
-      if (result) {
-        id = result.id;
-        await ledger.update((value) => ({ ...value, sandboxId: id }));
-      }
+      // Read-only discovery may lag an accepted create. Keep observing within the
+      // cleanup budget; never dispatch another create while ownership is uncertain.
+      do {
+        try {
+          const result = await access.observeCreate(state.createReference, signal);
+
+          if (result) id = result.id;
+        } catch (error) {
+          if (!(error instanceof OutcomeUnknownError)) throw error;
+        }
+
+        if (id || Date.now() >= deadline) break;
+        await boundedRead(
+          new Promise((resolve) => setTimeout(resolve, Math.min(500, deadline - Date.now()))),
+          signal,
+        );
+      } while (Date.now() < deadline);
+
+      if (id) await ledger.update((value) => ({ ...value, sandboxId: id }));
     }
 
     if (!id) throw new Error("Create outcome remains unknown");
     const box = access.sandbox(id);
-
-    capture.at("inspect");
-
-    if ((await boundedRead(box.inspect(), signal)).state === "destroyed") {
-      await ledger.update((value) => ({ ...value, cleanup: "confirmed", lastIssue: undefined }));
-
-      return [
-        { scenario: "destroy", status: "passed" },
-        { scenario: "confirm-cleanup", status: "passed" },
-      ];
-    }
 
     let terminationConfirmed = false;
     capture.at("destroy");
@@ -745,11 +749,33 @@ async function reconcileLocked(
     if (state.destroyReference) {
       if (state.destroyReference.kind !== "destroy" || state.destroyReference.sandboxId !== id)
         throw new Error("Saved destroy does not belong to the owned sandbox");
-      terminationConfirmed = await access.observeDestroy(state.destroyReference, signal);
+
+      // Inspect may already return NOT_FOUND after deletion. Observe the saved
+      // deletion first; only its adapter can establish a termination receipt.
+      try {
+        terminationConfirmed = await access.observeDestroy(state.destroyReference, signal);
+      } catch (error) {
+        if (!(error instanceof OutcomeUnknownError)) throw error;
+      }
     } else {
-      // Public destroy resolves only for a correlated computeStopped completion.
-      await box.destroy({ signal });
-      terminationConfirmed = true;
+      capture.at("inspect");
+
+      if ((await boundedRead(box.inspect(), signal)).state === "destroyed") {
+        terminationConfirmed = true;
+      } else {
+        capture.at("destroy");
+
+        try {
+          await box.destroy({ signal });
+          terminationConfirmed = true;
+        } catch (error) {
+          await recordRecoveryError(ledger, error);
+
+          if (!(await ledger.read()).destroyReference) throw error;
+          // Retain the failure and observe this attempt; DELETE is never replayed.
+          deletionFailure = await capture.failure(error);
+        }
+      }
     }
 
     if (terminationConfirmed) {
@@ -766,11 +792,17 @@ async function reconcileLocked(
     while (Date.now() < deadline) {
       const current = await ledger.read();
 
-      const confirmed = current.destroyReference
-        ? await access.observeDestroy(current.destroyReference, signal)
-        : false;
+      let confirmed = false;
 
-      if (confirmed || (await boundedRead(box.inspect(), signal)).state === "destroyed") {
+      try {
+        confirmed = current.destroyReference
+          ? await access.observeDestroy(current.destroyReference, signal)
+          : (await boundedRead(box.inspect(), signal)).state === "destroyed";
+      } catch (error) {
+        if (!(error instanceof OutcomeUnknownError)) throw error;
+      }
+
+      if (confirmed) {
         await ledger.update((value) => ({ ...value, cleanup: "confirmed", lastIssue: undefined }));
 
         return [
@@ -797,7 +829,12 @@ async function reconcileLocked(
     const diagnostic = await capture.failure(new Error("Cleanup confirmation timed out"));
 
     return [
-      { scenario: "destroy", status: "blocked", issue: "cleanup-unconfirmed", diagnostic },
+      {
+        scenario: "destroy",
+        status: "blocked",
+        issue: "cleanup-unconfirmed",
+        diagnostic: deletionFailure ?? diagnostic,
+      },
       { scenario: "confirm-cleanup", status: "failed", issue: "cleanup-unconfirmed", diagnostic },
     ];
   } catch (error) {

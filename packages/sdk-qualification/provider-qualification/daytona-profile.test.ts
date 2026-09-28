@@ -21,6 +21,7 @@ async function fixture(
     networkPolicy?: "blocked" | "daytona-default";
     publicSnapshot?: boolean;
     foreignPrivateSnapshot?: boolean;
+    asynchronousDelete?: boolean;
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-daytona-qualification-"));
@@ -107,7 +108,7 @@ async function fixture(
       if (url.pathname === "/api/sandbox" && method === "POST") {
         const body = JSON.parse(String(init?.body));
         expect(body.ttlMinutes).toBe(15);
-        expect(body.snapshot).toBe("snap-fixture");
+        expect(body.snapshot).toBe(options.publicSnapshot ? "public-small" : "snap-fixture");
 
         if (config.networkPolicy === "blocked") expect(body.networkBlockAll).toBe(true);
         else expect(body).not.toHaveProperty("networkBlockAll");
@@ -141,10 +142,17 @@ async function fixture(
 
         if (options.loseDestroy) throw new Error("lost offline delete acknowledgement");
 
+        if (options.asynchronousDelete) {
+          native = undefined;
+
+          return new Response(null, { status: 204 });
+        }
+
         return Response.json(native);
       }
 
-      if (url.pathname === "/api/sandbox/owned-daytona") return Response.json(native);
+      if (url.pathname === "/api/sandbox/owned-daytona")
+        return native ? Response.json(native) : new Response(null, { status: 404 });
 
       if (url.pathname.endsWith("/process/execute")) {
         const body = JSON.parse(String(init?.body));
@@ -383,6 +391,28 @@ test("Daytona default recovery cannot be imported into a strict blocked connecti
     } finally {
       await strict.close();
     }
+  });
+  expect(native.counters.create).toBe(1);
+  expect(native.counters.destroy).toBe(1);
+});
+
+test("Daytona asynchronous delete acknowledgment survives reconnect and confirms disappearance", async () => {
+  const native = await fixture({
+    networkPolicy: "daytona-default",
+    publicSnapshot: true,
+    asynchronousDelete: true,
+  });
+
+  await native.use(async () => {
+    const steps = await runPrepared(native.factory, native.ledger, native.config.snapshotId, {
+      network: "daytona-default",
+      cleanupWaitMs: 5000,
+      selectedScenarios: new Set(["inspect"]),
+    });
+
+    expect(steps.find((s) => s.scenario === "destroy")?.status).toBe("passed");
+    expect((await native.ledger.read()).cleanup).toBe("confirmed");
+    await reconcileConnection(native.factory, native.ledger, 1000);
   });
   expect(native.counters.create).toBe(1);
   expect(native.counters.destroy).toBe(1);

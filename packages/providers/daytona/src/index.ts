@@ -524,7 +524,7 @@ export class DaytonaDriver implements ProviderDriver {
         reason: "POSIX Linux snapshot required for binary command capture",
       };
 
-    return { supported: true, effectiveImage: snapshot.id };
+    return { supported: true, effectiveImage: snapshot.name ?? snapshot.id };
   }
   prepareImage(image: string): boolean {
     return fixedImage(image);
@@ -1542,7 +1542,7 @@ export class DaytonaDriver implements ProviderDriver {
     identity: InvocationIdentity;
     signal?: AbortSignal;
     retainedResources?: string[];
-  }): Promise<DriverResult> {
+  }): Promise<DriverResult & { deletionAccepted?: boolean }> {
     this.sameScope(input.sandbox);
 
     if (input.signal?.aborted)
@@ -1572,19 +1572,39 @@ export class DaytonaDriver implements ProviderDriver {
       if (input.signal?.aborted)
         return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
 
-      const value = await this.json(
+      const response = await this.request(
         "DELETE",
         `/sandbox/${encodeURIComponent(input.sandbox.nativeId)}`,
-        NativeSandbox,
       );
+
+      if (!response.ok) throw new Error(`Daytona HTTP ${response.status}`);
+
+      // Native deletion acknowledges dispatch before asynchronous termination.
+      // Persist this acknowledgment; a lost response must never gain this authority.
+      const pending = () => ({
+        status: "pending" as const,
+        effect: "possible" as const,
+        submissionId: input.identity.submissionId,
+        observeAfterMs: 500,
+        deletionAccepted: true,
+      });
+
+      let value: Sandbox;
+
+      try {
+        value = await boundedJson(response, NativeSandbox);
+      } catch {
+        return pending();
+      }
 
       if (
         value.id !== input.sandbox.nativeId ||
         value.organizationId !== this.scope.accountId ||
-        value.target !== this.scope.region ||
-        value.state !== "destroyed"
+        value.target !== this.scope.region
       )
-        return unknown(input.identity.submissionId, "Daytona deletion not confirmed");
+        return unknown(input.identity.submissionId, "Daytona deletion identity mismatched");
+
+      if (value.state !== "destroyed") return pending();
 
       if (retainedResources === undefined && value.labels) {
         const snapshotId = value.labels["sandbar.imageSnapshot"];
@@ -1622,11 +1642,28 @@ export class DaytonaDriver implements ProviderDriver {
     sandbox: SandboxRef,
     submissionId: string,
     retainedResources?: string[],
+    deletionAccepted = false,
   ): Promise<DriverResult | null> {
     this.sameScope(sandbox);
     const value = await this.sandboxDetail(sandbox.nativeId);
 
-    if (!value) return null;
+    if (!value) {
+      if (!deletionAccepted || retainedResources === undefined) return null;
+
+      return {
+        status: "completed",
+        effect: "applied",
+        submissionId,
+        value: {
+          kind: "destroy",
+          observation: {
+            sandbox,
+            computeStopped: true,
+            retainedResources,
+          },
+        },
+      };
+    }
 
     if (value.state === "destroying")
       return { status: "pending", effect: "possible", submissionId, observeAfterMs: 500 };

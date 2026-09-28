@@ -42,6 +42,7 @@ const WriteToken = z.strictObject({
 
 const DestroyToken = z.strictObject({
   sandboxId: z.string().min(1).max(512),
+  deletionAccepted: z.boolean().optional(),
   retainedResources: z.array(z.string().min(1).max(512)).max(1).optional(),
 });
 
@@ -373,6 +374,8 @@ export function createDaytonaAdapter(
 
             if (retainedResources !== undefined) token.retainedResources = retainedResources;
 
+            if (result.deletionAccepted) token.deletionAccepted = true;
+
             return ctx.pending(token, { pollAfterMs: 500 });
           },
           async observe(attempt, ctx) {
@@ -388,6 +391,7 @@ export function createDaytonaAdapter(
               native(attempt.sandbox.id),
               attempt.submissionId,
               token?.success ? token.data.retainedResources : undefined,
+              token?.success ? token.data.deletionAccepted : false,
             );
 
             if (!result) return null;
@@ -397,6 +401,8 @@ export function createDaytonaAdapter(
 
               if (token?.success && token.data.retainedResources)
                 recovery.retainedResources = token.data.retainedResources;
+
+              if (token?.success && token.data.deletionAccepted) recovery.deletionAccepted = true;
 
               return ctx.pending(recovery, { pollAfterMs: result.observeAfterMs });
             }
