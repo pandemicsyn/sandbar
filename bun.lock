@@ -158,6 +158,7 @@
     "packages/sdk-qualification": {
       "name": "sandbar-sdk-qualification",
       "dependencies": {
+        "sandbar-adapter": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
         "sandbar-sdk": "workspace:*",
         "sandbar-service": "workspace:*",

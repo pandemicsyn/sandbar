@@ -420,10 +420,11 @@ process.stdout.write("packed Modal fixture flow passed\\n");
 `;
 
 const e2bSource = `
-import { Sandbar, Image } from "sandbar-sdk";
+import { Sandbar, Image, OutcomeUnknownError } from "sandbar-sdk";
 import { createE2BAdapter } from "sandbar-sdk/e2b";
 let creates = 0, kills = 0, closes = 0, buildName = "", retained = "";
 let record;
+let failWrite = false;
 const files = new Map();
 const binary = Uint8Array.from([0, 255, 129]);
 const transport = {
@@ -453,7 +454,11 @@ const transport = {
     return "";
   },
   async read(_id, path, max) { const bytes = files.get(path); if (!bytes) throw Error("Missing binary file " + path); return { bytes: bytes.slice(0,max), truncated: bytes.length > max }; },
-  async write(_id, path, bytes) { files.set(path, bytes); },
+  async write(_id, path, bytes) {
+    if (path === "/tmp/packed-failure.bin" && failWrite) throw Object.assign(Error("private native body"), {name: "SandboxError", statusCode: 500});
+    files.set(path, bytes);
+    if (path === "/tmp/packed-lost-ack.bin") throw Error("private lost response");
+  },
   async remove(_id, path) { files.delete(path); },
   close() { closes++; },
 };
@@ -466,6 +471,15 @@ try {
   await box.writeFile("/tmp/no-clobber.bin", binary, { overwrite: false });
   const loaded = await box.readFile("/tmp/packed.bin");
   if (loaded.some((byte, i) => byte !== binary[i])) throw Error("Binary file changed");
+  await box.writeFile("/tmp/packed-failure.bin", binary, {overwrite: true});
+  failWrite = true;
+  let failed = false;
+  try { await box.writeFile("/tmp/packed-failure.bin", Uint8Array.of(2,254,0), {overwrite: true}); }
+  catch (error) {
+    failed = error instanceof OutcomeUnknownError && error.message.includes("error=SandboxError, httpStatus=500") && !error.message.includes("private native body");
+  }
+  if (!failed) throw Error("Packed E2B native write failure classification lost");
+  await box.writeFile("/tmp/packed-lost-ack.bin", binary, {overwrite: true});
   await box.destroy();
   const oci = await client.sandboxes.create({ environment: Image.oci("node:24"), networkPolicy: "blocked" });
   await oci.destroy();

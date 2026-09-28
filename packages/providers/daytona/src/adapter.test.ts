@@ -97,7 +97,7 @@ test.each([
         creates++;
 
         const request = z
-          .object({ name: z.string(), snapshot: z.literal("built-1") })
+          .object({ name: z.string(), snapshot: z.literal(name || "built-1") })
           .parse(JSON.parse(String(init.body)));
 
         sandboxName = request.name;

@@ -1,5 +1,6 @@
 import { Sandbox, SandboxNotFoundError, Template } from "e2b";
 import { z } from "zod";
+import { classifyWriteFailure, E2BWriteFailure } from "./write-failure";
 
 export const E2B_ENDPOINT = "https://api.e2b.app";
 
@@ -288,10 +289,28 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       );
     },
     async write(id, path, bytes) {
-      const sandbox = await Sandbox.connect(id, opts);
-      await sandbox.files.write(path, new Blob([new Uint8Array(bytes)]), {
-        requestTimeoutMs: 30_000,
-      });
+      let stage: "connect" | "upload" = "connect";
+      let httpStatus: number | undefined;
+
+      const logger = {
+        // The pinned SDK exposes response status here even when its error drops statusCode.
+        // Ignore status text, trace IDs, bodies and all other logger arguments.
+        error(label: string, status: number) {
+          if (label === "Response:" && Number.isInteger(status) && status >= 100 && status <= 599)
+            httpStatus = status;
+        },
+      };
+
+      try {
+        const sandbox = await Sandbox.connect(id, { ...opts, logger });
+        stage = "upload";
+        httpStatus = undefined;
+        await sandbox.files.write(path, new Blob([new Uint8Array(bytes)]), {
+          requestTimeoutMs: 30_000,
+        });
+      } catch (error) {
+        throw new E2BWriteFailure(classifyWriteFailure(error, stage, httpStatus));
+      }
     },
     async remove(id, path) {
       const sandbox = await Sandbox.connect(id, opts);
