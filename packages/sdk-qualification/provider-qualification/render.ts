@@ -14,6 +14,9 @@ const output = fileURLToPath(
 
 const files = (await readdir(directory)).filter((name) => name.endsWith(".json")).sort();
 
+if (files.some((name) => name !== "daytona.json" && name !== "e2b.json"))
+  throw new Error("Keep one results JSON per provider: daytona.json and e2b.json");
+
 const reports = await Promise.all(
   files.map(async (name) => parseReport(JSON.parse(await readFile(join(directory, name), "utf8")))),
 );

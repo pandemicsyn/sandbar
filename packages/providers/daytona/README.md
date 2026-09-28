@@ -1,6 +1,6 @@
 # Daytona provider
 
-`@sandbar/provider-daytona` is the private built-in implementation behind `sandbar-sdk/daytona`. It uses Daytona's v0.218 REST and toolbox APIs through a single-attempt `fetch` transport. The authorized [default-policy diagnostic baseline](../../../specs/provider-evidence/diagnostics/daytona-2026-09-28-default-fixed.md) passed all 13 scenarios with cleanup confirmed on an unmerged fix. This is configuration-specific diagnostic evidence; merged-source certification remains pending. The published `@daytona/sdk@0.218.0` was inspected but is not in this package's runtime graph: its connection retry adapter may replay `DELETE` after a midflight failure, while Sandbar cannot treat an uncertain deletion as effect-free.
+`@sandbar/provider-daytona` is the private built-in implementation behind `sandbar-sdk/daytona`. It uses Daytona's v0.218 REST and toolbox APIs through a single-attempt `fetch` transport. The authorized default-policy diagnostic baseline passed all 13 scenarios with cleanup confirmed on an unmerged fix. This is configuration-specific diagnostic evidence; merged-source certification remains pending. The published `@daytona/sdk@0.218.0` was inspected but is not in this package's runtime graph: its connection retry adapter may replay `DELETE` after a midflight failure, while Sandbar cannot treat an uncertain deletion as effect-free.
 
 ## Direct TypeScript
 

@@ -9,12 +9,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -32,12 +36,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -55,12 +63,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -78,12 +90,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -101,12 +117,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -124,12 +144,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -147,12 +171,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -170,12 +198,16 @@
       "status": "failed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -184,7 +216,7 @@
         "regionClass": "provider-default"
       },
       "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19",
-      "issue": "assertion-failed"
+      "issue": "outcome-unknown"
     },
     {
       "schemaVersion": 1,
@@ -194,12 +226,16 @@
       "status": "blocked",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -218,12 +254,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -241,12 +281,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -264,12 +308,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -287,12 +335,16 @@
       "status": "passed",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
@@ -310,12 +362,16 @@
       "status": "not-run",
       "runCleanup": "confirmed",
       "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
-      "harnessCommit": "9254140d1f2e194ba8ea9d2e8e27385159910c21",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
       "sdkVersion": "0.0.0",
       "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
       "runtime": "Bun 1.3.14",
       "platform": "darwin-arm64",
-      "timestamp": "2026-09-28T01:47:21.834Z",
+      "timestamp": "2026-09-28T02:28:41.591Z",
       "configuration": {
         "imageClass": "prepared",
         "templateClass": "public-base",
