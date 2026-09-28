@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+policy_root=$(dirname -- "$hook_dir")
+
+while IFS= read -r -d '' staged_path; do
+  case "${staged_path##*/}" in
+    .env.example) ;;
+    .env|.env.*)
+      printf 'Commit blocked: credential environment file is staged: %s\n' "$staged_path" >&2
+      printf 'Unstage it and keep credentials in the ignored .env.local file.\n' >&2
+      exit 1
+      ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  printf 'Commit blocked: gitleaks is required. Install it, then retry (macOS: brew install gitleaks).\n' >&2
+  exit 1
+fi
+
+exec gitleaks git --pre-commit --staged --redact --no-banner --timeout 60 \
+  --config "$policy_root/.gitleaks.toml" "$repo_root"

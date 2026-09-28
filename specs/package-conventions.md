@@ -1,6 +1,6 @@
 # Public packages and adapter conventions
 
-**Accepted user decision — September 27, 2026.** This is the target for the active SDK-first refactor and its release tooling. It supersedes provisional package names and import paths in earlier specs. It records a design decision, not a claim that these packages are published or all providers are implemented.
+**Accepted user decision — September 27, 2026.** Updated for the 1.0 launch decision: Daytona and E2B are the only launch built-ins; Modal is external and experimental. It supersedes provisional package names and import paths in earlier specs. It records a design decision, not a claim that these packages are published or all providers are implemented.
 
 ## Names and imports
 
@@ -8,8 +8,8 @@
 | --- | --- | --- |
 | Main SDK | `sandbar-sdk` | `sandbar-sdk` |
 | Built-in Daytona adapter | included in `sandbar-sdk` | `sandbar-sdk/daytona` |
-| Experimental Modal adapter | `sandbar-modal` | `sandbar-modal` |
-| Planned built-in E2B adapter | included in `sandbar-sdk` when implemented | `sandbar-sdk/e2b` |
+| External experimental Modal adapter | `sandbar-modal` | `sandbar-modal` |
+| Built-in E2B adapter for 1.0 | included in `sandbar-sdk` | `sandbar-sdk/e2b` |
 | Custom adapter authoring | `sandbar-adapter` | `sandbar-adapter` |
 | Adapter conformance tests | included in `sandbar-adapter` | `sandbar-adapter/testing` |
 | Optional management service | `sandbar-service` | `sandbar-service` |
@@ -40,17 +40,19 @@ const sandbar = await Sandbar.connect(
 );
 ```
 
-This is a target API example, not a live-verified or currently published quickstart. `daytona` packages typed provider configuration and credentials for the common connection path. Constructing it performs no provider IO; `Sandbar.connect` validates and verifies the binding and owns the resulting session. It uses the same engine, configuration schemas, scope verification, host policy and close/recovery semantics as custom adapters. E2B will use the same factory pattern when implemented. The experimental `sandbar-modal` package exports a public adapter definition and factory for the general `Sandbar.connect({ adapter, config, credentials })` path. Keep the general custom-adapter connection form available without forcing custom authors to implement a factory.
+This is a target API example, not a live-verified or currently published quickstart. `daytona` packages typed provider configuration and credentials for the common connection path. Constructing it performs no provider IO; `Sandbar.connect` validates and verifies the binding and owns the resulting session. It uses the same engine, configuration schemas, scope verification, host policy and close/recovery semantics as custom adapters. E2B uses the same built-in factory pattern; external adapters use the public binding or definition connection form. Exact options must follow their supported implementations. Keep the general custom-adapter connection form available without forcing custom authors to implement a factory.
 
 The service is separately installed with `npm install sandbar-service`. A remote consumer imports `sandbar-service/client`; it does not need a running local service. Service hosting retains its documented runtime/database requirements. The client subpath must run in supported Node and Bun environments without importing Bun-only hosting, SQL or UI code.
 
 ## Support and implementation scope
 
-Daytona and E2B are the selected built-in providers for the 1.0 launch. Bundled convenience, documentation, conformance tests and maintenance distinguish them; they have no privileged execution path. They implement the same public `sandbar-adapter` API that every additional or third-party integration uses.
+Daytona and E2B are the selected 1.0 built-in providers. Bundled convenience, conformance tests and maintenance distinguish them; they have no privileged execution path. Both use the same public `sandbar-adapter` API as external integrations. Implementation, fixture qualification, packed qualification and live qualification are separate statuses; a roadmap selection does not establish support.
 
-Daytona and the separate experimental Modal implementation exist. Their capability restrictions and lack of live qualification remain explicit. E2B is a planned built-in adapter, not implemented by this decision. Do not add an E2B stub export or claim support until its implementation and qualification are separately authorized and completed.
+Modal is a separately installed experimental `sandbar-modal` adapter. Its implementation uses the public adapter API; its built-in SDK export and bundled native dependencies have been removed. The experimental designation must describe actual limitations: private version-sensitive transport, uncertain image-build recovery and any unrun live qualification. The optional service can consume it through explicit custom registration; installation never auto-registers it. Modal is not a 1.0 built-in release gate.
 
-Tensorlake, Vercel and other additional integrations are planned separate packages built through the public custom-adapter API. This decision does not start those implementations. The fake provider remains a deterministic development/test fixture, not a fourth advertised core provider; its final internal/test packaging follows actual qualification needs.
+Fast-follow priority is exactly **Vercel, Boxed (boxd), Islo, Tensorlake**. Additional integrations retain the external `sandbar-<provider>` distribution convention unless the user separately changes it. This roadmap does not start those implementations, authorize publication or permit placeholder exports. None is a 1.0 launch gate.
+
+Daytona and E2B implementations and the external Modal transition are merged. Their package READMEs and qualification evidence describe supported behavior and remaining limitations; merger does not establish live qualification or npm publication. The fake provider remains a deterministic development/test fixture.
 
 ## Dependency and schema ownership
 

@@ -1,0 +1,12 @@
+title = "Sandbar staged credential scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "sandbar-provider-api-key"
+description = "Daytona or E2B API key assignment"
+regex = '''(?i)(?:SANDBAR_DAYTONA_API_KEY|DAYTONA_API_KEY|SANDBAR_E2B_API_KEY|E2B_API_KEY)\s*[=:]\s*["']?([a-zA-Z0-9_./+\-=]{20,})'''
+secretGroup = 1
+entropy = 3.0
+keywords = ["daytona_api_key", "e2b_api_key"]
