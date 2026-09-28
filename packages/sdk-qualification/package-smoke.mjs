@@ -233,6 +233,9 @@ void flow;
 import { Sandbar, Image } from "sandbar-service/client";
 async function flow() {
   const client = Sandbar.connect({ url: "https://sandbar.example", token: "example-token-123456", projectId: "project_1" });
+  const image = await client.images.build({ source: Image.oci("fixture/image:1"), connectionId: "conn_1" });
+  const builtBox = await client.sandboxes.create({ environment: Image.prepared(image.prepared) });
+  await builtBox.destroy();
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
   const argv = ["fixture"] as const;
   const result = await box.exec(argv);
@@ -569,7 +572,7 @@ try {
     const target = new URL(String(url));
     return fetch(origin + target.pathname + target.search, init);
   }, { preconnect() {} }) });
-  const build = await client.images.submitBuild({ source: Image.oci("fixture/image:1") });
+  const build = await client.images.submitBuild({ source: Image.oci("fixture/image:1"), connectionId: conn.body.id });
   await until(async () => metrics.builds === 1 && (await request(\`/v1/projects/\${projectId}/operations/\${build.reference.operationId}\`)).body.status === "running");
   const admitted = await request(\`/v1/projects/\${projectId}/sandboxes\`, "POST", {
     environment: { kind: "prepared", imageId: "image-1" }, network: { policy: "blocked" }, connectionId: conn.body.id,

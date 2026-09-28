@@ -24,7 +24,8 @@ test("remote image build recovers a lost admission and binds its prepared result
     recovery: [],
   };
 
-  const scope = { authority: { kind: "team", id: "team_1" }, partition: {} };
+  const scope = { authority: { kind: "team", id: `team:${"a".repeat(507)}` }, partition: {} };
+  const templateId = `template:${"t".repeat(503)}`;
 
   const build = {
     ...base,
@@ -34,13 +35,13 @@ test("remote image build recovers a lost admission and binds its prepared result
       kind: "image_build",
       prepared: {
         kind: "prepared",
-        value: "template_1",
+        value: templateId,
         provider: "e2b",
         scope,
         connectionId: "conn_1",
       },
       retainedResources: [
-        { kind: "template", id: "template_1", ownership: "unknown", cleanup: "manual" },
+        { kind: "template", id: templateId, ownership: "unknown", cleanup: "manual" },
       ],
     },
   };
@@ -60,6 +61,7 @@ test("remote image build recovers a lost admission and binds its prepared result
     const path = new URL(String(url)).pathname;
 
     if (path.endsWith("/images/builds") && init?.method === "POST") {
+      expect(JSON.parse(String(init.body))).toMatchObject({ connectionId: "conn_1" });
       buildPosts++;
       throw new TypeError("admission response lost");
     }
@@ -84,7 +86,10 @@ test("remote image build recovers a lost admission and binds its prepared result
     fetch: fetcher,
   });
 
-  const result = await client.images.build({ source: RemoteImage.oci("registry.example/image:1") });
+  const result = await client.images.build({
+    source: RemoteImage.oci("registry.example/image:1"),
+    connectionId: "conn_1",
+  });
 
   expect(buildPosts).toBe(1);
   expect(result.prepared).toEqual(build.result.prepared);
@@ -92,7 +97,7 @@ test("remote image build recovers a lost admission and binds its prepared result
 
   await client.sandboxes.submitCreate({ environment: RemoteImage.prepared(result.prepared) });
   expect(createBody).toMatchObject({
-    environment: { kind: "prepared", imageId: "template_1" },
+    environment: { kind: "prepared", imageId: templateId },
     connectionId: "conn_1",
     preparedBinding: { provider: "e2b", scope, connectionId: "conn_1" },
   });
@@ -157,7 +162,7 @@ test("remote lost acceptance is resolved by invocation lookup under one key", as
   });
 
   for (const invalid of [
-    { environment: RemoteImage.prepared("invalid id") },
+    { environment: RemoteImage.prepared("x".repeat(513)) },
     { environment: RemoteImage.oci("x".repeat(1025)) },
     { environment: RemoteImage.prepared("fake-starter"), labels: { long: "x".repeat(257) } },
   ]) {

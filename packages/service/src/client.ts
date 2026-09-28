@@ -454,11 +454,11 @@ export class RemoteClient implements SandbarClient {
   };
   readonly images = {
     build: async (
-      input: { source: { kind: "oci"; value: string } },
+      input: { source: { kind: "oci"; value: string }; connectionId?: string },
       options: { signal?: AbortSignal } = {},
     ) => (await this.submitBuild(input, options)).wait(options),
     submitBuild: (
-      input: { source: { kind: "oci"; value: string } },
+      input: { source: { kind: "oci"; value: string }; connectionId?: string },
       options: { signal?: AbortSignal } = {},
     ) => this.submitBuild(input, options),
   };
@@ -756,7 +756,7 @@ export class RemoteClient implements SandbarClient {
     );
   }
   async submitBuild(
-    input: { source: { kind: "oci"; value: string } },
+    input: { source: { kind: "oci"; value: string }; connectionId?: string },
     options: { signal?: AbortSignal } = {},
   ): Promise<OperationHandle<ImageBuildResult>> {
     throwIfAborted(options.signal);

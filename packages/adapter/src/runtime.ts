@@ -70,11 +70,7 @@ const CreateInputSchema = z.strictObject({
   image: z.discriminatedUnion("kind", [
     z.strictObject({
       kind: z.literal("prepared"),
-      value: z
-        .string()
-        .min(1)
-        .max(128)
-        .regex(/^[A-Za-z0-9_-]+$/),
+      value: Id,
     }),
     z.strictObject({ kind: z.literal("oci"), value: z.string().min(1).max(1024) }),
   ]),

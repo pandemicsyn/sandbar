@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // Inputs are strict so a misspelled security or lifecycle setting cannot be ignored.
 // Outputs intentionally strip additive fields when decoded by older clients.
-import { Id, CreateSandboxInput, Effect, SafeError } from "sandbar-adapter/portable";
+import { Id, ImageSource, CreateSandboxInput, Effect, SafeError } from "sandbar-adapter/portable";
 
 export {
   Id,
@@ -29,7 +29,7 @@ export const SandboxPath = ProjectPath.extend({ sandboxId: Id });
 export const OperationPath = ProjectPath.extend({ operationId: Id });
 
 export const BuildScope = z.strictObject({
-  authority: z.strictObject({ kind: z.string().min(1).max(64), id: Id }),
+  authority: z.strictObject({ kind: z.string().min(1).max(64), id: z.string().min(1).max(512) }),
   partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
 });
 
@@ -51,21 +51,21 @@ export const ImageBuildRequest = z.strictObject({
 
 export const RetainedArtifact = z.strictObject({
   kind: z.string().min(1).max(128),
-  id: Id,
+  id: z.string().min(1).max(512),
   ownership: z.enum(["verified", "unknown"]),
   cleanup: z.enum(["manual", "provider_expiry", "none_known"]),
 });
 
 export const PreparedImage = z.strictObject({
   kind: z.literal("prepared"),
-  value: Id,
+  value: ImageSource.options[0].shape.imageId,
   provider: z.string().min(1).max(128),
   scope: BuildScope,
   connectionId: Id,
 });
 
 const ImageSourceResponse = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("prepared"), imageId: Id }),
+  z.object({ kind: z.literal("prepared"), imageId: ImageSource.options[0].shape.imageId }),
   z.object({ kind: z.literal("oci"), reference: z.string().min(1).max(1024) }),
 ]);
 

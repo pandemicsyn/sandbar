@@ -2494,8 +2494,7 @@
                           "value": {
                             "type": "string",
                             "minLength": 1,
-                            "maxLength": 128,
-                            "pattern": "^[A-Za-z0-9_-]+$"
+                            "maxLength": 512
                           },
                           "provider": {
                             "type": "string",
@@ -2516,8 +2515,7 @@
                                   "id": {
                                     "type": "string",
                                     "minLength": 1,
-                                    "maxLength": 128,
-                                    "pattern": "^[A-Za-z0-9_-]+$"
+                                    "maxLength": 512
                                   }
                                 },
                                 "required": ["kind", "id"],
@@ -2563,8 +2561,7 @@
                             "id": {
                               "type": "string",
                               "minLength": 1,
-                              "maxLength": 128,
-                              "pattern": "^[A-Za-z0-9_-]+$"
+                              "maxLength": 512
                             },
                             "ownership": {
                               "type": "string",
@@ -3021,8 +3018,7 @@
                   "imageId": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
+                    "maxLength": 512
                   }
                 },
                 "required": ["kind", "imageId"],
@@ -3103,8 +3099,7 @@
                       "id": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 128,
-                        "pattern": "^[A-Za-z0-9_-]+$"
+                        "maxLength": 512
                       }
                     },
                     "required": ["kind", "id"],
@@ -4066,8 +4061,7 @@
                       "value": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 128,
-                        "pattern": "^[A-Za-z0-9_-]+$"
+                        "maxLength": 512
                       },
                       "provider": {
                         "type": "string",
@@ -4088,8 +4082,7 @@
                               "id": {
                                 "type": "string",
                                 "minLength": 1,
-                                "maxLength": 128,
-                                "pattern": "^[A-Za-z0-9_-]+$"
+                                "maxLength": 512
                               }
                             },
                             "required": ["kind", "id"],
@@ -4135,8 +4128,7 @@
                         "id": {
                           "type": "string",
                           "minLength": 1,
-                          "maxLength": 128,
-                          "pattern": "^[A-Za-z0-9_-]+$"
+                          "maxLength": 512
                         },
                         "ownership": {
                           "type": "string",
@@ -4883,8 +4875,7 @@
                   "imageId": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
+                    "maxLength": 512
                   }
                 },
                 "required": ["kind", "imageId"]
@@ -5008,8 +4999,7 @@
                         "imageId": {
                           "type": "string",
                           "minLength": 1,
-                          "maxLength": 128,
-                          "pattern": "^[A-Za-z0-9_-]+$"
+                          "maxLength": 512
                         }
                       },
                       "required": ["kind", "imageId"]
@@ -5206,8 +5196,7 @@
                   "value": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9_-]+$"
+                    "maxLength": 512
                   },
                   "provider": {
                     "type": "string",
@@ -5228,8 +5217,7 @@
                           "id": {
                             "type": "string",
                             "minLength": 1,
-                            "maxLength": 128,
-                            "pattern": "^[A-Za-z0-9_-]+$"
+                            "maxLength": 512
                           }
                         },
                         "required": ["kind", "id"],
@@ -5275,8 +5263,7 @@
                     "id": {
                       "type": "string",
                       "minLength": 1,
-                      "maxLength": 128,
-                      "pattern": "^[A-Za-z0-9_-]+$"
+                      "maxLength": 512
                     },
                     "ownership": {
                       "type": "string",
