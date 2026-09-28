@@ -26,6 +26,8 @@
     "wrangler": "4.141.0",
     "sandbar-adapter": "workspace:*",
     "zod": "4.6.5",
-    "sandbar-service": "workspace:*"
+    "sandbar-service": "workspace:*",
+    "sandbar-modal": "workspace:*",
+    "satteri": "0.10.5"
   }
 }

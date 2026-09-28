@@ -12,7 +12,7 @@
     "plans/**",
     "README.md",
     "packages/contracts/openapi.json",
-    "apps/docs/src/content/docs/docs/reference/http.md",
+    "apps/docs/internal/reference/http.md",
     ".agent/**",
     ".agents/**",
     ".claude/**",

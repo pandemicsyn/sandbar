@@ -1,14 +1,31 @@
 ---
-title: Sandbar documentation
-description: Development documentation for Sandbar's direct TypeScript SDK and self-hosted service.
+title: Sandbar SDK
+description: Create sandboxes, run code, and move files with one TypeScript SDK for Daytona and E2B.
 ---
 
-Sandbar is a server-side sandbox SDK with first-class custom adapters. The service is an optional standalone package. This documentation describes an **unpublished development build**. Its independent fake provider is qualified for local simulation; it **does not isolate or execute host processes**. The fake, Daytona and Modal adapters have deterministic fixture coverage for direct and service use, but has not passed live provider conformance.
+Sandbar is a server-side TypeScript SDK for creating sandboxes, running commands, and moving files across providers. **Daytona and E2B are built in.** Other providers can integrate through the public adapter API.
 
-Choose a starting point:
+Start with [Getting started](/docs/direct-quickstart/) to run your first command and clean up the sandbox. This site documents the current source build; packages are not yet published.
 
-- [Direct TypeScript quickstart](/docs/direct-quickstart/) for a server-side SDK in your Node.js or Bun process.
-- [Service quickstart](/docs/service-quickstart/) for the Bun/Hono API, management UI and remote SDK.
-- [Support matrix](/docs/providers/support/) before planning a deployment.
+## Build with an agent
 
-No public package install command works yet. Clone this repository and use its local workspace packages. Rust and Python SDKs, additional provider adapters, storage mounts and accounting are planned, not part of this build.
+Copy a prompt to give your coding agent the right imports, examples, and constraints:
+
+- [Build an application with Sandbar](/docs/agents/build-with-sdk/)
+- [Build a provider integration for Sandbar](/docs/agents/build-a-provider/)
+
+## Use the SDK
+
+| Task                                 | Guide                                                        |
+| ------------------------------------ | ------------------------------------------------------------ |
+| Create a sandbox and run commands    | [Sandboxes and execution](/docs/guides/resources/)           |
+| Read and write files, capture output | [Files and output](/docs/guides/files-and-output/)           |
+| Choose an image or build one         | [Images and networking](/docs/guides/images-and-networking/) |
+| Handle a timeout or lost response    | [Errors and recovery](/docs/guides/recovery/)                |
+| Fix common setup issues              | [Troubleshooting](/docs/guides/troubleshooting/)             |
+
+## Choose a provider
+
+The [Tested provider support](/docs/providers/support/) matrix shows which operations have been exercised against real providers, along with the tested configuration and limits. See the [Daytona](/docs/providers/daytona/) and [E2B](/docs/providers/e2b/) guides for connection settings.
+
+For API details, use the [TypeScript reference](/docs/reference/typescript/). To add a provider, start with [Write an adapter](/docs/guides/write-an-adapter/).

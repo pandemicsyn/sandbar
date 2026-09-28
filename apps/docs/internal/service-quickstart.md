@@ -35,4 +35,4 @@ try {
 }
 ```
 
-The service URL must use HTTPS, except for loopback HTTP. The local example uses the operator session token returned by setup and scopes calls with the project ID. The remote SDK uses the same resource handles as direct mode, with **service-durable operation references**. See [adapter registration](/docs/self-hosting/create-service/) and [self-hosting](/docs/self-hosting/operations/) for configuration and custody requirements.
+The service URL must use HTTPS, except for loopback HTTP. The local example uses the operator session token returned by setup and scopes calls with the project ID. The remote SDK uses the same resource handles as direct mode, with **service-durable operation references**. See [adapter registration](./self-hosting/create-service.md) and [self-hosting](./self-hosting/operations.md) for configuration and custody requirements.

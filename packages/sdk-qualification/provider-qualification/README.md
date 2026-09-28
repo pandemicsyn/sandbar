@@ -1,6 +1,6 @@
 # Provider qualification
 
-The qualification targets are **Daytona and E2B**. Prepared profiles exercise the public SDK with finite native lifetimes and owned cleanup. Keep one reviewed qualification summary per provider in `results/daytona.json` and `results/e2b.json`; detailed run diagnostics and cleanup ledgers stay private outside the repository. These summaries retain the latest merged-source attempts: E2B overwrite failed in sticky `/tmp`, and Daytona strict-blocked creation was unsupported before allocation. Later unmerged diagnostic fixes passed their respective baselines with cleanup confirmed; those runs do not certify the merged SDK.
+The qualification targets are **Daytona and E2B**. Prepared profiles exercise the public SDK with finite native lifetimes and owned cleanup. Keep one reviewed qualification summary per provider in `results/daytona.json` and `results/e2b.json`; detailed run diagnostics and cleanup ledgers stay private outside the repository. The September 28 merged-source reruns passed all 13 baseline scenarios for both providers with confirmed cleanup: E2B public `base` in `/home/user`, and Daytona `daytona-small` in `us` with explicit `daytona-default`. Earlier E2B sticky-`/tmp` failure and Daytona strict-blocked unsupported results remain recorded for their original configurations. OCI builds and network probes were not run.
 
 ## When to run
 
@@ -58,7 +58,7 @@ Exercise and reconciliation hold an exclusive per-run lock across all mutations.
 
 Publish only intentionally selected summary records in `results/daytona.json` or `results/e2b.json`, updating the existing provider file. Include scenario status, exact merged SDK/harness revisions, versions, timestamp, configuration and cleanup status. Review the summary before committing it; omit diagnostic error text, byte dumps and native responses. Keep debugging runs and private cleanup receipts outside the repository. Earlier published results remain in Git history.
 
-The normal docs build reads only committed JSON and never contacts providers. The generated page uses live evidence only. A newer failure supersedes an older pass for the same configuration. Scenario successes with incomplete cleanup remain incomplete. Missing credentials or approval means not-run. The current dated E2B record preserves the overwrite failure, dependent no-clobber blockage and confirmed cleanup; it is not a provider-wide pass.
+The normal docs build reads only committed JSON and never contacts providers. The generated page uses live evidence only. A newer failure supersedes an older pass for the same configuration. Scenario successes with incomplete cleanup remain incomplete. Missing credentials or approval means not-run. The current E2B records preserve the earlier overwrite failure and dependent no-clobber blockage alongside the passing `/home/user` baseline; they do not establish arbitrary-path support.
 
 ```sh
 bun test packages/sdk-qualification/provider-qualification

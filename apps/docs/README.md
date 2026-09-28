@@ -12,9 +12,9 @@ bun run docs:check
 bun run --cwd apps/docs dev
 ```
 
-`docs:check` builds public workspace packages, checks Astro content and TypeScript examples, validates internal Markdown routes and anchors, checks generated OpenAPI reference drift, builds the static site and Pagefind index, checks output, and runs direct/remote quickstart flows against temporary fake and service processes. The fake is a simulation only.
+`docs:check` builds public workspace packages, checks Astro content and TypeScript examples, validates internal Markdown routes and anchors, checks generated TypeScript, provider evidence, and internal OpenAPI reference drift, builds the static site and Pagefind index, checks output, and runs direct/remote quickstart flows against temporary fake and service processes. The fake is a simulation only.
 
-Edit the executable contract in `apps/server/src/openapi.ts`, run `bun run --cwd apps/server openapi:generate`, then `bun run --cwd apps/docs reference:generate` when routes change. Commit both generated artifacts. Do not edit the generated HTTP reference by hand.
+Edit the executable contract in `apps/server/src/openapi.ts`, run `bun run --cwd apps/server openapi:generate`, then `bun run --cwd apps/docs reference:generate` when routes change. Commit both generated artifacts. The generated HTTP reference lives in `internal/reference/http.md`. Do not edit it by hand.
 
 ## Cloudflare Workers Static Assets
 
@@ -23,3 +23,26 @@ Edit the executable contract in `apps/server/src/openapi.ts`, run `bun run --cwd
 The `sandbar-docs` Worker serves `sandbarsdk.dev` and `www.sandbarsdk.dev`; both are bound as custom domains in `wrangler.jsonc`, so a deploy keeps them attached. Pages canonicalize to `https://sandbarsdk.dev/`.
 
 `.github/workflows/docs-deploy.yml` deploys on pushes to `main` that change `apps/docs/**`, `bun.lock` or the workflow itself, and can be run manually. It reruns `bun run docs:check` before `wrangler deploy`. It reads `CLOUDFLARE_API_TOKEN` (Workers Scripts edit and Workers Custom Domains/Zone edit for `sandbarsdk.dev`) and `CLOUDFLARE_ACCOUNT_ID` from the protected `production` GitHub environment. Pull request checks only build and test; they receive no deployment credentials. Preview deployments, if introduced, should use `noindex` and must not publish an unmerged stack to the canonical domain. Every page keeps `noindex` until public launch is decided.
+
+## Content structure
+
+The public docs focus on the SDK: getting started, agent prompts, everyday guides,
+provider setup and tested support, adapter authoring, and TypeScript reference.
+The landing page is maintained separately in `src/pages/index.astro`.
+
+Service setup and HTTP documentation are retained in `internal/`, outside the
+content collection, navigation, and Pagefind search until that feature is ready.
+Internal source links are historical authoring context, not published routes.
+
+The getting started page imports `examples/getting-started-{daytona,e2b,modal}.ts`
+as its displayed code, so all three copyable examples are checked by the examples
+TypeScript project. Synchronized provider tabs switch install, credentials, and
+code together. The examples are not executed in offline checks because they
+create real sandboxes. Installation copy describes the upcoming package release
+until publication; contributor setup stays in this README.
+
+Provider test evidence comes from the reviewed JSON files in
+`packages/sdk-qualification/provider-qualification/results/`. After an authorized
+run, update the provider's existing file and run the qualification renderer.
+Keep `providers/support.md` consistent with those operation-level results. The
+normal docs build checks drift and never calls live providers.

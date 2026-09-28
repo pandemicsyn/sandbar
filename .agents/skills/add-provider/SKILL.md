@@ -91,7 +91,7 @@ Document operations whose uncertain outcomes cannot be reconciled. A new recover
 
 ### Optional service registration
 
-External adapters are trusted installed code, registered explicitly via `createService({ storage, auth, adapters: [definition] })` from `sandbar-service`. Installation alone never registers one. See the [service guide](../../../apps/docs/src/content/docs/docs/self-hosting/create-service.md).
+External adapters are trusted installed code, registered explicitly via `createService({ storage, auth, adapters: [definition] })` from `sandbar-service`. Installation alone never registers one. See the [service guide](../../../apps/docs/internal/self-hosting/create-service.md).
 
 The existing service catalog derives forms from the definition's schemas. Connection requests supply JSON configuration and credentials, then verify the connection. Use this path without adding provider-specific auth, SQL, UI forms or a parallel runner. For supported service usage, test the definition through the public SDK consumer boundary, including persisted reconnection and recovery.
 

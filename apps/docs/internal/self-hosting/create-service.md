@@ -21,4 +21,4 @@ The service operator installs trusted code and registers definitions at startup.
 
 Credentials and configuration are validated, encrypted, and bound to a verified native scope. Existing operations are observed after restart without resubmitting native effects. A missing registration stops new provider-dependent admission. The [packed service consumer](https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/package-smoke.mjs) installs service, SDK, and an external adapter tarball, then exercises HTTP submission and observation-only restart recovery.
 
-These packages are not yet published. The source checkout builds local tarballs for qualification; it does not deploy or make live provider calls. See [Service operations](/docs/self-hosting/operations/) for key files, database ownership, and recovery behavior.
+These packages are not yet published. The source checkout builds local tarballs for qualification; it does not deploy or make live provider calls. See [Service operations](./operations.md) for key files, database ownership, and recovery behavior.
