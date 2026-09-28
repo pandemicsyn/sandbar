@@ -245,12 +245,11 @@ export class ModalRouterWire {
     const { taskId, client, metadata } = await this.connect(sandboxId);
 
     try {
-      let remaining = maxBytes;
-      let truncated = false;
-
-      const collect = (descriptor: number): Promise<Uint8Array> =>
+      const collect = (descriptor: number): Promise<{ bytes: Uint8Array; truncated: boolean }> =>
         new Promise((resolve, reject) => {
           const chunks: Uint8Array[] = [];
+          let remaining = maxBytes;
+          let truncated = false;
 
           const call: ClientReadableStream<Buffer> = client.makeServerStreamRequest(
             `${SERVICE}/TaskExecStdioRead`,
@@ -272,7 +271,7 @@ export class ModalRouterWire {
               if (!(data instanceof Uint8Array)) return;
               const take = Math.min(remaining, data.length);
 
-              if (take) chunks.push(data.subarray(0, take));
+              if (take) chunks.push(data.slice(0, take));
               remaining -= take;
 
               if (take < data.length) truncated = true;
@@ -289,7 +288,7 @@ export class ModalRouterWire {
           call.on("end", () => {
             this.calls.delete(call);
             signal?.removeEventListener("abort", onAbort);
-            resolve(message(...chunks));
+            resolve({ bytes: message(...chunks), truncated });
           });
         });
 
@@ -312,7 +311,15 @@ export class ModalRouterWire {
       if (code === undefined && processSignal === undefined)
         throw new Error("Modal exec exit status unavailable");
 
-      return { exitCode: code ?? 128 + processSignal!, stdout, stderr, truncated };
+      const retainedStderr = stderr.bytes.subarray(0, maxBytes - stdout.bytes.length);
+
+      return {
+        exitCode: code ?? 128 + processSignal!,
+        stdout: stdout.bytes,
+        stderr: retainedStderr,
+        truncated:
+          stdout.truncated || stderr.truncated || retainedStderr.length < stderr.bytes.length,
+      };
     } finally {
       this.release(client);
     }

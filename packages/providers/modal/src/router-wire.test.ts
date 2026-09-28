@@ -34,6 +34,8 @@ let holdWait = false;
 
 let loseStdin = false;
 
+let firstStream: "stdout" | "stderr" | undefined;
+
 const seen: Buffer[] = [];
 
 server.addService(
@@ -81,12 +83,18 @@ server.addService(
     },
     taskExecStdioRead(call: grpc.ServerWritableStream<Buffer, Buffer>) {
       const descriptor = parse(call.request).get(4);
-      call.write(
-        message(
-          field(1, descriptor === 0 ? Uint8Array.from([0, 255, 129]) : Uint8Array.from([42])),
-        ),
-      );
-      call.end();
+
+      const emit = () => {
+        call.write(
+          message(
+            field(1, descriptor === 0 ? Uint8Array.from([0, 255, 129]) : Uint8Array.from([42])),
+          ),
+        );
+        call.end();
+      };
+
+      if (firstStream) setTimeout(emit, (descriptor === 0) === (firstStream === "stdout") ? 0 : 20);
+      else emit();
     },
   },
 );
@@ -182,6 +190,40 @@ test("binary stdin uses exact offsets and bounded output truncates", async () =>
     expect(result.stdout.length + result.stderr.length).toBe(2);
     expect(result.truncated).toBe(true);
   } finally {
+    wire.close();
+  }
+});
+
+test("stdout-first retention is independent of arrival order with exact combined bounds", async () => {
+  starts = 0;
+  const wire = router();
+
+  try {
+    await wire.start({
+      sandboxId: "sb-fixture",
+      execId: "submission-1",
+      command: ["printf", "fixture"],
+      timeoutSeconds: 5,
+    });
+
+    for (const order of ["stdout", "stderr"] as const) {
+      firstStream = order;
+
+      for (const limit of [0, 2, 3, 4]) {
+        const result = await wire.result("sb-fixture", "submission-1", limit);
+        expect(result).toEqual({
+          exitCode: 7,
+          stdout: Uint8Array.from([0, 255, 129].slice(0, limit)),
+          stderr: limit === 4 ? Uint8Array.from([42]) : new Uint8Array(),
+          truncated: limit < 4,
+        });
+        expect(result.stdout.length + result.stderr.length).toBeLessThanOrEqual(limit);
+      }
+    }
+
+    expect(starts).toBe(1);
+  } finally {
+    firstStream = undefined;
     wire.close();
   }
 });

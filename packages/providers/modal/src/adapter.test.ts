@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { adapterSuite } from "sandbar-adapter/testing";
 import { createModalAdapter, modalWriteScript } from "./adapter";
 import type { ModalTransport } from "./transport";
-import { Image, Sandbar } from "sandbar-sdk";
+import { Image, OutcomeUnknownError, Sandbar } from "sandbar-sdk";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -354,6 +354,126 @@ test("Modal direct exec and write recover by execution ID after one uncertain su
   expect(shell).toMatchObject({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() });
   expect(starts[4]?.command).toEqual(["/bin/sh", "-c", "printf shell"]);
   await client.close();
+});
+
+test("file writes require decimal byte-count evidence in submit and reopened observation", async () => {
+  let receipt = "";
+  let loseStdin = false;
+  let starts = 0;
+  let record = { id: "sb-receipt", tags: {}, running: true };
+
+  const transport: ModalTransport = {
+    async lookupApp() {
+      return "ap-fixture";
+    },
+    async imageExists() {
+      return true;
+    },
+    async create(input) {
+      record = { ...record, tags: input.tags };
+
+      return record.id;
+    },
+    async findByName() {
+      return record;
+    },
+    async *list() {
+      yield record;
+    },
+    async terminate() {
+      return true;
+    },
+    async poll() {
+      return "stopped";
+    },
+    async readBytes() {
+      return new Uint8Array();
+    },
+    async fileExists() {
+      return false;
+    },
+    async start() {
+      starts++;
+    },
+    async stdin() {
+      if (loseStdin) {
+        loseStdin = false;
+        throw new Error("lost stdin acknowledgement");
+      }
+    },
+    async result() {
+      return {
+        exitCode: 0,
+        stdout: new TextEncoder().encode(receipt),
+        stderr: new Uint8Array(),
+        truncated: false,
+      };
+    },
+    close() {},
+  };
+
+  const open = () =>
+    Sandbar.connect({
+      adapter: createModalAdapter(() => transport),
+      config: { appName: "existing", environment: "main" },
+      credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+    });
+
+  let client = await open();
+
+  const creation = await client.sandboxes.submitCreate({
+    environment: Image.prepared("im-fixture"),
+    networkPolicy: "blocked",
+  });
+
+  let box = await creation.wait();
+
+  try {
+    for (const invalid of ["", " \n", "invalid", "0x0", "9007199254740992"]) {
+      receipt = invalid;
+      await expect(
+        box.writeFile("/receipt", new Uint8Array(), { overwrite: true }),
+      ).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    }
+
+    for (const valid of ["0", " 0\n"]) {
+      receipt = valid;
+      await box.writeFile("/receipt", new Uint8Array(), { overwrite: true });
+    }
+
+    receipt = "2\n";
+    await box.writeFile("/receipt", Uint8Array.from([0, 255]), { overwrite: true });
+
+    for (const missing of ["", " \n"]) {
+      receipt = missing;
+      loseStdin = true;
+      let reference;
+
+      try {
+        await box.writeFile("/receipt", new Uint8Array(), { overwrite: true });
+        throw new Error("Expected uncertain receipt");
+      } catch (error) {
+        if (!(error instanceof OutcomeUnknownError)) throw error;
+        reference = error.reference;
+      }
+
+      const submitted = starts;
+      await client.close();
+      client = await open();
+      // SAFETY: The SDK emitted this reference for the fixture's original write.
+      await expect((await client.recover(reference as never)).observe()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+      });
+      receipt = "0";
+      // SAFETY: Recovery reuses the same SDK-emitted reference with decimal evidence now available.
+      expect(await (await client.recover(reference as never)).observe()).toBeUndefined();
+      expect(starts).toBe(submitted);
+      // SAFETY: This completed create reference restores the same sandbox handle after reopening.
+      box = (await (await client.recover(creation.reference)).observe()) as typeof box;
+    }
+  } finally {
+    await client.close();
+  }
 });
 
 test("OCI create builds only in submit and never replays an uncertain image or sandbox mutation", async () => {

@@ -30,6 +30,15 @@ const WriteToken = z.strictObject({ expectedBytes: z.number().int().min(0).max(M
 
 const DestroyToken = z.strictObject({ id: z.string().min(1).max(128) });
 
+function writeCount(bytes: Uint8Array): number | undefined {
+  const receipt = new TextDecoder().decode(bytes).trim();
+
+  if (!/^\d+$/.test(receipt)) return undefined;
+  const count = Number(receipt);
+
+  return Number.isSafeInteger(count) ? count : undefined;
+}
+
 type RecordValue = z.output<typeof RecordSchema>;
 
 export function modalWriteScript(overwrite: boolean): string {
@@ -431,7 +440,7 @@ export function createModalAdapter(
                 if (
                   result.exitCode === 0 &&
                   !result.truncated &&
-                  Number(new TextDecoder().decode(result.stdout).trim()) === input.bytes.length
+                  writeCount(result.stdout) === input.bytes.length
                 )
                   return { bytesWritten: input.bytes.length };
 
@@ -464,12 +473,11 @@ export function createModalAdapter(
                   signal,
                 );
 
-                const count = Number(new TextDecoder().decode(result.stdout).trim());
+                const count = writeCount(result.stdout);
 
                 if (
                   result.exitCode === 0 &&
                   !result.truncated &&
-                  Number.isSafeInteger(count) &&
                   count === token.data.expectedBytes
                 )
                   return { bytesWritten: count };
