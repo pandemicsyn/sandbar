@@ -1,0 +1,402 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "connect",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "create-prepared",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "inspect",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "exec-argv",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "exec-shell",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "exec-nonzero",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "file-binary",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "file-overwrite",
+      "mode": "live",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "diagnostic": {
+        "stage": "write",
+        "timestamp": "2026-09-28T02:28:40.654Z",
+        "elapsedMs": 1687,
+        "error": {
+          "name": "OutcomeUnknownError",
+          "code": "OUTCOME_UNKNOWN",
+          "message": "E2B written bytes differ from the submitted content",
+          "truncated": false
+        },
+        "overwrite": true,
+        "writeBytes": [2, 254, 0],
+        "writeLength": 3,
+        "expectedBytes": [2, 254, 0],
+        "expectedLength": 3
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19",
+      "issue": "outcome-unknown"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "file-no-clobber",
+      "mode": "live",
+      "status": "blocked",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19",
+      "issue": "dependency-failed"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "inventory",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "destroy",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "confirm-cleanup",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "close",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "e2b",
+      "scenario": "build-oci",
+      "mode": "live",
+      "status": "not-run",
+      "runCleanup": "confirmed",
+      "sdkCommit": "626b47b396c6a57267cd9942c1e40b9e5ba305a0",
+      "harnessCommit": "925270bde2794005909cf6e95fd27188c316ec96",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "envd": {
+        "status": "available",
+        "version": "0.6.10"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-28T02:28:41.591Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "templateClass": "public-base",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "provider-default"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/19",
+      "issue": "not-selected"
+    }
+  ]
+}
