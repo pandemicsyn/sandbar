@@ -101,6 +101,15 @@ test("per-call parents, convenience phases, nonzero exits, privacy and applicati
   expect(spans.filter((s) => s.name === "sandbar.wait")).toHaveLength(8);
   expect(
     spans
+      .filter((s) => s.name === "sandbar.wait")
+      .every(
+        (s) =>
+          s.attributes["sandbar.wait.poll_count"] === 1 &&
+          s.events.at(-1)?.attributes?.["sandbar.operation.state"] === "completed",
+      ),
+  ).toBe(true);
+  expect(
+    spans
       .filter((s) => s.name === "sandbar.exec")
       .every(
         (s) =>
@@ -245,6 +254,59 @@ test("pre-submission rejection, bounded polling and post-submission abort", asyn
   expect(wait.events.length).toBeLessThanOrEqual(8);
   expect(spans.filter((s) => s.name === "sandbar.operation.observe")).toHaveLength(0);
   await provider.shutdown();
+});
+
+test("wait counts failed observations and records the unknown transition", async () => {
+  for (const observeFailure of ["unknown", "throw", "invalid_token"] as const) {
+    const { provider, exporter } = setup();
+
+    const fixture = fixtureAdapter({
+      pending: true,
+      observeFailure: observeFailure === "invalid_token" ? undefined : observeFailure,
+    });
+
+    const client = await Sandbar.connect({
+      adapter: fixture.adapter,
+      config: {},
+      credentials: {},
+      tracing: { tracerProvider: provider },
+    });
+
+    let operation = await client.sandboxes.submitCreate({
+      environment: Image.prepared("CANARY_IMAGE"),
+    });
+
+    if (observeFailure === "invalid_token") {
+      expect(await operation.observe()).toBeNull();
+      operation = await client.recover({ ...operation.reference, tokenVersion: 2 });
+    }
+
+    const error = await operation.wait({ pollMs: 50 }).catch((failure) => failure);
+
+    if (observeFailure === "invalid_token") expect(error.code).toBe("CONFLICT");
+    else {
+      expect(error).toBeInstanceOf(OutcomeUnknownError);
+      expect(error.reference).toEqual(operation.reference);
+    }
+
+    await client.close();
+
+    const wait = safeSpans(exporter).find((span) => span.name === "sandbar.operation.wait")!;
+    expect(wait.attributes["sandbar.wait.poll_count"]).toBe(
+      observeFailure === "invalid_token" ? 1 : 2,
+    );
+    expect(wait.events.map((event) => event.attributes?.["sandbar.operation.state"])).toEqual(
+      observeFailure === "invalid_token" ? ["unknown"] : ["pending", "unknown"],
+    );
+
+    if (observeFailure !== "invalid_token")
+      expect(wait.attributes["sandbar.operation.state"]).toBe("unknown");
+    expect(wait.status.code).toBe(SpanStatusCode.ERROR);
+    expect(fixture.counts.create).toBe(1);
+    expect(fixture.counts.observe).toBe(observeFailure === "invalid_token" ? 0 : 1);
+    expect(fixture.counts.close).toBe(1);
+    await provider.shutdown();
+  }
 });
 
 test("throwing tracer methods/context hooks cannot replay work, replace errors or skip cleanup", async () => {

@@ -13,6 +13,7 @@ export function fixtureAdapter(
   options: {
     lost?: boolean;
     pending?: boolean;
+    observeFailure?: "unknown" | "throw";
     exitCode?: number;
     delay?: Promise<void>;
     read?: () => Promise<Uint8Array>;
@@ -52,6 +53,10 @@ export function fixtureAdapter(
           },
           async observe(_attempt: RecoveryAttempt, ctx: ObserveContext) {
             counts.observe++;
+
+            if (options.observeFailure === "unknown") return ctx.unknown("CANARY_UNKNOWN");
+
+            if (options.observeFailure === "throw") throw new Error("CANARY_PROVIDER_FAILURE");
 
             return ctx.pending({ secret: "CANARY_TOKEN" }, { pollAfterMs: 50 });
           },

@@ -332,7 +332,21 @@ export class AdapterOperation<T> {
           await waitDelay(delay, signal).catch((error) => abortWaiting(this.reference, error));
       }
 
-      const value = await this.observeWithSignal(signal);
+      const value = await this.observeWithSignal(signal).catch((error) => {
+        this.client.telemetry.poll(
+          error instanceof SandbarError && error.effect === "applied"
+            ? "completed"
+            : this.terminal &&
+                "error" in this.terminal &&
+                error instanceof SandbarError &&
+                error.effect === "none"
+              ? "rejected"
+              : "unknown",
+        );
+
+        throw error;
+      });
+
       this.client.telemetry.poll(value === null ? "pending" : "completed");
 
       if (value !== null) return value;
