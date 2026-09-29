@@ -921,7 +921,15 @@ export class PreparedAdapterAttempt {
                 checked,
                 signal,
                 this.kind === "exec" ? this.maxOutputBytes : undefined,
-                options.onCheckpoint,
+                async (token, version) => {
+                  if (!options.onCheckpoint)
+                    throw new SandbarError(
+                      "INVALID_ARGUMENT",
+                      "Checkpointing submissions require onCheckpoint persistence",
+                    );
+
+                  await options.onCheckpoint(token, version);
+                },
               ),
               submissionWaitSignal,
               this.client.signal,

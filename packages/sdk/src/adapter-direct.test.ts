@@ -1918,3 +1918,76 @@ test("reference persistence recovers after one failed observation save before co
     await client.close();
   }
 });
+
+test("advanced checkpointing submissions require a persistence callback before effects", async () => {
+  let effects = 0;
+
+  const adapter = defineAdapter({
+    name: "example.advanced-checkpoint",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          recovery: {
+            version: 1,
+            token: z.strictObject({ state: z.enum(["uncertain", "accepted"]) }),
+          },
+          async submit(_input, ctx) {
+            await ctx.checkpoint({ state: "uncertain" });
+            effects++;
+            await ctx.checkpoint({ state: "accepted" });
+
+            return { id: "checkpointed", state: "running" as const };
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const input = { image: { kind: "prepared" as const, value: "image" }, networkPolicy: "blocked" };
+  const identity = { operationId: "op", submissionId: "submission", invocationKey: "invocation" };
+
+  try {
+    const missing = await client.operations.prepare("create", input);
+    expect(await missing.submit(identity, { beforeSubmit: async () => true })).toMatchObject({
+      kind: "unknown",
+    });
+    expect(effects).toBe(0);
+    const failed = await client.operations.prepare("create", input);
+    expect(
+      await failed.submit(identity, {
+        beforeSubmit: async () => true,
+        onCheckpoint: async () => {
+          throw Error("Persistence failed");
+        },
+      }),
+    ).toMatchObject({ kind: "unknown" });
+    expect(effects).toBe(0);
+    const saved: string[] = [];
+    const durable = await client.operations.prepare("create", input);
+    expect(
+      await durable.submit(identity, {
+        beforeSubmit: async () => true,
+        onCheckpoint: async (token, version) => {
+          saved.push(JSON.stringify({ token, version }));
+        },
+      }),
+    ).toMatchObject({ kind: "completed" });
+    expect(saved.map((value) => JSON.parse(value))).toEqual([
+      { token: { state: "uncertain" }, version: 1 },
+      { token: { state: "accepted" }, version: 1 },
+    ]);
+    expect(effects).toBe(1);
+    await client.sandboxes.create({ environment: Image.prepared("image") });
+    expect(effects).toBe(2);
+  } finally {
+    await client.close();
+  }
+});
