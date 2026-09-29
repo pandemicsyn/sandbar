@@ -15,7 +15,13 @@ import {
   type TracerProvider,
   type Attributes,
 } from "@opentelemetry/api";
-import { SandbarError, NonzeroExitError, NoExitCodeError } from "./resource";
+import {
+  SandbarError,
+  NonzeroExitError,
+  NoExitCodeError,
+  validateReference,
+  type RecoveryReference,
+} from "./resource";
 
 export interface ObservabilityOptions {
   /** Omission uses the application provider. Sandbar never owns provider shutdown. */
@@ -85,6 +91,64 @@ export function safeIdentity(value: unknown): string | undefined {
   return typeof value === "string" && /^(sdk|op|sub)_[0-9a-f]{32}$/.test(value) ? value : undefined;
 }
 
+// oxlint-disable anti-slop/no-unsafe-dictionary-type -- This private snapshot boundary copies only allowlisted own data descriptors; remoteRecoveryAvailable immediately validates the detached fields against the existing recovery schema.
+function dataFields(value: unknown, keys: readonly string[]): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") return;
+  const names = Object.getOwnPropertyNames(value);
+
+  if (names.some((name) => !keys.includes(name))) return;
+  const fields: Record<string, unknown> = {};
+
+  for (const name of names) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name);
+
+    if (!descriptor || !("value" in descriptor)) return;
+    fields[name] = descriptor.value;
+  }
+
+  return fields;
+}
+
+// oxlint-enable anti-slop/no-unsafe-dictionary-type
+
+function remoteRecoveryAvailable(value: unknown): boolean {
+  const fields = dataFields(value, [
+    "version",
+    "mode",
+    "kind",
+    "invocationKey",
+    "operationId",
+    "resourceId",
+    "file",
+    "service",
+  ]);
+
+  if (!fields) return false;
+  fields.service = dataFields(fields.service, ["url", "projectId"]);
+
+  if (fields.file !== undefined) {
+    const file = dataFields(fields.file, ["path", "bytes"]);
+
+    if (!file) return false;
+    fields.file = file;
+  }
+
+  // Reject nonprimitive leaf values before passing a detached snapshot to the validator.
+  for (const [key, field] of Object.entries(fields)) {
+    if (key === "service" || key === "file") {
+      if (
+        field &&
+        typeof field === "object" &&
+        Object.values(field).some((leaf) => leaf !== null && typeof leaf === "object")
+      )
+        return false;
+    } else if (field !== null && typeof field === "object") return false;
+  }
+
+  // SAFETY: The snapshot contains only own data fields; validateReference checks the full public remote contract before use.
+  return !!attempt(() => validateReference(fields as RecoveryReference));
+}
+
 /** Pure correlation data; the original handle/error retains recovery authority. */
 export function diagnosticContext(value: unknown): Readonly<DiagnosticContext> {
   const record: DiagnosticContext = { recoveryAvailable: false };
@@ -121,7 +185,6 @@ export function diagnosticContext(value: unknown): Readonly<DiagnosticContext> {
 
       if (ref && typeof ref === "object") {
         const mode = Object.getOwnPropertyDescriptor(ref, "mode")?.value;
-        const invocationKey = Object.getOwnPropertyDescriptor(ref, "invocationKey")?.value;
 
         record.operationId = safeIdentity(
           Object.getOwnPropertyDescriptor(ref, "operationId")?.value,
@@ -132,9 +195,7 @@ export function diagnosticContext(value: unknown): Readonly<DiagnosticContext> {
         record.recoveryAvailable =
           mode === "direct"
             ? !!record.operationId && !!record.submissionId
-            : mode === "remote" &&
-              typeof invocationKey === "string" &&
-              /^[0-9a-f-]{36}$/.test(invocationKey);
+            : mode === "remote" && remoteRecoveryAvailable(ref);
       }
     }
   } catch {
@@ -407,6 +468,7 @@ export class Telemetry {
 
           if (name === "sandbar.operation.observe")
             span.setAttributes({
+              ...diagnosticAttributes(options.identity),
               "sandbar.operation.state": result === null ? "pending" : "completed",
               "sandbar.effect": result === null ? "possible" : "applied",
             });

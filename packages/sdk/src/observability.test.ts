@@ -815,3 +815,96 @@ test("pending image builds and destroys retain bounded counts after decoding and
     await provider.shutdown();
   }
 });
+
+test("pending handle observation preserves recovery availability", async () => {
+  const { provider, exporter } = setup();
+  const fixture = fixtureAdapter({ pending: true });
+
+  const client = await Sandbar.connect({
+    ...fixture,
+    config: {},
+    credentials: {},
+    tracing: { tracerProvider: provider },
+  });
+
+  const operation = await client.sandboxes.submitCreate({
+    environment: Image.prepared("CANARY_IMAGE"),
+  });
+
+  expect(await operation.observe()).toBeNull();
+  expect(await operation.observe()).toBeNull();
+  await client.close();
+
+  const observations = safeSpans(exporter).filter(
+    (span) => span.name === "sandbar.operation.observe",
+  );
+
+  expect(observations).toHaveLength(2);
+
+  for (const span of observations) {
+    expect(span.attributes["sandbar.recovery.available"]).toBe(true);
+    expect(span.attributes["sandbar.operation.state"]).toBe("pending");
+    expect(span.attributes["sandbar.effect"]).toBe("possible");
+  }
+
+  await provider.shutdown();
+});
+
+test("remote diagnostics validate recovery bindings without executing getters", () => {
+  const reference = {
+    version: 2,
+    mode: "remote",
+    kind: "create",
+    invocationKey: "00000000-0000-7000-8000-000000000000",
+    service: { url: "https://CANARY.example", projectId: "CANARY_PROJECT" },
+  };
+
+  expect(diagnosticContext({ reference }).recoveryAvailable).toBe(true);
+
+  for (const invalid of [
+    { mode: "remote", invocationKey: "-".repeat(36) },
+    { ...reference, invocationKey: "-".repeat(36) },
+    { ...reference, version: 1 },
+    { ...reference, service: undefined },
+    { ...reference, kind: "destroy" },
+    { ...reference, kind: "file_write", resourceId: "CANARY_RESOURCE" },
+    { ...reference, resourceId: "CANARY_RESOURCE" },
+    { ...reference, kind: "destroy", resourceId: "" },
+    { ...reference, service: { url: "invalid", projectId: "CANARY_PROJECT" } },
+    { ...reference, file: { path: "/file", bytes: 1 } },
+    { ...reference, file: { extra: 1 } },
+    {
+      ...reference,
+      kind: "file_write",
+      resourceId: "CANARY_RESOURCE",
+      file: { path: "/../file", bytes: 1 },
+    },
+  ])
+    expect(diagnosticContext({ reference: invalid }).recoveryAvailable).toBe(false);
+
+  expect(
+    diagnosticContext({
+      reference: {
+        ...reference,
+        kind: "file_write",
+        resourceId: "CANARY_RESOURCE",
+        file: { path: "/file", bytes: 1 },
+      },
+    }).recoveryAvailable,
+  ).toBe(true);
+
+  let getters = 0;
+
+  const service = {
+    get url() {
+      getters++;
+
+      return "https://CANARY.example";
+    },
+    projectId: "CANARY_PROJECT",
+  };
+
+  expect(diagnosticContext({ reference: { ...reference, service } }).recoveryAvailable).toBe(false);
+  expect(getters).toBe(0);
+  expect(JSON.stringify(diagnosticContext({ reference }))).not.toContain("CANARY");
+});
