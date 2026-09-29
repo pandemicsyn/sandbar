@@ -203,6 +203,22 @@ function normalizedCustody(entries: StateCustody[]) {
   return [...unique.values()];
 }
 
+export function operationCheckpoints(
+  entries: RunLedger["operationReferences"],
+  reference: AdapterRecoveryReference,
+) {
+  // SAFETY: Every entry came from a schema-read ledger or the SDK recovery-reference hook.
+  return normalizedCustody([
+    ...(entries ?? []).map((saved) => ({
+      role: "operation",
+      reference: saved,
+      creation: false,
+      cleanup: "not-required" as const,
+    })),
+    { role: "operation", reference, creation: false, cleanup: "not-required" },
+  ]).map((entry) => entry.reference as AdapterRecoveryReference);
+}
+
 /** Private crash-recovery state. The caller must put directory on persistent restricted storage. */
 export class LedgerStore {
   readonly path: string;
@@ -347,6 +363,7 @@ export class LedgerStore {
 
     await this.update((value) => {
       const entries = normalizedCustody(value.stateMutations ?? []);
+
       const incoming: StateCustody = {
         role: value.stateRole ?? "reconcile/delete",
         reference,

@@ -8,7 +8,7 @@ import {
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
 import { z } from "zod";
-import { LedgerStore } from "./ledger";
+import { LedgerStore, operationCheckpoints } from "./ledger";
 import type { Scenario } from "./report";
 import { boundedRead } from "./bounds";
 import { AdapterError } from "sandbar-adapter";
@@ -45,7 +45,10 @@ export async function recordReference(
 
     if (reference.kind === "destroy") return { ...value, destroyReference: reference };
 
-    return { ...value, operationReferences: [...(value.operationReferences ?? []), reference] };
+    return {
+      ...value,
+      operationReferences: operationCheckpoints(value.operationReferences, reference),
+    };
   });
 }
 

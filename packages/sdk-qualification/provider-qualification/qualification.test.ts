@@ -754,3 +754,25 @@ test("full legacy checkpoint ledger normalizes custody before recording new clea
   ).rejects.toThrow("identity conflicts");
   expect((await store.read()).stateMutations).toHaveLength(2);
 });
+
+test("baseline observation checkpoints do not grow the bounded operation inventory", async () => {
+  const store = await ledger();
+  const exec = { ...reference, kind: "exec" as const, sandboxId: "original" };
+  await store.update((value) => ({
+    ...value,
+    operationReferences: Array.from({ length: 32 }, () => exec),
+  }));
+
+  for (let stage = 0; stage < 70; stage++)
+    await recordReference(store, { ...exec, token: { stage } });
+  await recordReference(store, {
+    ...exec,
+    operationId: "second-op",
+    submissionId: "second-sub",
+    invocationKey: "second-inv",
+  });
+  const state = await store.read();
+
+  expect(state.operationReferences).toHaveLength(2);
+  expect(state.operationReferences?.[0]).toMatchObject({ token: { stage: 69 } });
+});
