@@ -306,6 +306,8 @@ export function e2bState(input: {
           consistency: info.consistency,
         });
 
+        if (ctx.signal.aborted) return ctx.pending(token, { pollAfterMs: 0 });
+
         return {
           snapshot: info,
           capture: {

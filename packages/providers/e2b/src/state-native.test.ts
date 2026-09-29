@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { Sandbar, Image, OutcomeUnknownError } from "sandbar-sdk";
+import { z } from "zod";
+import { ResourceReference } from "sandbar-adapter";
+import { Sandbar, Image, OutcomeUnknownError, WaitAbortedError } from "sandbar-sdk";
 import { createE2BAdapter } from "./index";
 import { createSdkTransport, type E2BTransport, type E2BRecord } from "./transport";
 
@@ -9,6 +11,7 @@ function fixture() {
   const volumes = new Map<string, { volumeId: string; name: string }>();
   let generation = "build_one";
   let extraTag = false;
+  let postCaptureRead: (() => void) | undefined;
   let inventoryBarrier: (() => Promise<void>) | undefined;
 
   const calls = {
@@ -57,6 +60,8 @@ function fixture() {
       return id;
     },
     async get(id) {
+      if (calls.capture) postCaptureRead?.();
+
       return boxes.get(id) ?? null;
     },
     async list(metadata, limit) {
@@ -160,6 +165,9 @@ function fixture() {
     volumes,
     calls,
     modes,
+    postCaptureRead(value: () => void) {
+      postCaptureRead = value;
+    },
     inventoryBarrier(value: () => Promise<void>) {
       inventoryBarrier = value;
     },
@@ -422,4 +430,60 @@ test("E2B recovery cannot invent capture generation when first tag evidence was 
   expect(f.calls.capture).toBe(1);
   expect(f.calls.snapshotDelete).toBe(0);
   await client.close();
+});
+
+test("E2B cancellation after capture acknowledgement retains generation custody and recovers without capture replay", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  f.postCaptureRead(() => controller.abort());
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    let failure: unknown;
+
+    try {
+      await source.snapshot(undefined, { signal: controller.signal });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(WaitAbortedError);
+
+    if (!(failure instanceof WaitAbortedError)) throw new Error("Expected wait abort");
+    expect(failure.reference.token).toMatchObject({
+      generation: "build_one",
+      sourceId: source.id,
+      consistency: "unknown",
+    });
+    const recovered = await (await client.recover(failure.reference)).wait();
+    expect(recovered).toMatchObject({
+      source: { state: "running" },
+      capture: { restoreExecution: "resume" },
+    });
+
+    const reference = z
+      .object({ snapshot: z.object({ reference: ResourceReference }) })
+      .parse(recovered).snapshot.reference;
+
+    await source.destroy();
+    const reopened = await f.connect();
+
+    try {
+      const snapshot = await reopened.snapshots.get(reference);
+      expect(await snapshot.inspect()).toMatchObject({
+        restoreExecution: "resume",
+        consistency: "unknown",
+        reference: { ownership: "verified-created", generation: "build_one" },
+      });
+      await snapshot.delete();
+    } finally {
+      await reopened.close();
+    }
+
+    expect(f.snapshots.size).toBe(0);
+    expect(f.calls.capture).toBe(1);
+  } finally {
+    await client.close();
+  }
 });
