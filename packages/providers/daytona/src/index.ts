@@ -700,6 +700,7 @@ export class DaytonaDriver implements ProviderDriver {
     identity: InvocationIdentity;
     image: string;
     imageKind?: "prepared" | "oci";
+    requireSnapshotIdentity?: boolean;
     networkPolicy: string;
     labels?: Record<string, string>;
     mounts?: import("sandbar-adapter").MountSpec[];
@@ -850,8 +851,11 @@ export class DaytonaDriver implements ProviderDriver {
 
       if (value.name !== name) return uncertain("Daytona returned a different sandbox name");
 
-      if (value.snapshot && value.snapshot !== snapshotId)
-        return uncertain("Daytona returned a different snapshot");
+      if (
+        (input.requireSnapshotIdentity && value.snapshot !== snapshotId) ||
+        (value.snapshot !== undefined && value.snapshot !== snapshotId)
+      )
+        return uncertain("Daytona sandbox snapshot identity is unconfirmed");
 
       if (input.mounts?.length) {
         const actual = await this.request("GET", `/sandbox/${encodeURIComponent(value.id)}`);
@@ -962,6 +966,7 @@ export class DaytonaDriver implements ProviderDriver {
     scope: NativeScope;
     submissionId: string;
     operationId?: string;
+    expectedSnapshotId?: string;
   }): Promise<DriverResult | null> {
     this.sameScope(input.scope);
     const name = `sandbar-${input.submissionId}`;
@@ -1029,6 +1034,9 @@ export class DaytonaDriver implements ProviderDriver {
       (input.operationId && detail.labels?.["sandbar.operation"] !== input.operationId)
     )
       return null;
+
+    if (input.expectedSnapshotId !== undefined && detail.snapshot !== input.expectedSnapshotId)
+      return unknown(input.submissionId, "Daytona sandbox snapshot identity is unconfirmed");
 
     const observation = observed(this.scope, detail, this.config.configuration.networkPolicy);
 

@@ -272,6 +272,7 @@ export function createDaytonaAdapter(
               identity: identity(ctx),
               image: input.snapshot.nativeId,
               imageKind: "prepared",
+              requireSnapshotIdentity: true,
               networkPolicy: input.request.networkPolicy,
               signal: ctx.signal,
             }),
@@ -279,10 +280,14 @@ export function createDaytonaAdapter(
           );
         },
         async observe(attempt: import("sandbar-adapter").RecoveryAttempt, ctx: ObserveContext) {
+          if (!attempt.resource || attempt.resource.kind !== "snapshot")
+            return ctx.unknown("Missing restore snapshot identity");
+
           const value = await driver.observe({
             scope,
             submissionId: attempt.submissionId,
             operationId: attempt.operationId,
+            expectedSnapshotId: attempt.resource.nativeId,
           });
 
           return value ? observedCreate(value, ctx, attempt.submissionId) : null;

@@ -1057,3 +1057,171 @@ test.each(["started", "stopped", "destroyed"])(
     }
   },
 );
+
+test.each([
+  ["immediate", "matching"],
+  ["immediate", "missing"],
+  ["immediate", "wrong"],
+  ["pending", "matching"],
+  ["pending", "missing"],
+  ["pending", "wrong"],
+  ["lost", "matching"],
+  ["lost", "missing"],
+  ["lost", "wrong"],
+] as const)("restore verifies native snapshot identity: %s / %s", async (path, evidence) => {
+  let state = "started";
+  let snapshotName = "";
+  let restoreCreates = 0;
+  let sourceName = "";
+  let restoreName = "";
+  let restoreLabels: Record<string, string> = {};
+  let confirmed = evidence === "matching";
+
+  const snapshot = () => ({
+    id: "captured-1",
+    general: false,
+    name: snapshotName,
+    organizationId: "org-1",
+    state: "active",
+    sandboxClass: "container",
+    sourceSandboxId: "source",
+    regionIds: ["us"],
+  });
+
+  const restored = (creating = false) => ({
+    id: "restored",
+    name: restoreName,
+    organizationId: "org-1",
+    target: "us",
+    state: creating ? "creating" : "started",
+    networkBlockAll: true,
+    public: false,
+    snapshot:
+      creating || confirmed ? "captured-1" : evidence === "missing" ? undefined : "other-snapshot",
+    labels: restoreLabels,
+  });
+
+  const fetchImpl: typeof fetch = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const route = url.pathname;
+
+      if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (route === "/api/regions")
+        return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+      if (route === "/api/organizations/org-1")
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+      if (route === "/api/warm-pools") return Response.json([]);
+
+      if (route === "/api/snapshots/base")
+        return Response.json({ ...snapshot(), id: "base", name: "base" });
+
+      if (route.startsWith("/api/snapshots/"))
+        return snapshotName ? Response.json(snapshot()) : new Response(null, { status: 404 });
+
+      if (route === "/api/sandbox/source/stop" || route === "/api/sandbox/source/start") {
+        state = route.endsWith("/stop") ? "stopped" : "started";
+
+        return Response.json({});
+      }
+
+      if (route === "/api/sandbox/source/snapshot") {
+        snapshotName = z.object({ name: z.string() }).parse(JSON.parse(String(init?.body))).name;
+
+        return Response.json({ id: "source", state });
+      }
+
+      if (route === "/api/sandbox/source")
+        return Response.json({
+          id: "source",
+          name: sourceName,
+          organizationId: "org-1",
+          target: "us",
+          state,
+          networkBlockAll: true,
+          public: false,
+          sandboxClass: "container",
+          volumes: [],
+        });
+
+      if (route === "/api/sandbox" && method === "POST") {
+        const body = z
+          .object({
+            name: z.string(),
+            snapshot: z.string(),
+            labels: z.record(z.string(), z.string()),
+          })
+          .parse(JSON.parse(String(init?.body)));
+
+        if (body.snapshot === "base") {
+          sourceName = body.name;
+
+          return Response.json({
+            id: "source",
+            name: sourceName,
+            organizationId: "org-1",
+            target: "us",
+            state,
+            networkBlockAll: true,
+            public: false,
+            snapshot: "base",
+            labels: body.labels,
+          });
+        }
+
+        expect(body.snapshot).toBe("captured-1");
+        restoreCreates++;
+        restoreName = body.name;
+        restoreLabels = body.labels;
+
+        if (path === "lost") throw new Error("Lost restore acknowledgement");
+
+        return Response.json(restored(path === "pending"));
+      }
+
+      if (route === "/api/sandbox") return Response.json({ items: [restored()] });
+
+      if (route === "/api/sandbox/restored") return Response.json(restored());
+      throw new Error(`Unexpected restore fixture route: ${method} ${route}`);
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const connect = () =>
+    Sandbar.connect({
+      adapter: createDaytonaAdapter(fetchImpl),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+  let client = await connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const capture = await source.snapshot();
+    const operation = await capture.snapshot.submitRestore({ networkPolicy: "blocked" });
+    const reference = structuredClone(operation.reference);
+
+    if (evidence !== "matching" || path === "lost")
+      await expect(operation.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    else expect((await operation.wait()).id).toBe("restored");
+
+    await client.close();
+    client = await connect();
+    const recovered = await client.recover(reference);
+
+    if (evidence !== "matching") {
+      await expect(recovered.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+      confirmed = true;
+    }
+
+    expect(await (await client.recover(reference)).wait()).toMatchObject({ id: "restored" });
+    expect(restoreCreates).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
