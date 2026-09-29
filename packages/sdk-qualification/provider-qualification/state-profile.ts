@@ -267,6 +267,9 @@ export async function runState(
       return output.stdoutText(512);
     };
 
+    const snapshotPath =
+      options.provider === "e2b" ? "/home/user/sandbar-captured.bin" : "/tmp/sandbar-captured.bin";
+
     const volumePath = `/mnt/sandbar-state/sandbar_${ledger.runId.replaceAll("-", "")}.bin`;
     const volumeBytes = new TextEncoder().encode(`Sandbar persistence ${ledger.runId}`);
     const observed: Partial<Record<StateScenario, StateEvidence>> = {};
@@ -309,7 +312,7 @@ export async function runState(
               plan.reason,
             );
           role = "snapshot/write";
-          await source.writeFile("/tmp/sandbar-captured.bin", bytes, {
+          await source.writeFile(snapshotPath, bytes, {
             overwrite: true,
             signal: options.signal,
           });
@@ -389,7 +392,7 @@ export async function runState(
 
           if (expected === "running") {
             role = "snapshot/source-change";
-            await source.writeFile("/tmp/sandbar-captured.bin", changed, {
+            await source.writeFile(snapshotPath, changed, {
               overwrite: true,
               signal: options.signal,
             });
@@ -405,7 +408,7 @@ export async function runState(
           );
 
           if (restored.id === source.id) throw new Error("Restore reused source compute identity");
-          equal(await read(restored, "/tmp/sandbar-captured.bin"), bytes);
+          equal(await read(restored, snapshotPath), bytes);
 
           if (plan.value.profile.restoreExecution === "resume" && before) {
             role = "snapshot/restored-memory";
@@ -440,7 +443,7 @@ export async function runState(
           }
 
           role = "snapshot/restored-change";
-          await restored.writeFile("/tmp/sandbar-captured.bin", changed, {
+          await restored.writeFile(snapshotPath, changed, {
             overwrite: true,
             signal: options.signal,
           });
@@ -488,7 +491,7 @@ export async function runState(
             ),
           );
 
-          equal(await read(again, "/tmp/sandbar-captured.bin"), bytes);
+          equal(await read(again, snapshotPath), bytes);
           observed["snapshot-roundtrip"] = {
             probe: snapshotProbe,
             preserve: plan.value.profile.preserve,
