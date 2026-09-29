@@ -1,14 +1,16 @@
 ---
 name: Provider research
 about: Research a sandbox provider and prepare an evidence-backed adapter implementation brief.
-title: "[Provider research] "
+title: "[Provider research] <Official product name>"
+labels: "provider-research, research:researching, native:lifecycle:unknown, native:exec:unknown, native:files:unknown, native:snapshots:unknown, native:volumes:unknown, native:egress:unknown, native:ingress:unknown, native:suspend-resume:unknown, native:recovery:unknown, native:typescript-sdk:unknown, native:observability:unknown"
 ---
 
-<!-- Use $provider-research to complete this brief. Keep unknowns explicit; an issue is not certification or permission to run paid tests. -->
+<!-- Use $provider-research to complete this brief. Follow .github/provider-research-conventions.md for exact title, labels and statuses. Replace the title placeholder. Keep unknowns explicit; an issue is not certification or permission to run paid tests. -->
 
 ## Provider and research scope
 
 - Provider name and product (distinguish sandbox product from other services):
+- Stable provider key (reuse the adapter name if one exists):
 - Homepage / official documentation / API reference:
 - Official TypeScript SDK: package, repository, version, reference; or no SDK found:
 - Research date and Sandbar commit used for mapping:
@@ -24,9 +26,27 @@ title: "[Provider research] "
 - Native capabilities deliberately unsupported or deferred in this slice:
 - Questions needing a provider answer or an authorized experiment:
 
+## Native capability summary
+
+Use one canonical status per row and the matching `native:<capability>:<status>` label. State limitations and source IDs even for unsupported capabilities. The detailed sections below explain subfeatures and Sandbar implementation gaps. These are researched native capabilities, not live certification.
+
+| Capability       | Native status | Limitation / evidence | Sandbar mapping |
+| ---------------- | ------------- | --------------------- | --------------- |
+| `lifecycle`      | unknown       | Not researched        |                 |
+| `exec`           | unknown       | Not researched        |                 |
+| `files`          | unknown       | Not researched        |                 |
+| `snapshots`      | unknown       | Not researched        |                 |
+| `volumes`        | unknown       | Not researched        |                 |
+| `egress`         | unknown       | Not researched        |                 |
+| `ingress`        | unknown       | Not researched        |                 |
+| `suspend-resume` | unknown       | Not researched        |                 |
+| `recovery`       | unknown       | Not researched        |                 |
+| `typescript-sdk` | unknown       | Not researched        |                 |
+| `observability`  | unknown       | Not researched        |                 |
+
 ## Evidence and capability map
 
-Use native status **documented**, **verified in source**, **observed live**, **unsupported**, **unknown**, or **conditional** (explain conditions). Missing docs means unknown, not unsupported. Track Sandbar mapping separately: **fits current API**, **contract extension needed**, or **out of scope**. A native feature does not mean Sandbar implements it.
+Use native status **supported**, **unsupported**, **conditional**, or **unknown**. Record evidence provenance separately as docs, pinned source, or authorized live observation, with version/date. Missing docs means unknown, not unsupported. Track Sandbar mapping separately: **fits current API**, **contract extension needed**, or **out of scope**. A native feature does not mean Sandbar implements it.
 
 For each row cite a source ID below, identify the exact native method/endpoint, summarize restrictions and the proposed mapping, and name the missing validation. Expand consequential details in the sections below.
 

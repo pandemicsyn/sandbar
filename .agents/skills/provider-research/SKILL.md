@@ -7,6 +7,12 @@ description: Research a sandbox provider and draft or update a GitHub issue that
 
 Produce a source-backed implementation brief using the repository's [provider research issue template](../../../.github/ISSUE_TEMPLATE/provider-research.md). That template is the canonical research checklist; do not maintain a second provider dossier in specs. Research can conclude that a useful partial adapter is feasible while snapshots or other native features are unavailable.
 
+## Standardize the issue
+
+Read the [issue conventions](../../../.github/provider-research-conventions.md) before drafting. Use `[Provider research] <Official product name>`, the stable provider key, every required summary row, and exact labels from the [label manifest](../../../.github/provider-research-labels.json). Classify every capability, not just snapshots: lifecycle, exec, files, volumes, egress, ingress, suspension, recovery, TypeScript SDK and observability all need explicit statuses. Distinguish native support, evidence provenance, Sandbar mapping and research readiness.
+
+Apply one status per capability family and one research-status label. Verify title, summary and labels agree before publishing; replace stale family labels and preserve unrelated labels. Unsupported needs evidence; unknown is the correct value for unresearched or inconclusive behavior. State consequential unsupported subfeatures even when a broader capability is supported. Do not mark a partial snapshot capture-only path as full snapshot support.
+
 ## Establish the target
 
 Identify the provider's exact sandbox product, requested scope, repository and any supplied issue. Read an existing issue and its relevant discussion before updating it; preserve user decisions and unrelated content. Search that repository for prior provider research before proposing a duplicate.
@@ -38,6 +44,6 @@ Before handing off, check that every in-scope capability has native evidence or 
 
 ## Save and hand off
 
-When the user asks to file or update a GitHub issue, use the selected repository's GitHub tools or `gh` to publish the brief. For `gh`, write the rendered Markdown body to a file and use `--body-file`; remove the template's YAML frontmatter and instructional HTML comments. Update an existing research issue when appropriate and preserve its unrelated decisions. Do not create labels, milestones or extra issues unless requested.
+When the user asks to file or update a GitHub issue, use the selected repository's GitHub tools or `gh` to publish the brief. For `gh`, write the rendered Markdown body to a file and use `--body-file`; remove the template's YAML frontmatter and instructional HTML comments. Update an existing research issue when appropriate and preserve its unrelated decisions. Use the convention labels when filing/updating; `gh --body-file` does not apply template labels automatically, so pass them explicitly. If a convention label is missing, create only that label using the manifest metadata. Do not create ad hoc labels, milestones or extra issues. Read back the saved title, body and labels to verify the handoff.
 
 If the request is research-only or publishing is not authorized, deliver the same completed issue body as a draft. If GitHub access fails, retain that draft and report the limitation. Return the issue URL (or draft location), implementation readiness and consequential unknowns. Recheck time-sensitive or conflicting evidence when implementation starts; the issue is a guide, not authority to override current contracts or authorize extra work.
