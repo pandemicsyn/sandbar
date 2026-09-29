@@ -498,11 +498,14 @@ try {
   const saved=structuredClone(capture.snapshot.reference);
   await box.destroy();
   const snapshot=await client.snapshots.get(saved);
-  const restored=await snapshot.restore({networkPolicy:"blocked"});await restored.destroy();await snapshot.delete();
+  const caps=await client.capabilities();
+  if(caps.snapshots.restore.status!=="unsupported"||caps.mounts.status!=="unsupported")throw Error("Unsafe state operations advertised");
+  let restoreRejected=false;try{await snapshot.restore({networkPolicy:"blocked"});}catch(error){restoreRejected=error.code==="UNSUPPORTED"&&error.effect==="none";}
+  if(!restoreRejected)throw Error("Unsafe mutable restore dispatched");
+  await snapshot.delete();
   const volume=await client.volumes.create({name:"packed-data"});
-  const mounted=await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});
-  const cleanup=await mounted.destroy({storage:"allow-unconfirmed"});
-  if(cleanup.mountDurability?.[0]?.status!=="unconfirmed"||!volumes.size)throw Error("Packed volume custody lost");
+  let mountRejected=false;try{await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});}catch(error){mountRejected=error.code==="UNSUPPORTED"&&error.effect==="none";}
+  if(!mountRejected||!volumes.size)throw Error("Unsafe name-only mount dispatched");
   await volume.delete();if(volumes.size||snapshots.size)throw Error("Packed state artifact cleanup failed");
   const oci = await client.sandboxes.create({ environment: Image.oci("node:24"), networkPolicy: "blocked" });
   await oci.destroy();
@@ -512,7 +515,7 @@ try {
   const fromBuild = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
   await fromBuild.destroy();
 } finally { await client.close(); }
-if (creates !== 5 || kills !== 5 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
+if (creates !== 3 || kills !== 3 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
 process.stdout.write("packed E2B fixture flow passed\\n");
 `;
 

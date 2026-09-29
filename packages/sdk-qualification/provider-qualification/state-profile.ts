@@ -256,6 +256,13 @@ export async function runState(
         );
 
         try {
+          const restore = (await client.capabilities()).snapshots.restore;
+
+          if (restore.status !== "supported")
+            throw new SandbarError(
+              restore.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
+              restore.reason,
+            );
           const source = await create("snapshot/source");
 
           const plan = await source.checkSnapshot();

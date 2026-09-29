@@ -32,6 +32,7 @@ async function fixture(
     borrowed?: boolean;
     checkpointFailure?: boolean;
     memory?: boolean;
+    restoreUnsupported?: boolean;
     readOnly?: "enforced" | "leaky";
   } = {},
 ) {
@@ -268,15 +269,17 @@ async function fixture(
         },
         async resourceCapabilities() {
           return {
-            restore: {
-              status: "supported",
-              value: {
-                networkPolicies: ["blocked"],
-                resources: false,
-                mounts: false,
-                independentLifecycle: true,
-              },
-            },
+            restore: options.restoreUnsupported
+              ? { status: "unsupported", reason: "Immutable restore unavailable" }
+              : {
+                  status: "supported",
+                  value: {
+                    networkPolicies: ["blocked"],
+                    resources: false,
+                    mounts: false,
+                    independentLifecycle: true,
+                  },
+                },
             volumes: {
               status: "supported",
               value: { create: true, inspect: true, list: false, delete: true },
@@ -633,4 +636,21 @@ test("partial E2B-style snapshot reference cleans storage after source expiry wi
   expect(f.snapshots.size).toBe(0);
   expect(f.boxes.size).toBe(0);
   expect(f.calls.capture).toBe(1);
+});
+
+test("snapshot roundtrip gates unsupported restore before any compute or retained capture", async () => {
+  const f = await fixture({ restoreUnsupported: true });
+
+  const steps = await runState(f.connect, f.ledger, "base", {
+    provider: "daytona",
+    network: "blocked",
+    selected: new Set(["snapshot-roundtrip"]),
+    signal: AbortSignal.timeout(5000),
+  });
+
+  expect(steps.find((s) => s.scenario === "snapshot-roundtrip")).toMatchObject({
+    status: "unsupported",
+  });
+  expect(f.calls).toMatchObject({ create: 0, capture: 0, restore: 0 });
+  expect((await f.ledger.read()).cleanup).toBe("not-required");
 });

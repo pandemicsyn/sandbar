@@ -84,10 +84,10 @@ export function e2bState(input: {
       mounts: [],
       mountHandling: knownSnapshots.has(id) ? "none" : "unknown",
       restore: {
-        networkPolicies: ["internet", "blocked"],
+        networkPolicies: [],
         resources: false,
         mounts: false,
-        independentLifecycle: true,
+        independentLifecycle: false,
       },
       dependencies: [],
       nativeDependencies: [],
@@ -388,79 +388,17 @@ export function e2bState(input: {
     },
     snapshotRestore: {
       recovery: { version: 1, token: restoreToken },
-      async prepare(value) {
-        const info = await snapshotInspect(value.snapshot);
-
-        if (info.mountHandling !== "none")
-          throw new AdapterError(
-            "UNAVAILABLE",
-            "Snapshot mount provenance unavailable in this connection; observe the saved capture first",
-          );
-
-        if (
-          value.request.resources ||
-          Object.keys(value.request.mounts ?? {}).length ||
-          !["internet", "blocked"].includes(value.request.networkPolicy)
-        )
-          throw new AdapterError("UNSUPPORTED", "Unsupported restore overrides");
-
-        return value;
-      },
-      async submit(value, ctx) {
-        await snapshotInspect(value.snapshot);
-
-        if (ctx.signal.aborted)
-          return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
-
-        const id = await transport.create({
-          signal: ctx.signal,
-          templateId: value.snapshot.nativeId,
-          timeoutMs: input.timeoutSeconds * 1000,
-          allowInternetAccess: value.request.networkPolicy === "internet",
-          metadata: {
-            sandbar_scope: input.scopeMarker,
-            sandbar_submission: ctx.submissionId,
-            sandbar_operation: ctx.operationId,
-            sandbar_template: value.snapshot.nativeId,
-            sandbar_snapshot: value.snapshot.nativeId,
-          },
-        });
-
-        const box = await transport.get(id);
-
-        if (
-          !box ||
-          `${box.templateId}:default` !== value.snapshot.nativeId ||
-          box.state !== "running" ||
-          box.metadata.sandbar_operation !== ctx.operationId ||
-          box.metadata.sandbar_submission !== ctx.submissionId
-        )
-          return ctx.pending({ snapshotId: value.snapshot.nativeId }, { pollAfterMs: 500 });
-
-        return { id, state: "running" };
-      },
-      async observe(attempt, ctx) {
-        if (!attempt.resource) return ctx.unknown("Restore snapshot identity missing");
-        check(attempt.resource);
-
-        const page = await transport.list(
-          {
-            sandbar_scope: input.scopeMarker,
-            sandbar_operation: attempt.operationId,
-            sandbar_submission: attempt.submissionId,
-            sandbar_snapshot: attempt.resource.nativeId,
-          },
-          2,
+      async prepare() {
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "E2B restore cannot bind the immutable captured build",
         );
-
-        if (page.items.length !== 1 || page.nextToken)
-          return ctx.unknown("Restore create is unconfirmed; no replay");
-        const box = page.items[0]!;
-
-        if (box.state !== "running" || `${box.templateId}:default` !== attempt.resource.nativeId)
-          return ctx.unknown("Restored compute identity or readiness is unconfirmed");
-
-        return { id: box.id, state: "running" };
+      },
+      async submit(_value, ctx) {
+        return ctx.reject("UNSUPPORTED", "E2B restore cannot bind the immutable captured build");
+      },
+      async observe(_attempt, ctx) {
+        return ctx.unknown("Native restore build generation cannot be confirmed; no replay");
       },
     },
     volumeCreate: {
@@ -516,26 +454,28 @@ export function e2bState(input: {
       if (values.length > page.limit)
         throw new AdapterError("CAPACITY", "Native volume inventory exceeds requested bound");
 
-      return { items: values.map((v) => volumeInfo(v)), coverage: "provider-scope" };
+      return {
+        items: values.map((v) => volumeInfo(v)),
+        coverage: "provider-scope",
+      };
     },
     async resourceCapabilities() {
-      const restore = state
-        ? {
-            status: "supported" as const,
-            value: {
-              networkPolicies: ["internet", "blocked"],
-              resources: false,
-              mounts: false,
-              independentLifecycle: true,
-            },
-          }
-        : { status: "unsupported" as const, reason: "Native state transport unavailable" };
+      const restore = {
+        status: "unsupported" as const,
+        reason: "E2B create selects a mutable template tag and exposes no restored build identity",
+      };
 
       if (!state)
         return {
           restore,
-          volumes: { status: "unsupported", reason: "Native volume transport unavailable" },
-          mounts: { status: "unsupported", reason: "Native mount transport unavailable" },
+          volumes: {
+            status: "unsupported",
+            reason: "Native volume transport unavailable",
+          },
+          mounts: {
+            status: "unsupported",
+            reason: "Native mount transport unavailable",
+          },
         };
 
       try {
@@ -548,15 +488,8 @@ export function e2bState(input: {
             value: { create: true, inspect: true, list: true, delete: true },
           },
           mounts: {
-            status: "supported",
-            value: {
-              timing: "create",
-              access: ["read-write"],
-              subpaths: false,
-              versions: false,
-              durability: "unknown",
-              compatibility: ["firecracker-us-eu"],
-            },
+            status: "unsupported",
+            reason: "E2B mounts select reusable names and expose no mounted volume ID",
           },
         };
       } catch (error) {
@@ -574,36 +507,22 @@ export function e2bState(input: {
                 ? "Volume private-beta access unavailable"
                 : "Volume eligibility could not be established",
           },
-          mounts: { status, reason: "Volume account/region eligibility is not established" },
+          mounts: {
+            status: "unsupported",
+            reason: "E2B cannot bind mount names to immutable volume IDs",
+          },
         };
       }
     },
     async checkMounts(create) {
-      const paths: string[] = [];
+      for (const mount of create.mounts ?? []) check(mount.volume);
 
-      for (const mount of create.mounts ?? []) {
-        check(mount.volume);
-
-        if (mount.access !== "read-write" || mount.subpath)
-          return {
+      return create.mounts?.length
+        ? {
             status: "unsupported",
-            reason: "Read-only/subpath enforcement unavailable in E2B beta",
-          };
-
-        if (
-          paths.some(
-            (path) =>
-              path === mount.path ||
-              path.startsWith(mount.path + "/") ||
-              mount.path.startsWith(path + "/"),
-          )
-        )
-          return { status: "unsupported", reason: "Mount paths overlap" };
-        paths.push(mount.path);
-        await volumeInspect(mount.volume);
-      }
-
-      return { status: "supported", value: {} };
+            reason: "E2B cannot bind mount names to immutable volume IDs",
+          }
+        : { status: "supported", value: {} };
     },
   };
 

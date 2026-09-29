@@ -1060,12 +1060,18 @@ test.each(["started", "stopped", "destroyed"])(
 
 test.each([
   ["immediate", "matching"],
+  ["immediate", "name"],
+  ["immediate", "replacement-name"],
   ["immediate", "missing"],
   ["immediate", "wrong"],
   ["pending", "matching"],
+  ["pending", "name"],
+  ["pending", "replacement-name"],
   ["pending", "missing"],
   ["pending", "wrong"],
   ["lost", "matching"],
+  ["lost", "name"],
+  ["lost", "replacement-name"],
   ["lost", "missing"],
   ["lost", "wrong"],
 ] as const)("restore verifies native snapshot identity: %s / %s", async (path, evidence) => {
@@ -1075,7 +1081,7 @@ test.each([
   let sourceName = "";
   let restoreName = "";
   let restoreLabels: Record<string, string> = {};
-  let confirmed = evidence === "matching";
+  let confirmed = evidence === "matching" || evidence === "name";
 
   const snapshot = () => ({
     id: "captured-1",
@@ -1097,7 +1103,15 @@ test.each([
     networkBlockAll: true,
     public: false,
     snapshot:
-      creating || confirmed ? "captured-1" : evidence === "missing" ? undefined : "other-snapshot",
+      creating || confirmed
+        ? evidence === "name"
+          ? snapshotName
+          : "captured-1"
+        : evidence === "missing"
+          ? undefined
+          : evidence === "replacement-name"
+            ? snapshotName
+            : "other-snapshot",
     labels: restoreLabels,
   });
 
@@ -1121,7 +1135,18 @@ test.each([
         return Response.json({ ...snapshot(), id: "base", name: "base" });
 
       if (route.startsWith("/api/snapshots/"))
-        return snapshotName ? Response.json(snapshot()) : new Response(null, { status: 404 });
+        return snapshotName
+          ? Response.json({
+              ...snapshot(),
+              id:
+                restoreCreates > 0 &&
+                !confirmed &&
+                evidence === "replacement-name" &&
+                route.endsWith(snapshotName)
+                  ? "replacement"
+                  : "captured-1",
+            })
+          : new Response(null, { status: 404 });
 
       if (route === "/api/sandbox/source/stop" || route === "/api/sandbox/source/start") {
         state = route.endsWith("/stop") ? "stopped" : "started";
@@ -1206,7 +1231,7 @@ test.each([
     const operation = await capture.snapshot.submitRestore({ networkPolicy: "blocked" });
     const reference = structuredClone(operation.reference);
 
-    if (evidence !== "matching" || path === "lost")
+    if (!["matching", "name"].includes(evidence) || path === "lost")
       await expect(operation.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
     else expect((await operation.wait()).id).toBe("restored");
 
@@ -1214,7 +1239,7 @@ test.each([
     client = await connect();
     const recovered = await client.recover(reference);
 
-    if (evidence !== "matching") {
+    if (!["matching", "name"].includes(evidence)) {
       await expect(recovered.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
       confirmed = true;
     }

@@ -36,6 +36,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     restartRejected: false,
     failedDelete: false,
     poolsDenied: false,
+    poolsDisabled: false,
     sharedSnapshot: false,
     pools: 0,
     slowReads: 0,
@@ -117,6 +118,8 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
 
       if (url.pathname === "/warm-pools") {
         calls.poolReads++;
+
+        if (modes.poolsDisabled) return new Response(null, { status: 404 });
 
         if (modes.poolsDenied) return new Response(null, { status: 403 });
 
@@ -658,3 +661,19 @@ for (const stopped of [false, true]) {
     });
   }
 }
+
+test("Daytona organization-disabled warm pools do not prevent owned snapshot cleanup", async () => {
+  const f = fixture();
+  f.modes.poolsDisabled = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const captured = await source.snapshot();
+    expect((await captured.snapshot.inspect()).nativeDependencies).toEqual([]);
+    await captured.snapshot.delete();
+    expect(f.calls.delete).toBe(1);
+  } finally {
+    await client.close();
+  }
+});

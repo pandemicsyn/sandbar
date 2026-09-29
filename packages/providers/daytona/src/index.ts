@@ -392,6 +392,27 @@ export class DaytonaDriver implements ProviderDriver {
 
     return sandbox;
   }
+  private async matchesSnapshot(
+    reported: string | undefined,
+    expectedId: string,
+  ): Promise<boolean> {
+    if (!reported) return false;
+
+    if (reported === expectedId) return true;
+
+    // Daytona creates from the immutable ID but reports the native snapshot name.
+    // Resolve that returned name and positively compare its ID; replacement names never match.
+    const response = await this.request("GET", `/snapshots/${encodeURIComponent(reported)}`);
+
+    if (!response.ok) return false;
+    const snapshot = await boundedJson(response, Snapshot);
+
+    return (
+      snapshot.id === expectedId &&
+      snapshot.name === reported &&
+      (snapshot.general || snapshot.organizationId === this.scope.accountId)
+    );
+  }
   private async sandbox(id: string): Promise<Sandbox | null> {
     const sandbox = await this.sandboxDetail(id);
 
@@ -852,8 +873,8 @@ export class DaytonaDriver implements ProviderDriver {
       if (value.name !== name) return uncertain("Daytona returned a different sandbox name");
 
       if (
-        (input.requireSnapshotIdentity && value.snapshot !== snapshotId) ||
-        (value.snapshot !== undefined && value.snapshot !== snapshotId)
+        (input.requireSnapshotIdentity || value.snapshot !== undefined) &&
+        !(await this.matchesSnapshot(value.snapshot, snapshotId))
       )
         return uncertain("Daytona sandbox snapshot identity is unconfirmed");
 
@@ -1035,7 +1056,10 @@ export class DaytonaDriver implements ProviderDriver {
     )
       return null;
 
-    if (input.expectedSnapshotId !== undefined && detail.snapshot !== input.expectedSnapshotId)
+    if (
+      input.expectedSnapshotId !== undefined &&
+      !(await this.matchesSnapshot(detail.snapshot, input.expectedSnapshotId))
+    )
       return unknown(input.submissionId, "Daytona sandbox snapshot identity is unconfirmed");
 
     const observation = observed(this.scope, detail, this.config.configuration.networkPolicy);

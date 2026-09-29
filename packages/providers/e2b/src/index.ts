@@ -36,7 +36,9 @@ const Configuration = z.strictObject({
 
 const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
-const ExecToken = z.strictObject({ maxOutputBytes: z.number().int().min(0).max(MAX_BYTES) });
+const ExecToken = z.strictObject({
+  maxOutputBytes: z.number().int().min(0).max(MAX_BYTES),
+});
 
 const WriteToken = z.strictObject({
   path: z.string().max(4096),
@@ -94,7 +96,11 @@ function executionPaths(submissionId: string) {
     throw new AdapterError("INVALID_ARGUMENT", "Invalid submission ID");
   const base = `/tmp/.sandbar-${submissionId}`;
 
-  return { stdout: `${base}.stdout`, stderr: `${base}.stderr`, status: `${base}.status` };
+  return {
+    stdout: `${base}.stdout`,
+    stderr: `${base}.stderr`,
+    status: `${base}.status`,
+  };
 }
 
 /** The E2B definition uses the same public adapter contract as external adapters. */
@@ -298,6 +304,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         },
         create: {
           async prepare(input) {
+            if (input.mounts?.length)
+              throw new AdapterError(
+                "UNSUPPORTED",
+                "E2B cannot bind mount names to immutable volume IDs",
+              );
+
             if (input.region)
               throw new AdapterError("UNSUPPORTED", "E2B region selection is unavailable");
 
@@ -320,6 +332,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             return input;
           },
           async submit(input, ctx) {
+            if (input.mounts?.length)
+              return ctx.reject(
+                "UNSUPPORTED",
+                "E2B cannot bind mount names to immutable volume IDs",
+              );
+
             if (!nativeId.test(ctx.submissionId) || !nativeId.test(ctx.operationId))
               return ctx.reject("INVALID_ARGUMENT", "Invalid E2B correlation ID");
 
@@ -380,53 +398,20 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
               if (name) Object.assign(metadata, { sandbar_build: name });
 
-              const volumeMounts = input.mounts?.length
-                ? Object.fromEntries(
-                    await Promise.all(
-                      input.mounts.map(async (mount) => [
-                        mount.path,
-                        (await resources.volumeInspect(mount.volume)).name,
-                      ]),
-                    ),
-                  )
-                : undefined;
-
-              if (ctx.signal.aborted) return ctx.unknown("E2B create cancelled before dispatch");
-
               const id = await transport.create({
                 templateId,
                 timeoutMs: config.timeoutSeconds * 1000,
                 allowInternetAccess: input.networkPolicy === "internet",
                 metadata,
-                volumeMounts,
                 signal: ctx.signal,
               });
 
               if (!nativeId.test(id)) return ctx.unknown("E2B create returned an invalid ID");
               const record = await transport.get(id);
 
-              if (input.mounts?.length) {
-                const expected = await Promise.all(
-                  input.mounts.map(async (mount) => ({
-                    path: mount.path,
-                    name: (await resources.volumeInspect(mount.volume)).name,
-                  })),
-                );
-
-                if (
-                  !record?.volumeMounts ||
-                  expected.some(
-                    (mount) =>
-                      !record.volumeMounts!.some(
-                        (actual) => actual.path === mount.path && actual.name === mount.name,
-                      ),
-                  )
-                )
-                  return ctx.unknown("Native create-time mounts were not confirmed ready");
-              }
-
               if (
                 !record ||
+                record.id !== id ||
                 !owned(record) ||
                 record.metadata.sandbar_submission !== ctx.submissionId ||
                 record.metadata.sandbar_operation !== ctx.operationId
@@ -478,26 +463,16 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
             const record = (await transport.get(matches[0]!.id)) ?? matches[0]!;
 
-            if (attempt.mounts?.length) {
-              const expected = await Promise.all(
-                attempt.mounts.map(async (mount) => ({
-                  path: mount.path,
-                  name: (await resources.volumeInspect(mount.volume)).name,
-                })),
-              );
+            if (
+              record.id !== matches[0]!.id ||
+              !owned(record) ||
+              record.metadata.sandbar_submission !== attempt.submissionId ||
+              record.metadata.sandbar_operation !== attempt.operationId
+            )
+              return ctx.unknown("Recovered E2B create identity could not be verified");
 
-              if (
-                record.state !== "running" ||
-                !record.volumeMounts ||
-                expected.some(
-                  (mount) =>
-                    !record.volumeMounts!.some(
-                      (actual) => actual.path === mount.path && actual.name === mount.name,
-                    ),
-                )
-              )
-                return ctx.unknown("Recovered native mounts are not ready");
-            }
+            if (attempt.mounts?.length)
+              return ctx.unknown("Recovered native volume IDs cannot be confirmed; no replay");
 
             return {
               id: record.id,

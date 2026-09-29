@@ -241,8 +241,14 @@ export function daytonaState(input: {
   }
 
   async function dependencies(v: z.infer<typeof NativeSnapshot>, ctx?: ReadContext) {
+    const response = await request("GET", "/warm-pools", undefined, ctx);
+
+    // The native warm-pool API returns 404 when this organization has pools disabled.
+    // Other failures remain unknown and block deletion; never drain another resource.
+    if (response.status === 404) return [];
+
     const pools = await json(
-      await request("GET", "/warm-pools", undefined, ctx),
+      response,
       z
         .array(
           z.object({

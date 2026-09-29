@@ -16,6 +16,7 @@ function fixture() {
   const snapshots = new Map<string, { snapshotId: string; names: string[] }>();
   const volumes = new Map<string, { volumeId: string; name: string }>();
   let generation = "build_one";
+  let createObservation: "missing" | "id" | "scope" | "submission" | "operation" | undefined;
   let extraTag = false;
   let postCaptureRead: (() => void) | undefined;
   let inventoryBarrier: (() => Promise<void>) | undefined;
@@ -69,7 +70,19 @@ function fixture() {
     async get(id) {
       if (calls.capture) postCaptureRead?.();
 
-      return boxes.get(id) ?? null;
+      const box = boxes.get(id);
+
+      if (!box || createObservation === "missing") return null;
+
+      if (createObservation === "id") return { ...box, id: "other_box" };
+
+      if (createObservation)
+        return {
+          ...box,
+          metadata: { ...box.metadata, ["sandbar_" + createObservation]: "foreign" },
+        };
+
+      return box;
     },
     async list(metadata, limit) {
       return {
@@ -188,6 +201,9 @@ function fixture() {
     replaceBuild() {
       generation = "build_two";
     },
+    createObservation(value: typeof createObservation) {
+      createObservation = value;
+    },
   };
 }
 
@@ -210,14 +226,14 @@ test("E2B capture is independent compute, reconnects after source deletion, and 
   const reopened = await f.connect();
   const snapshot = await reopened.snapshots.get(saved);
   expect((await snapshot.inspect()).mountHandling).toBe("none");
-  const restored = await snapshot.restore({ networkPolicy: "blocked" });
-  expect(restored.id).not.toBe(source.id);
-  await restored.destroy();
-  f.replaceBuild();
+  expect((await reopened.capabilities()).snapshots.restore.status).toBe("unsupported");
   await expect(snapshot.restore({ networkPolicy: "blocked" })).rejects.toMatchObject({
-    code: "CONFLICT",
+    code: "UNSUPPORTED",
+    effect: "none",
   });
-  expect(f.calls.create).toBe(2);
+  f.replaceBuild();
+  await expect(snapshot.inspect()).rejects.toMatchObject({ code: "CONFLICT" });
+  expect(f.calls.create).toBe(1);
   await reopened.close();
 });
 
@@ -270,10 +286,8 @@ test("E2B mounted compute requires explicit unconfirmed durability and retains i
   const client = await f.connect();
   const volume = await client.volumes.create({ name: "fixture-volume" });
 
-  const box = await client.sandboxes.create({
-    environment: Image.prepared("base"),
-    mounts: [volume.at("/mnt/data")],
-  });
+  const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+  f.boxes.get(box.id)!.volumeMounts = [{ path: "/mnt/data", name: "fixture-volume" }];
 
   await expect(box.destroy()).rejects.toMatchObject({ code: "UNSUPPORTED" });
   expect(f.calls.kill).toBe(0);
@@ -287,20 +301,25 @@ test("E2B mounted compute requires explicit unconfirmed durability and retains i
   await client.close();
 });
 
-test("E2B mount recovery never succeeds from compute identity alone", async () => {
+test("E2B rejects name-only mounts before create and refuses legacy mount recovery", async () => {
   const f = fixture();
-  f.modes.omitMounts = true;
   const client = await f.connect();
   const volume = await client.volumes.create({ name: "fixture-mount" });
+  const mounts = [volume.at("/mnt/data")];
+  expect((await client.capabilities()).mounts?.status).toBe("unsupported");
+  await expect(
+    client.sandboxes.create({ environment: Image.prepared("base"), mounts }),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+  expect(f.calls.create).toBe(0);
+  const operation = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+  await operation.wait();
+  const reference = { ...structuredClone(operation.reference), mounts };
+  const recovered = await client.recover(reference);
 
-  const operation = await client.sandboxes.submitCreate({
-    environment: Image.prepared("base"),
-    mounts: [volume.at("/mnt/data")],
-  });
-
-  await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-  expect(operation.reference.mounts?.length).toBe(1);
-  const recovered = await client.recover(operation.reference);
+  expect(Object.isFrozen(recovered.reference.mounts)).toBe(true);
+  expect(Reflect.set(recovered.reference.mounts![0]!.volume, "nativeId", "replacement")).toBe(
+    false,
+  );
   await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
   expect(f.calls.create).toBe(1);
   await client.close();
@@ -361,10 +380,8 @@ test("E2B mounted destroy cannot dispatch kill after abort during inventory", as
   const client = await f.connect();
   const volume = await client.volumes.create({ name: "fixture-abort" });
 
-  const box = await client.sandboxes.create({
-    environment: Image.prepared("base"),
-    mounts: [{ volume: volume.reference, path: "/mnt/data", access: "read-write" }],
-  });
+  const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+  f.boxes.get(box.id)!.volumeMounts = [{ path: "/mnt/data", name: (await volume.inspect()).name! }];
 
   let entered!: () => void;
   let release!: () => void;
@@ -507,10 +524,10 @@ for (const lostKill of [false, true]) {
     try {
       const volume = await client.volumes.create({ name: "cleanup-retained" });
 
-      const box = await client.sandboxes.create({
-        environment: Image.prepared("base"),
-        mounts: [volume.at("/mnt/work")],
-      });
+      const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+      f.boxes.get(box.id)!.volumeMounts = [
+        { path: "/mnt/work", name: (await volume.inspect()).name! },
+      ];
 
       f.modes.betaDenied = true;
       f.modes.loseKill = lostKill;
@@ -532,7 +549,7 @@ for (const lostKill of [false, true]) {
   });
 }
 
-test("direct custody references recursively freeze capture profiles, resource scope and mount arrays", async () => {
+test("direct custody references recursively freeze capture profiles and resource scope", async () => {
   const f = fixture();
   const checked = new Set<string>();
 
@@ -561,16 +578,10 @@ test("direct custody references recursively freeze capture profiles, resource sc
     const source = await client.sandboxes.create({ environment: Image.prepared("base") });
     const captured = await source.snapshot();
 
-    const mounted = await client.sandboxes.create({
-      environment: Image.prepared("base"),
-      mounts: [volume.at("/mnt/work")],
-    });
-
-    await mounted.destroy({ storage: "allow-unconfirmed" });
     await source.destroy();
     await captured.snapshot.delete();
     await volume.delete();
-    expect([...checked].sort()).toEqual(["capture", "mounts", "resource"]);
+    expect([...checked].sort()).toEqual(["capture", "resource"]);
   } finally {
     await client.close();
   }
@@ -685,6 +696,53 @@ test("E2B unsigned capture tokens cannot acquire owned snapshot references durin
       code: "OUTCOME_UNKNOWN",
     });
     expect(f.calls).toMatchObject({ capture: 1, snapshotDelete: 0 });
+  } finally {
+    await client.close();
+  }
+});
+
+for (const mode of ["missing", "id", "scope", "submission", "operation"] as const) {
+  test(`E2B ordinary create refuses unconfirmed native observation: ${mode}`, async () => {
+    const f = fixture();
+    f.createObservation(mode);
+    const client = await f.connect();
+
+    try {
+      const operation = await client.sandboxes.submitCreate({
+        environment: Image.prepared("base"),
+      });
+
+      await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      expect(f.calls.create).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("E2B old pending restore cannot confirm a reassigned native build", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const capture = await source.snapshot();
+    const create = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+    await create.wait();
+
+    const reference = {
+      ...structuredClone(create.reference),
+      kind: "snapshot_restore" as const,
+      resource: structuredClone(capture.snapshot.reference),
+      tokenVersion: 1,
+      token: { snapshotId: capture.snapshot.reference.nativeId },
+    };
+
+    f.replaceBuild();
+    await expect((await client.recover(reference)).wait()).rejects.toBeInstanceOf(
+      OutcomeUnknownError,
+    );
+    expect(f.calls.create).toBe(2);
   } finally {
     await client.close();
   }
