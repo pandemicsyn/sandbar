@@ -263,7 +263,7 @@ test("E2B lost capture acknowledgement is observed without a second capture or g
   await client.close();
 });
 
-test("native deletion needs an acknowledged request, an owned receipt, and matching scope", async () => {
+test("E2B snapshot deletion rejects effect-free and preserves scope checks", async () => {
   const f = fixture();
   const client = await f.connect();
   const source = await client.sandboxes.create({ environment: Image.prepared("base") });
@@ -275,14 +275,30 @@ test("native deletion needs an acknowledged request, an owned receipt, and match
   ).rejects.toMatchObject({ code: "CONFLICT" });
   const forged = structuredClone(result.snapshot.reference);
   delete forged.receipt;
-  await expect(client.snapshots.delete(forged)).rejects.toMatchObject({ code: "CONFLICT" });
+  await expect(client.snapshots.delete(forged)).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+    effect: "none",
+  });
   expect(f.calls.snapshotDelete).toBe(0);
-  f.modes.loseDelete = true;
-  const operation = await result.snapshot.submitDelete();
-  await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-  const recovered = await client.recover(operation.reference);
-  await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-  expect(f.calls.snapshotDelete).toBe(1);
+  await expect(result.snapshot.submitDelete()).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+    effect: "none",
+  });
+  expect(f.calls.snapshotDelete).toBe(0);
+  expect((await client.capabilities()).snapshots.delete.status).toBe("unsupported");
+  const created = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+
+  const legacy = {
+    ...structuredClone(created.reference),
+    kind: "snapshot_delete" as const,
+    resource: result.snapshot.reference,
+    tokenVersion: 1,
+    token: { accepted: true },
+  };
+
+  await expect((await client.recover(legacy)).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  expect(f.calls.snapshotDelete).toBe(0);
+  await (await created.wait()).destroy();
   await source.destroy();
   await client.close();
 });
@@ -416,7 +432,7 @@ test("E2B mounted destroy cannot dispatch kill after abort during native observa
   await client.close();
 });
 
-test("E2B deletion revalidates native generation after the durable barrier", async () => {
+test("E2B snapshot deletion cannot dispatch through a mutable generation", async () => {
   const f = fixture();
 
   const client = await f.connect("fixture-key", (ref) => {
@@ -425,13 +441,16 @@ test("E2B deletion revalidates native generation after the durable barrier", asy
 
   const source = await client.sandboxes.create({ environment: Image.prepared("base") });
   const result = await source.snapshot({ requirements: { preserve: "filesystem+memory" } });
-  await expect(result.snapshot.delete()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  await expect(result.snapshot.delete()).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+    effect: "none",
+  });
   expect(f.calls.snapshotDelete).toBe(0);
   expect(f.snapshots.size).toBe(1);
   await client.close();
 });
 
-test("E2B deletion refuses a newly shared native template after the durable barrier", async () => {
+test("E2B snapshot deletion cannot dispatch through a shared template", async () => {
   const f = fixture();
 
   const client = await f.connect("fixture-key", (ref) => {
@@ -440,7 +459,10 @@ test("E2B deletion refuses a newly shared native template after the durable barr
 
   const source = await client.sandboxes.create({ environment: Image.prepared("base") });
   const result = await source.snapshot({ requirements: { preserve: "filesystem+memory" } });
-  await expect(result.snapshot.delete()).rejects.toBeInstanceOf(OutcomeUnknownError);
+  await expect(result.snapshot.delete()).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+    effect: "none",
+  });
   expect(f.calls.snapshotDelete).toBe(0);
   await client.close();
 });
@@ -510,12 +532,15 @@ test("E2B cancellation after capture acknowledgement retains generation custody 
         consistency: "unknown",
         reference: { ownership: "verified-created", generation: "build_one" },
       });
-      await snapshot.delete();
+      await expect(snapshot.delete()).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+        effect: "none",
+      });
     } finally {
       await reopened.close();
     }
 
-    expect(f.snapshots.size).toBe(0);
+    expect(f.snapshots.size).toBe(1);
     expect(f.calls.capture).toBe(1);
   } finally {
     await client.close();
@@ -585,7 +610,10 @@ test("direct custody references recursively freeze capture profiles and resource
     const captured = await source.snapshot();
 
     await source.destroy();
-    await captured.snapshot.delete();
+    await expect(captured.snapshot.delete()).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      effect: "none",
+    });
     await volume.delete();
     expect([...checked].sort()).toEqual(["capture", "resource"]);
   } finally {
@@ -639,8 +667,11 @@ for (const mode of ["expires-during-read", "expires-after-cancel"] as const) {
         mountHandling: "none",
         source: { id: source.id },
       });
-      await snapshot.delete();
-      expect(f.calls).toMatchObject({ capture: 1, snapshotDelete: 1, kill: 0 });
+      await expect(snapshot.delete()).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+        effect: "none",
+      });
+      expect(f.calls).toMatchObject({ capture: 1, snapshotDelete: 0, kill: 0 });
     } finally {
       await client.close();
     }
@@ -669,9 +700,12 @@ test("public snapshot and volume handle scopes are immutable cloned references",
     }
 
     await source.destroy();
-    await captured.snapshot.delete();
+    await expect(captured.snapshot.delete()).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      effect: "none",
+    });
     await volume.delete();
-    expect(f.calls).toMatchObject({ snapshotDelete: 1, volumeDelete: 1 });
+    expect(f.calls).toMatchObject({ snapshotDelete: 0, volumeDelete: 1 });
   } finally {
     await client.close();
   }

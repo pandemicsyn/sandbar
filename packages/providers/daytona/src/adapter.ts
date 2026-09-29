@@ -303,6 +303,18 @@ export function createDaytonaAdapter(
 
           return info;
         },
+        async snapshotList(
+          page: Parameters<
+            NonNullable<import("sandbar-adapter").AdapterSession["snapshotList"]>
+          >[0],
+          ctx: import("sandbar-adapter").ReadContext,
+        ) {
+          const result = await resourceState.fields.snapshotList!(page, ctx);
+
+          for (const info of result.items) info.restore.networkPolicies = [...caps.networkPolicies];
+
+          return result;
+        },
         async resourceCapabilities() {
           const fields = await resourceState.fields.resourceCapabilities!(
             {},

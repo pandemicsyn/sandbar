@@ -28,12 +28,13 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts src/service-support.ts src/daytona.ts src/e2b.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external e2b --external zod && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts src/service-support.ts src/daytona.ts src/e2b.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external e2b --external zod --external @opentelemetry/api && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
   },
   "dependencies": {
     "sandbar-adapter": "workspace:*",
     "zod": "4.6.5",
-    "e2b": "2.51.0"
+    "e2b": "2.51.0",
+    "@opentelemetry/api": "1.9.1"
   },
   "devDependencies": {
     "@sandbar/provider-fake": "workspace:*",

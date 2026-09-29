@@ -526,33 +526,29 @@ export function e2bState(input: {
     },
   };
 
-  const deletion = (
-    kind: "snapshot" | "volume",
-  ): NonNullable<AdapterSession["snapshotDelete"]> => ({
+  fields.volumeDelete = {
     recovery: { version: 1, token: DeleteToken },
     async prepare(reference) {
       check(reference);
 
-      if (reference.kind !== kind || reference.ownership !== "verified-created")
+      if (reference.kind !== "volume" || reference.ownership !== "verified-created")
         throw new AdapterError("CONFLICT", "Artifact is not verified-created");
       receipts.owned(reference);
-      await (kind === "snapshot" ? snapshotInspect(reference) : volumeInspect(reference));
+      await volumeInspect(reference);
 
       return reference;
     },
     async submit(reference, ctx) {
       check(reference);
       receipts.owned(reference);
-      await (kind === "snapshot" ? snapshotInspect(reference) : volumeInspect(reference));
+      await volumeInspect(reference);
 
       if (ctx.signal.aborted)
         return ctx.reject("UNAVAILABLE", "Deletion cancelled before dispatch");
       let accepted = false;
 
       try {
-        accepted = await (kind === "snapshot"
-          ? need().deleteSnapshot(reference.nativeId, ctx.signal)
-          : need().deleteVolume(reference.nativeId, ctx.signal));
+        accepted = await need().deleteVolume(reference.nativeId, ctx.signal);
       } catch {
         /* observe only */
       }
@@ -562,7 +558,7 @@ export function e2bState(input: {
     async observe(attempt, ctx) {
       const reference = attempt.resource;
 
-      if (!reference || reference.kind !== kind || reference.ownership !== "verified-created")
+      if (!reference || reference.kind !== "volume" || reference.ownership !== "verified-created")
         return ctx.unknown("Deletion ownership missing");
       check(reference);
       receipts.owned(reference);
@@ -573,23 +569,14 @@ export function e2bState(input: {
           "Deletion acknowledgement unavailable; absence alone is not correlated deletion evidence",
         );
 
-      if (kind === "snapshot") {
-        const page = await need().snapshots({ limit: 1, name: reference.nativeId });
+      const values = await need().volumes();
 
-        if (!page.items.length && !page.nextCursor) return { deleted: true, reference };
-      } else {
-        const values = await need().volumes();
-
-        if (!values.some((v) => v.volumeId === reference.nativeId))
-          return { deleted: true, reference };
-      }
+      if (!values.some((v) => v.volumeId === reference.nativeId))
+        return { deleted: true, reference };
 
       return ctx.pending(token.data, { pollAfterMs: 500 });
     },
-  });
-
-  fields.snapshotDelete = deletion("snapshot");
-  fields.volumeDelete = deletion("volume");
+  };
 
   return { fields: state ? fields : {}, volumeInspect };
 }

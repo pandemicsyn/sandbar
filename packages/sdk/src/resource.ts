@@ -1,3 +1,4 @@
+import { certifyRecoveryReference } from "./recovery-diagnostics";
 import {
   SnapshotRequest,
   MountSpec,
@@ -394,7 +395,7 @@ export function sealedReference(value: RecoveryReference): RecoveryReference {
   if (ref.file) Object.freeze(ref.file);
   Object.freeze(ref.service);
 
-  return Object.freeze(ref);
+  return certifyRecoveryReference(Object.freeze(ref));
 }
 
 export function waitDelay(ms: number, signal?: AbortSignal): Promise<void> {

@@ -30,6 +30,8 @@ Import from `sandbar-sdk`.
 | `Capabilities`              | type      |
 | `CreateInput`               | type      |
 | `CreatePlan`                | type      |
+| `diagnosticContext`         | re-export |
+| `DiagnosticContext`         | type      |
 | `DirectCapabilities`        | type      |
 | `ExecInput`                 | type      |
 | `ExecOutput`                | type      |
@@ -40,6 +42,7 @@ Import from `sandbar-sdk`.
 | `MountSpec`                 | re-export |
 | `NoExitCodeError`           | re-export |
 | `NonzeroExitError`          | re-export |
+| `ObservabilityOptions`      | type      |
 | `OperationHandle`           | type      |
 | `OutcomeUnknownError`       | re-export |
 | `outputText`                | re-export |

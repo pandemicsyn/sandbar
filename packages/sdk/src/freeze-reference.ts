@@ -1,7 +1,14 @@
 export function freezeReference<T extends object>(value: T): T {
-  for (const child of Object.values(value))
-    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Parsed recovery references contain only bounded JSON containers and scalar values.
-    if (child !== null && typeof child === "object") freezeReference(child);
+  const pending: object[] = [value];
 
-  return Object.freeze(value);
+  while (pending.length) {
+    const current = pending.pop()!;
+
+    for (const child of Object.values(current))
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Parsed recovery references contain only bounded JSON containers and scalar values.
+      if (child !== null && typeof child === "object") pending.push(child);
+    Object.freeze(current);
+  }
+
+  return value;
 }

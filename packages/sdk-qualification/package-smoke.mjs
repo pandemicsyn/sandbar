@@ -113,7 +113,21 @@ async function consumer(directory, dependencies, overrides, source) {
 async function checkTypes(directory, mode) {
   let source;
 
-  if (mode === "service")
+  if (mode === "observability")
+    source = `
+import { type TracerProvider } from "@opentelemetry/api";
+import { Sandbar, type ObservabilityOptions, diagnosticContext } from "sandbar-sdk";
+import { acme } from "@acme/sandbar-adapter";
+async function flow(provider: TracerProvider) {
+  const options: ObservabilityOptions = { tracing: { tracerProvider: provider } };
+  const client = await Sandbar.connect({ adapter: acme, config: { region: "us" }, credentials: { token: "fixture" }, ...options });
+  const safe = diagnosticContext(new Error("private"));
+  await client.close();
+  return safe.recoveryAvailable;
+}
+void flow;
+`;
+  else if (mode === "service")
     source = `
 import { createService, type ServiceHandle } from "sandbar-service";
 import { asyncAcme } from "@acme/sandbar-adapter";
@@ -502,11 +516,12 @@ try {
   if(caps.snapshots.restore.status!=="unsupported"||caps.mounts.status!=="unsupported")throw Error("Unsafe state operations advertised");
   let restoreRejected=false;try{await snapshot.restore({networkPolicy:"blocked"});}catch(error){restoreRejected=error.code==="UNSUPPORTED"&&error.effect==="none";}
   if(!restoreRejected)throw Error("Unsafe mutable restore dispatched");
-  await snapshot.delete();
+  let deleteRejected=false;try{await snapshot.delete();}catch(error){deleteRejected=error.code==="UNSUPPORTED"&&error.effect==="none";}
+  if(!deleteRejected||snapshots.size!==1)throw Error("Unsafe mutable snapshot deletion dispatched");
   const volume=await client.volumes.create({name:"packed-data"});
   let mountRejected=false;try{await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});}catch(error){mountRejected=error.code==="UNSUPPORTED"&&error.effect==="none";}
   if(!mountRejected||!volumes.size)throw Error("Unsafe name-only mount dispatched");
-  await volume.delete();if(volumes.size||snapshots.size)throw Error("Packed state artifact cleanup failed");
+  await volume.delete();if(volumes.size||snapshots.size!==1)throw Error("Packed state artifact cleanup failed");
   const oci = await client.sandboxes.create({ environment: Image.oci("node:24"), networkPolicy: "blocked" });
   await oci.destroy();
   if (!buildName || retained !== "template_oci") throw Error("OCI retained template was hidden");
@@ -798,6 +813,23 @@ try {
   const e2b = join(temporary, "e2b-consumer");
   const builtins = join(temporary, "builtins-consumer");
   const service = join(temporary, "service-consumer");
+  const observability = join(temporary, "observability-consumer");
+  await consumer(
+    observability,
+    {
+      ...customDeps,
+      "@opentelemetry/api": "1.9.1",
+      "@opentelemetry/context-async-hooks": "2.11.0",
+      "@opentelemetry/sdk-trace-node": "2.11.0",
+      "@opentelemetry/sdk-trace-base": "2.11.0",
+    },
+    archiveOverrides,
+    await readFile(join(root, "packages/sdk-qualification/observability/packed.mjs"), "utf8"),
+  );
+  await checkTypes(observability, "observability");
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], observability)}`);
   await consumer(remote, remoteDeps, archiveOverrides, remoteSource);
   await consumer(custom, customDeps, archiveOverrides, customSource);
   await consumer(direct, directDeps, archiveOverrides, directSource);

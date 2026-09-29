@@ -1131,6 +1131,9 @@ test.each([
 
       if (route === "/api/warm-pools") return Response.json([]);
 
+      if (route === "/api/snapshots")
+        return Response.json({ items: [snapshot()], page: 1, totalPages: 1 });
+
       if (route === "/api/snapshots/base")
         return Response.json({ ...snapshot(), id: "base", name: "base" });
 
@@ -1228,6 +1231,16 @@ test.each([
   try {
     const source = await client.sandboxes.create({ environment: Image.prepared("base") });
     const capture = await source.snapshot();
+    const listed = await client.snapshots.list({ limit: 10 });
+    const capabilities = await client.capabilities();
+    expect(listed.items[0]!.restore.networkPolicies).toEqual(
+      (await capture.snapshot.inspect()).restore.networkPolicies,
+    );
+    expect(listed.items[0]!.restore.networkPolicies).toEqual(
+      capabilities.snapshots.restore.status === "supported"
+        ? capabilities.snapshots.restore.value.networkPolicies
+        : [],
+    );
     const operation = await capture.snapshot.submitRestore({ networkPolicy: "blocked" });
     const reference = structuredClone(operation.reference);
 

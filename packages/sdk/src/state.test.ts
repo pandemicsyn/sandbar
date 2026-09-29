@@ -664,3 +664,72 @@ for (const stalled of ["profiles", "inspect"] as const) {
     }
   });
 }
+
+test("recovery and advanced observation reject foreign mounted volume scopes before adapter IO", async () => {
+  let creates = 0;
+  const scope = { authority: { kind: "account", id: "one" }, partition: { region: "us" } };
+
+  const adapter = defineAdapter({
+    name: "fixture.mount-scope",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope,
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          creates++;
+
+          return { id: "box", state: "running" };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        async inspect(box) {
+          return { id: box.id, state: "running" };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+  try {
+    const operation = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+
+    for (const foreign of [
+      { provider: "other", scope },
+      { provider: adapter.name, scope: { ...scope, authority: { kind: "account", id: "two" } } },
+      { provider: adapter.name, scope: { ...scope, partition: { region: "eu" } } },
+    ]) {
+      const reference = structuredClone(operation.reference);
+      reference.mounts = [
+        {
+          volume: {
+            version: 1,
+            kind: "volume",
+            ...foreign,
+            nativeId: "vol-one",
+            ownership: "verified-created",
+          },
+          path: "/mnt/data",
+          access: "read-write",
+        },
+      ];
+      await expect(client.recover(reference)).rejects.toMatchObject({ code: "CONFLICT" });
+      await expect(
+        client.operations.observe({
+          scope: reference.scope,
+          kind: reference.kind,
+          operationId: reference.operationId,
+          submissionId: reference.submissionId,
+          mounts: reference.mounts,
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+    }
+
+    expect(creates).toBe(1);
+  } finally {
+    await client.close();
+  }
+});

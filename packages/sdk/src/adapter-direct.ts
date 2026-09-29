@@ -1,4 +1,20 @@
 import { freezeReference } from "./freeze-reference";
+import { certifyRecoveryReference } from "./recovery-diagnostics";
+import {
+  ReferenceSchema,
+  CaptureExpectation,
+  type AdapterRecoveryReference,
+} from "./adapter-reference";
+import {
+  Telemetry,
+  instrument,
+  internalMethod,
+  waitFor,
+  noteOperation,
+  noteRetainedResources,
+  activeTraceParent,
+  type ObservabilityOptions,
+} from "./observability";
 import {
   SandboxState,
   stateCapabilities,
@@ -15,7 +31,6 @@ import {
   resourceManagers,
   decodeResourceResult,
   decodeCapture,
-  CaptureExpectation,
   type SnapshotResult,
   type WaitOptions,
 } from "./resources";
@@ -67,45 +82,7 @@ import type { BoundAdapter } from "./bound";
 
 export { Image, outputText } from "./resource";
 
-const ReferenceSchema = z.strictObject({
-  version: z.literal(2),
-  mode: z.literal("direct"),
-  provider: z.string().min(1).max(128),
-  kind: z.enum([
-    "create",
-    "destroy",
-    "exec",
-    "file_write",
-    "image_build",
-    "snapshot_capture",
-    "snapshot_restore",
-    "snapshot_delete",
-    "volume_create",
-    "volume_delete",
-  ]),
-  scope: z.strictObject({
-    authority: z.strictObject({ kind: z.string().min(1).max(64), id: z.string().min(1).max(512) }),
-    partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
-  }),
-  operationId: z.string().min(1).max(128),
-  submissionId: z.string().min(1).max(128),
-  invocationKey: z.string().min(1).max(128),
-  sandboxId: z.string().min(1).max(512).optional(),
-  capture: CaptureExpectation.optional(),
-  resource: ResourceReference.optional(),
-  mounts: z.array(importMountSpec).max(32).optional(),
-  file: z
-    .strictObject({
-      path: z.string().min(1).max(4096),
-      bytes: z.number().int().nonnegative().max(1_048_576),
-    })
-    .optional(),
-  maxOutputBytes: z.number().int().nonnegative().max(1_048_576).optional(),
-  tokenVersion: z.number().int().positive().optional(),
-  token: z.json().optional(),
-});
-
-export type AdapterRecoveryReference = z.infer<typeof ReferenceSchema>;
+export type { AdapterRecoveryReference } from "./adapter-reference";
 
 function canonicalScope(scope: Scope): string {
   return JSON.stringify({
@@ -123,7 +100,29 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
     throw new SandbarError("INVALID_ARGUMENT", "Recovery reference exceeds 16384 bytes");
   const copy = structuredClone(parsed);
 
-  return freezeReference(copy);
+  freezeReference(copy);
+
+  const createsResource = ["create", "image_build", "volume_create", "snapshot_restore"].includes(
+    copy.kind,
+  );
+
+  const artifactOperation = ["snapshot_delete", "volume_delete"].includes(copy.kind);
+  const boundSandbox = createsResource || artifactOperation ? !copy.sandboxId : !!copy.sandboxId;
+
+  const boundResource = ["snapshot_restore", "snapshot_delete"].includes(copy.kind)
+    ? copy.resource?.kind === "snapshot"
+    : copy.kind === "volume_delete"
+      ? copy.resource?.kind === "volume"
+      : !copy.resource;
+
+  const boundCapture = (copy.kind === "snapshot_capture") === !!copy.capture;
+
+  return boundSandbox &&
+    boundResource &&
+    boundCapture &&
+    (copy.kind === "file_write") === !!copy.file
+    ? certifyRecoveryReference(copy)
+    : copy;
 }
 
 function identity() {
@@ -194,6 +193,22 @@ export class AdapterOperation<T> {
         token: first.token,
         tokenVersion: first.version,
       });
+
+    if (first)
+      noteOperation(
+        this,
+        first.kind,
+        first.kind === "completed" ? "applied" : first.kind === "rejected" ? "none" : "possible",
+      );
+    instrument(this, "observe", client.telemetry, "sandbar.operation.observe", {
+      identity: this,
+      origin: first ? activeTraceParent() : undefined,
+    });
+    instrument(this, "wait", client.telemetry, "sandbar.operation.wait", {
+      identity: this,
+      effect: "applied",
+      origin: first ? activeTraceParent() : undefined,
+    });
   }
   async observe(): Promise<T | null> {
     return this.observeWithSignal(this.client.signal);
@@ -296,6 +311,11 @@ export class AdapterOperation<T> {
       throw error;
     }
 
+    if ("retainedResources" in result.value) {
+      noteRetainedResources(this, result.value.retainedResources.length);
+      this.client.telemetry.correlate(this);
+    }
+
     try {
       const value = this.decode(result, this.reference);
       this.terminal = { value };
@@ -335,7 +355,22 @@ export class AdapterOperation<T> {
           await waitDelay(delay, signal).catch((error) => abortWaiting(this.reference, error));
       }
 
-      const value = await this.observeWithSignal(signal);
+      const value = await this.observeWithSignal(signal).catch((error) => {
+        this.client.telemetry.poll(
+          error instanceof SandbarError && error.effect === "applied"
+            ? "completed"
+            : this.terminal &&
+                "error" in this.terminal &&
+                error instanceof SandbarError &&
+                error.effect === "none"
+              ? "rejected"
+              : "unknown",
+        );
+
+        throw error;
+      });
+
+      this.client.telemetry.poll(value === null ? "pending" : "completed");
 
       if (value !== null) return value;
     }
@@ -346,7 +381,16 @@ export class AdapterSandbox {
   constructor(
     private readonly client: AdapterDirectClient,
     readonly id: string,
-  ) {}
+  ) {
+    instrument(this, "capabilities", client.telemetry, "sandbar.capabilities");
+    instrument(this, "checkSnapshot", client.telemetry, "sandbar.snapshot.check");
+    instrument(this, "inspect", client.telemetry, "sandbar.sandbox.inspect");
+    instrument(this, "submitExec", client.telemetry, "sandbar.exec.submit", { effect: "possible" });
+    instrument(this, "exec", client.telemetry, "sandbar.exec", { effect: "applied" });
+    instrument(this, "readFile", client.telemetry, "sandbar.file.read");
+    instrument(this, "writeFile", client.telemetry, "sandbar.file.write", { effect: "applied" });
+    instrument(this, "destroy", client.telemetry, "sandbar.sandbox.destroy", { effect: "applied" });
+  }
   async submitSnapshot(
     request: SnapshotRequest = {},
     options: WaitOptions = {},
@@ -391,7 +435,7 @@ export class AdapterSandbox {
     return (await this.submitSnapshot(request, options)).wait(options);
   }
   capabilities(): Promise<AdapterCapabilities> {
-    return this.client.capabilities({ sandbox: { id: this.id } });
+    return internalMethod(this.client.capabilities)({ sandbox: { id: this.id } });
   }
   async checkSnapshot(request: SnapshotRequest = {}): Promise<Support<SnapshotPlan>> {
     return this.checkSnapshotWithSignal(request, this.client.signal);
@@ -401,11 +445,18 @@ export class AdapterSandbox {
     signal: AbortSignal,
   ): Promise<Support<SnapshotPlan>> {
     assertSignal(signal);
-    const caps = await this.client.capabilities({ sandbox: { id: this.id } }, { signal });
+
+    const caps = await internalMethod(this.client.capabilities)(
+      { sandbox: { id: this.id } },
+      { signal },
+    );
 
     if (caps.snapshots.capture.status !== "supported")
       return resolveSnapshot(caps.snapshots.capture, request, "unknown");
-    const state = this.client.session.inspect ? (await this.inspect({ signal })).state : "unknown";
+
+    const state = this.client.session.inspect
+      ? (await internalMethod(this.inspect)({ signal })).state
+      : "unknown";
 
     return resolveSnapshot(caps.snapshots.capture, request, state);
   }
@@ -492,7 +543,11 @@ export class AdapterSandbox {
     input: ExecInput | readonly string[],
     options: { signal?: AbortSignal } = {},
   ): Promise<ExecOutput> {
-    return (await this.submitExec(input, options)).wait(options);
+    return waitFor(
+      this.client.telemetry,
+      await internalMethod(this.submitExec)(input, options),
+      options,
+    );
   }
   async readFile(path: string): Promise<Uint8Array> {
     this.client.ensureOpen();
@@ -583,7 +638,7 @@ export class AdapterSandbox {
       { ...options, sandboxId: this.id, file: { path, bytes: payload.length } },
     );
 
-    await op.wait(options);
+    await waitFor(this.client.telemetry, op, options);
   }
   async submitDestroy(
     options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
@@ -609,7 +664,7 @@ export class AdapterSandbox {
   async destroy(
     options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
   ): Promise<import("sandbar-adapter").DestroyValue> {
-    return (await this.submitDestroy(options)).wait(options);
+    return waitFor(this.client.telemetry, await this.submitDestroy(options), options);
   }
 }
 
@@ -701,19 +756,37 @@ export class PreparedAdapterAttempt {
     assertSignal(options.signal);
 
     if (!permitted) return null;
+    this.client.telemetry.submitted();
+
+    const submissionWaitSignal =
+      this.kind === "snapshot_capture"
+        ? AbortSignal.any([this.client.signal, AbortSignal.timeout(85000)])
+        : signal;
 
     try {
       return await raceAbort(
         // Requirements were checked before the durable marker; no read hook may run after it.
-        submitOperation(
-          { ...this.prepared, revalidate: undefined },
-          checked,
-          signal,
-          this.kind === "exec" ? this.maxOutputBytes : undefined,
+        this.client.telemetry.run(
+          "sandbar.submit",
+          () =>
+            raceAbort(
+              submitOperation(
+                { ...this.prepared, revalidate: undefined },
+                checked,
+                signal,
+                this.kind === "exec" ? this.maxOutputBytes : undefined,
+              ),
+              submissionWaitSignal,
+            ),
+          {
+            phase: true,
+            operationType: this.kind,
+            effect: "possible",
+            identity: { reference: { mode: "direct", ...checked } },
+            signal,
+          },
         ),
-        this.kind === "snapshot_capture"
-          ? AbortSignal.any([this.client.signal, AbortSignal.timeout(85000)])
-          : signal,
+        submissionWaitSignal,
       );
     } catch {
       if (signal.aborted)
@@ -733,6 +806,7 @@ export class PreparedAdapterAttempt {
 export class AdapterDirectClient {
   private closed = false;
   private closePromise?: Promise<void>;
+  readonly telemetry: Telemetry;
   readonly session: RuntimeSession;
   readonly scope: Scope;
   readonly operations: {
@@ -775,7 +849,9 @@ export class AdapterDirectClient {
     readonly provider: string,
     private readonly connection: AdapterConnection<RuntimeSession>,
     private readonly onReference?: (reference: AdapterRecoveryReference) => void | Promise<void>,
+    observability: ObservabilityOptions = {},
   ) {
+    this.telemetry = new Telemetry(observability, "direct", provider);
     const managers = resourceManagers(this);
     this.snapshots = managers.snapshots;
     this.volumes = managers.volumes;
@@ -908,6 +984,9 @@ export class AdapterDirectClient {
         if (checked.resource)
           assertResourceScope(checked.resource, { provider: this.provider, scope: this.scope });
 
+        for (const mount of checked.mounts ?? [])
+          assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
+
         if (
           ([
             "create",
@@ -968,13 +1047,33 @@ export class AdapterDirectClient {
     this.sandboxes = {
       checkCreate: (input) => this.checkCreate(input),
       create: async (input, options = {}) =>
-        (await this.submitCreate(input, options)).wait(options),
+        waitFor(this.telemetry, await internalMethod(this.submitCreate)(input, options), options),
       submitCreate: (input, options = {}) => this.submitCreate(input, options),
     };
     this.images = {
-      build: async (input, options = {}) => (await this.submitBuild(input, options)).wait(options),
+      build: async (input, options = {}) =>
+        waitFor(this.telemetry, await internalMethod(this.submitBuild)(input, options), options),
       submitBuild: (input, options = {}) => this.submitBuild(input, options),
     };
+    instrument(this, "capabilities", this.telemetry, "sandbar.capabilities");
+    instrument(this, "checkCreate", this.telemetry, "sandbar.sandbox.check_create");
+    instrument(this, "submitCreate", this.telemetry, "sandbar.sandbox.submit_create", {
+      effect: "possible",
+    });
+    instrument(this, "submitBuild", this.telemetry, "sandbar.image.submit_build", {
+      effect: "possible",
+    });
+    instrument(this, "recover", this.telemetry, "sandbar.operation.recover", {
+      effect: "possible",
+    });
+    instrument(this, "close", this.telemetry, "sandbar.close");
+    instrument(this.sandboxes, "create", this.telemetry, "sandbar.sandbox.create", {
+      effect: "applied",
+    });
+    instrument(this.images, "build", this.telemetry, "sandbar.image.build", { effect: "applied" });
+    instrument(this.operations, "inventory", this.telemetry, "sandbar.sandbox.inventory");
+    instrument(this.operations, "prepare", this.telemetry, "sandbar.prepare", { phase: true });
+    instrument(this.operations, "observe", this.telemetry, "sandbar.observe", { phase: true });
   }
   isClosed() {
     return this.closed || this.signal.aborted;
@@ -1178,6 +1277,7 @@ export class AdapterDirectClient {
       maxOutputBytes: options.maxOutputBytes,
     });
 
+    this.telemetry.correlate({ reference });
     let first: RuntimeResult;
     let barrierStarted = false;
     const signals = options.signal ? [this.signal, options.signal] : [this.signal];
@@ -1247,6 +1347,9 @@ export class AdapterDirectClient {
 
     if (reference.resource)
       assertResourceScope(reference.resource, { provider: this.provider, scope: this.scope });
+
+    for (const mount of reference.mounts ?? [])
+      assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
 
     if (
       [
@@ -1336,7 +1439,7 @@ export type AdapterConnectOptions<
   C extends z.ZodType,
   K extends z.ZodType,
   S extends RuntimeSession,
-> = {
+> = ObservabilityOptions & {
   adapter: Pick<AdapterDefinition<C, K, S>, "name" | "config" | "credentials"> & {
     connect: (input: never) => Promise<S>;
     policy?: { schema: z.ZodType; default: Json };
@@ -1348,7 +1451,10 @@ export type AdapterConnectOptions<
   onDiagnostic?: (error: unknown) => void;
 };
 
-export function connectDirect(adapter: BoundAdapter): Promise<AdapterDirectClient>;
+export function connectDirect(
+  adapter: BoundAdapter,
+  options?: ObservabilityOptions,
+): Promise<AdapterDirectClient>;
 export function connectDirect<C extends z.ZodType, K extends z.ZodType, S extends RuntimeSession>(
   options: AdapterConnectOptions<C, K, S>,
 ): Promise<AdapterDirectClient>;
@@ -1357,18 +1463,29 @@ export async function connectDirect<
   C extends z.ZodType,
   K extends z.ZodType,
   S extends RuntimeSession,
->(options: AdapterConnectOptions<C, K, S> | BoundAdapter): Promise<AdapterDirectClient> {
-  if ("bound" in options) {
-    const connection = await connectAdapter(options, { config: {}, credentials: {} });
+>(
+  options: AdapterConnectOptions<C, K, S> | BoundAdapter,
+  observability: ObservabilityOptions = {},
+): Promise<AdapterDirectClient> {
+  const telemetry = new Telemetry(
+    "bound" in options ? observability : options,
+    "direct",
+    "bound" in options ? options.name : options.adapter.name,
+  );
 
-    return new AdapterDirectClient(options.name, connection);
-  }
+  return telemetry.run("sandbar.connect", async () => {
+    if ("bound" in options) {
+      const connection = await connectAdapter(options, { config: {}, credentials: {} });
 
-  const connection = await connectAdapter(options.adapter, {
-    config: options.config,
-    credentials: options.credentials,
-    onDiagnostic: options.onDiagnostic,
+      return new AdapterDirectClient(options.name, connection, undefined, observability);
+    }
+
+    const connection = await connectAdapter(options.adapter, {
+      config: options.config,
+      credentials: options.credentials,
+      onDiagnostic: options.onDiagnostic,
+    });
+
+    return new AdapterDirectClient(options.adapter.name, connection, options.onReference, options);
   });
-
-  return new AdapterDirectClient(options.adapter.name, connection, options.onReference);
 }

@@ -36,6 +36,8 @@ jobs:
         run: bun run build
       - name: Packed Node and Bun consumers
         run: bun run package:smoke
+      - name: Local OpenTelemetry, Sentry and Datadog runtime fixtures
+        run: bun run observability:check
       - uses: pnpm/action-setup@v6
         with:
           version: 10.18.3

@@ -6,8 +6,6 @@ import {
   assertResourceIdentity,
   MountSpec,
   SnapshotInfo,
-  SnapshotProfile,
-  SandboxState,
   VolumeInfo,
   RestoreRequest,
   VolumeCreateInput,
@@ -323,11 +321,6 @@ export function resourceManagers(client: AdapterDirectClient) {
 
   return { snapshots, volumes };
 }
-
-export const CaptureExpectation = z.strictObject({
-  profile: SnapshotProfile,
-  sourceState: SandboxState,
-});
 
 export function decodeCapture(
   client: AdapterDirectClient,
