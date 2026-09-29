@@ -13,7 +13,7 @@ import {
   runPrepared,
   type CleanupAccess,
 } from "./lifecycle";
-import { parseReport, renderLiveMatrix } from "./report";
+import { parseReport, renderLiveMatrix, unselectedRecord } from "./report";
 
 const directories: string[] = [];
 
@@ -640,4 +640,50 @@ test("directory admission blocks unrelated runs and unresolved resources before 
     await previous.update((value) => ({ ...value, cleanup: "confirmed" }));
     await next.requirePreviousCleanup();
   });
+});
+
+test("unselected scenarios do not inherit snapshot or volume configuration", () => {
+  const sample = parseReport({
+    schemaVersion: 1,
+    records: [
+      {
+        schemaVersion: 1,
+        provider: "daytona",
+        scenario: "snapshot-roundtrip",
+        mode: "fixture",
+        status: "failed",
+        sdkCommit: "a".repeat(40),
+        sdkVersion: "0.0.0",
+        runtime: "Bun 1.3.14",
+        platform: "macos-arm64",
+        timestamp: "2026-09-28T00:00:00Z",
+        configuration: {
+          imageClass: "prepared",
+          network: "daytona-default",
+          regionClass: "us",
+          stateProbe: "snapshot-roundtrip-v2",
+          preserve: "filesystem",
+          restoreExecution: "fresh",
+          sourceAfter: "running",
+          volumeOwnership: "created",
+        },
+      },
+    ],
+  }).records[0]!;
+
+  for (const scenario of ["volume-persistence", "inspect"] as const) {
+    const record = unselectedRecord(sample, scenario);
+    expect(JSON.parse(JSON.stringify(record.configuration))).toEqual({
+      imageClass: "prepared",
+      network: "daytona-default",
+      regionClass: "us",
+    });
+    expect(record.status).toBe("not-run");
+    expect(record.scenario).toBe(scenario);
+    expect(record.stateEvidence).toBeUndefined();
+    expect(record.diagnostic).toBeUndefined();
+    expect(parseReport({ schemaVersion: 1, records: [record] }).records).toHaveLength(1);
+  }
+
+  expect(sample.configuration.stateProbe).toBe("snapshot-roundtrip-v2");
 });

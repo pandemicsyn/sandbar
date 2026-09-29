@@ -14,7 +14,14 @@ import { LedgerStore, requirePrivateDirectory, reportedCleanup } from "./ledger"
 import { reconcileConnection, runPrepared, type Step } from "./lifecycle";
 import { runNetworkPair, type NetworkRun } from "./network-profile";
 import { networkProbeId } from "./network-probe";
-import { parseReport, publicIssue, scenarios, type Scenario } from "./report";
+import {
+  parseReport,
+  publicIssue,
+  scenarios,
+  unselectedRecord,
+  type Scenario,
+  type QualificationRecord,
+} from "./report";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 
@@ -416,7 +423,7 @@ const exercise = async () => {
           envd: state.envd,
         }));
 
-    const records = sourcedSteps.map(({ step, policy, envd }) => ({
+    const records: QualificationRecord[] = sourcedSteps.map(({ step, policy, envd }) => ({
       ...metadata,
       configuration: {
         ...metadata.configuration,
@@ -469,7 +476,7 @@ const exercise = async () => {
       }
     }
 
-    const combined = previous
+    const combined: QualificationRecord[] = previous
       ? [
           ...previous.records.map((record) => ({
             ...record,
@@ -482,14 +489,7 @@ const exercise = async () => {
     if (!previous)
       for (const scenario of scenarios)
         if (!combined.some((record) => record.scenario === scenario))
-          combined.push({
-            ...records[0]!,
-            scenario,
-            status: "not-run",
-            issue: "not-selected",
-            networkEvidence: undefined,
-            stateEvidence: undefined,
-          });
+          combined.push(unselectedRecord(records[0]!, scenario));
     const report = parseReport({ schemaVersion: 1, records: combined });
 
     const publicPath =

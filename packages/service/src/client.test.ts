@@ -1528,3 +1528,38 @@ test("remote completed execution without an exit code has a distinct outcome", a
 
   await expect((await client.recover(reference)).observe()).rejects.toBeInstanceOf(NoExitCodeError);
 });
+
+test("remote mount checks report unsupported without dispatching a request", async () => {
+  let requests = 0;
+
+  const client = RemoteSandbar.connect({
+    url: "https://sandbar.example/",
+    token: "secret",
+    projectId: "project_1",
+    fetch: async () => {
+      requests++;
+      throw new Error("Mount checks must not dispatch");
+    },
+  });
+
+  const input = {
+    environment: RemoteImage.prepared("base"),
+    mounts: [
+      {
+        volume: {
+          version: 1 as const,
+          kind: "volume" as const,
+          provider: "daytona",
+          nativeId: "volume_1",
+          scope: { authority: { kind: "organization", id: "org_1" }, partition: {} },
+          ownership: "borrowed" as const,
+        },
+        path: "/data",
+      },
+    ],
+  };
+
+  expect(await client.sandboxes.checkCreate(input)).toMatchObject({ status: "unsupported" });
+  await expect(client.sandboxes.submitCreate(input)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  expect(requests).toBe(0);
+});

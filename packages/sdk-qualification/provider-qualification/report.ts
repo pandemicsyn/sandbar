@@ -217,6 +217,26 @@ export type QualificationReport = z.infer<typeof reportSchema>;
 
 export type Scenario = QualificationRecord["scenario"];
 
+export function unselectedRecord<T extends QualificationRecord>(record: T, scenario: Scenario) {
+  return {
+    ...record,
+    configuration: {
+      ...record.configuration,
+      stateProbe: undefined,
+      preserve: undefined,
+      restoreExecution: undefined,
+      sourceAfter: undefined,
+      volumeOwnership: undefined,
+    },
+    scenario,
+    status: "not-run" as const,
+    issue: "not-selected" as const,
+    diagnostic: undefined,
+    networkEvidence: undefined,
+    stateEvidence: undefined,
+  };
+}
+
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the JSON artifact boundary; reportSchema parses it immediately.
 export function parseReport(value: unknown): QualificationReport {
   return reportSchema.parse(value);

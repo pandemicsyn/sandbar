@@ -760,10 +760,10 @@ export class RemoteClient implements SandbarClient {
     input = validateCreate(input);
 
     if (input.mounts?.length)
-      throw new SandbarError(
-        "UNSUPPORTED",
-        "State resource mounts require a direct SDK connection",
-      );
+      return {
+        status: "unsupported",
+        reason: "State resource mounts require a direct SDK connection",
+      };
     const binding = input.environment.kind === "prepared" ? input.environment.binding : undefined;
 
     if (binding && !binding.connectionId)
