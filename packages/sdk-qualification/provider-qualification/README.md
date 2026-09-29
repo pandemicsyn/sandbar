@@ -91,7 +91,7 @@ This measures TCP egress for the stated public IPv4 destinations, not every dest
 
 ## Snapshot and volume state profile
 
-`manual.ts live-state` selects `snapshot-roundtrip,volume-persistence` through public shipped SDK methods. This is a separate paid storage budget, never implied by prepared baseline or credential authorization. The merged-source, clean-tree, local-only and explicit approval gates apply before loading secrets. No live state calls have been authorized or executed for this implementation. New behavior remains pending live qualification.
+`manual.ts live-state` selects `snapshot-roundtrip,volume-persistence` through public shipped SDK methods. This is a separate paid storage budget, never implied by prepared baseline or credential authorization. The merged-source, clean-tree, local-only and explicit approval gates apply before loading secrets. Merged-source state certification remains pending. User-authorized unmerged diagnostics are tracked separately with exact revisions and private durable ledgers; they do not qualify published support-matrix rows.
 
 The default bounded plan for **one provider per approval** is:
 

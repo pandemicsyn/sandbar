@@ -833,6 +833,7 @@ test("advanced capture observation forwards saved expectations on a fresh connec
   let observations = 0;
   let captures = 0;
   const expectation = { profile, sourceState: "running" as const };
+
   const adapter = defineAdapter({
     name: "fixture.advanced-capture",
     config: z.strictObject({}),
@@ -860,27 +861,32 @@ test("advanced capture observation forwards saved expectations on a fresh connec
           recovery: { version: 1, token: z.strictObject({ stage: z.literal("accepted") }) },
           async submit(_input, ctx) {
             captures++;
+
             return ctx.pending({ stage: "accepted" });
           },
           async observe(attempt, ctx) {
             observations++;
+
             if (
               attempt.capture?.sourceState !== expectation.sourceState ||
               attempt.capture?.profile.id !== profile.id
             )
               return ctx.unknown("Original capture plan differs");
+
             return ctx.pending({ stage: "accepted" });
           },
         },
       };
     },
   });
+
   const first = await Sandbar.connect({ adapter, config: {}, credentials: {} });
   const box = await first.sandboxes.create({ environment: Image.prepared("base") });
   const operation = await box.submitSnapshot();
   const saved = JSON.parse(JSON.stringify(operation.reference));
   await first.close();
   const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
   try {
     const input = {
       scope: saved.scope,
@@ -891,6 +897,7 @@ test("advanced capture observation forwards saved expectations on a fresh connec
       token: saved.token,
       tokenVersion: saved.tokenVersion,
     };
+
     await expect(client.operations.observe(input)).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
     });

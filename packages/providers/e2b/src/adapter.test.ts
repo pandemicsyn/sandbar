@@ -1115,6 +1115,7 @@ test("uncertain writes and destroy reconcile after reconnect without replay", as
 
     let checkpoint: Json | undefined;
     let checkpointVersion: number | undefined;
+
     const result = await submitOperation(
       prepared,
       identity,
@@ -1126,6 +1127,7 @@ test("uncertain writes and destroy reconcile after reconnect without replay", as
         checkpointVersion = version;
       },
     );
+
     expect(checkpoint).toEqual({
       stage: "uncertain",
       retainedTemplateId: "built_template",
@@ -1220,6 +1222,7 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
   test(`destroy checkpoint ${barrier} preserves custody and never replays kill`, async () => {
     let kills = 0;
     let present = true;
+
     const record: E2BRecord = {
       id: "box",
       templateId: "built_template",
@@ -1233,6 +1236,7 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
       },
       volumeMounts: [{ name: "retained-name", path: "/data" }],
     };
+
     const adapter = createE2BAdapter(() => ({
       async verifyAuth() {},
       async verifyTeam() {},
@@ -1257,6 +1261,7 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
       async kill() {
         kills++;
         present = false;
+
         return true;
       },
       async run() {
@@ -1269,21 +1274,26 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
       async remove() {},
       close() {},
     }));
+
     const connect = (apiKey: string) =>
       connectAdapter(adapter, {
         config: { teamId: "team_one", templateId: "template_1" },
         credentials: { apiKey },
       });
+
     let connection = await connect("first-key");
     const controller = new AbortController();
+
     const identity = {
       operationId: "destroy-op",
       submissionId: "destroy-sub",
       invocationKey: "destroy-inv",
       sandbox: { id: "box" },
     };
+
     let saved: Json | undefined;
     let version: number | undefined;
+
     try {
       const prepared = await prepareOperation(
         connection.session,
@@ -1291,6 +1301,7 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
         { ...identity.sandbox, storage: "allow-unconfirmed" },
         controller.signal,
       );
+
       const submitted = submitOperation(
         prepared,
         identity,
@@ -1301,6 +1312,7 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
           version = tokenVersion;
           const stage = z.object({ stage: z.string() }).parse(token).stage;
           expect(kills).toBe(stage === "accepted" ? 1 : 0);
+
           if (barrier === "abort-before") controller.abort();
           else if (
             (barrier === "reject-before" && stage === "uncertain") ||
@@ -1309,6 +1321,7 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
             throw Error("durable store unavailable");
         },
       );
+
       if (barrier === "abort-before") expect((await submitted).kind).toBe("unknown");
       else await expect(submitted).rejects.toThrow("reference persistence failed");
       expect(kills).toBe(barrier === "reject-after" ? 1 : 0);
@@ -1318,12 +1331,14 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
       });
       await connection.close();
       connection = await connect("rotated-key");
+
       const observed = await observeOperation(
         connection.session,
         "destroy",
         { ...identity, token: saved, version },
         new AbortController().signal,
       );
+
       if (barrier === "reject-after")
         expect(observed).toMatchObject({
           kind: "completed",
