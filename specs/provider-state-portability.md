@@ -1,8 +1,8 @@
 # Provider state portability
 
-Direction accepted September 28, 2026; recovery and E2B requirements revised September 29, 2026 · Foundations implemented; resource mutations remain in flight
+Direction accepted September 28, 2026; recovery and E2B requirements revised September 29, 2026 · Snapshot and core volume mutations implemented in the direct SDK; lifecycle and version slices remain proposed
 
-This specifies the next SDK and adapter extensions for snapshots, volumes, and lifecycle control. Daytona, E2B, Vercel Sandbox, and Tensorlake inform the portable contracts; implementing the future Vercel and Tensorlake adapters is separate work to specify later. Existing exports remain the authority for implemented behavior. These signatures are design sketches, not compilable examples of today's SDK.
+This records the accepted SDK and adapter direction for snapshots, volumes, and lifecycle control. Daytona, E2B, Vercel Sandbox, and Tensorlake inform the portable contracts; implementing the future Vercel and Tensorlake adapters is separate work to specify later. Existing exports remain the authority for implemented behavior. The signatures below remain design sketches, not a current API inventory; use SDK and adapter exports for implemented behavior.
 
 ## Delivery scope
 

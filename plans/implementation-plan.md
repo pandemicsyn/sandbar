@@ -1,6 +1,6 @@
 # Implementation sequence
 
-Updated September 28, 2026. SDK completeness and qualified provider integrations come first. The optional service is a distant milestone.
+Updated September 29, 2026. SDK completeness and qualified provider integrations come first. The optional service is a distant milestone.
 
 ## Delivery rule
 
@@ -8,15 +8,16 @@ New features ship through the direct SDK and public adapter API. New HTTP routes
 
 Preserve existing service behavior and keep existing regression checks passing. Make narrow compatibility fixes when shared contracts change; do not expand the service to mirror each new SDK feature. Document SDK-only support explicitly. This decision does not delete the service or remove existing tests, and does not weaken SDK scope validation, recovery references, unknown-effect handling, or no-replay guarantees.
 
-## Next: SDK state portability
+## In progress: SDK state portability
 
-The foundations are merged: resource reference descriptors, read-only capability/profile checks, and effect-free create requirement gates. Complete the [state portability spec](../specs/provider-state-portability.md) in SDK feature slices:
+The direct SDK and public adapter API now implement snapshot capture → inspect → restore → delete, application-persisted recovery references, native volume lifecycle, and create-time mounts where the provider supports them. Daytona and E2B have different snapshot guarantees; E2B does not support create-time mounts in its pinned integration. These implemented surfaces have deterministic native-boundary and packed-consumer coverage. Historical live snapshot runs do not certify every final-head behavior or the corrected filesystem-isolation probe; keep provider support claims tied to actual qualification evidence.
 
-1. Snapshot capture → inspect → restore → delete, including source disruption and retained-resource cleanup.
-2. Native persistent volumes and create-time mounts.
-3. Suspend/resume and lifetime controls, followed by optional volume versions and native forks where justified.
+The [state portability spec](../specs/provider-state-portability.md) remains active for these next slices:
 
-Daytona and E2B are the current built-ins. Implement supported native behavior with explicit provider differences and deterministic native-boundary tests. Live qualification requires separate authorization.
+1. Exact-preservation suspend/resume and lifetime controls, with execution-generation handling.
+2. Optional volume versions and native forks where justified.
+
+Continue to document provider differences and unsupported operations explicitly. Paid live qualification requires separate authorization; do not infer it from fixture coverage.
 
 ## In flight: SDK observability and diagnostics
 

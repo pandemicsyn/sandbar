@@ -4,9 +4,9 @@ Keep this directory for focused implementation specs and a small set of current 
 
 New features target the direct SDK and public adapter API. Service expansion is deferred until the SDK is mature and several provider integrations are established; see the [delivery rule](../plans/implementation-plan.md#delivery-rule). Preserve existing service behavior and regression coverage, without requiring new feature parity.
 
-## Next implementation
+## Active state design
 
-- [Provider state portability](provider-state-portability.md) — snapshots, volumes, mounts and lifecycle control, with explicit guarantees when provider support differs. This is the next coding work; the APIs are not implemented yet.
+- [Provider state portability](provider-state-portability.md) — direct SDK snapshots, core volumes and supported create-time mounts are implemented with provider-specific guarantees. Suspension, lifetime controls, optional volume versions and native forks remain proposed. Use the SDK and adapter source plus qualification evidence for current behavior; design sketches in the spec are not an API inventory.
 
 ## Planned observability
 
