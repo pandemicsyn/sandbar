@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { AdapterError, defineAdapter, type SnapshotProfile } from "sandbar-adapter";
+import {
+  AdapterError,
+  defineAdapter,
+  ResourceReference,
+  type SnapshotProfile,
+} from "sandbar-adapter";
 import { Sandbar, Image, UnsupportedFeatureError, OutcomeUnknownError } from "./index";
 
 const profile: SnapshotProfile = {
@@ -919,3 +924,101 @@ test("advanced capture observation forwards saved expectations on a fresh connec
     await client.close();
   }
 });
+
+for (const mode of ["rejects", "hung"] as const) {
+  test(`delete cancellation finalization is joined with a finite bound: ${mode}`, async () => {
+    const scope = { authority: { kind: "account", id: "one" }, partition: {} };
+
+    const reference = ResourceReference.parse({
+      version: 1,
+      kind: "volume",
+      provider: "fixture.delete-finalization",
+      scope,
+      nativeId: "borrowed",
+      ownership: "borrowed",
+    });
+
+    const controller = new AbortController();
+    let deletes = 0;
+
+    const adapter = defineAdapter({
+      name: "fixture.delete-finalization",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope,
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async create() {
+            throw Error("No allocation in this fixture");
+          },
+          async destroy() {
+            throw Error("No compute deletion in this fixture");
+          },
+          async volumeInspect() {
+            return {
+              reference,
+              name: "borrowed",
+              state: "ready",
+              filesystem: "object-backed",
+              visibility: "unknown",
+              durability: "unknown",
+              locking: "unknown",
+              rename: "unknown",
+              conflicts: "unknown",
+            };
+          },
+          volumeDelete: {
+            recovery: {
+              version: 1,
+              token: z.strictObject({ stage: z.enum(["uncertain", "rejected"]) }),
+            },
+            async submit(_reference, ctx) {
+              await ctx.checkpoint({ stage: "uncertain" });
+
+              if (mode === "hung") await new Promise<never>(() => undefined);
+
+              if (ctx.signal.aborted) {
+                await ctx.checkpoint({ stage: "rejected" });
+
+                return ctx.reject("UNAVAILABLE", "No delete was dispatched");
+              }
+
+              deletes++;
+
+              return { deleted: true, reference };
+            },
+            async observe(_attempt, ctx) {
+              return ctx.unknown("No mutation replay");
+            },
+          },
+          async close() {},
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({
+      adapter,
+      config: {},
+      credentials: {},
+      onReference(saved) {
+        if (
+          saved.kind === "volume_delete" &&
+          z.object({ stage: z.literal("uncertain") }).safeParse(saved.token).success
+        )
+          controller.abort();
+      },
+    });
+
+    try {
+      const volume = await client.volumes.get(reference);
+      await expect(volume.delete({ signal: controller.signal })).rejects.toMatchObject({
+        code: mode === "rejects" ? "UNAVAILABLE" : "WAIT_ABORTED",
+        effect: mode === "rejects" ? "none" : "possible",
+      });
+      expect(deletes).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}

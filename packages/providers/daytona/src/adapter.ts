@@ -238,7 +238,7 @@ export function createDaytonaAdapter(
             info.mountHandling !== "none" ||
             info.state !== "ready" ||
             info.preserve !== "filesystem" ||
-            input.request.resources ||
+            Object.keys(input.request.resources ?? {}).length ||
             Object.keys(input.request.mounts ?? {}).length
           )
             throw new AdapterError(

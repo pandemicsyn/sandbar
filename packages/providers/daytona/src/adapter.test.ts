@@ -1241,7 +1241,13 @@ test.each([
         ? capabilities.snapshots.restore.value.networkPolicies
         : [],
     );
-    const operation = await capture.snapshot.submitRestore({ networkPolicy: "blocked" });
+
+    const operation = await capture.snapshot.submitRestore({
+      networkPolicy: "blocked",
+      resources: {},
+      mounts: {},
+    });
+
     const reference = structuredClone(operation.reference);
 
     if (!["matching", "name"].includes(evidence) || path === "lost")

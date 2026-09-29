@@ -1160,12 +1160,15 @@ for (const kind of ["snapshot", "volume"] as const) {
           await operation.wait({ signal: controller.signal });
           throw Error("Expected interrupted deletion");
         } catch (error) {
-          expect(error instanceof OutcomeUnknownError || error instanceof WaitAbortedError).toBe(
-            true,
-          );
+          if (barrier === "abort-before")
+            expect(error).toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+          else expect(error).toBeInstanceOf(OutcomeUnknownError);
         }
 
         expect(saved).toBeDefined();
+
+        if (barrier === "abort-before")
+          expect(saved!.token).toMatchObject({ accepted: false, stage: "rejected" });
 
         if (barrier === "reject-after")
           expect(saved!.token).toMatchObject({ accepted: false, stage: "uncertain" });
@@ -1188,11 +1191,7 @@ for (const kind of ["snapshot", "volume"] as const) {
             await expect((await reopened.recover(mismatched)).wait()).rejects.toBeInstanceOf(
               OutcomeUnknownError,
             );
-          } else if (barrier === "abort-before")
-            await expect(
-              recovered.wait({ signal: AbortSignal.timeout(30), pollMs: 50 }),
-            ).rejects.toBeInstanceOf(WaitAbortedError);
-          else await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+          } else await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
           expect(f.calls.delete).toBe(barrier === "reject-after" ? 1 : 0);
         } finally {
           await reopened.close();

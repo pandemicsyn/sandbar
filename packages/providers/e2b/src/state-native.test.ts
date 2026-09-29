@@ -950,10 +950,10 @@ for (const kind of ["snapshot_capture", "snapshot_restore", "snapshot_delete"] a
           await new Promise((resolve) => setTimeout(resolve, 0));
           expect(f.calls.create).toBe(1);
         } else {
-          await expect(snapshot.submitDelete({ signal: controller.signal })).rejects.toBeInstanceOf(
-            WaitAbortedError,
-          );
-          await new Promise((resolve) => setTimeout(resolve, 0));
+          await expect(snapshot.delete({ signal: controller.signal })).rejects.toMatchObject({
+            code: "UNAVAILABLE",
+            effect: "none",
+          });
           expect(f.calls.snapshotDelete).toBe(0);
         }
       }
@@ -1032,20 +1032,30 @@ for (const rejectCheckpoint of [false, true]) {
   );
 }
 
-test("E2B restore accepts an explicitly empty mount map without native mounts", async () => {
+test("E2B restore accepts empty mount and resource maps without native overrides", async () => {
   const f = fixture();
   const client = await f.connect();
 
   try {
     const source = await client.sandboxes.create({ environment: Image.prepared("base") });
     const captured = await source.snapshot();
-    const restored = await captured.snapshot.restore({ networkPolicy: "blocked", mounts: {} });
+
+    const restored = await captured.snapshot.restore({
+      networkPolicy: "blocked",
+      mounts: {},
+      resources: {},
+    });
+
     expect(restored.id).not.toBe(source.id);
     expect(f.createRequests.at(-1)).toEqual({
       templateId: `snap_one:${captured.snapshot.reference.generation}`,
       allowInternetAccess: false,
     });
     expect(f.boxes.get(restored.id)?.volumeMounts).toEqual([]);
+    await expect(
+      captured.snapshot.restore({ networkPolicy: "blocked", resources: { vcpu: 1 } }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+    expect(f.calls.create).toBe(2);
   } finally {
     await client.close();
   }
@@ -1100,12 +1110,15 @@ for (const kind of ["snapshot", "volume"] as const) {
           await operation.wait({ signal: controller.signal });
           throw Error("Expected interrupted deletion");
         } catch (error) {
-          expect(error instanceof OutcomeUnknownError || error instanceof WaitAbortedError).toBe(
-            true,
-          );
+          if (barrier === "abort-before")
+            expect(error).toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+          else expect(error).toBeInstanceOf(OutcomeUnknownError);
         }
 
         expect(saved).toBeDefined();
+
+        if (barrier === "abort-before")
+          expect(saved!.token).toMatchObject({ accepted: false, stage: "rejected" });
 
         if (barrier === "reject-after")
           expect(saved!.token).toMatchObject({ accepted: false, stage: "uncertain" });
@@ -1129,11 +1142,7 @@ for (const kind of ["snapshot", "volume"] as const) {
               f.modes.betaDenied = true;
               await expect((await reopened.recover(saved!)).wait()).rejects.toBeDefined();
             }
-          } else if (barrier === "abort-before")
-            await expect(
-              recovered.wait({ signal: AbortSignal.timeout(30), pollMs: 50 }),
-            ).rejects.toBeInstanceOf(WaitAbortedError);
-          else await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+          } else await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
           expect(f.calls[kind === "snapshot" ? "snapshotDelete" : "volumeDelete"]).toBe(
             barrier === "reject-after" ? 1 : 0,
           );

@@ -551,7 +551,11 @@ export function daytonaState(input: {
 
       await ctx.checkpoint({ reference: ref, accepted: false, stage: "uncertain" });
 
-      if (ctx.signal.aborted) return ctx.unknown("Artifact delete cancelled before dispatch");
+      if (ctx.signal.aborted) {
+        await ctx.checkpoint({ reference: ref, accepted: false, stage: "rejected" });
+
+        return ctx.reject("UNAVAILABLE", "Artifact delete cancelled before dispatch");
+      }
 
       try {
         const response = await request(

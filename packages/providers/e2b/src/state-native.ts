@@ -250,7 +250,7 @@ export function e2bState(input: {
 
     if (
       !["internet", "blocked"].includes(value.request.networkPolicy) ||
-      value.request.resources ||
+      (value.request.resources && Object.keys(value.request.resources).length > 0) ||
       (value.request.mounts && Object.keys(value.request.mounts).length > 0)
     )
       throw new AdapterError("UNSUPPORTED", "Restore policy or overrides are unsupported");
@@ -552,7 +552,12 @@ export function e2bState(input: {
           return ctx.reject("UNAVAILABLE", "Delete cancelled before dispatch");
         await ctx.checkpoint({ accepted: false, stage: "uncertain" });
 
-        if (ctx.signal.aborted) return ctx.unknown("Snapshot delete cancelled before dispatch");
+        if (ctx.signal.aborted) {
+          await ctx.checkpoint({ accepted: false, stage: "rejected" });
+
+          return ctx.reject("UNAVAILABLE", "Snapshot delete cancelled before dispatch");
+        }
+
         const accepted = await need().deleteSnapshot(value.nativeId, ctx.signal);
         await ctx.checkpoint({ accepted, stage: accepted ? "accepted" : "rejected" });
 
@@ -829,7 +834,12 @@ export function e2bState(input: {
         return ctx.reject("UNAVAILABLE", "Deletion cancelled before dispatch");
       await ctx.checkpoint({ accepted: false, stage: "uncertain" });
 
-      if (ctx.signal.aborted) return ctx.unknown("Volume delete cancelled before dispatch");
+      if (ctx.signal.aborted) {
+        await ctx.checkpoint({ accepted: false, stage: "rejected" });
+
+        return ctx.reject("UNAVAILABLE", "Volume delete cancelled before dispatch");
+      }
+
       let stage: "uncertain" | "accepted" | "rejected" = "uncertain";
       let accepted = false;
 

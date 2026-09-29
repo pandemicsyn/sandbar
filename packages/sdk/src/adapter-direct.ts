@@ -155,6 +155,35 @@ function abortWaiting(ref: AdapterRecoveryReference, reason: unknown): never {
   throw new WaitAbortedError(ref, reason);
 }
 
+async function waitForSubmission<T>(
+  work: Promise<T>,
+  signal: AbortSignal,
+  closed: AbortSignal,
+  finalizeDeletion: boolean,
+): Promise<T> {
+  if (!finalizeDeletion) return raceAbort(work, signal);
+  const finalization = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const abort = () => {
+    signal.removeEventListener("abort", abort);
+
+    if (timer !== undefined) return;
+    timer = setTimeout(() => finalization.abort(signal.reason), 1000);
+  };
+
+  signal.addEventListener("abort", abort, { once: true });
+
+  if (signal.aborted) abort();
+
+  try {
+    return await raceAbort(work, AbortSignal.any([closed, finalization.signal]));
+  } finally {
+    signal.removeEventListener("abort", abort);
+    clearTimeout(timer);
+  }
+}
+
 function assertSignal(signal?: AbortSignal) {
   if (signal?.aborted)
     throw new SandbarError("WAIT_ABORTED", "Waiting stopped before submission", "none");
@@ -413,7 +442,15 @@ export class AdapterOperation<T> {
     while (true) {
       if (this.client.isClosed()) abortWaiting(this.reference, this.client.signal.reason);
 
-      if (options.signal?.aborted) abortWaiting(this.reference, options.signal.reason);
+      const confirmedRejection =
+        this.first?.kind === "rejected" ||
+        (this.terminal &&
+          "error" in this.terminal &&
+          this.terminal.error instanceof SandbarError &&
+          this.terminal.error.effect === "none");
+
+      if (options.signal?.aborted && !confirmedRejection)
+        abortWaiting(this.reference, options.signal.reason);
 
       if (this.pendingAt !== null) {
         const eligibleAt = Math.max(this.nextPollAt, this.pendingAt + pollMs);
@@ -423,7 +460,9 @@ export class AdapterOperation<T> {
           await waitDelay(delay, signal).catch((error) => abortWaiting(this.reference, error));
       }
 
-      const value = await this.observeWithSignal(signal).catch((error) => {
+      const value = await this.observeWithSignal(
+        confirmedRejection ? this.client.signal : signal,
+      ).catch((error) => {
         this.client.telemetry.poll(
           error instanceof SandbarError && error.effect === "applied"
             ? "completed"
@@ -837,12 +876,12 @@ export class PreparedAdapterAttempt {
         : signal;
 
     try {
-      return await raceAbort(
+      return await waitForSubmission(
         // Requirements were checked before the durable marker; no read hook may run after it.
         this.client.telemetry.run(
           "sandbar.submit",
           () =>
-            raceAbort(
+            waitForSubmission(
               submitOperation(
                 { ...this.prepared, revalidate: undefined },
                 checked,
@@ -851,6 +890,8 @@ export class PreparedAdapterAttempt {
                 options.onCheckpoint,
               ),
               submissionWaitSignal,
+              this.client.signal,
+              this.kind === "snapshot_delete" || this.kind === "volume_delete",
             ),
           {
             phase: true,
@@ -861,6 +902,8 @@ export class PreparedAdapterAttempt {
           },
         ),
         submissionWaitSignal,
+        this.client.signal,
+        this.kind === "snapshot_delete" || this.kind === "volume_delete",
       );
     } catch {
       if (signal.aborted)
@@ -1377,7 +1420,7 @@ export class AdapterDirectClient {
     const waiting = AbortSignal.any(signals);
 
     try {
-      first = await raceAbort(
+      first = await waitForSubmission(
         prepared
           .submit(ids, {
             beforeSubmit: async () => {
@@ -1398,6 +1441,8 @@ export class AdapterDirectClient {
             return value;
           }),
         kind === "snapshot_capture" ? this.signal : waiting,
+        this.signal,
+        kind === "snapshot_delete" || kind === "volume_delete",
       );
 
       if (first.kind === "pending") {

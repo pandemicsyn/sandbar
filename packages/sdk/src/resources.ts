@@ -111,7 +111,7 @@ export class AdapterSnapshot {
 
     if (
       !info.restore.networkPolicies.includes(input.networkPolicy) ||
-      (input.resources && !info.restore.resources) ||
+      (Object.keys(input.resources ?? {}).length > 0 && !info.restore.resources) ||
       (input.requireIndependentLifecycle !== false && !info.restore.independentLifecycle)
     )
       throw new SandbarError("UNSUPPORTED", "Restore requirements are unsupported");
