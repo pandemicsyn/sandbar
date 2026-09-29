@@ -387,6 +387,12 @@ export class Telemetry {
             ...diagnosticAttributes(result),
           });
 
+          if (name === "sandbar.wait" || name === "sandbar.operation.wait")
+            span.setAttributes({
+              ...diagnosticAttributes(options.identity),
+              "sandbar.operation.state": "completed",
+            });
+
           if (name === "sandbar.operation.observe")
             span.setAttributes({
               "sandbar.operation.state": result === null ? "pending" : "completed",

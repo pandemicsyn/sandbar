@@ -13,6 +13,7 @@ export function fixtureAdapter(
   options: {
     lost?: boolean;
     pending?: boolean;
+    completeAfterPolls?: number;
     observeFailure?: "unknown" | "throw";
     exitCode?: number;
     delay?: Promise<void>;
@@ -53,6 +54,9 @@ export function fixtureAdapter(
           },
           async observe(_attempt: RecoveryAttempt, ctx: ObserveContext) {
             counts.observe++;
+
+            if (options.completeAfterPolls && counts.observe >= options.completeAfterPolls)
+              return { id: "CANARY_NATIVE_ID", state: "running" as const };
 
             if (options.observeFailure === "unknown") return ctx.unknown("CANARY_UNKNOWN");
 

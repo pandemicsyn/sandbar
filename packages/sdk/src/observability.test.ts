@@ -682,3 +682,37 @@ test("provider throttling keeps its safe diagnostic and span classification", as
   expect(span.attributes["sandbar.wait.poll_count"]).toBeUndefined();
   await provider.shutdown();
 });
+
+test("pending waits finalize completed state for convenience and explicit calls", async () => {
+  for (const convenience of [true, false]) {
+    const { provider, exporter } = setup();
+    const fixture = fixtureAdapter({ pending: true, completeAfterPolls: 2 });
+
+    const client = await Sandbar.connect({
+      adapter: fixture.adapter,
+      config: {},
+      credentials: {},
+      tracing: { tracerProvider: provider },
+    });
+
+    const input = { environment: Image.prepared("CANARY_IMAGE") };
+
+    if (convenience) await client.sandboxes.create(input);
+    else {
+      const operation = await client.sandboxes.submitCreate(input);
+      expect(diagnosticContext(operation).operationState).toBe("pending");
+      await operation.wait({ pollMs: 50 });
+    }
+
+    await client.close();
+    const name = convenience ? "sandbar.wait" : "sandbar.operation.wait";
+    const wait = safeSpans(exporter).find((span) => span.name === name)!;
+    expect(wait.attributes["sandbar.operation.state"]).toBe("completed");
+    expect(wait.attributes["sandbar.effect"]).toBe("applied");
+    expect(wait.attributes["sandbar.call.outcome"]).toBe("success");
+    expect(wait.events.at(-1)?.attributes?.["sandbar.operation.state"]).toBe("completed");
+    expect(fixture.counts.create).toBe(1);
+    expect(fixture.counts.observe).toBe(2);
+    await provider.shutdown();
+  }
+});
