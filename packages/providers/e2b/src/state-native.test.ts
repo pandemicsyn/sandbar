@@ -1066,8 +1066,10 @@ for (const kind of ["snapshot", "volume"] as const) {
 
           if (!token.success) {
             saved = JSON.parse(JSON.stringify(reference));
+
             return;
           }
+
           expect(f.calls[kind === "snapshot" ? "snapshotDelete" : "volumeDelete"]).toBe(
             token.data.accepted ? 1 : 0,
           );
@@ -1104,6 +1106,7 @@ for (const kind of ["snapshot", "volume"] as const) {
         }
 
         expect(saved).toBeDefined();
+
         if (barrier === "reject-after")
           expect(saved!.token).toMatchObject({ accepted: false, stage: "uncertain" });
         expect(f.calls[kind === "snapshot" ? "snapshotDelete" : "volumeDelete"]).toBe(
@@ -1121,6 +1124,7 @@ for (const kind of ["snapshot", "volume"] as const) {
             await expect((await reopened.recover(legacy)).wait()).rejects.toBeInstanceOf(
               OutcomeUnknownError,
             );
+
             if (kind === "volume") {
               f.modes.betaDenied = true;
               await expect((await reopened.recover(saved!)).wait()).rejects.toBeDefined();

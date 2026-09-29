@@ -1109,8 +1109,10 @@ for (const kind of ["snapshot", "volume"] as const) {
 
         if (!token.success) {
           saved = JSON.parse(JSON.stringify(reference));
+
           return;
         }
+
         expect(f.calls.delete).toBe(token.data.accepted ? 1 : 0);
 
         if (barrier === "abort-before" && !token.data.accepted) controller.abort();
@@ -1143,6 +1145,7 @@ for (const kind of ["snapshot", "volume"] as const) {
         }
 
         expect(saved).toBeDefined();
+
         if (barrier === "reject-after")
           expect(saved!.token).toMatchObject({ accepted: false, stage: "uncertain" });
         expect(f.calls.delete).toBe(barrier === "reject-after" ? 1 : 0);
@@ -1154,9 +1157,11 @@ for (const kind of ["snapshot", "volume"] as const) {
           if (barrier === "reject-after") {
             expect(await recovered.wait()).toMatchObject({ deleted: true });
             const mismatched = structuredClone(saved!);
+
             const token = z
               .object({ reference: ResourceReference, accepted: z.boolean(), stage: z.string() })
               .parse(mismatched.token);
+
             token.reference.nativeId = "other-artifact";
             mismatched.token = token;
             await expect((await reopened.recover(mismatched)).wait()).rejects.toBeInstanceOf(
