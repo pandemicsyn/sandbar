@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
   MountDurability as importMountDurability,
   AdapterError,
+  AdapterCheckpointError,
   defineAdapter,
   type ExecValue,
 } from "sandbar-adapter";
@@ -51,6 +52,7 @@ const WriteToken = z.strictObject({
 type WriteTokenData = z.infer<typeof WriteToken>;
 
 const DestroyToken = z.strictObject({
+  stage: z.enum(["uncertain", "accepted"]),
   retainedTemplateId: z.string().max(128).optional(),
   retainedVolumeNames: z.array(z.string().min(1).max(128)).max(32).optional(),
   mountDurability: z.array(importMountDurability).max(32).optional(),
@@ -484,7 +486,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           },
         },
         destroy: {
-          recovery: { version: 1, token: DestroyToken },
+          recovery: { version: 2, token: DestroyToken },
           async prepare(box) {
             const record = await find(box.id);
 
@@ -511,7 +513,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             if (ctx.signal.aborted)
               return ctx.unknown("E2B termination was not submitted after cancellation");
 
-            const token: z.infer<typeof DestroyToken> = {};
+            const token: z.infer<typeof DestroyToken> = { stage: "uncertain" };
 
             if (record.volumeMounts?.length) {
               // Native mount observations expose reusable names, never immutable volume IDs.
@@ -520,14 +522,19 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
             if (record.metadata.sandbar_build) token.retainedTemplateId = record.templateId;
 
+            await ctx.checkpoint(token);
+
             if (ctx.signal.aborted)
               return ctx.unknown("E2B termination was not submitted after cancellation");
 
             try {
               await transport.kill(box.id, ctx.signal);
+              token.stage = "accepted";
+              await ctx.checkpoint(token);
 
               if ((await transport.get(box.id)) === null) return destroyValue(token);
-            } catch {
+            } catch (error) {
+              if (error instanceof AdapterCheckpointError) throw error;
               // An absent sandbox may still be confirmed by read-only observation.
             }
 

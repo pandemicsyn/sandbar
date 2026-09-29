@@ -746,6 +746,7 @@ export type AdvancedOperationKind = OperationKind;
 export type AdvancedIdentity = { operationId: string; submissionId: string; invocationKey: string };
 
 export type AdvancedObservation = {
+  capture?: AdapterRecoveryReference["capture"];
   scope: Scope;
   kind: OperationKind;
   operationId: string;
@@ -1042,6 +1043,7 @@ export class AdapterDirectClient {
             submissionId: z.string().min(1).max(128),
             sandboxId: z.string().min(1).max(512).optional(),
             resource: ResourceReference.optional(),
+            capture: CaptureExpectation.optional(),
             mounts: z.array(importMountSpec).max(32).optional(),
             token: z.json().optional(),
             tokenVersion: z.number().int().positive().optional(),
@@ -1077,6 +1079,12 @@ export class AdapterDirectClient {
         )
           throw new SandbarError("INVALID_ARGUMENT", "Observation sandbox binding is invalid");
 
+        if (checked.kind === "snapshot_capture" && !checked.capture)
+          throw new SandbarError(
+            "INVALID_ARGUMENT",
+            "Capture observation requires saved expectations",
+          );
+
         let locallyValidated = false;
 
         try {
@@ -1089,6 +1097,7 @@ export class AdapterDirectClient {
                 submissionId: checked.submissionId,
                 sandbox: checked.sandboxId ? { id: checked.sandboxId } : undefined,
                 resource: checked.resource,
+                capture: checked.capture,
                 mounts: checked.mounts,
                 token: checked.token,
                 version: checked.tokenVersion,
