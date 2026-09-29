@@ -4,6 +4,7 @@ import {
   internalMethod,
   waitFor,
   noteOperation,
+  noteRetainedResources,
   activeTraceParent,
   type ObservabilityOptions,
 } from "./observability";
@@ -291,6 +292,11 @@ export class AdapterOperation<T> {
 
       this.terminal = { error };
       throw error;
+    }
+
+    if ("retainedResources" in result.value) {
+      noteRetainedResources(this, result.value.retainedResources.length);
+      this.client.telemetry.correlate(this);
     }
 
     try {

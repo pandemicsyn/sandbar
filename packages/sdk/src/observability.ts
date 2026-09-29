@@ -31,6 +31,12 @@ export interface DiagnosticContext {
   recoveryAvailable: boolean;
 }
 
+const retainedCounts = new WeakMap<object, number>();
+
+export function noteRetainedResources<T extends object>(value: T, count: number): void {
+  retainedCounts.set(value, Math.min(count, 100));
+}
+
 const operationFacts = new WeakMap<
   object,
   { state: NonNullable<DiagnosticContext["operationState"]>; effect: DiagnosticContext["effect"] }
@@ -152,6 +158,12 @@ function diagnosticAttributes(value: unknown): Attributes {
 
   if (d.operationState) attrs["sandbar.operation.state"] = d.operationState;
   attrs["sandbar.recovery.available"] = d.recoveryAvailable;
+
+  if (value && typeof value === "object") {
+    const retained = retainedCounts.get(value);
+
+    if (retained !== undefined) attrs["sandbar.retained_resource.count"] = retained;
+  }
 
   return attrs;
 }

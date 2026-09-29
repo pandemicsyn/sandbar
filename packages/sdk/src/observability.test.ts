@@ -1,5 +1,8 @@
 /* oxlint-disable anti-slop/no-chained-type-assertions -- Fault-injection objects intentionally violate the OTel interface to prove that broken application providers cannot change SDK behavior. */
 import { afterAll, expect, test } from "bun:test";
+import type { AdapterRecoveryReference } from "./index";
+import { defineAdapter } from "sandbar-adapter";
+import { z } from "zod";
 import {
   context,
   trace,
@@ -713,6 +716,102 @@ test("pending waits finalize completed state for convenience and explicit calls"
     expect(wait.events.at(-1)?.attributes?.["sandbar.operation.state"]).toBe("completed");
     expect(fixture.counts.create).toBe(1);
     expect(fixture.counts.observe).toBe(2);
+    await provider.shutdown();
+  }
+});
+
+test("pending image builds and destroys retain bounded counts after decoding and cached waits", async () => {
+  for (const convenience of [true, false]) {
+    const { provider, exporter } = setup();
+
+    const adapter = defineAdapter({
+      name: "retention-fixture",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "fixture", id: "CANARY_SCOPE" }, partition: {} },
+          supports: { images: ["prepared" as const], network: ["blocked" as const] },
+          async create() {
+            return { id: "CANARY_BOX", state: "running" as const };
+          },
+          imageBuild: {
+            recovery: { version: 1, token: z.strictObject({}) },
+            async submit(_input, ctx) {
+              return ctx.pending({}, { pollAfterMs: 1 });
+            },
+            async observe() {
+              return {
+                preparedId: "CANARY_IMAGE",
+                retainedResources: Array.from({ length: 101 }, () => ({
+                  kind: "CANARY_KIND",
+                  id: "CANARY_RESOURCE",
+                  ownership: "unknown" as const,
+                  cleanup: "manual" as const,
+                })),
+              };
+            },
+          },
+          destroy: {
+            recovery: { version: 1, token: z.strictObject({}) },
+            async submit(_input, ctx) {
+              return ctx.pending({}, { pollAfterMs: 1 });
+            },
+            async observe() {
+              return { computeStopped: true, retainedResources: ["CANARY_RETAINED"] };
+            },
+          },
+        };
+      },
+    });
+
+    let destroyReference: AdapterRecoveryReference | undefined;
+
+    const client = await Sandbar.connect({
+      adapter,
+      config: {},
+      credentials: {},
+      tracing: { tracerProvider: provider },
+      onReference(reference) {
+        if (reference.kind === "destroy") destroyReference = reference;
+      },
+    });
+
+    const buildInput = { source: { kind: "oci" as const, value: "CANARY_SOURCE" } };
+
+    if (convenience) await client.images.build(buildInput);
+    else {
+      const operation = await client.images.submitBuild(buildInput);
+      await operation.wait();
+      await operation.wait();
+    }
+
+    const box = await client.sandboxes.create({ environment: Image.prepared("CANARY_IMAGE") });
+
+    await box.destroy();
+
+    if (!convenience) {
+      const operation = await client.recover(destroyReference!);
+      await operation.wait();
+      await operation.wait();
+    }
+
+    await client.close();
+
+    const waits = safeSpans(exporter).filter(
+      (span) => span.name === "sandbar.wait" || span.name === "sandbar.operation.wait",
+    );
+
+    expect(
+      waits
+        .filter((span) => span.attributes["sandbar.operation.type"] === "image_build")
+        .map((span) => span.attributes["sandbar.retained_resource.count"]),
+    ).toEqual(convenience ? [100] : [100, 100]);
+    expect(
+      waits
+        .filter((span) => span.attributes["sandbar.operation.type"] === "destroy")
+        .map((span) => span.attributes["sandbar.retained_resource.count"]),
+    ).toEqual(convenience ? [1] : [1, 1, 1]);
     await provider.shutdown();
   }
 });
