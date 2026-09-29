@@ -18,6 +18,7 @@ const CaptureToken = z.strictObject({
   snapshotId: z.string().max(512),
   sourceId: z.string().max(512),
   generation: z.string().max(512).optional(),
+  snapshot: ResourceReference.optional(),
   consistency: z.enum(["crash-consistent", "caller-quiesced", "unknown"]),
 });
 
@@ -287,24 +288,25 @@ export function e2bState(input: {
         try {
           info = await snapshotInspect(ref("snapshot", created.snapshotId, "verified-created"));
           token.generation = info.reference.generation;
+          info.consistency = token.consistency;
+          info.reference.receipt = receipts.issue({
+            version: 1,
+            kind: "snapshot",
+            nativeId: info.reference.nativeId,
+            generation: info.reference.generation,
+            sourceId: box.id,
+            sourceClass: "firecracker",
+            preserve: "filesystem+memory",
+            mounts: "none",
+            consistency: info.consistency,
+          });
+          token.snapshot = structuredClone(info.reference);
           actual = await input.find(box.id);
         } catch {
           return ctx.pending(token, { pollAfterMs: 500 });
         }
 
         if (!actual || actual.state !== "running") return ctx.pending(token, { pollAfterMs: 500 });
-        info.consistency = token.consistency;
-        info.reference.receipt = receipts.issue({
-          version: 1,
-          kind: "snapshot",
-          nativeId: info.reference.nativeId,
-          generation: info.reference.generation,
-          sourceId: box.id,
-          sourceClass: "firecracker",
-          preserve: "filesystem+memory",
-          mounts: "none",
-          consistency: info.consistency,
-        });
 
         if (ctx.signal.aborted) return ctx.pending(token, { pollAfterMs: 0 });
 
@@ -322,34 +324,40 @@ export function e2bState(input: {
       async observe(attempt, ctx) {
         const token = CaptureToken.safeParse(attempt.token);
 
-        if (!token.success || !token.data.generation || token.data.sourceId !== attempt.sandbox?.id)
+        if (
+          !token.success ||
+          !token.data.generation ||
+          !token.data.snapshot ||
+          token.data.sourceId !== attempt.sandbox?.id
+        )
           return ctx.unknown(
             "Capture may retain storage; no acknowledged artifact identity; do not replay",
           );
+
+        check(token.data.snapshot);
+        receipts.owned(token.data.snapshot);
+        const evidence = receipts.read(token.data.snapshot);
+
+        if (
+          token.data.snapshot.kind !== "snapshot" ||
+          token.data.snapshot.nativeId !== token.data.snapshotId ||
+          token.data.snapshot.generation !== token.data.generation ||
+          evidence?.sourceId !== token.data.sourceId ||
+          evidence.consistency !== token.data.consistency ||
+          evidence.preserve !== "filesystem+memory" ||
+          evidence.mounts !== "none"
+        )
+          return ctx.unknown("Saved snapshot custody differs from capture acknowledgement");
+
         const box = await input.find(token.data.sourceId);
 
         if (!box || box.volumeMounts?.length)
           return ctx.unknown("Source mount provenance unavailable");
         knownSnapshots.set(token.data.snapshotId, { sourceId: token.data.sourceId });
 
-        const info = await snapshotInspect({
-          ...ref("snapshot", token.data.snapshotId, "verified-created"),
-          generation: token.data.generation,
-        });
+        const info = await snapshotInspect(token.data.snapshot);
 
-        if (box?.state !== "running") return ctx.unknown("Original source outcome is unconfirmed");
-        info.consistency = token.data.consistency;
-        info.reference.receipt = receipts.issue({
-          version: 1,
-          kind: "snapshot",
-          nativeId: info.reference.nativeId,
-          generation: info.reference.generation,
-          sourceId: box.id,
-          sourceClass: "firecracker",
-          preserve: "filesystem+memory",
-          mounts: "none",
-          consistency: info.consistency,
-        });
+        if (box.state !== "running") return ctx.unknown("Original source outcome is unconfirmed");
 
         return {
           snapshot: info,

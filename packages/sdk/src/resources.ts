@@ -1,3 +1,4 @@
+import { freezeReference } from "./freeze-reference";
 import { z } from "zod";
 import {
   ResourceReference,
@@ -78,7 +79,7 @@ export class AdapterSnapshot {
     private readonly client: AdapterDirectClient,
     reference: ResourceReference,
   ) {
-    this.reference = Object.freeze(checkedResource(client, reference, "snapshot"));
+    this.reference = freezeReference(checkedResource(client, reference, "snapshot"));
   }
   async inspect(options: WaitOptions = {}): Promise<SnapshotInfo> {
     const ref = checkedResource(this.client, this.reference, "snapshot");
@@ -157,7 +158,7 @@ export class AdapterVolume {
     private readonly client: AdapterDirectClient,
     reference: ResourceReference,
   ) {
-    this.reference = Object.freeze(checkedResource(client, reference, "volume"));
+    this.reference = freezeReference(checkedResource(client, reference, "volume"));
   }
   async inspect(options: WaitOptions = {}): Promise<VolumeInfo> {
     const ref = checkedResource(this.client, this.reference, "volume");

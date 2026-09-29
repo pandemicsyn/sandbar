@@ -575,3 +575,117 @@ test("direct custody references recursively freeze capture profiles, resource sc
     await client.close();
   }
 });
+
+for (const mode of ["expires-during-read", "expires-after-cancel"] as const) {
+  test(`E2B acknowledged snapshot custody survives source loss: ${mode}`, async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    let client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      f.postCaptureRead(() => {
+        if (mode === "expires-during-read") f.boxes.delete(source.id);
+        else controller.abort();
+      });
+      let failure: unknown;
+
+      try {
+        await source.snapshot({ consistency: "caller-quiesced" }, { signal: controller.signal });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(
+        mode === "expires-after-cancel" ? WaitAbortedError : OutcomeUnknownError,
+      );
+
+      if (!(failure instanceof WaitAbortedError) && !(failure instanceof OutcomeUnknownError))
+        throw new Error("Expected uncertain capture with custody");
+      const recovery = structuredClone(failure.reference);
+      const saved = z.object({ snapshot: ResourceReference }).parse(recovery.token).snapshot;
+      expect(saved).toMatchObject({
+        nativeId: "snap_one:default",
+        generation: "build_one",
+        ownership: "verified-created",
+      });
+      expect(saved.receipt).toBeString();
+      f.boxes.delete(source.id);
+      await client.close();
+      client = await f.connect();
+      await expect((await client.recover(recovery)).wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+      });
+      const snapshot = await client.snapshots.get(saved);
+      expect(await snapshot.inspect()).toMatchObject({
+        consistency: "caller-quiesced",
+        mountHandling: "none",
+        source: { id: source.id },
+      });
+      await snapshot.delete();
+      expect(f.calls).toMatchObject({ capture: 1, snapshotDelete: 1, kill: 0 });
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("public snapshot and volume handle scopes are immutable cloned references", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const volume = await client.volumes.create({ name: "immutable-handle" });
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const captured = await source.snapshot();
+
+    for (const handle of [volume, captured.snapshot]) {
+      expect(Object.isFrozen(handle.reference)).toBe(true);
+      expect(Object.isFrozen(handle.reference.scope)).toBe(true);
+      expect(Object.isFrozen(handle.reference.scope.authority)).toBe(true);
+      expect(Object.isFrozen(handle.reference.scope.partition)).toBe(true);
+      expect(Reflect.set(handle.reference.scope.authority, "id", "foreign")).toBe(false);
+      expect(Reflect.set(handle.reference.scope.partition, "endpoint", "foreign")).toBe(false);
+      const persisted = structuredClone(handle.reference);
+      expect(Reflect.set(persisted.scope.authority, "id", "foreign")).toBe(true);
+      expect((await handle.inspect()).reference).toEqual(handle.reference);
+    }
+
+    await source.destroy();
+    await captured.snapshot.delete();
+    await volume.delete();
+    expect(f.calls).toMatchObject({ snapshotDelete: 1, volumeDelete: 1 });
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B unsigned capture tokens cannot acquire owned snapshot references during recovery", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  f.postCaptureRead(() => controller.abort());
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    let failure: unknown;
+
+    try {
+      await source.snapshot(undefined, { signal: controller.signal });
+    } catch (error) {
+      failure = error;
+    }
+
+    if (!(failure instanceof WaitAbortedError)) throw new Error("Expected wait abort with custody");
+    const reference = structuredClone(failure.reference);
+    const token = z.object({ snapshot: ResourceReference }).passthrough().parse(reference.token);
+    const { snapshot: _snapshot, ...unsigned } = token;
+    reference.token = unsigned;
+    await expect((await client.recover(reference)).wait()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+    });
+    expect(f.calls).toMatchObject({ capture: 1, snapshotDelete: 0 });
+  } finally {
+    await client.close();
+  }
+});
