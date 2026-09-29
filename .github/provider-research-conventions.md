@@ -22,7 +22,9 @@ Record the recommendation, its dependency/runtime evidence, and unresolved trade
 
 Honor an explicit user choice or existing accepted distribution decision in [package conventions](../specs/package-conventions.md). If research suggests changing it, state the proposed change separately; applying a label does not migrate an existing adapter. A TypeScript SDK alone does not guarantee a built-in recommendation. Missing optional native features, such as snapshots, do not by themselves force external distribution.
 
-Research readiness in the body is `researching`, `ready`, or `blocked`. Ready means the proposed slice has enough evidence and decisions to implement. Unsupported optional features do not block readiness. Blocked means a required part of that slice cannot proceed; explain why. Link implementation issues/PRs separately.
+Report two independent facts in the body: **research completeness** (`incomplete` / `complete`) and **implementation readiness** (`ready` / `conditional` / `blocked`) for the named slice. A complete brief can identify an unresolved implementation blocker. Ready means no unresolved design/research prerequisite blocks starting that slice; implementation tests still remain. Conditional means a named subset can proceed while other paths await a decision; blocked means the proposed useful slice cannot proceed. Optional unsupported features do not automatically block it. Neither status certifies a released adapter. Link implementation issues/PRs separately.
+
+Separate accepted distribution policy from technical suitability. Evaluate dependencies, runtime requirements and maintenance costs of the chosen transport. SDK dependencies that a proposed REST implementation will not install are costs of an alternative, not that implementation's costs. Record evidence for the actual target recommendation and any proposed policy change.
 
 ## Capability statuses
 
@@ -57,8 +59,10 @@ Use the detailed evidence map for subfeatures. For example, execution can be sup
 
 ## Required issue content
 
-Keep the template's section headings and every capability-summary row. Start with the recommendation and an at-a-glance native capability summary. Each row contains a canonical status, one-line limitation, source IDs and the separate Sandbar mapping (`fits current API`, `contract extension needed`, or `out of scope`). Use `unknown` plus a reason instead of blanks or deleting an unsupported section; unsupported sections need the evidence and adapter consequence, not unanswered boilerplate.
+Keep the template's section headings and every capability-summary row. Include the decision table, minimum useful user workflow, contract compatibility check and concrete recipes for the proposed slice. Highlight product decisions when essential operations are omitted; do not describe a narrower implementation as useful without explaining its user outcome. Start with the recommendation and an at-a-glance native capability summary. Each row contains a canonical status, one-line limitation, source IDs and the separate Sandbar mapping (`fits current API`, `contract extension needed`, or `out of scope`). Use `unknown` plus a reason instead of blanks or deleting an unsupported section; unsupported sections need the evidence and adapter consequence, not unanswered boilerplate.
 
 The detailed map records exact methods/endpoints and per-operation restrictions. Evidence provenance is a separate field: docs, pinned source, or authorized live observation with version/date. Do not use “documented” or “live” as a capability status. Include the target configuration, research date, native/Sandbar versions, default workflow, real options, implementation checklist, validation plan and unresolved questions. Neither labels nor summary rows replace the underlying citations.
+
+Before publication, reconcile the target rationale/label, summary, scope, recipes, contract decisions, readiness and acceptance gates. Required unknowns must appear as named investigations or decisions with the affected operation; merely mentioning them deep in the research does not resolve them.
 
 When dependency evidence changes, update the target rationale and label together; when capability evidence changes, update its summary and details, retain material decisions and explain changed conclusions. Keep private IDs, recovery references, credentials and raw logs out of issues.

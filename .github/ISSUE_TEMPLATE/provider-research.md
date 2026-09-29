@@ -22,14 +22,30 @@ labels: "provider-candidate, target:unknown"
 - Existing accepted distribution decision or proposed change:
 - Existing research, implementation issues or PRs:
 
-## Recommendation and blockers
+## Recommendation and implementation gates
 
-- Research readiness (`researching` / `ready` / `blocked`):
+- Research completeness (`incomplete` / `complete`): explain remaining research gaps. Complete means the brief accounts for the requested scope with evidence or explicit unknowns, not that all questions are resolved.
+- Implementation readiness (`ready` / `conditional` / `blocked`): name the exact slice this applies to and the decisions/investigations required before it can proceed. Tests to run during implementation are separate acceptance gates.
+- Minimum useful adapter: describe one end-to-end user workflow enabled by the proposed first slice, including its limitations.
+- Essential operations omitted from that workflow (such as execution or cleanup), why, and the product decision needed before shipping that reduced scope:
+- Optional capabilities deferred, with reasons; these do not automatically block the useful slice:
 
-- Proposed first usable slice and why:
-- Required capabilities blocked by missing evidence or contract gaps:
-- Native capabilities deliberately unsupported or deferred in this slice:
-- Questions needing a provider answer or an authorized experiment:
+| Decision                          | Recommendation and evidence | Alternatives / tradeoffs | Unresolved question | Blocks which operation or release? | Resolution needed (research, product decision, implementation test, or authorized live experiment) |
+| --------------------------------- | --------------------------- | ------------------------ | ------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Distribution and native transport |                             |                          |                     |                                    |                                                                                                    |
+| Initial usable scope              |                             |                          |                     |                                    |                                                                                                    |
+| Lifecycle and state defaults      |                             |                          |                     |                                    |                                                                                                    |
+| Identity, recovery and cleanup    |                             |                          |                     |                                    |                                                                                                    |
+
+Distinguish accepted project decisions from new recommendations. Base technical packaging rationale on the transport/dependencies actually proposed; describe unused SDK dependencies only as an alternative's cost. Identify specific investigation tasks for gaps instead of leaving the implementer to discover them.
+
+## Contract compatibility
+
+| Proposed behavior / default | Current Sandbar contract (link and revision) | Fits, conflicts, or unknown | Proposed resolution / required decision | Effect on implementation readiness |
+| --------------------------- | -------------------------------------------- | --------------------------- | --------------------------------------- | ---------------------------------- |
+|                             |                                              |                             |                                         |                                    |
+
+Check lifecycle defaults, execution/file fidelity, identity and scope, network guarantees, recovery and deletion for the proposed slice. Native API behavior alone does not choose Sandbar's default: explain required adapter orchestration. Do not silently weaken a contract or claim a prose caveat resolves an identity/safety gap. If a prerequisite cannot be established, name the affected blocked path; do not invent a guarantee.
 
 ## Native capability summary
 
@@ -121,6 +137,12 @@ If unavailable, distinguish no native volume feature from one that cannot fit Sa
 - Ingress/preview URLs, ports, authentication, private networking/tunnels and metadata access:
 - Evidence gaps and bounded positive/negative controls needed to test each proposed guarantee:
 
+## Implementation recipes
+
+For each operation proposed for the initial slice, supply a short call sequence or pseudocode with concrete public inputs (including one image selector for create), native methods/endpoints and request fields, readiness/completion responses, returned identity and scope checks, and failure/timeout/recovery/cleanup behavior. Link to details already documented above instead of repeating them. Examples are proposed/uncompiled unless validated; use placeholders for private IDs and credentials.
+
+If an exact prerequisite or call is unknown, record it as a named investigation in the decision table with its blocking consequence. Unsupported or deferred operations need a reason and future gate, not a speculative implementation recipe.
+
 ## Recovery and implementation handoff
 
 - Proposed adapter configuration/credential separation, stable provider name and public entrypoint:
@@ -140,6 +162,7 @@ If unavailable, distinguish no native volume feature from one that cannot fit Sa
 - For volumes: persistence across compute teardown, reopen/reattach and independent cleanup as applicable:
 - Proposed live budget: resource count, lifetime/wait limits, cleanup ownership, residual-resource reconciliation; authorization status (default: not requested):
 - What is ready to implement, what is conditional, and what remains unverified:
+- Consistency review: title/target rationale/label, capability summary, proposed useful scope, recipes, contract compatibility, readiness and acceptance criteria agree; unresolved blocking decisions are visible above:
 
 ## Sources
 
