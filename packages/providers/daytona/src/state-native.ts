@@ -90,7 +90,17 @@ class TerminalCaptureError extends Error {
   }
 }
 
-const DeleteToken = z.strictObject({ reference: z.json(), accepted: z.boolean() });
+const DeleteToken = z
+  .strictObject({
+    reference: z.json(),
+    accepted: z.boolean(),
+    stage: z.enum(["uncertain", "accepted", "rejected"]).optional(),
+  })
+  .refine((token) => !token.stage || token.accepted === (token.stage === "accepted"));
+
+function canObserveDelete(token: z.infer<typeof DeleteToken>) {
+  return token.accepted || token.stage === "uncertain";
+}
 
 type Fields = Pick<
   AdapterSession,
@@ -507,7 +517,7 @@ export function daytonaState(input: {
       if (ctx.signal.aborted)
         return ctx.reject("UNAVAILABLE", "Deletion cancelled before dispatch");
 
-      await ctx.checkpoint({ reference: ref, accepted: false });
+      await ctx.checkpoint({ reference: ref, accepted: false, stage: "uncertain" });
 
       if (ctx.signal.aborted) return ctx.unknown("Artifact delete cancelled before dispatch");
 
@@ -519,16 +529,33 @@ export function daytonaState(input: {
           { signal: ctx.signal, deadline: Date.now() + 30000 },
         );
 
-        await ctx.checkpoint({ reference: ref, accepted: response.ok });
+        await ctx.checkpoint({
+          reference: ref,
+          accepted: response.ok,
+          stage: response.ok ? "accepted" : response.status >= 500 ? "uncertain" : "rejected",
+        });
 
         if (response.ok)
-          return ctx.pending({ reference: ref, accepted: true }, { pollAfterMs: 500 });
+          return ctx.pending(
+            { reference: ref, accepted: true, stage: "accepted" },
+            { pollAfterMs: 500 },
+          );
 
-        return ctx.pending({ reference: ref, accepted: false }, { pollAfterMs: 500 });
+        return ctx.pending(
+          {
+            reference: ref,
+            accepted: false,
+            stage: response.status >= 500 ? "uncertain" : "rejected",
+          },
+          { pollAfterMs: 500 },
+        );
       } catch (error) {
         if (error instanceof AdapterCheckpointError) throw error;
 
-        return ctx.pending({ reference: ref, accepted: false }, { pollAfterMs: 500 });
+        return ctx.pending(
+          { reference: ref, accepted: false, stage: "uncertain" },
+          { pollAfterMs: 500 },
+        );
       }
     },
     async observe(attempt, ctx) {
@@ -538,8 +565,19 @@ export function daytonaState(input: {
       check(ref);
       const token = DeleteToken.safeParse(attempt.token);
 
-      if (!token.success || !token.data.accepted)
-        return ctx.unknown("Artifact delete acknowledgement is unavailable; no replay");
+      if (!token.success || !canObserveDelete(token.data))
+        return ctx.unknown("Artifact delete dispatch evidence is unavailable; no replay");
+      const saved = ResourceReference.safeParse(token.data.reference);
+
+      if (
+        !saved.success ||
+        saved.data.kind !== ref.kind ||
+        saved.data.provider !== ref.provider ||
+        saved.data.nativeId !== ref.nativeId ||
+        saved.data.generation !== ref.generation
+      )
+        return ctx.unknown("Artifact delete checkpoint identity differs");
+      check(saved.data);
 
       const response = await request(
         "GET",
@@ -552,6 +590,13 @@ export function daytonaState(input: {
 
       if (!response.ok) return ctx.unknown("Deletion is unconfirmed");
 
+      if (kind === "snapshot") {
+        const native = await json(response, NativeSnapshot);
+
+        if (native.id !== ref.nativeId || native.organizationId !== scope.authority.id)
+          return ctx.unknown("Deleted snapshot identity or scope differs");
+      }
+
       if (kind === "volume") {
         const native = await json(response, NativeVolume);
 
@@ -561,7 +606,7 @@ export function daytonaState(input: {
         if (native.state === "deleted") return { deleted: true, reference: ref };
       }
 
-      return ctx.pending({ reference: ref, accepted: true }, { pollAfterMs: 500 });
+      return ctx.pending(token.data, { pollAfterMs: 500 });
     },
   });
 

@@ -29,7 +29,16 @@ const CaptureToken = z.strictObject({
   consistency: z.enum(["crash-consistent", "caller-quiesced", "unknown"]),
 });
 
-const DeleteToken = z.strictObject({ accepted: z.boolean() });
+const DeleteToken = z
+  .strictObject({
+    accepted: z.boolean(),
+    stage: z.enum(["uncertain", "accepted", "rejected"]).optional(),
+  })
+  .refine((token) => !token.stage || token.accepted === (token.stage === "accepted"));
+
+function canObserveDelete(token: z.infer<typeof DeleteToken>) {
+  return token.accepted || token.stage === "uncertain";
+}
 
 const restoreToken = z.strictObject({
   selector: z.string().min(1).max(256),
@@ -541,19 +550,22 @@ export function e2bState(input: {
 
         if (ctx.signal.aborted)
           return ctx.reject("UNAVAILABLE", "Delete cancelled before dispatch");
-        await ctx.checkpoint({ accepted: false });
+        await ctx.checkpoint({ accepted: false, stage: "uncertain" });
 
         if (ctx.signal.aborted) return ctx.unknown("Snapshot delete cancelled before dispatch");
         const accepted = await need().deleteSnapshot(value.nativeId, ctx.signal);
-        await ctx.checkpoint({ accepted });
+        await ctx.checkpoint({ accepted, stage: accepted ? "accepted" : "rejected" });
 
-        return ctx.pending({ accepted }, { pollAfterMs: 0 });
+        return ctx.pending(
+          { accepted, stage: accepted ? "accepted" : "rejected" },
+          { pollAfterMs: 0 },
+        );
       },
       async observe(attempt, ctx) {
         const token = DeleteToken.safeParse(attempt.token);
 
-        if (!attempt.resource || !token.success || !token.data.accepted)
-          return ctx.unknown("Snapshot delete acknowledgement is unavailable; no replay");
+        if (!attempt.resource || !token.success || !canObserveDelete(token.data))
+          return ctx.unknown("Snapshot delete dispatch evidence is unavailable; no replay");
         check(attempt.resource);
 
         if (await need().template(attempt.resource.nativeId))
@@ -815,21 +827,23 @@ export function e2bState(input: {
 
       if (ctx.signal.aborted)
         return ctx.reject("UNAVAILABLE", "Deletion cancelled before dispatch");
-      await ctx.checkpoint({ accepted: false });
+      await ctx.checkpoint({ accepted: false, stage: "uncertain" });
 
       if (ctx.signal.aborted) return ctx.unknown("Volume delete cancelled before dispatch");
+      let stage: "uncertain" | "accepted" | "rejected" = "uncertain";
       let accepted = false;
 
       try {
         accepted = await need().deleteVolume(reference.nativeId, ctx.signal);
-        await ctx.checkpoint({ accepted });
+        stage = accepted ? "accepted" : "rejected";
+        await ctx.checkpoint({ accepted, stage });
       } catch (error) {
         if (error instanceof AdapterCheckpointError) throw error;
 
         /* observe only */
       }
 
-      return ctx.pending({ accepted }, { pollAfterMs: 500 });
+      return ctx.pending({ accepted, stage }, { pollAfterMs: 500 });
     },
     async observe(attempt, ctx) {
       const reference = attempt.resource;
@@ -839,10 +853,8 @@ export function e2bState(input: {
       check(reference);
       const token = DeleteToken.safeParse(attempt.token);
 
-      if (!token.success || !token.data.accepted)
-        return ctx.unknown(
-          "Deletion acknowledgement unavailable; absence alone is not correlated deletion evidence",
-        );
+      if (!token.success || !canObserveDelete(token.data))
+        return ctx.unknown("Deletion dispatch evidence unavailable; no replay");
 
       const values = await need().volumes();
 

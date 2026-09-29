@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter, SnapshotInfo } from "sandbar-adapter";
+import { defineAdapter, SnapshotInfo, ResourceReference } from "sandbar-adapter";
 import {
   Sandbar,
   Image,
@@ -466,7 +466,7 @@ for (const mode of ["pools", "poolsDenied", "sharedSnapshot"] as const) {
   });
 }
 
-test("Daytona lost delete acknowledgement remains unknown despite absence", async () => {
+test("Daytona uncertain delete response reconciles exact artifact absence without replay", async () => {
   const f = fixture();
   const client = await f.connect();
 
@@ -475,10 +475,13 @@ test("Daytona lost delete acknowledgement remains unknown despite absence", asyn
     const result = await source.snapshot();
     f.modes.failedDelete = true;
     const operation = await result.snapshot.submitDelete();
-    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-    await expect((await client.recover(operation.reference)).wait()).rejects.toBeInstanceOf(
-      OutcomeUnknownError,
-    );
+    expect(await operation.wait()).toMatchObject({ deleted: true });
+    expect(await (await client.recover(operation.reference)).wait()).toMatchObject({
+      deleted: true,
+    });
+    const legacy = structuredClone(operation.reference);
+    legacy.token = { reference: result.snapshot.reference, accepted: false };
+    await expect((await client.recover(legacy)).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
     expect(f.calls.delete).toBe(1);
   } finally {
     await client.close();
@@ -737,7 +740,7 @@ for (const mode of [
   "renamed-tombstone",
   "lost-ack",
 ] as const) {
-  test(`Daytona deleted volume tombstone requires acknowledged scoped identity: ${mode}`, async () => {
+  test(`Daytona deleted volume tombstone requires checkpointed scoped identity: ${mode}`, async () => {
     const scope = { authority: { kind: "organization", id: "org" }, partition: { target: "us" } };
     let deleted = false;
     let deletes = 0;
@@ -808,7 +811,7 @@ for (const mode of [
       const volume = await client.volumes.create({ name: "owned" });
       const operation = await volume.submitDelete();
 
-      if (mode === "matching" || mode === "renamed-tombstone") {
+      if (mode === "matching" || mode === "renamed-tombstone" || mode === "lost-ack") {
         expect(await operation.wait()).toMatchObject({ deleted: true });
         await expect(volume.inspect()).rejects.toMatchObject({ code: "NOT_FOUND" });
       } else await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
@@ -1104,8 +1107,10 @@ for (const kind of ["snapshot", "volume"] as const) {
         if (reference.kind !== `${kind}_delete`) return;
         const token = z.object({ accepted: z.boolean() }).safeParse(reference.token);
 
-        if (!token.success) return;
-        saved = JSON.parse(JSON.stringify(reference));
+        if (!token.success) {
+          saved = JSON.parse(JSON.stringify(reference));
+          return;
+        }
         expect(f.calls.delete).toBe(token.data.accepted ? 1 : 0);
 
         if (barrier === "abort-before" && !token.data.accepted) controller.abort();
@@ -1114,6 +1119,7 @@ for (const kind of ["snapshot", "volume"] as const) {
           (barrier === "reject-after" && token.data.accepted)
         )
           throw Error("Persistence unavailable");
+        saved = JSON.parse(JSON.stringify(reference));
       });
 
       try {
@@ -1137,14 +1143,29 @@ for (const kind of ["snapshot", "volume"] as const) {
         }
 
         expect(saved).toBeDefined();
+        if (barrier === "reject-after")
+          expect(saved!.token).toMatchObject({ accepted: false, stage: "uncertain" });
         expect(f.calls.delete).toBe(barrier === "reject-after" ? 1 : 0);
         const reopened = await f.connect(undefined, "rotated-key");
 
         try {
           const recovered = await reopened.recover(saved!);
 
-          if (barrier === "reject-after")
+          if (barrier === "reject-after") {
             expect(await recovered.wait()).toMatchObject({ deleted: true });
+            const mismatched = structuredClone(saved!);
+            const token = z
+              .object({ reference: ResourceReference, accepted: z.boolean(), stage: z.string() })
+              .parse(mismatched.token);
+            token.reference.nativeId = "other-artifact";
+            mismatched.token = token;
+            await expect((await reopened.recover(mismatched)).wait()).rejects.toBeInstanceOf(
+              OutcomeUnknownError,
+            );
+          } else if (barrier === "abort-before")
+            await expect(
+              recovered.wait({ signal: AbortSignal.timeout(30), pollMs: 50 }),
+            ).rejects.toBeInstanceOf(WaitAbortedError);
           else await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
           expect(f.calls.delete).toBe(barrier === "reject-after" ? 1 : 0);
         } finally {
