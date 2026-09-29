@@ -24,6 +24,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
   } | null = null;
 
   const startHook: FixtureStartHook = {};
+  const snapshotHook: FixtureStartHook = {};
 
   const modes = {
     mounted: false,
@@ -39,6 +40,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     slowReads: 0,
     snapshotReads: 0,
     onStart: startHook,
+    onSnapshotRead: snapshotHook,
   };
 
   const calls = { stop: 0, capture: 0, start: 0, delete: 0, poolReads: 0 };
@@ -128,7 +130,10 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
 
         const id = decodeURIComponent(url.pathname.slice("/snapshots/".length));
 
-        if (snapshot) modes.snapshotReads++;
+        if (snapshot) {
+          modes.snapshotReads++;
+          modes.onSnapshotRead.callback?.();
+        }
 
         return snapshot && (snapshot.id === id || snapshot.name === id)
           ? Response.json({
@@ -188,6 +193,9 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     calls,
     modes,
     state: () => state,
+    replaceSnapshot() {
+      if (snapshot) snapshot = { ...snapshot, id: "replacement-artifact" };
+    },
     setState(value: string) {
       state = value;
     },
@@ -549,6 +557,62 @@ test("Daytona stopped-to-running drift cannot violate maxInterruption none", asy
       source.snapshot({ requirements: { maxInterruption: "none" } }),
     ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
     expect(f.calls).toMatchObject({ stop: 0, capture: 0, start: 0 });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona recovery never adopts or authorizes deletion of a replacement captured name", async () => {
+  const f = fixture();
+  f.modes.restartRejected = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    const saved = structuredClone(operation.reference);
+    expect(saved.token).toMatchObject({
+      snapshotId: "snapshot-one",
+      snapshot: { reference: { nativeId: "snapshot-one" } },
+    });
+    f.replaceSnapshot();
+    f.setState("started");
+    const recovered = await client.recover(saved);
+    await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(recovered.reference.token).toMatchObject({
+      snapshot: { reference: { nativeId: "snapshot-one" } },
+    });
+    expect(f.calls).toMatchObject({ capture: 1, start: 1, delete: 0 });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona accepted capture binds the first observed ID before readiness and rejects name reuse", async () => {
+  const f = fixture();
+  f.modes.slowReads = 100;
+  const controller = new AbortController();
+  f.modes.onSnapshotRead.callback = () => controller.abort();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot(undefined, { signal: controller.signal });
+    expect(operation.reference.token).toMatchObject({
+      captureState: "accepted",
+      snapshotId: "snapshot-one",
+    });
+    f.modes.onSnapshotRead.callback = undefined;
+    f.modes.slowReads = 0;
+    f.replaceSnapshot();
+    await expect((await client.recover(operation.reference)).wait()).rejects.toBeInstanceOf(
+      OutcomeUnknownError,
+    );
+    const legacy = JSON.parse(JSON.stringify(operation.reference));
+    delete legacy.token.snapshotId;
+    await expect((await client.recover(legacy)).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(f.calls).toMatchObject({ capture: 1, start: 0, delete: 0 });
   } finally {
     await client.close();
   }

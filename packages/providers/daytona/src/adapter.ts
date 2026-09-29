@@ -653,11 +653,10 @@ export function createDaytonaAdapter(
           const result = await driver.inspect(native(box.id));
 
           if (!result) return null;
-          const detail = await resourceState.box(box.id);
 
           return {
             id: box.id,
-            state: detail.state === "stopped" ? ("stopped" as const) : result.state,
+            state: result.nativeState === "stopped" ? ("stopped" as const) : result.state,
           };
         },
         async inventory(input) {

@@ -916,11 +916,16 @@ export class DaytonaDriver implements ProviderDriver {
       return uncertain("Daytona create response unavailable; observe without replay");
     }
   }
-  async inspect(value: SandboxRef): Promise<SandboxObservation | null> {
+  async inspect(value: SandboxRef): Promise<(SandboxObservation & { nativeState: string }) | null> {
     this.sameScope(value);
     const sandbox = await this.sandbox(value.nativeId);
 
-    return sandbox ? observed(this.scope, sandbox, this.config.configuration.networkPolicy) : null;
+    return sandbox
+      ? {
+          ...observed(this.scope, sandbox, this.config.configuration.networkPolicy),
+          nativeState: sandbox.state,
+        }
+      : null;
   }
   async inventory(input: { scope: NativeScope; cursor?: string; limit: number }) {
     this.sameScope(input.scope);

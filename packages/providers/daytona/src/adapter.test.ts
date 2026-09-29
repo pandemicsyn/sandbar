@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { z } from "zod";
 import { adapterSuite } from "sandbar-adapter/testing";
 import { createDaytonaAdapter } from "./adapter";
-import { Sandbar, Image } from "sandbar-sdk";
+import { Sandbar, Image, AdapterSandbox } from "sandbar-sdk";
 
 test.each([
   "normal",
@@ -998,6 +998,61 @@ test.each(["lost-name", "known-id", "known-id-throw"] as const)(
       expect(builds).toBe(1);
     } finally {
       Date.now = originalNow;
+      await client.close();
+    }
+  },
+);
+
+test.each(["started", "stopped", "destroyed"])(
+  "Daytona inspection maps %s from exactly one native read",
+  async (state) => {
+    let reads = 0;
+
+    const fetchImpl: typeof fetch = Object.assign(
+      async (input: RequestInfo | URL) => {
+        const path = new URL(String(input)).pathname;
+
+        if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (path === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (path === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (path === "/api/sandbox/native-1") {
+          reads++;
+
+          if (reads > 1) return new Response(null, { status: 404 });
+
+          return Response.json({
+            id: "native-1",
+            name: "fixture-box",
+            organizationId: "org-1",
+            target: "us",
+            state,
+            public: false,
+            networkBlockAll: true,
+          });
+        }
+
+        throw new Error("Unexpected fixture route");
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(fetchImpl),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+    try {
+      expect(await new AdapterSandbox(client, "native-1").inspect()).toMatchObject({
+        state: state === "started" ? "running" : state,
+      });
+      expect(reads).toBe(1);
+    } finally {
       await client.close();
     }
   },

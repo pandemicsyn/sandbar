@@ -1,7 +1,13 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
 import { ResourceReference } from "sandbar-adapter";
-import { Sandbar, Image, OutcomeUnknownError, WaitAbortedError } from "sandbar-sdk";
+import {
+  Sandbar,
+  Image,
+  OutcomeUnknownError,
+  WaitAbortedError,
+  type AdapterRecoveryReference,
+} from "sandbar-sdk";
 import { createE2BAdapter } from "./index";
 import { createSdkTransport, type E2BTransport, type E2BRecord } from "./transport";
 
@@ -26,6 +32,7 @@ function fixture() {
   const modes = {
     loseCapture: false,
     loseDelete: false,
+    loseKill: false,
     omitMounts: false,
     betaDenied: false,
     tagsDenied: false,
@@ -76,7 +83,11 @@ function fixture() {
     async kill(id) {
       calls.kill++;
 
-      return boxes.delete(id);
+      const deleted = boxes.delete(id);
+
+      if (modes.loseKill) throw new Error("Lost kill response");
+
+      return deleted;
     },
     async run() {
       throw new Error("No process fixture");
@@ -150,7 +161,7 @@ function fixture() {
     },
   };
 
-  const connect = (apiKey = "fixture-key", onReference?: (ref: { kind: string }) => void) =>
+  const connect = (apiKey = "fixture-key", onReference?: (ref: AdapterRecoveryReference) => void) =>
     Sandbar.connect({
       adapter: createE2BAdapter(() => transport),
       config: {},
@@ -483,6 +494,83 @@ test("E2B cancellation after capture acknowledgement retains generation custody 
 
     expect(f.snapshots.size).toBe(0);
     expect(f.calls.capture).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+for (const lostKill of [false, true]) {
+  test(`E2B explicit compute cleanup survives unavailable volume inventory: lost kill ${lostKill}`, async () => {
+    const f = fixture();
+    const client = await f.connect();
+
+    try {
+      const volume = await client.volumes.create({ name: "cleanup-retained" });
+
+      const box = await client.sandboxes.create({
+        environment: Image.prepared("base"),
+        mounts: [volume.at("/mnt/work")],
+      });
+
+      f.modes.betaDenied = true;
+      f.modes.loseKill = lostKill;
+      await expect(box.destroy()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+      expect(f.calls.kill).toBe(0);
+      const result = await box.destroy({ storage: "allow-unconfirmed" });
+      expect(result).toMatchObject({
+        computeStopped: true,
+        retainedResources: ["e2b-volume-name:cleanup-retained"],
+      });
+      expect(result.mountDurability).toBeUndefined();
+      expect(f.calls.kill).toBe(1);
+      expect(f.boxes.size).toBe(0);
+      expect(f.volumes.size).toBe(1);
+      expect(f.calls.volumeDelete).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("direct custody references recursively freeze capture profiles, resource scope and mount arrays", async () => {
+  const f = fixture();
+  const checked = new Set<string>();
+
+  const client = await f.connect("fixture-key", (reference) => {
+    if (reference.capture) {
+      expect(Object.isFrozen(reference.capture.profile.sourceStates)).toBe(true);
+      expect(Reflect.set(reference.capture.profile, "preserve", "filesystem")).toBe(false);
+      checked.add("capture");
+    }
+
+    if (reference.resource) {
+      expect(Reflect.set(reference.resource.scope.authority, "id", "foreign")).toBe(false);
+      expect(Reflect.set(reference.resource, "nativeId", "replacement")).toBe(false);
+      checked.add("resource");
+    }
+
+    if (reference.mounts?.length) {
+      expect(Reflect.set(reference.mounts[0]!.volume, "nativeId", "replacement")).toBe(false);
+      expect(() => reference.mounts!.push(reference.mounts![0]!)).toThrow(TypeError);
+      checked.add("mounts");
+    }
+  });
+
+  try {
+    const volume = await client.volumes.create({ name: "frozen-custody" });
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const captured = await source.snapshot();
+
+    const mounted = await client.sandboxes.create({
+      environment: Image.prepared("base"),
+      mounts: [volume.at("/mnt/work")],
+    });
+
+    await mounted.destroy({ storage: "allow-unconfirmed" });
+    await source.destroy();
+    await captured.snapshot.delete();
+    await volume.delete();
+    expect([...checked].sort()).toEqual(["capture", "mounts", "resource"]);
   } finally {
     await client.close();
   }

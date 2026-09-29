@@ -8,6 +8,7 @@ import {
   type Scope,
   type ResourceReference,
   type SnapshotInfo,
+  SnapshotInfo as SnapshotInfoSchema,
   type VolumeInfo,
   type ReadContext,
   type CreateInput,
@@ -58,6 +59,7 @@ const Token = z.strictObject({
   initialState: z.enum(["running", "stopped"]),
   restartRequired: z.boolean(),
   stage: z.enum(["stop", "capture", "restart", "complete"]),
+  snapshotId: z.string().min(1).max(512).optional(),
   captureState: z.enum(["not-submitted", "uncertain", "accepted", "completed", "failed"]),
   sourceState: z.enum(["running", "stopped", "unknown"]),
   capture: CaptureFacts,
@@ -376,6 +378,7 @@ export function daytonaState(input: {
     acknowledged: boolean,
     ctx: ReadContext,
     consistency: SnapshotInfo["consistency"] = "unknown",
+    expectedId?: string,
   ) {
     const response = await request("GET", `/snapshots/${encodeURIComponent(name)}`, undefined, ctx);
 
@@ -383,6 +386,7 @@ export function daytonaState(input: {
     const v = await json(response, NativeSnapshot);
 
     if (
+      (expectedId !== undefined && v.id !== expectedId) ||
       v.name !== name ||
       v.sourceSandboxId !== sourceId ||
       v.organizationId !== scope.authority.id ||
@@ -406,7 +410,7 @@ export function daytonaState(input: {
         consistency,
       });
 
-    return info.state === "ready" && acknowledged ? info : null;
+    return acknowledged ? info : null;
   }
 
   async function settledSource(id: string, wanted: "started" | "stopped", ctx: ReadContext) {
@@ -716,12 +720,27 @@ export function daytonaState(input: {
           token.captureState = "accepted";
           let info = await observedCapture(name, source.id, true, context, token.consistency);
 
-          while (!info && !ctx.signal.aborted && Date.now() < context.deadline) {
+          if (info) token.snapshotId = info.reference.nativeId;
+
+          while (
+            (!info || info.state !== "ready") &&
+            !ctx.signal.aborted &&
+            Date.now() < context.deadline
+          ) {
             await new Promise((resolve) => setTimeout(resolve, 250));
-            info = await observedCapture(name, source.id, true, context, token.consistency);
+            info = await observedCapture(
+              name,
+              source.id,
+              true,
+              context,
+              token.consistency,
+              token.snapshotId,
+            );
+
+            if (info) token.snapshotId = info.reference.nativeId;
           }
 
-          if (!info) return pending();
+          if (!info || info.state !== "ready") return pending();
           token.captureState = "completed";
           token.snapshot = JSON.parse(JSON.stringify(info));
           await restart();
@@ -761,6 +780,23 @@ export function daytonaState(input: {
           );
         const token = parsed.data;
 
+        const saved = token.snapshot ? SnapshotInfoSchema.safeParse(token.snapshot) : undefined;
+        const artifactId = saved?.success ? saved.data.reference.nativeId : token.snapshotId;
+
+        if (
+          (token.captureState === "completed" && !saved?.success) ||
+          !artifactId ||
+          (token.snapshotId && token.snapshotId !== artifactId)
+        )
+          return ctx.unknown(
+            "Captured artifact identity missing or inconsistent; names cannot establish ownership",
+          );
+
+        if (saved?.success) {
+          check(saved.data.reference);
+          receipts.owned(saved.data.reference);
+        }
+
         if (token.captureState === "accepted") {
           const captured = await observedCapture(
             token.name,
@@ -768,9 +804,10 @@ export function daytonaState(input: {
             true,
             ctx,
             token.consistency,
+            artifactId,
           );
 
-          if (captured)
+          if (captured?.state === "ready")
             return ctx.pending(
               {
                 ...token,
@@ -794,9 +831,11 @@ export function daytonaState(input: {
           true,
           ctx,
           token.consistency,
+          artifactId,
         );
 
-        if (!info) return ctx.unknown("Acknowledged snapshot is not ready; no replay");
+        if (!info || info.state !== "ready")
+          return ctx.unknown("Acknowledged snapshot is not ready; no replay");
         const source = await box(token.sourceId, ctx);
         const expected = token.restartRequired ? "started" : "stopped";
 

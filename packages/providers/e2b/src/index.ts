@@ -50,6 +50,7 @@ type WriteTokenData = z.infer<typeof WriteToken>;
 
 const DestroyToken = z.strictObject({
   retainedTemplateId: z.string().max(128).optional(),
+  retainedVolumeNames: z.array(z.string().min(1).max(128)).max(32).optional(),
   mountDurability: z.array(importMountDurability).max(32).optional(),
 });
 
@@ -59,6 +60,7 @@ function destroyValue(token: z.infer<typeof DestroyToken>): import("sandbar-adap
     retainedResources: [
       ...(token.retainedTemplateId ? [`e2b-template:${token.retainedTemplateId}`] : []),
       ...(token.mountDurability?.map((mount) => `e2b-volume:${mount.volume.nativeId}`) ?? []),
+      ...(token.retainedVolumeNames?.map((name) => `e2b-volume-name:${name}`) ?? []),
     ],
   };
 
@@ -532,35 +534,47 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             if (ctx.signal.aborted)
               return ctx.unknown("E2B termination was not submitted after cancellation");
 
-            const token: z.infer<typeof DestroyToken> = {
-              mountDurability: await Promise.all(
-                (record.volumeMounts ?? []).map(async (mount) => {
-                  const volumes = await transport.state?.volumes();
-                  const volume = volumes?.find((volume) => volume.name === mount.name);
+            const token: z.infer<typeof DestroyToken> = {};
 
-                  if (!volume)
-                    throw new AdapterError(
-                      "UNAVAILABLE",
-                      "Mounted volume identity unavailable before cleanup",
-                    );
+            if (record.volumeMounts?.length) {
+              // Inventory enriches retained-storage identity; explicit unconfirmed cleanup does not depend on it.
+              let volumes: Awaited<ReturnType<NonNullable<E2BTransport["state"]>["volumes"]>> = [];
 
-                  return {
-                    volume: {
-                      version: 1 as const,
-                      kind: "volume" as const,
-                      provider: "e2b",
-                      scope: boundScope,
-                      nativeId: volume.volumeId,
-                      ownership: "unknown" as const,
-                    },
-                    path: mount.path,
-                    status: "unconfirmed" as const,
-                  };
-                }),
-              ),
-            };
+              try {
+                volumes = (await transport.state?.volumes()) ?? [];
+              } catch {
+                /* Preserve unresolved names below. */
+              }
 
-            if (!token.mountDurability?.length) delete token.mountDurability;
+              token.mountDurability = [];
+              token.retainedVolumeNames = [];
+
+              for (const mount of record.volumeMounts) {
+                const volume = volumes.find((volume) => volume.name === mount.name);
+
+                if (!volume) {
+                  token.retainedVolumeNames.push(mount.name);
+                  continue;
+                }
+
+                token.mountDurability.push({
+                  volume: {
+                    version: 1,
+                    kind: "volume",
+                    provider: "e2b",
+                    scope: boundScope,
+                    nativeId: volume.volumeId,
+                    ownership: "unknown",
+                  },
+                  path: mount.path,
+                  status: "unconfirmed",
+                });
+              }
+
+              if (!token.mountDurability.length) delete token.mountDurability;
+
+              if (!token.retainedVolumeNames.length) delete token.retainedVolumeNames;
+            }
 
             if (record.metadata.sandbar_build) token.retainedTemplateId = record.templateId;
 

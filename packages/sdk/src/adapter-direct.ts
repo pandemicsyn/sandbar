@@ -115,22 +115,22 @@ function canonicalScope(scope: Scope): string {
   });
 }
 
+function freezeReference<T extends object>(value: T): T {
+  for (const child of Object.values(value))
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Parsed recovery references contain only bounded JSON containers and scalar values.
+    if (child !== null && typeof child === "object") freezeReference(child);
+
+  return Object.freeze(value);
+}
+
 function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryReference {
   const parsed = ReferenceSchema.parse(value);
 
   if (JSON.stringify(parsed).length > 16_384)
     throw new SandbarError("INVALID_ARGUMENT", "Recovery reference exceeds 16384 bytes");
   const copy = structuredClone(parsed);
-  Object.freeze(copy.scope.authority);
-  Object.freeze(copy.scope.partition);
-  Object.freeze(copy.scope);
 
-  if (copy.file) Object.freeze(copy.file);
-
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The reference schema parsed a JSON token; freeze only its container variants.
-  if (copy.token && typeof copy.token === "object") Object.freeze(copy.token);
-
-  return Object.freeze(copy);
+  return freezeReference(copy);
 }
 
 function identity() {
