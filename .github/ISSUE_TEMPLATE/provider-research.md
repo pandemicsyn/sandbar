@@ -1,8 +1,8 @@
 ---
-name: Provider research
+name: Provider candidate
 about: Research a sandbox provider and prepare an evidence-backed adapter implementation brief.
-title: "[Provider research] <Official product name>"
-labels: "provider-research, research:researching, native:lifecycle:unknown, native:exec:unknown, native:files:unknown, native:snapshots:unknown, native:volumes:unknown, native:egress:unknown, native:ingress:unknown, native:suspend-resume:unknown, native:recovery:unknown, native:typescript-sdk:unknown, native:observability:unknown"
+title: "[provider-candidate]: <Official product name>"
+labels: "provider-candidate, target:unknown"
 ---
 
 <!-- Use $provider-research to complete this brief. Follow .github/provider-research-conventions.md for exact title, labels and statuses. Replace the title placeholder. Keep unknowns explicit; an issue is not certification or permission to run paid tests. -->
@@ -16,10 +16,15 @@ labels: "provider-research, research:researching, native:lifecycle:unknown, nati
 - Research date and Sandbar commit used for mapping:
 - Provider API version / SDK release or source commit examined:
 - Target configuration: region, account tier, runtime/image class, hosted or self-hosted:
-- Requested adapter scope and distribution (built-in / external / undecided):
+- Requested adapter scope:
+- Distribution target (`builtin` / `external` / `unknown`, matching the target label):
+- Target rationale: TypeScript SDK availability, runtime/CLI/native requirements, transitive dependencies, package size, licensing and transport stability (cite evidence):
+- Existing accepted distribution decision or proposed change:
 - Existing research, implementation issues or PRs:
 
 ## Recommendation and blockers
+
+- Research readiness (`researching` / `ready` / `blocked`):
 
 - Proposed first usable slice and why:
 - Required capabilities blocked by missing evidence or contract gaps:
@@ -28,7 +33,7 @@ labels: "provider-research, research:researching, native:lifecycle:unknown, nati
 
 ## Native capability summary
 
-Use one canonical status per row and the matching `native:<capability>:<status>` label. State limitations and source IDs even for unsupported capabilities. The detailed sections below explain subfeatures and Sandbar implementation gaps. These are researched native capabilities, not live certification.
+Use one canonical status per row: `supported`, `unsupported`, `conditional`, or `unknown`. Capability statuses belong in this table, not labels. State limitations and source IDs even for unsupported capabilities. The detailed sections below explain subfeatures and Sandbar implementation gaps. These are researched native capabilities, not live certification.
 
 | Capability       | Native status | Limitation / evidence | Sandbar mapping |
 | ---------------- | ------------- | --------------------- | --------------- |

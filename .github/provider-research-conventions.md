@@ -4,19 +4,25 @@ Use one research issue per sandbox product, updating it as evidence changes. The
 
 ## Naming
 
-Title: **`[Provider research] <Official product name>`**, for example `[Provider research] Vercel Sandbox`. Use the provider's official capitalization and exact sandbox product name. Do not append status, capability lists or implementation promises to the title. Preserve an established product name unless the provider renames it. Record a stable lowercase hyphenated provider key in the body, reusing an existing adapter name when available; the issue title is a display name, not a package-name reservation.
+Title: **`[provider-candidate]: <Official product name>`**, for example `[provider-candidate]: Vercel Sandbox`. Use the provider's official capitalization and exact sandbox product name. Do not append status, capability lists or implementation promises to the title. Preserve an established product name unless the provider renames it. Record a stable lowercase hyphenated provider key in the body, reusing an existing adapter name when available; the issue title is a display name, not a package-name reservation.
 
 ## Labels
 
-The [label manifest](provider-research-labels.json) defines exact names, descriptions and colors. Apply:
+The [label manifest](provider-research-labels.json) defines exact names, descriptions and colors. Apply `provider-candidate` and exactly one of `target:builtin`, `target:external`, or `target:unknown`. These are the only labels managed by this workflow. Keep capability statuses and research readiness in the issue body.
 
-- `provider-research`.
-- Exactly one of `research:researching`, `research:ready`, `research:blocked`.
-- Exactly one `native:<capability>:<status>` label for each capability below, including unknowns.
+On updates, replace the old target label and preserve unrelated labels. Remove superseded `provider-research`, `research:*` and `native:*` labels from migrated research issues. Do not create provider-specific, capability or research-status labels. The template starts with `provider-candidate` and `target:unknown`. GitHub's Markdown template does not enforce these invariants; check them when filing or updating.
 
-`research:ready` means the proposed slice has enough evidence and decisions to implement. Optional unsupported features do not block readiness. `research:blocked` means a required part of that slice cannot proceed; explain the blocker. These labels do not mean an adapter is implemented, merged or live-qualified. Closing a research issue does not certify an adapter either; link its implementation issue/PR separately.
+## Choose the distribution target
 
-On updates, replace the old label within each managed family and keep unrelated labels. Do not accumulate contradictory statuses, create synonyms or create one label per provider. The template starts with `research:researching` and all native capabilities unknown. The skill applies researched values when filing the completed brief. GitHub's Markdown template does not enforce these invariants; check them when filing or updating.
+Record the recommendation, its dependency/runtime evidence, and unresolved tradeoffs in the issue. The target is a packaging recommendation, not a claim that the adapter is implemented, merged, live-qualified or approved for a release.
+
+- **`target:builtin`**: a maintained usable TypeScript SDK and conventional dependencies fit Sandbar's supported Node/Bun runtimes and bundling. Confirm package size/transitive dependencies, platform requirements, licensing, import behavior and native transport stability before recommending that every SDK installation carry them.
+- **`target:external`**: unusual or heavy dependencies, Python/another runtime, mandatory CLI/native tools, private/version-sensitive transports, or lack of a usable official TypeScript SDK justify a separately installed adapter. Modal is the project's example of an external adapter; cite its actual dependency/transport facts rather than assuming it lacks TypeScript support. No TypeScript SDK defaults to external even when a REST implementation is feasible.
+- **`target:unknown`**: insufficient evidence to choose. Identify what package/runtime/API information would resolve it; do not infer built-in suitability merely from an npm package's existence.
+
+Honor an explicit user choice or existing accepted distribution decision in [package conventions](../specs/package-conventions.md). If research suggests changing it, state the proposed change separately; applying a label does not migrate an existing adapter. A TypeScript SDK alone does not guarantee a built-in recommendation. Missing optional native features, such as snapshots, do not by themselves force external distribution.
+
+Research readiness in the body is `researching`, `ready`, or `blocked`. Ready means the proposed slice has enough evidence and decisions to implement. Unsupported optional features do not block readiness. Blocked means a required part of that slice cannot proceed; explain why. Link implementation issues/PRs separately.
 
 ## Capability statuses
 
@@ -29,7 +35,7 @@ These describe native behavior in the explicitly researched product/configuratio
 | `conditional` | Known partial support or a material prerequisite (tier, region, image class, preview access, etc.) limits the baseline. State exactly what works and what does not.                    |
 | `unknown`     | Evidence is missing, stale or conflicting. State the question and what would resolve it. A capability omitted from the requested research scope remains unknown with that explanation. |
 
-For example, no native snapshot facility is `native:snapshots:unsupported`; documented capture without a restore API is `conditional`; a restore API that could not be located is `unknown`. A native snapshot feature that Sandbar cannot currently express still gets its native status, with `contract extension needed` recorded separately. Apply this distinction to every capability.
+For example, no native snapshot facility is `unsupported`; documented capture without a restore API is `conditional`; a restore API that could not be located is `unknown`. A native snapshot feature that Sandbar cannot currently express still gets its native status, with `contract extension needed` recorded separately. Apply this distinction to every capability.
 
 ## Capability baselines
 
@@ -51,8 +57,8 @@ Use the detailed evidence map for subfeatures. For example, execution can be sup
 
 ## Required issue content
 
-Keep the template's section headings and every capability-summary row. Start with the recommendation and an at-a-glance native capability summary. Each row contains a canonical status, one-line limitation, source IDs and the separate Sandbar mapping (`fits current API`, `contract extension needed`, or `out of scope`). Match its label exactly. Use `unknown` plus a reason instead of blanks or deleting an unsupported section; unsupported sections need the evidence and adapter consequence, not unanswered boilerplate.
+Keep the template's section headings and every capability-summary row. Start with the recommendation and an at-a-glance native capability summary. Each row contains a canonical status, one-line limitation, source IDs and the separate Sandbar mapping (`fits current API`, `contract extension needed`, or `out of scope`). Use `unknown` plus a reason instead of blanks or deleting an unsupported section; unsupported sections need the evidence and adapter consequence, not unanswered boilerplate.
 
 The detailed map records exact methods/endpoints and per-operation restrictions. Evidence provenance is a separate field: docs, pinned source, or authorized live observation with version/date. Do not use “documented” or “live” as a capability status. Include the target configuration, research date, native/Sandbar versions, default workflow, real options, implementation checklist, validation plan and unresolved questions. Neither labels nor summary rows replace the underlying citations.
 
-When evidence changes, update the body and labels together, retain material decisions and explain changed conclusions. Keep private IDs, recovery references, credentials and raw logs out of issues.
+When dependency evidence changes, update the target rationale and label together; when capability evidence changes, update its summary and details, retain material decisions and explain changed conclusions. Keep private IDs, recovery references, credentials and raw logs out of issues.
