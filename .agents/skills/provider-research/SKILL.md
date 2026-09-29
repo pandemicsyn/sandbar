@@ -7,6 +7,12 @@ description: Research a sandbox provider and draft or update a GitHub issue that
 
 Produce a source-backed implementation brief using the repository's [provider research issue template](../../../.github/ISSUE_TEMPLATE/provider-research.md). That template is the canonical research checklist; do not maintain a second provider dossier in specs. Research can conclude that a useful partial adapter is feasible while snapshots or other native features are unavailable.
 
+## Start with a provider link
+
+Before provider research, look for a provider homepage or official documentation URL supplied in the request, earlier conversation, or the existing issue the user asked you to use. If none is available, ask: “Can you share a link to the provider's website or sandbox documentation?” Wait for that link before researching the provider; do not guess which product the user means from its name alone. Do not ask again when a usable link is already supplied.
+
+Open the supplied page to identify the exact sandbox product, then follow its official documentation, API reference and SDK repository links. A homepage is enough to get started; the user does not need to find every technical reference. If the link is inaccessible or leaves the product ambiguous, explain the specific problem and ask for an accessible link or clarification before drawing provider-specific conclusions. Record the starting URL in the issue's provider/docs fields.
+
 ## Standardize the issue
 
 Read the [issue conventions](../../../.github/provider-research-conventions.md) before drafting. Use `[provider-candidate]: <Official product name>`, the stable provider key, every required summary row, and exact labels from the [label manifest](../../../.github/provider-research-labels.json). Classify every capability, not just snapshots: lifecycle, exec, files, volumes, egress, ingress, suspension, recovery, TypeScript SDK and observability all need explicit statuses. Distinguish native support, evidence provenance, Sandbar mapping and research readiness.
