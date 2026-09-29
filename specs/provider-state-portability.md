@@ -10,7 +10,9 @@ Remaining feature slices target the direct SDK and public adapter API. Service p
 
 ## Recommendation
 
-Offer a consistent vocabulary with explicit guarantees and optional provider capabilities. A provider need not support snapshots or volumes to be a valid adapter. Unsupported requests reject before mutation; there is no implicit file-copy snapshot, memory downgrade, provider switch, or mount omission.
+Make `box.snapshot()` the normal capture path. Each adapter selects sensible native defaults and performs the lifecycle steps needed to capture state. Configuration exposes real choices, not permission switches for unavoidable provider mechanics. A provider need not support snapshots or volumes to be a valid adapter. Unsupported requests reject before mutation; there is no implicit file-copy snapshot, provider switch, or mount omission.
+
+The portable contract is the call and resource lifecycle, not identical captured state across providers. A default capture may contain files only on one provider and files plus memory on another. Document that behavior before use and return the actual guarantees with the result. Applications that need stricter guarantees can opt into requirement checks; these remain exact and cannot silently degrade. This supersedes the earlier mandatory `preserve`, pause-only default, and explicit stop-permission design.
 
 Keep four concepts separate:
 
@@ -45,12 +47,16 @@ interface SnapshotProfile {
   interruption: Interruption;
   sourceAfter: SourceAfter;
   connections: "preserved" | "dropped" | "unknown";
-  consistency: "crash-consistent" | "caller-quiesced";
+  consistency: "crash-consistent" | "caller-quiesced" | "unknown";
+  restoreExecution: "fresh" | "resume";
 }
 
 interface StateCapabilities {
   snapshots: {
-    capture: Support<{ profiles: readonly SnapshotProfile[] }>;
+    capture: Support<{
+      profiles: readonly SnapshotProfile[];
+      defaultProfileId: string;
+    }>;
     restore: Support<RestoreCapabilities>;
     inspect: Support<{}>;
     list: Support<{ coverage: "provider-scope" | "sandbar-managed" }>;
@@ -61,22 +67,27 @@ interface StateCapabilities {
 }
 ```
 
-Profiles describe valid combinations. Separate arrays of preservation modes and disruption levels would incorrectly suggest every combination works. Profile IDs are opaque descriptions, not application branching keys.
+Profiles describe valid combinations and include adapter orchestration, not only the raw native capture endpoint. For example, Daytona's default running-container profile includes stop, capture, and restart. `defaultProfileId` selects the profile for the configured adapter and target class/state; unknown target facts produce unknown/unavailable rather than a guessed default. Separate arrays of preservation modes and disruption levels would incorrectly suggest every combination works. Profile IDs are opaque descriptions, not application branching keys.
 
 Expose `await client.capabilities()` for the verified connection and `await box.capabilities()` for the actual sandbox class/state. Preserve the existing command/image/network facts when extending this surface; making the current direct capability getter asynchronous is an intentional API change to review. Implement the direct SDK contract; extending it to the service client is deferred.
 
 `supported` means the adapter implements the stated contract for the checked scope; upstream documentation alone does not qualify it. Publish fixture, packed-consumer, and live evidence separately. Connection capabilities are a dated observation, not a permanent entitlement or reservation. A beta feature without account access is unavailable, not automatically supported. An unimplemented adapter operation is unsupported even if the provider supports it natively. Capture, restore, inventory, and deletion are independently advertised; `RestoreCapabilities` describes enforceable policy, resource, mount, and lifecycle-independence constraints. A restore-only adapter need not support capture.
 
-Provide request-specific, read-only checks such as `box.checkSnapshot(request)` and `client.sandboxes.checkCreate(input)`. Their supported result contains a resolved plan: preservation, disruption, source state after capture, mount handling, restore restrictions, and retention evidence. Unknown facts remain unknown; they cannot satisfy a hard requirement. Running the mutation revalidates that plan's constraints and scope. A check never allocates probe compute, reserves capacity, builds an image, or guarantees a future call will succeed.
+Provide optional request-specific, read-only checks such as `box.checkSnapshot()` and `client.sandboxes.checkCreate(input)`. With no request, resolve the configured native default. Their supported result contains a resolved plan: preservation, disruption, source state after capture, restored process behavior, mount handling, restore restrictions, and retention evidence. Optional hard requirements validate that plan; they do not silently choose another capture mode. Unknown facts remain unknown and cannot satisfy a hard requirement. Running the mutation revalidates that plan's constraints and scope. A check never allocates probe compute, reserves capacity, builds an image, or guarantees a future call will succeed.
 
 ## 2. Snapshot and restore
 
 ```ts
+interface SnapshotRequirements {
+  preserve?: Preservation; // when supplied, exact; not a mode selector
+  maxInterruption?: Interruption;
+  sourceAfter?: SourceAfter;
+  consistency?: "crash-consistent" | "caller-quiesced";
+}
+
 interface SnapshotRequest {
-  preserve: Preservation; // required; exact, never a minimum
-  maxInterruption?: Interruption; // default: "pause"
-  sourceAfter?: SourceAfter; // default: "unchanged"
-  consistency?: "crash-consistent" | "caller-quiesced"; // default: crash-consistent
+  requirements?: SnapshotRequirements; // omitted: accept configured native behavior
+  consistency?: "caller-quiesced"; // caller attests writers were quiesced
   retention?: {
     minimumSeconds?: number;
     cleanupAfterSeconds?: number; // preference, not a durability guarantee
@@ -93,13 +104,19 @@ interface SnapshotHandle {
 
 interface SnapshotResult {
   snapshot: SnapshotHandle;
+  capture: {
+    preserve: Preservation;
+    interruption: Interruption;
+    restoreExecution: "fresh" | "resume";
+  };
   source: { state: SandboxState; connections: "preserved" | "dropped" | "unknown" };
   retainedResources: RetainedArtifact[];
 }
 
 interface SandboxHandle {
-  snapshot(input: SnapshotRequest, options?: WaitOptions): Promise<SnapshotResult>;
-  submitSnapshot(input: SnapshotRequest, options?: WaitOptions): Promise<OperationHandle<SnapshotResult>>;
+  snapshot(input?: SnapshotRequest, options?: WaitOptions): Promise<SnapshotResult>;
+  submitSnapshot(input?: SnapshotRequest, options?: WaitOptions): Promise<OperationHandle<SnapshotResult>>;
+  checkSnapshot(input?: SnapshotRequest): Promise<Support<SnapshotPlan>>;
 }
 
 interface RestoreRequest {
@@ -118,26 +135,85 @@ type RestoreMount =
 
 `SandboxState` expands today's running/destroyed/unknown model to represent observed creating, running, stopped, suspended, restoring, destroying, and destroyed states without guessing when native evidence is incomplete. Wait options retain `AbortSignal` behavior.
 
-Example: accept capture that stops the source, but preserve only files:
+The ordinary workflow is identical across adapters:
 
 ```ts
-const { snapshot, source } = await box.snapshot({
-  preserve: "filesystem",
-  maxInterruption: "stop",
-  sourceAfter: "stopped",
-});
-
+const { snapshot, source, capture } = await box.snapshot();
 const restored = await snapshot.restore({ networkPolicy: "blocked" });
 ```
 
+### Concrete adapter signatures and defaults
+
+These are proposed SDK binding-factory signatures. Existing connection options are retained. Snapshot choices belong to the adapter's typed configuration, also available through `Sandbar.connect({ adapter, config, credentials })`; no provider-name switch belongs in the SDK runtime.
+
+```ts
+// sandbar-sdk/daytona — initial capture implementation: containers
+export function daytona(options: {
+  apiKey: string;
+  target: string;
+  ttlMinutes?: number;
+  networkPolicy?: "blocked" | "daytona-default";
+  snapshots?: {
+    restartAfterCapture?: boolean; // default true; only restart a previously running source
+  };
+}): BoundAdapter;
+
+// sandbar-sdk/e2b
+export function e2b(options: {
+  apiKey: string;
+  teamId?: string;
+  templateId?: string;
+  timeoutSeconds?: number;
+  // No snapshot options: native reusable capture has no memory/pause choice.
+}): BoundAdapter;
+```
+
+```ts
+const daytonaClient = await Sandbar.connect(daytona({
+  apiKey: process.env.DAYTONA_API_KEY!,
+  target: "us",
+})); // snapshot(): stop if running, capture files, restart if previously running
+
+const e2bClient = await Sandbar.connect(e2b({
+  apiKey: process.env.E2B_API_KEY!,
+})); // snapshot(): native files + memory capture, automatic brief pause/resume
+
+const batchClient = await Sandbar.connect(daytona({
+  apiKey: process.env.DAYTONA_API_KEY!,
+  target: "us",
+  snapshots: { restartAfterCapture: false },
+})); // real alternative: leave the source stopped after capture
+```
+
+| Behavior | Daytona containers | E2B reusable snapshots |
+| --- | --- | --- |
+| Default capture | Whole private filesystem, excluding external mounts | Private filesystem plus memory/process state, excluding external mounts |
+| Running source | Adapter stops it, captures, then starts it | Native capture briefly pauses and resumes it |
+| Source already stopped | Capture and leave stopped | Native capture requires a running source; reject before effects |
+| Source processes after capture | Previous processes ended; restart does not recover them | Continue; active connections are dropped |
+| Restored sandbox | Fresh process execution | Captured process execution resumes |
+| Actual configuration choice | `restartAfterCapture: false` leaves a previously running source stopped | None for memory inclusion or automatic pause |
+
+Daytona's native container endpoint requires a stopped source; automatic stop/capture/start is Sandbar adapter orchestration. E2B performs its pause/resume natively. Do not add `allowSourceRestart`, `pauseOnly`, or mandatory `memory: "required"` settings to acknowledge fixed behavior. Daytona VM capture is a separate class-specific implementation: when implemented and qualified, it can expose an actual filesystem/memory selection with cold capture as its default. Do not advertise VM capture merely because the container adapter supports capture.
+
+Applications that need identical guarantees across providers may optionally reject incompatible defaults:
+
+```ts
+await box.snapshot({ requirements: { preserve: "filesystem" } });
+// Daytona container default can satisfy this; E2B reusable capture cannot.
+// Rejection happens before stopping, pausing, or creating any artifact.
+```
+
+The default filesystem scope is the provider's whole private persistent filesystem, not a caller-selected directory. External mounts, pseudo-filesystems, and other native exclusions must be reported; do not promise every path under `/`. A future `workspace.snapshot()` or path-scoped export would be a distinct capability with its own fidelity and consistency contract. Portable workspace storage, automatic archives, and cross-provider transfer are outside this slice.
+
 Behavior:
 
-- Preservation is exact. A memory capture is not an acceptable substitute for filesystem-only: it retains additional state and potentially secrets. A cold restore cannot satisfy a memory requirement.
-- Disruption is bounded independently of preservation. Stopping and restarting to pretend a capture was nondisruptive is prohibited. An already stopped source can remain stopped with `sourceAfter: "unchanged"`; otherwise a stopping capture needs explicit acceptance of its final state.
-- `sourceAfter: "unchanged"` means lifecycle state, not unchanged files or uninterrupted sockets. Connection interruption is reported separately. The adapter must conservatively bound capture disruption; unknown disruption cannot pass a finite requirement.
-- Default consistency is crash consistency only where established by the adapter. `caller-quiesced` requires the caller to stop application writes beforehand; Sandbar does not certify application-level consistency. A provider with insufficient evidence rejects the requested guarantee.
+- No-argument capture accepts the configured native profile, including its memory behavior and lifecycle steps. Explicit preservation requirements remain exact: memory capture cannot substitute for required filesystem-only capture, and cold restore cannot satisfy required memory preservation.
+- Disruption is reported independently of preservation. Stopping and restarting must never be described as nondisruptive. The default restores the source's prior lifecycle state where the adapter can implement it; Daytona containers restart only if running before capture. A provider unable to do this must document its different default and expose only alternatives it actually supports.
+- `sourceAfter: "unchanged"` means lifecycle state, not unchanged files, processes, or sockets. Report process loss and connection interruption separately. Unknown disruption cannot satisfy an explicit finite bound.
+- Default consistency is crash consistency only where established by the adapter. Do not require `caller-quiesced` merely to acknowledge native behavior. It asserts the caller stopped application writes beforehand; Sandbar does not certify application-level consistency. Profiles and artifact metadata must represent unknown consistency honestly where evidence is insufficient, and unknown cannot satisfy a requested guarantee.
 - Restore creates a new logical sandbox with independent private captured state. Resume is a different operation. Neither promises cross-provider portability. Account, region, class, image, resource, and native dependency restrictions travel with the snapshot.
-- `SnapshotInfo` includes exact preservation, source identity/class, excluded paths and mounts, allowed restore overrides, parent/deletion dependencies, creation time, and known expiration behavior. Unknown values are explicit. Expiry can be absolute or idle-based; inspect reports the latest evidence rather than a fictitious permanent timestamp.
+- `SnapshotInfo` includes exact preservation, fresh/resumed process behavior on restore, source identity/class, excluded paths and mounts, allowed restore overrides, parent/deletion dependencies, creation time, and known expiration behavior. These facts travel with the artifact; reopening it with different connection defaults must not reinterpret its captured state. Unknown values are explicit. Expiry can be absolute or idle-based; inspect reports the latest evidence rather than a fictitious permanent timestamp.
 - Minimum retention is a requirement within the documented provider contract, absent explicit deletion. Unknown expiry cannot satisfy it. Cleanup preference must not precede the minimum. Direct mode has no scheduler: requested cleanup is reported as manual unless native expiry enforces it; service scheduling is deferred and must not be assumed.
 - Snapshotting does not capture external volumes by default. Record every exclusion. Restore requires an explicit choice for every captured mount; omission of the map is valid only when there were no mounts. Even read-only live mounts can change externally.
 - Memory restore with mounts is unsupported until the adapter verifies handling of saved mount credentials, caches, sessions, dirty buffers, and writers. Required network restrictions and attachment changes must take effect before resumed code can run. Reject incompatible overrides before restore submission.
@@ -146,6 +222,14 @@ Behavior:
 Add `client.snapshots.get(reference)`, bounded/paginated `list`, and `delete` for supported inventory/cleanup operations. `get` inspects a scoped resource; it does not import ownership or change scope. List results state whether they cover the provider scope or only Sandbar-managed artifacts. Recovering an operation remains separate from opening an existing resource.
 
 Initially use snapshot followed by restore for a fork workflow. A later `box.fork(request)` can use a native clone path only when it honors the same explicit preservation, interruption, mount, independence, and recovery contracts. Native fork availability is independent of reusable-snapshot availability; a provider might support one without the other. Avoid a generic multi-step fallback engine in the first release.
+
+### Source restoration and partial failure
+
+Daytona's default adapter submission records the observed initial state and each stop/capture/start stage. After a confirmed stop of a previously running source, attempt to start it again after either successful capture or a definitive capture failure. `restartAfterCapture: false` leaves it stopped on either path. An already-stopped source is never started by this option.
+
+Do not claim full success until the requested final lifecycle state is confirmed. If capture succeeded but restart failed, preserve and report the snapshot reference, capture completion, observed source state, and restart failure; do not discard the artifact or submit a second capture. Report capture and restart failures separately when both fail. Restarting does not recover former processes or application readiness.
+
+If a stop, capture, or start response is uncertain, retain its stage and recovery evidence. Do not replay it or start the source while capture may still be in progress. Once a definitive safe outcome is established during the active submission, perform the next stage at most once. Observation/recovery remains read-only and cannot later restart the source; if the submission process exits or safe completion cannot be established within its bounded finalization window, report pending/unknown state and any required explicit lifecycle action. Cancellation does not prove remote work stopped; bounded source-restoration cleanup must not repeat an uncertain mutation.
 
 ## 3. Persistent volumes and mount sessions
 
@@ -220,7 +304,7 @@ The adapter omits snapshot operations and reports `snapshots.capture.status: "un
 
 Applications have three explicit choices:
 
-1. Require snapshots and reject this provider before creating compute. Proposed `sandboxes.create({ ..., requirements: { snapshot: request } })` checks the selected image/class and requested future snapshot contract before effects. If those facts require an image build first, return unknown/unavailable; do not run a paid probe build under a read-only check. Callers can explicitly build first and evaluate the prepared result.
+1. Require snapshots and reject this provider before creating compute. Proposed `sandboxes.create({ ..., requirements: { snapshot: {} } })` checks availability of the configured default for the selected image/class before effects. Supply `{ snapshot: { requirements: { preserve: "filesystem" } } }` for a stricter contract. If those facts require an image build first, return unknown/unavailable; do not run a paid probe build under a read-only check. Callers can explicitly build first and evaluate the prepared result.
 2. Make snapshots optional and branch on `checkSnapshot`. Continue without a checkpoint only if the application accepts losing that recovery feature. An unknown/unavailable result is distinct from unsupported and can justify retrying a read-only check.
 3. Choose another explicitly configured provider before allocation. A direct client remains bound to its selected provider. Future service placement can filter eligible connections; it cannot migrate an existing sandbox or restore a foreign snapshot without a separately specified transfer mechanism.
 
@@ -234,7 +318,7 @@ Extend the public adapter contract with optional typed operations for snapshot c
 
 Use the existing `Mutation<Input, Result, Prepared, Token, Resource>` pattern: read-only prepare; one controlled submission with stable identity; read-only observation. Generalize the current sandbox-only resource parameter into a scoped resource reference for artifacts and mounts. Extend the current operation-kind union and direct SDK result plumbing rather than inventing another runner. Preserve existing service cases without adding dispatch for new artifact operations.
 
-Every new mutation gets an explicit submission form backed by `OperationHandle`, including artifact deletion and lifecycle operations; sketches omit repetitive signatures. A multi-stage adapter action such as stop-then-capture records stages without treating later failure as effect-free. Recovery never advances an unfinished mutation stage; it only observes. An explicit subsequent user operation can continue from confirmed state. Direct mode remains process-durable; callers can persist references and use the existing advanced submission lifecycle when they need durable markers. Do not introduce hidden database dependencies. New service operation persistence is deferred.
+Every new mutation gets an explicit submission form backed by `OperationHandle`, including artifact deletion and lifecycle operations; sketches omit repetitive signatures. A multi-stage adapter action such as stop-capture-start records stages without treating later failure as effect-free. The adapter owns its configured default and orchestration; the shared runtime must not branch on provider names. Recovery never advances an unfinished mutation stage; it only observes. An explicit subsequent user operation can continue from confirmed state. Direct mode remains process-durable; callers can persist references and use the existing advanced submission lifecycle when they need durable markers. Do not introduce hidden database dependencies. New service operation persistence is deferred.
 
 `ResourceReference<K>` is versioned, serializable, and includes resource kind, provider, verified scope, native locator, and generation where native names are reusable. Service references also identify their service/project binding. References hold no credentials and confer no authorization. Borrowed artifacts, verified-created artifacts, and artifacts with uncertain ownership remain distinct. Creation provenance must be established from correlated evidence, not a name prefix.
 
@@ -246,9 +330,9 @@ These are documentation-derived design inputs checked September 28, 2026, not Sa
 
 | Provider | Capture semantics relevant to this proposal | Persistent storage | Consequence |
 | --- | --- | --- | --- |
-| Daytona | Containers: filesystem capture from stopped source. Linux VMs: cold filesystem or running filesystem+memory capture; experimental SDK method | Native FUSE/object-backed volumes and subpaths | Class-specific capture profiles; a running container cannot satisfy pause-only filesystem capture |
+| Daytona | Containers: filesystem capture from stopped source. Linux VMs: cold filesystem or running filesystem+memory capture; experimental SDK method | Native FUSE/object-backed volumes and subpaths | Default container adapter stops/captures/restarts a previously running source; optional leave-stopped behavior. VM capture needs separate implementation and qualification |
 | E2B | Reusable captures include filesystem+memory and briefly interrupt connections. Filesystem-only pause is a separate lifecycle operation | Native volumes are private beta | Do not advertise reusable filesystem-only capture based on disk-only pause; gate volumes by access |
-| Vercel | Filesystem snapshots stop the source; persistent logical sandboxes can restart from stored files | No general native volume API established in the documentation reviewed | Require acceptance of stopping; do not claim memory restore; initially leave native volumes unsupported pending evidence |
+| Vercel | Filesystem snapshots stop the source; persistent logical sandboxes can restart from stored files | No general native volume API established in the documentation reviewed | Future adapter must document source lifecycle and implement the simplest supported workflow; do not claim memory restore or native volumes without evidence |
 | Tensorlake | Filesystem and memory snapshots; memory restore fixes image, CPU/memory, and entrypoint | Native versioned filesystems; pinned versions are read-only | Distinct capture/restore profiles and optional volume-version support |
 
 Sources: [Daytona snapshots](https://www.daytona.io/docs/en/snapshots/), [Daytona volumes](https://www.daytona.io/docs/en/volumes/), [E2B snapshots](https://docs.e2b.dev/sandbox/snapshots), [E2B filesystem-only suspension](https://docs.e2b.dev/sandbox/filesystem-only-snapshots), [E2B volumes](https://docs.e2b.dev/volumes), [Vercel snapshots](https://vercel.com/docs/sandbox/concepts/snapshots), [Vercel persistence and auto-resume](https://vercel.com/docs/sandbox/concepts/persistent-sandboxes), [Tensorlake snapshots](https://docs.tensorlake.ai/sandboxes/snapshots), [Tensorlake mounts](https://docs.tensorlake.ai/sandboxes/mount-filesystems).
@@ -256,16 +340,22 @@ Sources: [Daytona snapshots](https://www.daytona.io/docs/en/snapshots/), [Dayton
 ## 8. Implementation sequence and acceptance
 
 1. Add resource references, request-specific capability evaluation, errors, and operation plumbing. Test a minimal adapter with no snapshot/volume concepts; keep today's core operations usable.
-2. Deliver snapshot capture/inspect/restore/delete end to end through the direct SDK with source disruption, retained-resource reporting, and native-boundary coverage. Use deterministic contrasting profiles: stopping filesystem capture, non-stopping memory capture, and no capture support.
+2. Deliver no-argument snapshot capture/inspect/restore/delete end to end through the direct SDK, migrating foundation requirement evaluation to optional strict checks of configured defaults. Include source disruption, retained-resource reporting, and native-boundary coverage. Use deterministic contrasting profiles: stopping filesystem capture with restart, native pause/resume memory capture, and no capture support.
 3. Add native create-time mounts and volume lifecycle. Keep volume versions and dynamic attachments optional. Exercise storage scope, unavailable beta access, failed mount readiness, durability-before-destroy, and explicit unconfirmed cleanup.
 4. Add exact-preservation suspend/resume and timeout control, with execution-generation handling and native auto-resume disabled. Then add one verified volume-version adapter and native forks as justified.
 5. Address resource sizing, richer images, streaming processes, broader files, and network policies as separate focused contracts. Their capabilities should follow the same exact-requirement rules; this proposal does not bundle the entire inventory into one implementation.
 
-Required tests include unsupported-before-mutation; profile combinations that must reject; filesystem-only on a memory-only adapter; stopped source despite failed capture; lost capture/restore/delete responses; expired or foreign references; no implicit fresh sandbox on resume; incompatible policy before memory restore; unpinned external mounts; readonly enforcement; concurrent writers and version identity; unknown ownership; no-replay recovery; and direct SDK recovery across reconnects. Existing service regression coverage must continue to pass; new feature parity is deferred. Qualification must also inspect native retry/auto-resume behavior, not just callback counts. Paid live qualification requires separate authorization.
+Required tests include no-argument defaults; unsupported-before-mutation; explicit filesystem-only requirements on a memory-only adapter; Daytona running-source stop/capture/start, already-stopped capture without start, and leave-stopped configuration; restart after definitive capture failure; retained snapshot on restart failure; uncertain stop/capture/start without replay or unsafe continuation; E2B native pause/resume without redundant lifecycle calls; captured and restored process behavior; lost capture/restore/delete responses; expired or foreign references; no implicit fresh sandbox on resume; incompatible policy before memory restore; unpinned external mounts; readonly enforcement; concurrent writers and version identity; unknown ownership; and direct SDK recovery across reconnects. Existing service regression coverage must continue to pass; new feature parity is deferred. Qualification must also inspect native retry/auto-resume behavior, not just callback counts. Paid live qualification requires separate authorization.
 
-Decisions proposed for review: public name `snapshot`; required exact `preserve`; default pause-only capture with unchanged source lifecycle; explicit restore networking; no automatic degradation; native create-time mounts first; and durability-required destruction for writable mounts. No production exports or provider behavior change with this document.
+Extend the live provider E2E harness and attestation reports for snapshot and volume behavior as part of implementation. Snapshot scenarios must exercise no-argument capture, file isolation after restore, source lifecycle and process behavior, and owned-artifact cleanup. Attest memory continuation when claimed. Volume scenarios must prove persistence across compute replacement and read-only enforcement when advertised. Record exact configuration and provider/class evidence, and distinguish passed, failed, unsupported, blocked, and not-run scenarios. Fixture evidence and documentation are not live certification; follow the existing bounded authorization and qualification workflow.
+
+Each provider's public docs must describe the default capture scope, memory inclusion, source lifecycle and process/connection effects, restored execution behavior, real options and defaults, exclusions, prerequisites, and partial-failure cleanup/recovery. Mark planned behavior separately from implemented and live-qualified behavior. Update these docs with the implementation; capability metadata alone is not sufficient documentation.
+
+Accepted snapshot direction: no-argument `snapshot()` with adapter-owned native defaults; only real configuration choices; Daytona container source restart by default when previously running; optional exact requirement checks; explicit returned capture/restore semantics; no implicit archive or cross-provider fallback. Explicit restore networking, native create-time mounts first, and durability-required destruction for writable mounts remain in the broader proposal. No production exports or provider behavior change with this document.
 
 ## Foundation implementation decisions
+
+This section records the already-merged foundation, including its earlier required-preservation request shape. The next snapshot slice must update that shape and its checks to the optional request/default behavior above; this historical implementation does not override the accepted design.
 
 The first bounded slice exports a version-1 resource reference schema and scope/identity checks, read-only snapshot-profile evaluation, asynchronous capability observations, and create-time snapshot requirements through direct and service clients. Reference ownership is explicit; generations are opaque native evidence and must be supplied for reusable locators. Existing sandbox/image identity APIs and recovery-reference version 2 remain intact. The adapter mutation resource constraint accepts resource references while retaining the legacy sandbox observation field; artifact operation kinds and result dispatch wait for their feature slice.
 

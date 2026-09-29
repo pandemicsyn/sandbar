@@ -33,6 +33,15 @@ output bounds, and atomic no-clobber semantics where advertised. Confirm
 compute termination before reporting success. Release owned clients on
 close without implying that close destroys compute.
 
+When snapshot capture is in scope, follow the current state-portability
+spec at https://github.com/pandemicsyn/sandbar/blob/main/specs/provider-state-portability.md:
+no-argument snapshot() uses sensible native defaults, with required
+lifecycle orchestration owned by the adapter. Expose options only for real
+choices. Document each provider's capture scope, memory inclusion, source
+process/connection effects, restore behavior, options, and partial failures.
+Report actual guarantees; reject unsupported strict requirements before
+effects. Do not emulate snapshots with archives or invent native choices.
+
 For asynchronous work, use read-only prepare, one submit, and read-only
 observe with versioned recovery tokens. A lost response is not proof of
 failure. Recovery must never replay a mutation. Keep secrets and native

@@ -56,3 +56,11 @@ The adapter supports argument arrays and Bash shell scripts, working directory a
 Prepared templates and explicit OCI builds are implemented. Builds can retain a template after sandbox destruction; see [Images and networking](/docs/guides/images-and-networking/). The adapter supports `blocked` and `internet` policies through E2B's native internet-access setting. Region selection is not supported.
 
 Destroy each sandbox explicitly, then close the client. Native timeout is a fallback, not a cleanup confirmation. The [support matrix](/docs/providers/support/) distinguishes live baseline coverage from image-build and network tests.
+
+## Planned runtime snapshot defaults
+
+Runtime capture through `box.snapshot()` is planned, not an available or live-qualified operation in this documented release. The planned E2B adapter needs no snapshot configuration: reusable native snapshots include the private filesystem, memory, and process state. E2B automatically pauses the running source briefly and resumes it; active connections, including command streams and PTYs, are dropped. Restoring creates a new sandbox that resumes captured process state. External volumes are not included in the proposed contract.
+
+There is no memory-exclusion or pause-selection option for this native reusable capture. E2B's filesystem-only pause/resume feature resumes the same logical sandbox and is a different operation. A stopped source is not automatically started for capture. Native reusable snapshots require a running sandbox and a template with envd `v0.5.0` or newer; adapter support must verify the applicable prerequisites. See [E2B snapshots](https://docs.e2b.dev/sandbox/snapshots) and [filesystem-only pause/resume](https://docs.e2b.dev/sandbox/filesystem-only-snapshots).
+
+Applications may optionally require filesystem-only capture, in which case this E2B path must reject before effects. A lost capture response is an uncertain outcome: preserve operation evidence and reconcile without submitting another capture. Retained snapshots need explicit artifact cleanup independent of sandbox destruction. Default capture, resumed processes, connection effects, and artifact cleanup must be covered by implementation and live qualification before this page claims support.
