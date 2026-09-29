@@ -159,15 +159,45 @@ export function daytonaState(input: {
 
     if (body) headers.set("Content-Type", "application/json");
 
-    return input.fetch(input.apiUrl + path, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      redirect: "error",
-      signal: ctx
-        ? AbortSignal.any([ctx.signal, AbortSignal.timeout(Math.max(1, ctx.deadline - Date.now()))])
-        : AbortSignal.timeout(30000),
-    });
+    const signal = ctx
+      ? AbortSignal.any([ctx.signal, AbortSignal.timeout(Math.max(1, ctx.deadline - Date.now()))])
+      : AbortSignal.timeout(30000);
+
+    for (let attempt = 0; ; attempt++) {
+      signal.throwIfAborted();
+
+      const response = await input.fetch(input.apiUrl + path, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        redirect: "error",
+        signal,
+      });
+
+      if (method !== "GET" || attempt >= 2 || ![502, 503, 504].includes(response.status))
+        return response;
+      // Releasing a failed read body must not outlive the caller’s wait bound.
+      void response.body?.cancel().catch(() => undefined);
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => {
+          signal.removeEventListener("abort", abort);
+          clearTimeout(timer);
+          reject(signal.reason);
+        };
+
+        const timer = setTimeout(
+          () => {
+            signal.removeEventListener("abort", abort);
+            resolve();
+          },
+          250 * 2 ** attempt,
+        );
+
+        signal.addEventListener("abort", abort, { once: true });
+
+        if (signal.aborted) abort();
+      });
+    }
   }
 
   async function json<S extends z.ZodType>(response: Response, schema: S): Promise<z.output<S>> {
@@ -175,7 +205,7 @@ export function daytonaState(input: {
       throw new AdapterError(
         response.status === 404
           ? "NOT_FOUND"
-          : response.status === 403
+          : response.status === 403 || [502, 503, 504].includes(response.status)
             ? "UNAVAILABLE"
             : "INTERNAL",
         `Daytona state HTTP ${response.status}`,
@@ -899,6 +929,8 @@ export function daytonaState(input: {
     if (token.captureState === "completed" || token.captureState === "failed") {
       await restart();
       await ctx.checkpoint(token);
+
+      if (ctx.signal.aborted && !finalizeAfterAbort) return pending();
 
       return captureResult(token, ctx);
     }

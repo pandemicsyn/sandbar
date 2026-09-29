@@ -33,6 +33,8 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
   const snapshotHook: FixtureStartHook = {};
   const sourceHook: FixtureStartHook = {};
 
+  const snapshotReadStatuses: number[] = [];
+
   const modes = {
     mounted: false,
     stopLost: false,
@@ -42,6 +44,10 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     restartLost: false,
     restartRejected: false,
     failedDelete: false,
+    failedDeleteStatus: 500,
+    snapshotReadStatuses,
+    snapshotReadAttempts: 0,
+    pendingReadBodyCancel: false,
     poolsDenied: false,
     poolsDisabled: false,
     sharedSnapshot: false,
@@ -148,9 +154,21 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
           calls.delete++;
           snapshot = null;
 
-          return new Response(null, { status: modes.failedDelete ? 500 : 204 });
+          return new Response(null, {
+            status: modes.failedDelete ? modes.failedDeleteStatus : 204,
+          });
         }
 
+        modes.snapshotReadAttempts++;
+        const readStatus = modes.snapshotReadStatuses.shift();
+
+        if (readStatus)
+          return new Response(
+            modes.pendingReadBodyCancel
+              ? new ReadableStream({ cancel: () => new Promise<void>(() => undefined) })
+              : null,
+            { status: readStatus },
+          );
         const id = decodeURIComponent(url.pathname.slice("/snapshots/".length));
 
         if (snapshot) {
@@ -1182,3 +1200,90 @@ for (const kind of ["snapshot", "volume"] as const) {
     });
   }
 }
+
+for (const mode of ["recovers", "exhausted", "cancelled", "cancel-pending-body"] as const) {
+  test(`Daytona snapshot read transient gateway retry is bounded: ${mode}`, async () => {
+    const f = fixture();
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const artifact = (await source.snapshot()).snapshot;
+      const before = f.modes.snapshotReadAttempts;
+      f.modes.pendingReadBodyCancel = mode === "cancel-pending-body";
+      f.modes.snapshotReadStatuses = mode === "recovers" ? [502, 503] : [502, 503, 504];
+
+      if (mode === "recovers") expect(await artifact.inspect()).toMatchObject({ state: "ready" });
+      else if (mode === "exhausted")
+        await expect(artifact.inspect()).rejects.toMatchObject({ code: "UNAVAILABLE" });
+      else
+        await expect(artifact.inspect({ signal: AbortSignal.timeout(30) })).rejects.toBeDefined();
+      expect(f.modes.snapshotReadAttempts - before).toBe(mode.startsWith("cancel") ? 1 : 3);
+      expect(f.calls.capture).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("Daytona gateway DELETE failure never repeats the mutation", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const artifact = (await source.snapshot()).snapshot;
+    f.modes.failedDelete = true;
+    f.modes.failedDeleteStatus = 502;
+    expect(await artifact.delete()).toMatchObject({ deleted: true });
+    expect(f.calls.delete).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona native state read aborts even when gateway body cancellation never settles", async () => {
+  const scope = { authority: { kind: "organization", id: "org" }, partition: { target: "us" } };
+  let reads = 0;
+
+  // SAFETY: The deterministic fixture implements fetch and preconnect without native provider access.
+  const fetcher = Object.assign(
+    async (_value: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("GET");
+      reads++;
+
+      return new Response(
+        new ReadableStream({ cancel: () => new Promise<void>(() => undefined) }),
+        {
+          status: 502,
+        },
+      );
+    },
+    { preconnect() {} },
+  ) as typeof fetch;
+
+  const state = daytonaState({
+    scope,
+    apiUrl: "https://fixture.invalid",
+    apiKey: "fixture",
+    target: "us",
+    fetch: fetcher,
+  });
+
+  const reference = ResourceReference.parse({
+    version: 1,
+    kind: "snapshot",
+    provider: "daytona",
+    scope,
+    nativeId: "snap",
+    ownership: "unknown",
+  });
+
+  await expect(
+    state.fields.snapshotInspect!(reference, {
+      signal: AbortSignal.timeout(30),
+      deadline: Date.now() + 1000,
+    }),
+  ).rejects.toBeDefined();
+  expect(reads).toBe(1);
+});
