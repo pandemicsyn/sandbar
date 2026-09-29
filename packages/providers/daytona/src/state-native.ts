@@ -576,12 +576,30 @@ export function daytonaState(input: {
     );
   }
 
-  async function captureResult(token: z.infer<typeof Token>, ctx: ObserveContext | AttemptContext) {
+  async function captureResult(
+    token: z.infer<typeof Token>,
+    ctx: ObserveContext | AttemptContext,
+    captureObserved = false,
+  ) {
     const pending = () => ctx.pending(token, { pollAfterMs: 500 });
+
+    const saved = SnapshotInfoSchema.safeParse(token.snapshot);
+
+    if (
+      token.captureState === "accepted" &&
+      captureObserved &&
+      saved.success &&
+      token.snapshotId &&
+      saved.data.reference.nativeId === token.snapshotId &&
+      history.read(saved.data.reference)
+    ) {
+      check(saved.data.reference);
+
+      return pending();
+    }
 
     if (token.captureState !== "completed")
       return ctx.unknown(token.captureFailure ?? "Capture outcome remains uncertain");
-    const saved = SnapshotInfoSchema.safeParse(token.snapshot);
 
     if (!saved.success || !token.snapshotId || saved.data.reference.nativeId !== token.snapshotId)
       return ctx.unknown("Captured artifact identity missing");
@@ -625,6 +643,7 @@ export function daytonaState(input: {
   }
 
   async function reconcileCapture(token: z.infer<typeof Token>, ctx: ReadContext) {
+    let captureObserved = false;
     const source = await box(token.sourceId, ctx);
     token.sourceState =
       source.state === "started" ? "running" : source.state === "stopped" ? "stopped" : "unknown";
@@ -650,7 +669,7 @@ export function daytonaState(input: {
         saved.data.reference.nativeId !== token.snapshotId ||
         !history.read(saved.data.reference)
       )
-        return token;
+        return { token, captureObserved };
 
       try {
         const info = await observedCapture(
@@ -663,6 +682,7 @@ export function daytonaState(input: {
         );
 
         if (info) {
+          captureObserved = true;
           token.snapshotId = info.reference.nativeId;
           token.snapshot = JSON.parse(JSON.stringify(info));
           token.captureState = info.state === "ready" ? "completed" : "accepted";
@@ -676,7 +696,7 @@ export function daytonaState(input: {
       }
     }
 
-    return token;
+    return { token, captureObserved };
   }
 
   async function runCaptureStages(
@@ -1090,11 +1110,11 @@ export function daytonaState(input: {
         )
           return ctx.unknown("Capture stage correlation missing");
         const before = JSON.stringify(parsed.data);
-        const token = await reconcileCapture(parsed.data, ctx);
+        const { token, captureObserved } = await reconcileCapture(parsed.data, ctx);
 
         if (JSON.stringify(token) !== before) return ctx.pending(token, { pollAfterMs: 500 });
 
-        return captureResult(token, ctx);
+        return captureResult(token, ctx, captureObserved);
       },
       async continue(attempt, ctx) {
         const parsed = Token.safeParse(attempt.token);
@@ -1109,11 +1129,13 @@ export function daytonaState(input: {
 
         if (ctx.signal.aborted) return ctx.unknown("Continuation cancelled before dispatch");
 
-        const token = await reconcileCapture(parsed.data, {
+        const { token, captureObserved } = await reconcileCapture(parsed.data, {
           signal: ctx.signal,
           deadline: Date.now() + 30000,
         });
 
+        if (token.captureState === "accepted" && !captureObserved)
+          return ctx.unknown("Acknowledged capture identity is no longer positively observed");
         await ctx.checkpoint(token);
 
         return runCaptureStages(token, ctx, false);

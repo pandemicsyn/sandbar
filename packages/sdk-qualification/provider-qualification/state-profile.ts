@@ -336,9 +336,34 @@ export async function runState(
 
           role = "snapshot/capture";
 
-          const result = await wait(
-            await source.submitSnapshot(undefined, { signal: options.signal }),
-          );
+          const captureOperation = await source.submitSnapshot(undefined, {
+            signal: options.signal,
+          });
+
+          const finishCapture = async () => {
+            try {
+              return await wait(captureOperation);
+            } catch (error) {
+              const restart = z
+                .object({
+                  captureState: z.literal("completed"),
+                  restartState: z.literal("not-submitted"),
+                })
+                .safeParse(captureOperation.reference.token);
+
+              if (
+                !(error instanceof OutcomeUnknownError) ||
+                !restart.success ||
+                options.signal.aborted
+              )
+                throw error;
+              await captureOperation.continue({ signal: options.signal });
+
+              return await wait(captureOperation);
+            }
+          };
+
+          const result = await finishCapture();
 
           const expected =
             plan.value.profile.sourceAfter === "unchanged"

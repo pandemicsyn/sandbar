@@ -1054,3 +1054,34 @@ for (const rejectCheckpoint of [false, true]) {
     },
   );
 }
+
+test("acknowledged native capture still in progress remains pending without replay or restart", async () => {
+  const f = fixture();
+  f.modes.slowReads = 1000000;
+  const originalNow = Date.now;
+  let offset = 0;
+  Date.now = () => originalNow() + offset;
+  f.modes.onSnapshotRead.callback = () => {
+    offset = 61000;
+  };
+
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    Date.now = originalNow;
+    f.modes.onSnapshotRead.callback = undefined;
+    await expect(
+      (await client.recover(operation.reference)).wait({
+        signal: AbortSignal.timeout(100),
+        pollMs: 50,
+      }),
+    ).rejects.toBeInstanceOf(WaitAbortedError);
+    expect(operation.reference.token).toMatchObject({ captureState: "accepted" });
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 0 });
+  } finally {
+    Date.now = originalNow;
+    await client.close();
+  }
+});

@@ -343,20 +343,7 @@ const exercise = async () => {
       borrowedVolume,
     });
   else if (action === "reconcile" && saved?.stateMode === "live-state") {
-    const connected = await factory(async (reference) =>
-      ledger.update((value) => ({
-        ...value,
-        stateMutations: [
-          ...(value.stateMutations ?? []),
-          {
-            role: value.stateRole ?? "reconcile/delete",
-            reference,
-            cleanup: "not-required",
-            creation: false,
-          },
-        ],
-      })),
-    );
+    const connected = await factory((reference) => ledger.saveStateReference(reference));
 
     try {
       steps = await ledger.withLock(() =>

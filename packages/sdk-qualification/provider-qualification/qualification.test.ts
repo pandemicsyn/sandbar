@@ -687,3 +687,70 @@ test("unselected scenarios do not inherit snapshot or volume configuration", () 
 
   expect(sample.configuration.stateProbe).toBe("snapshot-roundtrip-v3");
 });
+
+test("state reconciliation checkpoints update original custody without exhausting the mutation bound", async () => {
+  const store = await ledger();
+  await store.update((value) => ({
+    ...value,
+    stateMutations: [{ role: "snapshot/capture", reference, creation: true, cleanup: "pending" }],
+  }));
+
+  for (let stage = 0; stage < 70; stage++)
+    await store.saveStateReference({ ...reference, tokenVersion: 1, token: { stage } });
+  const state = await store.read();
+
+  expect(state.stateMutations).toHaveLength(1);
+  expect(state.stateMutations?.[0]).toMatchObject({
+    role: "snapshot/capture",
+    creation: true,
+    cleanup: "pending",
+    reference: { token: { stage: 69 } },
+  });
+});
+
+test("full legacy checkpoint ledger normalizes custody before recording new cleanup", async () => {
+  const store = await ledger();
+  await store.update((value) => ({
+    ...value,
+    stateMutations: Array.from({ length: 64 }, (_, stage) => ({
+      role: stage === 0 ? "snapshot/capture" : "reconcile/delete",
+      reference: { ...reference, token: { stage } },
+      creation: stage === 0,
+      cleanup: stage === 0 ? "pending" : "not-required",
+      sandboxId: "original",
+    })),
+  }));
+  await store.saveStateReference({ ...reference, token: { stage: 64 } });
+  await store.saveStateReference({
+    ...reference,
+    kind: "destroy",
+    operationId: "delete-op",
+    submissionId: "delete-sub",
+    invocationKey: "delete-inv",
+    sandboxId: "original",
+  });
+  const state = await store.read();
+
+  expect(state.stateMutations).toHaveLength(2);
+  expect(state.stateMutations?.[0]).toMatchObject({
+    role: "snapshot/capture",
+    creation: true,
+    cleanup: "pending",
+    sandboxId: "original",
+    reference: { token: { stage: 64 } },
+  });
+  expect(state.stateMutations?.[1]).toMatchObject({
+    creation: false,
+    reference: { kind: "destroy" },
+  });
+  await expect(store.saveStateReference({ ...reference, provider: "e2b" })).rejects.toThrow(
+    "identity conflicts",
+  );
+  await expect(
+    store.saveStateReference({
+      ...reference,
+      scope: { authority: { kind: "app", id: "foreign" }, partition: {} },
+    }),
+  ).rejects.toThrow("identity conflicts");
+  expect((await store.read()).stateMutations).toHaveLength(2);
+});
