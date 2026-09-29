@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { z } from "zod";
 import { adapterSuite } from "sandbar-adapter/testing";
 import { createDaytonaAdapter } from "./adapter";
-import { Sandbar, Image, AdapterSandbox } from "sandbar-sdk";
+import { Sandbar, Image, AdapterSandbox, OutcomeUnknownError } from "sandbar-sdk";
 
 test.each([
   "normal",
@@ -1250,3 +1250,121 @@ test.each([
     await client.close();
   }
 });
+
+test.each(["immediate", "pending", "lost"] as const)(
+  "mounted create reuses one native detail per observation: %s",
+  async (mode) => {
+    let name = "";
+    let labels: Record<string, string> = {};
+    let detailReads = 0;
+    let creates = 0;
+
+    const native = (state = "started") => ({
+      id: "mounted-box",
+      name,
+      labels,
+      state,
+      organizationId: "org-1",
+      target: "us",
+      networkBlockAll: true,
+      public: false,
+      volumes: [{ volumeId: "volume-1", mountPath: "/mnt/data", subpath: "fixture" }],
+    });
+
+    const fetcher = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const route = url.pathname;
+        const method = init?.method ?? "GET";
+
+        if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (route === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (route === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (route === "/api/snapshots/base")
+          return Response.json({
+            id: "base",
+            organizationId: "org-1",
+            state: "active",
+            general: true,
+            regionIds: ["us"],
+            sandboxClass: "container",
+          });
+
+        if (route.startsWith("/api/volumes/by-name/")) return new Response(null, { status: 404 });
+
+        if (route === "/api/volumes" || route === "/api/volumes/volume-1")
+          return Response.json({
+            id: "volume-1",
+            name: "fixture-volume",
+            organizationId: "org-1",
+            state: "ready",
+          });
+
+        if (route === "/api/sandbox" && method === "POST") {
+          const body = z
+            .object({ name: z.string(), labels: z.record(z.string(), z.string()) })
+            .parse(JSON.parse(String(init?.body)));
+
+          name = body.name;
+          labels = body.labels;
+          creates++;
+
+          if (mode === "lost") throw new Error("Lost create acknowledgement");
+
+          return Response.json(native(mode === "pending" ? "starting" : "started"));
+        }
+
+        if (route === "/api/sandbox") return Response.json({ items: [native()] });
+
+        if (route === "/api/sandbox/mounted-box") {
+          detailReads++;
+
+          if (detailReads > (mode === "pending" ? 2 : 1))
+            throw new Error("Redundant detail read failed");
+
+          return Response.json(
+            native(mode === "pending" && detailReads === 1 ? "starting" : "started"),
+          );
+        }
+
+        throw new Error(`Unexpected route ${route}`);
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(fetcher),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+    try {
+      const volume = await client.volumes.create({ name: "fixture-volume" });
+      const mounts = [volume.at("/mnt/data", { subpath: "fixture" })];
+
+      const operation = await client.sandboxes.submitCreate({
+        environment: Image.prepared("base"),
+        mounts,
+      });
+
+      if (mode === "lost")
+        await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+
+      const box =
+        mode === "lost"
+          ? await (await client.recover(operation.reference)).wait()
+          : await operation.wait();
+
+      expect(box).toMatchObject({ id: "mounted-box" });
+      expect(creates).toBe(1);
+      expect(detailReads).toBe(mode === "pending" ? 2 : 1);
+    } finally {
+      await client.close();
+    }
+  },
+);

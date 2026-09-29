@@ -20,6 +20,7 @@ function fixture() {
   let extraTag = false;
   let postCaptureRead: (() => void) | undefined;
   let inventoryBarrier: (() => Promise<void>) | undefined;
+  let getBarrier: (() => Promise<void>) | undefined;
 
   const calls = {
     create: 0,
@@ -68,6 +69,8 @@ function fixture() {
       return id;
     },
     async get(id) {
+      await getBarrier?.();
+
       if (calls.capture) postCaptureRead?.();
 
       const box = boxes.get(id);
@@ -192,6 +195,9 @@ function fixture() {
     postCaptureRead(value: () => void) {
       postCaptureRead = value;
     },
+    getBarrier(value: () => Promise<void>) {
+      getBarrier = value;
+    },
     inventoryBarrier(value: () => Promise<void>) {
       inventoryBarrier = value;
     },
@@ -293,8 +299,8 @@ test("E2B mounted compute requires explicit unconfirmed durability and retains i
   expect(f.calls.kill).toBe(0);
   const result = await box.destroy({ storage: "allow-unconfirmed" });
   expect(result.computeStopped).toBe(true);
-  expect(result.mountDurability?.[0]?.status).toBe("unconfirmed");
-  expect(result.retainedResources).toContain(`e2b-volume:${volume.reference.nativeId}`);
+  expect(result.mountDurability).toBeUndefined();
+  expect(result.retainedResources).toEqual(["e2b-volume-name:fixture-volume"]);
   expect(f.volumes.size).toBe(1);
   await volume.delete();
   expect(f.volumes.size).toBe(0);
@@ -375,7 +381,7 @@ test("pinned native volume/tag inventory is byte bounded before parsing", async 
   expect(cancelled).toBe(2);
 });
 
-test("E2B mounted destroy cannot dispatch kill after abort during inventory", async () => {
+test("E2B mounted destroy cannot dispatch kill after abort during native observation", async () => {
   const f = fixture();
   const client = await f.connect();
   const volume = await client.volumes.create({ name: "fixture-abort" });
@@ -394,7 +400,7 @@ test("E2B mounted destroy cannot dispatch kill after abort during inventory", as
     release = resolve;
   });
 
-  f.inventoryBarrier(async () => {
+  f.getBarrier(async () => {
     entered();
     await barrier;
   });
@@ -743,6 +749,29 @@ test("E2B old pending restore cannot confirm a reassigned native build", async (
       OutcomeUnknownError,
     );
     expect(f.calls.create).toBe(2);
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B cleanup never adopts a replacement volume with a reused mount name", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const original = await client.volumes.create({ name: "reused-mount" });
+    const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+    f.boxes.get(box.id)!.volumeMounts = [{ path: "/mnt/data", name: "reused-mount" }];
+    await original.delete();
+    const replacement = await client.volumes.create({ name: "reused-mount" });
+    const result = await box.destroy({ storage: "allow-unconfirmed" });
+    expect(result.retainedResources).toEqual(["e2b-volume-name:reused-mount"]);
+    expect(result.mountDurability).toBeUndefined();
+    expect(result.retainedResources).not.toContain(`e2b-volume:${replacement.reference.nativeId}`);
+    expect(f.volumes.has(replacement.reference.nativeId)).toBe(true);
+    expect(f.calls.kill).toBe(1);
+    expect(f.calls.volumeDelete).toBe(1);
+    await replacement.delete();
   } finally {
     await client.close();
   }

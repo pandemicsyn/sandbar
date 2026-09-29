@@ -67,6 +67,15 @@ const NativeSandbox = z.object({
   toolboxProxyUrl: z.url().optional(),
   snapshot: z.string().optional(),
   labels: z.record(z.string(), z.string()).optional(),
+  volumes: z
+    .array(
+      z.object({
+        volumeId: z.string(),
+        mountPath: z.string(),
+        subpath: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 const ListedSandbox = NativeSandbox.omit({ networkBlockAll: true, public: true });
@@ -115,6 +124,8 @@ export type DaytonaInput = {
 type Config = z.infer<typeof Input>;
 
 type Sandbox = z.infer<typeof NativeSandbox>;
+
+type DaytonaCreateResult = DriverResult & { nativeSandbox?: Sandbox };
 
 type DaytonaInventoryPage = Awaited<ReturnType<ProviderDriver["inventory"]>>;
 
@@ -726,7 +737,7 @@ export class DaytonaDriver implements ProviderDriver {
     labels?: Record<string, string>;
     mounts?: import("sandbar-adapter").MountSpec[];
     signal?: AbortSignal;
-  }): Promise<DriverResult> {
+  }): Promise<DaytonaCreateResult> {
     this.sameScope(input.scope);
 
     if ("sandbar.imageSnapshot" in (input.labels ?? {}))
@@ -878,28 +889,19 @@ export class DaytonaDriver implements ProviderDriver {
       )
         return uncertain("Daytona sandbox snapshot identity is unconfirmed");
 
-      if (input.mounts?.length) {
-        const actual = await this.request("GET", `/sandbox/${encodeURIComponent(value.id)}`);
+      let mountDetail: Sandbox | null = null;
 
-        const checked = await boundedJson(
-          actual,
-          z.object({
-            id: z.string(),
-            volumes: z.array(
-              z.object({
-                volumeId: z.string(),
-                mountPath: z.string(),
-                subpath: z.string().optional(),
-              }),
-            ),
-          }),
-        );
+      if (input.mounts?.length) {
+        mountDetail = await this.sandbox(value.id);
 
         if (
-          checked.id !== value.id ||
+          !mountDetail ||
+          mountDetail.name !== name ||
+          mountDetail.labels?.["sandbar.submission"] !== input.identity.submissionId ||
+          mountDetail.labels?.["sandbar.operation"] !== input.identity.operationId ||
           input.mounts.some(
             (mount) =>
-              !checked.volumes.some(
+              !mountDetail!.volumes?.some(
                 (attached) =>
                   attached.volumeId === mount.volume.nativeId &&
                   attached.mountPath === mount.path &&
@@ -910,17 +912,24 @@ export class DaytonaDriver implements ProviderDriver {
           return uncertain("Native mount readiness/identity is unconfirmed");
       }
 
-      const observation = observed(this.scope, value, this.config.configuration.networkPolicy);
+      const nativeSandbox = mountDetail ?? value;
 
-      if (["destroyed", "error", "build_failed"].includes(value.state))
+      const observation = observed(
+        this.scope,
+        nativeSandbox,
+        this.config.configuration.networkPolicy,
+      );
+
+      if (["destroyed", "error", "build_failed"].includes(nativeSandbox.state))
         return uncertain("Daytona sandbox did not reach running state");
 
-      if (["stopped", "paused", "archived"].includes(value.state))
+      if (["stopped", "paused", "archived"].includes(nativeSandbox.state))
         return {
           status: "completed",
           effect: "applied",
           submissionId: input.identity.submissionId,
           value: { kind: "sandbox", observation },
+          nativeSandbox,
         };
 
       if (observation.state !== "running")
@@ -936,6 +945,7 @@ export class DaytonaDriver implements ProviderDriver {
         effect: "applied",
         submissionId: input.identity.submissionId,
         value: { kind: "sandbox", observation },
+        nativeSandbox,
       };
     } catch {
       return uncertain("Daytona create response unavailable; observe without replay");
@@ -988,7 +998,7 @@ export class DaytonaDriver implements ProviderDriver {
     submissionId: string;
     operationId?: string;
     expectedSnapshotId?: string;
-  }): Promise<DriverResult | null> {
+  }): Promise<DaytonaCreateResult | null> {
     this.sameScope(input.scope);
     const name = `sandbar-${input.submissionId}`;
 
@@ -1073,6 +1083,7 @@ export class DaytonaDriver implements ProviderDriver {
         effect: "applied",
         submissionId: input.submissionId,
         value: { kind: "sandbox", observation },
+        nativeSandbox: detail,
       };
 
     if (observation.state !== "running")
@@ -1088,6 +1099,7 @@ export class DaytonaDriver implements ProviderDriver {
       effect: "applied",
       submissionId: input.submissionId,
       value: { kind: "sandbox", observation },
+      nativeSandbox: detail,
     };
   }
   async exec(input: {

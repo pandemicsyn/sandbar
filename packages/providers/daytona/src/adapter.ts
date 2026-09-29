@@ -443,32 +443,29 @@ export function createDaytonaAdapter(
             };
           },
           async submit(input, ctx) {
-            const result = createResult(
-              await driver.create({
-                scope,
-                identity: identity(ctx),
-                image: input.image,
-                imageKind: input.imageKind,
-                networkPolicy: input.networkPolicy,
-                labels: input.labels,
-                mounts: input.mounts,
-                signal: ctx.signal,
-              }),
-              ctx,
-            );
+            const nativeResult = await driver.create({
+              scope,
+              identity: identity(ctx),
+              image: input.image,
+              imageKind: input.imageKind,
+              networkPolicy: input.networkPolicy,
+              labels: input.labels,
+              mounts: input.mounts,
+              signal: ctx.signal,
+            });
+
+            const result = createResult(nativeResult, ctx);
 
             if (!("id" in result) || !input.mounts?.length) return result;
 
-            const detail = await resourceState.box(result.id, {
-              signal: ctx.signal,
-              deadline: Date.now() + 30000,
-            });
+            const detail = nativeResult.nativeSandbox;
 
             if (
+              !detail ||
               detail.state !== "started" ||
               input.mounts.some(
                 (mount) =>
-                  !detail.volumes.some(
+                  !detail.volumes?.some(
                     (actual) =>
                       actual.volumeId === mount.volume.nativeId &&
                       actual.mountPath === mount.path &&
@@ -490,13 +487,14 @@ export function createDaytonaAdapter(
             const value = result ? observedCreate(result, ctx, attempt.submissionId) : null;
 
             if (!value || !("id" in value) || !attempt.mounts?.length) return value;
-            const detail = await resourceState.box(value.id, ctx);
+            const detail = result?.nativeSandbox;
 
             if (
+              !detail ||
               detail.state !== "started" ||
               attempt.mounts.some(
                 (mount) =>
-                  !detail.volumes.some(
+                  !detail.volumes?.some(
                     (actual) =>
                       actual.volumeId === mount.volume.nativeId &&
                       actual.mountPath === mount.path &&

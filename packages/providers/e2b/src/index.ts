@@ -512,43 +512,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             const token: z.infer<typeof DestroyToken> = {};
 
             if (record.volumeMounts?.length) {
-              // Inventory enriches retained-storage identity; explicit unconfirmed cleanup does not depend on it.
-              let volumes: Awaited<ReturnType<NonNullable<E2BTransport["state"]>["volumes"]>> = [];
-
-              try {
-                volumes = (await transport.state?.volumes()) ?? [];
-              } catch {
-                /* Preserve unresolved names below. */
-              }
-
-              token.mountDurability = [];
-              token.retainedVolumeNames = [];
-
-              for (const mount of record.volumeMounts) {
-                const volume = volumes.find((volume) => volume.name === mount.name);
-
-                if (!volume) {
-                  token.retainedVolumeNames.push(mount.name);
-                  continue;
-                }
-
-                token.mountDurability.push({
-                  volume: {
-                    version: 1,
-                    kind: "volume",
-                    provider: "e2b",
-                    scope: boundScope,
-                    nativeId: volume.volumeId,
-                    ownership: "unknown",
-                  },
-                  path: mount.path,
-                  status: "unconfirmed",
-                });
-              }
-
-              if (!token.mountDurability.length) delete token.mountDurability;
-
-              if (!token.retainedVolumeNames.length) delete token.retainedVolumeNames;
+              // Native mount observations expose reusable names, never immutable volume IDs.
+              token.retainedVolumeNames = record.volumeMounts.map((mount) => mount.name);
             }
 
             if (record.metadata.sandbar_build) token.retainedTemplateId = record.templateId;
