@@ -118,45 +118,35 @@ function recoverySnapshot(value: unknown): unknown {
       array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null
     )
       throw new Error("Diagnostic reference contains a non-JSON container");
-    const names = Object.getOwnPropertyNames(input);
-
-    if (array) {
-      const length = Object.getOwnPropertyDescriptor(input, "length")?.value;
-
-      if (
-        !Number.isSafeInteger(length) ||
-        length < 0 ||
-        length > remaining ||
-        names.length !== length + 1 ||
-        names.some(
-          (key) =>
-            key !== "length" &&
-            (String(Number(key)) !== key ||
-              !Number.isInteger(Number(key)) ||
-              Number(key) < 0 ||
-              Number(key) >= length),
-        )
-      )
-        throw new Error("Diagnostic reference contains a sparse or oversized array");
-    }
-
     const result: Record<string, unknown> | unknown[] = array ? [] : {};
 
-    for (const key of names) {
-      if (array && key === "length") continue;
-
+    const copyProperty = (key: string) => {
       if (!array) remaining -= key.length;
 
+      if (remaining < 0) throw new Error("Diagnostic reference exceeds its budget");
       const descriptor = Object.getOwnPropertyDescriptor(input, key);
 
       if (!descriptor || !("value" in descriptor))
-        throw new Error("Diagnostic reference contains an accessor");
+        throw new Error("Diagnostic reference contains a non-data entry");
       Object.defineProperty(result, key, {
         value: copy(descriptor.value),
         enumerable: true,
         configurable: true,
         writable: true,
       });
+    };
+
+    if (array) {
+      const length = Object.getOwnPropertyDescriptor(input, "length")?.value;
+
+      if (!Number.isSafeInteger(length) || length < 0 || length > remaining)
+        throw new Error("Diagnostic reference contains an oversized array");
+
+      for (let index = 0; index < length; index++) copyProperty(String(index));
+    } else {
+      for (const key in input) {
+        if (Object.prototype.hasOwnProperty.call(input, key)) copyProperty(key);
+      }
     }
 
     visiting.delete(input);
@@ -581,11 +571,22 @@ export class Telemetry {
           const cancelled =
             options.signal?.aborted || attrs["sandbar.error.code"] === "WAIT_ABORTED";
 
+          const identityAttrs: Attributes =
+            name === "sandbar.wait" ||
+            name === "sandbar.operation.wait" ||
+            name === "sandbar.operation.observe"
+              ? diagnosticAttributes(options.identity)
+              : {};
+
           span.setAttributes({
+            ...identityAttrs,
             "sandbar.call.outcome": cancelled ? "cancelled" : "error",
             "sandbar.effect": state.effect,
             ...attrs,
           });
+
+          if (identityAttrs["sandbar.recovery.available"])
+            span.setAttribute("sandbar.recovery.available", true);
 
           if (!cancelled)
             span.setStatus({ code: SpanStatusCode.ERROR, message: "Sandbar call failed" });

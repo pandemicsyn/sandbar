@@ -1059,3 +1059,133 @@ test("enabled clients keep advanced submission effects separate in pre-submissio
   expect(otherFixture.counts.create).toBe(1);
   await provider.shutdown();
 });
+
+test("diagnostics stop traversing oversized property collections before late getters", async () => {
+  const fixture = fixtureAdapter();
+  const client = await Sandbar.connect({ ...fixture, config: {}, credentials: {}, tracing: false });
+
+  const operation = await client.sandboxes.submitCreate({
+    environment: Image.prepared("CANARY_IMAGE"),
+  });
+
+  const token = Object.fromEntries(
+    Array.from({ length: 20_000 }, (_, index) => [`field_${index}`, index]),
+  );
+
+  let getters = 0;
+  Object.defineProperty(token, "last", {
+    enumerable: true,
+    get() {
+      getters++;
+
+      return "CANARY";
+    },
+  });
+  expect(
+    diagnosticContext({ reference: { ...operation.reference, token } }).recoveryAvailable,
+  ).toBe(false);
+  expect(getters).toBe(0);
+  await client.close();
+});
+
+test("completed exec failures finalize pending and recovered observation/wait spans", async () => {
+  for (const exitCode of [7, null]) {
+    for (const mode of ["convenience", "wait", "observe", "recover"] as const) {
+      const { provider, exporter } = setup();
+      let submissions = 0;
+      let observations = 0;
+
+      const adapter = defineAdapter({
+        name: "terminal-exec-fixture",
+        config: z.strictObject({}),
+        credentials: z.strictObject({}),
+        async connect() {
+          return {
+            scope: { authority: { kind: "fixture", id: "CANARY_SCOPE" }, partition: {} },
+            supports: {
+              images: ["prepared" as const],
+              network: ["blocked" as const],
+              exec: { commands: ["argv" as const], maxOutputBytes: 1024 },
+            },
+            async create() {
+              return { id: "CANARY_BOX", state: "running" as const };
+            },
+            async destroy() {
+              return { computeStopped: true, retainedResources: [] };
+            },
+            exec: {
+              recovery: { version: 1, token: z.strictObject({}) },
+              async submit(_input, ctx) {
+                submissions++;
+
+                return ctx.pending({}, { pollAfterMs: 1 });
+              },
+              async observe() {
+                observations++;
+
+                return {
+                  exitCode,
+                  stdout: new Uint8Array(),
+                  stderr: new Uint8Array(),
+                  truncated: false,
+                };
+              },
+            },
+          };
+        },
+      });
+
+      const client = await Sandbar.connect({
+        adapter,
+        config: {},
+        credentials: {},
+        tracing: { tracerProvider: provider },
+      });
+
+      const box = await client.sandboxes.create({ environment: Image.prepared("CANARY_IMAGE") });
+
+      const input = {
+        command: { kind: "argv" as const, argv: ["CANARY_COMMAND"] },
+        maxOutputBytes: 1024,
+      };
+
+      let error;
+
+      if (mode === "convenience") error = await box.exec(input).catch((failure) => failure);
+      else {
+        const submitted = await box.submitExec(input);
+
+        const operation =
+          mode === "recover" ? await client.recover(submitted.reference) : submitted;
+
+        if (mode === "observe") {
+          expect(await operation.observe()).toBeNull();
+          error = await operation.observe().catch((failure) => failure);
+        } else error = await operation.wait({ pollMs: 50 }).catch((failure) => failure);
+      }
+
+      expect(error.code).toBe(exitCode === null ? "EXIT_STATUS_UNKNOWN" : "NONZERO_EXIT");
+      expect(error.effect).toBe("applied");
+      await client.close();
+
+      const name = {
+        convenience: "sandbar.wait",
+        wait: "sandbar.operation.wait",
+        observe: "sandbar.operation.observe",
+        recover: "sandbar.operation.wait",
+      }[mode];
+
+      const span = safeSpans(exporter)
+        .filter((item) => item.name === name)
+        .at(-1)!;
+
+      expect(span.attributes["sandbar.operation.state"]).toBe("completed");
+      expect(span.attributes["sandbar.effect"]).toBe("applied");
+      expect(span.attributes["sandbar.recovery.available"]).toBe(true);
+      expect(span.status.code).toBe(SpanStatusCode.ERROR);
+      expect(submissions).toBe(1);
+      expect(observations).toBe(1);
+      await provider.shutdown();
+    }
+  }
+});
