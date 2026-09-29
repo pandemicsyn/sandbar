@@ -496,6 +496,44 @@ test("E2B snapshot deletion cannot dispatch through a shared template", async ()
   await client.close();
 });
 
+test.each(["verified-created", "borrowed"] as const)(
+  "E2B forged %s history cannot widen deletion to another build",
+  async (ownership) => {
+    const f = fixture();
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const snapshot = (await source.snapshot()).snapshot;
+      await source.destroy();
+      f.moveDefault();
+      const selected = structuredClone(snapshot.reference);
+      selected.ownership = ownership;
+      selected.history = {
+        version: 1,
+        kind: "snapshot",
+        provenance: "application-retained",
+        nativeId: selected.nativeId,
+        generation: selected.generation!,
+        deletion: {
+          templateId: selected.nativeId,
+          public: false,
+          names: [],
+          builds: [selected.generation!, "22222222-2222-4222-8222-222222222222"],
+        },
+      };
+
+      await expect(client.snapshots.delete(selected)).rejects.toMatchObject({
+        code: "CONFLICT",
+      });
+      expect(f.calls.snapshotDelete).toBe(0);
+      expect(f.snapshots.size).toBe(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
 test("E2B recovery cannot invent capture generation when first tag evidence was unavailable", async () => {
   const f = fixture();
   const client = await f.connect();

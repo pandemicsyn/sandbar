@@ -205,6 +205,13 @@ export function e2bState(input: {
         "Original captured build is no longer in the containing template",
       );
 
+    // Retained JSON history cannot authorize deleting other generations.
+    if (native.builds.length !== 1)
+      throw new AdapterError(
+        "CONFLICT",
+        "Snapshot deletion cannot expand into a shared multi-build template",
+      );
+
     if (baseline) {
       if (
         baseline.templateId !== reference.nativeId ||
@@ -218,11 +225,6 @@ export function e2bState(input: {
           "CONFLICT",
           "Snapshot containing template has expanded beyond retained history",
         );
-    } else if (native.builds.length !== 1) {
-      throw new AdapterError(
-        "CONFLICT",
-        "Explicit snapshot deletion cannot expand into a shared multi-build template",
-      );
     }
 
     const dependencies = await transport.list({}, 100);
