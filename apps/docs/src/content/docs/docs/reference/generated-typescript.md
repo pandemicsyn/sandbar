@@ -59,6 +59,7 @@ Import from `sandbar-sdk`.
 | `SnapshotPlan`              | type      |
 | `SnapshotProfile`           | type      |
 | `SnapshotRequest`           | re-export |
+| `SnapshotRequirements`      | re-export |
 | `SnapshotResult`            | type      |
 | `Support`                   | type      |
 | `UnsupportedFeatureError`   | re-export |

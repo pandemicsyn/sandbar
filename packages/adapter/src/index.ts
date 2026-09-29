@@ -197,7 +197,7 @@ export type AdapterSession<
   snapshotProfiles?: (
     target: { sandbox?: Sandbox; create?: CreateInput },
     ctx: ReadContext,
-  ) => Promise<Support<{ profiles: SnapshotProfile[] }>>;
+  ) => Promise<Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>>;
   snapshotCapture?: Mutation<
     import("./resources").SnapshotCaptureInput,
     import("./resources").SnapshotCaptureValue

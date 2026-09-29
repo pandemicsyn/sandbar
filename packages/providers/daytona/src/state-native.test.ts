@@ -1,13 +1,16 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter } from "sandbar-adapter";
-import { Sandbar, Image, OutcomeUnknownError } from "sandbar-sdk";
+import { defineAdapter, SnapshotInfo } from "sandbar-adapter";
+import { Sandbar, Image, OutcomeUnknownError, WaitAbortedError } from "sandbar-sdk";
 import { daytonaState } from "./state-native";
 
-function fixture() {
+interface FixtureStartHook {
+  callback?: () => void;
+}
+
+function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } = {}) {
   const scope = { authority: { kind: "organization", id: "org-one" }, partition: { target: "us" } };
-  let state = "started";
-  let mounted = false;
+  let state = options.stopped ? "stopped" : "started";
 
   let snapshot: {
     id: string;
@@ -20,43 +23,76 @@ function fixture() {
     regionIds: string[];
   } | null = null;
 
-  const calls = { stop: 0, capture: 0, delete: 0 };
-  let failedDelete = false;
+  const startHook: FixtureStartHook = {};
 
-  // SAFETY: The deterministic fetch fixture implements the native request signature and preconnect property.
+  const modes = {
+    mounted: false,
+    stopLost: false,
+    captureLost: false,
+    captureRejected: false,
+    restartLost: false,
+    restartRejected: false,
+    failedDelete: false,
+    poolsDenied: false,
+    sharedSnapshot: false,
+    pools: 0,
+    slowReads: 0,
+    snapshotReads: 0,
+    onStart: startHook,
+  };
+
+  const calls = { stop: 0, capture: 0, start: 0, delete: 0, poolReads: 0 };
+
+  // SAFETY: This deterministic native boundary matches the fetch call and preconnect contract.
   const fetcher = Object.assign(
     async (value: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(value));
       const method = init?.method ?? "GET";
 
-      if (url.pathname === "/sandbox/source") {
+      if (url.pathname === "/sandbox/source")
         return Response.json({
           id: "source",
           organizationId: "org-one",
           target: "us",
           state,
           sandboxClass: "container",
-          volumes: mounted ? [{ volumeId: "external", mountPath: "/mnt/data" }] : [],
+          volumes: modes.mounted ? [{ volumeId: "external", mountPath: "/mnt/data" }] : [],
         });
-      }
 
       if (url.pathname === "/sandbox/source/stop" && method === "POST") {
         calls.stop++;
         state = "stopped";
+
+        if (modes.stopLost) throw new Error("Lost stop acknowledgement");
+
+        return Response.json({});
+      }
+
+      if (url.pathname === "/sandbox/source/start" && method === "POST") {
+        calls.start++;
+        modes.onStart.callback?.();
+        await Promise.resolve();
+
+        if (modes.restartRejected) return new Response(null, { status: 422 });
+        state = "started";
+
+        if (modes.restartLost) throw new Error("Lost start acknowledgement");
 
         return Response.json({});
       }
 
       if (url.pathname === "/sandbox/source/snapshot" && method === "POST") {
         calls.capture++;
+        expect(state).toBe("stopped");
 
-        const request = z
+        const input = z
           .object({ name: z.string(), includeMemory: z.literal(false) })
           .parse(JSON.parse(String(init?.body)));
 
+        if (modes.captureRejected) return new Response(null, { status: 422 });
         snapshot = {
           id: "snapshot-one",
-          name: request.name,
+          name: input.name,
           organizationId: "org-one",
           general: false,
           state: "active",
@@ -65,7 +101,21 @@ function fixture() {
           regionIds: ["us"],
         };
 
-        return Response.json({ id: "source", state: "stopped" });
+        if (modes.captureLost) throw new Error("Lost capture acknowledgement");
+
+        return Response.json({ id: "source", state });
+      }
+
+      if (url.pathname === "/warm-pools") {
+        calls.poolReads++;
+
+        if (modes.poolsDenied) return new Response(null, { status: 403 });
+
+        return Response.json(
+          modes.pools
+            ? [{ id: "external-pool", organizationId: "org-one", snapshot: "snapshot-one" }]
+            : [],
+        );
       }
 
       if (url.pathname.startsWith("/snapshots/")) {
@@ -73,18 +123,24 @@ function fixture() {
           calls.delete++;
           snapshot = null;
 
-          return new Response(null, { status: failedDelete ? 500 : 204 });
+          return new Response(null, { status: modes.failedDelete ? 500 : 204 });
         }
 
         const id = decodeURIComponent(url.pathname.slice("/snapshots/".length));
 
+        if (snapshot) modes.snapshotReads++;
+
         return snapshot && (snapshot.id === id || snapshot.name === id)
-          ? Response.json(snapshot)
+          ? Response.json({
+              ...snapshot,
+              state: modes.snapshotReads <= modes.slowReads ? "creating" : snapshot.state,
+              general: modes.sharedSnapshot,
+            })
           : new Response(null, { status: 404 });
       }
 
       if (url.pathname === "/volumes") return Response.json([]);
-      throw new Error(`Unexpected fixture route ${method} ${url.pathname}`);
+      throw new Error(`Unexpected native fixture route: ${method} ${url.pathname}`);
     },
     { preconnect() {} },
   ) as typeof fetch;
@@ -95,6 +151,7 @@ function fixture() {
       apiUrl: "https://fixture.invalid",
       apiKey: "fixture-key",
       target: "us",
+      restartAfterCapture: options.restartAfterCapture,
       fetch: fetcher,
     });
 
@@ -115,7 +172,7 @@ function fixture() {
               return { computeStopped: true, retainedResources: [] };
             },
             async inspect(box) {
-              return { id: box.id, state: state === "stopped" ? "stopped" : "running" };
+              return { id: box.id, state: state === "started" ? "running" : "stopped" };
             },
           };
         },
@@ -129,126 +186,370 @@ function fixture() {
   return {
     connect,
     calls,
+    modes,
+    state: () => state,
     setState(value: string) {
       state = value;
-    },
-    mount() {
-      mounted = true;
-    },
-    shareSnapshot() {
-      if (snapshot) snapshot.general = true;
-    },
-    failDelete() {
-      failedDelete = true;
     },
   };
 }
 
-test("Daytona cold capture explicitly stops once, uses includeMemory false, and reopens acknowledged provenance", async () => {
+for (const variant of ["default", "stopped", "leave-stopped"] as const) {
+  test(`Daytona no-argument capture uses native default: ${variant}`, async () => {
+    const f = fixture({
+      stopped: variant === "stopped",
+      restartAfterCapture: variant !== "leave-stopped",
+    });
+
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const result = await source.snapshot();
+      expect(result.capture).toEqual({
+        preserve: "filesystem",
+        interruption: variant === "stopped" ? "none" : "stop",
+        restoreExecution: "fresh",
+      });
+      expect(result.source.state).toBe(variant === "default" ? "running" : "stopped");
+      expect(f.calls.stop).toBe(variant === "stopped" ? 0 : 1);
+      expect(f.calls.start).toBe(variant === "default" ? 1 : 0);
+      expect(f.calls.capture).toBe(1);
+      const saved = structuredClone(result.snapshot.reference);
+      const opened = await client.snapshots.get(saved);
+      expect((await opened.inspect()).restoreExecution).toBe("fresh");
+      await opened.delete();
+      expect(f.calls.delete).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+for (const request of [
+  { requirements: { preserve: "filesystem+memory" as const } },
+  { requirements: { maxInterruption: "pause" as const } },
+  { requirements: { sourceAfter: "stopped" as const } },
+]) {
+  test(`Daytona strict requirement rejects configured default before effects: ${JSON.stringify(request)}`, async () => {
+    const f = fixture();
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      await expect(source.snapshot(request)).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+        effect: "none",
+      });
+      expect(f.calls.stop).toBe(0);
+      expect(f.calls.capture).toBe(0);
+      expect(f.calls.start).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("Daytona unknown consistency does not satisfy a hard requirement without caller attestation", async () => {
   const f = fixture();
   const client = await f.connect();
-  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-  await expect(source.snapshot({ preserve: "filesystem" })).rejects.toMatchObject({
-    code: "UNSUPPORTED",
-  });
-  expect(f.calls.stop).toBe(0);
 
-  const result = await source.snapshot({
-    preserve: "filesystem",
-    maxInterruption: "stop",
-    sourceAfter: "stopped",
-    consistency: "caller-quiesced",
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    expect((await source.checkSnapshot()).status).toBe("supported");
+    expect(
+      (await source.checkSnapshot({ requirements: { consistency: "crash-consistent" } })).status,
+    ).toBe("unknown");
+    expect(
+      (
+        await source.checkSnapshot({
+          consistency: "caller-quiesced",
+          requirements: { consistency: "caller-quiesced" },
+        })
+      ).status,
+    ).toBe("supported");
+  } finally {
+    await client.close();
+  }
+});
+
+for (const mode of ["stopLost", "captureLost"] as const) {
+  test(`Daytona ${mode} stays read-only and never advances an uncertain stage`, async () => {
+    const f = fixture();
+    f.modes[mode] = true;
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const operation = await source.submitSnapshot();
+      await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      const saved = structuredClone(operation.reference);
+      await expect((await client.recover(saved)).wait()).rejects.toBeInstanceOf(
+        OutcomeUnknownError,
+      );
+      expect(f.calls.stop).toBe(1);
+      expect(f.calls.capture).toBe(mode === "stopLost" ? 0 : 1);
+      expect(f.calls.start).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+for (const restartAfterCapture of [true, false]) {
+  test(`Daytona definitive capture failure restores the source only when configured: ${restartAfterCapture}`, async () => {
+    const f = fixture({ restartAfterCapture });
+    f.modes.captureRejected = true;
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const operation = await source.submitSnapshot();
+      await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      expect(operation.reference.token).toMatchObject({
+        captureState: "failed",
+        captureFailure: "Native capture definitively rejected",
+      });
+      expect(f.state()).toBe(restartAfterCapture ? "started" : "stopped");
+      expect(f.calls.start).toBe(restartAfterCapture ? 1 : 0);
+      await expect((await client.recover(operation.reference)).wait()).rejects.toBeInstanceOf(
+        OutcomeUnknownError,
+      );
+      expect(f.calls.capture).toBe(1);
+      expect(f.calls.start).toBe(restartAfterCapture ? 1 : 0);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("Daytona retained capture remains inspectable and owned when source restart fails", async () => {
+  const f = fixture();
+  f.modes.restartRejected = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+
+    const token = z
+      .object({
+        captureState: z.literal("completed"),
+        snapshot: SnapshotInfo,
+        restartFailure: z.string(),
+      })
+      .parse(operation.reference.token);
+
+    expect(token.snapshot.reference.ownership).toBe("verified-created");
+    expect(token.snapshot.restoreExecution).toBe("fresh");
+    await expect((await client.recover(operation.reference)).wait()).rejects.toBeInstanceOf(
+      OutcomeUnknownError,
+    );
+    expect(f.calls.capture).toBe(1);
+    expect(f.calls.start).toBe(1);
+    await (await client.snapshots.get(token.snapshot.reference)).delete();
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona reports capture and restart failures independently", async () => {
+  const f = fixture();
+  f.modes.captureRejected = true;
+  f.modes.restartRejected = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(operation.reference.token).toMatchObject({
+      captureState: "failed",
+      captureFailure: "Native capture definitively rejected",
+      restartFailure: "Source start response was not successful; no replay",
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+for (const mode of ["pools", "poolsDenied", "sharedSnapshot"] as const) {
+  test(`Daytona deletion rechecks unsafe native dependencies after durable barrier: ${mode}`, async () => {
+    const f = fixture();
+
+    const client = await f.connect((ref) => {
+      if (ref.kind === "snapshot_delete") {
+        if (mode === "pools") f.modes.pools = 1;
+        else f.modes[mode] = true;
+      }
+    });
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const result = await source.snapshot();
+      await expect(result.snapshot.delete()).rejects.toBeDefined();
+      expect(f.calls.delete).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("Daytona lost delete acknowledgement remains unknown despite absence", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const result = await source.snapshot();
+    f.modes.failedDelete = true;
+    const operation = await result.snapshot.submitDelete();
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    await expect((await client.recover(operation.reference)).wait()).rejects.toBeInstanceOf(
+      OutcomeUnknownError,
+    );
+    expect(f.calls.delete).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona newly mounted source rejects before stop", async () => {
+  const f = fixture();
+
+  const client = await f.connect((ref) => {
+    if (ref.kind === "snapshot_capture") f.modes.mounted = true;
   });
 
-  expect(f.calls).toEqual({ stop: 1, capture: 1, delete: 0 });
-  expect(result.source.state).toBe("stopped");
-  const saved = structuredClone(result.snapshot.reference);
-  await client.close();
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    await expect(source.snapshot()).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect(f.calls.stop).toBe(0);
+    expect(f.calls.capture).toBe(0);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona caller cancellation during restart retains acknowledged artifact and stage custody", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  f.modes.onStart.callback = () => controller.abort();
+  const saved: unknown[] = [];
+  const client = await f.connect((ref) => saved.push(structuredClone(ref)));
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    let error: unknown;
+
+    try {
+      await source.snapshot(undefined, { signal: controller.signal });
+    } catch (value) {
+      error = value;
+    }
+
+    expect(error).toBeInstanceOf(WaitAbortedError);
+
+    if (!(error instanceof WaitAbortedError)) throw new Error("Expected wait abort");
+
+    const token = z
+      .object({
+        captureState: z.literal("completed"),
+        snapshot: SnapshotInfo,
+        sourceState: z.literal("running"),
+      })
+      .parse(error.reference.token);
+
+    expect(
+      saved.some(
+        (ref) =>
+          z.object({ token: z.object({ captureState: z.literal("completed") }) }).safeParse(ref)
+            .success,
+      ),
+    ).toBe(true);
+    const recovered = await (await client.recover(error.reference)).wait();
+    expect(recovered).toMatchObject({ source: { state: "running" } });
+    await (await client.snapshots.get(token.snapshot.reference)).delete();
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona lost start acknowledgement is confirmed read-only without another start", async () => {
+  const f = fixture();
+  f.modes.restartLost = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    const result = await operation.wait();
+    expect(result.source.state).toBe("running");
+    expect(operation.reference.token).toMatchObject({
+      sourceState: "running",
+      captureState: "completed",
+    });
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona default orchestration waits beyond ten seconds for accepted native capture readiness", async () => {
+  const f = fixture();
+  f.modes.slowReads = 45;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const result = await source.snapshot();
+    expect(result.source.state).toBe("running");
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+  } finally {
+    await client.close();
+  }
+}, 20000);
+
+test("Daytona preserves caller consistency attestation across a new connection", async () => {
+  const f = fixture();
+  const client = await f.connect();
+  let reference;
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    reference = (await source.snapshot({ consistency: "caller-quiesced" })).snapshot.reference;
+  } finally {
+    await client.close();
+  }
+
   const reopened = await f.connect();
-  const snapshot = await reopened.snapshots.get(saved);
-  expect((await snapshot.inspect()).mountHandling).toBe("none");
-  await snapshot.delete();
-  expect(f.calls.delete).toBe(1);
-  await reopened.close();
-});
 
-test("Daytona external mounts reject snapshot capture before stop or retained storage allocation", async () => {
-  const f = fixture();
-  f.mount();
-  const client = await f.connect();
-  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-  await expect(
-    source.snapshot({
-      preserve: "filesystem",
-      maxInterruption: "stop",
-      sourceAfter: "stopped",
+  try {
+    expect(await (await reopened.snapshots.get(reference!)).inspect()).toMatchObject({
       consistency: "caller-quiesced",
-    }),
-  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
-  expect(f.calls.stop).toBe(0);
-  expect(f.calls.capture).toBe(0);
-  await client.close();
+      restoreExecution: "fresh",
+    });
+  } finally {
+    await reopened.close();
+  }
 });
 
-test("Daytona absence cannot turn a failed delete into successful correlated cleanup", async () => {
-  const f = fixture();
-  const client = await f.connect();
-  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-
-  const result = await source.snapshot({
-    preserve: "filesystem",
-    maxInterruption: "stop",
-    sourceAfter: "stopped",
-    consistency: "caller-quiesced",
-  });
-
-  f.failDelete();
-  const operation = await result.snapshot.submitDelete();
-  await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-  const recovered = await client.recover(operation.reference);
-  await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-  expect(f.calls.delete).toBe(1);
-  await client.close();
-});
-
-test("Daytona capture revalidates unchanged stopped source after the durable barrier", async () => {
-  const f = fixture();
-  f.setState("stopped");
+test("Daytona stopped-to-running drift cannot violate maxInterruption none", async () => {
+  const f = fixture({ stopped: true });
 
   const client = await f.connect((ref) => {
     if (ref.kind === "snapshot_capture") f.setState("started");
   });
 
-  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-  await expect(
-    source.snapshot({
-      preserve: "filesystem",
-      sourceAfter: "unchanged",
-      consistency: "caller-quiesced",
-    }),
-  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
-  expect(f.calls.stop).toBe(0);
-  expect(f.calls.capture).toBe(0);
-  await client.close();
-});
-
-test("Daytona deletion refuses changed shared ownership after the durable barrier", async () => {
-  const f = fixture();
-
-  const client = await f.connect((ref) => {
-    if (ref.kind === "snapshot_delete") f.shareSnapshot();
-  });
-
-  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-
-  const result = await source.snapshot({
-    preserve: "filesystem",
-    maxInterruption: "stop",
-    sourceAfter: "stopped",
-    consistency: "caller-quiesced",
-  });
-
-  await expect(result.snapshot.delete()).rejects.toBeInstanceOf(OutcomeUnknownError);
-  expect(f.calls.delete).toBe(0);
-  await client.close();
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    await expect(
+      source.snapshot({ requirements: { maxInterruption: "none" } }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+    expect(f.calls).toMatchObject({ stop: 0, capture: 0, start: 0 });
+  } finally {
+    await client.close();
+  }
 });

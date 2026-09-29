@@ -18,6 +18,7 @@ const CaptureToken = z.strictObject({
   snapshotId: z.string().max(512),
   sourceId: z.string().max(512),
   generation: z.string().max(512).optional(),
+  consistency: z.enum(["crash-consistent", "caller-quiesced", "unknown"]),
 });
 
 const DeleteToken = z.strictObject({ accepted: z.boolean() });
@@ -70,6 +71,8 @@ export function e2bState(input: {
     return {
       reference: ref("snapshot", id, ownership),
       preserve: "filesystem+memory",
+      consistency: "unknown",
+      restoreExecution: "resume",
       source: knownSnapshots.has(id)
         ? { id: knownSnapshots.get(id)!.sourceId, class: "firecracker" }
         : null,
@@ -86,6 +89,7 @@ export function e2bState(input: {
         independentLifecycle: true,
       },
       dependencies: [],
+      nativeDependencies: [],
     };
   }
 
@@ -131,6 +135,7 @@ export function e2bState(input: {
       evidence.mounts === "none"
     ) {
       info.mountHandling = "none";
+      info.consistency = evidence.consistency ?? "unknown";
       info.reference.receipt = reference.receipt;
       info.source = { id: evidence.sourceId!, class: evidence.sourceClass! };
     }
@@ -193,11 +198,15 @@ export function e2bState(input: {
       interruption: "pause",
       sourceAfter: "unchanged",
       connections: "dropped",
-      consistency: "crash-consistent",
+      consistency: "unknown",
+      restoreExecution: "resume",
       mountHandling: "none",
     };
 
-    return { status: "supported" as const, value: { profiles: [profile] } };
+    return {
+      status: "supported" as const,
+      value: { profiles: [profile], defaultProfileId: profile.id },
+    };
   }
 
   const fields: Pick<
@@ -269,6 +278,7 @@ export function e2bState(input: {
         const token: z.infer<typeof CaptureToken> = {
           snapshotId: created.snapshotId,
           sourceId: box.id,
+          consistency: plan.value.profile.consistency,
         };
 
         let info: SnapshotInfo;
@@ -283,6 +293,7 @@ export function e2bState(input: {
         }
 
         if (!actual || actual.state !== "running") return ctx.pending(token, { pollAfterMs: 500 });
+        info.consistency = token.consistency;
         info.reference.receipt = receipts.issue({
           version: 1,
           kind: "snapshot",
@@ -292,10 +303,16 @@ export function e2bState(input: {
           sourceClass: "firecracker",
           preserve: "filesystem+memory",
           mounts: "none",
+          consistency: info.consistency,
         });
 
         return {
           snapshot: info,
+          capture: {
+            preserve: "filesystem+memory",
+            interruption: "pause",
+            restoreExecution: "resume",
+          },
           source: { state: "running", connections: "dropped" },
           retainedResources: [info.reference],
         };
@@ -319,6 +336,7 @@ export function e2bState(input: {
         });
 
         if (box?.state !== "running") return ctx.unknown("Original source outcome is unconfirmed");
+        info.consistency = token.data.consistency;
         info.reference.receipt = receipts.issue({
           version: 1,
           kind: "snapshot",
@@ -328,10 +346,16 @@ export function e2bState(input: {
           sourceClass: "firecracker",
           preserve: "filesystem+memory",
           mounts: "none",
+          consistency: info.consistency,
         });
 
         return {
           snapshot: info,
+          capture: {
+            preserve: "filesystem+memory",
+            interruption: "pause",
+            restoreExecution: "resume",
+          },
           source: { state: "running", connections: "dropped" },
           retainedResources: [info.reference],
         };
@@ -431,11 +455,21 @@ export function e2bState(input: {
     },
     volumeCreate: {
       async prepare(value) {
+        if (!/^[A-Za-z0-9-]+$/.test(value.name))
+          throw new AdapterError(
+            "INVALID_ARGUMENT",
+            "E2B volume names allow only letters, numbers and hyphens",
+          );
         await need().volumes();
 
         return value;
       },
       async submit(value, ctx) {
+        if (!/^[A-Za-z0-9-]+$/.test(value.name))
+          return ctx.reject(
+            "INVALID_ARGUMENT",
+            "E2B volume names allow only letters, numbers and hyphens",
+          );
         const prior = await need().volumes();
 
         if (prior.some((v) => v.name === value.name))

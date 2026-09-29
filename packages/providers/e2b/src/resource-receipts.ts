@@ -10,6 +10,7 @@ const Evidence = z.strictObject({
   sourceId: z.string().max(512).optional(),
   preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
   sourceClass: z.string().max(128).optional(),
+  consistency: z.enum(["crash-consistent", "caller-quiesced", "unknown"]).optional(),
   mounts: z.literal("none").optional(),
   name: z.string().max(128).optional(),
 });

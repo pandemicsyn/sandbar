@@ -423,7 +423,7 @@ const exercise = async () => {
         network: `${policy}-requested`,
         stateProbe:
           step.scenario === "snapshot-roundtrip"
-            ? "snapshot-roundtrip-v1"
+            ? "snapshot-roundtrip-v2"
             : step.scenario === "volume-persistence"
               ? "volume-persistence-v1"
               : undefined,
@@ -433,6 +433,13 @@ const exercise = async () => {
               ? "filesystem"
               : "filesystem+memory"
             : undefined,
+        restoreExecution:
+          step.scenario === "snapshot-roundtrip"
+            ? provider === "daytona"
+              ? "fresh"
+              : "resume"
+            : undefined,
+        sourceAfter: step.scenario === "snapshot-roundtrip" ? "running" : undefined,
         volumeOwnership:
           step.scenario === "volume-persistence"
             ? state.stateBorrowedVolume

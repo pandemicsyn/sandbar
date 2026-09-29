@@ -1598,7 +1598,11 @@
                                 },
                                 "consistency": {
                                   "type": "string",
-                                  "enum": ["crash-consistent", "caller-quiesced"]
+                                  "enum": ["crash-consistent", "caller-quiesced", "unknown"]
+                                },
+                                "restoreExecution": {
+                                  "type": "string",
+                                  "enum": ["fresh", "resume"]
                                 },
                                 "mountHandling": {
                                   "type": "string",
@@ -1618,13 +1622,19 @@
                                 "sourceAfter",
                                 "connections",
                                 "consistency",
+                                "restoreExecution",
                                 "mountHandling"
                               ],
                               "additionalProperties": false
                             }
+                          },
+                          "defaultProfileId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
                           }
                         },
-                        "required": ["profiles"],
+                        "required": ["profiles", "defaultProfileId"],
                         "additionalProperties": false
                       }
                     },
@@ -1876,7 +1886,11 @@
                           },
                           "consistency": {
                             "type": "string",
-                            "enum": ["crash-consistent", "caller-quiesced"]
+                            "enum": ["crash-consistent", "caller-quiesced", "unknown"]
+                          },
+                          "restoreExecution": {
+                            "type": "string",
+                            "enum": ["fresh", "resume"]
                           },
                           "mountHandling": {
                             "type": "string",
@@ -1896,6 +1910,7 @@
                           "sourceAfter",
                           "connections",
                           "consistency",
+                          "restoreExecution",
                           "mountHandling"
                         ],
                         "additionalProperties": false
@@ -2058,7 +2073,11 @@
                       },
                       "consistency": {
                         "type": "string",
-                        "enum": ["crash-consistent", "caller-quiesced"]
+                        "enum": ["crash-consistent", "caller-quiesced", "unknown"]
+                      },
+                      "restoreExecution": {
+                        "type": "string",
+                        "enum": ["fresh", "resume"]
                       },
                       "mountHandling": {
                         "type": "string",
@@ -2078,6 +2097,7 @@
                       "sourceAfter",
                       "connections",
                       "consistency",
+                      "restoreExecution",
                       "mountHandling"
                     ],
                     "additionalProperties": false
@@ -2183,21 +2203,31 @@
       "SnapshotRequest": {
         "type": "object",
         "properties": {
-          "preserve": {
-            "type": "string",
-            "enum": ["filesystem", "filesystem+memory"]
-          },
-          "maxInterruption": {
-            "type": "string",
-            "enum": ["none", "pause", "stop", "terminate"]
-          },
-          "sourceAfter": {
-            "type": "string",
-            "enum": ["unchanged", "stopped", "destroyed"]
+          "requirements": {
+            "type": "object",
+            "properties": {
+              "preserve": {
+                "type": "string",
+                "enum": ["filesystem", "filesystem+memory"]
+              },
+              "maxInterruption": {
+                "type": "string",
+                "enum": ["none", "pause", "stop", "terminate"]
+              },
+              "sourceAfter": {
+                "type": "string",
+                "enum": ["unchanged", "stopped", "destroyed"]
+              },
+              "consistency": {
+                "type": "string",
+                "enum": ["crash-consistent", "caller-quiesced"]
+              }
+            },
+            "additionalProperties": false
           },
           "consistency": {
             "type": "string",
-            "enum": ["crash-consistent", "caller-quiesced"]
+            "const": "caller-quiesced"
           },
           "retention": {
             "type": "object",
@@ -2216,7 +2246,6 @@
             "additionalProperties": false
           }
         },
-        "required": ["preserve"],
         "additionalProperties": false
       },
       "AcceptedExecution": {
@@ -4055,21 +4084,31 @@
               "snapshot": {
                 "type": "object",
                 "properties": {
-                  "preserve": {
-                    "type": "string",
-                    "enum": ["filesystem", "filesystem+memory"]
-                  },
-                  "maxInterruption": {
-                    "type": "string",
-                    "enum": ["none", "pause", "stop", "terminate"]
-                  },
-                  "sourceAfter": {
-                    "type": "string",
-                    "enum": ["unchanged", "stopped", "destroyed"]
+                  "requirements": {
+                    "type": "object",
+                    "properties": {
+                      "preserve": {
+                        "type": "string",
+                        "enum": ["filesystem", "filesystem+memory"]
+                      },
+                      "maxInterruption": {
+                        "type": "string",
+                        "enum": ["none", "pause", "stop", "terminate"]
+                      },
+                      "sourceAfter": {
+                        "type": "string",
+                        "enum": ["unchanged", "stopped", "destroyed"]
+                      },
+                      "consistency": {
+                        "type": "string",
+                        "enum": ["crash-consistent", "caller-quiesced"]
+                      }
+                    },
+                    "additionalProperties": false
                   },
                   "consistency": {
                     "type": "string",
-                    "enum": ["crash-consistent", "caller-quiesced"]
+                    "const": "caller-quiesced"
                   },
                   "retention": {
                     "type": "object",
@@ -4088,7 +4127,6 @@
                     "additionalProperties": false
                   }
                 },
-                "required": ["preserve"],
                 "additionalProperties": false
               }
             },

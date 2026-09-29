@@ -12,6 +12,7 @@ const profile: SnapshotProfile = {
   consistency: "crash-consistent",
   connections: "dropped",
   mountHandling: "none",
+  restoreExecution: "resume",
 };
 
 test("direct checks are read-only, required guarantees gate create, and minimal adapters still work", async () => {
@@ -43,7 +44,7 @@ test("direct checks are read-only, required guarantees gate create, and minimal 
         },
         async snapshotProfiles() {
           return status === "supported"
-            ? { status, value: { profiles: [profile] } }
+            ? { status, value: { profiles: [profile], defaultProfileId: profile.id } }
             : { status, reason: "fixture evidence" };
         },
         async snapshotCapture() {
@@ -58,7 +59,7 @@ test("direct checks are read-only, required guarantees gate create, and minimal 
 
   const input = {
     environment: Image.prepared("base"),
-    requirements: { snapshot: { preserve: "filesystem" as const } },
+    requirements: { snapshot: { requirements: { preserve: "filesystem" as const } } },
   };
 
   expect((await client.sandboxes.checkCreate(input)).status).toBe("unsupported");
@@ -69,7 +70,9 @@ test("direct checks are read-only, required guarantees gate create, and minimal 
   });
   expect(creates).toBe(0);
   const box = await client.sandboxes.create({ environment: input.environment });
-  expect((await box.checkSnapshot({ preserve: "filesystem+memory" })).status).toBe("supported");
+  expect(
+    (await box.checkSnapshot({ requirements: { preserve: "filesystem+memory" } })).status,
+  ).toBe("supported");
   expect((await client.capabilities()).snapshots.capture.status).toBe("supported");
   const caps = await box.capabilities();
   caps.network.push("all");
@@ -80,7 +83,7 @@ test("direct checks are read-only, required guarantees gate create, and minimal 
 
     const required = {
       environment: input.environment,
-      requirements: { snapshot: { preserve: "filesystem+memory" as const } },
+      requirements: { snapshot: { requirements: { preserve: "filesystem+memory" as const } } },
     };
 
     expect((await client.sandboxes.checkCreate(required)).status).toBe(value);
@@ -116,7 +119,10 @@ for (const status of ["unsupported", "unknown", "unavailable"] as const) {
             reads++;
 
             return reads === 1
-              ? { status: "supported" as const, value: { profiles: [profile] } }
+              ? {
+                  status: "supported" as const,
+                  value: { profiles: [profile], defaultProfileId: profile.id },
+                }
               : { status, reason: "evidence changed" };
           },
           async snapshotCapture() {
@@ -149,7 +155,7 @@ for (const status of ["unsupported", "unknown", "unavailable"] as const) {
       try {
         await client.sandboxes.create({
           environment: Image.prepared("base"),
-          requirements: { snapshot: { preserve: "filesystem+memory" } },
+          requirements: { snapshot: { requirements: { preserve: "filesystem+memory" } } },
         });
       } catch (error) {
         if (!(error instanceof Error)) throw error;
@@ -191,7 +197,10 @@ for (const mode of ["direct", "advanced"] as const) {
 
             if (marked) throw new Error("Capability read after marker");
 
-            return { status: "supported" as const, value: { profiles: [profile] } };
+            return {
+              status: "supported" as const,
+              value: { profiles: [profile], defaultProfileId: profile.id },
+            };
           },
           async snapshotCapture() {
             throw new Error("Must not capture");
@@ -230,7 +239,7 @@ for (const mode of ["direct", "advanced"] as const) {
       if (mode === "direct") {
         const operation = await client.sandboxes.submitCreate({
           environment: Image.prepared("base"),
-          requirements: { snapshot: { preserve: "filesystem+memory" } },
+          requirements: { snapshot: { requirements: { preserve: "filesystem+memory" } } },
         });
 
         expect(creates).toBe(1);
@@ -242,7 +251,7 @@ for (const mode of ["direct", "advanced"] as const) {
         const prepared = await client.operations.prepare("create", {
           image: { kind: "prepared", value: "base" },
           networkPolicy: "blocked",
-          requirements: { snapshot: { preserve: "filesystem+memory" } },
+          requirements: { snapshot: { requirements: { preserve: "filesystem+memory" } } },
         });
 
         const result = await prepared.submit(
@@ -316,7 +325,7 @@ test("create preflight observes caller abort and skips reads for pre-aborted cal
 
   const input = {
     environment: Image.prepared("base"),
-    requirements: { snapshot: { preserve: "filesystem+memory" as const } },
+    requirements: { snapshot: { requirements: { preserve: "filesystem+memory" as const } } },
   };
 
   try {
@@ -366,7 +375,10 @@ for (const mode of ["direct", "advanced"] as const) {
                 return new Promise<never>(() => {});
               }
 
-              return { status: "supported" as const, value: { profiles: [profile] } };
+              return {
+                status: "supported" as const,
+                value: { profiles: [profile], defaultProfileId: profile.id },
+              };
             },
             async snapshotCapture() {
               throw new Error("Must not capture");
@@ -400,7 +412,7 @@ for (const mode of ["direct", "advanced"] as const) {
             ? client.sandboxes.submitCreate(
                 {
                   environment: Image.prepared("base"),
-                  requirements: { snapshot: { preserve: "filesystem+memory" } },
+                  requirements: { snapshot: { requirements: { preserve: "filesystem+memory" } } },
                 },
                 { signal: controller.signal },
               )
@@ -408,7 +420,7 @@ for (const mode of ["direct", "advanced"] as const) {
                 await client.operations.prepare("create", {
                   image: { kind: "prepared", value: "base" },
                   networkPolicy: "blocked",
-                  requirements: { snapshot: { preserve: "filesystem+memory" } },
+                  requirements: { snapshot: { requirements: { preserve: "filesystem+memory" } } },
                 })
               ).submit(
                 { operationId: "op", submissionId: "submission", invocationKey: "invocation" },
@@ -447,6 +459,9 @@ for (const contradiction of [
   "mounts",
   "connections",
   "retained-scope",
+  "consistency",
+  "restore-execution",
+  "none",
 ] as const) {
   test(`capture recovery preserves accepted expectations: ${contradiction}`, async () => {
     const scope = { authority: { kind: "account", id: "one" }, partition: {} };
@@ -466,6 +481,11 @@ for (const contradiction of [
       credentials: z.strictObject({}),
       async connect() {
         const capture = () => ({
+          capture: {
+            preserve: "filesystem+memory" as const,
+            interruption: "pause" as const,
+            restoreExecution: "resume" as const,
+          },
           snapshot: {
             reference,
             preserve:
@@ -486,6 +506,11 @@ for (const contradiction of [
               independentLifecycle: true,
             },
             dependencies: [],
+            restoreExecution:
+              contradiction === "restore-execution" ? ("fresh" as const) : ("resume" as const),
+            consistency:
+              contradiction === "consistency" ? ("unknown" as const) : profile.consistency,
+            nativeDependencies: [],
           },
           source: {
             state: contradiction === "state" ? ("stopped" as const) : ("running" as const),
@@ -510,7 +535,10 @@ for (const contradiction of [
             return { id: box.id, state: "running" };
           },
           async snapshotProfiles() {
-            return { status: "supported", value: { profiles: [profile] } };
+            return {
+              status: "supported",
+              value: { profiles: [profile], defaultProfileId: profile.id },
+            };
           },
           snapshotCapture: {
             recovery: { version: 1, token: z.strictObject({}) },
@@ -527,12 +555,112 @@ for (const contradiction of [
 
     const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
     const box = await client.sandboxes.create({ environment: Image.prepared("base") });
-    const operation = await box.submitSnapshot({ preserve: "filesystem+memory" });
+    const operation = await box.submitSnapshot({ requirements: { preserve: "filesystem+memory" } });
+
+    if (contradiction === "none") {
+      expect((await operation.wait()).capture).toMatchObject({
+        preserve: "filesystem+memory",
+        restoreExecution: "resume",
+      });
+      await client.close();
+
+      return;
+    }
+
     await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
     const saved = JSON.parse(JSON.stringify(operation.reference));
     expect(saved.capture).toEqual({ profile, sourceState: "running" });
     const recovered = await client.recover(saved);
     await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
     await client.close();
+  });
+}
+
+for (const stalled of ["profiles", "inspect"] as const) {
+  test(`snapshot preflight propagates caller abort during ${stalled} and creates no custody marker`, async () => {
+    let reads = 0;
+    let markers = 0;
+    let captures = 0;
+    let readSignal: AbortSignal | undefined;
+    let entered!: () => void;
+
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+
+    const adapter = defineAdapter({
+      name: "fixture.snapshot-abort",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async create() {
+            return { id: "box", state: "running" };
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+          async snapshotProfiles(_target, context) {
+            reads++;
+
+            if (stalled === "profiles") {
+              readSignal = context.signal;
+              entered();
+
+              return new Promise<never>(() => {});
+            }
+
+            return {
+              status: "supported" as const,
+              value: { profiles: [profile], defaultProfileId: profile.id },
+            };
+          },
+          async inspect(box, context) {
+            reads++;
+            readSignal = context.signal;
+            entered();
+
+            return new Promise<never>(() => {});
+          },
+          async snapshotCapture() {
+            captures++;
+            throw new Error("Unexpected capture");
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({
+      adapter,
+      config: {},
+      credentials: {},
+      onReference() {
+        markers++;
+      },
+    });
+
+    try {
+      const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+      markers = 0;
+      const aborted = new AbortController();
+      aborted.abort();
+      await expect(box.snapshot(undefined, { signal: aborted.signal })).rejects.toMatchObject({
+        code: "WAIT_ABORTED",
+        effect: "none",
+      });
+      expect(reads).toBe(0);
+      const controller = new AbortController();
+      const pending = box.snapshot(undefined, { signal: controller.signal });
+      await ready;
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ code: "WAIT_ABORTED", effect: "none" });
+      expect(readSignal?.aborted).toBe(true);
+      expect(markers).toBe(0);
+      expect(captures).toBe(0);
+    } finally {
+      await client.close();
+    }
   });
 }

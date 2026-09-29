@@ -51,6 +51,7 @@ export {
   assertResourceScope,
   assertResourceIdentity,
   SnapshotRequest,
+  SnapshotRequirements,
 } from "sandbar-adapter";
 
 export type {

@@ -1,12 +1,16 @@
 import { z } from "zod";
 
-export const snapshotProbe = "snapshot-roundtrip-v1" as const;
+export const snapshotProbe = "snapshot-roundtrip-v2" as const;
 
 export const volumeProbe = "volume-persistence-v1" as const;
 
 export const snapshotEvidence = z.strictObject({
   probe: z.literal(snapshotProbe),
   preserve: z.enum(["filesystem", "filesystem+memory"]),
+  captureMode: z.literal("native-default"),
+  restoreExecution: z.enum(["fresh", "resume"]),
+  sourceProcesses: z.enum(["continued", "ended"]),
+  freshExecution: z.enum(["verified-missing-guest-process", "not-applicable"]),
   sourceState: z.enum(["running", "stopped"]),
   capturedBytes: z.literal(true),
   newIdentity: z.literal(true),
@@ -48,8 +52,22 @@ export function assertStateEvidence(scenario: string, value: StateEvidence) {
         "Memory snapshot pass requires observable independent memory and source writes",
       );
 
-    if (evidence.preserve === "filesystem" && evidence.memory !== "not-applicable")
-      throw new Error("Filesystem capture must not imply RAM");
+    if (
+      evidence.preserve === "filesystem" &&
+      (evidence.memory !== "not-applicable" ||
+        evidence.restoreExecution !== "fresh" ||
+        evidence.freshExecution !== "verified-missing-guest-process" ||
+        evidence.sourceProcesses !== "ended")
+    )
+      throw new Error("Filesystem capture requires fresh execution and cannot imply RAM");
+
+    if (
+      evidence.preserve === "filesystem+memory" &&
+      (evidence.restoreExecution !== "resume" ||
+        evidence.sourceProcesses !== "continued" ||
+        evidence.freshExecution !== "not-applicable")
+    )
+      throw new Error("Memory capture requires resumed process execution");
   } else if (scenario === "volume-persistence") volumeEvidence.parse(value);
   else throw new Error("State evidence scenario differs");
 }

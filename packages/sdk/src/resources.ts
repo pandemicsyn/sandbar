@@ -339,6 +339,11 @@ export function decodeCapture(
   checkedResource(client, value.snapshot.reference, "snapshot");
 
   if (
+    value.capture.preserve !== expected.profile.preserve ||
+    value.capture.interruption !== expected.profile.interruption ||
+    value.capture.restoreExecution !== expected.profile.restoreExecution ||
+    value.snapshot.restoreExecution !== expected.profile.restoreExecution ||
+    value.snapshot.consistency !== expected.profile.consistency ||
     value.snapshot.preserve !== expected.profile.preserve ||
     value.snapshot.source?.id !== ref.sandboxId ||
     value.snapshot.mountHandling !== expected.profile.mountHandling ||

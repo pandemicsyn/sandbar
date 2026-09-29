@@ -213,19 +213,23 @@ void flow;
 `;
   else if (mode === "direct")
     source = `
-import { Sandbar, Image } from "sandbar-sdk";
+import { Sandbar, Image, type SandbarClient, type SandboxHandle } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 async function flow() {
   const client = await Sandbar.connect({ adapter: createFakeAdapter({ url: "http://127.0.0.1:1234", token: "example-token-123456" }), config: {}, credentials: {} });
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
+  const commonClient: SandbarClient = client;
+  const commonSandbox: SandboxHandle = box;
+  const destroy: SandboxHandle["destroy"] = box.destroy;
+  void commonClient; void commonSandbox; void destroy;
   const argv = ["fixture"] as const;
   const result = await box.exec(argv);
   const operation = await box.submitExec(argv);
   await operation.wait();
   const text: string = result.stdoutText();
-  const volume=await client.volumes.create({name:"consumer_state"});
+  const volume=await client.volumes.create({name:"consumer-state"});
   const mounted=await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});
-  const captured=await box.snapshot({preserve:"filesystem+memory"});
+  const captured=await box.snapshot();
   const snapshot=await client.snapshots.get(captured.snapshot.reference);
   const restored=await snapshot.restore({networkPolicy:"blocked"});
   await restored.destroy();
@@ -490,12 +494,12 @@ try {
   }
   if (!failed) throw Error("Packed E2B native write failure classification lost");
   await box.writeFile("/tmp/packed-lost-ack.bin", binary, {overwrite: true});
-  const capture=await box.snapshot({preserve:"filesystem+memory"});
+  const capture=await box.snapshot();
   const saved=structuredClone(capture.snapshot.reference);
   await box.destroy();
   const snapshot=await client.snapshots.get(saved);
   const restored=await snapshot.restore({networkPolicy:"blocked"});await restored.destroy();await snapshot.delete();
-  const volume=await client.volumes.create({name:"packed_data"});
+  const volume=await client.volumes.create({name:"packed-data"});
   const mounted=await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});
   const cleanup=await mounted.destroy({storage:"allow-unconfirmed"});
   if(cleanup.mountDurability?.[0]?.status!=="unconfirmed"||!volumes.size)throw Error("Packed volume custody lost");
@@ -597,8 +601,8 @@ try {
   const box = await client.sandboxes.create({ environment: Image.prepared("image-1") });
   const caps = await client.capabilities();
   if (caps.snapshots.capture.status !== "unsupported" || caps.volumes.status !== "unsupported") throw Error("Unimplemented state support was advertised");
-  if ((await box.checkSnapshot({ preserve: "filesystem" })).status !== "unsupported") throw Error("Snapshot support mismatch");
-  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { preserve: "filesystem" } } };
+  if ((await box.checkSnapshot({ requirements: { preserve: "filesystem" } })).status !== "unsupported") throw Error("Snapshot support mismatch");
+  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { requirements: { preserve: "filesystem" } } } };
   if ((await client.sandboxes.checkCreate(required)).status !== "unsupported") throw Error("Required snapshot was accepted");
   try { await client.sandboxes.create(required); throw Error("Required snapshot allocated compute"); } catch (error) { if (error.code !== "UNSUPPORTED" || error.effect !== "none") throw error; }
   for (const kind of ["snapshot", "volume", "mount", "session"]) {
@@ -667,7 +671,7 @@ try {
     return fetch(origin + target.pathname + target.search, init);
   }, { preconnect() {} }) });
   if ((await client.capabilities()).snapshots.capture.status !== "unsupported") throw Error("Service advertised capture");
-  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { preserve: "filesystem" } } };
+  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { requirements: { preserve: "filesystem" } } } };
   if ((await client.sandboxes.checkCreate(required)).status !== "unsupported") throw Error("Service check accepted capture");
   try { await client.sandboxes.create(required); throw Error("Service allocated required capture"); } catch (error) { if (error.code !== "UNSUPPORTED" || error.effect !== "none") throw error; }
   const build = await client.images.submitBuild({ source: Image.oci("fixture/image:1"), connectionId: conn.body.id });

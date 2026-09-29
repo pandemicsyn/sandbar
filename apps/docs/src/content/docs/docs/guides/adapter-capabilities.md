@@ -23,14 +23,14 @@ Direct and service clients expose asynchronous `client.capabilities()` and `box.
 ```ts
 const check = await client.sandboxes.checkCreate({
   environment: Image.prepared("your-image-id"),
-  requirements: { snapshot: { preserve: "filesystem" } },
+  requirements: { snapshot: { requirements: { preserve: "filesystem" } } },
 });
 if (check.status === "supported") {
   console.log(check.value.snapshot);
 }
 ```
 
-`checkSnapshot({ preserve: "filesystem" })` on an existing sandbox resolves one complete capture profile. Preservation is exact; the default permits at most a pause and requires unchanged source lifecycle and crash consistency. The four statuses distinguish implemented support, unsupported combinations, unavailable access/state, and unknown evidence. Unknown state or retention cannot satisfy hard requirements. Supported checks report mount handling, retention evidence, manual cleanup, and explicitly unknown restore restrictions. They never build images, allocate probe resources, stop compute, or dispatch capture.
+`checkSnapshot()` resolves the configured native default. Optional `requirements` validate its preservation, interruption, source lifecycle and consistency without selecting another profile. The profile and artifact metadata report fresh or resumed execution and unknown consistency where evidence is unavailable. The four statuses distinguish implemented support, unsupported combinations, unavailable access/state, and unknown evidence. Unknown state or retention cannot satisfy hard requirements. Supported checks report mount handling, retention evidence, manual cleanup, and explicitly unknown restore restrictions. They never build images, allocate probe resources, stop compute, or dispatch capture.
 
 Requirements are rechecked during create preparation and before submission. Unsupported requests fail before allocation; unknown and unavailable requirements also block allocation. The service checks requirements before admission and the runner checks the persisted requirement again. Service connection checks use the first verified installed connection in creation order; a scoped prepared image selects its bound connection for create checks. No automatic provider switching is performed.
 

@@ -181,7 +181,7 @@ test("E2B capture is independent compute, reconnects after source deletion, and 
     networkPolicy: "blocked",
   });
 
-  const result = await source.snapshot({ preserve: "filesystem+memory" });
+  const result = await source.snapshot({ requirements: { preserve: "filesystem+memory" } });
   expect(result.source).toEqual({ state: "running", connections: "dropped" });
   expect(result.snapshot.reference.generation).toBe("build_one");
   expect(f.calls.capture).toBe(1);
@@ -207,7 +207,11 @@ test("E2B lost capture acknowledgement is observed without a second capture or g
   f.modes.loseCapture = true;
   const client = await f.connect();
   const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-  const operation = await source.submitSnapshot({ preserve: "filesystem+memory" });
+
+  const operation = await source.submitSnapshot({
+    requirements: { preserve: "filesystem+memory" },
+  });
+
   await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
   const recovered = await client.recover(operation.reference);
   await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
@@ -222,7 +226,7 @@ test("native deletion needs an acknowledged request, an owned receipt, and match
   const f = fixture();
   const client = await f.connect();
   const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-  const result = await source.snapshot({ preserve: "filesystem+memory" });
+  const result = await source.snapshot({ requirements: { preserve: "filesystem+memory" } });
   const foreign = structuredClone(result.snapshot.reference);
   foreign.provider = "daytona";
   await expect(
@@ -245,7 +249,7 @@ test("native deletion needs an acknowledged request, an owned receipt, and match
 test("E2B mounted compute requires explicit unconfirmed durability and retains independent volume custody", async () => {
   const f = fixture();
   const client = await f.connect();
-  const volume = await client.volumes.create({ name: "fixture_volume" });
+  const volume = await client.volumes.create({ name: "fixture-volume" });
 
   const box = await client.sandboxes.create({
     environment: Image.prepared("base"),
@@ -268,7 +272,7 @@ test("E2B mount recovery never succeeds from compute identity alone", async () =
   const f = fixture();
   f.modes.omitMounts = true;
   const client = await f.connect();
-  const volume = await client.volumes.create({ name: "fixture_mount" });
+  const volume = await client.volumes.create({ name: "fixture-mount" });
 
   const operation = await client.sandboxes.submitCreate({
     environment: Image.prepared("base"),
@@ -289,7 +293,7 @@ test("private-beta denial and incompatible mounts fail before effect", async () 
   f.modes.betaDenied = true;
   expect((await client.capabilities()).volumes.status).toBe("unavailable");
   f.modes.betaDenied = false;
-  const volume = await client.volumes.create({ name: "fixture_scope" });
+  const volume = await client.volumes.create({ name: "fixture-scope" });
   await expect(
     client.sandboxes.create({
       environment: Image.prepared("base"),
@@ -336,7 +340,7 @@ test("pinned native volume/tag inventory is byte bounded before parsing", async 
 test("E2B mounted destroy cannot dispatch kill after abort during inventory", async () => {
   const f = fixture();
   const client = await f.connect();
-  const volume = await client.volumes.create({ name: "fixture_abort" });
+  const volume = await client.volumes.create({ name: "fixture-abort" });
 
   const box = await client.sandboxes.create({
     environment: Image.prepared("base"),
@@ -378,7 +382,7 @@ test("E2B deletion revalidates native generation after the durable barrier", asy
   });
 
   const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-  const result = await source.snapshot({ preserve: "filesystem+memory" });
+  const result = await source.snapshot({ requirements: { preserve: "filesystem+memory" } });
   await expect(result.snapshot.delete()).rejects.toBeInstanceOf(OutcomeUnknownError);
   expect(f.calls.snapshotDelete).toBe(0);
   expect(f.snapshots.size).toBe(1);
@@ -393,7 +397,7 @@ test("E2B deletion refuses a newly shared native template after the durable barr
   });
 
   const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-  const result = await source.snapshot({ preserve: "filesystem+memory" });
+  const result = await source.snapshot({ requirements: { preserve: "filesystem+memory" } });
   await expect(result.snapshot.delete()).rejects.toBeInstanceOf(OutcomeUnknownError);
   expect(f.calls.snapshotDelete).toBe(0);
   await client.close();
@@ -404,7 +408,11 @@ test("E2B recovery cannot invent capture generation when first tag evidence was 
   const client = await f.connect();
   const source = await client.sandboxes.create({ environment: Image.prepared("base") });
   f.modes.tagsDenied = true;
-  const operation = await source.submitSnapshot({ preserve: "filesystem+memory" });
+
+  const operation = await source.submitSnapshot({
+    requirements: { preserve: "filesystem+memory" },
+  });
+
   await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
   f.modes.tagsDenied = false;
   f.replaceBuild();

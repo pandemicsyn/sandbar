@@ -36,12 +36,13 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 
 ## Connection options
 
-| Option          | Default   | Purpose                                           |
-| --------------- | --------- | ------------------------------------------------- |
-| `apiKey`        | Required  | Daytona API key.                                  |
-| `target`        | Required  | Available native region ID, such as `us`.         |
-| `ttlMinutes`    | `60`      | Native sandbox lifetime, from 1 to 1,440 minutes. |
-| `networkPolicy` | `blocked` | `blocked` or explicit `daytona-default`.          |
+| Option                          | Default   | Purpose                                           |
+| ------------------------------- | --------- | ------------------------------------------------- |
+| `apiKey`                        | Required  | Daytona API key.                                  |
+| `target`                        | Required  | Available native region ID, such as `us`.         |
+| `ttlMinutes`                    | `60`      | Native sandbox lifetime, from 1 to 1,440 minutes. |
+| `snapshots.restartAfterCapture` | `true`    | Restart only a previously running capture source. |
+| `networkPolicy`                 | `blocked` | `blocked` or explicit `daytona-default`.          |
 
 `Sandbar.connect` verifies native organization and region with authenticated reads. Scope includes the organization, target, endpoint, and selected network policy. Use the same scope to recover a prior operation.
 
@@ -57,15 +58,13 @@ Commands support argv and POSIX shell. Binary output capture requires `/bin/sh`,
 
 The live baseline uses the prepared `daytona-small` workflow in `us`; it does not qualify arbitrary snapshots. Explicit OCI builds are implemented but need separate live evidence and cleanup for retained snapshots. See [Images and networking](/docs/guides/images-and-networking/).
 
-## Planned runtime snapshot defaults
+## Runtime snapshots
 
-Runtime capture through `box.snapshot()` is planned, not an available or live-qualified operation in this documented release. Existing prepared-image snapshots above are a separate workflow.
+`box.snapshot()` stops a running container, captures its private filesystem, and starts the source again. An already-stopped source stays stopped. Stopping ends the former processes; restart and restore use fresh process execution. Memory and external volumes are not captured. This orchestration has fixture coverage and is **not yet live-qualified**.
 
-For Daytona **containers**, the planned default is to stop a running source, capture its private filesystem, then start the source again. An already-stopped source stays stopped. Memory is not captured: stopping ends the original processes, and starting the sandbox does not recover them. Restoring the snapshot creates a new sandbox with fresh process execution. External volumes are not included.
+Configure `snapshots: { restartAfterCapture: false }` on `daytona(...)` to leave a running source stopped. The default is `true`, restarting only a previously running source. Optional snapshot requirements validate the configured behavior without selecting another mode. Consistency defaults to unknown; `consistency: "caller-quiesced"` attests that the application quiesced writers.
 
-The proposed adapter option is `daytona({ ..., snapshots: { restartAfterCapture: false } })` to leave the source stopped. It defaults to `true`, meaning restart only if previously running. There is no separate permission setting for the required stop. Daytona's native capture requires the container to be stopped; Sandbar would provide the stop/capture/start orchestration. The native method is experimental. VM filesystem/memory capture requires separate adapter support and qualification. See [Daytona's native snapshot requirements](https://www.daytona.io/docs/en/snapshots/#create-snapshot-from-sandbox).
-
-If capture definitively fails after stopping, the default workflow attempts to start the source again. If capture succeeds but restart fails, the error must retain the snapshot reference and report source state. An uncertain capture must be reconciled before a safe restart; read-only recovery never replays capture or starts compute. These defaults and failure cases must be covered by the implementation and live qualification before this page claims support.
+A definitive capture failure permits one bounded restart attempt. A successful capture followed by a failed restart retains the snapshot metadata in the operation recovery token. Uncertain stop/capture/start outcomes are observed without repeating lifecycle calls. Native capture is experimental; VM filesystem/memory capture is not mapped. See [Daytona snapshot requirements](https://www.daytona.io/docs/en/snapshots/#create-snapshot-from-sandbox).
 
 ## Cleanup and recovery
 
@@ -75,6 +74,6 @@ See [Tested provider support](/docs/providers/support/) for measured coverage an
 
 ## Snapshots and retained volumes
 
-The direct SDK maps cold container filesystem capture with explicit stop permission and caller-quiesced writers. The source ends stopped. VM captures, memory capture and external mount capture remain unsupported. Scoped capture receipts support independent restore after source deletion; borrowed image selectors do not become owned snapshot artifacts. Writable object-backed volumes attach at create with optional subpaths. Native readiness is checked; read-only, volume versions and verified shutdown durability are unavailable. These workflows are not yet live-qualified. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/).
+Scoped capture receipts support independent restore after source deletion; borrowed image selectors do not become owned snapshot artifacts. Snapshot deletion rechecks organization warm pools, blocking when dependencies are present or unreadable because native deletion cascades to warm pools and unclaimed compute. Writable object-backed volumes attach at create with optional subpaths. Native readiness is checked; read-only, volume versions and verified shutdown durability are unavailable. These workflows have fixture coverage and are not yet live-qualified. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/).
 
 Native mapping evidence: [Daytona snapshots](https://www.daytona.io/docs/snapshots/) and [volumes](https://www.daytona.io/docs/en/volumes/), checked against REST 0.218.0 DTOs.

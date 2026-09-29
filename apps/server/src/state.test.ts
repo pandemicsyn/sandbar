@@ -16,6 +16,7 @@ const profile: SnapshotProfile = {
   sourceAfter: "unchanged",
   connections: "dropped",
   consistency: "crash-consistent",
+  restoreExecution: "resume",
   mountHandling: "none",
   minimumRetentionSeconds: 900,
 };
@@ -78,7 +79,7 @@ test("service and direct read checks agree, admission and runtime reject before 
           }
 
           return status === "supported"
-            ? { status, value: { profiles: [profile] } }
+            ? { status, value: { profiles: [profile], defaultProfileId: profile.id } }
             : { status, reason };
         },
         async snapshotCapture() {
@@ -164,7 +165,7 @@ test("service and direct read checks agree, admission and runtime reject before 
 
     const input = {
       environment: Image.prepared("base"),
-      requirements: { snapshot: { preserve: "filesystem+memory" as const } },
+      requirements: { snapshot: { requirements: { preserve: "filesystem+memory" as const } } },
     };
 
     const ociInput = { ...input, environment: Image.oci("registry.test/base:stable") };
@@ -190,12 +191,15 @@ test("service and direct read checks agree, admission and runtime reject before 
       (
         await client.sandboxes.checkCreate({
           ...input,
-          requirements: { snapshot: { preserve: "filesystem" } },
+          requirements: { snapshot: { requirements: { preserve: "filesystem" } } },
         })
       ).status,
     ).toBe("unsupported");
     await expect(
-      client.sandboxes.create({ ...input, requirements: { snapshot: { preserve: "filesystem" } } }),
+      client.sandboxes.create({
+        ...input,
+        requirements: { snapshot: { requirements: { preserve: "filesystem" } } },
+      }),
     ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
 
     for (const value of ["unknown", "unavailable"] as const) {
@@ -303,17 +307,21 @@ test("service and direct read checks agree, admission and runtime reject before 
     const parsedBox = z
       .custom<{
         id: string;
-        checkSnapshot: (request: { preserve: "filesystem+memory" }) => Promise<object>;
+        checkSnapshot: (request: {
+          requirements: { preserve: "filesystem+memory" };
+        }) => Promise<object>;
       }>()
       .parse(box);
 
-    expect(await parsedBox.checkSnapshot({ preserve: "filesystem+memory" })).toMatchObject({
+    expect(
+      await parsedBox.checkSnapshot({ requirements: { preserve: "filesystem+memory" } }),
+    ).toMatchObject({
       status: "supported",
     });
     const directBox = new (await import("sandbar-sdk")).AdapterSandbox(direct, "box1");
-    expect(await parsedBox.checkSnapshot({ preserve: "filesystem+memory" })).toEqual(
-      await directBox.checkSnapshot({ preserve: "filesystem+memory" }),
-    );
+    expect(
+      await parsedBox.checkSnapshot({ requirements: { preserve: "filesystem+memory" } }),
+    ).toEqual(await directBox.checkSnapshot({ requirements: { preserve: "filesystem+memory" } }));
     expect(creates).toBe(1);
     expect(captures).toBe(0);
     expect(destroys).toBe(0);

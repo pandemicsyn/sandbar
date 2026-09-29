@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   defineAdapter,
-  type SnapshotInfo,
+  SnapshotInfo,
   type VolumeInfo,
   type ResourceReference,
   type MountSpec,
@@ -27,6 +27,7 @@ async function fixture(
   options: {
     dropVolumeWrite?: boolean;
     loseCapture?: boolean;
+    partialCapture?: boolean;
     borrowed?: boolean;
     checkpointFailure?: boolean;
     memory?: boolean;
@@ -146,20 +147,30 @@ async function fixture(
                   preserve: options.memory ? "filesystem+memory" : "filesystem",
                   sourceStates: ["running", "stopped"],
                   interruption: options.memory ? "pause" : "stop",
-                  sourceAfter: options.memory ? "unchanged" : "stopped",
+                  sourceAfter: "unchanged",
                   connections: "dropped",
-                  consistency: options.memory ? "crash-consistent" : "caller-quiesced",
+                  consistency: "unknown",
                   mountHandling: "none",
+                  restoreExecution: options.memory ? "resume" : "fresh",
                 },
               ],
+              defaultProfileId: "cold",
             },
           };
         },
         snapshotCapture: {
+          recovery: {
+            version: 1,
+            token: z.strictObject({
+              captureState: z.literal("completed"),
+              snapshot: SnapshotInfo,
+              restartFailure: z.string(),
+            }),
+          },
           async submit(input, ctx) {
             calls.capture++;
             const box = boxes.get(input.sandbox.id)!;
-            box.state = options.memory ? "running" : "stopped";
+            box.state = "running";
 
             const info: SnapshotInfo = {
               reference: ref("snapshot", "captured"),
@@ -178,6 +189,9 @@ async function fixture(
                 independentLifecycle: true,
               },
               dependencies: [],
+              restoreExecution: options.memory ? "resume" : "fresh",
+              nativeDependencies: [],
+              consistency: "unknown",
             };
 
             snapshots.set("captured", {
@@ -187,10 +201,25 @@ async function fixture(
 
             if (options.loseCapture) return ctx.unknown("Acknowledgement lost");
 
+            if (options.partialCapture)
+              return ctx.pending(
+                {
+                  captureState: "completed",
+                  snapshot: JSON.parse(JSON.stringify(info)),
+                  restartFailure: "Source restart rejected",
+                },
+                { pollAfterMs: 0 },
+              );
+
             return {
               snapshot: info,
-              source: { state: options.memory ? "running" : "stopped", connections: "dropped" },
+              source: { state: "running", connections: "dropped" },
               retainedResources: [info.reference],
+              capture: {
+                preserve: info.preserve!,
+                interruption: info.restoreExecution === "resume" ? "pause" : "stop",
+                restoreExecution: info.restoreExecution!,
+              },
             };
           },
           async observe(_attempt, ctx) {
@@ -259,13 +288,15 @@ async function fixture(
         async exec(input) {
           const script = input.command.kind === "shell" ? input.command.script : "";
 
-          const stdout = script.includes("READ_ONLY_REJECTED")
-            ? options.readOnly === "enforced"
-              ? "READ_ONLY_REJECTED\n"
-              : "WRITE_ACCEPTED\n"
-            : script.includes("s.recv(128)")
-              ? `${(input.sandbox.id === "box_1" ? "a" : "b").repeat(32)}:1\n`
-              : "";
+          const stdout = script.includes("PROCESS_ABSENT")
+            ? "PROCESS_ABSENT\n"
+            : script.includes("READ_ONLY_REJECTED")
+              ? options.readOnly === "enforced"
+                ? "READ_ONLY_REJECTED\n"
+                : "WRITE_ACCEPTED\n"
+              : script.includes("s.recv(128)")
+                ? `${(input.sandbox.id === "box_1" ? "a" : "b").repeat(32)}:1\n`
+                : "";
 
           return {
             exitCode: 0,
@@ -438,9 +469,13 @@ test("custody checkpoint failure prevents native state allocation", async () => 
 
 test("RAM certification requires process observations and confirmed storage teardown", () => {
   const fs = {
-    probe: "snapshot-roundtrip-v1" as const,
+    probe: "snapshot-roundtrip-v2" as const,
     preserve: "filesystem" as const,
-    sourceState: "stopped" as const,
+    captureMode: "native-default" as const,
+    restoreExecution: "fresh" as const,
+    sourceProcesses: "ended" as const,
+    freshExecution: "verified-missing-guest-process" as const,
+    sourceState: "running" as const,
     capturedBytes: true as const,
     newIdentity: true as const,
     metadataInspected: true as const,
@@ -472,8 +507,10 @@ test("RAM certification requires process observations and confirmed storage tear
       imageClass: "prepared",
       network: "blocked-requested",
       regionClass: "fixture",
-      stateProbe: "snapshot-roundtrip-v1",
+      stateProbe: "snapshot-roundtrip-v2",
       preserve: "filesystem",
+      restoreExecution: "fresh",
+      sourceAfter: "running",
     },
     stateEvidence: fs,
     evidenceRef: "fixture/state",
@@ -532,4 +569,26 @@ test("a filesystem clone cannot certify a claimed memory capture", async () => {
   ).toBeUndefined();
   expect(f.calls.capture).toBe(1);
   expect(f.snapshots.size).toBe(0);
+});
+
+test("partial acknowledged capture retains owned artifact custody and cleans source before storage", async () => {
+  const f = await fixture({ partialCapture: true });
+
+  const steps = await runState(f.connect, f.ledger, "base", {
+    provider: "daytona",
+    network: "blocked",
+    selected: new Set(["snapshot-roundtrip"]),
+    signal: AbortSignal.timeout(5000),
+    cleanupWaitMs: 1000,
+  });
+
+  expect(steps.find((step) => step.scenario === "snapshot-roundtrip")?.status).toBe("failed");
+  const state = await f.ledger.read();
+  expect(
+    state.stateMutations?.find((entry) => entry.role === "snapshot/capture")?.resource,
+  ).toMatchObject({ kind: "snapshot" });
+  expect(state.cleanup).toBe("confirmed");
+  expect(f.snapshots.size).toBe(0);
+  expect(f.boxes.size).toBe(0);
+  expect(f.calls.capture).toBe(1);
 });

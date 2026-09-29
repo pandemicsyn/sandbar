@@ -15,6 +15,9 @@ const Configuration = z.strictObject({
   toolboxOrigin: z.url().default("https://proxy.app.daytona.io"),
   target: z.string().min(1),
   networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
+  snapshots: z
+    .strictObject({ restartAfterCapture: z.boolean().default(true) })
+    .default({ restartAfterCapture: true }),
   ttlMinutes: z.coerce.number().int().min(1).max(1440).default(60),
 });
 
@@ -212,6 +215,7 @@ export function createDaytonaAdapter(
         apiUrl: config.apiUrl,
         apiKey: credentials.apiKey,
         target: config.target,
+        restartAfterCapture: config.snapshots.restartAfterCapture,
         fetch: fetchImpl ?? fetch,
       });
 

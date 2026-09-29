@@ -125,11 +125,18 @@ export type Support<T> =
   | { status: "unavailable"; reason: string }
   | { status: "unknown"; reason: string };
 
-export const SnapshotRequest = z.strictObject({
-  preserve: z.enum(["filesystem", "filesystem+memory"]),
+export const SnapshotRequirements = z.strictObject({
+  preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
   maxInterruption: z.enum(["none", "pause", "stop", "terminate"]).optional(),
   sourceAfter: z.enum(["unchanged", "stopped", "destroyed"]).optional(),
   consistency: z.enum(["crash-consistent", "caller-quiesced"]).optional(),
+});
+
+export type SnapshotRequirements = z.infer<typeof SnapshotRequirements>;
+
+export const SnapshotRequest = z.strictObject({
+  requirements: SnapshotRequirements.optional(),
+  consistency: z.literal("caller-quiesced").optional(),
   retention: z
     .strictObject({
       minimumSeconds: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
@@ -161,12 +168,13 @@ export type SandboxState = z.infer<typeof SandboxState>;
 
 export const SnapshotProfile = z.strictObject({
   id: z.string().min(1).max(128),
-  preserve: SnapshotRequest.shape.preserve,
+  preserve: z.enum(["filesystem", "filesystem+memory"]),
   sourceStates: z.array(SandboxState).min(1).max(8),
   interruption: z.enum(["none", "pause", "stop", "terminate"]),
   sourceAfter: z.enum(["unchanged", "stopped", "destroyed"]),
   connections: z.enum(["preserved", "dropped", "unknown"]),
-  consistency: z.enum(["crash-consistent", "caller-quiesced"]),
+  consistency: z.enum(["crash-consistent", "caller-quiesced", "unknown"]),
+  restoreExecution: z.enum(["fresh", "resume"]),
   mountHandling: z.enum(["none", "excluded", "unknown"]),
   minimumRetentionSeconds: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
 });
@@ -258,6 +266,8 @@ export type RestoreRequest = z.infer<typeof RestoreRequest>;
 export const SnapshotInfo = z.strictObject({
   reference: ResourceReference.refine((ref) => ref.kind === "snapshot"),
   preserve: z.enum(["filesystem", "filesystem+memory"]).nullable(),
+  restoreExecution: z.enum(["fresh", "resume"]).nullable(),
+  consistency: z.enum(["crash-consistent", "caller-quiesced", "unknown"]),
   source: z
     .strictObject({ id: z.string().min(1).max(512), class: z.string().min(1).max(128) })
     .nullable(),
@@ -274,6 +284,10 @@ export const SnapshotInfo = z.strictObject({
     independentLifecycle: z.boolean(),
   }),
   dependencies: z.array(ResourceReference).max(128),
+  nativeDependencies: z
+    .array(z.strictObject({ kind: z.string().min(1).max(128), id: z.string().min(1).max(512) }))
+    .max(128)
+    .nullable(),
 });
 
 export type SnapshotInfo = z.infer<typeof SnapshotInfo>;
@@ -287,6 +301,11 @@ export type SnapshotCaptureInput = z.infer<typeof SnapshotCaptureInput>;
 
 export const SnapshotCaptureValue = z.strictObject({
   snapshot: SnapshotInfo,
+  capture: z.strictObject({
+    preserve: SnapshotProfile.shape.preserve,
+    interruption: SnapshotProfile.shape.interruption,
+    restoreExecution: SnapshotProfile.shape.restoreExecution,
+  }),
   source: z.strictObject({ state: SandboxState, connections: SnapshotProfile.shape.connections }),
   retainedResources: z.array(ResourceReference).max(128),
 });
@@ -362,7 +381,10 @@ export const MountDurability = z.strictObject({
 export const SnapshotSupport = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("supported"),
-    value: z.strictObject({ profiles: z.array(SnapshotProfile).max(128) }),
+    value: z.strictObject({
+      profiles: z.array(SnapshotProfile).max(128),
+      defaultProfileId: z.string().min(1).max(128),
+    }),
   }),
   ...(["unsupported", "unavailable", "unknown"] as const).map((status) =>
     z.strictObject({ status: z.literal(status), reason: z.string().min(1).max(1024) }),
@@ -384,7 +406,7 @@ export type CreatePlan = {
 
 export type StateCapabilities = {
   snapshots: {
-    capture: Support<{ profiles: SnapshotProfile[] }>;
+    capture: Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>;
     restore: Support<RestoreCapabilities>;
     inspect: Support<{}>;
     list: Support<{ coverage: "provider-scope" | "sandbar-managed" }>;
@@ -521,51 +543,54 @@ export function resolveSnapshot(
   const input = parsed.data;
   const interruption = ["none", "pause", "stop", "terminate"];
 
-  const matches = support.value.profiles.filter(
-    (profile) =>
-      profile.preserve === input.preserve &&
-      interruption.indexOf(profile.interruption) <=
-        interruption.indexOf(input.maxInterruption ?? "pause") &&
-      profile.consistency === (input.consistency ?? "crash-consistent"),
+  const selected = support.value.profiles.find(
+    (profile) => profile.id === support.value.defaultProfileId,
   );
 
-  if (!matches.length)
+  if (!selected)
+    throw new AdapterError("INVALID_ARGUMENT", "Configured snapshot default profile is missing");
+  const profile = structuredClone(selected);
+
+  if (input.consistency === "caller-quiesced") profile.consistency = "caller-quiesced";
+  const required = input.requirements;
+
+  if (
+    (required?.preserve !== undefined && profile.preserve !== required.preserve) ||
+    (required?.maxInterruption !== undefined &&
+      interruption.indexOf(profile.interruption) > interruption.indexOf(required.maxInterruption))
+  )
     return {
       status: "unsupported",
-      reason: "No profile satisfies the exact preservation and lifecycle requirements",
+      reason: "Configured default does not satisfy exact capture requirements",
+    };
+
+  if (required?.consistency !== undefined && profile.consistency !== required.consistency)
+    return {
+      status: profile.consistency === "unknown" ? "unknown" : "unsupported",
+      reason: "Required capture consistency is not established",
     };
 
   if (state === "unknown") return { status: "unknown", reason: "Source state is unknown" };
-  const sources = matches.filter((profile) => profile.sourceStates.includes(state));
 
-  if (!sources.length)
-    return { status: "unavailable", reason: "No matching profile accepts the source state" };
+  if (!profile.sourceStates.includes(state))
+    return { status: "unavailable", reason: "Configured default cannot capture the source state" };
 
-  const requestedAfter = input.sourceAfter ?? "unchanged";
-  const expectedState = requestedAfter === "unchanged" ? state : requestedAfter;
-
-  const valid = sources.filter(
-    (profile) =>
-      (profile.sourceAfter === "unchanged" ? state : profile.sourceAfter) === expectedState,
-  );
-
-  if (!valid.length)
+  if (
+    required?.sourceAfter !== undefined &&
+    (profile.sourceAfter === "unchanged" ? state : profile.sourceAfter) !==
+      (required.sourceAfter === "unchanged" ? state : required.sourceAfter)
+  )
     return {
       status: "unsupported",
-      reason: "No profile satisfies the requested source lifecycle outcome",
+      reason: "Configured default does not satisfy required source lifecycle",
     };
   const minimum = input.retention?.minimumSeconds ?? 0;
 
-  const profile = valid.find(
-    (profile) =>
-      minimum === 0 ||
-      (profile.minimumRetentionSeconds !== undefined && profile.minimumRetentionSeconds >= minimum),
-  );
+  if (minimum > 0 && profile.minimumRetentionSeconds === undefined)
+    return { status: "unknown", reason: "Minimum retention is not established" };
 
-  if (!profile)
-    return valid.some((profile) => profile.minimumRetentionSeconds === undefined)
-      ? { status: "unknown", reason: "Minimum retention is not established" }
-      : { status: "unsupported", reason: "Minimum retention cannot be satisfied" };
+  if (minimum > (profile.minimumRetentionSeconds ?? 0))
+    return { status: "unsupported", reason: "Minimum retention cannot be satisfied" };
 
   return {
     status: "supported",

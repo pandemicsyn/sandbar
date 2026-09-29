@@ -69,7 +69,9 @@ export const recordSchema = z.strictObject({
     authorityClass: z.enum(["api-key", "verified-team", "verified-organization"]).optional(),
     network: safeLabel,
     networkProbe: z.literal(networkProbeId).optional(),
-    stateProbe: z.enum(["snapshot-roundtrip-v1", "volume-persistence-v1"]).optional(),
+    restoreExecution: z.enum(["fresh", "resume"]).optional(),
+    sourceAfter: z.enum(["running", "stopped"]).optional(),
+    stateProbe: z.enum(["snapshot-roundtrip-v2", "volume-persistence-v1"]).optional(),
     preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
     volumeOwnership: z.enum(["created", "borrowed"]).optional(),
     regionClass: safeLabel,
@@ -110,8 +112,10 @@ export const reportSchema = z
             throw new Error("State evidence must match its intended probe");
 
           if (
-            record.stateEvidence.probe === "snapshot-roundtrip-v1" &&
-            record.configuration.preserve !== record.stateEvidence.preserve
+            record.stateEvidence.probe === "snapshot-roundtrip-v2" &&
+            (record.configuration.preserve !== record.stateEvidence.preserve ||
+              record.configuration.restoreExecution !== record.stateEvidence.restoreExecution ||
+              record.configuration.sourceAfter !== record.stateEvidence.sourceState)
           )
             throw new Error("Snapshot evidence preservation differs from requested configuration");
 
@@ -232,6 +236,8 @@ function key(record: QualificationRecord): string {
       : "—",
     record.scenario.startsWith("file-") ? (record.configuration.fileRoot ?? "not-recorded") : "—",
     record.configuration.stateProbe ?? "—",
+    record.configuration.restoreExecution ?? "—",
+    record.configuration.sourceAfter ?? "—",
     record.configuration.preserve ?? "—",
     record.configuration.volumeOwnership ?? "—",
     record.runtime,

@@ -194,6 +194,13 @@ export class AdapterOperation<T> {
     first?: RuntimeResult,
   ) {
     this.first = first;
+
+    if (first?.kind === "pending")
+      this.reference = sealedReference({
+        ...reference,
+        token: first.token,
+        tokenVersion: first.version,
+      });
   }
   async observe(): Promise<T | null> {
     return this.observeWithSignal(this.client.signal);
@@ -348,16 +355,22 @@ export class AdapterSandbox {
     readonly id: string,
   ) {}
   async submitSnapshot(
-    request: SnapshotRequest,
+    request: SnapshotRequest = {},
     options: WaitOptions = {},
   ): Promise<AdapterOperation<SnapshotResult>> {
-    const plan = await this.checkSnapshot(request);
+    this.client.ensureOpen();
+    assertSignal(options.signal);
 
-    if (plan.status !== "supported")
-      throw new SandbarError(
-        plan.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
-        plan.reason,
-      );
+    const signal = AbortSignal.any([
+      this.client.signal,
+      ...(options.signal ? [options.signal] : []),
+    ]);
+
+    const plan = await this.checkSnapshotWithSignal(request, signal);
+
+    if (plan.status === "unsupported") throw new UnsupportedFeatureError("snapshot", [plan.reason]);
+
+    if (plan.status !== "supported") throw new SandbarError("UNAVAILABLE", plan.reason, "none");
 
     return this.client.submit(
       "snapshot_capture",
@@ -374,18 +387,28 @@ export class AdapterSandbox {
       },
     );
   }
-  async snapshot(request: SnapshotRequest, options: WaitOptions = {}): Promise<SnapshotResult> {
+  async snapshot(
+    request: SnapshotRequest = {},
+    options: WaitOptions = {},
+  ): Promise<SnapshotResult> {
     return (await this.submitSnapshot(request, options)).wait(options);
   }
   capabilities(): Promise<AdapterCapabilities> {
     return this.client.capabilities({ sandbox: { id: this.id } });
   }
-  async checkSnapshot(request: SnapshotRequest): Promise<Support<SnapshotPlan>> {
-    const caps = await this.capabilities();
+  async checkSnapshot(request: SnapshotRequest = {}): Promise<Support<SnapshotPlan>> {
+    return this.checkSnapshotWithSignal(request, this.client.signal);
+  }
+  private async checkSnapshotWithSignal(
+    request: SnapshotRequest,
+    signal: AbortSignal,
+  ): Promise<Support<SnapshotPlan>> {
+    assertSignal(signal);
+    const caps = await this.client.capabilities({ sandbox: { id: this.id } }, { signal });
 
     if (caps.snapshots.capture.status !== "supported")
       return resolveSnapshot(caps.snapshots.capture, request, "unknown");
-    const state = this.client.session.inspect ? (await this.inspect()).state : "unknown";
+    const state = this.client.session.inspect ? (await this.inspect({ signal })).state : "unknown";
 
     return resolveSnapshot(caps.snapshots.capture, request, state);
   }
@@ -401,17 +424,30 @@ export class AdapterSandbox {
 
     return true;
   }
-  async inspect(): Promise<{ state: import("sandbar-adapter").SandboxState }> {
+  async inspect(
+    options: WaitOptions = {},
+  ): Promise<{ state: import("sandbar-adapter").SandboxState }> {
     this.client.ensureOpen();
 
     if (!this.client.session.inspect) unsupported("inspect");
 
+    assertSignal(options.signal);
+
+    const signal = AbortSignal.any([
+      this.client.signal,
+      ...(options.signal ? [options.signal] : []),
+      AbortSignal.timeout(30000),
+    ]);
+
     const result = await readWhileOpen(
       this.client,
-      this.client.session.inspect(
-        { id: this.id },
-        { signal: this.client.signal, deadline: Date.now() + 30_000 },
-      ),
+      raceAbort(
+        this.client.session.inspect({ id: this.id }, { signal, deadline: Date.now() + 30000 }),
+        signal,
+      ).catch((error) => {
+        assertSignal(options.signal);
+        throw error;
+      }),
     );
 
     if (!result) return { state: "unknown" };
@@ -678,7 +714,9 @@ export class PreparedAdapterAttempt {
           signal,
           this.kind === "exec" ? this.maxOutputBytes : undefined,
         ),
-        signal,
+        this.kind === "snapshot_capture"
+          ? AbortSignal.any([this.client.signal, AbortSignal.timeout(85000)])
+          : signal,
       );
     } catch {
       if (signal.aborted)
@@ -949,15 +987,24 @@ export class AdapterDirectClient {
   }
   async capabilities(
     target: { sandbox?: Sandbox; create?: AdapterCreateInput } = {},
+    options: WaitOptions = {},
   ): Promise<AdapterCapabilities> {
     this.ensureOpen();
+    assertSignal(options.signal);
     const support = this.session.supports;
+    const signal = AbortSignal.any([this.signal, ...(options.signal ? [options.signal] : [])]);
 
     const state = await readWhileOpen(
       this,
-      stateCapabilities(this.session, target, {
-        signal: this.signal,
-        deadline: Date.now() + 30_000,
+      raceAbort(
+        stateCapabilities(this.session, target, {
+          signal,
+          deadline: Date.now() + 30000,
+        }),
+        signal,
+      ).catch((error) => {
+        assertSignal(options.signal);
+        throw error;
       }),
     );
 
@@ -1119,7 +1166,7 @@ export class AdapterDirectClient {
     assertSignal(options.signal);
     const ids = identity();
 
-    const reference = sealedReference({
+    let reference = sealedReference({
       version: 2,
       mode: "direct",
       provider: this.provider,
@@ -1156,8 +1203,17 @@ export class AdapterDirectClient {
 
             return value;
           }),
-        waiting,
+        kind === "snapshot_capture" ? this.signal : waiting,
       );
+
+      if (kind === "snapshot_capture" && first.kind === "pending") {
+        reference = sealedReference({
+          ...reference,
+          token: first.token,
+          tokenVersion: first.version,
+        });
+        await this.onReference?.(reference);
+      }
     } catch (error) {
       if (!barrierStarted) {
         this.ensureOpen();

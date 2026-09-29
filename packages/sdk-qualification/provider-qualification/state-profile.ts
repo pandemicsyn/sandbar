@@ -12,12 +12,37 @@ import {
   type AdapterRecoveryReference,
   type AdapterOperation,
 } from "sandbar-sdk";
-import { AdapterError } from "sandbar-adapter";
+import { AdapterError, SnapshotInfo, assertResourceScope } from "sandbar-adapter";
 import { LedgerStore } from "./ledger";
 import { FailureCapture } from "./diagnostics";
 import { boundedRead } from "./bounds";
 import { type ConnectionFactory, type Step } from "./lifecycle";
 import { snapshotProbe, volumeProbe, type StateEvidence } from "./state-evidence";
+
+function partialSnapshot(reference: AdapterRecoveryReference) {
+  if (reference.kind !== "snapshot_capture") return undefined;
+
+  const token = z
+    .object({ captureState: z.literal("completed"), snapshot: SnapshotInfo })
+    .safeParse(reference.token);
+
+  if (!token.success) return undefined;
+  assertResourceScope(token.data.snapshot.reference, {
+    provider: reference.provider,
+    scope: reference.scope,
+  });
+
+  return token.data.snapshot.reference;
+}
+
+const processAbsent = `python3 -c 'import errno,socket
+s=socket.socket(socket.AF_UNIX);s.settimeout(1)
+try:
+ s.connect("/tmp/sandbar-memory.sock");print("PROCESS_PRESENT")
+except OSError as e:
+ if e.errno not in (errno.ENOENT,errno.ECONNREFUSED,errno.ECONNRESET): raise
+ print("PROCESS_ABSENT")
+finally: s.close()'`;
 
 type StateScenario = "snapshot-roundtrip" | "volume-persistence";
 
@@ -139,6 +164,17 @@ export async function runState(
           if (capture.success)
             return { ...entry, reference, resource: capture.data.snapshot.reference };
 
+          const partial = partialSnapshot(reference);
+
+          if (partial) return { ...entry, reference, resource: partial };
+
+          const failure = z
+            .object({ captureState: z.literal("failed") })
+            .safeParse(reference.token);
+
+          if (reference.kind === "snapshot_capture" && failure.success)
+            return { ...entry, reference, cleanup: "not-required" };
+
           return { ...entry, reference };
         }),
       }));
@@ -214,21 +250,7 @@ export async function runState(
         try {
           const source = await create("snapshot/source");
 
-          const request =
-            options.provider === "daytona"
-              ? {
-                  preserve: "filesystem" as const,
-                  maxInterruption: "stop" as const,
-                  sourceAfter: "stopped" as const,
-                  consistency: "caller-quiesced" as const,
-                }
-              : {
-                  preserve: "filesystem+memory" as const,
-                  maxInterruption: "pause" as const,
-                  sourceAfter: "unchanged" as const,
-                };
-
-          const plan = await source.checkSnapshot(request);
+          const plan = await source.checkSnapshot();
 
           if (plan.status !== "supported")
             throw new SandbarError(
@@ -242,7 +264,7 @@ export async function runState(
           });
           let before: ReturnType<typeof memorySample> | undefined;
 
-          if (request.preserve === "filesystem+memory") {
+          {
             role = "snapshot/memory-start";
             await exec(
               source,
@@ -264,10 +286,14 @@ export async function runState(
           role = "snapshot/capture";
 
           const result = await wait(
-            await source.submitSnapshot(request, { signal: options.signal }),
+            await source.submitSnapshot(undefined, { signal: options.signal }),
           );
 
-          const expected = options.provider === "daytona" ? "stopped" : "running";
+          const expected =
+            plan.value.profile.sourceAfter === "unchanged"
+              ? plan.value.sourceState
+              : plan.value.profile.sourceAfter;
+
           const actual = await boundedRead(source.inspect(), options.signal);
 
           if (result.source.state !== expected || actual.state !== expected)
@@ -275,7 +301,11 @@ export async function runState(
           const info = await boundedRead(result.snapshot.inspect(), options.signal);
 
           if (
-            info.preserve !== request.preserve ||
+            info.preserve !== plan.value.profile.preserve ||
+            info.restoreExecution !== plan.value.profile.restoreExecution ||
+            result.capture.preserve !== info.preserve ||
+            result.capture.restoreExecution !== info.restoreExecution ||
+            result.capture.interruption !== plan.value.profile.interruption ||
             info.mountHandling !== "none" ||
             info.state !== "ready"
           )
@@ -301,7 +331,7 @@ export async function runState(
           if (restored.id === source.id) throw new Error("Restore reused source compute identity");
           equal(await read(restored, "/tmp/sandbar-captured.bin"), bytes);
 
-          if (before) {
+          if (plan.value.profile.restoreExecution === "resume" && before) {
             role = "snapshot/restored-memory";
             const first = memorySample(await exec(restored, memoryRead));
             const second = memorySample(await exec(restored, memoryRead));
@@ -317,6 +347,20 @@ export async function runState(
               original.count !== before.count + 1
             )
               throw new Error("RAM/process state or private-memory independence is unverified");
+          }
+
+          if (plan.value.profile.restoreExecution === "fresh") {
+            role = "snapshot/restored-process-absent";
+
+            if ((await exec(restored, processAbsent)) !== "PROCESS_ABSENT\n")
+              throw new Error("Fresh restore retained the captured guest process");
+
+            if (expected === "running") {
+              role = "snapshot/source-process-absent";
+
+              if ((await exec(source, processAbsent)) !== "PROCESS_ABSENT\n")
+                throw new Error("Stopped/restarted source retained its previous guest process");
+            }
           }
 
           role = "snapshot/restored-change";
@@ -355,15 +399,25 @@ export async function runState(
           equal(await read(again, "/tmp/sandbar-captured.bin"), bytes);
           observed["snapshot-roundtrip"] = {
             probe: snapshotProbe,
-            preserve: request.preserve,
-            sourceState: expected,
+            preserve: plan.value.profile.preserve,
+            captureMode: "native-default",
+            restoreExecution: plan.value.profile.restoreExecution,
+            sourceProcesses: plan.value.profile.interruption === "stop" ? "ended" : "continued",
+            freshExecution:
+              plan.value.profile.restoreExecution === "fresh"
+                ? "verified-missing-guest-process"
+                : "not-applicable",
+            sourceState: expected === "running" ? "running" : "stopped",
             capturedBytes: true,
             newIdentity: true,
             metadataInspected: true,
             restoredWriteIndependent: true,
             sourceWriteIndependent: expected === "running",
             secondRestoreOriginalBytes: true,
-            memory: before ? "verified-unix-socket-nonce-counter" : "not-applicable",
+            memory:
+              plan.value.profile.restoreExecution === "resume"
+                ? "verified-unix-socket-nonce-counter"
+                : "not-applicable",
             ownedArtifactDeleted: true,
           };
           await ledger.update((value) => ({
@@ -423,7 +477,7 @@ export async function runState(
               role = "volume/create";
               volume = await wait(
                 await client.volumes.submitCreate(
-                  { name: `sandbar_${ledger.runId.replaceAll("-", "")}` },
+                  { name: `sandbar-${ledger.runId.replaceAll("-", "")}` },
                   { signal: options.signal },
                 ),
               );
@@ -712,7 +766,7 @@ export async function reconcileState(
       stateMutations: value.stateMutations?.map((entry) =>
         // SAFETY: The SDK produced this direct custody reference; recover validates the full schema and connection binding before provider access.
         (entry.reference as AdapterRecoveryReference).submissionId === reference.submissionId
-          ? { ...entry, reference }
+          ? { ...entry, reference, resource: entry.resource ?? partialSnapshot(reference) }
           : entry,
       ),
     }));

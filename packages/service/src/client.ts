@@ -91,6 +91,15 @@ function base64Bytes(value?: string, maxBytes = 1_048_576): Uint8Array {
   return bytes;
 }
 
+function remoteOperationReference(
+  reference: OperationHandle<unknown>["reference"],
+): RecoveryReference {
+  if (!("service" in reference))
+    throw new SandbarError("INVALID_ARGUMENT", "Remote operation reference required");
+
+  return sealedReference(reference);
+}
+
 class RemoteOperation<T> implements OperationHandle<T> {
   readonly durability = "service" as const;
   readonly reference: RecoveryReference;
@@ -189,7 +198,7 @@ class RemoteSandbox implements SandboxHandle {
       Capabilities,
     );
   }
-  checkSnapshot(request: SnapshotRequest): Promise<Support<SnapshotPlan>> {
+  checkSnapshot(request: SnapshotRequest = {}): Promise<Support<SnapshotPlan>> {
     return this.client.request(
       `sandboxes/${encodeURIComponent(this.id)}/check-snapshot`,
       SnapshotCheck,
@@ -299,7 +308,7 @@ class RemoteSandbox implements SandboxHandle {
     } catch (error) {
       return rethrowCloseWithReference(
         error instanceof Error ? error : new Error("Operation failed", { cause: error }),
-        operation.reference,
+        remoteOperationReference(operation.reference),
         options.signal,
       );
     }
@@ -893,14 +902,16 @@ export class RemoteClient implements SandbarClient {
     } catch (error) {
       return rethrowCloseWithReference(
         error instanceof Error ? error : new Error("Operation failed", { cause: error }),
-        operation.reference,
+        remoteOperationReference(operation.reference),
         options.signal,
       );
     }
   }
-  async recover(reference: RecoveryReference): Promise<OperationHandle<unknown>> {
+  async recover(
+    reference: OperationHandle<unknown>["reference"],
+  ): Promise<OperationHandle<unknown>> {
     this.ensureOpen();
-    reference = sealedReference(reference);
+    reference = remoteOperationReference(reference);
 
     if (reference.mode !== "remote")
       throw new SandbarError("INVALID_ARGUMENT", "Expected remote reference");
