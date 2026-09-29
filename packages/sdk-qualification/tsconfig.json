@@ -1,1 +1,4 @@
-{ "extends": "../../tsconfig.json", "include": ["*.ts", "provider-qualification/*.ts"] }
+{
+  "extends": "../../tsconfig.json",
+  "include": ["*.ts", "provider-qualification/*.ts", "observability/*.ts"]
+}

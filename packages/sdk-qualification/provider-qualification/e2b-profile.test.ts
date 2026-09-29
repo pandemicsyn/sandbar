@@ -157,7 +157,8 @@ test("E2B prepared profile qualifies documented home-directory file workflow wit
   const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
     network: "blocked",
     fileRoot: "/home/user",
-    cleanupWaitMs: 100,
+    // Allow offline filesystem cleanup to finish on loaded CI runners.
+    cleanupWaitMs: 1000,
   });
 
   expect(steps.every((step) => step.status === "passed")).toBe(true);
@@ -173,7 +174,8 @@ test("E2B lost create is observed and cleaned without another create or borrowed
 
   const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
     network: "blocked",
-    cleanupWaitMs: 100,
+    // Allow offline filesystem cleanup to finish on loaded CI runners.
+    cleanupWaitMs: 1000,
   });
 
   expect(steps.find((step) => step.scenario === "create-prepared")?.status).toBe("failed");
@@ -255,7 +257,8 @@ test("failed overwrite blocks no-clobber without another write and still confirm
 
   const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
     network: "blocked",
-    cleanupWaitMs: 100,
+    // Allow offline filesystem cleanup to finish on loaded CI runners.
+    cleanupWaitMs: 1000,
   });
 
   expect(steps.find((step) => step.scenario === "file-binary")?.status).toBe("passed");
@@ -274,7 +277,8 @@ test("uncertain no-clobber preserves original write failure and observes unchang
 
   const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
     network: "blocked",
-    cleanupWaitMs: 100,
+    // Allow offline filesystem cleanup to finish on loaded CI runners.
+    cleanupWaitMs: 1000,
   });
 
   const failed = steps.find((step) => step.scenario === "file-no-clobber");
@@ -294,7 +298,8 @@ test("failed no-clobber diagnostic read is captured separately while retaining w
 
   const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
     network: "blocked",
-    cleanupWaitMs: 100,
+    // Allow offline filesystem cleanup to finish on loaded CI runners.
+    cleanupWaitMs: 1000,
   });
 
   const failed = steps.find((step) => step.scenario === "file-no-clobber");

@@ -153,6 +153,8 @@ try {
 
   const stableArtifacts = join(temporary, "stable-artifacts");
 
+  // Instrumentation scope versions are compiled from the manifest; qualify rebuilt versioned code.
+  run("bun", ["run", "build:packages"]);
   run("bun", ["scripts/release.mjs", "dry-run"], temporary, { RELEASE_ARTIFACTS: stableArtifacts });
   run("bun", ["scripts/check-installers.mjs"], temporary, { RELEASE_ARTIFACTS: stableArtifacts });
   run("bun", ["packages/sdk-qualification/package-smoke.mjs"]);
@@ -165,6 +167,8 @@ try {
   run("git", ["update-ref", "refs/remotes/origin/main", run("git", ["rev-parse", "HEAD"])]);
   run("git", ["tag", "v0.1.1"]);
   rmSync(stableArtifacts, { recursive: true, force: true });
+  // Instrumentation scope versions are compiled from the manifest; qualify rebuilt versioned code.
+  run("bun", ["run", "build:packages"]);
   run("bun", ["scripts/release.mjs", "dry-run"], temporary, { RELEASE_ARTIFACTS: stableArtifacts });
   run("bun", ["run", "build:packages"]);
 
@@ -449,6 +453,7 @@ if (args[1] === "view") {
   run("bunx", ["changeset", "version"], temporary, { GITHUB_TOKEN: githubToken });
   run("bun", ["scripts/refresh-workspace-lock.mjs"]);
   run("bun", ["install", "--frozen-lockfile"]);
+  run("bun", ["run", "build:packages"]);
   const nextArtifacts = join(temporary, "next-artifacts");
 
   const nextOutput = run("bun", ["scripts/release.mjs", "dry-run"], temporary, {

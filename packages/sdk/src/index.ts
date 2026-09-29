@@ -61,3 +61,7 @@ export type {
   SandboxState,
   CreatePlan,
 } from "sandbar-adapter";
+
+export { diagnosticContext } from "./observability";
+
+export type { ObservabilityOptions, DiagnosticContext } from "./observability";

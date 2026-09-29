@@ -83,6 +83,7 @@ export default defineConfig({
             { slug: "docs/guides/files-and-output" },
             { slug: "docs/guides/images-and-networking" },
             { slug: "docs/guides/recovery" },
+            { slug: "docs/observability" },
             { slug: "docs/guides/troubleshooting" },
           ],
         },

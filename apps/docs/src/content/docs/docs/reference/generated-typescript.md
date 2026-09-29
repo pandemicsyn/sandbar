@@ -27,6 +27,8 @@ Import from `sandbar-sdk`.
 | `Capabilities`              | type      |
 | `CreateInput`               | type      |
 | `CreatePlan`                | type      |
+| `diagnosticContext`         | re-export |
+| `DiagnosticContext`         | type      |
 | `ExecInput`                 | type      |
 | `ExecOutput`                | type      |
 | `Image`                     | re-export |
@@ -34,6 +36,7 @@ Import from `sandbar-sdk`.
 | `ImageInput`                | type      |
 | `NoExitCodeError`           | re-export |
 | `NonzeroExitError`          | re-export |
+| `ObservabilityOptions`      | type      |
 | `OperationHandle`           | type      |
 | `OutcomeUnknownError`       | re-export |
 | `outputText`                | re-export |

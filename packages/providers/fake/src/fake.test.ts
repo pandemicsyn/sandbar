@@ -1485,6 +1485,7 @@ describe("independent fake provider", () => {
     }
   });
 
+  // This exhaustive fixture performs 512 serialized durable writes on the CI filesystem.
   test("full effect ledger rejects the 513th mutation before changing provider state while preserving replay evidence", async () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
     const engine = new FakeProviderEngine(join(directory, "provider.json"), true);
@@ -1537,7 +1538,7 @@ describe("independent fake provider", () => {
 
     expect(replay.result.status).toBe("completed");
     expect(engine.snapshot().ledger).toHaveLength(512);
-  });
+  }, 30_000);
 
   test("state byte limit returns definitive capacity without persisting a large execution effect", async () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
