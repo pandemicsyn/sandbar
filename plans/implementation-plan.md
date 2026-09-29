@@ -8,26 +8,34 @@ New features ship through the direct SDK and public adapter API. New HTTP routes
 
 Preserve existing service behavior and keep existing regression checks passing. Make narrow compatibility fixes when shared contracts change; do not expand the service to mirror each new SDK feature. Document SDK-only support explicitly. This decision does not delete the service or remove existing tests, and does not weaken SDK scope validation, recovery references, unknown-effect handling, or no-replay guarantees.
 
-## In progress: SDK state portability
+## Current: complete the snapshot and volume PR
 
-The direct SDK and public adapter API now implement snapshot capture → inspect → restore → delete, application-persisted recovery references, native volume lifecycle, and create-time mounts where the provider supports them. Daytona and E2B have different snapshot guarantees; E2B does not support create-time mounts in its pinned integration. These implemented surfaces have deterministic native-boundary and packed-consumer coverage. Historical live snapshot runs do not certify every final-head behavior or the corrected filesystem-isolation probe; keep provider support claims tied to actual qualification evidence.
+[PR #25](https://github.com/pandemicsyn/sandbar/pull/25) implements snapshot capture/inspect/restore/delete, retained volumes, and supported create-time mounts under the [state portability spec](../specs/provider-state-portability.md). It is in review, not merged behavior.
 
-The [state portability spec](../specs/provider-state-portability.md) remains active for these next slices:
+Finish the [current PR acceptance fixes](../specs/provider-state-portability.md#9-current-pr-completion-and-follow-up-boundary): prevent stale observation from overwriting continuation checkpoints; persist retained-volume custody before compute destruction; prove two-way filesystem write isolation; and correct release/evidence claims. Check the latest revision rather than assuming every reviewed finding is still open. Add focused regressions and final independent review/required gates. Missing live evidence stays explicitly unverified; paid runs need separate authorization.
 
-1. Exact-preservation suspend/resume and lifetime controls, with execution-generation handling.
-2. Optional volume versions and native forks where justified.
+Do not expand this PR into richer volume metadata, mounted restore, or a new public partial-outcome API. Existing correctness and resource-custody guarantees are required now.
 
-Continue to document provider differences and unsupported operations explicitly. Paid live qualification requires separate authorization; do not infer it from fixture coverage.
+## Next: SDK recovery outcomes and adapter support
 
-## In flight: SDK observability and diagnostics
+Implement [the focused follow-up spec](../specs/sdk-recovery-dx.md):
 
-Implement the [observability spec](../specs/sdk-observability.md) alongside SDK state portability:
+1. Stable typed partial outcomes on errors, operation handles, and recovered operations, including retained resources, completed work, observed source state, unresolved steps, and continuation eligibility. Application code must not decode provider tokens.
+2. Small shared checkpoint/dispatch helpers and reusable recovery conformance tests. Keep native evidence and transitions in adapters; preserve application-owned persistence and explicit continuation without replay.
 
-1. Direct SDK operation/phase tracing, safe error correlation, and application-owned OpenTelemetry setup.
-2. Tested direct SDK Sentry, Datadog, and plain OpenTelemetry recipes with separate Node/Bun and local/vendor evidence.
-3. Bounded metrics and structured diagnostic events after tracing is stable.
+This is the next bounded unit after the current PR, not a prerequisite for fixing its correctness findings. No general workflow engine or service persistence is included.
 
-Service propagation, persisted trace context, and runner tracing are deferred with the service. They do not block the SDK integration story.
+## Later state extensions with concrete provider requirements
+
+- Evolve volume metadata to separate backing from filesystem semantics and durability boundaries. Add capacity/placement only when needed by an actual provider/use case.
+- Implement capability-driven share/replace/omit mounted restore with enforcement before restored execution, alongside an adapter that can prove it.
+- Complete suspend/resume and lifetime controls, followed by optional volume versions and native forks where justified by the [state contract](../specs/provider-state-portability.md).
+
+Keep these scoped separately from the recovery follow-up. Current limitations remain explicit until implementations and appropriate qualification exist.
+
+## Implemented: SDK tracing and diagnostics
+
+The direct tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes from the [observability spec](../specs/sdk-observability.md) merged in PR #24. Bounded metrics and structured diagnostic events remain later work after tracing is stable. Service propagation, persisted trace context, and runner tracing remain deferred with the service.
 
 ## Broaden the SDK and provider coverage
 

@@ -28,6 +28,8 @@ async function fixture(
     dropVolumeWrite?: boolean;
     dropSourceChange?: boolean;
     dropRestoredChange?: boolean;
+    aliasRestoredFilesystem?: boolean;
+    stoppedSource?: boolean;
     loseCapture?: boolean;
     partialCapture?: boolean;
     pendingNativeCapture?: boolean;
@@ -152,7 +154,7 @@ async function fixture(
                   preserve: options.memory ? "filesystem+memory" : "filesystem",
                   sourceStates: ["running", "stopped"],
                   interruption: options.memory ? "pause" : "stop",
-                  sourceAfter: "unchanged",
+                  sourceAfter: options.stoppedSource ? "stopped" : "unchanged",
                   connections: "dropped",
                   consistency: "unknown",
                   mountHandling: "none",
@@ -248,7 +250,12 @@ async function fixture(
         async snapshotRestore(input) {
           calls.restore++;
 
-          return allocate(snapshots.get(input.snapshot.nativeId)!.files);
+          const restored = allocate(snapshots.get(input.snapshot.nativeId)!.files);
+
+          if (options.aliasRestoredFilesystem)
+            boxes.get("box_1")!.files = boxes.get(restored.id)!.files;
+
+          return restored;
         },
         async snapshotDelete(reference) {
           snapshots.delete(reference.nativeId);
@@ -424,6 +431,45 @@ test.each(["source", "restored"] as const)(
   },
 );
 
+test("stopped-source profiles are blocked before capture for two-way isolation qualification", async () => {
+  const f = await fixture({ stoppedSource: true });
+  const steps = await runState(f.connect, f.ledger, "base", {
+    provider: "daytona",
+    network: "blocked",
+    selected: new Set(["snapshot-roundtrip"]),
+    signal: AbortSignal.timeout(5000),
+    cleanupWaitMs: 1000,
+  });
+
+  const result = steps.find((step) => step.scenario === "snapshot-roundtrip");
+  expect(result?.status).toBe("unsupported");
+  expect(result?.stateEvidence).toBeUndefined();
+  expect(f.calls.capture).toBe(0);
+  expect(f.calls.restore).toBe(0);
+  expect(f.boxes.size).toBe(0);
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+});
+
+test("aliased source and restored filesystems cannot certify snapshot isolation", async () => {
+  const f = await fixture({ aliasRestoredFilesystem: true });
+
+  const steps = await runState(f.connect, f.ledger, "base", {
+    provider: "daytona",
+    network: "blocked",
+    selected: new Set(["snapshot-roundtrip"]),
+    signal: AbortSignal.timeout(5000),
+    cleanupWaitMs: 1000,
+  });
+
+  const result = steps.find((step) => step.scenario === "snapshot-roundtrip");
+  expect(result?.status).toBe("failed");
+  expect(result?.stateEvidence).toBeUndefined();
+  expect(f.calls.restore).toBe(1);
+  expect(f.boxes.size).toBe(0);
+  expect(f.snapshots.size).toBe(0);
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+});
+
 test("a dropped volume write cannot certify persistence", async () => {
   const f = await fixture({ dropVolumeWrite: true });
 
@@ -527,7 +573,7 @@ test("RAM certification requires process observations and confirmed storage tear
     serializedReferenceReopened: true as const,
     freshConnectionAfterSourceDeletion: true as const,
     restoredWriteIndependent: true as const,
-    sourceWriteIndependent: false,
+    sourceWriteIndependent: true,
     secondRestoreOriginalBytes: true as const,
     memory: "not-applicable" as const,
     ownedArtifactDeleted: true as const,
@@ -536,6 +582,13 @@ test("RAM certification requires process observations and confirmed storage tear
   expect(() =>
     assertStateEvidence("snapshot-roundtrip", { ...fs, preserve: "filesystem+memory" }),
   ).toThrow("observable independent memory");
+
+  expect(() =>
+    assertStateEvidence("snapshot-roundtrip", { ...fs, sourceWriteIndependent: false }),
+  ).toThrow("two-way filesystem write isolation");
+  expect(() =>
+    assertStateEvidence("snapshot-roundtrip", { ...fs, sourceState: "stopped" }),
+  ).toThrow("two-way filesystem write isolation");
 
   const record = {
     schemaVersion: 1,

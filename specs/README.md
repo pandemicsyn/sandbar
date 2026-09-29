@@ -4,13 +4,14 @@ Keep this directory for focused implementation specs and a small set of current 
 
 New features target the direct SDK and public adapter API. Service expansion is deferred until the SDK is mature and several provider integrations are established; see the [delivery rule](../plans/implementation-plan.md#delivery-rule). Preserve existing service behavior and regression coverage, without requiring new feature parity.
 
-## Active state design
+## Current implementation and next unit
 
-- [Provider state portability](provider-state-portability.md) — direct SDK snapshots, core volumes and supported create-time mounts are implemented with provider-specific guarantees. Suspension, lifetime controls, optional volume versions and native forks remain proposed. Use the SDK and adapter source plus qualification evidence for current behavior; design sketches in the spec are not an API inventory.
+- [Provider state portability](provider-state-portability.md) — the snapshot/volume slice is in [PR #25](https://github.com/pandemicsyn/sandbar/pull/25); its [current completion criteria](provider-state-portability.md#9-current-pr-completion-and-follow-up-boundary) separate correctness fixes from later extensions. Remaining lifecycle features are planned.
+- [SDK recovery outcomes and adapter support](sdk-recovery-dx.md) — the next bounded unit: typed partial outcomes and shared recovery helpers/conformance. Richer volume semantics and mounted restore wait for concrete provider work.
 
-## Planned observability
+## Implemented observability contract
 
-- [SDK observability and diagnostics](sdk-observability.md) — application-owned OpenTelemetry tracing, actionable SDK error/recovery correlation, and qualified Sentry/Datadog recipes. Implementation is in flight; service tracing is deferred. This is separate from accounting and does not expand the current state-portability unit.
+- [SDK observability and diagnostics](sdk-observability.md) — direct SDK tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes merged in PR #24. Metrics/events remain later work; service tracing is deferred.
 
 ## Later design work
 

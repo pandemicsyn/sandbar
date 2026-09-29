@@ -422,6 +422,23 @@ Accepted recovery direction: application-owned JSON persistence; credential-inde
 
 Accepted snapshot direction: no-argument `snapshot()` with adapter-owned native defaults; only real configuration choices; Daytona container source restart by default when previously running; optional exact requirement checks; explicit returned capture/restore semantics; no implicit archive or cross-provider fallback. Explicit restore networking, native create-time mounts first, and durability-required destruction for writable mounts remain in the broader proposal. No production exports or provider behavior change with this document.
 
+## 9. Current PR completion and follow-up boundary
+
+[PR #25](https://github.com/pandemicsyn/sandbar/pull/25) delivers the current snapshot/volume slice. Independent review of `0cdc3cca5cb544e57656be7de62dbf1da4d157e1` identified the following completion requirements. Check the latest revision for fixes; these are acceptance criteria, not a claim that every finding remains open.
+
+| Fix in the current PR | Required evidence |
+| --- | --- |
+| Prevent stale observation from replacing a newer continuation checkpoint, in memory or persisted state | Start an observation from never-submitted state, advance/persist continuation, release the old observation, then attempt continuation again. State must not regress and the native effect count must remain one. Ordering must cover observation and continuation, not only simultaneous continuations. |
+| Preserve retained-volume custody across interrupted Daytona compute destruction | Persist known mount identities, retained artifacts, and durability observations before DELETE. Interrupt after the native effect but before the response checkpoint; a fresh connection recovering the last durable reference must still report retained storage and its known durability status. |
+| Prove filesystem isolation rather than merely issuing writes | Use different post-capture source and restored payloads. Read each write back, verify the other live sandbox is unchanged in both directions, and separately verify a second restore retains original captured bytes. A fixture that drops writes or aliases both filesystems must fail. |
+| Correct release notes and qualification claims | Describe E2B restore/deletion and explicit caller-selected deletion accurately. Separate fixture coverage, actual live evidence, stale-provider-bundle attempts, artifact immutability, and two-way write isolation. Earlier passing diagnostics cannot retroactively prove new assertions or fixes. |
+
+These are correctness and evidence fixes to existing promises. Add focused regressions, review the final diff independently, and run required final gates. Do not repeatedly run broad gates on intermediate revisions when focused tests answer the current question. Correct claims when evidence is missing; additional paid runs require separate authorization and are not granted by this document.
+
+The next bounded unit is [SDK recovery outcomes and adapter support](sdk-recovery-dx.md): stable typed partial outcomes and reusable recovery helpers/conformance. It does not defer the race or custody fixes above. Keep current public capture/restore/volume methods; no redesign of the successful call flow is required.
+
+Richer volume semantics and capability-driven mounted restore are later work, paired with a concrete provider requirement. The reviewed slice may honestly expose limited volume metadata and reject mounted restore; it must not claim those extension points already work. Capacity/placement options, arbitrary provider option bags, a generic workflow engine, and service expansion are not new requirements for PR #25.
+
 ## Foundation implementation decisions
 
 This section records the already-merged foundation, including its earlier required-preservation request shape. The next snapshot slice must update that shape and its checks to the optional request/default behavior above; this historical implementation does not override the accepted design.

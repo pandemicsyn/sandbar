@@ -313,6 +313,14 @@ export async function runState(
               plan.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
               plan.reason,
             );
+          if (
+            plan.value.profile.sourceAfter !== "unchanged" ||
+            plan.value.sourceState !== "running"
+          )
+            throw new SandbarError(
+              "UNSUPPORTED",
+              "Two-way snapshot isolation qualification requires a running source after capture",
+            );
           role = "snapshot/write";
           await source.writeFile(snapshotPath, bytes, {
             overwrite: true,
@@ -392,16 +400,6 @@ export async function runState(
           )
             throw new Error("Snapshot metadata does not establish requested capture");
 
-          if (expected === "running") {
-            role = "snapshot/source-change";
-            await source.writeFile(snapshotPath, sourceChanged, {
-              overwrite: true,
-              signal: options.signal,
-            });
-            role = "snapshot/source-change-readback";
-            equal(await read(source, snapshotPath), sourceChanged);
-          }
-
           role = "snapshot/restore";
 
           const restored = await wait(
@@ -413,6 +411,18 @@ export async function runState(
 
           if (restored.id === source.id) throw new Error("Restore reused source compute identity");
           equal(await read(restored, snapshotPath), bytes);
+
+          if (expected === "running") {
+            role = "snapshot/source-change";
+            await source.writeFile(snapshotPath, sourceChanged, {
+              overwrite: true,
+              signal: options.signal,
+            });
+            role = "snapshot/source-change-readback";
+            equal(await read(source, snapshotPath), sourceChanged);
+            role = "snapshot/restored-isolation-readback";
+            equal(await read(restored, snapshotPath), bytes);
+          }
 
           if (plan.value.profile.restoreExecution === "resume" && before) {
             role = "snapshot/restored-memory";

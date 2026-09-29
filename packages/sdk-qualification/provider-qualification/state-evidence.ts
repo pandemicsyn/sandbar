@@ -54,6 +54,9 @@ export function assertStateEvidence(scenario: string, value: StateEvidence) {
         "Memory snapshot pass requires observable independent memory and source writes",
       );
 
+    if (!evidence.sourceWriteIndependent || evidence.sourceState !== "running")
+      throw new Error("Snapshot pass requires two-way filesystem write isolation");
+
     if (
       evidence.preserve === "filesystem" &&
       (evidence.memory !== "not-applicable" ||
