@@ -59,6 +59,7 @@ const codes = new Set([
   "CONFLICT",
   "NOT_FOUND",
   "CAPACITY",
+  "RATE_LIMIT",
   "OUTPUT_CAPACITY",
   "OUTPUT_UNAVAILABLE",
   "INVOCATION_EXPIRED",
@@ -482,7 +483,7 @@ export class Telemetry {
         });
       throw error;
     } finally {
-      if (recording && (!options.phase || name === "sandbar.wait"))
+      if (recording && (name === "sandbar.wait" || name === "sandbar.operation.wait"))
         attempt(() =>
           span.setAttributes({
             "sandbar.wait.poll_count": state.polls,

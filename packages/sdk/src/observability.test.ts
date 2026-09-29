@@ -99,6 +99,12 @@ test("per-call parents, convenience phases, nonzero exits, privacy and applicati
   expect(spans.filter((s) => s.name === "sandbar.sandbox.submit_create")).toHaveLength(0);
   expect(spans.filter((s) => s.name === "sandbar.operation.wait")).toHaveLength(0);
   expect(spans.filter((s) => s.name === "sandbar.wait")).toHaveLength(8);
+
+  for (const span of spans.filter((s) => s.name !== "sandbar.wait")) {
+    expect(span.attributes["sandbar.wait.poll_count"]).toBeUndefined();
+    expect(span.attributes["sandbar.events.dropped"]).toBeUndefined();
+  }
+
   expect(
     spans
       .filter((s) => s.name === "sandbar.wait")
@@ -654,4 +660,25 @@ test("an AbortError from a pre-submission callback with a live caller signal is 
     await client.close();
     await provider.shutdown();
   }
+});
+
+test("provider throttling keeps its safe diagnostic and span classification", async () => {
+  const { provider, exporter } = setup();
+  const telemetry = new Telemetry({ tracing: { tracerProvider: provider } });
+  const error = new SandbarError("RATE_LIMIT", "CANARY_PROVIDER_MESSAGE");
+  expect(diagnosticContext(error).errorCode).toBe("RATE_LIMIT");
+  await expect(
+    telemetry.run(
+      "sandbar.submit",
+      async () => {
+        throw error;
+      },
+      { phase: true },
+    ),
+  ).rejects.toBe(error);
+  const span = safeSpans(exporter)[0]!;
+  expect(span.attributes["sandbar.error.code"]).toBe("RATE_LIMIT");
+  expect(span.status.code).toBe(SpanStatusCode.ERROR);
+  expect(span.attributes["sandbar.wait.poll_count"]).toBeUndefined();
+  await provider.shutdown();
 });
