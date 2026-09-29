@@ -1,6 +1,13 @@
 /* oxlint-disable anti-slop/no-chained-type-assertions -- Fault-injection objects intentionally violate the OTel interface to prove that broken application providers cannot change SDK behavior. */
 import { afterAll, expect, test } from "bun:test";
-import { context, trace, SpanStatusCode, type TracerProvider } from "@opentelemetry/api";
+import {
+  context,
+  trace,
+  ROOT_CONTEXT,
+  SpanStatusCode,
+  type Context,
+  type TracerProvider,
+} from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import {
@@ -394,4 +401,142 @@ test("callback-initiated public submissions are distinct calls rather than conve
   expect(spans.filter((s) => s.name === "sandbar.sandbox.submit_create")).toHaveLength(1);
   expect(fixture.counts.create).toBe(2);
   await provider.shutdown();
+});
+
+test("throwing Context.setValue preserves SDK work, original errors and ended spans", async () => {
+  for (const boundary of ["span", "owner"] as const) {
+    const { provider, exporter } = setup();
+    const fixture = fixtureAdapter();
+
+    // Create real recording spans without asking the SDK provider to process the broken context.
+    // This isolates Sandbar's subsequent span/owner context updates from provider startSpan failures.
+    const faultProvider: TracerProvider = {
+      getTracer(name, version) {
+        const tracer = provider.getTracer(name, version);
+
+        return {
+          startSpan(spanName, options) {
+            const span = tracer.startSpan(spanName, options, ROOT_CONTEXT);
+            const end = span.end.bind(span);
+            // The recording processor also needs a healthy context to export the ended span.
+            span.end = (endTime) => context.with(ROOT_CONTEXT, () => end(endTime));
+
+            return span;
+          },
+          startActiveSpan: tracer.startActiveSpan.bind(tracer),
+        };
+      },
+    };
+
+    let failedUpdates = 0;
+
+    const broken: Context = {
+      getValue: ROOT_CONTEXT.getValue.bind(ROOT_CONTEXT),
+      deleteValue: ROOT_CONTEXT.deleteValue.bind(ROOT_CONTEXT),
+      setValue() {
+        failedUpdates++;
+        throw new Error("CANARY_CONTEXT_UPDATE");
+      },
+    };
+
+    const parent: Context =
+      boundary === "span"
+        ? broken
+        : {
+            getValue: ROOT_CONTEXT.getValue.bind(ROOT_CONTEXT),
+            deleteValue: ROOT_CONTEXT.deleteValue.bind(ROOT_CONTEXT),
+            setValue: () => broken,
+          };
+
+    const telemetry = new Telemetry({ tracing: { tracerProvider: faultProvider } });
+    const original = new SandbarError("TIMEOUT", "CANARY_ORIGINAL");
+    let calls = 0;
+
+    try {
+      await context.with(parent, async () => {
+        const client = await Sandbar.connect({
+          adapter: fixture.adapter,
+          config: {},
+          credentials: {},
+          tracing: { tracerProvider: faultProvider },
+        });
+
+        try {
+          const box = await client.sandboxes.create({ environment: Image.prepared("fixture") });
+          await box.destroy();
+          await expect(
+            telemetry.run("sandbar.exec", async () => {
+              calls++;
+              expect(context.active()).toBe(parent);
+              throw original;
+            }),
+          ).rejects.toBe(original);
+          const value = { completed: true };
+          expect(
+            await telemetry.run(
+              "sandbar.wait",
+              async () => {
+                calls++;
+                expect(context.active()).toBe(parent);
+
+                return value;
+              },
+              { phase: true },
+            ),
+          ).toBe(value);
+        } finally {
+          await client.close();
+        }
+      });
+      expect(calls).toBe(2);
+      expect(failedUpdates).toBeGreaterThan(0);
+      expect(fixture.counts.create).toBe(1);
+      expect(fixture.counts.destroy).toBe(1);
+      expect(fixture.counts.close).toBe(1);
+      const spans = safeSpans(exporter);
+      expect(spans.filter((span) => span.name === "sandbar.sandbox.create")).toHaveLength(1);
+      expect(spans.filter((span) => span.name === "sandbar.exec")).toHaveLength(1);
+      expect(spans.filter((span) => span.name === "sandbar.wait")).toHaveLength(3);
+    } finally {
+      await provider.shutdown();
+    }
+  }
+});
+
+test("an AbortError from a pre-submission callback with a live caller signal is a failure", async () => {
+  const { provider, exporter } = setup();
+  const fixture = fixtureAdapter();
+  const controller = new AbortController();
+  const original = new Error("CANARY_INTERNAL_TIMEOUT");
+  original.name = "AbortError";
+
+  const client = await Sandbar.connect({
+    adapter: fixture.adapter,
+    config: {},
+    credentials: {},
+    tracing: { tracerProvider: provider },
+    onReference() {
+      throw original;
+    },
+  });
+
+  try {
+    await expect(
+      client.sandboxes.create(
+        { environment: Image.prepared("fixture") },
+        {
+          signal: controller.signal,
+        },
+      ),
+    ).rejects.toBe(original);
+    expect(controller.signal.aborted).toBe(false);
+    expect(fixture.counts.create).toBe(0);
+    const span = safeSpans(exporter).find((span) => span.name === "sandbar.sandbox.create")!;
+    expect(span.attributes["sandbar.call.outcome"]).toBe("error");
+    expect(span.attributes["sandbar.effect"]).toBe("none");
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+  } finally {
+    await client.close();
+    await provider.shutdown();
+  }
 });

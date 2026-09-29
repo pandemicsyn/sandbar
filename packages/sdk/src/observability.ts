@@ -354,7 +354,8 @@ export class Telemetry {
 
     let active = attempt(() => trace.setSpan(parent, span)) ?? parent;
 
-    if (!options.phase || name === "sandbar.wait") active = active.setValue(this.owner, state);
+    if (!options.phase || name === "sandbar.wait")
+      active = attempt(() => active.setValue(this.owner, state)) ?? parent;
     // Call work once even if a custom context manager throws before/after invoking it.
     let promise: Promise<T> | undefined;
     let invoked = false;
@@ -457,9 +458,7 @@ export class Telemetry {
           const attrs = diagnosticAttributes(error);
 
           const cancelled =
-            options.signal?.aborted ||
-            attrs["sandbar.error.code"] === "WAIT_ABORTED" ||
-            (error instanceof Error && error.name === "AbortError");
+            options.signal?.aborted || attrs["sandbar.error.code"] === "WAIT_ABORTED";
 
           span.setAttributes({
             "sandbar.call.outcome": cancelled ? "cancelled" : "error",
