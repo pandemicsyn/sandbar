@@ -127,6 +127,16 @@ type Sandbox = z.infer<typeof NativeSandbox>;
 
 type DaytonaCreateResult = DriverResult & { nativeSandbox?: Sandbox };
 
+function volumeContains(native: Sandbox, path: string): boolean {
+  const normalized = path.replace(/\/+/g, "/");
+
+  return (native.volumes ?? []).some((mount) => {
+    const root = mount.mountPath.replace(/\/+/g, "/").replace(/\/$/, "");
+
+    return normalized === root || normalized.startsWith(root + "/");
+  });
+}
+
 type DaytonaInventoryPage = Awaited<ReturnType<ProviderDriver["inventory"]>>;
 
 function endpointConfigurationError(field: "apiUrl" | "toolboxOrigin"): z.ZodError {
@@ -1382,7 +1392,24 @@ export class DaytonaDriver implements ProviderDriver {
       };
     }
 
-    const stageDirectory = `${input.path.slice(0, input.path.lastIndexOf("/") + 1)}.sandbar-${Buffer.from(
+    const mounted = volumeContains(native, input.path);
+
+    if (mounted && !input.overwrite)
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code: "unsupported",
+          message: "Daytona mounted volumes cannot enforce atomic no-clobber writes",
+          effect: "none",
+          retry: "never",
+        },
+      };
+
+    // Object-backed mounts cannot chmod a private stage; overwrite commits do not require a same-filesystem link.
+    const stageParent = mounted ? "/tmp/" : input.path.slice(0, input.path.lastIndexOf("/") + 1);
+
+    const stageDirectory = `${stageParent}.sandbar-${Buffer.from(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.identity.submissionId)),
     )
       .toString("hex")
@@ -1410,6 +1437,18 @@ export class DaytonaDriver implements ProviderDriver {
     try {
       const markerPath = await receiptPath("write", input.identity.submissionId);
       const receiptDirectory = markerPath.slice(0, markerPath.lastIndexOf("/"));
+
+      if (volumeContains(native, stageDirectory) || volumeContains(native, receiptDirectory))
+        return {
+          status: "rejected",
+          effect: "none",
+          error: {
+            code: "unsupported",
+            message: "Daytona mounted volume covers private file staging or receipt storage",
+            effect: "none",
+            retry: "never",
+          },
+        };
 
       const reserved = await this.json(
         "POST",
@@ -1473,8 +1512,8 @@ export class DaytonaDriver implements ProviderDriver {
       if (input.signal?.aborted)
         return unknown(input.identity.submissionId, "Daytona file write wait was aborted");
 
-      // The stage and destination share a directory. POSIX link(2) is atomic
-      // create-if-absent; overwrite uses a shell copy and verifies final bytes.
+      // Root no-clobber stages share the destination directory for atomic link(2).
+      // Overwrite copies verified private bytes and checks the completed destination.
       const action = input.overwrite
         ? `cat ${quote(temporaryPath)} > ${quote(input.path)}`
         : `ln -T -- ${quote(temporaryPath)} ${quote(input.path)}`;

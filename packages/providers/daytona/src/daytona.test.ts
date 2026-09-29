@@ -2199,3 +2199,164 @@ test.each(["name", "imageName", "lost-read", "failed-read"] as const)(
     expect(creates).toBe(0);
   },
 );
+
+test.each([
+  "overwrite",
+  "lost",
+  "partial",
+  "abort",
+  "no-clobber",
+  "double-slash",
+  "private-tmp",
+  "prefix",
+] as const)("mounted writes preserve private staging and honest effects: %s", async (mode) => {
+  const directory = mkdtempSync("/tmp/sandbar-mounted-write-");
+  const mountPath = `${directory}/mount`;
+  const targetDirectory = mode === "prefix" ? `${directory}/mount2` : mountPath;
+  mkdirSync(targetDirectory);
+  const target = `${targetDirectory}/target`;
+  writeFileSync(target, "original");
+  const bytes = new Uint8Array([0, 255, 10, 1]);
+  const controller = new AbortController();
+  let stage = "";
+  let receipt = "";
+  let reservations = 0;
+  let uploads = 0;
+  let commits = 0;
+
+  const fetcher = fixtureFetch(async (input, init) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
+
+    if (url.pathname === "/api/sandbox/native-1")
+      return Response.json({
+        ...native("box"),
+        volumes: [{ volumeId: "volume-1", mountPath: mode === "private-tmp" ? "/tmp" : mountPath }],
+      });
+
+    if (url.pathname.endsWith("/files/upload-v2")) {
+      uploads++;
+      const form = init?.body;
+
+      if (!(form instanceof FormData)) throw new Error("Expected multipart upload");
+      const file = form.get("file");
+
+      if (!(file instanceof Blob)) throw new Error("Expected uploaded bytes");
+      const path = url.searchParams.get("path")!;
+      writeFileSync(path, new Uint8Array(await file.arrayBuffer()));
+
+      return Response.json({ path, name: "blob", type: "file" });
+    }
+
+    if (url.pathname.endsWith("/files/download")) {
+      try {
+        return new Response(new Uint8Array(readFileSync(url.searchParams.get("path")!)));
+      } catch {
+        return new Response(null, { status: 404 });
+      }
+    }
+
+    if (url.pathname.endsWith("/process/execute")) {
+      const command = z
+        .object({ command: z.string() })
+        .parse(JSON.parse(String(init?.body))).command;
+
+      if (command.startsWith("mkdir -m 700 -- ")) {
+        reservations++;
+        const matches = [...command.matchAll(/mkdir -m 700 -- '([^']+)'/g)];
+        stage = matches[0]![1]!;
+        receipt = matches[1]![1]!;
+
+        if (mode === "prefix") {
+          expect(stage.startsWith(targetDirectory + "/")).toBe(true);
+
+          return Response.json({ exitCode: 126, result: "reservation denied" });
+        }
+
+        if (stage.startsWith(mountPath + "/"))
+          return Response.json({ exitCode: 126, result: "chmod is unsupported" });
+        expect(stage.startsWith("/tmp/.sandbar-")).toBe(true);
+        const reserved = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+        expect(reserved.status).toBe(0);
+
+        if (mode === "abort") controller.abort();
+
+        return Response.json({ exitCode: reserved.status, result: reserved.stdout });
+      }
+
+      commits++;
+
+      if (mode === "partial") {
+        writeFileSync(target, bytes.slice(0, 1));
+
+        return Response.json({ exitCode: 1, result: "partial destination write" });
+      }
+
+      const committed = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+      expect(committed.status).toBe(0);
+
+      if (mode === "lost") throw new Error("Lost commit acknowledgement");
+
+      return Response.json({ exitCode: committed.status, result: committed.stdout });
+    }
+
+    throw new Error(`Unexpected fixture route ${url.pathname}`);
+  });
+
+  try {
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetcher });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+    const submissionId = directory.split("/").at(-1)!;
+    const path = mode === "double-slash" ? target.replaceAll("/", "//") : target;
+
+    const result = await provider.driver.writeFile({
+      sandbox,
+      identity: identity(submissionId),
+      path,
+      bytes,
+      overwrite: !["no-clobber", "double-slash", "prefix"].includes(mode),
+      signal: controller.signal,
+    });
+
+    if (["no-clobber", "double-slash", "private-tmp"].includes(mode)) {
+      expect(result).toMatchObject({
+        status: "rejected",
+        effect: "none",
+        error: { code: "unsupported" },
+      });
+      expect([reservations, uploads, commits]).toEqual([0, 0, 0]);
+      expect(readFileSync(target, "utf8")).toBe("original");
+    } else if (mode === "prefix") {
+      expect(result).toMatchObject({ status: "rejected", error: { code: "unavailable" } });
+      expect([reservations, uploads, commits]).toEqual([1, 0, 0]);
+    } else if (mode === "abort") {
+      expect(result.status).toBe("unknown");
+      expect([uploads, commits]).toEqual([0, 0]);
+      expect(readFileSync(target, "utf8")).toBe("original");
+    } else if (mode === "partial") {
+      expect(result).toMatchObject({ status: "unknown", effect: "possible" });
+      expect(
+        await provider.driver.observeWrite({ sandbox, submissionId, path: target }),
+      ).toBeNull();
+      expect(commits).toBe(1);
+    } else {
+      expect(result.status).toBe(mode === "lost" ? "unknown" : "completed");
+      expect(new Uint8Array(readFileSync(target))).toEqual(bytes);
+      expect(
+        (await provider.driver.observeWrite({ sandbox, submissionId, path: target }))?.status,
+      ).toBe("completed");
+      expect([reservations, uploads, commits]).toEqual([1, 1, 1]);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+
+    if (stage && stage.startsWith("/tmp/.sandbar-"))
+      rmSync(stage, { recursive: true, force: true });
+
+    if (receipt && receipt.startsWith("/tmp/.sandbar-write-"))
+      rmSync(receipt, { recursive: true, force: true });
+  }
+});
