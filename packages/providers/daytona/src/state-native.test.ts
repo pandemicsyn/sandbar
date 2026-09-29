@@ -3,6 +3,7 @@ import { z } from "zod";
 import { defineAdapter, SnapshotInfo, ResourceReference } from "sandbar-adapter";
 import {
   Sandbar,
+  SandbarError,
   Image,
   OutcomeUnknownError,
   WaitAbortedError,
@@ -1325,3 +1326,44 @@ for (const kind of ["snapshot", "volume"] as const) {
     }
   });
 }
+
+test("Daytona cancelled volume-create checkpoint survives fresh recovery without dispatch", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  let saved: AdapterRecoveryReference | undefined;
+
+  const client = await f.connect((reference) => {
+    if (reference.kind !== "volume_create" || !reference.token) return;
+    saved = JSON.parse(JSON.stringify(reference));
+    controller.abort();
+  });
+
+  try {
+    try {
+      await client.volumes.create({ name: "cancelled" }, { signal: controller.signal });
+      throw Error("Expected cancellation");
+    } catch (error) {
+      expect(
+        error instanceof WaitAbortedError ||
+          (error instanceof SandbarError && error.effect === "none"),
+      ).toBe(true);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(saved?.token).toMatchObject({ state: "rejected" });
+    const before = structuredClone(f.calls);
+    const reopened = await f.connect(undefined, "rotated-key");
+
+    try {
+      const recovered = await reopened.recover(saved!);
+      await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      await recovered.continue();
+      await expect(recovered.wait()).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+      expect(f.calls).toEqual(before);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await client.close();
+  }
+});

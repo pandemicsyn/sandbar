@@ -21,7 +21,7 @@ const profile: SnapshotProfile = {
   minimumRetentionSeconds: 900,
 };
 
-test("service and direct read checks agree, admission and runtime reject before effects, recovery never replays", async () => {
+test("service create checks agree with direct checks, unavailable capture is gated, and recovery never replays", async () => {
   let creates = 0;
   let destroys = 0;
   let captures = 0;
@@ -179,9 +179,15 @@ test("service and direct read checks agree, admission and runtime reject before 
 
     const remoteCaps = await client.capabilities();
     const directCaps = await direct.capabilities();
+    expect(directCaps.snapshots.capture.status).toBe("supported");
+    expect(remoteCaps.snapshots.capture.status).toBe("unsupported");
     const { mounts: _mounts, ...legacyDirectCaps } = directCaps;
     expect({ ...remoteCaps, observedAt: "dated" }).toEqual({
       ...Capabilities.parse(legacyDirectCaps),
+      snapshots: {
+        ...remoteCaps.snapshots,
+        capture: { status: "unsupported", reason: "Operation is not implemented" },
+      },
       observedAt: "dated",
     });
     expect(await client.sandboxes.checkCreate(input)).toEqual(
@@ -315,13 +321,11 @@ test("service and direct read checks agree, admission and runtime reject before 
 
     expect(
       await parsedBox.checkSnapshot({ requirements: { preserve: "filesystem+memory" } }),
-    ).toMatchObject({
-      status: "supported",
-    });
+    ).toMatchObject({ status: "unsupported", reason: "Operation is not implemented" });
     const directBox = new (await import("sandbar-sdk")).AdapterSandbox(direct, "box1");
     expect(
-      await parsedBox.checkSnapshot({ requirements: { preserve: "filesystem+memory" } }),
-    ).toEqual(await directBox.checkSnapshot({ requirements: { preserve: "filesystem+memory" } }));
+      await directBox.checkSnapshot({ requirements: { preserve: "filesystem+memory" } }),
+    ).toMatchObject({ status: "supported" });
     expect(creates).toBe(1);
     expect(captures).toBe(0);
     expect(destroys).toBe(0);

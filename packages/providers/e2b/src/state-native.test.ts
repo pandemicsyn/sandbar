@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ResourceReference } from "sandbar-adapter";
 import {
   Sandbar,
+  SandbarError,
   Image,
   OutcomeUnknownError,
   WaitAbortedError,
@@ -921,41 +922,66 @@ test("E2B lost restore acknowledgement recovers exact dispatched selector withou
   }
 });
 
-for (const kind of ["snapshot_capture", "snapshot_restore", "snapshot_delete"] as const) {
-  test(`E2B cancellation during ${kind} checkpoint prevents dispatch`, async () => {
+for (const kind of ["snapshot_capture", "snapshot_restore", "volume_create"] as const) {
+  test(`E2B cancellation during ${kind} checkpoint persists no-dispatch recovery`, async () => {
     const f = fixture();
     const controller = new AbortController();
     let armed = false;
+    let saved: AdapterRecoveryReference | undefined;
 
-    const client = await f.connect("fixture-key", (reference) => {
-      if (armed && reference.kind === kind && reference.token) controller.abort();
-    });
+    const client = await f.connect(
+      "fixture-key",
+      (reference) => {
+        if (!armed || reference.kind !== kind || !reference.token) return;
+        saved = JSON.parse(JSON.stringify(reference));
+        controller.abort();
+      },
+      "team-fixture",
+    );
 
     try {
       const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const snapshot = kind === "snapshot_restore" ? (await source.snapshot()).snapshot : undefined;
+      armed = true;
 
-      if (kind === "snapshot_capture") {
-        armed = true;
-        const operation = await source.submitSnapshot(undefined, { signal: controller.signal });
-        await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-        expect(f.calls.capture).toBe(0);
-      } else {
-        const snapshot = (await source.snapshot()).snapshot;
-        armed = true;
+      try {
+        if (kind === "snapshot_capture")
+          await (await source.submitSnapshot(undefined, { signal: controller.signal })).wait();
+        else if (kind === "snapshot_restore")
+          await (
+            await snapshot!.submitRestore(
+              { networkPolicy: "blocked" },
+              { signal: controller.signal },
+            )
+          ).wait();
+        else await client.volumes.create({ name: "cancelled" }, { signal: controller.signal });
+        throw Error("Expected cancellation");
+      } catch (error) {
+        expect(
+          error instanceof WaitAbortedError ||
+            (error instanceof SandbarError && error.effect === "none"),
+        ).toBe(true);
+      }
 
-        if (kind === "snapshot_restore") {
-          await expect(
-            snapshot.submitRestore({ networkPolicy: "blocked" }, { signal: controller.signal }),
-          ).rejects.toBeInstanceOf(WaitAbortedError);
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          expect(f.calls.create).toBe(1);
-        } else {
-          await expect(snapshot.delete({ signal: controller.signal })).rejects.toMatchObject({
-            code: "UNAVAILABLE",
-            effect: "none",
-          });
-          expect(f.calls.snapshotDelete).toBe(0);
-        }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(saved?.token).toMatchObject({ state: "rejected" });
+      expect(f.calls.capture).toBe(kind === "snapshot_restore" ? 1 : 0);
+      expect(f.calls.create).toBe(1);
+      expect(f.calls.volumeCreate).toBe(0);
+      const before = structuredClone(f.calls);
+      const reopened = await f.connect("rotated-key", undefined, "team-fixture");
+
+      try {
+        const recovered = await reopened.recover(saved!);
+        await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+        await recovered.continue();
+        await expect(recovered.wait()).rejects.toMatchObject({
+          code: "UNAVAILABLE",
+          effect: "none",
+        });
+        expect(f.calls).toEqual(before);
+      } finally {
+        await reopened.close();
       }
     } finally {
       await client.close();

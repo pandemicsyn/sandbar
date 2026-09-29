@@ -182,7 +182,7 @@ export type Mutation<
       continue?: (
         attempt: RecoveryAttempt<T, S>,
         ctx: AttemptContext<T>,
-      ) => Promise<V | Pending | Unknown>;
+      ) => Promise<V | Pending | Unknown | Rejected>;
       prepare?: (input: I, ctx: ReadContext) => Promise<P>;
       submit: (input: P, ctx: AttemptContext<T>) => Promise<V | Pending | Unknown | Rejected>;
       observe?: (
@@ -475,7 +475,7 @@ export type OperationParts<I, V, P, T extends Json, S extends RecoveryResource |
   continue?: (
     attempt: RecoveryAttempt<T, S>,
     ctx: AttemptContext<T>,
-  ) => Promise<V | Pending | Unknown>;
+  ) => Promise<V | Pending | Unknown | Rejected>;
   recovery?: { version: number; token: z.ZodType<T> };
 };
 

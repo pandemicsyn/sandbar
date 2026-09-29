@@ -16,12 +16,13 @@ import {
 import { type E2BTransport, type E2BRecord } from "./transport";
 
 const VolumeCreateToken = z.strictObject({
-  state: z.enum(["uncertain", "accepted"]),
+  state: z.enum(["uncertain", "accepted", "rejected"]),
   name: z.string().min(1).max(128),
   volume: ResourceReference.optional(),
 });
 
 const CaptureToken = z.strictObject({
+  state: z.literal("rejected").optional(),
   snapshotId: z.string().max(512),
   sourceId: z.string().max(512),
   generation: z.string().max(512).optional(),
@@ -42,7 +43,7 @@ function canObserveDelete(token: z.infer<typeof DeleteToken>) {
 
 const restoreToken = z.strictObject({
   selector: z.string().min(1).max(256),
-  state: z.enum(["uncertain", "accepted"]),
+  state: z.enum(["uncertain", "accepted", "rejected"]),
   sandboxId: z.string().min(1).max(512).optional(),
 });
 
@@ -383,7 +384,17 @@ export function e2bState(input: {
           consistency: plan.value.profile.consistency,
         });
 
-        if (ctx.signal.aborted) return ctx.unknown("Capture cancelled before dispatch");
+        if (ctx.signal.aborted) {
+          await ctx.checkpoint({
+            state: "rejected",
+            snapshotId: "",
+            sourceId: box.id,
+            consistency: plan.value.profile.consistency,
+          });
+
+          return ctx.reject("UNAVAILABLE", "Capture cancelled before dispatch");
+        }
+
         const created = await need().capture(box.id, undefined, ctx.signal);
 
         if (!/^[A-Za-z0-9_-]+:default$/.test(created.snapshotId))
@@ -472,6 +483,19 @@ export function e2bState(input: {
         const token = CaptureToken.safeParse(attempt.token);
 
         if (
+          token.success &&
+          token.data.state === "rejected" &&
+          !token.data.snapshotId &&
+          !token.data.generation &&
+          !token.data.snapshot &&
+          token.data.sourceId === attempt.sandbox?.id
+        )
+          return ctx.unknown("Cancelled before dispatch; continue to confirm no-effect rejection");
+
+        if (token.success && token.data.state === "rejected")
+          return ctx.unknown("Rejected checkpoint contains contradictory acknowledgement evidence");
+
+        if (
           !token.success ||
           !token.data.generation ||
           !token.data.snapshot ||
@@ -517,6 +541,21 @@ export function e2bState(input: {
           source: { state: "running", connections: "dropped" },
           retainedResources: [info.reference],
         };
+      },
+      async continue(attempt, ctx) {
+        const token = CaptureToken.safeParse(attempt.token);
+
+        if (
+          token.success &&
+          token.data.state === "rejected" &&
+          !token.data.snapshotId &&
+          !token.data.generation &&
+          !token.data.snapshot &&
+          token.data.sourceId === attempt.sandbox?.id
+        )
+          return ctx.reject("UNAVAILABLE", "Capture cancelled before dispatch");
+
+        return ctx.unknown("Snapshot capture cannot be replayed");
       },
     },
     snapshotInspect,
@@ -595,7 +634,12 @@ export function e2bState(input: {
         const token: z.infer<typeof restoreToken> = { selector, state: "uncertain" };
         await ctx.checkpoint(token);
 
-        if (ctx.signal.aborted) return ctx.unknown("Restore cancelled before dispatch");
+        if (ctx.signal.aborted) {
+          token.state = "rejected";
+          await ctx.checkpoint(token);
+
+          return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
+        }
 
         const id = await transport.create({
           templateId: selector,
@@ -620,6 +664,17 @@ export function e2bState(input: {
       async observe(attempt, ctx) {
         const token = restoreToken.safeParse(attempt.token);
         const reference = attempt.resource;
+
+        if (
+          token.success &&
+          token.data.state === "rejected" &&
+          !token.data.sandboxId &&
+          token.data.selector === `${attempt.resource?.nativeId}:${attempt.resource?.generation}`
+        )
+          return ctx.unknown("Cancelled before dispatch; continue to confirm no-effect rejection");
+
+        if (token.success && token.data.state === "rejected")
+          return ctx.unknown("Rejected checkpoint contains contradictory acknowledgement evidence");
 
         if (
           !reference ||
@@ -663,6 +718,19 @@ export function e2bState(input: {
 
         return { id: current.id, state: current.state === "running" ? "running" : "unknown" };
       },
+      async continue(attempt, ctx) {
+        const token = restoreToken.safeParse(attempt.token);
+
+        if (
+          token.success &&
+          token.data.state === "rejected" &&
+          !token.data.sandboxId &&
+          token.data.selector === `${attempt.resource?.nativeId}:${attempt.resource?.generation}`
+        )
+          return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
+
+        return ctx.unknown("Snapshot restore cannot be replayed");
+      },
     },
     volumeCreate: {
       recovery: { version: 1, token: VolumeCreateToken },
@@ -689,8 +757,11 @@ export function e2bState(input: {
 
         await ctx.checkpoint({ state: "uncertain", name: value.name });
 
-        if (ctx.signal.aborted)
+        if (ctx.signal.aborted) {
+          await ctx.checkpoint({ state: "rejected", name: value.name });
+
           return ctx.reject("UNAVAILABLE", "Volume create cancelled before dispatch");
+        }
 
         const info = volumeInfo(
           await need().createVolume(value.name, ctx.signal),
@@ -714,6 +785,9 @@ export function e2bState(input: {
       async observe(attempt, ctx) {
         const parsed = VolumeCreateToken.safeParse(attempt.token);
 
+        if (parsed.success && parsed.data.state === "rejected" && !parsed.data.volume)
+          return ctx.unknown("Cancelled before dispatch; continue to confirm no-effect rejection");
+
         if (!parsed.success || parsed.data.state !== "accepted" || !parsed.data.volume)
           return ctx.unknown(
             "Volume create acknowledgement unavailable; no adoption by name or replay",
@@ -727,6 +801,14 @@ export function e2bState(input: {
           return ctx.unknown("Acknowledged volume identity does not match the saved request");
 
         return await volumeInspect(volume);
+      },
+      async continue(attempt, ctx) {
+        const parsed = VolumeCreateToken.safeParse(attempt.token);
+
+        if (parsed.success && parsed.data.state === "rejected" && !parsed.data.volume)
+          return ctx.reject("UNAVAILABLE", "Volume create cancelled before dispatch");
+
+        return ctx.unknown("Volume creation cannot be replayed");
       },
     },
     volumeInspect,

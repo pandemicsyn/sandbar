@@ -14,6 +14,7 @@ function serviceCapabilities(input: DirectCapabilities) {
     ...caps,
     snapshots: {
       ...caps.snapshots,
+      capture: absent,
       restore: absent,
       inspect: absent,
       list: absent,
@@ -832,18 +833,14 @@ export function registerDomainRoutes(app: Hono, deps: DomainDependencies): void 
     "/v1/projects/:projectId/sandboxes/:sandboxId/check-snapshot",
     protect(deps, false, async (c) => {
       const projectId = idParam(c, "projectId");
-      const request = await parseBody(c, SnapshotRequest);
+      await parseBody(c, SnapshotRequest);
       const box = await deps.store.getSandbox(projectId, idParam(c, "sandboxId"));
 
       if (!box?.native_id) throw new StoreError("CONFLICT", "Sandbox is not available");
-      const row = await selectConnection(projectId, box.connection_id);
+      await selectConnection(projectId, box.connection_id);
 
-      return withProvider(deps, row, async ({ adapterConnection }) =>
-        c.json(
-          SnapshotCheck.parse(
-            await new AdapterSandbox(adapterConnection, box.native_id!).checkSnapshot(request),
-          ),
-        ),
+      return c.json(
+        SnapshotCheck.parse({ status: "unsupported", reason: "Operation is not implemented" }),
       );
     }),
   );

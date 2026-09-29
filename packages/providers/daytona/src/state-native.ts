@@ -19,7 +19,7 @@ import {
 } from "sandbar-adapter";
 
 const VolumeCreateToken = z.strictObject({
-  state: z.enum(["uncertain", "accepted"]),
+  state: z.enum(["uncertain", "accepted", "rejected"]),
   name: z.string().min(1).max(128),
   volume: ResourceReference.optional(),
 });
@@ -1292,8 +1292,11 @@ export function daytonaState(input: {
 
         await ctx.checkpoint({ state: "uncertain", name: value.name });
 
-        if (ctx.signal.aborted)
+        if (ctx.signal.aborted) {
+          await ctx.checkpoint({ state: "rejected", name: value.name });
+
           return ctx.reject("UNAVAILABLE", "Volume create cancelled before dispatch");
+        }
 
         const result = volumeInfo(
           await json(
@@ -1320,6 +1323,9 @@ export function daytonaState(input: {
       async observe(attempt, ctx) {
         const parsed = VolumeCreateToken.safeParse(attempt.token);
 
+        if (parsed.success && parsed.data.state === "rejected" && !parsed.data.volume)
+          return ctx.unknown("Cancelled before dispatch; continue to confirm no-effect rejection");
+
         if (!parsed.success || parsed.data.state !== "accepted" || !parsed.data.volume)
           return ctx.unknown(
             "Volume create acknowledgement unavailable; no adoption by name or replay",
@@ -1333,6 +1339,14 @@ export function daytonaState(input: {
           return ctx.unknown("Acknowledged volume identity does not match the saved request");
 
         return await inspectVolume(volume, ctx);
+      },
+      async continue(attempt, ctx) {
+        const parsed = VolumeCreateToken.safeParse(attempt.token);
+
+        if (parsed.success && parsed.data.state === "rejected" && !parsed.data.volume)
+          return ctx.reject("UNAVAILABLE", "Volume create cancelled before dispatch");
+
+        return ctx.unknown("Volume creation cannot be replayed");
       },
     },
     volumeDelete: deletion("volume"),
