@@ -242,7 +242,7 @@ export function e2bState(input: {
     if (
       !["internet", "blocked"].includes(value.request.networkPolicy) ||
       value.request.resources ||
-      value.request.mounts
+      (value.request.mounts && Object.keys(value.request.mounts).length > 0)
     )
       throw new AdapterError("UNSUPPORTED", "Restore policy or overrides are unsupported");
 
@@ -815,11 +815,17 @@ export function e2bState(input: {
 
       if (ctx.signal.aborted)
         return ctx.reject("UNAVAILABLE", "Deletion cancelled before dispatch");
+      await ctx.checkpoint({ accepted: false });
+
+      if (ctx.signal.aborted) return ctx.unknown("Volume delete cancelled before dispatch");
       let accepted = false;
 
       try {
         accepted = await need().deleteVolume(reference.nativeId, ctx.signal);
-      } catch {
+        await ctx.checkpoint({ accepted });
+      } catch (error) {
+        if (error instanceof AdapterCheckpointError) throw error;
+
         /* observe only */
       }
 

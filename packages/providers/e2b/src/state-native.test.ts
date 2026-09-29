@@ -1031,3 +1031,81 @@ for (const rejectCheckpoint of [false, true]) {
     },
   );
 }
+
+test("E2B restore accepts an explicitly empty mount map without native mounts", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const captured = await source.snapshot();
+    const restored = await captured.snapshot.restore({ networkPolicy: "blocked", mounts: {} });
+    expect(restored.id).not.toBe(source.id);
+    expect(f.createRequests.at(-1)).toEqual({
+      templateId: `snap_one:${captured.snapshot.reference.generation}`,
+      allowInternetAccess: false,
+    });
+    expect(f.boxes.get(restored.id)?.volumeMounts).toEqual([]);
+  } finally {
+    await client.close();
+  }
+});
+
+for (const barrier of ["reject-before", "abort-before", "reject-after"] as const) {
+  test(`E2B volume delete ${barrier} checkpoints custody without replay`, async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    let saved: AdapterRecoveryReference | undefined;
+
+    const client = await f.connect(
+      "first-key",
+      (reference) => {
+        if (reference.kind !== "volume_delete") return;
+        const token = z.object({ accepted: z.boolean() }).safeParse(reference.token);
+
+        if (!token.success) return;
+        saved = JSON.parse(JSON.stringify(reference));
+        expect(f.calls.volumeDelete).toBe(token.data.accepted ? 1 : 0);
+
+        if (barrier === "abort-before" && !token.data.accepted) controller.abort();
+        else if (
+          (barrier === "reject-before" && !token.data.accepted) ||
+          (barrier === "reject-after" && token.data.accepted)
+        )
+          throw Error("Persistence unavailable");
+      },
+      "team-fixture",
+    );
+
+    try {
+      const volume = await client.volumes.create({ name: "checkpointed" });
+
+      try {
+        const operation = await volume.submitDelete({ signal: controller.signal });
+        await operation.wait({ signal: controller.signal });
+        throw Error("Expected interrupted deletion");
+      } catch (error) {
+        expect(error instanceof OutcomeUnknownError || error instanceof WaitAbortedError).toBe(
+          true,
+        );
+      }
+
+      expect(saved).toBeDefined();
+      expect(f.calls.volumeDelete).toBe(barrier === "reject-after" ? 1 : 0);
+      const reopened = await f.connect("rotated-key", undefined, "team-fixture");
+
+      try {
+        const recovered = await reopened.recover(saved!);
+
+        if (barrier === "reject-after")
+          expect(await recovered.wait()).toMatchObject({ deleted: true });
+        else await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+        expect(f.calls.volumeDelete).toBe(barrier === "reject-after" ? 1 : 0);
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+}

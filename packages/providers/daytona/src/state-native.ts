@@ -507,6 +507,10 @@ export function daytonaState(input: {
       if (ctx.signal.aborted)
         return ctx.reject("UNAVAILABLE", "Deletion cancelled before dispatch");
 
+      await ctx.checkpoint({ reference: ref, accepted: false });
+
+      if (ctx.signal.aborted) return ctx.unknown("Artifact delete cancelled before dispatch");
+
       try {
         const response = await request(
           "DELETE",
@@ -515,11 +519,15 @@ export function daytonaState(input: {
           { signal: ctx.signal, deadline: Date.now() + 30000 },
         );
 
+        await ctx.checkpoint({ reference: ref, accepted: response.ok });
+
         if (response.ok)
           return ctx.pending({ reference: ref, accepted: true }, { pollAfterMs: 500 });
 
         return ctx.pending({ reference: ref, accepted: false }, { pollAfterMs: 500 });
-      } catch {
+      } catch (error) {
+        if (error instanceof AdapterCheckpointError) throw error;
+
         return ctx.pending({ reference: ref, accepted: false }, { pollAfterMs: 500 });
       }
     },

@@ -188,6 +188,13 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
 
       if (url.pathname.startsWith("/volumes/by-name/")) return new Response(null, { status: 404 });
 
+      if (url.pathname.startsWith("/volumes/") && method === "DELETE") {
+        calls.delete++;
+        volumes.delete(url.pathname.slice("/volumes/".length));
+
+        return new Response(null, { status: 204 });
+      }
+
       if (url.pathname.startsWith("/volumes/")) {
         const volume = volumes.get(url.pathname.slice("/volumes/".length));
 
@@ -1085,3 +1092,67 @@ test("acknowledged native capture still in progress remains pending without repl
     await client.close();
   }
 });
+
+for (const kind of ["snapshot", "volume"] as const) {
+  for (const barrier of ["reject-before", "abort-before", "reject-after"] as const) {
+    test(`Daytona ${kind} delete ${barrier} checkpoints custody without replay`, async () => {
+      const f = fixture();
+      const controller = new AbortController();
+      let saved: AdapterRecoveryReference | undefined;
+
+      const client = await f.connect((reference) => {
+        if (reference.kind !== `${kind}_delete`) return;
+        const token = z.object({ accepted: z.boolean() }).safeParse(reference.token);
+
+        if (!token.success) return;
+        saved = JSON.parse(JSON.stringify(reference));
+        expect(f.calls.delete).toBe(token.data.accepted ? 1 : 0);
+
+        if (barrier === "abort-before" && !token.data.accepted) controller.abort();
+        else if (
+          (barrier === "reject-before" && !token.data.accepted) ||
+          (barrier === "reject-after" && token.data.accepted)
+        )
+          throw Error("Persistence unavailable");
+      });
+
+      try {
+        const artifact =
+          kind === "snapshot"
+            ? (
+                await (
+                  await client.sandboxes.create({ environment: Image.prepared("base") })
+                ).snapshot()
+              ).snapshot
+            : await client.volumes.create({ name: "checkpointed" });
+
+        try {
+          const operation = await artifact.submitDelete({ signal: controller.signal });
+          await operation.wait({ signal: controller.signal });
+          throw Error("Expected interrupted deletion");
+        } catch (error) {
+          expect(error instanceof OutcomeUnknownError || error instanceof WaitAbortedError).toBe(
+            true,
+          );
+        }
+
+        expect(saved).toBeDefined();
+        expect(f.calls.delete).toBe(barrier === "reject-after" ? 1 : 0);
+        const reopened = await f.connect(undefined, "rotated-key");
+
+        try {
+          const recovered = await reopened.recover(saved!);
+
+          if (barrier === "reject-after")
+            expect(await recovered.wait()).toMatchObject({ deleted: true });
+          else await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+          expect(f.calls.delete).toBe(barrier === "reject-after" ? 1 : 0);
+        } finally {
+          await reopened.close();
+        }
+      } finally {
+        await client.close();
+      }
+    });
+  }
+}
