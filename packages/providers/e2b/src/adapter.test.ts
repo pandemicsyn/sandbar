@@ -1168,3 +1168,27 @@ test("pinned E2B forwards immutable build selector and blocked network policy in
     server.stop(true);
   }
 });
+
+test("native unfiltered inventory omits the invalid empty metadata parameter", async () => {
+  const original = globalThis.fetch;
+  const requests: URL[] = [];
+  // SAFETY: This deterministic fetch boundary matches Bun's fetch/preconnect shape and receives only fixture credentials.
+  globalThis.fetch = Object.assign(
+    async (input: RequestInfo | URL) => {
+      requests.push(new URL(input instanceof Request ? input.url : String(input)));
+
+      return Response.json([]);
+    },
+    { preconnect() {} },
+  ) as typeof fetch;
+
+  try {
+    const transport = createSdkTransport("fixture-key");
+    expect(await transport.list({}, 100)).toMatchObject({ items: [] });
+    expect(requests[0]?.searchParams.has("metadata")).toBe(false);
+    await transport.list({ owner: "fixture" }, 100);
+    expect(requests[1]?.searchParams.get("metadata")).toBeTruthy();
+  } finally {
+    globalThis.fetch = original;
+  }
+});

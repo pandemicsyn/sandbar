@@ -462,7 +462,12 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     },
     get,
     async list(metadata, limit, nextToken) {
-      const paginator = Sandbox.list({ ...opts, limit, nextToken, query: { metadata } });
+      const paginator = Sandbox.list({
+        ...opts,
+        limit,
+        nextToken,
+        query: Object.keys(metadata).length ? { metadata } : undefined,
+      });
 
       const items = (await paginator.nextItems()).map((info) => ({
         id: info.sandboxId,
