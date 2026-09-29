@@ -313,6 +313,7 @@ export async function runState(
               plan.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
               plan.reason,
             );
+
           if (
             plan.value.profile.sourceAfter !== "unchanged" ||
             plan.value.sourceState !== "running"

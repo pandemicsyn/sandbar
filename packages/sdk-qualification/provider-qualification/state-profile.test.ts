@@ -433,6 +433,7 @@ test.each(["source", "restored"] as const)(
 
 test("stopped-source profiles are blocked before capture for two-way isolation qualification", async () => {
   const f = await fixture({ stoppedSource: true });
+
   const steps = await runState(f.connect, f.ledger, "base", {
     provider: "daytona",
     network: "blocked",
