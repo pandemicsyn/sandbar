@@ -203,7 +203,9 @@ export function daytonaState(input: {
           ? "ready"
           : ["creating", "pending_create"].includes(v.state)
             ? "creating"
-            : "unknown",
+            : ["deleting", "pending_delete"].includes(v.state)
+              ? "deleting"
+              : "unknown",
       filesystem: "object-backed",
       visibility: "immediate",
       durability: "unknown",
@@ -321,6 +323,8 @@ export function daytonaState(input: {
 
     if (v.id !== ref.nativeId) throw new AdapterError("CONFLICT", "Volume identity differs");
     const info = volumeInfo(v, ref.ownership);
+
+    if (v.state === "deleted") throw new AdapterError("NOT_FOUND", "Volume is deleted");
     const evidence = receipts.read(ref);
 
     if (evidence && evidence.name !== v.name)
@@ -515,6 +519,15 @@ export function daytonaState(input: {
       if (response.status === 404) return { deleted: true, reference: ref };
 
       if (!response.ok) return ctx.unknown("Deletion is unconfirmed");
+
+      if (kind === "volume") {
+        const native = await json(response, NativeVolume);
+
+        if (native.id !== ref.nativeId || native.organizationId !== scope.authority.id)
+          return ctx.unknown("Deleted volume identity or scope differs");
+
+        if (native.state === "deleted") return { deleted: true, reference: ref };
+      }
 
       return ctx.pending({ reference: ref, accepted: true }, { pollAfterMs: 500 });
     },

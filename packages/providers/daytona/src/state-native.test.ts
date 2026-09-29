@@ -677,3 +677,92 @@ test("Daytona organization-disabled warm pools do not prevent owned snapshot cle
     await client.close();
   }
 });
+
+for (const mode of [
+  "matching",
+  "wrong-id",
+  "wrong-scope",
+  "renamed-tombstone",
+  "lost-ack",
+] as const) {
+  test(`Daytona deleted volume tombstone requires acknowledged scoped identity: ${mode}`, async () => {
+    const scope = { authority: { kind: "organization", id: "org" }, partition: { target: "us" } };
+    let deleted = false;
+    let deletes = 0;
+
+    const native = () => ({
+      id: deleted && mode === "wrong-id" ? "replacement" : "vol",
+      name: deleted && mode === "renamed-tombstone" ? "owned-deleted" : "owned",
+      organizationId: deleted && mode === "wrong-scope" ? "foreign" : "org",
+      state: deleted ? "deleted" : "ready",
+    });
+
+    // SAFETY: The deterministic native boundary implements the fetch/preconnect contract.
+    const fetcher = Object.assign(
+      async (value: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(value)).pathname;
+
+        if (path === "/volumes/by-name/owned") return new Response(null, { status: 404 });
+
+        if (path === "/volumes" && init?.method === "POST") return Response.json(native());
+
+        if (path === "/volumes/vol" && init?.method === "DELETE") {
+          deletes++;
+          deleted = true;
+
+          if (mode === "lost-ack") throw Error("Lost acknowledgment");
+
+          return new Response(null, { status: 204 });
+        }
+
+        if (path === "/volumes/vol") return Response.json(native());
+
+        throw Error("Unexpected volume fixture route");
+      },
+      { preconnect() {} },
+    ) as typeof fetch;
+
+    const adapter = defineAdapter({
+      name: "daytona",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        const state = daytonaState({
+          scope,
+          apiUrl: "https://fixture.invalid",
+          apiKey: "fixture",
+          target: "us",
+          fetch: fetcher,
+        });
+
+        return {
+          ...state.fields,
+          scope,
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async create() {
+            throw Error("This fixture never allocates compute");
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+          async close() {},
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+    try {
+      const volume = await client.volumes.create({ name: "owned" });
+      const operation = await volume.submitDelete();
+
+      if (mode === "matching" || mode === "renamed-tombstone") {
+        expect(await operation.wait()).toMatchObject({ deleted: true });
+        await expect(volume.inspect()).rejects.toMatchObject({ code: "NOT_FOUND" });
+      } else await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      expect(deletes).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+}

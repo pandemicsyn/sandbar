@@ -83,3 +83,6 @@ Omitting the policy still selects strict `blocked`; there is no automatic fallba
 
 
 Daytona create accepts the immutable snapshot ID but reports the snapshot name on native sandbox records. Restore completion and recovery positively resolve that returned name to the captured ID and reject missing, different or reused names. The organization-disabled warm-pool API returns 404; this denotes no enabled pools for dependency checks. Other unreadable or malformed dependency responses continue to block snapshot deletion. See the native [warm-pool eligibility contract](https://www.daytona.io/docs/en/troubleshooting/).
+
+
+Volume deletion can leave a native tombstone with state `deleted`, HTTP 200, and a changed name. After an acknowledged delete, recovery confirms that terminal state only for the saved immutable ID and organization; it does not require a later 404 or reuse the tombstone name. Missing acknowledgement and foreign/replacement identities remain unknown. Inspection of a scoped deleted volume returns `NOT_FOUND`.
