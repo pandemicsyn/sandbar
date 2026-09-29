@@ -908,3 +908,64 @@ test("remote diagnostics validate recovery bindings without executing getters", 
   expect(getters).toBe(0);
   expect(JSON.stringify(diagnosticContext({ reference }))).not.toContain("CANARY");
 });
+
+test("direct diagnostics require the complete recovery shape without traversing getters", async () => {
+  const fixture = fixtureAdapter({ pending: true });
+  const client = await Sandbar.connect({ ...fixture, config: {}, credentials: {}, tracing: false });
+
+  const operation = await client.sandboxes.submitCreate({
+    environment: Image.prepared("CANARY_IMAGE"),
+  });
+
+  const reference = operation.reference;
+  expect(diagnosticContext(operation).recoveryAvailable).toBe(true);
+  expect(diagnosticContext({ reference }).recoveryAvailable).toBe(true);
+
+  for (const invalid of [
+    { mode: "direct", operationId: reference.operationId, submissionId: reference.submissionId },
+    { ...reference, version: 1 },
+    { ...reference, provider: "" },
+    { ...reference, kind: "invalid" },
+    { ...reference, scope: undefined },
+    { ...reference, invocationKey: "" },
+    { ...reference, kind: "destroy" },
+    { ...reference, sandboxId: "CANARY_BOX" },
+    { ...reference, token: "x".repeat(16_384) },
+    { ...reference, token: new Date() },
+    { ...reference, token: new Map() },
+    { ...reference, token: new Set() },
+    { ...reference, token: new Uint8Array([1]) },
+    { ...reference, token: Array(20) },
+    { ...reference, token: Array(20_000) },
+    { ...reference, token: Object.assign([], { 1_000_000: "CANARY" }) },
+  ])
+    expect(diagnosticContext({ reference: invalid }).recoveryAvailable).toBe(false);
+
+  expect(
+    diagnosticContext({ reference: { ...reference, kind: "destroy", sandboxId: "CANARY_BOX" } })
+      .recoveryAvailable,
+  ).toBe(true);
+
+  let getters = 0;
+
+  const token = {
+    get secret() {
+      getters++;
+
+      return "CANARY_SECRET";
+    },
+  };
+
+  expect(diagnosticContext({ reference: { ...reference, token } }).recoveryAvailable).toBe(false);
+  expect(getters).toBe(0);
+  const cyclic = { child: {} };
+  cyclic.child = cyclic;
+  expect(
+    diagnosticContext({ reference: { ...reference, token: [1, "CANARY", null, { nested: true }] } })
+      .recoveryAvailable,
+  ).toBe(true);
+  expect(diagnosticContext({ reference: { ...reference, token: cyclic } }).recoveryAvailable).toBe(
+    false,
+  );
+  await client.close();
+});

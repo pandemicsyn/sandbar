@@ -1,3 +1,4 @@
+import { ReferenceSchema } from "./adapter-reference";
 import packageMetadata from "../package.json";
 /* oxlint-disable anti-slop/no-runtime-typeof -- This bounded allowlist helper checks primitives in memory without serializing arbitrary values or allocating a schema per span. */
 /* oxlint-disable anti-slop/no-unknown-returns -- The heterogeneous instance wrapper is internal and preserves the target method's existing generic return type. */
@@ -91,62 +92,99 @@ export function safeIdentity(value: unknown): string | undefined {
   return typeof value === "string" && /^(sdk|op|sub)_[0-9a-f]{32}$/.test(value) ? value : undefined;
 }
 
-// oxlint-disable anti-slop/no-unsafe-dictionary-type -- This private snapshot boundary copies only allowlisted own data descriptors; remoteRecoveryAvailable immediately validates the detached fields against the existing recovery schema.
-function dataFields(value: unknown, keys: readonly string[]): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object") return;
-  const names = Object.getOwnPropertyNames(value);
+// oxlint-disable anti-slop/no-unsafe-dictionary-type -- This private snapshot copies own data descriptors within a fixed budget, then immediately validates the detached values against the existing recovery schemas.
+function recoverySnapshot(value: unknown): unknown {
+  let remaining = 16_384;
+  const visiting = new WeakSet<object>();
 
-  if (names.some((name) => !keys.includes(name))) return;
-  const fields: Record<string, unknown> = {};
+  const copy = (input: unknown): unknown => {
+    remaining--;
 
-  for (const name of names) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, name);
+    if (typeof input === "string") remaining -= input.length;
 
-    if (!descriptor || !("value" in descriptor)) return;
-    fields[name] = descriptor.value;
-  }
+    if (remaining < 0) throw new Error("Diagnostic reference exceeds its budget");
 
-  return fields;
+    if (!input || typeof input !== "object") {
+      if (["string", "number", "boolean", "undefined"].includes(typeof input) || input === null)
+        return input;
+      throw new Error("Diagnostic reference contains a non-data value");
+    }
+
+    if (visiting.has(input)) throw new Error("Diagnostic reference contains a cycle");
+    visiting.add(input);
+    const array = Array.isArray(input);
+    const prototype = Object.getPrototypeOf(input);
+
+    if (
+      array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null
+    )
+      throw new Error("Diagnostic reference contains a non-JSON container");
+    const names = Object.getOwnPropertyNames(input);
+
+    if (array) {
+      const length = Object.getOwnPropertyDescriptor(input, "length")?.value;
+
+      if (
+        !Number.isSafeInteger(length) ||
+        length < 0 ||
+        length > remaining ||
+        names.length !== length + 1 ||
+        names.some(
+          (key) =>
+            key !== "length" &&
+            (String(Number(key)) !== key ||
+              !Number.isInteger(Number(key)) ||
+              Number(key) < 0 ||
+              Number(key) >= length),
+        )
+      )
+        throw new Error("Diagnostic reference contains a sparse or oversized array");
+    }
+
+    const result: Record<string, unknown> | unknown[] = array ? [] : {};
+
+    for (const key of names) {
+      if (array && key === "length") continue;
+
+      if (!array) remaining -= key.length;
+
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+
+      if (!descriptor || !("value" in descriptor))
+        throw new Error("Diagnostic reference contains an accessor");
+      Object.defineProperty(result, key, {
+        value: copy(descriptor.value),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+
+    visiting.delete(input);
+
+    return result;
+  };
+
+  return copy(value);
 }
-
 // oxlint-enable anti-slop/no-unsafe-dictionary-type
 
 function remoteRecoveryAvailable(value: unknown): boolean {
-  const fields = dataFields(value, [
-    "version",
-    "mode",
-    "kind",
-    "invocationKey",
-    "operationId",
-    "resourceId",
-    "file",
-    "service",
-  ]);
+  // SAFETY: The detached snapshot is fully validated by the existing public remote contract.
+  return !!attempt(() => validateReference(recoverySnapshot(value) as RecoveryReference));
+}
 
-  if (!fields) return false;
-  fields.service = dataFields(fields.service, ["url", "projectId"]);
+function directRecoveryAvailable(value: unknown): boolean {
+  return (
+    attempt(() => {
+      const reference = ReferenceSchema.parse(recoverySnapshot(value));
 
-  if (fields.file !== undefined) {
-    const file = dataFields(fields.file, ["path", "bytes"]);
+      if (JSON.stringify(reference).length > 16_384) return false;
+      const createsResource = reference.kind === "create" || reference.kind === "image_build";
 
-    if (!file) return false;
-    fields.file = file;
-  }
-
-  // Reject nonprimitive leaf values before passing a detached snapshot to the validator.
-  for (const [key, field] of Object.entries(fields)) {
-    if (key === "service" || key === "file") {
-      if (
-        field &&
-        typeof field === "object" &&
-        Object.values(field).some((leaf) => leaf !== null && typeof leaf === "object")
-      )
-        return false;
-    } else if (field !== null && typeof field === "object") return false;
-  }
-
-  // SAFETY: The snapshot contains only own data fields; validateReference checks the full public remote contract before use.
-  return !!attempt(() => validateReference(fields as RecoveryReference));
+      return createsResource ? !reference.sandboxId : !!reference.sandboxId;
+    }) ?? false
+  );
 }
 
 /** Pure correlation data; the original handle/error retains recovery authority. */
@@ -194,7 +232,7 @@ export function diagnosticContext(value: unknown): Readonly<DiagnosticContext> {
         );
         record.recoveryAvailable =
           mode === "direct"
-            ? !!record.operationId && !!record.submissionId
+            ? !!record.operationId && !!record.submissionId && directRecoveryAvailable(ref)
             : mode === "remote" && remoteRecoveryAvailable(ref);
       }
     }
