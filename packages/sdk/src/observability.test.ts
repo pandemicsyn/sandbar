@@ -160,6 +160,59 @@ test("disablement and unsampled tracing retain operational recovery without tele
   }
 });
 
+test("standalone advanced observation retains safe mutation correlation", async () => {
+  const { provider, exporter } = setup();
+  const fixture = fixtureAdapter({ pending: true });
+
+  const client = await Sandbar.connect({
+    adapter: fixture.adapter,
+    config: {},
+    credentials: {},
+    tracing: { tracerProvider: provider },
+  });
+
+  const operation = await client.sandboxes.submitCreate({
+    environment: Image.prepared("CANARY_IMAGE"),
+  });
+
+  const reference = operation.reference;
+  const parent = provider.getTracer("application").startSpan("advanced-observation");
+
+  const result = await context.with(trace.setSpan(context.active(), parent), () =>
+    client.operations.observe({
+      scope: client.scope,
+      kind: "create",
+      operationId: reference.operationId,
+      submissionId: reference.submissionId,
+      token: reference.token,
+      tokenVersion: reference.tokenVersion,
+    }),
+  );
+
+  expect(result.kind).toBe("pending");
+  parent.end();
+  await client.close();
+  const spans = safeSpans(exporter);
+  const observation = spans.find((span) => span.name === "sandbar.observe")!;
+  const submission = spans.find((span) => span.name === "sandbar.sandbox.submit_create")!;
+  expect(observation.parentSpanContext?.spanId).toBe(parent.spanContext().spanId);
+  expect(observation.attributes).toMatchObject({
+    "sandbar.operation.type": "create",
+    "sandbar.operation.id": reference.operationId,
+    "sandbar.submission.id": reference.submissionId,
+    "sandbar.operation.state": "pending",
+  });
+  expect(observation.attributes["sandbar.operation.id"]).toBe(
+    submission.attributes["sandbar.operation.id"],
+  );
+  expect(observation.attributes["sandbar.submission.id"]).toBe(
+    submission.attributes["sandbar.submission.id"],
+  );
+  expect(fixture.counts.create).toBe(1);
+  expect(fixture.counts.observe).toBe(1);
+  await provider.shutdown();
+});
+
 test("pre-submission rejection, bounded polling and post-submission abort", async () => {
   const { provider, exporter } = setup();
   const fixture = fixtureAdapter({ pending: true });

@@ -539,7 +539,9 @@ export function instrument<T extends object, K extends keyof T>(
 
   const wrapped = (...args: unknown[]) => {
     const identity =
-      name === "sandbar.operation.recover" ? { reference: args[0] } : options.identity;
+      name === "sandbar.operation.recover" || name === "sandbar.observe"
+        ? { reference: args[0] }
+        : options.identity;
 
     const operationType = name === "sandbar.prepare" ? operationKind(args[0]) : undefined;
 
