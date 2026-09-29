@@ -1,9 +1,9 @@
 ---
 title: Tracing and safe diagnostics
-description: Trace direct SDK work with application-owned OpenTelemetry.
+description: Trace SDK work with application-owned OpenTelemetry.
 ---
 
-The direct SDK uses the shared OpenTelemetry trace API. Your application owns the provider, context manager, sampler, exporter, credentials and shutdown. Importing Sandbar does not initialize telemetry. Without an application provider, calls perform no telemetry IO. Metrics and structured diagnostic logs are a later release. Service-client tracing, HTTP propagation, persisted context and runner spans are deferred to the distant service milestone.
+The SDK uses the shared OpenTelemetry trace API. Your application owns the provider, context manager, sampler, exporter, credentials and shutdown. Importing Sandbar does not initialize telemetry. Without an application provider, calls perform no telemetry IO. Metrics and structured diagnostic logs are a later release. Service-client tracing, HTTP propagation, persisted context and runner spans are deferred to the distant service milestone.
 
 ## Configure tracing
 
