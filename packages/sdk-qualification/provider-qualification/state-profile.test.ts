@@ -26,6 +26,8 @@ afterEach(async () => {
 async function fixture(
   options: {
     dropVolumeWrite?: boolean;
+    dropSourceChange?: boolean;
+    dropRestoredChange?: boolean;
     loseCapture?: boolean;
     partialCapture?: boolean;
     pendingNativeCapture?: boolean;
@@ -333,8 +335,12 @@ async function fixture(
 
             if (!input.overwrite && files.has(input.path)) throw new Error("Existing path");
 
-            if (!options.dropVolumeWrite || !input.path.startsWith("/mnt/"))
-              files.set(input.path, input.bytes.slice());
+            const dropWrite =
+              (options.dropVolumeWrite && input.path.startsWith("/mnt/")) ||
+              (options.dropSourceChange && snapshots.size > 0 && input.sandbox.id === "box_1") ||
+              (options.dropRestoredChange && snapshots.size > 0 && input.sandbox.id === "box_2");
+
+            if (!dropWrite) files.set(input.path, input.bytes.slice());
 
             return { bytesWritten: input.bytes.length };
           },
@@ -394,6 +400,29 @@ test("state workflow records each resource independently, preserves snapshot iso
       .every((entry) => entry.cleanup === "confirmed"),
   ).toBe(true);
 });
+
+test.each(["source", "restored"] as const)(
+  "a dropped %s post-capture write cannot certify snapshot isolation",
+  async (target) => {
+    const f = await fixture({
+      dropSourceChange: target === "source",
+      dropRestoredChange: target === "restored",
+    });
+
+    const steps = await runState(f.connect, f.ledger, "base", {
+      provider: "daytona",
+      network: "blocked",
+      selected: new Set(["snapshot-roundtrip"]),
+      signal: AbortSignal.timeout(5000),
+      cleanupWaitMs: 1000,
+    });
+
+    expect(steps.find((step) => step.scenario === "snapshot-roundtrip")?.status).toBe("failed");
+    expect(
+      steps.find((step) => step.scenario === "snapshot-roundtrip")?.stateEvidence,
+    ).toBeUndefined();
+  },
+);
 
 test("a dropped volume write cannot certify persistence", async () => {
   const f = await fixture({ dropVolumeWrite: true });

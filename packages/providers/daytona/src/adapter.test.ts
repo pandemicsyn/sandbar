@@ -2,7 +2,13 @@ import { expect, test } from "bun:test";
 import { z } from "zod";
 import { adapterSuite } from "sandbar-adapter/testing";
 import { createDaytonaAdapter } from "./adapter";
-import { Sandbar, Image, AdapterSandbox, OutcomeUnknownError } from "sandbar-sdk";
+import {
+  Sandbar,
+  Image,
+  AdapterSandbox,
+  OutcomeUnknownError,
+  type AdapterRecoveryReference,
+} from "sandbar-sdk";
 
 test.each([
   "normal",
@@ -1463,3 +1469,91 @@ test.each([
     }
   },
 );
+
+test("Daytona interrupted mounted destroy retains volume custody before DELETE", async () => {
+  let deleted = false;
+  let deletes = 0;
+  let saved: AdapterRecoveryReference | undefined;
+  const abort = new AbortController();
+
+  const fetcher = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const route = new URL(String(input)).pathname;
+
+      if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (route === "/api/regions")
+        return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+      if (route === "/api/organizations/org-1")
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+      if (route === "/api/sandbox/mounted-box") {
+        if (init?.method === "DELETE") {
+          expect(saved?.token).toMatchObject({
+            sandboxId: "mounted-box",
+            mountDurability: [{ volume: { nativeId: "retained-volume" } }],
+          });
+          deletes++;
+          deleted = true;
+          abort.abort();
+
+          return new Promise<Response>(() => undefined);
+        }
+
+        return Response.json({
+          id: "mounted-box",
+          name: "fixture",
+          labels: {},
+          state: deleted ? "destroyed" : "started",
+          organizationId: "org-1",
+          target: "us",
+          networkBlockAll: true,
+          public: false,
+          volumes: [{ volumeId: "retained-volume", mountPath: "/mnt/data" }],
+        });
+      }
+
+      throw new Error(`Unexpected fixture route: ${route}`);
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const connect = () =>
+    Sandbar.connect({
+      adapter: createDaytonaAdapter(fetcher),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+      onReference(reference) {
+        saved = structuredClone(reference);
+      },
+    });
+
+  const client = await connect();
+
+  try {
+    await expect(
+      new AdapterSandbox(client, "mounted-box").destroy({
+        storage: "allow-unconfirmed",
+        signal: abort.signal,
+      }),
+    ).rejects.toMatchObject({ code: "WAIT_ABORTED" });
+    expect(deletes).toBe(1);
+    expect(saved).toBeDefined();
+    const reopened = await connect();
+
+    try {
+      const recovered = await (await reopened.recover(saved!)).wait();
+      expect(recovered).toMatchObject({
+        computeStopped: true,
+        retainedResources: ["daytona-volume:retained-volume"],
+        mountDurability: [{ volume: { nativeId: "retained-volume" }, status: "unconfirmed" }],
+      });
+      expect(deletes).toBe(1);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await client.close();
+  }
+});

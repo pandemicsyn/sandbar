@@ -207,6 +207,9 @@ export class AdapterOperation<T> {
   readonly durability = "process" as const;
   private first: RuntimeResult | undefined;
   private continuing = false;
+  private revision = 0;
+  private persistence: Promise<void> = Promise.resolve();
+  private persistedReference?: AdapterRecoveryReference;
   private terminal?: { value: T } | { error: Error };
   private pendingAt: number | null = null;
   private nextPollAt = 0;
@@ -254,12 +257,16 @@ export class AdapterOperation<T> {
       : this.client.signal;
 
     this.continuing = true;
+    this.revision++;
     this.first = undefined;
     this.terminal = undefined;
     this.pendingAt = null;
     this.nextPollAt = 0;
 
     try {
+      await this.persistence;
+
+      if (this.persistedReference !== this.reference) await this.persistReference();
       this.reference = (await this.client.recover(this.reference)).reference;
       this.first = await continueOperation(
         this.client.session,
@@ -278,7 +285,7 @@ export class AdapterOperation<T> {
         signal,
         async (token, tokenVersion) => {
           this.reference = sealedReference({ ...this.reference, token, tokenVersion });
-          await this.client.persistReference(this.reference);
+          await this.persistReference();
         },
       );
 
@@ -288,7 +295,7 @@ export class AdapterOperation<T> {
           token: this.first.token,
           tokenVersion: this.first.version,
         });
-        await this.client.persistReference(this.reference);
+        await this.persistReference();
       }
 
       return this;
@@ -304,11 +311,27 @@ export class AdapterOperation<T> {
     }
   }
 
+  private persistReference(): Promise<void> {
+    const reference = this.reference;
+    const saved = this.persistence.then(() => this.client.persistReference(reference));
+    this.persistence = saved.then(
+      () => {
+        this.persistedReference = reference;
+      },
+      () => undefined,
+    );
+
+    return saved;
+  }
   async observe(): Promise<T | null> {
     return this.observeWithSignal(this.client.signal);
   }
   private async observeWithSignal(signal: AbortSignal): Promise<T | null> {
+    if (this.continuing)
+      throw new SandbarError("CONFLICT", "Operation continuation is already active");
+
     if (signal.aborted) abortWaiting(this.reference, signal.reason);
+    const revision = this.revision;
 
     if (this.terminal) {
       if ("error" in this.terminal) throw this.terminal.error;
@@ -321,14 +344,16 @@ export class AdapterOperation<T> {
     this.first = undefined;
 
     if (result?.kind === "pending") {
+      if (revision !== this.revision) return null;
       this.pendingAt = Date.now();
       this.nextPollAt = this.pendingAt + result.pollAfterMs;
+      this.revision++;
       this.reference = sealedReference({
         ...this.reference,
         token: result.token,
         tokenVersion: result.version,
       });
-      await this.client.persistReference(this.reference);
+      await this.persistReference();
 
       return null;
     }
@@ -370,6 +395,8 @@ export class AdapterOperation<T> {
         return null;
       });
 
+      if (revision !== this.revision) return null;
+
       if (!observed)
         throw asUnknown(this.reference, "No correlated provider observation is available");
       result = observed;
@@ -377,15 +404,18 @@ export class AdapterOperation<T> {
 
     if (signal.aborted) abortWaiting(this.reference, signal.reason);
 
+    if (revision !== this.revision) return null;
+
     if (result.kind === "pending") {
       this.pendingAt = Date.now();
       this.nextPollAt = this.pendingAt + result.pollAfterMs;
+      this.revision++;
       this.reference = sealedReference({
         ...this.reference,
         token: result.token,
         tokenVersion: result.version,
       });
-      await this.client.persistReference(this.reference);
+      await this.persistReference();
 
       return null;
     }

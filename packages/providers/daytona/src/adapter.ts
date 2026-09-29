@@ -563,36 +563,6 @@ export function createDaytonaAdapter(
               return ctx.reject("UNAVAILABLE", "Daytona inspection failed before deletion");
             }
 
-            const result = await driver.destroy({
-              sandbox: native(box.id),
-              identity: identity(ctx),
-              signal: ctx.signal,
-              retainedResources,
-            });
-
-            const value = destroyValue(result);
-
-            if (value)
-              return {
-                ...value,
-                retainedResources: [
-                  ...value.retainedResources,
-                  ...mounts.map((mount) => retainedVolumeLabel(mount.volumeId)),
-                ],
-                mountDurability: mounts.map((mount) => ({
-                  volume: {
-                    version: 1 as const,
-                    kind: "volume" as const,
-                    provider: "daytona",
-                    scope: { authority: { kind: "organization", id: scope.accountId! }, partition },
-                    nativeId: mount.volumeId,
-                    ownership: "unknown" as const,
-                  },
-                  path: mount.mountPath,
-                  status: "unconfirmed" as const,
-                })),
-              };
-
             const token: z.infer<typeof DestroyToken> = {
               sandboxId: box.id,
               mountDurability: mounts.map((mount) => ({
@@ -610,8 +580,34 @@ export function createDaytonaAdapter(
             };
 
             if (retainedResources !== undefined) token.retainedResources = retainedResources;
+            await ctx.checkpoint(token);
 
-            if (result.deletionAccepted) token.deletionAccepted = true;
+            if (ctx.signal.aborted)
+              return ctx.reject("UNAVAILABLE", "Daytona deletion cancelled before dispatch");
+
+            const result = await driver.destroy({
+              sandbox: native(box.id),
+              identity: identity(ctx),
+              signal: ctx.signal,
+              retainedResources,
+            });
+
+            if (result.deletionAccepted || result.status === "completed") {
+              token.deletionAccepted = true;
+              await ctx.checkpoint(token);
+            }
+
+            const value = destroyValue(result);
+
+            if (value)
+              return {
+                ...value,
+                retainedResources: [
+                  ...value.retainedResources,
+                  ...mounts.map((mount) => retainedVolumeLabel(mount.volumeId)),
+                ],
+                mountDurability: token.mountDurability,
+              };
 
             return ctx.pending(token, { pollAfterMs: 500 });
           },

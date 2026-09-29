@@ -90,7 +90,9 @@ type StateScenario = "snapshot-roundtrip" | "volume-persistence";
 
 const bytes = new Uint8Array([0, 255, 10, 83, 97, 110, 100, 98, 97, 114]);
 
-const changed = new Uint8Array([1, 2, 3]);
+const sourceChanged = new Uint8Array([1, 2, 3]);
+
+const restoredChanged = new Uint8Array([4, 5, 6]);
 
 function equal(actual: Uint8Array, expected: Uint8Array) {
   if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index]))
@@ -392,10 +394,12 @@ export async function runState(
 
           if (expected === "running") {
             role = "snapshot/source-change";
-            await source.writeFile(snapshotPath, changed, {
+            await source.writeFile(snapshotPath, sourceChanged, {
               overwrite: true,
               signal: options.signal,
             });
+            role = "snapshot/source-change-readback";
+            equal(await read(source, snapshotPath), sourceChanged);
           }
 
           role = "snapshot/restore";
@@ -443,10 +447,18 @@ export async function runState(
           }
 
           role = "snapshot/restored-change";
-          await restored.writeFile(snapshotPath, changed, {
+          await restored.writeFile(snapshotPath, restoredChanged, {
             overwrite: true,
             signal: options.signal,
           });
+          role = "snapshot/restored-change-readback";
+          equal(await read(restored, snapshotPath), restoredChanged);
+
+          if (expected === "running") {
+            role = "snapshot/source-isolation-readback";
+            equal(await read(source, snapshotPath), sourceChanged);
+          }
+
           // Free compute before the second restore; at most two active sandboxes.
           await cleanupCompute(
             client,
