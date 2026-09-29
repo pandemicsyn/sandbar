@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "check": "astro check && tsc -p examples/tsconfig.json && bun scripts/check-links.mjs && bun run typescript:check",
+    "check": "astro check && bun scripts/check-observability-snippets.mjs && tsc -p examples/tsconfig.json && bun scripts/check-links.mjs && bun run typescript:check",
     "build": "bun run provider:check && bun scripts/generate-http-reference.mjs --check && astro build && bun scripts/check-dist.mjs",
     "reference:generate": "bun scripts/generate-http-reference.mjs",
     "reference:check": "bun scripts/generate-http-reference.mjs --check",

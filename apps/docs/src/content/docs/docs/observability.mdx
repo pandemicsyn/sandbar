@@ -1,0 +1,205 @@
+---
+title: Tracing and safe diagnostics
+description: Trace SDK work with your application's OpenTelemetry, Sentry or Datadog setup.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import otel from "../../../../examples/observability-otel.ts?raw";
+import sentryNode from "../../../../examples/observability-sentry-node.ts?raw";
+import sentryBun from "../../../../examples/observability-sentry-bun.ts?raw";
+import datadogNode from "../../../../examples/observability-datadog-node.ts?raw";
+import capture from "../../../../examples/observability-sentry-capture.ts?raw";
+import datadogOtlp from "../../../../examples/observability-datadog-otlp.ts?raw";
+
+The SDK uses the shared OpenTelemetry trace API. SDK calls appear beneath your application's active request or job span. Your application owns initialization, sampling, export and shutdown; importing Sandbar does not initialize telemetry.
+
+## Already using telemetry
+
+### OpenTelemetry
+
+Keep your provider, context manager, exporters and instrumentation. No Sandbar tracing option is required. Initialize telemetry before application work, then call the SDK inside the request/job context you already use:
+
+```ts
+import { Sandbar } from "sandbar-sdk";
+import { daytona } from "sandbar-sdk/daytona";
+
+const client = await Sandbar.connect(
+  daytona({
+    apiKey: process.env.DAYTONA_API_KEY!,
+    target: process.env.DAYTONA_TARGET ?? "us",
+  }),
+);
+// Use client inside your existing active request/job span.
+await client.close();
+```
+
+### Sentry
+
+For an application whose Sentry SDK owns tracing, enable its OpenTelemetry API bridge in your existing `Sentry.init()` configuration: add `enableOpenTelemetrySetup: true`. Keep your current DSN, sampling, integrations, error hooks and shutdown. Sandbar then uses Sentry's shared provider and active span context; it needs no second provider or exporter. This path is tested with Sentry 11.1.0 on Node and Bun.
+
+If your application already owns an OpenTelemetry provider, keep that provider instead. Add `Sentry.openTelemetryIntegration()` to your existing Sentry integrations, set `enableOpenTelemetrySetup: false`, and leave Sentry's `tracesSampleRate`/`tracesSampler` unset. Your OTel sampler remains in control. To send spans to Sentry, add an OTLP exporter using `Sentry.getOtlpTracesEndpoint(dsn)` to that provider. [Sentry's custom-pipeline guide](https://docs.sentry.io/platforms/javascript/guides/node/opentelemetry/custom-setup/) covers that existing-provider configuration.
+
+### Datadog
+
+For Node applications already running `dd-trace`, register its OpenTelemetry bridge once during your existing startup, before importing application modules. Keep the existing Datadog initialization, plugins, sampling and Agent configuration:
+
+```ts
+import tracer from "dd-trace";
+
+// Your application's tracer.init(...) already ran.
+const provider = new tracer.TracerProvider();
+provider.register();
+```
+
+Sandbar spans now join the active Datadog request/job trace. Do not register another OTel SDK provider on this path. The bridge is tested with `dd-trace` 6.17.0 on Node 22. [Datadog's API bridge instructions](https://docs.datadoghq.com/opentelemetry/instrument/dd_sdks/api_support/) describe startup and custom instrumentation.
+
+For Bun, or an application already exporting OTel to Datadog, keep the OTel provider and use an Agent/Collector OTLP endpoint. The complete OTLP example below works on both runtimes.
+
+## Starting fresh
+
+These complete files create and destroy one Daytona sandbox under a `sandbar-demo` application span. Set `DAYTONA_API_KEY` and optionally `DAYTONA_TARGET` (defaults to `us`). Each sandbox has a 15-minute TTL and is explicitly destroyed. Run Node examples with Node 22.18 or later; Bun examples use Bun 1.3.14. Save the displayed file locally before running the commands.
+
+### See a trace in your terminal
+
+Install the application's tracing dependencies:
+
+```sh
+npm install sandbar-sdk @opentelemetry/api@1.9.1 @opentelemetry/sdk-trace-node@2.11.0 @opentelemetry/sdk-trace-base@2.11.0 @opentelemetry/context-async-hooks@2.11.0
+```
+
+<Code code={otel} lang="ts" title="observability-otel.ts" />
+
+```sh
+DAYTONA_API_KEY=your-key node observability-otel.ts
+# Or: DAYTONA_API_KEY=your-key bun observability-otel.ts
+```
+
+The console exporter prints the `sandbar-demo` parent and `sandbar.sandbox.create`, `sandbar.prepare`, `sandbar.submit`, `sandbar.wait`, destroy and close spans. No collector or vendor account is needed for console export.
+
+### Sentry
+
+Install `sandbar-sdk`, `@opentelemetry/api@1.9.1` and the runtime's Sentry package. Set `SENTRY_DSN` as well as your Daytona key. These examples keep Sentry's default integrations and error reporting. They enable its OTel bridge and export SDK spans through Sentry's existing tracing pipeline.
+
+<Tabs>
+  <TabItem label="Node">
+
+```sh
+npm install sandbar-sdk @opentelemetry/api@1.9.1 @sentry/node@11.1.0
+```
+
+<Code code={sentryNode} lang="ts" title="observability-sentry-node.ts" />
+
+```sh
+SENTRY_DSN=your-dsn DAYTONA_API_KEY=your-key node observability-sentry-node.ts
+```
+
+  </TabItem>
+  <TabItem label="Bun">
+
+```sh
+bun add sandbar-sdk @opentelemetry/api@1.9.1 @sentry/bun@11.1.0
+```
+
+<Code code={sentryBun} lang="ts" title="observability-sentry-bun.ts" />
+
+```sh
+SENTRY_DSN=your-dsn DAYTONA_API_KEY=your-key bun observability-sentry-bun.ts
+```
+
+  </TabItem>
+</Tabs>
+
+Look for the `sandbar-demo` trace and its SDK children in your project's traces. Local qualification verifies emitted envelopes and parent relationships; delivery and presentation in your account depend on its configuration and are not certified by the local fixture.
+
+### Datadog on Node
+
+Run a Datadog Agent configured for APM. Keep `DD_SERVICE`, `DD_ENV`, sampling and Agent settings in your application's environment. Install:
+
+```sh
+npm install sandbar-sdk @opentelemetry/api@1.9.1 dd-trace@6.17.0
+```
+
+<Code code={datadogNode} lang="ts" title="observability-datadog-node.ts" />
+
+```sh
+DAYTONA_API_KEY=your-key DD_TRACE_AGENT_URL=http://127.0.0.1:8126 node observability-datadog-node.ts
+```
+
+The OTel bridge sends the `sandbar-demo` trace and SDK children through `dd-trace` to the Agent. Local qualification decodes that native Datadog trace payload; real Agent ingestion and Datadog UI presentation remain unverified.
+
+### Datadog through OTLP on Node or Bun
+
+Enable your [Agent's OTLP HTTP receiver](https://docs.datadoghq.com/opentelemetry/setup/otlp_ingest_in_the_agent/) or use a trusted Collector that forwards to Datadog. Install:
+
+```sh
+npm install sandbar-sdk @opentelemetry/api@1.9.1 @opentelemetry/sdk-trace-node@2.11.0 @opentelemetry/sdk-trace-base@2.11.0 @opentelemetry/context-async-hooks@2.11.0 @opentelemetry/exporter-trace-otlp-http@0.222.0
+```
+
+<Code code={datadogOtlp} lang="ts" title="observability-datadog-otlp.ts" />
+
+```sh
+DAYTONA_API_KEY=your-key OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces bun observability-datadog-otlp.ts
+# The same file also runs with node.
+```
+
+This uses your OTel sampler and context manager. It does not load `dd-trace` on Bun. Look for the `sandbar-demo` trace in your configured backend; local qualification certifies the OTLP payload, rather than account ingestion or UI mapping.
+
+## Optional issue capture and privacy
+
+Sandbar records span status but does not capture Sentry issues automatically. If you choose to capture an SDK failure, pass bounded `diagnosticContext` rather than the original error, cause or output. Use an event processor scoped to that one explicit capture; preserve your global `beforeSend` and default integrations:
+
+<Code code={capture} lang="ts" title="observability-sentry-capture.ts" />
+
+Call it once inside your active request/job catch block. The processor returns a fresh allowlist for that event. Unrelated application errors retain their normal message, exception, stack and tags. Your application still owns any other event processors and `beforeSend` policy. Independent vendor/HTTP instrumentation and application spans can include data beyond the SDK's safe attributes; configure them according to your application's privacy policy.
+
+## Tracing controls
+
+No option is needed to use the application's provider. `tracing: false` disables SDK spans for one client:
+
+```ts
+import { Sandbar } from "sandbar-sdk";
+import { daytona } from "sandbar-sdk/daytona";
+
+const client = await Sandbar.connect(
+  daytona({
+    apiKey: process.env.DAYTONA_API_KEY!,
+    target: "us",
+  }),
+  { tracing: false },
+);
+await client.close();
+```
+
+Provider injection uses `tracing: { tracerProvider }`. Injection changes span creation; it still needs the application's compatible async context manager. Independent instrumentation has its own policy. `close()` releases SDK resources and never shuts down or flushes your provider. A shared client captures the active context separately for every call.
+
+## Interpret spans and errors
+
+Names are fixed, with INTERNAL semantic spans for connect, capabilities, checks, inventory, create/submit-create, image build/submit-build, exec/submit, files, inspect, destroy, operation observe/wait/recover and close. Real preparation, submission and convenience waiting use `sandbar.prepare`, `sandbar.submit` and `sandbar.wait`. Explicit advanced observation uses `sandbar.observe`. Convenience calls suppress their internal public submit/wait copies. Internal polling adds counts and at most eight changed-state events per wait, never one span per unchanged poll.
+
+`sandbar.call.outcome` is `success`, `error` or `cancelled`. `sandbar.effect` is separate: `none`, `possible`, `applied`, `partial` or `unknown`. Observation can succeed while the remote operation remains pending/unknown. Current `exec()` is success-only: a nonzero exit throws `NonzeroExitError`, records its exit code and applied effect, and fails that call's contract. Unsupported capability answers are successful queries. Local abort after dispatch does not prove that remote work stopped. Submission response loss remains uncertain and must use existing observation/recovery, without replay.
+
+```ts
+import { diagnosticContext } from "sandbar-sdk";
+
+try {
+  // await your Sandbar operation
+} catch (error) {
+  const diagnostic = diagnosticContext(error);
+  // Pass this bounded record to your application's issue/reporting system.
+  // Keep the original error/handle if recovery is needed.
+}
+```
+
+The pure helper returns allowlisted error code/effect, safe Sandbar operation/submission IDs when known, known pending/completed/rejected/failed/unknown state, and `recoveryAvailable`. It performs no IO, includes no recovery authority, and never exports invocation keys, native locators, scope, recovery tokens, service URLs or raw messages/causes. Custom provider labels become `custom`. Traces contain no command, argv, env, paths, file contents, stdout/stderr, image name, credential or URL by default.
+
+## Recovery and HTTP instrumentation
+
+New direct operation handles may retain a validated scalar origin context for links. Portable references do not gain tracing authority. After a direct-client restart, recover under the current caller context and use the safe operation identity when the original trace context is unavailable. Missing context and unsampled traces never remove recovery or permit replay. Links are not a promise that a vendor displays one continuous tree.
+
+Sandbar adds no HTTP transport spans, global fetch patches, or provider/guest tracing headers. The local fixture exercises a direct adapter file read with real `instrumentation-http`, proving one CLIENT transport child for one actual request on each runtime. It qualifies Node `http.request` on Bun too; it does **not** certify automatic tracing of Bun's native fetch. The fixture deliberately permits only its localhost test server. In production, configure the application's outgoing instrumentation to ignore provider/guest destinations by default, allow propagation only to explicitly trusted destinations, and scrub URL/query/header data before export. Library safe defaults cannot scrub independently instrumented HTTP, native SDKs, application spans or vendor captures.
+
+## Qualification and debugging
+
+Run `bun run observability:check` after building packages. The guide renders the same complete example files that documentation checks compile and runtime qualification executes with local provider and vendor boundaries. The pinned recipes and deterministic fixtures live in `packages/sdk-qualification/observability`. Evidence covers Node 22.23.3 and Bun 1.3.14 independently, local export, safe issues, sampling, concurrent parent context and bounded shutdown. Existing service regressions remain checked without new tracing parity requirements. Metrics, structured logs, service tracing, vendor UI and live provider telemetry are not qualified by these fixtures. Native Datadog qualification covers Node; Bun uses OTLP.
+
+If spans are missing, check that tracing is enabled, initialization preceded application work, the API is shared (Sandbar externalizes it), the sampler selected the trace, and the exporter finished within its deadline. If spans are disconnected, check the async context manager and per-call active request context. Injecting a provider does not install a context manager. Recovery correlation remains available through operation identity when traces are absent or unsampled.

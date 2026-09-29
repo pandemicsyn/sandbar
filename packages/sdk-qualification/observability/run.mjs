@@ -42,3 +42,5 @@ for (const runtime of ["node", "bun"]) {
     "packages/sdk-qualification/dist/observability-faults.mjs",
   ]);
 }
+
+run("bun", ["packages/sdk-qualification/observability/examples.mjs"]);

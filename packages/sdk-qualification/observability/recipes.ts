@@ -4,7 +4,7 @@ import { BatchSpanProcessor, TraceIdRatioBasedSampler } from "@opentelemetry/sdk
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { context } from "@opentelemetry/api";
-import { diagnosticContext } from "sandbar-sdk";
+import { captureSandbarFailure } from "../../../apps/docs/examples/observability-sentry-capture";
 import * as SentryNode from "@sentry/node";
 import * as SentryBun from "@sentry/bun";
 
@@ -60,6 +60,7 @@ export function startSentry(
   runtime: "node" | "bun",
   transport?: SentryNode.NodeOptions["transport"],
   sampleRate = 1,
+  beforeSend?: SentryNode.NodeOptions["beforeSend"],
 ) {
   const sentry = runtime === "bun" ? SentryBun : SentryNode;
   const endpoint = sentry.getOtlpTracesEndpoint(dsn);
@@ -69,30 +70,19 @@ export function startSentry(
   sentry.init({
     dsn,
     enableOpenTelemetrySetup: false,
-    defaultIntegrations: false,
     integrations: [sentry.openTelemetryIntegration()],
     transport,
-    // Return a fresh allowlist: no stack, request, breadcrumbs, causes, user or environment.
-    beforeSend(event) {
-      return {
-        type: undefined,
-        event_id: event.event_id,
-        timestamp: event.timestamp,
-        level: "error",
-        message: "Sandbar operation failed",
-        contexts: { trace: event.contexts?.trace, sandbar: event.contexts?.sandbar },
-      };
-    },
+    beforeSend,
   });
 
   return {
     ...otel,
     // Capture once inside the caller's active request context. Never capture the raw error.
     capture(error: unknown) {
-      sentry.captureMessage("Sandbar operation failed", {
-        level: "error",
-        contexts: { sandbar: { ...diagnosticContext(error) } },
-      });
+      captureSandbarFailure(error, sentry);
+    },
+    captureUnrelated(error: Error) {
+      sentry.captureException(error, { tags: { feature: "checkout" } });
     },
     async shutdown() {
       try {

@@ -16,6 +16,8 @@ const exports: string[] = [];
 
 const envelopes: unknown[] = [];
 
+let beforeSendCalls = 0;
+
 let failureTraceId: string | undefined;
 
 let failureOperationId: string | undefined;
@@ -57,6 +59,11 @@ const setup =
           },
         }),
         sampleRate,
+        (event) => {
+          beforeSendCalls++;
+
+          return { ...event, tags: { ...event.tags, applicationPolicy: "retained" } };
+        },
       )
     : (recipe === "datadog" ? startDatadog : startOpenTelemetry)(`${url}/v1/traces`, sampleRate);
 
@@ -100,6 +107,9 @@ try {
   });
   job.end();
   await other.close();
+
+  if ("captureUnrelated" in setup && typeof setup.captureUnrelated === "function")
+    setup.captureUnrelated(new Error("Checkout card declined"));
   await setup.provider.forceFlush();
 
   if ("capture" in setup) {
@@ -116,8 +126,6 @@ try {
 }
 
 assert(!exports.join("").includes("CANARY"));
-
-assert(!JSON.stringify(envelopes).includes("CANARY"));
 
 // Decode JSON OTLP to verify exported relationships rather than merely counting requests.
 type ExportedSpan = {
@@ -151,13 +159,25 @@ else {
 
 if (recipe === "sentry") {
   const issues = envelopes.filter((e) => JSON.stringify(e).includes('"type":"event"'));
-  assert.equal(issues.length, 1);
-  const serialized = JSON.stringify(issues);
+  assert.equal(issues.length, 2);
+  assert.equal(beforeSendCalls, 2);
+
+  const sandbar = issues.find((event) =>
+    JSON.stringify(event).includes('"message":"Sandbar operation failed"'),
+  );
+
+  const serialized = JSON.stringify(sandbar);
+  assert(!serialized.includes("CANARY"));
   assert(serialized.includes("OUTCOME_UNKNOWN"));
   assert(serialized.includes("operationId"));
   assert(serialized.includes(failureTraceId!));
   assert(serialized.includes(failureOperationId!));
   assert(!serialized.includes("stacktrace"));
+  const checkout = issues.find((event) => JSON.stringify(event).includes("Checkout card declined"));
+  assert(checkout, "An unrelated application error must retain its original message");
+  assert(JSON.stringify(checkout).includes("stacktrace"));
+  assert(JSON.stringify(checkout).includes('"feature":"checkout"'));
+  assert(JSON.stringify(checkout).includes('"applicationPolicy":"retained"'));
 }
 
 console.log(
