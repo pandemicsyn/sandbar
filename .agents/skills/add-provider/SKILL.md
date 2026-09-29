@@ -24,6 +24,8 @@ Package names and the adapter's stable `name` are separate. Do not assume owners
 
 ## Establish the native boundary
 
+If a provider research issue is supplied, read it and its relevant discussion first. Use its evidence, proposed defaults, implementation checklist and open questions as the brief; recheck version-sensitive claims against current native docs and Sandbar exports. Research does not establish implemented support or authorize paid tests. For missing or incomplete research, use [provider-research](../provider-research/SKILL.md) and the [issue template](../../../.github/ISSUE_TEMPLATE/provider-research.md) to resolve the gaps relevant to this implementation. Do not require a new issue for a small adapter fix or silently expand scope to every native capability.
+
 Inspect the provider's current official API documentation and the exact native SDK version being used. Record evidence for the operations you plan to expose, especially authentication, identity, retry defaults, command execution, network policy and deletion confirmation. Pin a deliberate dependency version consistent with the repository.
 
 Use a small injectable native client or transport so fixtures exercise real request construction and response handling. Verify outbound attempt counts at that boundary: a Sandbar callback invoked once does not prove the native SDK disabled retries. Disable hidden mutation retries, or leave the affected operation unsupported until a safe transport is available.

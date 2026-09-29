@@ -1,0 +1,4 @@
+interface:
+  display_name: "Provider Research"
+  short_description: "Research native APIs for a Sandbar adapter brief"
+  default_prompt: "Use $provider-research to research this sandbox provider and prepare a GitHub issue that can guide its Sandbar adapter implementation."
