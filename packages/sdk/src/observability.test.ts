@@ -929,6 +929,8 @@ test("direct diagnostics require the complete recovery shape without traversing 
     { ...reference, scope: undefined },
     { ...reference, invocationKey: "" },
     { ...reference, kind: "destroy" },
+    { ...reference, kind: "file_write", sandboxId: "CANARY_BOX" },
+    { ...reference, file: { path: "/file", bytes: 1 } },
     { ...reference, sandboxId: "CANARY_BOX" },
     { ...reference, token: "x".repeat(16_384) },
     { ...reference, token: new Date() },
@@ -946,6 +948,16 @@ test("direct diagnostics require the complete recovery shape without traversing 
       .recoveryAvailable,
   ).toBe(true);
 
+  expect(
+    diagnosticContext({
+      reference: {
+        ...reference,
+        kind: "file_write",
+        sandboxId: "CANARY_BOX",
+        file: { path: "/file", bytes: 1 },
+      },
+    }).recoveryAvailable,
+  ).toBe(true);
   let getters = 0;
 
   const token = {
@@ -996,5 +1008,54 @@ test("disabled client polls do not contaminate another client's active wait", as
   ]);
   expect(fixture.counts.create).toBe(1);
   expect(fixture.counts.observe).toBe(2);
+  await provider.shutdown();
+});
+
+test("enabled clients keep advanced submission effects separate in pre-submission callbacks", async () => {
+  const { provider, exporter } = setup();
+  const otherFixture = fixtureAdapter();
+  const firstFixture = fixtureAdapter();
+  const original = new Error("CANARY_CALLBACK_FAILURE");
+
+  const other = await Sandbar.connect({
+    ...otherFixture,
+    config: {},
+    credentials: {},
+    tracing: { tracerProvider: provider },
+  });
+
+  const prepared = await other.operations.prepare("create", {
+    image: { kind: "prepared", value: "CANARY_IMAGE" },
+    networkPolicy: "blocked",
+  });
+
+  const first = await Sandbar.connect({
+    ...firstFixture,
+    config: {},
+    credentials: {},
+    tracing: { tracerProvider: provider },
+    async onReference(reference) {
+      await prepared.submit(
+        {
+          operationId: reference.operationId,
+          submissionId: reference.submissionId,
+          invocationKey: reference.invocationKey,
+        },
+        { beforeSubmit: async () => true },
+      );
+      throw original;
+    },
+  });
+
+  await expect(
+    first.sandboxes.create({ environment: Image.prepared("CANARY_IMAGE") }),
+  ).rejects.toBe(original);
+  await first.close();
+  await other.close();
+  const create = safeSpans(exporter).find((span) => span.name === "sandbar.sandbox.create")!;
+  expect(create.attributes["sandbar.effect"]).toBe("none");
+  expect(create.attributes["sandbar.call.outcome"]).toBe("error");
+  expect(firstFixture.counts.create).toBe(0);
+  expect(otherFixture.counts.create).toBe(1);
   await provider.shutdown();
 });

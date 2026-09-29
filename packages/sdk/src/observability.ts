@@ -7,7 +7,6 @@ import {
   context,
   trace,
   ROOT_CONTEXT,
-  createContextKey,
   SpanStatusCode,
   SpanKind,
   type Context,
@@ -180,6 +179,8 @@ function directRecoveryAvailable(value: unknown): boolean {
       const reference = ReferenceSchema.parse(recoverySnapshot(value));
 
       if (JSON.stringify(reference).length > 16_384) return false;
+
+      if ((reference.kind === "file_write") !== !!reference.file) return false;
       const createsResource = reference.kind === "create" || reference.kind === "image_build";
 
       return createsResource ? !reference.sandboxId : !!reference.sandboxId;
@@ -346,7 +347,7 @@ interface CallState {
 
 /** Internal direct SDK instrumentation; never configures OTel globals. */
 export class Telemetry {
-  private readonly owner = createContextKey("sandbar.call");
+  private readonly owner = Symbol("sandbar.call");
   constructor(
     options: ObservabilityOptions = {},
     private readonly mode: "direct" = "direct",
