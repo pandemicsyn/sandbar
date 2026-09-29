@@ -95,6 +95,7 @@ const DeleteToken = z
     reference: z.json(),
     accepted: z.boolean(),
     stage: z.enum(["uncertain", "accepted", "rejected"]).optional(),
+    rejection: z.enum(["before-dispatch", "native-response"]).optional(),
   })
   .refine((token) => !token.stage || token.accepted === (token.stage === "accepted"));
 
@@ -543,13 +544,23 @@ export function daytonaState(input: {
           : inspectVolume(ref, context));
       } catch (error) {
         if (!ctx.signal.aborted) throw error;
-        await ctx.checkpoint({ reference: ref, accepted: false, stage: "rejected" });
+        await ctx.checkpoint({
+          reference: ref,
+          accepted: false,
+          stage: "rejected",
+          rejection: "before-dispatch",
+        });
 
         return ctx.reject("UNAVAILABLE", "Artifact delete cancelled before dispatch");
       }
 
       if (ctx.signal.aborted) {
-        await ctx.checkpoint({ reference: ref, accepted: false, stage: "rejected" });
+        await ctx.checkpoint({
+          reference: ref,
+          accepted: false,
+          stage: "rejected",
+          rejection: "before-dispatch",
+        });
 
         return ctx.reject("UNAVAILABLE", "Artifact delete cancelled before dispatch");
       }
@@ -564,7 +575,12 @@ export function daytonaState(input: {
       await ctx.checkpoint({ reference: ref, accepted: false, stage: "uncertain" });
 
       if (ctx.signal.aborted) {
-        await ctx.checkpoint({ reference: ref, accepted: false, stage: "rejected" });
+        await ctx.checkpoint({
+          reference: ref,
+          accepted: false,
+          stage: "rejected",
+          rejection: "before-dispatch",
+        });
 
         return ctx.reject("UNAVAILABLE", "Artifact delete cancelled before dispatch");
       }
@@ -577,11 +593,16 @@ export function daytonaState(input: {
           { signal: ctx.signal, deadline: Date.now() + 30000 },
         );
 
-        await ctx.checkpoint({
+        const rejected = [400, 401, 403, 422].includes(response.status);
+
+        const checkpoint: z.infer<typeof DeleteToken> = {
           reference: ref,
           accepted: response.ok,
-          stage: response.ok ? "accepted" : response.status >= 500 ? "uncertain" : "rejected",
-        });
+          stage: response.ok ? "accepted" : rejected ? "rejected" : "uncertain",
+        };
+
+        if (rejected) checkpoint.rejection = "native-response";
+        await ctx.checkpoint(checkpoint);
 
         if (response.ok)
           return ctx.pending(
@@ -589,12 +610,11 @@ export function daytonaState(input: {
             { pollAfterMs: 500 },
           );
 
+        if (rejected)
+          return ctx.reject("UNAVAILABLE", `Artifact delete rejected with HTTP ${response.status}`);
+
         return ctx.pending(
-          {
-            reference: ref,
-            accepted: false,
-            stage: response.status >= 500 ? "uncertain" : "rejected",
-          },
+          { reference: ref, accepted: false, stage: "uncertain" },
           { pollAfterMs: 500 },
         );
       } catch (error) {
@@ -655,6 +675,30 @@ export function daytonaState(input: {
       }
 
       return ctx.pending(token.data, { pollAfterMs: 500 });
+    },
+    async continue(attempt, ctx) {
+      const token = DeleteToken.safeParse(attempt.token);
+      const ref = attempt.resource;
+      const saved = token.success ? ResourceReference.safeParse(token.data.reference) : null;
+
+      if (
+        !ref ||
+        ref.kind !== kind ||
+        !token.success ||
+        token.data.stage !== "rejected" ||
+        !token.data.rejection ||
+        token.data.accepted ||
+        !saved?.success ||
+        saved.data.kind !== ref.kind ||
+        saved.data.provider !== ref.provider ||
+        saved.data.nativeId !== ref.nativeId ||
+        saved.data.generation !== ref.generation
+      )
+        return ctx.unknown("Artifact delete rejection evidence is unavailable; no replay");
+      check(ref);
+      check(saved.data);
+
+      return ctx.reject("UNAVAILABLE", "Artifact deletion was rejected; no replay");
     },
   });
 
@@ -898,6 +942,18 @@ export function daytonaState(input: {
       }
     };
 
+    if (token.stopState === "failed") {
+      if (
+        token.captureState === "not-submitted" &&
+        !token.snapshotId &&
+        !token.snapshot &&
+        source.state === "started"
+      )
+        return ctx.reject("UNAVAILABLE", "Source stop definitively rejected before capture");
+
+      return ctx.unknown("Source stop rejected but unchanged running state is unconfirmed");
+    }
+
     if (token.stopState === "not-submitted") {
       if (profileFor(source).status !== "supported")
         return ctx.unknown("Source capture eligibility changed before stop");
@@ -925,6 +981,19 @@ export function daytonaState(input: {
           undefined,
           context,
         );
+
+        if ([400, 401, 403, 422].includes(stopped.status)) {
+          token.stopState = "failed";
+          await ctx.checkpoint(token);
+          const unchanged = await box(source.id, context);
+          token.sourceState = unchanged.state === "started" ? "running" : "unknown";
+          await ctx.checkpoint(token);
+
+          if (unchanged.state === "started")
+            return ctx.reject("UNAVAILABLE", "Source stop definitively rejected before capture");
+
+          return ctx.unknown("Source stop rejected but unchanged running state is unconfirmed");
+        }
 
         if (stopped.ok) {
           token.stopState = "accepted";

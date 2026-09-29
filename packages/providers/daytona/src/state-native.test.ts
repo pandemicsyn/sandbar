@@ -41,6 +41,8 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
   const modes = {
     mounted: false,
     stopLost: false,
+    stopRejectedStatus: 0,
+    stopRejectedButStopped: false,
     captureLost: false,
     captureRejected: false,
     nativeCaptureError: false,
@@ -59,6 +61,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     slowReads: 0,
     snapshotReads: 0,
     sourceReads: 0,
+    sourceReadStatus: 0,
     onSourceRead: sourceHook,
     onStart: startHook,
     onSnapshotRead: snapshotHook,
@@ -89,6 +92,8 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
         modes.sourceReads++;
         modes.onSourceRead.callback?.();
 
+        if (modes.sourceReadStatus) return new Response(null, { status: modes.sourceReadStatus });
+
         return Response.json({
           id: "source",
           organizationId: "org-one",
@@ -101,6 +106,13 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
 
       if (url.pathname === "/sandbox/source/stop" && method === "POST") {
         calls.stop++;
+
+        if (modes.stopRejectedStatus) {
+          if (modes.stopRejectedButStopped) state = "stopped";
+
+          return new Response(null, { status: modes.stopRejectedStatus });
+        }
+
         state = "stopped";
 
         if (modes.stopLost) throw new Error("Lost stop acknowledgement");
@@ -163,6 +175,9 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
       if (url.pathname.startsWith("/snapshots/")) {
         if (method === "DELETE") {
           calls.delete++;
+
+          if (modes.failedDelete && modes.failedDeleteStatus < 500)
+            return new Response(null, { status: modes.failedDeleteStatus });
           snapshot = null;
 
           return new Response(null, {
@@ -220,6 +235,8 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
 
       if (url.pathname.startsWith("/volumes/") && method === "DELETE") {
         calls.delete++;
+
+        if (modes.failedDelete) return new Response(null, { status: modes.failedDeleteStatus });
         volumes.delete(url.pathname.slice("/volumes/".length));
 
         return new Response(null, { status: 204 });
@@ -1360,6 +1377,237 @@ test("Daytona cancelled volume-create checkpoint survives fresh recovery without
       await recovered.continue();
       await expect(recovered.wait()).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
       expect(f.calls).toEqual(before);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+test.each([400, 401, 403, 422])(
+  "Daytona definitive stop rejection preserves no capture effect: HTTP %s",
+  async (status) => {
+    const f = fixture();
+    f.modes.stopRejectedStatus = status;
+    let saved: AdapterRecoveryReference | undefined;
+
+    const client = await f.connect((reference) => {
+      if (reference.kind === "snapshot_capture") saved = structuredClone(reference);
+    });
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      await expect(source.snapshot()).rejects.toMatchObject({
+        code: "UNAVAILABLE",
+        effect: "none",
+      });
+      expect(saved?.token).toMatchObject({
+        stopState: "failed",
+        captureState: "not-submitted",
+        sourceState: "running",
+      });
+      expect(f.calls).toMatchObject({ stop: 1, capture: 0, start: 0 });
+      const reopened = await f.connect(undefined, "rotated-key");
+
+      try {
+        const recovered = await reopened.recover(saved!);
+        await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+        await expect((await recovered.continue()).wait()).rejects.toMatchObject({
+          code: "UNAVAILABLE",
+          effect: "none",
+        });
+        expect(f.calls).toMatchObject({ stop: 1, capture: 0, start: 0 });
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test("Daytona rejected stop cannot claim no effect when the source changed", async () => {
+  const f = fixture();
+  f.modes.stopRejectedStatus = 403;
+  f.modes.stopRejectedButStopped = true;
+  let saved: AdapterRecoveryReference | undefined;
+
+  const client = await f.connect((reference) => {
+    if (reference.kind === "snapshot_capture") saved = structuredClone(reference);
+  });
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    await expect(source.snapshot()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    const recovered = await client.recover(saved!);
+    await expect((await recovered.continue()).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(f.calls).toMatchObject({ stop: 1, capture: 0, start: 0 });
+  } finally {
+    await client.close();
+  }
+});
+
+for (const kind of ["snapshot", "volume"] as const) {
+  test.each([400, 401, 403, 422])(
+    `Daytona ${kind} definitive DELETE rejection survives reopen: HTTP %s`,
+    async (status) => {
+      const f = fixture();
+      let saved: AdapterRecoveryReference | undefined;
+
+      const client = await f.connect((reference) => {
+        if (reference.kind === `${kind}_delete`) saved = structuredClone(reference);
+      });
+
+      try {
+        const artifact =
+          kind === "snapshot"
+            ? (
+                await (
+                  await client.sandboxes.create({ environment: Image.prepared("base") })
+                ).snapshot()
+              ).snapshot
+            : await client.volumes.create({ name: "rejected-delete" });
+
+        f.modes.failedDelete = true;
+        f.modes.failedDeleteStatus = status;
+        await expect(artifact.delete()).rejects.toMatchObject({
+          code: "UNAVAILABLE",
+          effect: "none",
+        });
+        expect(saved?.token).toMatchObject({ accepted: false, stage: "rejected" });
+        expect(f.calls.delete).toBe(1);
+        const reopened = await f.connect(undefined, "rotated-key");
+
+        try {
+          const recovered = await reopened.recover(saved!);
+          await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+          await expect((await recovered.continue()).wait()).rejects.toMatchObject({
+            code: "UNAVAILABLE",
+            effect: "none",
+          });
+          const legacy = structuredClone(saved!);
+
+          const legacyToken = z
+            .object({ accepted: z.boolean(), stage: z.string(), reference: z.json() })
+            .parse(legacy.token);
+
+          legacy.token = legacyToken;
+          await expect(
+            (await (await reopened.recover(legacy)).continue()).wait(),
+          ).rejects.toBeInstanceOf(OutcomeUnknownError);
+          await expect(artifact.inspect()).resolves.toBeDefined();
+          expect(f.calls.delete).toBe(1);
+        } finally {
+          await reopened.close();
+        }
+      } finally {
+        await client.close();
+      }
+    },
+  );
+}
+
+test.each(["conflict", "missing", "unreadable"] as const)(
+  "Daytona stop rejection cannot settle ambiguous source evidence: %s",
+  async (mode) => {
+    const f = fixture();
+    f.modes.stopRejectedStatus = mode === "conflict" ? 409 : 403;
+    let saved: AdapterRecoveryReference | undefined;
+
+    const client = await f.connect((reference) => {
+      if (reference.kind !== "snapshot_capture") return;
+      saved = structuredClone(reference);
+
+      if (z.object({ stopState: z.literal("failed") }).safeParse(reference.token).success) {
+        if (mode === "missing") f.modes.sourceReadStatus = 404;
+
+        if (mode === "unreadable") f.modes.sourceReadStatus = 500;
+      }
+    });
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      await expect(source.snapshot()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      expect(saved?.token).toMatchObject({ captureState: "not-submitted" });
+      expect(f.calls).toMatchObject({ stop: 1, capture: 0, start: 0 });
+      f.modes.sourceReadStatus = 0;
+      const recovered = await client.recover(saved!);
+
+      if (mode === "conflict")
+        await expect((await recovered.continue()).wait()).rejects.toBeInstanceOf(
+          OutcomeUnknownError,
+        );
+      else {
+        f.modes.sourceReadStatus = mode === "missing" ? 404 : 500;
+        await expect(recovered.continue()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      }
+
+      expect(f.calls).toMatchObject({ stop: 1, capture: 0, start: 0 });
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+for (const kind of ["snapshot", "volume"] as const) {
+  test.each([408, 499])(
+    `Daytona ${kind} ambiguous DELETE response keeps dispatch uncertainty: HTTP %s`,
+    async (status) => {
+      const f = fixture();
+      const client = await f.connect();
+
+      try {
+        const artifact =
+          kind === "snapshot"
+            ? (
+                await (
+                  await client.sandboxes.create({ environment: Image.prepared("base") })
+                ).snapshot()
+              ).snapshot
+            : await client.volumes.create({ name: "ambiguous-delete" });
+
+        f.modes.failedDelete = true;
+        f.modes.failedDeleteStatus = status;
+        const operation = await artifact.submitDelete();
+        expect(operation.reference.token).toMatchObject({ accepted: false, stage: "uncertain" });
+        expect(await operation.observe()).toBeNull();
+        const recovered = await client.recover(operation.reference);
+        expect(await recovered.observe()).toBeNull();
+        await expect((await recovered.continue()).wait()).rejects.toBeInstanceOf(
+          OutcomeUnknownError,
+        );
+        expect(f.calls.delete).toBe(1);
+      } finally {
+        await client.close();
+      }
+    },
+  );
+}
+
+test("Daytona failed stop checkpoint preserves uncertainty without replay", async () => {
+  const f = fixture();
+  f.modes.stopRejectedStatus = 403;
+  let saved: AdapterRecoveryReference | undefined;
+
+  const client = await f.connect((reference) => {
+    if (reference.kind !== "snapshot_capture") return;
+
+    if (z.object({ stopState: z.literal("failed") }).safeParse(reference.token).success)
+      throw new Error("persistence unavailable");
+    saved = structuredClone(reference);
+  });
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    await expect(source.snapshot()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(saved?.token).toMatchObject({ stopState: "uncertain", captureState: "not-submitted" });
+    const reopened = await f.connect(undefined, "rotated-key");
+
+    try {
+      const recovered = await reopened.recover(saved!);
+      await expect((await recovered.continue()).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      expect(f.calls).toMatchObject({ stop: 1, capture: 0, start: 0 });
     } finally {
       await reopened.close();
     }
