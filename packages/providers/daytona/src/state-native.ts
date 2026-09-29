@@ -174,10 +174,12 @@ export function daytonaState(input: {
         signal,
       });
 
-      if (method !== "GET" || attempt >= 2 || ![502, 503, 504].includes(response.status))
-        return response;
+      if (method !== "GET" || ![502, 503, 504].includes(response.status)) return response;
       // Releasing a failed read body must not outlive the caller’s wait bound.
       void response.body?.cancel().catch(() => undefined);
+
+      if (attempt >= 2)
+        throw new AdapterError("UNAVAILABLE", `Daytona state HTTP ${response.status}`);
       await new Promise<void>((resolve, reject) => {
         const abort = () => {
           signal.removeEventListener("abort", abort);
@@ -1124,12 +1126,21 @@ export function daytonaState(input: {
         const context = { signal: ctx.signal, deadline: Date.now() + 60000 };
         const name = `sandbar-capture-${ctx.submissionId}`;
 
-        const prior = await request(
-          "GET",
-          `/snapshots/${encodeURIComponent(name)}`,
-          undefined,
-          context,
-        );
+        let prior: Response;
+
+        try {
+          prior = await request(
+            "GET",
+            `/snapshots/${encodeURIComponent(name)}`,
+            undefined,
+            context,
+          );
+        } catch (error) {
+          if (error instanceof AdapterError && error.code === "UNAVAILABLE")
+            return ctx.reject("UNAVAILABLE", error.message);
+
+          throw error;
+        }
 
         if (prior.status !== 404)
           return ctx.reject("CONFLICT", "Capture name absence is unverified");
@@ -1244,12 +1255,21 @@ export function daytonaState(input: {
       async submit(value, ctx) {
         const context = { signal: ctx.signal, deadline: Date.now() + 30000 };
 
-        const prior = await request(
-          "GET",
-          `/volumes/by-name/${encodeURIComponent(value.name)}`,
-          undefined,
-          context,
-        );
+        let prior: Response;
+
+        try {
+          prior = await request(
+            "GET",
+            `/volumes/by-name/${encodeURIComponent(value.name)}`,
+            undefined,
+            context,
+          );
+        } catch (error) {
+          if (error instanceof AdapterError && error.code === "UNAVAILABLE")
+            return ctx.reject("UNAVAILABLE", error.message);
+
+          throw error;
+        }
 
         if (prior.status !== 404)
           return ctx.reject("CONFLICT", "Volume exists or absence is unverified");

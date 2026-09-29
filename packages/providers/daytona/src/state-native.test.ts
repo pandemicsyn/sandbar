@@ -34,6 +34,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
   const sourceHook: FixtureStartHook = {};
 
   const snapshotReadStatuses: number[] = [];
+  const volumeAbsenceReadStatuses: number[] = [];
 
   const modes = {
     mounted: false,
@@ -46,6 +47,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     failedDelete: false,
     failedDeleteStatus: 500,
     snapshotReadStatuses,
+    volumeAbsenceReadStatuses,
     snapshotReadAttempts: 0,
     pendingReadBodyCancel: false,
     poolsDenied: false,
@@ -204,7 +206,8 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
         return Response.json(volume);
       }
 
-      if (url.pathname.startsWith("/volumes/by-name/")) return new Response(null, { status: 404 });
+      if (url.pathname.startsWith("/volumes/by-name/"))
+        return new Response(null, { status: modes.volumeAbsenceReadStatuses.shift() ?? 404 });
 
       if (url.pathname.startsWith("/volumes/") && method === "DELETE") {
         calls.delete++;
@@ -1287,3 +1290,24 @@ test("Daytona native state read aborts even when gateway body cancellation never
   ).rejects.toBeDefined();
   expect(reads).toBe(1);
 });
+
+for (const kind of ["snapshot", "volume"] as const) {
+  test(`Daytona ${kind} absence gateway exhaustion rejects unavailable before effects`, async () => {
+    const f = fixture();
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+
+      if (kind === "snapshot") f.modes.snapshotReadStatuses = [502, 503, 504];
+      else f.modes.volumeAbsenceReadStatuses = [502, 503, 504];
+      await expect(
+        kind === "snapshot" ? source.snapshot() : client.volumes.create({ name: "unavailable" }),
+      ).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+      expect(f.calls).toMatchObject({ stop: 0, capture: 0, start: 0 });
+      expect(f.volumeCreates()).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}
