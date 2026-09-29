@@ -96,7 +96,7 @@ function canonicalScope(scope: Scope): string {
 function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryReference {
   const parsed = ReferenceSchema.parse(value);
 
-  if (JSON.stringify(parsed).length > 16_384)
+  if (new TextEncoder().encode(JSON.stringify(parsed)).length > 16_384)
     throw new SandbarError("INVALID_ARGUMENT", "Recovery reference exceeds 16384 bytes");
   const copy = structuredClone(parsed);
 

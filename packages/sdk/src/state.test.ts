@@ -802,6 +802,18 @@ test("create mount preflight enforces aggregate recovery capacity before provide
       code: "INVALID_ARGUMENT",
       effect: "none",
     });
+    const unicode = {
+      environment: Image.prepared("base"),
+      mounts: [{ ...mount("a"), subpath: "界".repeat(4096) }],
+    };
+    await expect(client.sandboxes.checkCreate(unicode)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+    await expect(client.sandboxes.submitCreate(unicode)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
     expect(checks).toBe(0);
     expect(creates).toBe(0);
     expect(references).toBe(0);
