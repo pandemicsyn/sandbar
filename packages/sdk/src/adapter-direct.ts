@@ -228,6 +228,10 @@ export class AdapterOperation<T> {
         tokenVersion: first.version,
       });
 
+    // Submitted pending references were saved before constructing the handle; recovered
+    // references are the caller's saved input. Later local revisions must be saved here.
+    this.persistedReference = this.reference;
+
     if (first)
       noteOperation(
         this,
