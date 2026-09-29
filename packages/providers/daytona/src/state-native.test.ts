@@ -32,6 +32,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
   const startHook: FixtureStartHook = {};
   const snapshotHook: FixtureStartHook = {};
   const sourceHook: FixtureStartHook = {};
+  const deleteReadHook: FixtureStartHook = {};
 
   const snapshotReadStatuses: number[] = [];
   const volumeAbsenceReadStatuses: number[] = [];
@@ -60,6 +61,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     onSourceRead: sourceHook,
     onStart: startHook,
     onSnapshotRead: snapshotHook,
+    onDeleteRead: deleteReadHook,
   };
 
   const volumes = new Map<
@@ -75,6 +77,12 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     async (value: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(value));
       const method = init?.method ?? "GET";
+
+      if (
+        method === "GET" &&
+        (url.pathname.startsWith("/snapshots/") || url.pathname.startsWith("/volumes/"))
+      )
+        modes.onDeleteRead.callback?.();
 
       if (url.pathname === "/sandbox/source") {
         modes.sourceReads++;
@@ -1118,7 +1126,7 @@ test("acknowledged native capture still in progress remains pending without repl
 });
 
 for (const kind of ["snapshot", "volume"] as const) {
-  for (const barrier of ["reject-before", "abort-before", "reject-after"] as const) {
+  for (const barrier of ["reject-before", "abort-before", "abort-read", "reject-after"] as const) {
     test(`Daytona ${kind} delete ${barrier} checkpoints custody without replay`, async () => {
       const f = fixture();
       const controller = new AbortController();
@@ -1130,6 +1138,12 @@ for (const kind of ["snapshot", "volume"] as const) {
 
         if (!token.success) {
           saved = JSON.parse(JSON.stringify(reference));
+
+          if (barrier === "abort-read")
+            f.modes.onDeleteRead.callback = () => {
+              controller.abort();
+              throw controller.signal.reason;
+            };
 
           return;
         }
@@ -1160,19 +1174,20 @@ for (const kind of ["snapshot", "volume"] as const) {
           await operation.wait({ signal: controller.signal });
           throw Error("Expected interrupted deletion");
         } catch (error) {
-          if (barrier === "abort-before")
+          if (barrier === "abort-before" || barrier === "abort-read")
             expect(error).toMatchObject({ code: "UNAVAILABLE", effect: "none" });
           else expect(error).toBeInstanceOf(OutcomeUnknownError);
         }
 
         expect(saved).toBeDefined();
 
-        if (barrier === "abort-before")
+        if (barrier === "abort-before" || barrier === "abort-read")
           expect(saved!.token).toMatchObject({ accepted: false, stage: "rejected" });
 
         if (barrier === "reject-after")
           expect(saved!.token).toMatchObject({ accepted: false, stage: "uncertain" });
         expect(f.calls.delete).toBe(barrier === "reject-after" ? 1 : 0);
+        f.modes.onDeleteRead.callback = undefined;
         const reopened = await f.connect(undefined, "rotated-key");
 
         try {

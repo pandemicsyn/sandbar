@@ -535,9 +535,24 @@ export function daytonaState(input: {
       check(ref);
       const context = { signal: ctx.signal, deadline: Date.now() + 30000 };
 
-      const info = await (kind === "snapshot"
-        ? inspectSnapshot(ref, context, true)
-        : inspectVolume(ref, context));
+      let info: SnapshotInfo | VolumeInfo;
+
+      try {
+        info = await (kind === "snapshot"
+          ? inspectSnapshot(ref, context, true)
+          : inspectVolume(ref, context));
+      } catch (error) {
+        if (!ctx.signal.aborted) throw error;
+        await ctx.checkpoint({ reference: ref, accepted: false, stage: "rejected" });
+
+        return ctx.reject("UNAVAILABLE", "Artifact delete cancelled before dispatch");
+      }
+
+      if (ctx.signal.aborted) {
+        await ctx.checkpoint({ reference: ref, accepted: false, stage: "rejected" });
+
+        return ctx.reject("UNAVAILABLE", "Artifact delete cancelled before dispatch");
+      }
 
       if (
         kind === "snapshot" &&
@@ -545,9 +560,6 @@ export function daytonaState(input: {
         (info.nativeDependencies === null || info.nativeDependencies.length)
       )
         return ctx.reject("CONFLICT", "Snapshot deletion dependencies are present or unverified");
-
-      if (ctx.signal.aborted)
-        return ctx.reject("UNAVAILABLE", "Deletion cancelled before dispatch");
 
       await ctx.checkpoint({ reference: ref, accepted: false, stage: "uncertain" });
 
