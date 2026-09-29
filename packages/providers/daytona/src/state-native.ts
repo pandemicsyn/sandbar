@@ -561,7 +561,20 @@ export function daytonaState(input: {
             plan.reason,
           );
 
-        return value;
+        if (
+          value.expectation &&
+          (plan.value.sourceState !== value.expectation.sourceState ||
+            JSON.stringify(plan.value.profile) !== JSON.stringify(value.expectation.profile))
+        )
+          throw new AdapterError("UNAVAILABLE", "Snapshot capture plan changed before submission");
+
+        return {
+          ...value,
+          expectation: value.expectation ?? {
+            profile: plan.value.profile,
+            sourceState: plan.value.sourceState,
+          },
+        };
       },
       async submit(value, ctx) {
         const context = { signal: ctx.signal, deadline: Date.now() + 60000 };
@@ -592,6 +605,13 @@ export function daytonaState(input: {
             plan.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
             plan.reason,
           );
+
+        if (
+          value.expectation &&
+          (plan.value.sourceState !== value.expectation.sourceState ||
+            JSON.stringify(plan.value.profile) !== JSON.stringify(value.expectation.profile))
+        )
+          return ctx.reject("UNAVAILABLE", "Snapshot capture plan changed before submission");
 
         if (initial === "unknown") return ctx.reject("UNAVAILABLE", "Source is not capturable");
 

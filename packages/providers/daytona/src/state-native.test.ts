@@ -25,6 +25,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
 
   const startHook: FixtureStartHook = {};
   const snapshotHook: FixtureStartHook = {};
+  const sourceHook: FixtureStartHook = {};
 
   const modes = {
     mounted: false,
@@ -39,6 +40,8 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     pools: 0,
     slowReads: 0,
     snapshotReads: 0,
+    sourceReads: 0,
+    onSourceRead: sourceHook,
     onStart: startHook,
     onSnapshotRead: snapshotHook,
   };
@@ -51,7 +54,10 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
       const url = new URL(String(value));
       const method = init?.method ?? "GET";
 
-      if (url.pathname === "/sandbox/source")
+      if (url.pathname === "/sandbox/source") {
+        modes.sourceReads++;
+        modes.onSourceRead.callback?.();
+
         return Response.json({
           id: "source",
           organizationId: "org-one",
@@ -60,6 +66,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
           sandboxClass: "container",
           volumes: modes.mounted ? [{ volumeId: "external", mountPath: "/mnt/data" }] : [],
         });
+      }
 
       if (url.pathname === "/sandbox/source/stop" && method === "POST") {
         calls.stop++;
@@ -617,3 +624,29 @@ test("Daytona accepted capture binds the first observed ID before readiness and 
     await client.close();
   }
 });
+
+for (const stopped of [false, true]) {
+  for (const phase of ["prepare", "revalidate", "native-submit"] as const) {
+    test(`Daytona rejects capture plan drift before effects: ${stopped ? "stopped-to-running" : "running-to-stopped"} / ${phase}`, async () => {
+      const f = fixture({ stopped });
+      const driftRead = { prepare: 2, revalidate: 5, "native-submit": 6 }[phase];
+      f.modes.onSourceRead.callback = () => {
+        if (f.modes.sourceReads === driftRead) f.setState(stopped ? "started" : "stopped");
+      };
+
+      const client = await f.connect();
+
+      try {
+        const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+        await expect(source.snapshot()).rejects.toMatchObject({
+          code: "UNAVAILABLE",
+          effect: "none",
+        });
+        expect(f.modes.sourceReads).toBe(driftRead);
+        expect(f.calls).toMatchObject({ stop: 0, capture: 0, start: 0 });
+      } finally {
+        await client.close();
+      }
+    });
+  }
+}

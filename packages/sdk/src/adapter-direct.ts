@@ -374,7 +374,11 @@ export class AdapterSandbox {
 
     return this.client.submit(
       "snapshot_capture",
-      { sandbox: { id: this.id }, request },
+      {
+        sandbox: { id: this.id },
+        request,
+        expectation: { profile: plan.value.profile, sourceState: plan.value.sourceState },
+      },
       (result, ref) => {
         if (result.kind !== "completed" || !("snapshot" in result.value)) throw asUnknown(ref);
 

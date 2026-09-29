@@ -616,6 +616,18 @@ export async function prepareOperation(
       source?.state ?? "unknown",
     );
 
+    if (
+      plan.status === "supported" &&
+      captureInput.expectation &&
+      (plan.value.sourceState !== captureInput.expectation.sourceState ||
+        JSON.stringify(plan.value.profile) !== JSON.stringify(captureInput.expectation.profile))
+    )
+      return {
+        kind: "rejected",
+        code: "UNAVAILABLE",
+        message: "Snapshot capture plan changed before submission",
+      };
+
     return plan.status === "supported"
       ? null
       : {

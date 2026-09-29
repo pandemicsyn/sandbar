@@ -295,6 +295,7 @@ export type SnapshotInfo = z.infer<typeof SnapshotInfo>;
 export const SnapshotCaptureInput = z.strictObject({
   sandbox: z.strictObject({ id: z.string().min(1).max(512) }),
   request: SnapshotRequest,
+  expectation: z.strictObject({ profile: SnapshotProfile, sourceState: SandboxState }).optional(),
 });
 
 export type SnapshotCaptureInput = z.infer<typeof SnapshotCaptureInput>;
