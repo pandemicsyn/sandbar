@@ -609,7 +609,15 @@ test("Daytona accepted capture binds the first observed ID before readiness and 
     expect(operation.reference.token).toMatchObject({
       captureState: "accepted",
       snapshotId: "snapshot-one",
+      snapshot: { reference: { nativeId: "snapshot-one", ownership: "verified-created" } },
     });
+    const unsigned = structuredClone(operation.reference);
+    const unsignedToken = z.object({ snapshot: z.json() }).catchall(z.json()).parse(unsigned.token);
+    const { snapshot: _snapshot, ...withoutReceipt } = unsignedToken;
+    unsigned.token = withoutReceipt;
+    await expect((await client.recover(unsigned)).wait()).rejects.toBeInstanceOf(
+      OutcomeUnknownError,
+    );
     f.modes.onSnapshotRead.callback = undefined;
     f.modes.slowReads = 0;
     f.replaceSnapshot();

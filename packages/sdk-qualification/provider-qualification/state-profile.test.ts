@@ -7,7 +7,7 @@ import {
   defineAdapter,
   SnapshotInfo,
   type VolumeInfo,
-  type ResourceReference,
+  ResourceReference,
   type MountSpec,
 } from "sandbar-adapter";
 import { Sandbar } from "sandbar-sdk";
@@ -28,6 +28,7 @@ async function fixture(
     dropVolumeWrite?: boolean;
     loseCapture?: boolean;
     partialCapture?: boolean;
+    partialReferenceCapture?: boolean;
     borrowed?: boolean;
     checkpointFailure?: boolean;
     memory?: boolean;
@@ -161,11 +162,14 @@ async function fixture(
         snapshotCapture: {
           recovery: {
             version: 1,
-            token: z.strictObject({
-              captureState: z.literal("completed"),
-              snapshot: SnapshotInfo,
-              restartFailure: z.string(),
-            }),
+            token: z.union([
+              z.strictObject({
+                captureState: z.literal("completed"),
+                snapshot: SnapshotInfo,
+                restartFailure: z.string(),
+              }),
+              z.strictObject({ snapshot: ResourceReference }),
+            ]),
           },
           async submit(input, ctx) {
             calls.capture++;
@@ -198,6 +202,14 @@ async function fixture(
               info,
               files: new Map([...box.files].map(([path, bytes]) => [path, bytes.slice()])),
             });
+
+            if (options.partialReferenceCapture) {
+              info.reference.generation = "fixture-build";
+              info.reference.receipt = "fixture-signed-custody";
+              boxes.delete(input.sandbox.id);
+
+              return ctx.pending({ snapshot: info.reference }, { pollAfterMs: 0 });
+            }
 
             if (options.loseCapture) return ctx.unknown("Acknowledgement lost");
 
@@ -587,6 +599,36 @@ test("partial acknowledged capture retains owned artifact custody and cleans sou
   expect(
     state.stateMutations?.find((entry) => entry.role === "snapshot/capture")?.resource,
   ).toMatchObject({ kind: "snapshot" });
+  expect(state.cleanup).toBe("confirmed");
+  expect(f.snapshots.size).toBe(0);
+  expect(f.boxes.size).toBe(0);
+  expect(f.calls.capture).toBe(1);
+});
+
+test("partial E2B-style snapshot reference cleans storage after source expiry without certifying capture", async () => {
+  const f = await fixture({ partialReferenceCapture: true, memory: true });
+
+  const steps = await runState(f.connect, f.ledger, "base", {
+    provider: "e2b",
+    network: "blocked",
+    selected: new Set(["snapshot-roundtrip"]),
+    signal: AbortSignal.timeout(5000),
+    cleanupWaitMs: 1000,
+  });
+
+  expect(steps.find((step) => step.scenario === "snapshot-roundtrip")?.status).toBe("failed");
+  expect(
+    steps.find((step) => step.scenario === "snapshot-roundtrip")?.stateEvidence,
+  ).toBeUndefined();
+  const state = await f.ledger.read();
+  expect(
+    state.stateMutations?.find((entry) => entry.role === "snapshot/capture")?.resource,
+  ).toMatchObject({
+    kind: "snapshot",
+    ownership: "verified-created",
+    generation: "fixture-build",
+    receipt: "fixture-signed-custody",
+  });
   expect(state.cleanup).toBe("confirmed");
   expect(f.snapshots.size).toBe(0);
   expect(f.boxes.size).toBe(0);

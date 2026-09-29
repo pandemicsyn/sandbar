@@ -23,16 +23,24 @@ function partialSnapshot(reference: AdapterRecoveryReference) {
   if (reference.kind !== "snapshot_capture") return undefined;
 
   const token = z
-    .object({ captureState: z.literal("completed"), snapshot: SnapshotInfo })
+    .union([
+      z.object({ captureState: z.literal("completed"), snapshot: SnapshotInfo }),
+      z.object({ snapshot: ResourceReference }),
+    ])
     .safeParse(reference.token);
 
   if (!token.success) return undefined;
-  assertResourceScope(token.data.snapshot.reference, {
+
+  const resource =
+    "reference" in token.data.snapshot ? token.data.snapshot.reference : token.data.snapshot;
+
+  if (resource.kind !== "snapshot" || resource.ownership !== "verified-created") return undefined;
+  assertResourceScope(resource, {
     provider: reference.provider,
     scope: reference.scope,
   });
 
-  return token.data.snapshot.reference;
+  return resource;
 }
 
 const processAbsent = `python3 -c 'import errno,socket

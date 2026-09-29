@@ -740,7 +740,10 @@ export function daytonaState(input: {
           token.captureState = "accepted";
           let info = await observedCapture(name, source.id, true, context, token.consistency);
 
-          if (info) token.snapshotId = info.reference.nativeId;
+          if (info) {
+            token.snapshotId = info.reference.nativeId;
+            token.snapshot = JSON.parse(JSON.stringify(info));
+          }
 
           while (
             (!info || info.state !== "ready") &&
@@ -757,7 +760,10 @@ export function daytonaState(input: {
               token.snapshotId,
             );
 
-            if (info) token.snapshotId = info.reference.nativeId;
+            if (info) {
+              token.snapshotId = info.reference.nativeId;
+              token.snapshot = JSON.parse(JSON.stringify(info));
+            }
           }
 
           if (!info || info.state !== "ready") return pending();
@@ -801,13 +807,9 @@ export function daytonaState(input: {
         const token = parsed.data;
 
         const saved = token.snapshot ? SnapshotInfoSchema.safeParse(token.snapshot) : undefined;
-        const artifactId = saved?.success ? saved.data.reference.nativeId : token.snapshotId;
+        const artifactId = saved?.success ? saved.data.reference.nativeId : undefined;
 
-        if (
-          (token.captureState === "completed" && !saved?.success) ||
-          !artifactId ||
-          (token.snapshotId && token.snapshotId !== artifactId)
-        )
+        if (!saved?.success || !artifactId || (token.snapshotId && token.snapshotId !== artifactId))
           return ctx.unknown(
             "Captured artifact identity missing or inconsistent; names cannot establish ownership",
           );
