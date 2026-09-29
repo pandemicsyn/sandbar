@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { resourceReceipts } from "./resource-receipts";
+import { resourceHistory } from "./resource-history";
 import {
   AdapterError,
+  AdapterCheckpointError,
   assertResourceScope,
   resolveSnapshot,
   ResourceReference,
@@ -14,6 +15,12 @@ import {
 } from "sandbar-adapter";
 import { type E2BTransport, type E2BRecord } from "./transport";
 
+const VolumeCreateToken = z.strictObject({
+  state: z.enum(["uncertain", "accepted"]),
+  name: z.string().min(1).max(128),
+  volume: ResourceReference.optional(),
+});
+
 const CaptureToken = z.strictObject({
   snapshotId: z.string().max(512),
   sourceId: z.string().max(512),
@@ -25,8 +32,9 @@ const CaptureToken = z.strictObject({
 const DeleteToken = z.strictObject({ accepted: z.boolean() });
 
 const restoreToken = z.strictObject({
-  snapshotId: z.string().max(512),
-  templateId: z.string().max(512).optional(),
+  selector: z.string().min(1).max(256),
+  state: z.enum(["uncertain", "accepted"]),
+  sandboxId: z.string().min(1).max(512).optional(),
 });
 
 export function e2bState(input: {
@@ -39,7 +47,7 @@ export function e2bState(input: {
 }) {
   const { scope, transport } = input;
   const state = transport.state;
-  const receipts = resourceReceipts(input.apiKey, "e2b", scope);
+  const history = resourceHistory();
 
   const ref = (
     kind: "snapshot" | "volume",
@@ -84,13 +92,13 @@ export function e2bState(input: {
       mounts: [],
       mountHandling: knownSnapshots.has(id) ? "none" : "unknown",
       restore: {
-        networkPolicies: [],
+        networkPolicies: ["internet", "blocked"],
         resources: false,
         mounts: false,
-        independentLifecycle: false,
+        independentLifecycle: true,
       },
       dependencies: [],
-      nativeDependencies: [],
+      nativeDependencies: null,
     };
   }
 
@@ -113,22 +121,36 @@ export function e2bState(input: {
 
   async function snapshotInspect(reference: ResourceReference) {
     check(reference);
-    const page = await need().snapshots({ limit: 2, name: reference.nativeId });
-    const v = page.items.find((v) => v.snapshotId === reference.nativeId);
 
-    if (!v || page.nextCursor)
-      throw new AdapterError("NOT_FOUND", "Snapshot identity is not confirmed");
-    const tags = await need().tags(reference.nativeId.split(":")[0]!);
-    const native = tags.find((tag) => tag.tag === "default");
+    if (reference.kind !== "snapshot" || !/^[A-Za-z0-9_-]+$/.test(reference.nativeId))
+      throw new AdapterError("INVALID_ARGUMENT", "Snapshot requires a raw template identity");
 
-    if (!native || tags.length !== 1)
-      throw new AdapterError("UNAVAILABLE", "Snapshot build/tag ownership or dependencies unknown");
+    if (!reference.generation || !z.uuid().safeParse(reference.generation).success)
+      throw new AdapterError("UNAVAILABLE", "Original captured build identity is unavailable");
+    const native = await need().template(reference.nativeId);
 
-    if (reference.generation && reference.generation !== native.buildId)
-      throw new AdapterError("CONFLICT", "Snapshot tag was reassigned to another native build");
-    const info = snapshotInfo(v.snapshotId, reference.ownership);
-    info.reference.generation = native.buildId;
-    const evidence = receipts.read(reference);
+    if (!native) throw new AdapterError("NOT_FOUND", "Snapshot template is unavailable");
+
+    if (native.templateId !== reference.nativeId)
+      throw new AdapterError("CONFLICT", "Snapshot native template identity differs");
+    const build = native.builds.find((build) => build.buildId === reference.generation);
+
+    if (!build) throw new AdapterError("NOT_FOUND", "Captured snapshot build is unavailable");
+    const tags = await need().tags(reference.nativeId);
+
+    if (
+      !tags.some((tag) => tag.buildId === reference.generation) ||
+      tags.some((tag) => tag.tag === reference.generation && tag.buildId !== reference.generation)
+    )
+      throw new AdapterError(
+        "CONFLICT",
+        "Captured build is not addressable by its immutable selector",
+      );
+    await need().verifyAddress(reference.nativeId, native.names);
+    const info = snapshotInfo(reference.nativeId, reference.ownership);
+    info.reference.generation = reference.generation;
+    info.state = build.status === "ready" ? "ready" : "unknown";
+    const evidence = history.read(reference);
 
     if (
       evidence?.kind === "snapshot" &&
@@ -137,9 +159,92 @@ export function e2bState(input: {
     ) {
       info.mountHandling = "none";
       info.consistency = evidence.consistency ?? "unknown";
-      info.reference.receipt = reference.receipt;
+      info.reference.history = reference.history;
       info.source = { id: evidence.sourceId!, class: evidence.sourceClass! };
     }
+
+    return info;
+  }
+
+  async function deleteSnapshotPreflight(reference: ResourceReference) {
+    check(reference);
+
+    if (reference.kind !== "snapshot" || !/^[A-Za-z0-9_-]+$/.test(reference.nativeId))
+      throw new AdapterError(
+        "INVALID_ARGUMENT",
+        "Snapshot deletion requires a raw containing-template identity",
+      );
+    const native = await need().template(reference.nativeId);
+
+    if (!native) throw new AdapterError("NOT_FOUND", "Snapshot template is unavailable");
+
+    if (native.templateId !== reference.nativeId || native.public)
+      throw new AdapterError(
+        "CONFLICT",
+        "Snapshot template identity or private visibility differs",
+      );
+    await need().verifyAddress(reference.nativeId, native.names);
+    const baseline = history.read(reference)?.deletion;
+
+    if (
+      reference.generation &&
+      !native.builds.some((build) => build.buildId === reference.generation)
+    )
+      throw new AdapterError(
+        "CONFLICT",
+        "Original captured build is no longer in the containing template",
+      );
+
+    if (baseline) {
+      if (
+        baseline.templateId !== reference.nativeId ||
+        baseline.public ||
+        native.builds.length !== baseline.builds.length ||
+        native.builds.some((build) => !baseline.builds.includes(build.buildId)) ||
+        native.names.length !== baseline.names.length ||
+        native.names.some((name) => !baseline.names.includes(name))
+      )
+        throw new AdapterError(
+          "CONFLICT",
+          "Snapshot containing template has expanded beyond retained history",
+        );
+    } else if (native.builds.length !== 1) {
+      throw new AdapterError(
+        "CONFLICT",
+        "Explicit snapshot deletion cannot expand into a shared multi-build template",
+      );
+    }
+
+    const dependencies = await transport.list({}, 100);
+
+    if (
+      dependencies.nextToken ||
+      dependencies.items.some((box) => box.templateId === reference.nativeId)
+    )
+      throw new AdapterError(
+        "CONFLICT",
+        "Snapshot has native compute dependencies or incomplete inventory",
+      );
+  }
+
+  async function restorePreflight(value: {
+    snapshot: ResourceReference;
+    request: { networkPolicy: string; resources?: unknown; mounts?: unknown };
+  }) {
+    const info = await snapshotInspect(value.snapshot);
+
+    if (info.state !== "ready" || info.mountHandling !== "none")
+      throw new AdapterError(
+        "UNAVAILABLE",
+        "Captured build readiness or mount history is unverified",
+      );
+
+    if (
+      !["internet", "blocked"].includes(value.request.networkPolicy) ||
+      value.request.resources ||
+      value.request.mounts
+    )
+      throw new AdapterError("UNSUPPORTED", "Restore policy or overrides are unsupported");
 
     return info;
   }
@@ -151,12 +256,12 @@ export function e2bState(input: {
     if (value.volumeId !== reference.nativeId)
       throw new AdapterError("CONFLICT", "Volume identity differs");
     const info = volumeInfo(value, reference.ownership);
-    const evidence = receipts.read(reference);
+    const evidence = history.read(reference);
 
     if (evidence && evidence.name !== value.name)
       throw new AdapterError("CONFLICT", "Volume native name differs from acknowledged identity");
 
-    if (evidence) info.reference.receipt = reference.receipt;
+    if (evidence) info.reference.history = reference.history;
 
     return info;
   }
@@ -260,36 +365,59 @@ export function e2bState(input: {
 
         if (!box || plan.status !== "supported")
           return ctx.reject("UNAVAILABLE", "Source capture eligibility changed");
-        const name = `sandbar-capture-${ctx.submissionId}`;
-        const prior = await need().snapshots({ limit: 1, name });
-
-        if (prior.items.length || prior.nextCursor)
-          return ctx.reject("CONFLICT", "Snapshot name exists");
 
         if (ctx.signal.aborted)
           return ctx.reject("UNAVAILABLE", "Capture cancelled before dispatch");
+        await ctx.checkpoint({
+          snapshotId: "",
+          sourceId: box.id,
+          consistency: plan.value.profile.consistency,
+        });
+
+        if (ctx.signal.aborted) return ctx.unknown("Capture cancelled before dispatch");
         const created = await need().capture(box.id, undefined, ctx.signal);
 
         if (!/^[A-Za-z0-9_-]+:default$/.test(created.snapshotId))
           return ctx.unknown(
             "Snapshot returned alias instead of allocated native identity; storage may be retained",
           );
-        knownSnapshots.set(created.snapshotId, { sourceId: box.id });
+        const templateId = created.snapshotId.slice(0, -":default".length);
+        knownSnapshots.set(templateId, { sourceId: box.id });
 
         const token: z.infer<typeof CaptureToken> = {
-          snapshotId: created.snapshotId,
+          snapshotId: templateId,
           sourceId: box.id,
           consistency: plan.value.profile.consistency,
         };
 
+        // Save allocation identity before fallible generation reads. A later default lookup
+        // cannot repair a missing first-generation observation.
+        await ctx.checkpoint(token);
         let info: SnapshotInfo;
         let actual: E2BRecord | null;
 
         try {
-          info = await snapshotInspect(ref("snapshot", created.snapshotId, "verified-created"));
-          token.generation = info.reference.generation;
+          const native = await need().template(templateId);
+          const tags = await need().tags(templateId);
+
+          if (
+            !native ||
+            native.templateId !== templateId ||
+            native.public ||
+            native.names.length ||
+            native.builds.length !== 1 ||
+            tags.length !== 1 ||
+            tags[0]?.tag !== "default" ||
+            tags[0]?.buildId !== native.builds[0]?.buildId ||
+            !z.uuid().safeParse(native.builds[0]?.buildId).success
+          )
+            return ctx.pending(token, { pollAfterMs: 500 });
+          token.generation = native.builds[0]!.buildId;
+          const captured = ref("snapshot", templateId, "verified-created");
+          captured.generation = token.generation;
+          info = await snapshotInspect(captured);
           info.consistency = token.consistency;
-          info.reference.receipt = receipts.issue({
+          info.reference.history = history.issue({
             version: 1,
             kind: "snapshot",
             nativeId: info.reference.nativeId,
@@ -299,14 +427,24 @@ export function e2bState(input: {
             preserve: "filesystem+memory",
             mounts: "none",
             consistency: info.consistency,
+            deletion: {
+              templateId,
+              builds: [token.generation],
+              names: [...native.names],
+              public: native.public,
+            },
           });
           token.snapshot = structuredClone(info.reference);
+          await ctx.checkpoint(token);
           actual = await input.find(box.id);
-        } catch {
+        } catch (error) {
+          if (error instanceof AdapterCheckpointError) throw error;
+
           return ctx.pending(token, { pollAfterMs: 500 });
         }
 
-        if (!actual || actual.state !== "running") return ctx.pending(token, { pollAfterMs: 500 });
+        if (!actual || actual.state !== "running" || info.state !== "ready")
+          return ctx.pending(token, { pollAfterMs: 500 });
 
         if (ctx.signal.aborted) return ctx.pending(token, { pollAfterMs: 0 });
 
@@ -335,8 +473,8 @@ export function e2bState(input: {
           );
 
         check(token.data.snapshot);
-        receipts.owned(token.data.snapshot);
-        const evidence = receipts.read(token.data.snapshot);
+        history.owned(token.data.snapshot);
+        const evidence = history.read(token.data.snapshot);
 
         if (
           token.data.snapshot.kind !== "snapshot" ||
@@ -357,7 +495,8 @@ export function e2bState(input: {
 
         const info = await snapshotInspect(token.data.snapshot);
 
-        if (box.state !== "running") return ctx.unknown("Original source outcome is unconfirmed");
+        if (box.state !== "running" || info.state !== "ready")
+          return ctx.unknown("Original source or captured build outcome is unconfirmed");
 
         return {
           snapshot: info,
@@ -377,8 +516,12 @@ export function e2bState(input: {
       const values = await need().snapshots({ limit: page.limit, cursor: page.cursor });
       const items: SnapshotInfo[] = [];
 
-      for (const value of values.items)
-        items.push(await snapshotInspect(ref("snapshot", value.snapshotId)));
+      for (const value of values.items) {
+        const info = snapshotInfo(value.snapshotId.replace(/:default$/, ""));
+        info.state = "unknown";
+        info.nativeDependencies = null;
+        items.push(info);
+      }
 
       return {
         items,
@@ -386,22 +529,126 @@ export function e2bState(input: {
         coverage: "provider-scope",
       };
     },
+    snapshotDelete: {
+      recovery: { version: 1, token: DeleteToken },
+      async prepare(value) {
+        await deleteSnapshotPreflight(value);
+
+        return value;
+      },
+      async submit(value, ctx) {
+        await deleteSnapshotPreflight(value);
+
+        if (ctx.signal.aborted)
+          return ctx.reject("UNAVAILABLE", "Delete cancelled before dispatch");
+        await ctx.checkpoint({ accepted: false });
+
+        if (ctx.signal.aborted) return ctx.unknown("Snapshot delete cancelled before dispatch");
+        const accepted = await need().deleteSnapshot(value.nativeId, ctx.signal);
+        await ctx.checkpoint({ accepted });
+
+        return ctx.pending({ accepted }, { pollAfterMs: 0 });
+      },
+      async observe(attempt, ctx) {
+        const token = DeleteToken.safeParse(attempt.token);
+
+        if (!attempt.resource || !token.success || !token.data.accepted)
+          return ctx.unknown("Snapshot delete acknowledgement is unavailable; no replay");
+        check(attempt.resource);
+
+        if (await need().template(attempt.resource.nativeId))
+          return ctx.pending(token.data, { pollAfterMs: 500 });
+
+        return { deleted: true, reference: attempt.resource };
+      },
+    },
     snapshotRestore: {
       recovery: { version: 1, token: restoreToken },
-      async prepare() {
-        throw new AdapterError(
-          "UNSUPPORTED",
-          "E2B restore cannot bind the immutable captured build",
-        );
+      async prepare(value) {
+        await restorePreflight(value);
+
+        return value;
       },
-      async submit(_value, ctx) {
-        return ctx.reject("UNSUPPORTED", "E2B restore cannot bind the immutable captured build");
+      async submit(value, ctx) {
+        await restorePreflight(value);
+
+        if (ctx.signal.aborted)
+          return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
+        const selector = `${value.snapshot.nativeId}:${value.snapshot.generation}`;
+        const token: z.infer<typeof restoreToken> = { selector, state: "uncertain" };
+        await ctx.checkpoint(token);
+
+        if (ctx.signal.aborted) return ctx.unknown("Restore cancelled before dispatch");
+
+        const id = await transport.create({
+          templateId: selector,
+          metadata: {
+            sandbar_scope: input.scopeMarker,
+            sandbar_submission: ctx.submissionId,
+            sandbar_operation: ctx.operationId,
+            sandbar_template: selector,
+            sandbar_snapshot: selector,
+          },
+          timeoutMs: input.timeoutSeconds * 1000,
+          allowInternetAccess: value.request.networkPolicy === "internet",
+          signal: ctx.signal,
+        });
+
+        token.sandboxId = id;
+        token.state = "accepted";
+        await ctx.checkpoint(token);
+
+        return ctx.pending(token, { pollAfterMs: 0 });
       },
-      async observe(_attempt, ctx) {
-        return ctx.unknown("Native restore build generation cannot be confirmed; no replay");
+      async observe(attempt, ctx) {
+        const token = restoreToken.safeParse(attempt.token);
+        const reference = attempt.resource;
+
+        if (
+          !reference ||
+          !token.success ||
+          token.data.selector !== `${reference.nativeId}:${reference.generation}`
+        )
+          return ctx.unknown("Original restore selector is unavailable; no replay");
+        const info = await snapshotInspect(reference);
+
+        if (info.state !== "ready") return ctx.unknown("Original captured build is not ready");
+
+        const metadata = {
+          sandbar_scope: input.scopeMarker,
+          sandbar_submission: attempt.submissionId,
+          sandbar_operation: attempt.operationId,
+          sandbar_template: token.data.selector,
+          sandbar_snapshot: token.data.selector,
+        };
+
+        const page = await transport.list(metadata, 2);
+
+        if (page.nextToken || page.items.length !== 1)
+          return ctx.unknown("Restored sandbox identity is ambiguous or unavailable; no replay");
+        const box = page.items[0]!;
+
+        if (
+          (token.data.sandboxId && box.id !== token.data.sandboxId) ||
+          box.templateId !== reference.nativeId ||
+          !Object.entries(metadata).every(([key, value]) => box.metadata[key] === value)
+        )
+          return ctx.unknown("Restored sandbox correlation differs");
+        const current = await input.find(box.id);
+
+        if (
+          !current ||
+          current.id !== box.id ||
+          current.templateId !== reference.nativeId ||
+          !Object.entries(metadata).every(([key, value]) => current.metadata[key] === value)
+        )
+          return ctx.unknown("Restored sandbox identity is unverified");
+
+        return { id: current.id, state: current.state === "running" ? "running" : "unknown" };
       },
     },
     volumeCreate: {
+      recovery: { version: 1, token: VolumeCreateToken },
       async prepare(value) {
         if (!/^[A-Za-z0-9-]+$/.test(value.name))
           throw new AdapterError(
@@ -423,6 +670,8 @@ export function e2bState(input: {
         if (prior.some((v) => v.name === value.name))
           return ctx.reject("CONFLICT", "Volume already exists");
 
+        await ctx.checkpoint({ state: "uncertain", name: value.name });
+
         if (ctx.signal.aborted)
           return ctx.reject("UNAVAILABLE", "Volume create cancelled before dispatch");
 
@@ -431,19 +680,36 @@ export function e2bState(input: {
           "verified-created",
         );
 
-        info.reference.receipt = receipts.issue({
+        info.reference.history = history.issue({
           version: 1,
           kind: "volume",
           nativeId: info.reference.nativeId,
           name: info.name,
         });
 
+        await ctx.checkpoint({ state: "accepted", name: value.name, volume: info.reference });
+
+        if (info.name !== value.name)
+          return ctx.unknown("Acknowledged volume name differs from the requested name");
+
         return info;
       },
-      async observe(_attempt, ctx) {
-        return ctx.unknown(
-          "Volume create acknowledgement unavailable; names cannot establish ownership; no replay",
-        );
+      async observe(attempt, ctx) {
+        const parsed = VolumeCreateToken.safeParse(attempt.token);
+
+        if (!parsed.success || parsed.data.state !== "accepted" || !parsed.data.volume)
+          return ctx.unknown(
+            "Volume create acknowledgement unavailable; no adoption by name or replay",
+          );
+
+        const { volume, name } = parsed.data;
+        check(volume);
+        const evidence = history.read(volume);
+
+        if (volume.kind !== "volume" || !evidence || evidence.name !== name)
+          return ctx.unknown("Acknowledged volume identity does not match the saved request");
+
+        return await volumeInspect(volume);
       },
     },
     volumeInspect,
@@ -460,10 +726,17 @@ export function e2bState(input: {
       };
     },
     async resourceCapabilities() {
-      const restore = {
-        status: "unsupported" as const,
-        reason: "E2B create selects a mutable template tag and exposes no restored build identity",
-      };
+      const restore = state
+        ? {
+            status: "supported" as const,
+            value: {
+              networkPolicies: ["internet", "blocked"],
+              resources: false,
+              mounts: false,
+              independentLifecycle: true,
+            },
+          }
+        : { status: "unsupported" as const, reason: "Native state transport unavailable" };
 
       if (!state)
         return {
@@ -531,16 +804,13 @@ export function e2bState(input: {
     async prepare(reference) {
       check(reference);
 
-      if (reference.kind !== "volume" || reference.ownership !== "verified-created")
-        throw new AdapterError("CONFLICT", "Artifact is not verified-created");
-      receipts.owned(reference);
+      if (reference.kind !== "volume") throw new AdapterError("CONFLICT", "Artifact kind differs");
       await volumeInspect(reference);
 
       return reference;
     },
     async submit(reference, ctx) {
       check(reference);
-      receipts.owned(reference);
       await volumeInspect(reference);
 
       if (ctx.signal.aborted)
@@ -558,10 +828,9 @@ export function e2bState(input: {
     async observe(attempt, ctx) {
       const reference = attempt.resource;
 
-      if (!reference || reference.kind !== "volume" || reference.ownership !== "verified-created")
+      if (!reference || reference.kind !== "volume")
         return ctx.unknown("Deletion ownership missing");
       check(reference);
-      receipts.owned(reference);
       const token = DeleteToken.safeParse(attempt.token);
 
       if (!token.success || !token.data.accepted)

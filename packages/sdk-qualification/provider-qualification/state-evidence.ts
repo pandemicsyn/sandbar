@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const snapshotProbe = "snapshot-roundtrip-v2" as const;
+export const snapshotProbe = "snapshot-roundtrip-v3" as const;
 
 export const volumeProbe = "volume-persistence-v1" as const;
 
@@ -15,6 +15,8 @@ export const snapshotEvidence = z.strictObject({
   capturedBytes: z.literal(true),
   newIdentity: z.literal(true),
   metadataInspected: z.literal(true),
+  serializedReferenceReopened: z.literal(true),
+  freshConnectionAfterSourceDeletion: z.literal(true),
   restoredWriteIndependent: z.literal(true),
   sourceWriteIndependent: z.boolean(),
   secondRestoreOriginalBytes: z.literal(true),

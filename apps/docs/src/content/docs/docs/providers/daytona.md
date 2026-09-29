@@ -64,7 +64,7 @@ The live baseline uses the prepared `daytona-small` workflow in `us`; it does no
 
 Configure `snapshots: { restartAfterCapture: false }` on `daytona(...)` to leave a running source stopped. The default is `true`, restarting only a previously running source. Optional snapshot requirements validate the configured behavior without selecting another mode. Consistency defaults to unknown; `consistency: "caller-quiesced"` attests that the application quiesced writers.
 
-A definitive capture failure permits one bounded restart attempt. A successful capture followed by a failed restart retains the snapshot metadata in the operation recovery token. Uncertain stop/capture/start outcomes are observed without repeating lifecycle calls. Native capture is experimental; VM filesystem/memory capture is not mapped. See [Daytona snapshot requirements](https://www.daytona.io/docs/en/snapshots/#create-snapshot-from-sandbox).
+A definitive capture failure permits one bounded restart attempt. A successful capture followed by a failed restart retains the snapshot metadata in the operation recovery token. Uncertain stop/capture/start outcomes are observed without repeating lifecycle calls. If a delayed capture later completes or definitively fails, explicit `operation.continue()` can finish a configured restart proven never submitted. The SDK awaits reference persistence before each stage dispatch. Serialize continuations through an application lease or compare-and-swap across processes; a lost response after a dispatch marker cannot be replayed. Saved history reopens with current valid credentials for the same verified organization scope. Native capture is experimental; VM filesystem/memory capture is not mapped. See [Daytona snapshot requirements](https://www.daytona.io/docs/en/snapshots/#create-snapshot-from-sandbox).
 
 ## Cleanup and recovery
 
@@ -74,7 +74,7 @@ See [Tested provider support](/docs/providers/support/) for measured coverage an
 
 ## Snapshots and retained volumes
 
-Scoped capture receipts support independent restore after source deletion; borrowed image selectors do not become owned snapshot artifacts. Snapshot deletion rechecks organization warm pools, blocking when dependencies are present or unreadable because native deletion cascades to warm pools and unclaimed compute. Writable object-backed volumes attach at create with optional subpaths. Native readiness is checked; read-only, volume versions and verified shutdown durability are unavailable. These workflows have fixture coverage and are not yet live-qualified. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/).
+Application-retained capture history supports independent restore after source deletion; borrowed image selectors do not become owned snapshot artifacts. Snapshot deletion rechecks organization warm pools, blocking when dependencies are present or unreadable because native deletion cascades to warm pools and unclaimed compute. Writable object-backed volumes attach at create with optional subpaths. Native readiness is checked; read-only, volume versions and verified shutdown durability are unavailable. These workflows have fixture coverage and are not yet live-qualified. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/).
 
 Native mapping evidence: [Daytona snapshots](https://www.daytona.io/docs/snapshots/) and [volumes](https://www.daytona.io/docs/en/volumes/), checked against REST 0.218.0 DTOs.
 

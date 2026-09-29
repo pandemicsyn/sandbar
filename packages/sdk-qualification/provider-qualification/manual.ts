@@ -430,7 +430,7 @@ const exercise = async () => {
         network: `${policy}-requested`,
         stateProbe:
           step.scenario === "snapshot-roundtrip"
-            ? "snapshot-roundtrip-v2"
+            ? "snapshot-roundtrip-v3"
             : step.scenario === "volume-persistence"
               ? "volume-persistence-v1"
               : undefined,

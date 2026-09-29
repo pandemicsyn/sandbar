@@ -30,7 +30,16 @@ export type E2BRecord = {
   volumeMounts?: { name: string; path: string }[];
 };
 
+export type E2BTemplateState = {
+  templateId: string;
+  names: string[];
+  public: boolean;
+  builds: { buildId: string; status: "building" | "waiting" | "ready" | "error" }[];
+};
+
 export type E2BStateTransport = {
+  template(id: string): Promise<E2BTemplateState | null>;
+  verifyAddress(id: string, names?: string[]): Promise<void>;
   tags(id: string): Promise<{ tag: string; buildId: string }[]>;
   capture(
     id: string,
@@ -175,6 +184,39 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     return schema.parse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body.bytes)));
   }
 
+  async function readSnapshots(input: {
+    limit: number;
+    name?: string;
+    sandboxId?: string;
+    cursor?: string;
+  }) {
+    const query = new URLSearchParams({ limit: String(input.limit) });
+
+    if (input.name) query.set("name", input.name);
+
+    if (input.sandboxId) query.set("sandboxID", input.sandboxId);
+
+    if (input.cursor) query.set("nextToken", input.cursor);
+    const response = await controlGet(`/snapshots?${query}`);
+
+    const values = await readNative(
+      response,
+      z
+        .array(
+          z.object({
+            snapshotID: z.string().min(1).max(512),
+            names: z.array(z.string().min(1).max(512)).max(100),
+          }),
+        )
+        .max(input.limit),
+    );
+
+    return {
+      items: values.map((value) => ({ snapshotId: value.snapshotID, names: value.names })),
+      nextCursor: response.headers.get("X-Next-Token") ?? undefined,
+    };
+  }
+
   const readTemplates = (response: Response) => readNative(response, Templates);
 
   async function* teamTemplates(teamId: string | undefined) {
@@ -203,6 +245,98 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
   return {
     state: {
+      async template(id) {
+        const response = await controlGet(`/templates/${encodeURIComponent(id)}?limit=100`);
+
+        if (response.status === 404) {
+          await response.body?.cancel();
+
+          return null;
+        }
+
+        if (response.headers.get("X-Next-Token"))
+          throw new Error("E2B template builds exceed the inspection bound");
+
+        const value = await readNative(
+          response,
+          z.object({
+            templateID: z.string().min(1).max(128),
+            names: z.array(z.string().max(256)).max(100),
+            public: z.boolean(),
+            builds: z
+              .array(
+                z.object({
+                  buildID: z.uuid(),
+                  status: z.enum(["building", "waiting", "ready", "error"]),
+                }),
+              )
+              .max(100),
+          }),
+        );
+
+        return {
+          templateId: value.templateID,
+          names: value.names,
+          public: value.public,
+          builds: value.builds.map((build) => ({ buildId: build.buildID, status: build.status })),
+        };
+      },
+      async verifyAddress(id, names = []) {
+        for await (const templates of teamTemplates(undefined)) {
+          for (const value of templates) {
+            if (
+              value.templateID !== id &&
+              value.names.some((name) => {
+                const local = name.slice(name.lastIndexOf("/") + 1).replace(/:default$/, "");
+
+                return local === id || name.replace(/:default$/, "") === id;
+              })
+            )
+              throw new Error("E2B raw template identity is shadowed by an alias");
+          }
+        }
+
+        let cursor: string | undefined;
+        let foundSnapshot = false;
+        const seen = new Set<string>();
+        const withoutTag = (value: string) => value.split(":")[0]!;
+
+        for (let count = 0; count < 100; count++) {
+          const page = await readSnapshots({ limit: 100, cursor });
+
+          for (const value of page.items) {
+            if (
+              withoutTag(value.snapshotId) === id ||
+              value.names.some((name) => names.includes(withoutTag(name)))
+            ) {
+              foundSnapshot = true;
+              continue;
+            }
+
+            if (
+              value.names.some((name) => {
+                const local = name.slice(name.lastIndexOf("/") + 1).replace(/:default$/, "");
+
+                return local === id || name.replace(/:default$/, "") === id;
+              })
+            )
+              throw new Error("E2B raw snapshot identity is shadowed by an alias");
+          }
+
+          cursor = page.nextCursor;
+
+          if (!cursor) {
+            if (!foundSnapshot) throw new Error("Native snapshot kind is unverified");
+
+            return;
+          }
+
+          if (seen.has(cursor)) throw new Error("E2B snapshot inventory repeated a cursor");
+          seen.add(cursor);
+        }
+
+        throw new Error("E2B snapshot address inventory exceeds its page bound");
+      },
       async tags(id) {
         const tags = await readNative(
           await controlGet(`/templates/${encodeURIComponent(id)}/tags`),
@@ -216,17 +350,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         return tags.map((tag) => ({ tag: tag.tag, buildId: tag.buildID }));
       },
       capture: (id, name, signal) => Sandbox.createSnapshot(id, { ...opts, name, signal }),
-      async snapshots(input) {
-        const page = Sandbox.listSnapshots({
-          ...opts,
-          limit: input.limit,
-          name: input.name,
-          sandboxId: input.sandboxId,
-          nextToken: input.cursor,
-        });
-
-        return { items: await page.nextItems(), nextCursor: page.nextToken };
-      },
+      snapshots: readSnapshots,
       deleteSnapshot: (id, signal) => Sandbox.deleteSnapshot(id, { ...opts, signal }),
       async createVolume(name, signal) {
         const v = await Volume.create(name, { ...opts, signal });

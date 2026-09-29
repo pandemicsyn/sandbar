@@ -1134,3 +1134,37 @@ test("uncertain writes and destroy reconcile after reconnect without replay", as
     await connection.close();
   }
 });
+
+test("pinned E2B forwards immutable build selector and blocked network policy in one create request", async () => {
+  const requests: { path: string; body: unknown }[] = [];
+
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      requests.push({ path: new URL(request.url).pathname, body: await request.json() });
+
+      return new Response("fixture rejection", { status: 429, headers: { "Retry-After": "0" } });
+    },
+  });
+
+  const selector = "snapshot_raw:11111111-1111-4111-8111-111111111111";
+
+  try {
+    await expect(
+      Sandbox.create(selector, {
+        apiKey: "fixture-key",
+        apiUrl: `http://127.0.0.1:${server.port}`,
+        retries: 0,
+        requestTimeoutMs: 1000,
+        allowInternetAccess: false,
+      }),
+    ).rejects.toThrow();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      path: "/v2/sandboxes",
+      body: { templateID: selector, allow_internet_access: false },
+    });
+  } finally {
+    server.stop(true);
+  }
+});

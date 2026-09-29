@@ -71,7 +71,7 @@ export const recordSchema = z.strictObject({
     networkProbe: z.literal(networkProbeId).optional(),
     restoreExecution: z.enum(["fresh", "resume"]).optional(),
     sourceAfter: z.enum(["running", "stopped"]).optional(),
-    stateProbe: z.enum(["snapshot-roundtrip-v2", "volume-persistence-v1"]).optional(),
+    stateProbe: z.enum(["snapshot-roundtrip-v3", "volume-persistence-v1"]).optional(),
     preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
     volumeOwnership: z.enum(["created", "borrowed"]).optional(),
     regionClass: safeLabel,
@@ -112,7 +112,7 @@ export const reportSchema = z
             throw new Error("State evidence must match its intended probe");
 
           if (
-            record.stateEvidence.probe === "snapshot-roundtrip-v2" &&
+            record.stateEvidence.probe === "snapshot-roundtrip-v3" &&
             (record.configuration.preserve !== record.stateEvidence.preserve ||
               record.configuration.restoreExecution !== record.stateEvidence.restoreExecution ||
               record.configuration.sourceAfter !== record.stateEvidence.sourceState)

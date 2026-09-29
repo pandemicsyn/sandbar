@@ -661,7 +661,7 @@ test("unselected scenarios do not inherit snapshot or volume configuration", () 
           imageClass: "prepared",
           network: "daytona-default",
           regionClass: "us",
-          stateProbe: "snapshot-roundtrip-v2",
+          stateProbe: "snapshot-roundtrip-v3",
           preserve: "filesystem",
           restoreExecution: "fresh",
           sourceAfter: "running",
@@ -685,5 +685,5 @@ test("unselected scenarios do not inherit snapshot or volume configuration", () 
     expect(parseReport({ schemaVersion: 1, records: [record] }).records).toHaveLength(1);
   }
 
-  expect(sample.configuration.stateProbe).toBe("snapshot-roundtrip-v2");
+  expect(sample.configuration.stateProbe).toBe("snapshot-roundtrip-v3");
 });

@@ -46,6 +46,7 @@ import {
   observeOperation,
   prepareOperation,
   submitOperation,
+  continueOperation,
   type AdapterConnection,
   type AdapterDefinition,
   type RuntimeSession,
@@ -176,6 +177,7 @@ export type AdapterCapabilities = DirectCapabilities;
 export class AdapterOperation<T> {
   readonly durability = "process" as const;
   private first: RuntimeResult | undefined;
+  private continuing = false;
   private terminal?: { value: T } | { error: Error };
   private pendingAt: number | null = null;
   private nextPollAt = 0;
@@ -210,6 +212,69 @@ export class AdapterOperation<T> {
       origin: first ? activeTraceParent() : undefined,
     });
   }
+  /** Advance proven unsubmitted stages. Applications serialize continuation across processes. */
+  async continue(options: { signal?: AbortSignal } = {}): Promise<this> {
+    this.client.ensureOpen();
+
+    if (this.continuing)
+      throw new SandbarError("CONFLICT", "Operation continuation is already active");
+    assertSignal(options.signal);
+
+    const signal = options.signal
+      ? AbortSignal.any([this.client.signal, options.signal])
+      : this.client.signal;
+
+    this.continuing = true;
+    this.first = undefined;
+    this.terminal = undefined;
+    this.pendingAt = null;
+    this.nextPollAt = 0;
+
+    try {
+      this.reference = (await this.client.recover(this.reference)).reference;
+      this.first = await continueOperation(
+        this.client.session,
+        this.reference.kind,
+        {
+          operationId: this.reference.operationId,
+          submissionId: this.reference.submissionId,
+          sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+          resource: this.reference.resource,
+          mounts: this.reference.mounts,
+          capture: this.reference.capture,
+          token: this.reference.token,
+          version: this.reference.tokenVersion,
+        },
+        this.reference,
+        signal,
+        async (token, tokenVersion) => {
+          this.reference = sealedReference({ ...this.reference, token, tokenVersion });
+          await this.client.persistReference(this.reference);
+        },
+      );
+
+      if (this.first.kind === "pending") {
+        this.reference = sealedReference({
+          ...this.reference,
+          token: this.first.token,
+          tokenVersion: this.first.version,
+        });
+        await this.client.persistReference(this.reference);
+      }
+
+      return this;
+    } catch (error) {
+      if (error instanceof AdapterError && error.code === "UNSUPPORTED")
+        throw new UnsupportedFeatureError("operation continuation", [error.message]);
+      throw asUnknown(
+        this.reference,
+        "Continuation could not finish; persist the latest operation reference",
+      );
+    } finally {
+      this.continuing = false;
+    }
+  }
+
   async observe(): Promise<T | null> {
     return this.observeWithSignal(this.client.signal);
   }
@@ -234,6 +299,7 @@ export class AdapterOperation<T> {
         token: result.token,
         tokenVersion: result.version,
       });
+      await this.client.persistReference(this.reference);
 
       return null;
     }
@@ -251,6 +317,7 @@ export class AdapterOperation<T> {
             sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
             resource: this.reference.resource,
             mounts: this.reference.mounts,
+            capture: this.reference.capture,
             token: this.reference.token,
             version: this.reference.tokenVersion,
           },
@@ -289,6 +356,7 @@ export class AdapterOperation<T> {
         token: result.token,
         tokenVersion: result.version,
       });
+      await this.client.persistReference(this.reference);
 
       return null;
     }
@@ -713,7 +781,11 @@ export class PreparedAdapterAttempt {
   /** The callback must durably record the submission marker; false cancels dispatch. */
   async submit(
     identity: AdvancedIdentity,
-    options: { beforeSubmit: () => Promise<boolean>; signal?: AbortSignal },
+    options: {
+      beforeSubmit: () => Promise<boolean>;
+      signal?: AbortSignal;
+      onCheckpoint?: (token: Json, version: number) => Promise<void>;
+    },
   ): Promise<AdvancedOperationResult | null> {
     if (this.used) throw new SandbarError("CONFLICT", "Prepared attempt was already used");
     this.used = true;
@@ -775,6 +847,7 @@ export class PreparedAdapterAttempt {
                 checked,
                 signal,
                 this.kind === "exec" ? this.maxOutputBytes : undefined,
+                options.onCheckpoint,
               ),
               submissionWaitSignal,
             ),
@@ -1305,6 +1378,10 @@ export class AdapterDirectClient {
               return true;
             },
             signal: waiting,
+            onCheckpoint: async (token, tokenVersion) => {
+              reference = sealedReference({ ...reference, token, tokenVersion });
+              await this.onReference?.(reference);
+            },
           })
           .then((value) => {
             if (!value) throw new SandbarError("CONFLICT", "Submission was cancelled");
@@ -1314,7 +1391,7 @@ export class AdapterDirectClient {
         kind === "snapshot_capture" ? this.signal : waiting,
       );
 
-      if (kind === "snapshot_capture" && first.kind === "pending") {
+      if (first.kind === "pending") {
         reference = sealedReference({
           ...reference,
           token: first.token,
@@ -1337,6 +1414,14 @@ export class AdapterDirectClient {
 
     return new AdapterOperation(this, reference, decode, first);
   }
+  async persistReference(reference: AdapterRecoveryReference): Promise<void> {
+    try {
+      await this.onReference?.(reference);
+    } catch {
+      throw asUnknown(reference, "Operation reference persistence failed after submission");
+    }
+  }
+
   async recover(reference: AdapterRecoveryReference): Promise<AdapterOperation<unknown>> {
     this.ensureOpen();
     reference = sealedReference(reference);

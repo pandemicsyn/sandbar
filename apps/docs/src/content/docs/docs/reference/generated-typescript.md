@@ -108,6 +108,7 @@ Import from `sandbar-adapter`.
 
 | Export                         | Kind      |
 | ------------------------------ | --------- |
+| `AdapterCheckpointError`       | class     |
 | `AdapterConnection`            | type      |
 | `AdapterDefinition`            | type      |
 | `AdapterError`                 | re-export |
@@ -116,6 +117,7 @@ Import from `sandbar-adapter`.
 | `AttemptContext`               | type      |
 | `Command`                      | type      |
 | `connectAdapter`               | function  |
+| `continueOperation`            | re-export |
 | `createAttemptContext`         | function  |
 | `CreateInput`                  | type      |
 | `createObserveContext`         | function  |

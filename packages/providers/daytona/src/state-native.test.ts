@@ -1,7 +1,13 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
 import { defineAdapter, SnapshotInfo } from "sandbar-adapter";
-import { Sandbar, Image, OutcomeUnknownError, WaitAbortedError } from "sandbar-sdk";
+import {
+  Sandbar,
+  Image,
+  OutcomeUnknownError,
+  WaitAbortedError,
+  type AdapterRecoveryReference,
+} from "sandbar-sdk";
 import { daytonaState } from "./state-native";
 
 interface FixtureStartHook {
@@ -32,6 +38,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     stopLost: false,
     captureLost: false,
     captureRejected: false,
+    nativeCaptureError: false,
     restartLost: false,
     restartRejected: false,
     failedDelete: false,
@@ -47,6 +54,12 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     onSnapshotRead: snapshotHook,
   };
 
+  const volumes = new Map<
+    string,
+    { id: string; name: string; organizationId: string; state: string }
+  >();
+
+  let volumeCreates = 0;
   const calls = { stop: 0, capture: 0, start: 0, delete: 0, poolReads: 0 };
 
   // SAFETY: This deterministic native boundary matches the fetch call and preconnect contract.
@@ -148,23 +161,53 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
         return snapshot && (snapshot.id === id || snapshot.name === id)
           ? Response.json({
               ...snapshot,
-              state: modes.snapshotReads <= modes.slowReads ? "creating" : snapshot.state,
+              state: modes.nativeCaptureError
+                ? "error"
+                : modes.snapshotReads <= modes.slowReads
+                  ? "creating"
+                  : snapshot.state,
               general: modes.sharedSnapshot,
             })
           : new Response(null, { status: 404 });
       }
 
-      if (url.pathname === "/volumes") return Response.json([]);
+      if (url.pathname === "/volumes" && method === "POST") {
+        volumeCreates++;
+
+        const volume = {
+          id: `volume-${volumeCreates}`,
+          name: JSON.parse(String(init?.body)).name,
+          organizationId: "org-one",
+          state: "ready",
+        };
+
+        volumes.set(volume.id, volume);
+
+        return Response.json(volume);
+      }
+
+      if (url.pathname.startsWith("/volumes/by-name/")) return new Response(null, { status: 404 });
+
+      if (url.pathname.startsWith("/volumes/")) {
+        const volume = volumes.get(url.pathname.slice("/volumes/".length));
+
+        return volume ? Response.json(volume) : new Response(null, { status: 404 });
+      }
+
+      if (url.pathname === "/volumes") return Response.json([...volumes.values()]);
       throw new Error(`Unexpected native fixture route: ${method} ${url.pathname}`);
     },
     { preconnect() {} },
   ) as typeof fetch;
 
-  const connect = (onReference?: (ref: { kind: string }) => void) => {
+  const connect = (
+    onReference?: (ref: AdapterRecoveryReference) => void,
+    apiKey = "fixture-key",
+  ) => {
     const resource = daytonaState({
       scope,
       apiUrl: "https://fixture.invalid",
-      apiKey: "fixture-key",
+      apiKey,
       target: "us",
       restartAfterCapture: options.restartAfterCapture,
       fetch: fetcher,
@@ -200,6 +243,8 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
 
   return {
     connect,
+    volumes,
+    volumeCreates: () => volumeCreates,
     calls,
     modes,
     state: () => state,
@@ -765,4 +810,247 @@ for (const mode of [
       await client.close();
     }
   });
+}
+
+test("Daytona snapshot history reopens with rotated credentials in the same organization", async () => {
+  const f = fixture();
+  const client = await f.connect();
+  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+  const saved = JSON.parse(JSON.stringify((await source.snapshot()).snapshot.reference));
+  await client.close();
+  const reopened = await f.connect(undefined, "rotated-key-same-org");
+
+  try {
+    const snapshot = await reopened.snapshots.get(saved);
+    expect((await snapshot.inspect()).mountHandling).toBe("none");
+    await snapshot.delete();
+    expect(f.calls.delete).toBe(1);
+  } finally {
+    await reopened.close();
+  }
+});
+
+test("Daytona delayed capture stays read-only until continuation restarts exactly once", async () => {
+  const f = fixture();
+  f.modes.slowReads = 1;
+  const originalNow = Date.now;
+  let offset = 0;
+  Date.now = () => originalNow() + offset;
+  f.modes.onSnapshotRead.callback = () => {
+    offset = 61000;
+  };
+
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    Date.now = originalNow;
+    f.modes.onSnapshotRead.callback = undefined;
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 0 });
+    const saved = JSON.parse(JSON.stringify(operation.reference));
+    const reopened = await f.connect();
+
+    try {
+      const recovered = await reopened.recover(saved);
+      await (await recovered.continue()).wait();
+      await (await recovered.continue()).wait();
+      expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+      expect(f.state()).toBe("started");
+      expect(recovered.reference.submissionId).toBe(saved.submissionId);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    Date.now = originalNow;
+    await client.close();
+  }
+});
+
+for (const stage of ["stop", "capture", "restart"] as const) {
+  test(`Daytona persistence failure before ${stage} dispatch prevents that native effect`, async () => {
+    const f = fixture();
+
+    const client = await f.connect((reference) => {
+      const parsed = z
+        .object({
+          token: z.object({
+            stopState: z.string(),
+            captureState: z.string(),
+            restartState: z.string(),
+          }),
+        })
+        .safeParse(reference);
+
+      if (parsed.success && parsed.data.token[`${stage}State`] === "uncertain")
+        throw new Error("Durable store unavailable");
+    });
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const operation = await source.submitSnapshot();
+      await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      expect(f.calls).toMatchObject({
+        stop: stage === "stop" ? 0 : 1,
+        capture: stage === "restart" ? 1 : 0,
+        start: 0,
+      });
+      expect(operation.reference.token).toMatchObject({ [`${stage}State`]: "uncertain" });
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("Daytona terminal native capture failure retains artifact and restores configured source", async () => {
+  const f = fixture();
+  f.modes.nativeCaptureError = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(operation.reference.token).toMatchObject({
+      captureState: "failed",
+      snapshotId: "snapshot-one",
+      restartState: "completed",
+    });
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+    await expect((await operation.continue()).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(f.calls.start).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona explicit continuation observes cancellation inside restart checkpoint", async () => {
+  const f = fixture();
+  f.modes.slowReads = 1;
+  const originalNow = Date.now;
+  let offset = 0;
+  Date.now = () => originalNow() + offset;
+  f.modes.onSnapshotRead.callback = () => {
+    offset = 61000;
+  };
+
+  const first = await f.connect();
+
+  try {
+    const source = await first.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    Date.now = originalNow;
+    f.modes.onSnapshotRead.callback = undefined;
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    const controller = new AbortController();
+
+    const reopened = await f.connect((reference) => {
+      const parsed = z
+        .object({ token: z.object({ restartState: z.literal("uncertain") }) })
+        .safeParse(reference);
+
+      if (parsed.success) controller.abort();
+    });
+
+    try {
+      const continued = await reopened.recover(operation.reference);
+      await continued.continue({ signal: controller.signal });
+      expect(f.calls.start).toBe(0);
+      expect(continued.reference.token).toMatchObject({ restartState: "not-submitted" });
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    Date.now = originalNow;
+    await first.close();
+  }
+});
+
+test("Daytona continuation rejects contradictory saved workflow before lifecycle effects", async () => {
+  const f = fixture();
+  f.modes.stopLost = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    const saved = JSON.parse(JSON.stringify(operation.reference));
+    saved.token.restartRequired = false;
+    const recovered = await client.recover(saved);
+    await expect((await recovered.continue()).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(f.calls).toMatchObject({ stop: 1, capture: 0, start: 0 });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona caller-selected private snapshot deletion does not require SDK creation history", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const original = (await source.snapshot()).snapshot;
+    const selected = JSON.parse(JSON.stringify(original.reference));
+    selected.ownership = "borrowed";
+    delete selected.history;
+    await client.snapshots.delete(selected);
+    expect(f.calls.delete).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+for (const rejectCheckpoint of [false, true]) {
+  test(
+    "daytona volume ACK is persisted and recoverable with fresh credentials: " + rejectCheckpoint,
+    async () => {
+      const f = fixture();
+      let saved: AdapterRecoveryReference | undefined;
+
+      const callback = async (reference: AdapterRecoveryReference) => {
+        if (reference.kind !== "volume_create") return;
+
+        const token = z
+          .object({ state: z.literal("accepted"), volume: z.object({ nativeId: z.string() }) })
+          .safeParse(reference.token);
+
+        if (!token.success) return;
+        saved = JSON.parse(JSON.stringify(reference));
+        expect(token.data.volume.nativeId).toBeTruthy();
+
+        if (rejectCheckpoint) throw Error("Application persistence failed after ACK");
+      };
+
+      const client = await f.connect(callback);
+
+      try {
+        if (rejectCheckpoint)
+          await expect(client.volumes.create({ name: "durable-volume" })).rejects.toBeInstanceOf(
+            OutcomeUnknownError,
+          );
+        else await client.volumes.create({ name: "durable-volume" });
+        expect(saved).toBeDefined();
+        expect(f.volumeCreates()).toBe(1);
+        const reopened = await f.connect(undefined, "rotated-key");
+
+        try {
+          const volume = await (await reopened.recover(saved!)).wait();
+          expect(volume).toMatchObject({ reference: { kind: "volume" } });
+          expect(f.volumeCreates()).toBe(1);
+          const native = [...f.volumes.values()][0]!;
+          native.name = "replacement-name";
+          await expect((await reopened.recover(saved!)).wait()).rejects.toBeInstanceOf(
+            OutcomeUnknownError,
+          );
+          expect(f.volumeCreates()).toBe(1);
+        } finally {
+          await reopened.close();
+        }
+      } finally {
+        await client.close();
+      }
+    },
+  );
 }

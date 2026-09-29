@@ -19,12 +19,34 @@ import { boundedRead } from "./bounds";
 import { type ConnectionFactory, type Step } from "./lifecycle";
 import { snapshotProbe, volumeProbe, type StateEvidence } from "./state-evidence";
 
-function partialSnapshot(reference: AdapterRecoveryReference) {
+function partialResource(reference: AdapterRecoveryReference) {
+  if (reference.kind === "volume_create") {
+    const parsed = z
+      .object({ state: z.literal("accepted"), volume: ResourceReference })
+      .safeParse(reference.token);
+
+    if (
+      !parsed.success ||
+      parsed.data.volume.kind !== "volume" ||
+      parsed.data.volume.ownership !== "verified-created"
+    )
+      return undefined;
+    assertResourceScope(parsed.data.volume, {
+      provider: reference.provider,
+      scope: reference.scope,
+    });
+
+    return parsed.data.volume;
+  }
+
   if (reference.kind !== "snapshot_capture") return undefined;
 
   const token = z
     .union([
-      z.object({ captureState: z.literal("completed"), snapshot: SnapshotInfo }),
+      z.object({
+        captureState: z.enum(["accepted", "completed", "failed"]),
+        snapshot: SnapshotInfo,
+      }),
       z.object({ snapshot: ResourceReference }),
     ])
     .safeParse(reference.token);
@@ -41,6 +63,18 @@ function partialSnapshot(reference: AdapterRecoveryReference) {
   });
 
   return resource;
+}
+
+function captureInProgress(reference: AdapterRecoveryReference) {
+  const parsed = z
+    .object({
+      provider: z.literal("daytona"),
+      kind: z.literal("snapshot_capture"),
+      token: z.object({ captureState: z.string() }),
+    })
+    .safeParse(reference);
+
+  return parsed.success && !["completed", "failed"].includes(parsed.data.token.captureState);
 }
 
 const processAbsent = `python3 -c 'import errno,socket
@@ -105,6 +139,7 @@ export async function runState(
     cleanupWaitMs?: number;
     redactions?: readonly string[];
     borrowedVolume?: ResourceReference;
+    sourcePreflight?: (source: AdapterSandbox) => Promise<void>;
   },
 ): Promise<Step[]> {
   return ledger.withLock(async () => {
@@ -172,7 +207,7 @@ export async function runState(
           if (capture.success)
             return { ...entry, reference, resource: capture.data.snapshot.reference };
 
-          const partial = partialSnapshot(reference);
+          const partial = partialResource(reference);
 
           if (partial) return { ...entry, reference, resource: partial };
 
@@ -264,6 +299,7 @@ export async function runState(
               restore.reason,
             );
           const source = await create("snapshot/source");
+          await options.sourcePreflight?.(source);
 
           const plan = await source.checkSnapshot();
 
@@ -402,10 +438,26 @@ export async function runState(
             },
             options.cleanupWaitMs ?? 60000,
           );
+
+          const savedSnapshot = ResourceReference.parse(
+            JSON.parse(JSON.stringify(result.snapshot.reference)),
+          );
+
+          await client.close();
+          client = await factory(journal, onDiagnostic);
+          const reopenedSnapshot = await client.snapshots.get(savedSnapshot);
+          const reopenedInfo = await boundedRead(reopenedSnapshot.inspect(), options.signal);
+
+          if (
+            reopenedInfo.reference.nativeId !== savedSnapshot.nativeId ||
+            reopenedInfo.reference.generation !== savedSnapshot.generation ||
+            reopenedInfo.mountHandling !== "none"
+          )
+            throw new Error("Fresh connection lost captured identity or historical provenance");
           role = "snapshot/restore-second";
 
           const again = await wait(
-            await result.snapshot.submitRestore(
+            await reopenedSnapshot.submitRestore(
               { networkPolicy: options.network, requireIndependentLifecycle: true },
               { signal: options.signal },
             ),
@@ -426,6 +478,8 @@ export async function runState(
             capturedBytes: true,
             newIdentity: true,
             metadataInspected: true,
+            serializedReferenceReopened: true,
+            freshConnectionAfterSourceDeletion: true,
             restoredWriteIndependent: true,
             sourceWriteIndependent: expected === "running",
             secondRestoreOriginalBytes: true,
@@ -781,7 +835,7 @@ export async function reconcileState(
       stateMutations: value.stateMutations?.map((entry) =>
         // SAFETY: The SDK produced this direct custody reference; recover validates the full schema and connection binding before provider access.
         (entry.reference as AdapterRecoveryReference).submissionId === reference.submissionId
-          ? { ...entry, reference, resource: entry.resource ?? partialSnapshot(reference) }
+          ? { ...entry, reference, resource: entry.resource ?? partialResource(reference) }
           : entry,
       ),
     }));
@@ -790,7 +844,11 @@ export async function reconcileState(
   const pending =
     (await ledger.read()).stateMutations?.filter(
       (entry) =>
-        entry.creation && entry.cleanup === "pending" && !entry.resource && !entry.sandboxId,
+        entry.creation &&
+        entry.cleanup === "pending" &&
+        ((!entry.resource && !entry.sandboxId) ||
+          // SAFETY: This SDK-produced custody reference is schema-parsed by captureInProgress before examining its stage.
+          captureInProgress(entry.reference as AdapterRecoveryReference)),
     ) ?? [];
 
   for (const entry of pending) {
@@ -827,7 +885,12 @@ export async function reconcileState(
 
   // Keep unresolved capture source evidence alive until an operator can inspect it; native TTL remains fallback.
   const unresolved = (await ledger.read()).stateMutations?.some(
-    (entry) => entry.creation && entry.cleanup === "pending" && !entry.resource && !entry.sandboxId,
+    (entry) =>
+      entry.creation &&
+      entry.cleanup === "pending" &&
+      ((!entry.resource && !entry.sandboxId) ||
+        // SAFETY: This SDK-produced custody reference is schema-parsed by captureInProgress before examining its stage.
+        captureInProgress(entry.reference as AdapterRecoveryReference)),
   );
 
   for (const entry of (await ledger.read()).stateMutations ?? []) {

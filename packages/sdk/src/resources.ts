@@ -199,9 +199,6 @@ function deleteResource(
 ): Promise<AdapterOperation<ArtifactDeletionResult>> {
   const ref = checkedResource(client, reference, kind);
 
-  if (ref.ownership !== "verified-created")
-    throw new SandbarError("CONFLICT", "Borrowed or unverified artifacts cannot be deleted");
-
   return client.submit(
     kind === "snapshot" ? "snapshot_delete" : "volume_delete",
     ref,

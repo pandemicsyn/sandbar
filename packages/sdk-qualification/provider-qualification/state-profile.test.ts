@@ -28,6 +28,7 @@ async function fixture(
     dropVolumeWrite?: boolean;
     loseCapture?: boolean;
     partialCapture?: boolean;
+    pendingNativeCapture?: boolean;
     partialReferenceCapture?: boolean;
     borrowed?: boolean;
     checkpointFailure?: boolean;
@@ -66,7 +67,7 @@ async function fixture(
   const ref = (kind: "snapshot" | "volume", nativeId: string): ResourceReference => ({
     version: 1,
     kind,
-    provider: "fixture.state.lifecycle",
+    provider: options.pendingNativeCapture ? "daytona" : "fixture.state.lifecycle",
     scope,
     nativeId,
     ownership: "verified-created",
@@ -112,7 +113,7 @@ async function fixture(
   };
 
   const adapter = defineAdapter({
-    name: "fixture.state.lifecycle",
+    name: options.pendingNativeCapture ? "daytona" : "fixture.state.lifecycle",
     config: z.strictObject({}),
     credentials: z.strictObject({}),
     async connect() {
@@ -165,7 +166,7 @@ async function fixture(
             version: 1,
             token: z.union([
               z.strictObject({
-                captureState: z.literal("completed"),
+                captureState: z.enum(["accepted", "completed"]),
                 snapshot: SnapshotInfo,
                 restartFailure: z.string(),
               }),
@@ -214,10 +215,10 @@ async function fixture(
 
             if (options.loseCapture) return ctx.unknown("Acknowledgement lost");
 
-            if (options.partialCapture)
+            if (options.partialCapture || options.pendingNativeCapture)
               return ctx.pending(
                 {
-                  captureState: "completed",
+                  captureState: options.pendingNativeCapture ? "accepted" : "completed",
                   snapshot: JSON.parse(JSON.stringify(info)),
                   restartFailure: "Source restart rejected",
                 },
@@ -484,7 +485,7 @@ test("custody checkpoint failure prevents native state allocation", async () => 
 
 test("RAM certification requires process observations and confirmed storage teardown", () => {
   const fs = {
-    probe: "snapshot-roundtrip-v2" as const,
+    probe: "snapshot-roundtrip-v3" as const,
     preserve: "filesystem" as const,
     captureMode: "native-default" as const,
     restoreExecution: "fresh" as const,
@@ -494,6 +495,8 @@ test("RAM certification requires process observations and confirmed storage tear
     capturedBytes: true as const,
     newIdentity: true as const,
     metadataInspected: true as const,
+    serializedReferenceReopened: true as const,
+    freshConnectionAfterSourceDeletion: true as const,
     restoredWriteIndependent: true as const,
     sourceWriteIndependent: false,
     secondRestoreOriginalBytes: true as const,
@@ -522,7 +525,7 @@ test("RAM certification requires process observations and confirmed storage tear
       imageClass: "prepared",
       network: "blocked-requested",
       regionClass: "fixture",
-      stateProbe: "snapshot-roundtrip-v2",
+      stateProbe: "snapshot-roundtrip-v3",
       preserve: "filesystem",
       restoreExecution: "fresh",
       sourceAfter: "running",
@@ -653,4 +656,24 @@ test("snapshot roundtrip gates unsupported restore before any compute or retaine
   });
   expect(f.calls).toMatchObject({ create: 0, capture: 0, restore: 0 });
   expect((await f.ledger.read()).cleanup).toBe("not-required");
+});
+
+test("acknowledged in-progress Daytona capture retains custody without automatic source or artifact cleanup", async () => {
+  const f = await fixture({ pendingNativeCapture: true });
+
+  await runState(f.connect, f.ledger, "base", {
+    provider: "daytona",
+    network: "blocked",
+    selected: new Set(["snapshot-roundtrip"]),
+    signal: AbortSignal.timeout(5000),
+    cleanupWaitMs: 1000,
+  });
+  const state = await f.ledger.read();
+
+  expect(
+    state.stateMutations?.find((entry) => entry.role === "snapshot/capture")?.resource,
+  ).toMatchObject({ kind: "snapshot" });
+  expect(state.cleanup).toBe("unresolved");
+  expect(f.boxes.size).toBe(1);
+  expect(f.snapshots.size).toBe(1);
 });

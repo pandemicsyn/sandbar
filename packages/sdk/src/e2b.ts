@@ -14,6 +14,13 @@ const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 /** Injectable E2B native boundary for deterministic qualification. */
 export interface E2BTransport {
   state?: {
+    template(id: string): Promise<{
+      templateId: string;
+      names: string[];
+      public: boolean;
+      builds: { buildId: string; status: "building" | "waiting" | "ready" | "error" }[];
+    } | null>;
+    verifyAddress(id: string, names?: string[]): Promise<void>;
     tags(id: string): Promise<{ tag: string; buildId: string }[]>;
     capture(
       id: string,

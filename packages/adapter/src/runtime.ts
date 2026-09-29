@@ -776,13 +776,23 @@ export async function submitOperation(
   identity: Pick<AttemptContext, "operationId" | "submissionId" | "invocationKey">,
   signal: AbortSignal,
   maxOutputBytes = MAX_OUTPUT,
+  onCheckpoint?: (token: Json, version: number) => Promise<void>,
 ): Promise<RuntimeResult> {
   const rejected = await prepared.revalidate?.(signal);
 
   if (rejected) return rejected;
   const parts = operationParts(prepared.operation);
 
-  const context = createAttemptContext({ ...identity, signal }, parts.recovery?.token);
+  const context = createAttemptContext(
+    {
+      ...identity,
+      signal,
+      onCheckpoint: onCheckpoint
+        ? (token) => onCheckpoint(token, checkedRecoveryVersion(parts.recovery!.version))
+        : undefined,
+    },
+    parts.recovery?.token,
+  );
 
   const value = await parts.submit(prepared.input, context);
 
@@ -803,6 +813,7 @@ export async function observeOperation(
     sandbox?: Sandbox;
     resource?: import("./state").ResourceReference;
     mounts?: import("./state").MountSpec[];
+    capture?: import("./state").SnapshotCaptureInput["expectation"];
     token?: Json;
     version?: number;
   },
@@ -843,4 +854,35 @@ export async function observeOperation(
   }
 
   return { kind: "completed", value: await validateValue(kind, value, maxOutputBytes, signal) };
+}
+
+/** Explicit mutation continuation. Read-only observation never calls this function. */
+export async function continueOperation(
+  session: RuntimeSession,
+  kind: OperationKind,
+  attempt: Parameters<typeof observeOperation>[2],
+  identity: Pick<AttemptContext, "operationId" | "submissionId" | "invocationKey">,
+  signal: AbortSignal,
+  onCheckpoint: (token: Json, version: number) => Promise<void>,
+): Promise<RuntimeResult> {
+  const operation = select(session, kind);
+  const parts = operationParts(operation);
+
+  if (!parts.continue || !parts.recovery)
+    throw new AdapterError("UNSUPPORTED", "Operation continuation is unsupported");
+
+  if (attempt.version !== parts.recovery.version)
+    throw new AdapterError("CONFLICT", "Continuation token version differs");
+
+  const context = createAttemptContext(
+    { ...identity, signal, onCheckpoint: (token) => onCheckpoint(token, parts.recovery!.version) },
+    parts.recovery.token,
+  );
+
+  const token = context.pending(attempt.token!).token;
+  const value = await parts.continue({ ...attempt, token, sandbox: attempt.sandbox }, context);
+
+  if (isOutcome(value)) return normalizeSpecial(value, operation);
+
+  return { kind: "completed", value: await validateValue(kind, value, MAX_OUTPUT, signal) };
 }

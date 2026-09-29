@@ -30,7 +30,12 @@ export const ResourceReference = z.strictObject({
   // Required evidence when the adapter's native locator can be reused; never synthesized.
   generation: z.string().min(1).max(512).optional(),
   ownership: z.enum(["borrowed", "verified-created", "unknown"]),
-  /** Bounded adapter evidence, verified by the adapter; never a native generation or SDK authority. */
+  /** Historical observations retained by the application; never provider authorization. */
+  history: z
+    .json()
+    .refine((value) => new TextEncoder().encode(JSON.stringify(value)).length <= 4096)
+    .optional(),
+  /** Legacy receipt data; new historical observations use history. */
   receipt: z.string().min(1).max(4096).optional(),
   service: z
     .strictObject({

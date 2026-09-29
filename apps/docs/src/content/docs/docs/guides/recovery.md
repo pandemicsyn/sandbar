@@ -39,6 +39,14 @@ An adapter may register a release hook for a transport it owns. `close()` invoke
 
 The sample's `saveReference` is your application's persistence function. Await durable writes before moving on. For a checkpoint before native submission, pass `onReference` through the explicit adapter connection options or use the advanced `operations.prepare(...).submit(..., { beforeSubmit })` lifecycle. See [Asynchronous adapter recovery](/docs/guides/adapter-recovery/).
 
-`onReference` runs only for the initial reference before provider dispatch. A pending `observe()` result can add or replace a recovery token on the handle without calling `onReference` again. Persist the updated `operation.reference` after each pending observation. `wait()` observes internally and does not provide checkpoints for those intermediate updates; use explicit `observe()` calls when you need to persist each update. Save the reference carried by `WaitAbortedError` or `OutcomeUnknownError` if waiting stops with either error.
+`onReference` is awaited for the initial reference, provider stage checkpoints, and pending observation updates. The provider records a dispatch-may-have-occurred marker before every stage effect and checkpoints newly learned acknowledgements and resource identities. If persistence fails before a stage dispatch, that effect is not sent; after an effect, preserve the latest reference carried by the error. Resource and operation references are bounded versioned JSON owned by your application, without a required Sandbar database or provider-key signature.
 
-E2B's default scope is tied to the authenticated API key; rotating it changes that scope. Daytona's scope includes its organization, target, endpoint, and selected network policy. Reconnect with matching scope to recover prior operations.
+For E2B credential rotation, configure `teamId` so authenticated verification establishes a stable native team scope. E2B's default scope is tied to the authenticated API key; rotating it changes that scope. Daytona's scope includes its organization, target, endpoint, and selected network policy. Reconnect with matching scope to recover prior operations.
+
+Direct operations with supported multi-stage recovery expose `continue()`. `recover()`, `observe()`, `inspect()` and `wait()` stay read-only. Explicit continuation may dispatch a configured next stage proven never submitted, such as restarting a stopped Daytona source after a delayed capture completes. It does not replay an uncertain stage. Serialize concurrent continuations across processes with your application's own lease or compare-and-swap; a local handle guard is not a distributed exactly-once guarantee.
+
+```ts
+const operation = await client.recover(savedReference);
+await operation.continue(); // Explicit mutation; persist checkpoints through onReference.
+const result = await operation.wait(); // Read-only observation.
+```

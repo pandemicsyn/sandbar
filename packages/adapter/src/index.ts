@@ -130,11 +130,20 @@ const AdapterErrorCodeSchema = z.enum([
 
 const OutcomeTextSchema = z.string().max(1024);
 
+/** Persistence failed; adapters must stop before dispatching another stage. */
+export class AdapterCheckpointError extends Error {
+  constructor() {
+    super("Operation reference persistence failed");
+    this.name = "AdapterCheckpointError";
+  }
+}
+
 export type AttemptContext<T extends Json = Json> = {
   readonly operationId: string;
   readonly submissionId: string;
   readonly invocationKey: string;
   readonly signal: AbortSignal;
+  checkpoint(token: T): Promise<void>;
   pending(token: T, options?: { pollAfterMs?: number }): Pending;
   reject(code: AdapterErrorCode, message: string): Rejected;
   unknown(reason: string): Unknown;
@@ -154,6 +163,7 @@ export type RecoveryAttempt<
   readonly sandbox: S;
   readonly resource?: ResourceReference;
   readonly mounts?: import("./state").MountSpec[];
+  readonly capture?: import("./state").SnapshotCaptureInput["expectation"];
   readonly token?: T;
 };
 
@@ -169,6 +179,10 @@ export type Mutation<
       : never)
   | {
       recovery?: { version: number; token: z.ZodType<T> };
+      continue?: (
+        attempt: RecoveryAttempt<T, S>,
+        ctx: AttemptContext<T>,
+      ) => Promise<V | Pending | Unknown>;
       prepare?: (input: I, ctx: ReadContext) => Promise<P>;
       submit: (input: P, ctx: AttemptContext<T>) => Promise<V | Pending | Unknown | Rejected>;
       observe?: (
@@ -382,11 +396,26 @@ function boundedToken(value: Json, schema: z.ZodType<Json>): Json {
 }
 
 export function createAttemptContext(
-  input: Pick<AttemptContext, "operationId" | "submissionId" | "invocationKey" | "signal">,
+  input: Pick<AttemptContext, "operationId" | "submissionId" | "invocationKey" | "signal"> & {
+    onCheckpoint?: (token: Json) => Promise<void>;
+  },
   tokenSchema?: z.ZodType<Json>,
 ): AttemptContext {
   return {
-    ...input,
+    operationId: input.operationId,
+    submissionId: input.submissionId,
+    invocationKey: input.invocationKey,
+    signal: input.signal,
+    checkpoint: async (token) => {
+      try {
+        if (!tokenSchema)
+          throw new AdapterError("INVALID_ARGUMENT", "Checkpoint requires declared recovery");
+        const checked = boundedToken(token, tokenSchema);
+        await input.onCheckpoint?.(structuredClone(checked));
+      } catch {
+        throw new AdapterCheckpointError();
+      }
+    },
     pending: (token, options) => {
       if (!tokenSchema)
         throw new AdapterError("INVALID_ARGUMENT", "Pending requires a declared recovery token");
@@ -443,6 +472,10 @@ export type OperationParts<I, V, P, T extends Json, S extends RecoveryResource |
     attempt: RecoveryAttempt<T, S>,
     ctx: ObserveContext<T>,
   ) => Promise<V | Pending | Unknown | null>;
+  continue?: (
+    attempt: RecoveryAttempt<T, S>,
+    ctx: AttemptContext<T>,
+  ) => Promise<V | Pending | Unknown>;
   recovery?: { version: number; token: z.ZodType<T> };
 };
 
@@ -612,7 +645,7 @@ export async function connectAdapter<
   }
 }
 
-export { prepareOperation, submitOperation, observeOperation } from "./runtime";
+export { prepareOperation, submitOperation, observeOperation, continueOperation } from "./runtime";
 
 export type {
   OperationKind,

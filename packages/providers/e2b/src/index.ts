@@ -144,7 +144,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         nativeId.test(record.metadata.sandbar_submission ?? "") &&
         nativeId.test(record.metadata.sandbar_operation ?? "") &&
         ((!!record.metadata.sandbar_snapshot &&
-          record.metadata.sandbar_snapshot === `${record.templateId}:default` &&
+          record.metadata.sandbar_snapshot.startsWith(`${record.templateId}:`) &&
+          z.uuid().safeParse(record.metadata.sandbar_snapshot.slice(record.templateId.length + 1))
+            .success &&
           record.metadata.sandbar_snapshot === record.metadata.sandbar_template) ||
           record.metadata.sandbar_template === record.templateId ||
           (record.metadata.sandbar_template === "base" && !record.metadata.sandbar_build));

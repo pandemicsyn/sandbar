@@ -9,22 +9,22 @@ These are real provider runs through the public SDK, covering the configurations
 
 ## Functional test matrix
 
-| Workflow                                | Daytona                                                        | E2B                                            |
-| --------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------- |
-| Authenticate and connect                | Passed                                                         | Passed                                         |
-| Create from a prepared image            | Passed                                                         | Passed                                         |
-| Inspect and list scoped sandboxes       | Passed                                                         | Passed                                         |
-| Run argv and shell commands             | Passed                                                         | Passed                                         |
-| Handle nonzero exit and captured output | Passed                                                         | Passed                                         |
-| Write and read binary files             | Passed                                                         | Passed                                         |
-| Overwrite an existing file              | Passed in `/tmp`                                               | Passed in `/home/user`                         |
-| Reject a no-clobber conflict            | Passed in `/tmp`                                               | Passed in `/home/user`                         |
-| Destroy and confirm cleanup             | Passed                                                         | Passed                                         |
-| Close the client                        | Passed                                                         | Passed                                         |
-| Build from an OCI image                 | Implemented; not live-tested                                   | Implemented; not live-tested                   |
-| Measure network isolation               | Not tested                                                     | Not tested                                     |
-| Capture and restore snapshots           | Container stop/capture/restart, fresh execution; fixtures only | Filesystem + RAM capture; restore unsupported  |
-| Volumes and create-time mounts          | Writable/subpaths; not live-qualified                          | Private-beta artifact CRUD; mounts unsupported |
+| Workflow                                | Daytona                                                        | E2B                                                              |
+| --------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Authenticate and connect                | Passed                                                         | Passed                                                           |
+| Create from a prepared image            | Passed                                                         | Passed                                                           |
+| Inspect and list scoped sandboxes       | Passed                                                         | Passed                                                           |
+| Run argv and shell commands             | Passed                                                         | Passed                                                           |
+| Handle nonzero exit and captured output | Passed                                                         | Passed                                                           |
+| Write and read binary files             | Passed                                                         | Passed                                                           |
+| Overwrite an existing file              | Passed in `/tmp`                                               | Passed in `/home/user`                                           |
+| Reject a no-clobber conflict            | Passed in `/tmp`                                               | Passed in `/home/user`                                           |
+| Destroy and confirm cleanup             | Passed                                                         | Passed                                                           |
+| Close the client                        | Passed                                                         | Passed                                                           |
+| Build from an OCI image                 | Implemented; not live-tested                                   | Implemented; not live-tested                                     |
+| Measure network isolation               | Not tested                                                     | Not tested                                                       |
+| Capture and restore snapshots           | Container stop/capture/restart, fresh execution; fixtures only | Filesystem + RAM capture and pinned-build restore; fixtures only |
+| Volumes and create-time mounts          | Writable/subpaths; not live-qualified                          | Private-beta artifact CRUD; mounts unsupported                   |
 
 “Passed” means that workflow completed in the recorded live run and the run confirmed cleanup. “Implemented; not live-tested” means code and offline tests exist, but this evidence does not establish real-provider behavior.
 

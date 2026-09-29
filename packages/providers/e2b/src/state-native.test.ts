@@ -15,7 +15,9 @@ function fixture() {
   const boxes = new Map<string, E2BRecord>();
   const snapshots = new Map<string, { snapshotId: string; names: string[] }>();
   const volumes = new Map<string, { volumeId: string; name: string }>();
-  let generation = "build_one";
+  let generation = "11111111-1111-4111-8111-111111111111";
+  let retainedGeneration: string | undefined;
+  const createRequests: { templateId: string; allowInternetAccess: boolean }[] = [];
   let createObservation: "missing" | "id" | "scope" | "submission" | "operation" | undefined;
   let extraTag = false;
   let postCaptureRead: (() => void) | undefined;
@@ -38,6 +40,8 @@ function fixture() {
     omitMounts: false,
     betaDenied: false,
     tagsDenied: false,
+    aliasShadowed: false,
+    loseRestore: false,
   };
 
   const transport: E2BTransport = {
@@ -54,6 +58,10 @@ function fixture() {
     },
     async create(input) {
       calls.create++;
+      createRequests.push({
+        templateId: input.templateId,
+        allowInternetAccess: input.allowInternetAccess,
+      });
       const id = `box_${calls.create}`;
       boxes.set(id, {
         id,
@@ -65,6 +73,9 @@ function fixture() {
           ? []
           : Object.entries(input.volumeMounts ?? {}).map(([path, name]) => ({ path, name })),
       });
+
+      if (modes.loseRestore && input.metadata.sandbar_snapshot)
+        throw new Error("Restore acknowledgement lost");
 
       return id;
     },
@@ -115,12 +126,32 @@ function fixture() {
     async remove() {},
     close() {},
     state: {
+      async template(id) {
+        if (!snapshots.has(`${id}:default`)) return null;
+
+        return {
+          templateId: id,
+          names: extraTag ? ["shared"] : [],
+          public: false,
+          builds: [
+            { buildId: generation, status: "ready" },
+            ...(retainedGeneration
+              ? [{ buildId: retainedGeneration, status: "ready" as const }]
+              : []),
+          ],
+        };
+      },
+      async verifyAddress() {
+        if (modes.aliasShadowed)
+          throw new Error("Snapshot address shadowed by another template alias");
+      },
       async tags() {
         if (modes.tagsDenied) throw new Error("Native tag evidence unavailable");
 
         return [
           { tag: "default", buildId: generation },
           ...(extraTag ? [{ tag: "shared", buildId: generation }] : []),
+          ...(retainedGeneration ? [{ tag: "captured", buildId: retainedGeneration }] : []),
         ];
       },
       async capture(_id, name) {
@@ -142,7 +173,7 @@ function fixture() {
       },
       async deleteSnapshot(id) {
         calls.snapshotDelete++;
-        snapshots.delete(id);
+        snapshots.delete(`${id}:default`);
 
         if (modes.loseDelete) throw new Error("Acknowledgement lost after deletion");
 
@@ -177,10 +208,14 @@ function fixture() {
     },
   };
 
-  const connect = (apiKey = "fixture-key", onReference?: (ref: AdapterRecoveryReference) => void) =>
+  const connect = (
+    apiKey = "fixture-key",
+    onReference?: (ref: AdapterRecoveryReference) => void,
+    teamId?: string,
+  ) =>
     Sandbar.connect({
       adapter: createE2BAdapter(() => transport),
-      config: {},
+      config: teamId ? { teamId } : {},
       credentials: { apiKey },
       onReference,
     });
@@ -192,6 +227,11 @@ function fixture() {
     volumes,
     calls,
     modes,
+    createRequests,
+    moveDefault() {
+      retainedGeneration = generation;
+      generation = "22222222-2222-4222-8222-222222222222";
+    },
     postCaptureRead(value: () => void) {
       postCaptureRead = value;
     },
@@ -205,7 +245,7 @@ function fixture() {
       extraTag = true;
     },
     replaceBuild() {
-      generation = "build_two";
+      generation = "22222222-2222-4222-8222-222222222222";
     },
     createObservation(value: typeof createObservation) {
       createObservation = value;
@@ -213,7 +253,7 @@ function fixture() {
   };
 }
 
-test("E2B capture is independent compute, reconnects after source deletion, and detects tag reassignment", async () => {
+test("E2B captures, restores the saved UUID after source deletion, and rejects a missing build", async () => {
   const f = fixture();
   const client = await f.connect();
 
@@ -222,25 +262,29 @@ test("E2B capture is independent compute, reconnects after source deletion, and 
     networkPolicy: "blocked",
   });
 
-  const result = await source.snapshot({ requirements: { preserve: "filesystem+memory" } });
-  expect(result.source).toEqual({ state: "running", connections: "dropped" });
-  expect(result.snapshot.reference.generation).toBe("build_one");
-  expect(f.calls.capture).toBe(1);
+  const result = await source.snapshot();
   const saved = structuredClone(result.snapshot.reference);
+  expect(saved.nativeId).toBe("snap_one");
+  expect(saved.generation).toBe("11111111-1111-4111-8111-111111111111");
   await source.destroy();
   await client.close();
   const reopened = await f.connect();
-  const snapshot = await reopened.snapshots.get(saved);
-  expect((await snapshot.inspect()).mountHandling).toBe("none");
-  expect((await reopened.capabilities()).snapshots.restore.status).toBe("unsupported");
-  await expect(snapshot.restore({ networkPolicy: "blocked" })).rejects.toMatchObject({
-    code: "UNSUPPORTED",
-    effect: "none",
-  });
-  f.replaceBuild();
-  await expect(snapshot.inspect()).rejects.toMatchObject({ code: "CONFLICT" });
-  expect(f.calls.create).toBe(1);
-  await reopened.close();
+
+  try {
+    const snapshot = await reopened.snapshots.get(saved);
+    expect((await snapshot.inspect()).mountHandling).toBe("none");
+    expect((await reopened.capabilities()).snapshots.restore.status).toBe("supported");
+    const restored = await snapshot.restore({ networkPolicy: "blocked" });
+    expect(f.boxes.get(restored.id)?.metadata.sandbar_snapshot).toBe(
+      `snap_one:${saved.generation}`,
+    );
+    await restored.destroy();
+    f.replaceBuild();
+    await expect(snapshot.inspect()).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(f.calls).toMatchObject({ create: 2, capture: 1 });
+  } finally {
+    await reopened.close();
+  }
 });
 
 test("E2B lost capture acknowledgement is observed without a second capture or guessed ownership", async () => {
@@ -263,44 +307,30 @@ test("E2B lost capture acknowledgement is observed without a second capture or g
   await client.close();
 });
 
-test("E2B snapshot deletion rejects effect-free and preserves scope checks", async () => {
+test("E2B explicit borrowed template deletion checks scope and confirms native absence", async () => {
   const f = fixture();
   const client = await f.connect();
-  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-  const result = await source.snapshot({ requirements: { preserve: "filesystem+memory" } });
-  const foreign = structuredClone(result.snapshot.reference);
-  foreign.provider = "daytona";
-  await expect(
-    Promise.resolve().then(() => client.snapshots.delete(foreign)),
-  ).rejects.toMatchObject({ code: "CONFLICT" });
-  const forged = structuredClone(result.snapshot.reference);
-  delete forged.receipt;
-  await expect(client.snapshots.delete(forged)).rejects.toMatchObject({
-    code: "UNSUPPORTED",
-    effect: "none",
-  });
-  expect(f.calls.snapshotDelete).toBe(0);
-  await expect(result.snapshot.submitDelete()).rejects.toMatchObject({
-    code: "UNSUPPORTED",
-    effect: "none",
-  });
-  expect(f.calls.snapshotDelete).toBe(0);
-  expect((await client.capabilities()).snapshots.delete.status).toBe("unsupported");
-  const created = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
 
-  const legacy = {
-    ...structuredClone(created.reference),
-    kind: "snapshot_delete" as const,
-    resource: result.snapshot.reference,
-    tokenVersion: 1,
-    token: { accepted: true },
-  };
-
-  await expect((await client.recover(legacy)).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-  expect(f.calls.snapshotDelete).toBe(0);
-  await (await created.wait()).destroy();
-  await source.destroy();
-  await client.close();
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const result = await source.snapshot();
+    const foreign = structuredClone(result.snapshot.reference);
+    foreign.provider = "daytona";
+    await expect(
+      Promise.resolve().then(() => client.snapshots.delete(foreign)),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const missing = structuredClone(result.snapshot.reference);
+    delete missing.history;
+    missing.ownership = "borrowed";
+    expect(f.calls.snapshotDelete).toBe(0);
+    await source.destroy();
+    await client.snapshots.delete(missing);
+    expect(f.calls.snapshotDelete).toBe(1);
+    expect(f.snapshots.size).toBe(0);
+    expect((await client.capabilities()).snapshots.delete.status).toBe("supported");
+  } finally {
+    await client.close();
+  }
 });
 
 test("E2B mounted compute requires explicit unconfirmed durability and retains independent volume custody", async () => {
@@ -442,8 +472,7 @@ test("E2B snapshot deletion cannot dispatch through a mutable generation", async
   const source = await client.sandboxes.create({ environment: Image.prepared("base") });
   const result = await source.snapshot({ requirements: { preserve: "filesystem+memory" } });
   await expect(result.snapshot.delete()).rejects.toMatchObject({
-    code: "UNSUPPORTED",
-    effect: "none",
+    code: "OUTCOME_UNKNOWN",
   });
   expect(f.calls.snapshotDelete).toBe(0);
   expect(f.snapshots.size).toBe(1);
@@ -460,8 +489,7 @@ test("E2B snapshot deletion cannot dispatch through a shared template", async ()
   const source = await client.sandboxes.create({ environment: Image.prepared("base") });
   const result = await source.snapshot({ requirements: { preserve: "filesystem+memory" } });
   await expect(result.snapshot.delete()).rejects.toMatchObject({
-    code: "UNSUPPORTED",
-    effect: "none",
+    code: "OUTCOME_UNKNOWN",
   });
   expect(f.calls.snapshotDelete).toBe(0);
   await client.close();
@@ -508,7 +536,7 @@ test("E2B cancellation after capture acknowledgement retains generation custody 
 
     if (!(failure instanceof WaitAbortedError)) throw new Error("Expected wait abort");
     expect(failure.reference.token).toMatchObject({
-      generation: "build_one",
+      generation: "11111111-1111-4111-8111-111111111111",
       sourceId: source.id,
       consistency: "unknown",
     });
@@ -530,17 +558,17 @@ test("E2B cancellation after capture acknowledgement retains generation custody 
       expect(await snapshot.inspect()).toMatchObject({
         restoreExecution: "resume",
         consistency: "unknown",
-        reference: { ownership: "verified-created", generation: "build_one" },
+        reference: {
+          ownership: "verified-created",
+          generation: "11111111-1111-4111-8111-111111111111",
+        },
       });
-      await expect(snapshot.delete()).rejects.toMatchObject({
-        code: "UNSUPPORTED",
-        effect: "none",
-      });
+      await snapshot.delete();
     } finally {
       await reopened.close();
     }
 
-    expect(f.snapshots.size).toBe(1);
+    expect(f.snapshots.size).toBe(0);
     expect(f.calls.capture).toBe(1);
   } finally {
     await client.close();
@@ -610,10 +638,7 @@ test("direct custody references recursively freeze capture profiles and resource
     const captured = await source.snapshot();
 
     await source.destroy();
-    await expect(captured.snapshot.delete()).rejects.toMatchObject({
-      code: "UNSUPPORTED",
-      effect: "none",
-    });
+    await captured.snapshot.delete();
     await volume.delete();
     expect([...checked].sort()).toEqual(["capture", "resource"]);
   } finally {
@@ -650,11 +675,11 @@ for (const mode of ["expires-during-read", "expires-after-cancel"] as const) {
       const recovery = structuredClone(failure.reference);
       const saved = z.object({ snapshot: ResourceReference }).parse(recovery.token).snapshot;
       expect(saved).toMatchObject({
-        nativeId: "snap_one:default",
-        generation: "build_one",
+        nativeId: "snap_one",
+        generation: "11111111-1111-4111-8111-111111111111",
         ownership: "verified-created",
       });
-      expect(saved.receipt).toBeString();
+      expect(saved.history).toMatchObject({ provenance: "application-retained" });
       f.boxes.delete(source.id);
       await client.close();
       client = await f.connect();
@@ -667,11 +692,8 @@ for (const mode of ["expires-during-read", "expires-after-cancel"] as const) {
         mountHandling: "none",
         source: { id: source.id },
       });
-      await expect(snapshot.delete()).rejects.toMatchObject({
-        code: "UNSUPPORTED",
-        effect: "none",
-      });
-      expect(f.calls).toMatchObject({ capture: 1, snapshotDelete: 0, kill: 0 });
+      await snapshot.delete();
+      expect(f.calls).toMatchObject({ capture: 1, snapshotDelete: 1, kill: 0 });
     } finally {
       await client.close();
     }
@@ -700,12 +722,9 @@ test("public snapshot and volume handle scopes are immutable cloned references",
     }
 
     await source.destroy();
-    await expect(captured.snapshot.delete()).rejects.toMatchObject({
-      code: "UNSUPPORTED",
-      effect: "none",
-    });
+    await captured.snapshot.delete();
     await volume.delete();
-    expect(f.calls).toMatchObject({ snapshotDelete: 0, volumeDelete: 1 });
+    expect(f.calls).toMatchObject({ snapshotDelete: 1, volumeDelete: 1 });
   } finally {
     await client.close();
   }
@@ -775,7 +794,10 @@ test("E2B old pending restore cannot confirm a reassigned native build", async (
       kind: "snapshot_restore" as const,
       resource: structuredClone(capture.snapshot.reference),
       tokenVersion: 1,
-      token: { snapshotId: capture.snapshot.reference.nativeId },
+      token: {
+        selector: `${capture.snapshot.reference.nativeId}:${capture.snapshot.reference.generation}`,
+        state: "uncertain",
+      },
     };
 
     f.replaceBuild();
@@ -810,3 +832,202 @@ test("E2B cleanup never adopts a replacement volume with a reused mount name", a
     await client.close();
   }
 });
+
+test("E2B pinned restore survives default movement but cleanup rejects expanded template", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const snapshot = (await source.snapshot()).snapshot;
+    f.moveDefault();
+    expect((await snapshot.inspect()).reference.generation).toBe(snapshot.reference.generation);
+    const restored = await snapshot.restore({ networkPolicy: "blocked" });
+    expect(f.createRequests.at(-1)).toEqual({
+      templateId: `snap_one:${snapshot.reference.generation}`,
+      allowInternetAccess: false,
+    });
+    await restored.destroy();
+    await source.destroy();
+    await expect(snapshot.delete()).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.calls.snapshotDelete).toBe(0);
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B snapshot history reopens after source loss and credential rotation with verified team scope", async () => {
+  const f = fixture();
+  const client = await f.connect("original-key", undefined, "team-fixture");
+  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+  const saved = JSON.parse(JSON.stringify((await source.snapshot()).snapshot.reference));
+  await source.destroy();
+  await client.close();
+  const reopened = await f.connect("rotated-key", undefined, "team-fixture");
+
+  try {
+    const snapshot = await reopened.snapshots.get(saved);
+    const restored = await snapshot.restore({ networkPolicy: "internet" });
+    expect(f.createRequests.at(-1)).toEqual({
+      templateId: `snap_one:${saved.generation}`,
+      allowInternetAccess: true,
+    });
+    await restored.destroy();
+    await snapshot.delete();
+    expect(f.calls.snapshotDelete).toBe(1);
+  } finally {
+    await reopened.close();
+  }
+});
+
+test("E2B snapshot alias shadowing blocks restore and cleanup without native effects", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const snapshot = (await source.snapshot()).snapshot;
+    f.modes.aliasShadowed = true;
+    await expect(snapshot.restore({ networkPolicy: "blocked" })).rejects.toThrow("shadowed");
+    await expect(snapshot.delete()).rejects.toThrow("shadowed");
+    expect(f.calls).toMatchObject({ create: 1, snapshotDelete: 0 });
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B lost restore acknowledgement recovers exact dispatched selector without create replay", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const snapshot = (await source.snapshot()).snapshot;
+    f.modes.loseRestore = true;
+    const operation = await snapshot.submitRestore({ networkPolicy: "blocked" });
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    const saved = JSON.parse(JSON.stringify(operation.reference));
+    const reopened = await f.connect();
+
+    try {
+      const recovered = await (await reopened.recover(saved)).wait();
+      expect(recovered).toMatchObject({ id: "box_2" });
+      expect(f.calls.create).toBe(2);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+for (const kind of ["snapshot_capture", "snapshot_restore", "snapshot_delete"] as const) {
+  test(`E2B cancellation during ${kind} checkpoint prevents dispatch`, async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    let armed = false;
+
+    const client = await f.connect("fixture-key", (reference) => {
+      if (armed && reference.kind === kind && reference.token) controller.abort();
+    });
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+
+      if (kind === "snapshot_capture") {
+        armed = true;
+        const operation = await source.submitSnapshot(undefined, { signal: controller.signal });
+        await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+        expect(f.calls.capture).toBe(0);
+      } else {
+        const snapshot = (await source.snapshot()).snapshot;
+        armed = true;
+
+        if (kind === "snapshot_restore") {
+          await expect(
+            snapshot.submitRestore({ networkPolicy: "blocked" }, { signal: controller.signal }),
+          ).rejects.toBeInstanceOf(WaitAbortedError);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          expect(f.calls.create).toBe(1);
+        } else {
+          await expect(snapshot.submitDelete({ signal: controller.signal })).rejects.toBeInstanceOf(
+            WaitAbortedError,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          expect(f.calls.snapshotDelete).toBe(0);
+        }
+      }
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("E2B caller-selected borrowed volume deletion does not require creation history", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const original = await client.volumes.create({ name: "selected" });
+    const selected = JSON.parse(JSON.stringify(original.reference));
+    selected.ownership = "borrowed";
+    delete selected.history;
+    await client.volumes.delete(selected);
+    expect(f.calls.volumeDelete).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+for (const rejectCheckpoint of [false, true]) {
+  test(
+    "e2b volume ACK is persisted and recoverable with fresh credentials: " + rejectCheckpoint,
+    async () => {
+      const f = fixture();
+      let saved: AdapterRecoveryReference | undefined;
+
+      const callback = async (reference: AdapterRecoveryReference) => {
+        if (reference.kind !== "volume_create") return;
+
+        const token = z
+          .object({ state: z.literal("accepted"), volume: z.object({ nativeId: z.string() }) })
+          .safeParse(reference.token);
+
+        if (!token.success) return;
+        saved = JSON.parse(JSON.stringify(reference));
+        expect(token.data.volume.nativeId).toBeTruthy();
+
+        if (rejectCheckpoint) throw Error("Application persistence failed after ACK");
+      };
+
+      const client = await f.connect("first-key", callback, "team-fixture");
+
+      try {
+        if (rejectCheckpoint)
+          await expect(client.volumes.create({ name: "durable-volume" })).rejects.toBeInstanceOf(
+            OutcomeUnknownError,
+          );
+        else await client.volumes.create({ name: "durable-volume" });
+        expect(saved).toBeDefined();
+        expect(f.calls.volumeCreate).toBe(1);
+        const reopened = await f.connect("rotated-key", undefined, "team-fixture");
+
+        try {
+          const volume = await (await reopened.recover(saved!)).wait();
+          expect(volume).toMatchObject({ reference: { kind: "volume" } });
+          expect(f.calls.volumeCreate).toBe(1);
+          const native = [...f.volumes.values()][0]!;
+          native.name = "replacement-name";
+          await expect((await reopened.recover(saved!)).wait()).rejects.toBeInstanceOf(
+            OutcomeUnknownError,
+          );
+          expect(f.calls.volumeCreate).toBe(1);
+        } finally {
+          await reopened.close();
+        }
+      } finally {
+        await client.close();
+      }
+    },
+  );
+}
