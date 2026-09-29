@@ -377,6 +377,7 @@ export class Telemetry {
     });
   }
   poll(state: "pending" | "completed" | "rejected" | "unknown"): void {
+    if (!this.enabled) return;
     attempt(() => {
       // SAFETY: This private context key is set only by this Telemetry instance with a CallState.
       const call = context.active().getValue(this.owner) as CallState | undefined;

@@ -969,3 +969,32 @@ test("direct diagnostics require the complete recovery shape without traversing 
   );
   await client.close();
 });
+
+test("disabled client polls do not contaminate another client's active wait", async () => {
+  const { provider, exporter } = setup();
+  const fixture = fixtureAdapter({ pending: true, completeAfterPolls: 2 });
+
+  const disabledClient = await Sandbar.connect({
+    ...fixture,
+    config: {},
+    credentials: {},
+    tracing: false,
+  });
+
+  const enabled = new Telemetry({ tracing: { tracerProvider: provider } });
+
+  await enabled.run("sandbar.operation.wait", async () => {
+    await disabledClient.sandboxes.create({ environment: Image.prepared("CANARY_IMAGE") });
+    enabled.poll("completed");
+  });
+  await disabledClient.close();
+  const spans = safeSpans(exporter);
+  expect(spans).toHaveLength(1);
+  expect(spans[0]!.attributes["sandbar.wait.poll_count"]).toBe(1);
+  expect(spans[0]!.events.map((event) => event.attributes?.["sandbar.operation.state"])).toEqual([
+    "completed",
+  ]);
+  expect(fixture.counts.create).toBe(1);
+  expect(fixture.counts.observe).toBe(2);
+  await provider.shutdown();
+});
