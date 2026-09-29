@@ -455,14 +455,14 @@ const snapshots=new Map(),volumes=new Map();
 const files = new Map();
 const binary = Uint8Array.from([0, 255, 129]);
 const transport = {
-  state:{async tags(){return [{tag:"default",buildId:"build_snapshot"}];},async capture(){const value={snapshotId:"snapshot_packed:default",names:[]};snapshots.set(value.snapshotId,value);return value;},async snapshots(input){return {items:[...snapshots.values()].filter(value=>!input.name||value.snapshotId===input.name).slice(0,input.limit)};},async deleteSnapshot(id){return snapshots.delete(id);},async createVolume(name){const value={volumeId:"volume_packed",name};volumes.set(value.volumeId,value);return value;},async volume(id){return volumes.get(id);},async volumes(){return [...volumes.values()];},async deleteVolume(id){return volumes.delete(id);}},
+  state:{async template(id){return snapshots.has(id+":default")?{templateId:id,names:[],public:false,builds:[{buildId:"11111111-1111-4111-8111-111111111111",status:"ready"}]}:null;},async verifyAddress(){},async tags(){return [{tag:"default",buildId:"11111111-1111-4111-8111-111111111111"}];},async capture(){const value={snapshotId:"snapshot_packed:default",names:[]};snapshots.set(value.snapshotId,value);return value;},async snapshots(input){return {items:[...snapshots.values()].filter(value=>!input.name||value.snapshotId===input.name).slice(0,input.limit)};},async deleteSnapshot(id){return snapshots.delete(id+":default");},async createVolume(name){const value={volumeId:"volume_packed",name};volumes.set(value.volumeId,value);return value;},async volume(id){return volumes.get(id);},async volumes(){return [...volumes.values()];},async deleteVolume(id){return volumes.delete(id);}},
   async verifyAuth() {},
   async verifyTeam(id) { if (id !== "team_1") throw Error("Wrong team"); },
   async verifyTemplate(team, template) { if ((team !== undefined && team !== "team_1") || !["template_1", "template_oci"].includes(template)) throw Error("Wrong template"); return template; },
   async buildImage(reference, name) { if (reference !== "node:24") throw Error("Wrong OCI reference"); buildName = name; return { templateId: "template_oci", buildId: "build_1" }; },
   async findBuild(_team, name) { return name === buildName ? { templateId: "template_oci", buildId: "build_1", status: "ready" } : null; },
   async create(input) {
-    if (!["base", "template_1", "template_oci", "snapshot_packed:default"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
+    if (!["base", "template_1", "template_oci", "snapshot_packed:11111111-1111-4111-8111-111111111111"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
     creates++;
     record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
     return record.id;
@@ -513,15 +513,17 @@ try {
   await box.destroy();
   const snapshot=await client.snapshots.get(saved);
   const caps=await client.capabilities();
-  if(caps.snapshots.restore.status!=="unsupported"||caps.mounts.status!=="unsupported")throw Error("Unsafe state operations advertised");
-  let restoreRejected=false;try{await snapshot.restore({networkPolicy:"blocked"});}catch(error){restoreRejected=error.code==="UNSUPPORTED"&&error.effect==="none";}
-  if(!restoreRejected)throw Error("Unsafe mutable restore dispatched");
-  let deleteRejected=false;try{await snapshot.delete();}catch(error){deleteRejected=error.code==="UNSUPPORTED"&&error.effect==="none";}
-  if(!deleteRejected||snapshots.size!==1)throw Error("Unsafe mutable snapshot deletion dispatched");
+  if(caps.snapshots.restore.status!=="supported"||caps.mounts.status!=="unsupported")throw Error("Packed state capabilities differ");
+  if(saved.nativeId!=="snapshot_packed"||saved.generation!=="11111111-1111-4111-8111-111111111111")throw Error("Captured build identity missing");
+  const restored=await snapshot.restore({networkPolicy:"blocked"});
+  if(record.metadata.sandbar_snapshot!=="snapshot_packed:11111111-1111-4111-8111-111111111111")throw Error("Restore did not pin the captured UUID");
+  await restored.destroy();
+  await snapshot.delete();
+  if(snapshots.size)throw Error("Containing snapshot cleanup failed");
   const volume=await client.volumes.create({name:"packed-data"});
   let mountRejected=false;try{await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});}catch(error){mountRejected=error.code==="UNSUPPORTED"&&error.effect==="none";}
   if(!mountRejected||!volumes.size)throw Error("Unsafe name-only mount dispatched");
-  await volume.delete();if(volumes.size||snapshots.size!==1)throw Error("Packed state artifact cleanup failed");
+  await volume.delete();if(volumes.size||snapshots.size)throw Error("Packed state artifact cleanup failed");
   const oci = await client.sandboxes.create({ environment: Image.oci("node:24"), networkPolicy: "blocked" });
   await oci.destroy();
   if (!buildName || retained !== "template_oci") throw Error("OCI retained template was hidden");
@@ -530,7 +532,7 @@ try {
   const fromBuild = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
   await fromBuild.destroy();
 } finally { await client.close(); }
-if (creates !== 3 || kills !== 3 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
+if (creates !== 4 || kills !== 4 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
 process.stdout.write("packed E2B fixture flow passed\\n");
 `;
 
