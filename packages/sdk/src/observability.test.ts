@@ -20,6 +20,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { Sandbar, Image, SandbarError, diagnosticContext, OutcomeUnknownError } from "./index";
 import { Telemetry, parseTraceParent } from "./observability";
+import { sealedReference as sealedRemoteReference } from "./resource";
 import { fixtureAdapter } from "../../sdk-qualification/observability/adapter";
 
 const manager = new AsyncLocalStorageContextManager().enable();
@@ -850,16 +851,19 @@ test("pending handle observation preserves recovery availability", async () => {
   await provider.shutdown();
 });
 
-test("remote diagnostics validate recovery bindings without executing getters", () => {
+test("remote diagnostics recognize SDK-validated references without executing getters", () => {
   const reference = {
     version: 2,
     mode: "remote",
     kind: "create",
     invocationKey: "00000000-0000-7000-8000-000000000000",
     service: { url: "https://CANARY.example", projectId: "CANARY_PROJECT" },
-  };
+  } as const;
 
-  expect(diagnosticContext({ reference }).recoveryAvailable).toBe(true);
+  expect(diagnosticContext({ reference }).recoveryAvailable).toBe(false);
+  expect(diagnosticContext({ reference: sealedRemoteReference(reference) }).recoveryAvailable).toBe(
+    true,
+  );
 
   for (const invalid of [
     { mode: "remote", invocationKey: "-".repeat(36) },
@@ -884,12 +888,12 @@ test("remote diagnostics validate recovery bindings without executing getters", 
 
   expect(
     diagnosticContext({
-      reference: {
+      reference: sealedRemoteReference({
         ...reference,
         kind: "file_write",
         resourceId: "CANARY_RESOURCE",
         file: { path: "/file", bytes: 1 },
-      },
+      }),
     }).recoveryAvailable,
   ).toBe(true);
 
@@ -944,19 +948,20 @@ test("direct diagnostics require the complete recovery shape without traversing 
     expect(diagnosticContext({ reference: invalid }).recoveryAvailable).toBe(false);
 
   expect(
-    diagnosticContext({ reference: { ...reference, kind: "destroy", sandboxId: "CANARY_BOX" } })
-      .recoveryAvailable,
+    diagnosticContext(
+      await client.recover({ ...reference, kind: "destroy", sandboxId: "CANARY_BOX" }),
+    ).recoveryAvailable,
   ).toBe(true);
 
   expect(
-    diagnosticContext({
-      reference: {
+    diagnosticContext(
+      await client.recover({
         ...reference,
         kind: "file_write",
         sandboxId: "CANARY_BOX",
         file: { path: "/file", bytes: 1 },
-      },
-    }).recoveryAvailable,
+      }),
+    ).recoveryAvailable,
   ).toBe(true);
   let getters = 0;
 
@@ -973,8 +978,9 @@ test("direct diagnostics require the complete recovery shape without traversing 
   const cyclic = { child: {} };
   cyclic.child = cyclic;
   expect(
-    diagnosticContext({ reference: { ...reference, token: [1, "CANARY", null, { nested: true }] } })
-      .recoveryAvailable,
+    diagnosticContext(
+      await client.recover({ ...reference, token: [1, "CANARY", null, { nested: true }] }),
+    ).recoveryAvailable,
   ).toBe(true);
   expect(diagnosticContext({ reference: { ...reference, token: cyclic } }).recoveryAvailable).toBe(
     false,
@@ -1166,6 +1172,7 @@ test("completed exec failures finalize pending and recovered observation/wait sp
 
       expect(error.code).toBe(exitCode === null ? "EXIT_STATUS_UNKNOWN" : "NONZERO_EXIT");
       expect(error.effect).toBe("applied");
+      expect(diagnosticContext(error).operationState).toBe("completed");
       await client.close();
 
       const name = {
@@ -1183,9 +1190,93 @@ test("completed exec failures finalize pending and recovered observation/wait sp
       expect(span.attributes["sandbar.effect"]).toBe("applied");
       expect(span.attributes["sandbar.recovery.available"]).toBe(true);
       expect(span.status.code).toBe(SpanStatusCode.ERROR);
+
+      if (mode === "convenience") {
+        const publicExec = exporter
+          .getFinishedSpans()
+          .find((item) => item.name === "sandbar.exec")!;
+
+        expect(publicExec.attributes["sandbar.operation.state"]).toBe("completed");
+      }
+
       expect(submissions).toBe(1);
       expect(observations).toBe(1);
       await provider.shutdown();
     }
   }
+});
+
+test("unverified references never enumerate application keys or tokens", () => {
+  let enumerations = 0;
+
+  const token = new Proxy(
+    {},
+    {
+      ownKeys() {
+        enumerations++;
+        throw new Error("CANARY_ENUMERATION");
+      },
+    },
+  );
+
+  const reference = new Proxy(
+    {
+      mode: "direct",
+      operationId: `sdk_${"a".repeat(32)}`,
+      submissionId: `sdk_${"b".repeat(32)}`,
+      token,
+    },
+    {
+      ownKeys() {
+        enumerations++;
+        throw new Error("CANARY_ENUMERATION");
+      },
+    },
+  );
+
+  expect(diagnosticContext({ reference }).recoveryAvailable).toBe(false);
+  expect(enumerations).toBe(0);
+});
+
+test("certified direct recovery tokens are immutable through nested JSON containers", async () => {
+  const adapter = defineAdapter({
+    name: "nested-token-fixture",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "fixture", id: "CANARY_SCOPE" }, partition: {} },
+        supports: { images: ["prepared" as const], network: ["blocked" as const] },
+        create: {
+          recovery: {
+            version: 1,
+            token: z.strictObject({ nested: z.array(z.strictObject({ secret: z.string() })) }),
+          },
+          async submit(_input, ctx) {
+            return ctx.pending({ nested: [{ secret: "CANARY_TOKEN" }] });
+          },
+          async observe(_input, ctx) {
+            return ctx.pending({ nested: [{ secret: "CANARY_TOKEN" }] });
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {}, tracing: false });
+
+  const operation = await client.sandboxes.submitCreate({
+    environment: Image.prepared("CANARY_IMAGE"),
+  });
+
+  await operation.observe();
+  const nested = Object.getOwnPropertyDescriptor(operation.reference.token!, "nested")!.value;
+  expect(Object.isFrozen(nested)).toBe(true);
+  expect(Object.isFrozen(nested[0])).toBe(true);
+  expect(Reflect.set(nested[0], "secret", "CHANGED")).toBe(false);
+  expect(diagnosticContext(operation).recoveryAvailable).toBe(true);
+  await client.close();
 });

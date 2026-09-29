@@ -190,7 +190,7 @@ try {
 }
 ```
 
-The pure helper returns allowlisted error code/effect, safe Sandbar operation/submission IDs when known, known pending/completed/rejected/failed/unknown state, and `recoveryAvailable`. It performs no IO, includes no recovery authority, and never exports invocation keys, native locators, scope, recovery tokens, service URLs or raw messages/causes. Custom provider labels become `custom`. Traces contain no command, argv, env, paths, file contents, stdout/stderr, image name, credential or URL by default.
+The pure helper returns allowlisted error code/effect, safe Sandbar operation/submission IDs when known, known pending/completed/rejected/failed/unknown state, and `recoveryAvailable`. Recovery availability is reported for immutable references already validated by the SDK. A restored plain object is unverified until `recover()` returns a handle; diagnostics do not traverse its opaque token. The helper performs no IO, includes no recovery authority, and never exports invocation keys, native locators, scope, recovery tokens, service URLs or raw messages/causes. Custom provider labels become `custom`. Traces contain no command, argv, env, paths, file contents, stdout/stderr, image name, credential or URL by default.
 
 ## Recovery and HTTP instrumentation
 

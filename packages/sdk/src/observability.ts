@@ -1,4 +1,4 @@
-import { ReferenceSchema } from "./adapter-reference";
+import { certifiedRecoveryAvailable } from "./recovery-diagnostics";
 import packageMetadata from "../package.json";
 /* oxlint-disable anti-slop/no-runtime-typeof -- This bounded allowlist helper checks primitives in memory without serializing arbitrary values or allocating a schema per span. */
 /* oxlint-disable anti-slop/no-unknown-returns -- The heterogeneous instance wrapper is internal and preserves the target method's existing generic return type. */
@@ -15,13 +15,7 @@ import {
   type TracerProvider,
   type Attributes,
 } from "@opentelemetry/api";
-import {
-  SandbarError,
-  NonzeroExitError,
-  NoExitCodeError,
-  validateReference,
-  type RecoveryReference,
-} from "./resource";
+import { SandbarError, NonzeroExitError, NoExitCodeError } from "./resource";
 
 export interface ObservabilityOptions {
   /** Omission uses the application provider. Sandbar never owns provider shutdown. */
@@ -91,93 +85,6 @@ export function safeIdentity(value: unknown): string | undefined {
   return typeof value === "string" && /^(sdk|op|sub)_[0-9a-f]{32}$/.test(value) ? value : undefined;
 }
 
-// oxlint-disable anti-slop/no-unsafe-dictionary-type -- This private snapshot copies own data descriptors within a fixed budget, then immediately validates the detached values against the existing recovery schemas.
-function recoverySnapshot(value: unknown): unknown {
-  let remaining = 16_384;
-  const visiting = new WeakSet<object>();
-
-  const copy = (input: unknown): unknown => {
-    remaining--;
-
-    if (typeof input === "string") remaining -= input.length;
-
-    if (remaining < 0) throw new Error("Diagnostic reference exceeds its budget");
-
-    if (!input || typeof input !== "object") {
-      if (["string", "number", "boolean", "undefined"].includes(typeof input) || input === null)
-        return input;
-      throw new Error("Diagnostic reference contains a non-data value");
-    }
-
-    if (visiting.has(input)) throw new Error("Diagnostic reference contains a cycle");
-    visiting.add(input);
-    const array = Array.isArray(input);
-    const prototype = Object.getPrototypeOf(input);
-
-    if (
-      array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null
-    )
-      throw new Error("Diagnostic reference contains a non-JSON container");
-    const result: Record<string, unknown> | unknown[] = array ? [] : {};
-
-    const copyProperty = (key: string) => {
-      if (!array) remaining -= key.length;
-
-      if (remaining < 0) throw new Error("Diagnostic reference exceeds its budget");
-      const descriptor = Object.getOwnPropertyDescriptor(input, key);
-
-      if (!descriptor || !("value" in descriptor))
-        throw new Error("Diagnostic reference contains a non-data entry");
-      Object.defineProperty(result, key, {
-        value: copy(descriptor.value),
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-    };
-
-    if (array) {
-      const length = Object.getOwnPropertyDescriptor(input, "length")?.value;
-
-      if (!Number.isSafeInteger(length) || length < 0 || length > remaining)
-        throw new Error("Diagnostic reference contains an oversized array");
-
-      for (let index = 0; index < length; index++) copyProperty(String(index));
-    } else {
-      for (const key in input) {
-        if (Object.prototype.hasOwnProperty.call(input, key)) copyProperty(key);
-      }
-    }
-
-    visiting.delete(input);
-
-    return result;
-  };
-
-  return copy(value);
-}
-// oxlint-enable anti-slop/no-unsafe-dictionary-type
-
-function remoteRecoveryAvailable(value: unknown): boolean {
-  // SAFETY: The detached snapshot is fully validated by the existing public remote contract.
-  return !!attempt(() => validateReference(recoverySnapshot(value) as RecoveryReference));
-}
-
-function directRecoveryAvailable(value: unknown): boolean {
-  return (
-    attempt(() => {
-      const reference = ReferenceSchema.parse(recoverySnapshot(value));
-
-      if (JSON.stringify(reference).length > 16_384) return false;
-
-      if ((reference.kind === "file_write") !== !!reference.file) return false;
-      const createsResource = reference.kind === "create" || reference.kind === "image_build";
-
-      return createsResource ? !reference.sandboxId : !!reference.sandboxId;
-    }) ?? false
-  );
-}
-
 /** Pure correlation data; the original handle/error retains recovery authority. */
 export function diagnosticContext(value: unknown): Readonly<DiagnosticContext> {
   const record: DiagnosticContext = { recoveryAvailable: false };
@@ -199,6 +106,9 @@ export function diagnosticContext(value: unknown): Readonly<DiagnosticContext> {
         record.effect = effect;
 
       if (code === "OUTCOME_UNKNOWN") record.operationState = "unknown";
+
+      if (value instanceof NonzeroExitError || value instanceof NoExitCodeError)
+        record.operationState = "completed";
     }
 
     if (value && typeof value === "object") {
@@ -213,18 +123,13 @@ export function diagnosticContext(value: unknown): Readonly<DiagnosticContext> {
       const ref = Object.getOwnPropertyDescriptor(value, "reference")?.value;
 
       if (ref && typeof ref === "object") {
-        const mode = Object.getOwnPropertyDescriptor(ref, "mode")?.value;
-
         record.operationId = safeIdentity(
           Object.getOwnPropertyDescriptor(ref, "operationId")?.value,
         );
         record.submissionId = safeIdentity(
           Object.getOwnPropertyDescriptor(ref, "submissionId")?.value,
         );
-        record.recoveryAvailable =
-          mode === "direct"
-            ? !!record.operationId && !!record.submissionId && directRecoveryAvailable(ref)
-            : mode === "remote" && remoteRecoveryAvailable(ref);
+        record.recoveryAvailable = certifiedRecoveryAvailable(ref);
       }
     }
   } catch {

@@ -1,3 +1,4 @@
+import { certifyRecoveryReference, freezeRecoveryToken } from "./recovery-diagnostics";
 import { ReferenceSchema, type AdapterRecoveryReference } from "./adapter-reference";
 import {
   Telemetry,
@@ -88,10 +89,14 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
 
   if (copy.file) Object.freeze(copy.file);
 
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The reference schema parsed a JSON token; freeze only its container variants.
-  if (copy.token && typeof copy.token === "object") Object.freeze(copy.token);
+  if (copy.token !== undefined) freezeRecoveryToken(copy.token);
+  Object.freeze(copy);
+  const createsResource = copy.kind === "create" || copy.kind === "image_build";
+  const boundSandbox = createsResource ? !copy.sandboxId : !!copy.sandboxId;
 
-  return Object.freeze(copy);
+  return boundSandbox && (copy.kind === "file_write") === !!copy.file
+    ? certifyRecoveryReference(copy)
+    : copy;
 }
 
 function identity() {
