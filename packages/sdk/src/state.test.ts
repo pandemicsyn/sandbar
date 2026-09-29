@@ -733,3 +733,84 @@ test("recovery and advanced observation reject foreign mounted volume scopes bef
     await client.close();
   }
 });
+
+test("create mount preflight enforces aggregate recovery capacity before provider reads", async () => {
+  let checks = 0;
+  let creates = 0;
+  let references = 0;
+  const scope = { authority: { kind: "account", id: "one" }, partition: {} };
+
+  const adapter = defineAdapter({
+    name: "fixture.mount-capacity",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope,
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async checkMounts() {
+          checks++;
+
+          return { status: "supported", value: {} };
+        },
+        async create(input) {
+          creates++;
+
+          return { id: "box", state: "running", mounts: input.mounts };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        async inspect(box) {
+          return { id: box.id, state: "running" };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {},
+    credentials: {},
+    onReference() {
+      references++;
+    },
+  });
+
+  const mount = (suffix: string) => ({
+    volume: {
+      version: 1 as const,
+      kind: "volume" as const,
+      provider: adapter.name,
+      scope,
+      nativeId: suffix,
+      ownership: "verified-created" as const,
+      receipt: "r".repeat(4096),
+    },
+    path: "/" + suffix + "p".repeat(4000),
+    subpath: "s".repeat(4096),
+    access: "read-write" as const,
+  });
+
+  try {
+    const oversized = { environment: Image.prepared("base"), mounts: [mount("a"), mount("b")] };
+    await expect(client.sandboxes.checkCreate(oversized)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+    await expect(client.sandboxes.submitCreate(oversized)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+    expect(checks).toBe(0);
+    expect(creates).toBe(0);
+    expect(references).toBe(0);
+    const accepted = { environment: Image.prepared("base"), mounts: [mount("a")] };
+    expect((await client.sandboxes.checkCreate(accepted)).status).toBe("supported");
+    const box = await client.sandboxes.create(accepted);
+    expect(creates).toBe(1);
+    await box.destroy({ storage: "allow-unconfirmed" });
+  } finally {
+    await client.close();
+  }
+});

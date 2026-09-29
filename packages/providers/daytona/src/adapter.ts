@@ -65,6 +65,13 @@ const errorCodes = {
   internal: "INTERNAL",
 } as const;
 
+// Retained labels are summaries; mountDurability preserves the full scoped native identity.
+function retainedVolumeLabel(nativeId: string): string {
+  const label = `daytona-volume:${nativeId}`;
+
+  return label.length <= 512 ? label : nativeId;
+}
+
 function failure(result: Exclude<DriverResult, { status: "completed" }>, ctx: AttemptContext) {
   if (result.status === "rejected")
     return ctx.reject(errorCodes[result.error.code], result.error.message);
@@ -570,7 +577,7 @@ export function createDaytonaAdapter(
                 ...value,
                 retainedResources: [
                   ...value.retainedResources,
-                  ...mounts.map((mount) => `daytona-volume:${mount.volumeId}`),
+                  ...mounts.map((mount) => retainedVolumeLabel(mount.volumeId)),
                 ],
                 mountDurability: mounts.map((mount) => ({
                   volume: {
@@ -649,8 +656,8 @@ export function createDaytonaAdapter(
                 retainedResources: [
                   ...completed.retainedResources,
                   ...(token?.success
-                    ? (token.data.mountDurability?.map(
-                        (mount) => `daytona-volume:${mount.volume.nativeId}`,
+                    ? (token.data.mountDurability?.map((mount) =>
+                        retainedVolumeLabel(mount.volume.nativeId),
                       ) ?? [])
                     : []),
                 ],

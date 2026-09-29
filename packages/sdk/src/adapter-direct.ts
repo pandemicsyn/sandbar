@@ -1133,6 +1133,17 @@ export class AdapterDirectClient {
     for (const mount of request.mounts ?? [])
       assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
 
+    if (request.mounts?.length)
+      sealedReference({
+        version: 2,
+        mode: "direct",
+        kind: "create",
+        provider: this.provider,
+        scope: this.connection.scope,
+        ...identity(),
+        mounts: request.mounts,
+      });
+
     return readWhileOpen(
       this,
       checkCreate(

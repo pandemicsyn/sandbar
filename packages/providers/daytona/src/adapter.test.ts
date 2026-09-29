@@ -1381,3 +1381,79 @@ test.each(["immediate", "pending", "lost"] as const)(
     }
   },
 );
+
+test.each([
+  [497, "tombstone"],
+  [498, "tombstone"],
+  [512, "tombstone"],
+  [512, "absence"],
+] as const)(
+  "Daytona confirmed mounted destroy preserves bounded retained identity: %s / %s",
+  async (size, confirmation) => {
+    const volumeId = "v".repeat(size);
+    let deleted = false;
+    let deletes = 0;
+
+    const fetcher = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const route = new URL(String(input)).pathname;
+
+        if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (route === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (route === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (route === "/api/sandbox/mounted-box") {
+          if (init?.method === "DELETE") {
+            deletes++;
+            deleted = true;
+
+            return Response.json({});
+          }
+
+          if (deleted && confirmation === "absence") return new Response(null, { status: 404 });
+
+          return Response.json({
+            id: "mounted-box",
+            name: "fixture",
+            labels: {},
+            state: deleted ? "destroyed" : "started",
+            organizationId: "org-1",
+            target: "us",
+            networkBlockAll: true,
+            public: false,
+            volumes: [{ volumeId, mountPath: "/mnt/data" }],
+          });
+        }
+
+        throw new Error(`Unexpected fixture route: ${route}`);
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(fetcher),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+    try {
+      const result = await new AdapterSandbox(client, "mounted-box").destroy({
+        storage: "allow-unconfirmed",
+      });
+
+      expect(result.computeStopped).toBe(true);
+      expect(result.retainedResources[0]).toBe(
+        size <= 497 ? `daytona-volume:${volumeId}` : volumeId,
+      );
+      expect(result.retainedResources[0]!.length).toBeLessThanOrEqual(512);
+      expect(result.mountDurability?.[0]!.volume.nativeId).toBe(volumeId);
+      expect(deletes).toBe(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
