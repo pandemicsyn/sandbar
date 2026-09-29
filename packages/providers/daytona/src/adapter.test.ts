@@ -4,9 +4,11 @@ import { adapterSuite } from "sandbar-adapter/testing";
 import { createDaytonaAdapter } from "./adapter";
 import {
   Sandbar,
+  SandbarError,
   Image,
   AdapterSandbox,
   OutcomeUnknownError,
+  WaitAbortedError,
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
 
@@ -498,14 +500,29 @@ test("lost exec, write and destroy responses recover by read-only evidence after
   ) => {
     const prepared = await client.operations.prepare(kind, input, { maxOutputBytes: 10 });
 
+    let saved: { token: z.infer<ReturnType<typeof z.json>>; version: number } | undefined;
+
     const result = await prepared.submit(
       { operationId: `op-${submissionId}`, submissionId, invocationKey: `key-${submissionId}` },
-      { beforeSubmit: async () => true },
+      {
+        beforeSubmit: async () => true,
+        onCheckpoint: async (token, version) => {
+          saved = { token: structuredClone(token), version };
+        },
+      },
     );
 
     expect(result?.kind).toBe("pending");
 
-    return result!;
+    if (result?.kind !== "pending") throw Error("Expected pending submission");
+
+    if (kind === "destroy") {
+      expect(saved).toBeDefined();
+
+      return { ...result, token: saved!.token, version: saved!.version };
+    }
+
+    return result;
   };
 
   const exec = await submit(
@@ -1470,7 +1487,7 @@ test.each([
   },
 );
 
-test("Daytona interrupted mounted destroy retains volume custody before DELETE", async () => {
+async function interruptedMountedDestroy(mode: "tombstone" | "absent") {
   let deleted = false;
   let deletes = 0;
   let saved: AdapterRecoveryReference | undefined;
@@ -1492,6 +1509,7 @@ test("Daytona interrupted mounted destroy retains volume custody before DELETE",
         if (init?.method === "DELETE") {
           expect(saved?.token).toMatchObject({
             sandboxId: "mounted-box",
+            stage: "uncertain",
             mountDurability: [{ volume: { nativeId: "retained-volume" } }],
           });
           deletes++;
@@ -1500,6 +1518,8 @@ test("Daytona interrupted mounted destroy retains volume custody before DELETE",
 
           return new Promise<Response>(() => undefined);
         }
+
+        if (deleted && mode === "absent") return new Response(null, { status: 404 });
 
         return Response.json({
           id: "mounted-box",
@@ -1543,7 +1563,21 @@ test("Daytona interrupted mounted destroy retains volume custody before DELETE",
     const reopened = await connect();
 
     try {
-      const recovered = await (await reopened.recover(saved!)).wait();
+      const persisted = structuredClone(saved!);
+      expect(persisted.token).toMatchObject({ stage: "uncertain" });
+
+      if (mode === "absent") {
+        const legacy = structuredClone(persisted);
+
+        const token = z.object({ stage: z.string().optional() }).passthrough().parse(legacy.token);
+
+        delete token.stage;
+        legacy.token = z.json().parse(token);
+        const old = await reopened.recover(legacy);
+        await expect(old.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      }
+
+      const recovered = await (await reopened.recover(persisted)).wait();
       expect(recovered).toMatchObject({
         computeStopped: true,
         retainedResources: ["daytona-volume:retained-volume"],
@@ -1556,4 +1590,117 @@ test("Daytona interrupted mounted destroy retains volume custody before DELETE",
   } finally {
     await client.close();
   }
-});
+}
+
+test.each(["tombstone", "absent"] as const)(
+  "Daytona interrupted mounted destroy retains custody before DELETE: %s",
+  interruptedMountedDestroy,
+);
+
+for (const mode of ["gateway", "abort", "policy"] as const) {
+  test(`Daytona pre-dispatch destroy rejection survives recovery: ${mode}`, async () => {
+    let armed = false;
+    let reads = 0;
+    let deletes = 0;
+    let saved: AdapterRecoveryReference | undefined;
+    const controller = new AbortController();
+
+    const fetcher = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const route = new URL(String(input)).pathname;
+
+        if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (route === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (route === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (route === "/api/sandbox/pre-delete") {
+          if (init?.method === "DELETE") {
+            deletes++;
+
+            return new Response(null, { status: 204 });
+          }
+
+          reads++;
+
+          if (armed && mode !== "policy") {
+            if (mode === "abort") {
+              controller.abort();
+              throw controller.signal.reason;
+            }
+
+            return new Response(null, { status: 503 });
+          }
+
+          return Response.json({
+            id: "pre-delete",
+            name: "fixture",
+            labels: {},
+            state: "started",
+            organizationId: "org-1",
+            target: "us",
+            networkBlockAll: true,
+            public: false,
+            volumes:
+              armed && mode === "policy" ? [{ volumeId: "retained", mountPath: "/mnt/data" }] : [],
+          });
+        }
+
+        throw Error(`Unexpected fixture route ${route}`);
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const connect = () =>
+      Sandbar.connect({
+        adapter: createDaytonaAdapter(fetcher),
+        config: { target: "us" },
+        credentials: { apiKey: "fixture" },
+        onReference(reference) {
+          if (reference.kind !== "destroy") return;
+          saved = structuredClone(reference);
+
+          if (!reference.token) armed = true;
+        },
+      });
+
+    const client = await connect();
+
+    try {
+      try {
+        await new AdapterSandbox(client, "pre-delete").destroy({ signal: controller.signal });
+        throw Error("Expected pre-dispatch failure");
+      } catch (error) {
+        expect(
+          error instanceof WaitAbortedError ||
+            (error instanceof SandbarError && error.effect === "none"),
+        ).toBe(true);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(saved?.token).toMatchObject({ sandboxId: "pre-delete", stage: "rejected" });
+      expect(deletes).toBe(0);
+      const before = reads;
+      const reopened = await connect();
+
+      try {
+        const recovered = await reopened.recover(saved!);
+        await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+        await recovered.continue();
+        await expect(recovered.wait()).rejects.toMatchObject({
+          code: mode === "policy" ? "UNSUPPORTED" : "UNAVAILABLE",
+          effect: "none",
+        });
+        expect(reads).toBe(before);
+        expect(deletes).toBe(0);
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+}

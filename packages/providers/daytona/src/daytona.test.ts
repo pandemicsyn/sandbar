@@ -1808,6 +1808,52 @@ test("immediate destroyed response preserves the snapshot label read before DELE
   expect(deletes).toBe(1);
 });
 
+test.each(["before-read", "during-read"] as const)(
+  "native destroy cancellation is effect-free before DELETE: %s",
+  async (mode) => {
+    const controller = new AbortController();
+    let deletes = 0;
+    let reads = 0;
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+
+      if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (path === "/api/regions") return Response.json([region()]);
+
+      if (init?.method === "DELETE") deletes++;
+
+      if (path === "/api/sandbox/native-1") {
+        reads++;
+        controller.abort();
+
+        return Response.json(native("box"));
+      }
+
+      throw new Error("unexpected request");
+    });
+
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+    if (mode === "before-read") controller.abort();
+
+    const result = await provider.driver.destroy({
+      sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
+      identity: identity("cancelled-delete"),
+      signal: controller.signal,
+    });
+
+    expect(result).toMatchObject({
+      status: "rejected",
+      effect: "none",
+      error: { code: "unavailable", effect: "none" },
+    });
+    expect(deletes).toBe(0);
+    expect(reads).toBe(mode === "before-read" ? 0 : 1);
+  },
+);
+
 test("native destroy preflight read failure is effect-free", async () => {
   let deletes = 0;
 

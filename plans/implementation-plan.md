@@ -14,6 +14,14 @@ Preserve existing service behavior and keep existing regression checks passing. 
 
 Finish the [current PR acceptance fixes](../specs/provider-state-portability.md#9-current-pr-completion-and-follow-up-boundary): prevent stale observation from overwriting continuation checkpoints; persist retained-volume custody before compute destruction; prove two-way filesystem write isolation; and correct release/evidence claims. Check the latest revision rather than assuming every reviewed finding is still open. Add focused regressions and final independent review/required gates. Missing live evidence stays explicitly unverified; paid runs need separate authorization.
 
+### Completion status and remaining gates
+
+The implementation and focused regressions now address stale observation checkpoints, retained-volume custody, native artifact identity, immutable recovery references, two-way filesystem isolation checks, explicit deletion safeguards, and checkpoint persistence. Subsequent review also requires Daytona destruction to preserve known pre-dispatch rejection and recover confirmed absence after an uncertain DELETE without replay. Keep this work in the current PR until current-head independent review and required GitHub checks pass; do not treat an earlier green revision as completion.
+
+Live validation remains a separate evidence gap. Historical E2B and Daytona snapshot round trips passed, but the new two-way isolation assertions and latest recovery fixes have only deterministic fixture coverage. The authorized live-run budgets are exhausted. Daytona's private diagnostic capture wait is ten minutes; a longer wait is not evidence that a workflow passed. Additional paid qualification needs renewed authorization, and current support claims must retain these limits.
+
+After the current PR passes its gates, update the completion status and retain the contracts in `specs/`. Do not archive the state portability spec while its lifecycle and richer storage work remain planned; completed implementation-plan entries can move into historical context without marking those follow-ups complete.
+
 Do not expand this PR into richer volume metadata, mounted restore, or a new public partial-outcome API. Existing correctness and resource-custody guarantees are required now.
 
 ## Next: SDK recovery outcomes and adapter support

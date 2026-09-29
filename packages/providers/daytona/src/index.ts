@@ -1678,7 +1678,16 @@ export class DaytonaDriver implements ProviderDriver {
     this.sameScope(input.sandbox);
 
     if (input.signal?.aborted)
-      return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code: "unavailable",
+          message: "Daytona deletion cancelled before dispatch",
+          effect: "none",
+          retry: "never",
+        },
+      };
 
     let retainedResources: string[] | undefined;
 
@@ -1702,7 +1711,16 @@ export class DaytonaDriver implements ProviderDriver {
 
     try {
       if (input.signal?.aborted)
-        return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
+        return {
+          status: "rejected",
+          effect: "none",
+          error: {
+            code: "unavailable",
+            message: "Daytona deletion cancelled before dispatch",
+            effect: "none",
+            retry: "never",
+          },
+        };
 
       const response = await this.request(
         "DELETE",
@@ -1774,13 +1792,13 @@ export class DaytonaDriver implements ProviderDriver {
     sandbox: SandboxRef,
     submissionId: string,
     retainedResources?: string[],
-    deletionAccepted = false,
+    deletionMayHaveDispatched = false,
   ): Promise<DriverResult | null> {
     this.sameScope(sandbox);
     const value = await this.sandboxDetail(sandbox.nativeId);
 
     if (!value) {
-      if (!deletionAccepted || retainedResources === undefined) return null;
+      if (!deletionMayHaveDispatched || retainedResources === undefined) return null;
 
       return {
         status: "completed",

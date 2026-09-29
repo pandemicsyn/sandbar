@@ -45,13 +45,6 @@ const WriteToken = z.strictObject({
   digest: z.string().regex(/^[0-9a-f]{64}$/),
 });
 
-const DestroyToken = z.strictObject({
-  sandboxId: z.string().min(1).max(512),
-  deletionAccepted: z.boolean().optional(),
-  retainedResources: z.array(z.string().min(1).max(512)).max(128).optional(),
-  mountDurability: z.array(importMountDurability).max(32).optional(),
-});
-
 const errorCodes = {
   invalid: "INVALID_ARGUMENT",
   unsupported: "UNSUPPORTED",
@@ -64,6 +57,15 @@ const errorCodes = {
   timeout: "TIMEOUT",
   internal: "INTERNAL",
 } as const;
+
+const DestroyToken = z.strictObject({
+  sandboxId: z.string().min(1).max(512),
+  deletionAccepted: z.boolean().optional(),
+  stage: z.enum(["uncertain", "accepted", "rejected"]).optional(),
+  rejectionCode: z.enum(Object.values(errorCodes)).optional(),
+  retainedResources: z.array(z.string().min(1).max(512)).max(128).optional(),
+  mountDurability: z.array(importMountDurability).max(32).optional(),
+});
 
 // Retained labels are summaries; mountDurability preserves the full scoped native identity.
 function retainedVolumeLabel(nativeId: string): string {
@@ -546,25 +548,52 @@ export function createDaytonaAdapter(
             return box;
           },
           async submit(box, ctx) {
-            const mounts = (
-              await resourceState.box(box.id, { signal: ctx.signal, deadline: Date.now() + 30000 })
-            ).volumes;
+            let mounts: Awaited<ReturnType<typeof resourceState.box>>["volumes"];
 
-            if (mounts.length && box.storage !== "allow-unconfirmed")
+            try {
+              mounts = (
+                await resourceState.box(box.id, {
+                  signal: ctx.signal,
+                  deadline: Date.now() + 30000,
+                })
+              ).volumes;
+            } catch (error) {
+              const code = error instanceof AdapterError ? error.code : "UNAVAILABLE";
+              await ctx.checkpoint({ sandboxId: box.id, stage: "rejected", rejectionCode: code });
+
+              return ctx.reject(code, "Daytona inspection failed before deletion");
+            }
+
+            if (mounts.length && box.storage !== "allow-unconfirmed") {
+              await ctx.checkpoint({
+                sandboxId: box.id,
+                stage: "rejected",
+                rejectionCode: "UNSUPPORTED",
+              });
+
               return ctx.reject(
                 "UNSUPPORTED",
                 "Writable mount cleanup requires explicit allow-unconfirmed",
               );
+            }
+
             let retainedResources: string[] | undefined;
 
             try {
               retainedResources = await driver.destroyRetainedResources(native(box.id));
             } catch {
+              await ctx.checkpoint({
+                sandboxId: box.id,
+                stage: "rejected",
+                rejectionCode: "UNAVAILABLE",
+              });
+
               return ctx.reject("UNAVAILABLE", "Daytona inspection failed before deletion");
             }
 
             const token: z.infer<typeof DestroyToken> = {
               sandboxId: box.id,
+              stage: "uncertain",
               mountDurability: mounts.map((mount) => ({
                 volume: {
                   version: 1,
@@ -582,8 +611,13 @@ export function createDaytonaAdapter(
             if (retainedResources !== undefined) token.retainedResources = retainedResources;
             await ctx.checkpoint(token);
 
-            if (ctx.signal.aborted)
+            if (ctx.signal.aborted) {
+              token.stage = "rejected";
+              token.rejectionCode = "UNAVAILABLE";
+              await ctx.checkpoint(token);
+
               return ctx.reject("UNAVAILABLE", "Daytona deletion cancelled before dispatch");
+            }
 
             const result = await driver.destroy({
               sandbox: native(box.id),
@@ -592,8 +626,17 @@ export function createDaytonaAdapter(
               retainedResources,
             });
 
+            if (result.status === "rejected") {
+              token.stage = "rejected";
+              token.rejectionCode = errorCodes[result.error.code];
+              await ctx.checkpoint(token);
+
+              return failure(result, ctx);
+            }
+
             if (result.deletionAccepted || result.status === "completed") {
               token.deletionAccepted = true;
+              token.stage = "accepted";
               await ctx.checkpoint(token);
             }
 
@@ -620,11 +663,19 @@ export function createDaytonaAdapter(
             )
               return null;
 
+            if (token?.success && token.data.stage === "rejected")
+              return ctx.unknown(
+                "Deletion cancelled before dispatch; continue to confirm no effect",
+              );
+
             const result = await driver.observeDestroy(
               native(attempt.sandbox.id),
               attempt.submissionId,
               token?.success ? token.data.retainedResources : undefined,
-              token?.success ? token.data.deletionAccepted : false,
+              token?.success
+                ? token.data.deletionAccepted ||
+                    ["uncertain", "accepted"].includes(token.data.stage ?? "")
+                : false,
             );
 
             if (!result) return null;
@@ -632,6 +683,7 @@ export function createDaytonaAdapter(
             if (result.status === "pending") {
               const recovery: z.infer<typeof DestroyToken> = {
                 sandboxId: attempt.sandbox.id,
+                stage: token?.success ? token.data.stage : undefined,
                 mountDurability: token?.success ? token.data.mountDurability : undefined,
               };
 
@@ -665,6 +717,23 @@ export function createDaytonaAdapter(
                 result.status === "unknown" ? result.reason : "Daytona deletion is unconfirmed",
               )
             );
+          },
+          async continue(attempt, ctx) {
+            const token = DestroyToken.safeParse(attempt.token);
+
+            if (
+              token.success &&
+              token.data.stage === "rejected" &&
+              token.data.rejectionCode &&
+              !token.data.deletionAccepted &&
+              token.data.sandboxId === attempt.sandbox?.id
+            )
+              return ctx.reject(
+                token.data.rejectionCode,
+                "Daytona deletion was rejected before dispatch",
+              );
+
+            return ctx.unknown("Daytona destroy cannot be replayed");
           },
         },
         async inspect(box) {
