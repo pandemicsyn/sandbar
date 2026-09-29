@@ -57,6 +57,16 @@ Commands support argv and POSIX shell. Binary output capture requires `/bin/sh`,
 
 The live baseline uses the prepared `daytona-small` workflow in `us`; it does not qualify arbitrary snapshots. Explicit OCI builds are implemented but need separate live evidence and cleanup for retained snapshots. See [Images and networking](/docs/guides/images-and-networking/).
 
+## Planned runtime snapshot defaults
+
+Runtime capture through `box.snapshot()` is planned, not an available or live-qualified operation in this documented release. Existing prepared-image snapshots above are a separate workflow.
+
+For Daytona **containers**, the planned default is to stop a running source, capture its private filesystem, then start the source again. An already-stopped source stays stopped. Memory is not captured: stopping ends the original processes, and starting the sandbox does not recover them. Restoring the snapshot creates a new sandbox with fresh process execution. External volumes are not included.
+
+The proposed adapter option is `daytona({ ..., snapshots: { restartAfterCapture: false } })` to leave the source stopped. It defaults to `true`, meaning restart only if previously running. There is no separate permission setting for the required stop. Daytona's native capture requires the container to be stopped; Sandbar would provide the stop/capture/start orchestration. The native method is experimental. VM filesystem/memory capture requires separate adapter support and qualification. See [Daytona's native snapshot requirements](https://www.daytona.io/docs/en/snapshots/#create-snapshot-from-sandbox).
+
+If capture definitively fails after stopping, the default workflow attempts to start the source again. If capture succeeds but restart fails, the error must retain the snapshot reference and report source state. An uncertain capture must be reconciled before a safe restart; read-only recovery never replays capture or starts compute. These defaults and failure cases must be covered by the implementation and live qualification before this page claims support.
+
 ## Cleanup and recovery
 
 Deletion can be asynchronous. `destroy()` waits for confirmed termination; if the response becomes uncertain, save its reference and observe instead of issuing another delete. `close()` does not stop compute. Borrowed snapshots remain untouched, and built snapshots need separate owned-artifact cleanup.

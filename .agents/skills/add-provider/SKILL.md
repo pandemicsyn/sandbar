@@ -37,6 +37,16 @@ Read the [capability checklist](../../../apps/docs/src/content/docs/docs/guides/
 
 Do not turn an unsupported capability into an emulation layer, provider redesign or broader hardening project without a concrete task requirement.
 
+### Snapshot defaults
+
+When snapshot capture is in scope, follow the accepted direction in [provider state portability](../../../specs/provider-state-portability.md#2-snapshot-and-restore). The normal SDK call is `box.snapshot()` without required preservation or interruption options. The adapter supplies the simplest supported native capture workflow and owns its lifecycle orchestration. Current exports still determine what is implemented; this direction does not independently authorize adding snapshot support to an unrelated adapter task.
+
+- Expose typed adapter configuration only for real choices. Daytona containers default to stop/capture/start for a previously running source, leave an already-stopped source stopped, and offer `restartAfterCapture: false`. E2B reusable capture includes memory and handles pause/resume natively; do not invent memory-exclusion or pause-permission settings.
+- Advertise the configured default and actual capture/restore guarantees. Optional exact requirements validate that default before effects; they do not silently select different semantics. No snapshot capability means effect-free unsupported, before stopping compute. Do not add archive/export emulation or cross-provider fallback.
+- Record stop/capture/start stages and preserve partial outcomes. Attempt source restoration after definitive capture failure when the configured workflow calls for it. Report a retained snapshot if restart fails. An uncertain stage cannot be replayed or unsafely advanced; recovery stays read-only, including source restart.
+- Every provider page must document capture scope/exclusions, memory inclusion, source lifecycle and process/connection effects, restored execution, actual options/defaults, prerequisites, and partial-failure recovery/cleanup. Clearly distinguish planned, implemented, fixture-tested, and live-qualified behavior.
+- Test no-argument defaults, actual option alternatives, strict rejection before effects, source restoration and failures, and no-replay recovery at the native boundary. For new snapshot/volume guarantees, extend the existing live E2E harness and attestation reports using the [qualification workflow](../qualify-provider/SKILL.md); updating the harness is required, while paid runs still need explicit authorization.
+
 ## Implement the public definition
 
 Start from the [adapter guide](../../../apps/docs/src/content/docs/docs/guides/write-an-adapter.md) and its compiled [minimal example](../../../apps/docs/examples/acme-adapter.ts). The public types live in `packages/adapter/src/index.ts`.
