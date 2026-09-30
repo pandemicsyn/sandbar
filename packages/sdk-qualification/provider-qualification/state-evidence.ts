@@ -17,6 +17,7 @@ export const snapshotEvidence = z.strictObject({
   metadataInspected: z.literal(true),
   serializedReferenceReopened: z.literal(true),
   freshConnectionAfterSourceDeletion: z.literal(true),
+  freshProcessReopened: z.boolean().optional(),
   restoredWriteIndependent: z.literal(true),
   sourceWriteIndependent: z.boolean(),
   secondRestoreOriginalBytes: z.literal(true),
@@ -36,7 +37,13 @@ export const volumeEvidence = z.strictObject({
   storageCleanup: z.enum(["owned-deleted", "borrowed-retained"]),
 });
 
-export const stateEvidence = z.union([snapshotEvidence, volumeEvidence]);
+export const volumeCrudEvidence = z.strictObject({
+  probe: z.literal("volume-crud-v1"),
+  metadataInspected: z.literal(true),
+  ownedArtifactDeleted: z.literal(true),
+});
+
+export const stateEvidence = z.union([snapshotEvidence, volumeEvidence, volumeCrudEvidence]);
 
 export type StateEvidence = z.infer<typeof stateEvidence>;
 
@@ -74,5 +81,6 @@ export function assertStateEvidence(scenario: string, value: StateEvidence) {
     )
       throw new Error("Memory capture requires resumed process execution");
   } else if (scenario === "volume-persistence") volumeEvidence.parse(value);
+  else if (scenario === "volume-crud") volumeCrudEvidence.parse(value);
   else throw new Error("State evidence scenario differs");
 }

@@ -9,6 +9,10 @@ import {
 } from "./network-probe";
 
 export const scenarios = [
+  "sandbox-lifecycle",
+  "execution",
+  "files",
+  "network-controls",
   "connect",
   "create-prepared",
   "inspect",
@@ -27,6 +31,7 @@ export const scenarios = [
   "network-blocked",
   "snapshot-roundtrip",
   "volume-persistence",
+  "volume-crud",
 ] as const;
 
 const safeLabel = z
@@ -43,7 +48,14 @@ const evidence = z
 
 export const recordSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  provider: z.enum(["daytona", "e2b"]),
+  runner: z
+    .strictObject({
+      name: z.literal("bun:test"),
+      format: z.literal("junit"),
+      testName: z.string().min(1).max(160),
+    })
+    .optional(),
+  provider: z.string().regex(/^[a-z][a-z0-9.-]{0,79}$/),
   scenario: z.enum(scenarios),
   mode: z.enum(["live", "fixture", "packed"]),
   status: z.enum(["passed", "failed", "not-run", "unsupported", "blocked"]),
@@ -71,8 +83,11 @@ export const recordSchema = z.strictObject({
     networkProbe: z.literal(networkProbeId).optional(),
     restoreExecution: z.enum(["fresh", "resume"]).optional(),
     sourceAfter: z.enum(["running", "stopped"]).optional(),
-    stateProbe: z.enum(["snapshot-roundtrip-v3", "volume-persistence-v1"]).optional(),
+    stateProbe: z
+      .enum(["snapshot-roundtrip-v3", "volume-persistence-v1", "volume-crud-v1"])
+      .optional(),
     preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
+    freshProcess: z.boolean().optional(),
     volumeOwnership: z.enum(["created", "borrowed"]).optional(),
     regionClass: safeLabel,
   }),
@@ -92,16 +107,45 @@ export const recordSchema = z.strictObject({
     .optional(),
 });
 
+export const historicalEvidenceSchema = z.strictObject({
+  provider: z.string().regex(/^[a-z][a-z0-9.-]{0,79}$/),
+  scenario: z.enum(["snapshot-roundtrip", "volume-crud", "volume-persistence"]),
+  sourceRevision: z
+    .string()
+    .min(7)
+    .max(80)
+    .regex(/^[a-zA-Z0-9-]+$/),
+  status: z.enum(["passed", "failed", "blocked"]),
+  cleanup: z.enum(["confirmed", "incomplete", "not-required"]),
+  configuration: z.string().min(1).max(500),
+  attribution: z.string().min(1).max(1200),
+  evidenceRef: evidence,
+});
+
+export type HistoricalEvidence = z.infer<typeof historicalEvidenceSchema>;
+
 export const reportSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
     records: z.array(recordSchema).max(1000),
+    historicalEvidence: z.array(historicalEvidenceSchema).max(100).optional(),
   })
   .superRefine((report, ctx) => {
     for (const [index, record] of report.records.entries()) {
       if (
-        ["snapshot-roundtrip", "volume-persistence"].includes(record.scenario) &&
-        record.status === "passed"
+        ["sandbox-lifecycle", "execution", "files", "network-controls"].includes(record.scenario) &&
+        !record.runner
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["records", index, "runner"],
+          message: "Grouped workflow outcomes require a Bun testcase",
+        });
+
+      if (
+        ["snapshot-roundtrip", "volume-persistence", "volume-crud"].includes(record.scenario) &&
+        record.status === "passed" &&
+        !record.runner
       ) {
         try {
           if (!record.stateEvidence)
@@ -125,6 +169,15 @@ export const reportSchema = z
           )
             throw new Error("Volume evidence ownership differs from requested configuration");
 
+          if (
+            record.configuration.freshProcess &&
+            (record.stateEvidence.probe !== "snapshot-roundtrip-v3" ||
+              !record.stateEvidence.freshProcessReopened)
+          )
+            throw new Error(
+              "Fresh-process qualification requires an independent reopen observation",
+            );
+
           if (record.runCleanup !== "confirmed")
             throw new Error("State passes require independent confirmed resource teardown");
         } catch (error) {
@@ -136,7 +189,14 @@ export const reportSchema = z
         }
       }
 
-      if (record.status === "passed" && record.scenario.startsWith("network-")) {
+      if (record.runner && record.status === "passed" && record.runCleanup !== "confirmed")
+        ctx.addIssue({
+          code: "custom",
+          path: ["records", index, "runCleanup"],
+          message: "Bun passes require confirmed test-owned cleanup",
+        });
+
+      if (record.status === "passed" && record.scenario.startsWith("network-") && !record.runner) {
         try {
           const samples = record.networkEvidence?.samples;
 
@@ -217,27 +277,7 @@ export type QualificationReport = z.infer<typeof reportSchema>;
 
 export type Scenario = QualificationRecord["scenario"];
 
-export function unselectedRecord<T extends QualificationRecord>(record: T, scenario: Scenario) {
-  return {
-    ...record,
-    configuration: {
-      ...record.configuration,
-      stateProbe: undefined,
-      preserve: undefined,
-      restoreExecution: undefined,
-      sourceAfter: undefined,
-      volumeOwnership: undefined,
-    },
-    scenario,
-    status: "not-run" as const,
-    issue: "not-selected" as const,
-    diagnostic: undefined,
-    networkEvidence: undefined,
-    stateEvidence: undefined,
-  };
-}
-
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the JSON artifact boundary; reportSchema parses it immediately.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- JSON artifact boundary parsed immediately by reportSchema.
 export function parseReport(value: unknown): QualificationReport {
   return reportSchema.parse(value);
 }
@@ -254,18 +294,23 @@ function key(record: QualificationRecord): string {
     record.scenario.startsWith("network-")
       ? (record.configuration.networkProbe ?? record.networkEvidence?.probe ?? "not-recorded")
       : "—",
-    record.scenario.startsWith("file-") ? (record.configuration.fileRoot ?? "not-recorded") : "—",
+    record.scenario === "files" || record.scenario.startsWith("file-")
+      ? (record.configuration.fileRoot ?? "not-recorded")
+      : "—",
     record.configuration.stateProbe ?? "—",
     record.configuration.restoreExecution ?? "—",
     record.configuration.sourceAfter ?? "—",
     record.configuration.preserve ?? "—",
     record.configuration.volumeOwnership ?? "—",
+    record.configuration.freshProcess === undefined
+      ? "not-recorded"
+      : String(record.configuration.freshProcess),
     record.runtime,
     record.platform,
   ].join("|");
 }
 
-function markdownTable(header: string[], rows: string[][]): string[] {
+export function markdownTable(header: string[], rows: string[][]): string[] {
   const widths = header.map((cell, index) =>
     Math.max(3, cell.length, ...rows.map((row) => row[index]?.length ?? 0)),
   );
@@ -280,7 +325,10 @@ function markdownTable(header: string[], rows: string[][]): string[] {
   ];
 }
 
-export function renderLiveMatrix(reports: readonly QualificationReport[]): string {
+export function renderLiveMatrix(
+  reports: readonly QualificationReport[],
+  providerNames: Readonly<Record<string, string>> = { e2b: "E2B", daytona: "Daytona" },
+): string {
   const latest = new Map<string, QualificationRecord>();
 
   for (const report of reports)
@@ -315,7 +363,9 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
     "",
     "These results cover only the stated image, requested network policy and region classes. A blocked-requested policy is a create setting, not a measured egress-isolation result. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.",
     "",
-    "Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot and volume workflows have separate explicit observations and retained-storage teardown. Prepared-image creation does not qualify either feature. New workflows remain not-run until approved merged-source evidence is published.",
+    "Grouped Bun cases report one workflow outcome. They do not assign failures to individual operations; separately observed operation results retain their original dates and provenance.",
+    "",
+    "Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot and volume workflows have separate explicit observations and retained-storage teardown. Prepared-image creation does not qualify either feature. New workflows remain not-run until reviewed revision-specific evidence is published.",
     "",
   ];
 
@@ -355,7 +405,7 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
 
     if (provider !== record.provider) {
       provider = record.provider;
-      lines.push(`## ${provider === "e2b" ? "E2B" : "Daytona"}`, "");
+      lines.push(`## ${providerNames[provider] ?? provider}`, "");
     }
 
     lines.push(
@@ -364,13 +414,14 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
       `- Image / authority: ${config.imageClass}; ${config.templateClass ?? "unspecified"} / ${config.authorityClass ?? "unspecified"}.`,
       `- Runtime: ${record.runtime}, ${record.platform}. Native interface: ${record.nativeVersion ?? "not recorded"}.`,
       `- SDK: ${record.sdkVersion}, commit \`${record.sdkCommit}\`.`,
+      `- Fresh-process reopen: ${config.freshProcess === undefined ? "not recorded" : config.freshProcess ? "required" : "not selected"}.`,
       `- Harness commit: \`${record.harnessCommit}\`.`,
       `- Evidence: ${record.evidenceRef ? `[reviewed record](${record.evidenceRef})` : "not recorded"}.`,
       "",
       ...markdownTable(
         ["Scenario", "Latest live result", "Date"],
         group.map((item) => [
-          item.scenario.startsWith("file-")
+          item.scenario === "files" || item.scenario.startsWith("file-")
             ? `${item.scenario} (${item.configuration.fileRoot ?? "file root not recorded"})`
             : item.scenario.startsWith("network-")
               ? `${item.scenario} (${item.configuration.network} / ${item.configuration.networkProbe ?? item.networkEvidence?.probe ?? "probe not recorded"})`
@@ -385,7 +436,32 @@ export function renderLiveMatrix(reports: readonly QualificationReport[]): strin
     );
   }
 
-  if (!ordered.length) lines.push("No live evidence recorded", "");
+  const historical = reports.flatMap((report) => parseReport(report).historicalEvidence ?? []);
+
+  if (historical.length) {
+    lines.push(
+      "## Historical state acceptance",
+      "",
+      "These reviewed summaries retain their original source/configuration attribution. Missing dates and runtime fields were not reconstructed. They are not current-head runs. Fresh connection is distinct from a fresh OS process.",
+      "",
+    );
+
+    for (const item of historical)
+      lines.push(
+        `### ${item.provider} · ${item.scenario} · ${item.sourceRevision}`,
+        "",
+        `Result: **${item.status}**; cleanup: **${item.cleanup}**.`,
+        "",
+        `Configuration: ${item.configuration}`,
+        "",
+        item.attribution,
+        "",
+        `Evidence: [reviewed PR record](${item.evidenceRef}).`,
+        "",
+      );
+  }
+
+  if (!ordered.length && !historical.length) lines.push("No live evidence recorded", "");
   lines.push(
     "A missing row means no validated live result is recorded. Unsupported and blocked operations are not passes.",
     "",

@@ -1,73 +1,52 @@
-# Simplify provider acceptance and support docs
+# Ordinary provider integration tests
 
-Planned follow-up after [snapshot/volume PR #25](https://github.com/pandemicsyn/sandbar/pull/25) lands. This does not add requirements to that PR. The goal is a repeatable way to test an adapter's main SDK features and generate a small, accurate support table, with provider edge cases documented alongside it.
+PR #32 stays open as a draft while replacing custom test orchestration. The contract is simple: configure an adapter, exercise Sandbar's public SDK in ordinary Bun tests, assert observable behavior, clean test-owned resources, and generate a support table with concise caveats. The user owns final review and merge. No further paid allocations are authorized by this restructuring.
 
-## Keep the feature tests; simplify how they run
+## Test shape
 
-Extend the existing [provider qualification harness](../packages/sdk-qualification/provider-qualification/README.md), rather than building a replacement framework. One maintained runner must work for built-in and external adapters, on an implementation branch or a merged revision, with the same assertions and report format.
+Use `describe`, `test`, `expect`, `beforeAll` and `afterAll` from `bun:test`. Bun owns selection, execution, timeout/failure reporting and standard JUnit. Shared helpers may configure providers, persist owned identities/recovery references and perform bounded cleanup. They must not schedule scenarios or collect a second set of pass/fail results.
 
-A new adapter supplies a small provider profile: adapter construction, credentials/configuration requirements, capability declarations, and bounded time/resource defaults. Reuse existing capability descriptors where available; keep scenario prerequisites and documentation notes in the profile. Allow narrow provider setup/probe hooks where semantics require them, but run the workflow through the public SDK. Do not monkeypatch SDK methods or copy whole scenarios into temporary scripts.
+The first bounded slice is Daytona snapshot roundtrip in `packages/sdk-qualification/live/snapshots.test.ts`. The body uses SDK handles directly and assertions an adapter author can read. Offline fixtures retain default capture/source lifecycle, filesystem isolation, RAM/fresh execution, fresh OS process reference reopen, source deletion, fresh connection, second restore and independent owned deletion. Tests cover setup/body/teardown/reopen failure and actual Bun setup/body timeouts. The fixture is published before provider IO, so teardown can abort late work; cleanup has its own bounded path.
 
-The normal workflow should be:
+Use the same pattern for `sandbox.test.ts`, `volumes.test.ts` and E2B's bounded IPv4 TCP `network.test.ts`. Volume CRUD remains independent of mounts. Advertised read-only support requires native rejection and unchanged bytes. Borrowed resources are never deleted. Exhaustive malformed input, retry/race and transport fault matrices remain offline.
 
-1. Configure the adapter and select supported feature groups.
-2. Run the shared acceptance command with an explicitly authorized resource budget.
-3. Inspect the feature results and cleanup outcome; fix integration defects or document genuine limitations.
-4. Generate the docs table offline from maintained profiles and reviewed, sanitized results.
-
-Adding a provider should normally require a profile and provider notes, not edits to the shared runner. Adding a genuinely new SDK feature may require a new shared scenario.
-
-## Test observable SDK behavior
-
-Retain existing meaningful assertions. Group them into user-facing features rather than presenting every assertion as a separate support-table row.
-
-| Feature group | Live acceptance evidence |
+| Before | After |
 | --- | --- |
-| Sandbox lifecycle | Create, inspect, inventory, destroy, and confirm cleanup. |
-| Execution | Execute commands through the SDK; verify output and nonzero exits. |
-| Files | Write/read bytes and verify supported overwrite behavior. |
-| Snapshots | Capture, inspect, restore preserved state, prove independent writes, reopen a persisted reference from a fresh process, restore after source deletion, and delete. Assert the adapter's documented filesystem/memory and source-restart semantics. |
-| Volumes | Create/inspect/delete independently of mount support. Where mounts are supported, write through one sandbox and read through another after destroying the first; verify read-only behavior when advertised. |
-| Network controls | Exercise advertised allow/deny behavior with a reachable control endpoint; merely accepting a configuration flag is not proof. |
+| `bun .../manual.ts live-state` plus custom selection and `Step[]` statuses | `bun test --preload .../live/preload.ts .../live/snapshots.test.ts`, standard `-t`, timeout and JUnit options |
+| Assertion workflow embedded in `runState` with catch/status logic | Public SDK workflow and ordinary `expect` assertions in the test body |
+| Custom baseline/state/network executors, manual launcher and branch/merged gates | Small provider factories and bounded resource setup/cleanup fixtures |
+| Custom per-scenario pass/fail/observation collector | Thin offline JUnit case-to-feature mapping plus private provenance/cleanup context |
 
-Snapshot capture alone does not prove restore/delete support. Volume CRUD does not prove persistent mounts. Keep those distinctions in the capability data and table wherever support differs. Unsupported operations should have offline contract coverage for the expected SDK error; they do not require paid attempts to fail live.
+Superseded `manual.ts`, `lifecycle.ts`, `state-profile.ts`, `network-profile.ts` and revision gate code are removed after offline parity. Durable ownership custody and cleanup observation are retained, without a general resource-management framework. Historical report schemas/results remain readable; they are not relabeled as Bun evidence.
 
-Keep exhaustive fault injection, cancellation races, malformed references, and recovery transition combinations in deterministic offline tests. Live tests cover representative end-to-end workflows and native guarantees; they are not an exhaustive provider reliability study.
+## Support table
 
-## Generate a small support matrix
+Keep maintained supported/unsupported/conditional metadata and concise provider limitations separate from passed/failed/blocked/not-run results. Missing access is a failed or blocked exercise, never unsupported; skipped is not passed. A standard runner pass with unconfirmed cleanup/close cannot generate a passed claim. A thin JUnit transform supplies reviewed JSON input to the existing offline support generator. Publication is a reviewed repository edit, never an automatic side effect of testing.
 
-Use one maintained source for declared capabilities, concise limitations, and links to reviewed live evidence. Generate the overview currently maintained in [support.md](../apps/docs/src/content/docs/docs/providers/support.md) and any retained evidence detail from that source. Avoid manually synchronizing two accounts of support.
+Build shared packages sequentially before SDK imports, identify the exact source revision/native dependency/runtime/configuration, and reject dirty-source docs evidence. Branch and merged revisions use the same invocation. A historical pass covers its recorded source/configuration; unchanged production code may retain that provenance across merge, without inventing a current-head run or requiring paid work merely for a merge commit.
 
-Keep two facts distinct:
+## Ownership and interruption
 
-- **Adapter support:** supported, unsupported, or conditional on a documented configuration. Native provider functionality does not count until the adapter exposes it.
-- **Live validation:** passed, failed, blocked, or not run, with the tested configuration, date, and source revision.
+Persist scoped identities before effects and retain acknowledged resources after lost responses. Bun teardown cannot survive SIGKILL, so keep the persistent private ledger and explicit cleanup-only reconciliation command. Never replay uncertain creation or a saved delete, adopt resources by name, delete a ledger, or bypass custody through a new directory.
 
-The public overview is a feature-by-provider table. Use compact cells such as `Supported · passed`, `Supported · unverified`, `Supported · failing`, `Unsupported`, or `Conditional [note]` with validation shown for the tested configuration. Explain these labels once. A missing credential, provider outage, or expired test budget must never turn into `Unsupported` or a passing result.
+Preserve the independently reviewed provider-scoped admission correction and shared lock. Unresolved same-provider compute, snapshot, mixed or unidentified custody conservatively blocks new allocations; E2B identified volume-only custody does not block suites with an enforced zero-volume budget. E2B volume CRUD and persistence skip before setup; consistently identified E2B custody does not consume an independently approved Daytona budget. Unknown or conflicting identity fails closed. Preserve the original unresolved E2B volume receipt exactly. Provider TTL is fallback for compute, not storage cleanup or evidence of disappearance.
 
-Link cells to short provider notes for real restrictions: snapshot scope, process-memory behavior, interruption/restart defaults, mount exclusions, network semantics, or account prerequisites. Keep detailed scenario records out of the overview. Do not infer one configuration's support from another, or hide a later failed run for the same configuration behind an earlier pass.
+## Delivery
 
-## Use the same evidence before and after merge
+Demonstrate the snapshot slice offline, migrate remaining workflows with native-boundary parity, remove duplicate executors, rewrite qualification guidance and revise the draft PR description. Obtain independent reviews of coverage, cleanup and remaining custom machinery before marking ready. Run focused and required checks appropriate to the change; retain exact live results and cleanup evidence without weakening a failed assertion. Do not merge, publish, deploy, schedule monitoring or implement unrelated recovery DX, lifecycle changes, providers or CI architecture.
 
-A test must identify the actual SDK/adapter build, dependency versions, provider profile, and source revision it exercised. Build shared packages in order before loading them; stale bundles must invalidate a run. Keep provenance in the maintained runner instead of requiring ad hoc script hashes and separate diagnostic launchers.
+See the [operator README](../packages/sdk-qualification/provider-qualification/README.md) for invocations, finite per-suite budgets, cleanup and evidence review.
 
-An unmerged revision is valid acceptance evidence for that revision. After merge, a reviewed successful run can support the docs when relevant SDK/adapter code, dependencies, and test configuration are unchanged; record the relationship to the merged revision. Do not require another paid run merely because documentation or the merge commit changed. Changes to tested behavior require the affected feature groups to be rerun before their validation claims advance.
+## Authorized live validation
 
-Publishing support docs remains a reviewed repository change. Running a test does not automatically publish claims, and historical results never become evidence for changed code by relabeling them.
+The user subsequently authorized live tests with failure cleanup checks. At clean source `1505ee0`, the ordinary Daytona Bun suites produced five passing tests and one lifecycle failure: the running owned sandbox was absent from managed inventory. Execution, files, snapshot roundtrip, volume CRUD and mounted persistence passed. The finite run used six total compute allocations (peak two), one snapshot and one volume; every creator has confirmed cleanup and all clients closed. A final read-only inventory found no known owned retained artifacts, but the failed managed inventory assertion means empty compute inventory is not independent cleanup proof.
 
-## Preserve bounded runs and cleanup
+E2B reconciliation made no allocation and still returned `OUTCOME_UNKNOWN` for the preserved original volume receipt. No new E2B tests were admitted. Raw JUnit, provider logs and receipts remain private; sanitized records retain exact source/configuration and failed lifecycle evidence. No creator retry, image build or additional live budget is included. PR #32 remains draft and unmerged.
 
-Keep explicit authorization for paid calls, finite resource counts and deadlines, cleanup in normal and failure paths, and the existing durable record of run-owned resource identities for reconciliation after interruption. Cleanup may only target resources the run is authorized to remove. Provider TTLs do not substitute for snapshot/volume cleanup.
+## Failure investigation and E2B selection
 
-Report cleanup separately and treat unresolved resources as an unsuccessful overall run. Do not repeatedly allocate until a flaky workflow passes. Reuse existing safety mechanisms; this follow-up does not introduce another orchestration system.
+The user requested diagnosis of the Daytona failure and explicitly directed E2B volume cases to skip without suppressing its other tests. A single Daytona diagnostic at `5ea4923` reproduced successful direct running inspection followed by two empty native lists; matching labels and SDK inventory appeared about 1.3 seconds after creation. The diagnostic compute has confirmed cleanup. Daytona documents listing as eventually consistent. Lifecycle now allows a 30-second read-only convergence window; permanent absence still fails, without another allocation.
 
-## Delivery and completion
+E2B volume CRUD and persistence skip before setup. Admission isolates only consistently identified volume-only E2B custody when the new fixture enforces a zero-volume budget; compute, capture, mixed and malformed custody remain blocked. A pre-dispatch guard rejects new volume creators. The original receipt stays unresolved and unchanged. Independent admission review cleared the change. Live verification is bounded to six E2B compute allocations (peak two), one snapshot, no volumes, plus one Daytona sandbox; no image builds or creator retries.
 
-1. Consolidate useful snapshot, volume CRUD, and fresh-process recovery scenarios from the PR into the maintained runner. Preserve its baseline and state assertions; remove superseded temporary paths once parity is established.
-2. Simplify branch/release execution into one command path and a small documented profile interface. Exercise external-adapter loading with an offline fixture, without implementing another provider.
-3. Generate the overview and provider caveat links from the shared metadata/results. Add focused offline coverage for unsupported, conditional, unverified, failed, and passed cases, plus stale-build rejection.
-4. Update the harness README and the [qualification](../.agents/skills/qualify-provider/SKILL.md) and [adapter-authoring](../.agents/skills/add-provider/SKILL.md) skills to describe this workflow and remove contradictory merged-only certification rules.
-
-Done means an implementer can configure a new adapter, run its supported main features, and produce the docs table without a bespoke runner or manually editing support cells. Existing failures and missing live evidence remain visible. Any paid validation of this refactor needs separate authorization; this plan does not grant it.
-
-No service work, new provider implementation, general workflow engine, or expansion of the snapshot contract is included. The [recovery DX follow-up](../specs/sdk-recovery-dx.md) remains a separate feature effort.
+Verification at `8449def`: Daytona lifecycle/execution/files passed; E2B lifecycle/execution/files/snapshot roundtrip passed. E2B volumes skipped. Its network command had no recoverable result. An unbounded guest DNS lookup was identified and bounded in a killed-and-reaped subprocess; the one additional two-compute paired run at `431cdaa` returned DNS failure for the hostname and a successful direct IPv4 TCP connection despite requested blocking, with both positive controls passing. Both network failures remain recorded. Every newly allocated compute and owned snapshot has confirmed cleanup; the original E2B volume receipt is byte-for-byte unchanged. The direct cause of E2B native outbound enforcement failure remains unestablished; adapter and pinned SDK forwarding of false were checked. No additional paid retries are authorized by these results.

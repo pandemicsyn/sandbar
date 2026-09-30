@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { daytonaConfiguration, daytonaConnection } from "./daytona-profile";
 import { LedgerStore } from "./ledger";
-import { runPrepared, reconcileConnection, recordReference } from "./lifecycle";
+import { TestResources } from "../live/fixtures/resources";
+import { cleanupLedger } from "../live/fixtures/reconcile";
+import { lifecycle, execution, files } from "../live/sandbox.test";
+import { recordLegacyReference as recordReference } from "./ledger";
 import { Image } from "sandbar-sdk";
 
 const directories: string[] = [];
@@ -114,8 +117,15 @@ async function fixture(
         if (config.networkPolicy === "blocked") expect(body.networkBlockAll).toBe(true);
         else expect(body).not.toHaveProperty("networkBlockAll");
         const saved = await ledger.read();
-        expect(saved.createIntent).toBe(true);
-        expect(saved.createReference?.provider).toBe("daytona");
+        // SAFETY: The fixture compares only the provider field persisted by the public SDK pre-dispatch hook.
+        expect(
+          saved.createReference?.provider ??
+            (
+              saved.stateMutations?.find((entry) => entry.creation)?.reference as {
+                provider: string;
+              }
+            )?.provider,
+        ).toBe("daytona");
         counters.create++;
         native = {
           ...body,
@@ -137,7 +147,16 @@ async function fixture(
         return Response.json({ items: native ? [native] : [] });
 
       if (url.pathname === "/api/sandbox/owned-daytona" && method === "DELETE") {
-        expect((await ledger.read()).destroyReference?.provider).toBe("daytona");
+        const saved = await ledger.read();
+        // SAFETY: The fixture compares only the provider field persisted by the public SDK pre-dispatch hook.
+        expect(
+          saved.destroyReference?.provider ??
+            (
+              saved.stateMutations?.find(
+                (entry) => !entry.creation && entry.role.endsWith("/delete"),
+              )?.reference as { provider: string }
+            )?.provider,
+        ).toBe("daytona");
         counters.destroy++;
         native!.state = "destroyed";
 
@@ -223,72 +242,94 @@ async function fixture(
   };
 }
 
-test("Daytona public prepared profile runs baseline with bounded TTL and owned cleanup", async () => {
-  const native = await fixture();
+function resources(
+  native: Awaited<ReturnType<typeof fixture>>,
+  network = native.config.networkPolicy,
+) {
+  return new TestResources(native.factory, native.ledger, native.config.snapshotId, network, {
+    compute: 1,
+    snapshots: 0,
+    volumes: 0,
+    exerciseMs: 5000,
+    cleanupMs: 1000,
+  });
+}
 
-  const steps = await native.use(() =>
-    runPrepared(native.factory, native.ledger, native.config.snapshotId, {
-      network: "blocked",
-      cleanupWaitMs: 1000,
-    }),
-  );
+for (const networkPolicy of ["blocked", "daytona-default"] as const)
+  test(`Daytona ${networkPolicy} public baseline retains native lifetime and independent owned cleanup`, async () => {
+    const native = await fixture({
+      networkPolicy,
+      publicSnapshot: networkPolicy === "daytona-default",
+      restricted: networkPolicy === "daytona-default",
+    });
 
-  expect(steps.every((step) => step.status === "passed")).toBe(true);
-  expect(native.counters).toEqual({ create: 1, destroy: 1, upload: 3, build: 0 });
-  expect((await native.ledger.read()).cleanup).toBe("confirmed");
-  expect((await native.ledger.read()).connection).toEqual(native.config);
-});
-
-test.each(["loseCreate", "loseDestroy"] as const)(
-  "Daytona %s is observed without mutation replay",
-  async (mode) => {
-    const native = await fixture({ [mode]: true });
     await native.use(async () => {
-      await runPrepared(native.factory, native.ledger, native.config.snapshotId, {
-        network: "blocked",
-        cleanupWaitMs: 1000,
-        selectedScenarios: new Set(["inspect"]),
-      });
-      await reconcileConnection(native.factory, native.ledger, 1000);
+      const t = resources(native);
+
+      try {
+        await t.open();
+        const box = await t.create("sandbox/source");
+        await lifecycle(t, box);
+        await execution(t, box);
+        await files(t, box);
+      } finally {
+        await t.close();
+      }
     });
-    expect(native.counters.create).toBe(1);
-    expect(native.counters.destroy).toBe(1);
-    expect(native.counters.build).toBe(0);
+    expect(native.counters).toEqual({ create: 1, destroy: 1, upload: 3, build: 0 });
     expect((await native.ledger.read()).cleanup).toBe("confirmed");
-  },
-);
 
-test("Daytona restricted organization rejects before native allocation", async () => {
-  const native = await fixture({ restricted: true });
+    if (networkPolicy === "daytona-default") expect(native.organizationReads()).toBe(0);
+  });
 
-  const steps = await native.use(() =>
-    runPrepared(native.factory, native.ledger, native.config.snapshotId, {
-      network: "blocked",
-      cleanupWaitMs: 100,
-    }),
-  );
+for (const networkPolicy of ["blocked", "daytona-default"] as const)
+  for (const mode of ["loseCreate", "loseDestroy"] as const)
+    test(`Daytona ${networkPolicy} ${mode} is observed without mutation replay`, async () => {
+      const native = await fixture({
+        networkPolicy,
+        publicSnapshot: networkPolicy === "daytona-default",
+        [mode]: true,
+      });
 
-  expect(steps.find((step) => step.scenario === "create-prepared")?.status).toBe("unsupported");
-  expect(native.counters.create).toBe(0);
-  expect(native.counters.destroy).toBe(0);
-  expect((await native.ledger.read()).cleanup).toBe("not-required");
-});
+      await native.use(async () => {
+        const t = resources(native);
+        await t.open();
 
-test("Daytona manual preflight rejects unapproved or unsupported runs before operator credentials", () => {
-  for (const action of ["live-prepared", "live-network"]) {
-    const result = Bun.spawnSync({
-      cmd: [
-        process.execPath,
-        "packages/sdk-qualification/provider-qualification/manual.ts",
-        action,
-      ],
-      env: { SANDBAR_QUAL_PROVIDER: "daytona", SANDBAR_CREDENTIALS_FILE: "/dev/null/never-read" },
+        try {
+          if (mode === "loseCreate") await expect(t.create("sandbox/source")).rejects.toThrow();
+          else await t.create("sandbox/source");
+        } finally {
+          try {
+            await t.close();
+          } catch {
+            await cleanupLedger(native.factory, native.ledger, 1000);
+          }
+        }
+      });
+      expect(native.counters.create).toBe(1);
+      expect(native.counters.destroy).toBe(1);
+      expect((await native.ledger.read()).cleanup).toBe("confirmed");
     });
 
-    const message = new TextDecoder().decode(result.stderr);
-    expect(result.exitCode).not.toBe(0);
-    expect(message).toMatch(/SANDBAR_QUAL_LIVE_AUTHORIZED|E2B internet-mode support/);
-    expect(message).not.toContain("Unable to read Sandbar credential file");
+test("Daytona rejects restricted authority, foreign snapshot and incompatible requested policy before native allocation", async () => {
+  for (const opts of [
+    { restricted: true },
+    { networkPolicy: "daytona-default" as const, foreignPrivateSnapshot: true },
+    { networkPolicy: "daytona-default" as const, publicSnapshot: true },
+  ]) {
+    const native = await fixture(opts);
+    await native.use(async () => {
+      const t = resources(native, "blocked");
+
+      try {
+        await t.open();
+        await expect(t.create("sandbox/source")).rejects.toMatchObject({ code: "UNSUPPORTED" });
+      } finally {
+        await t.close();
+      }
+    });
+    expect(native.counters.create).toBe(0);
+    expect((await native.ledger.read()).cleanup).toBe("not-required");
   }
 
   expect(() =>
@@ -296,108 +337,38 @@ test("Daytona manual preflight rejects unapproved or unsupported runs before ope
   ).toThrow();
 });
 
-test("Daytona default policy qualifies a public borrowed snapshot without organization-management access", async () => {
-  const native = await fixture({
-    networkPolicy: "daytona-default",
-    publicSnapshot: true,
-    restricted: true,
-  });
-
-  const steps = await native.use(() =>
-    runPrepared(native.factory, native.ledger, native.config.snapshotId, {
-      network: "daytona-default",
-      cleanupWaitMs: 1000,
-    }),
-  );
-
-  expect(steps.every((step) => step.status === "passed")).toBe(true);
-  expect(native.organizationReads()).toBe(0);
-  expect(native.counters).toEqual({ create: 1, destroy: 1, upload: 3, build: 0 });
-  expect((await native.ledger.read()).cleanup).toBe("confirmed");
-});
-
-test.each(["loseCreate", "loseDestroy"] as const)(
-  "Daytona default %s preserves scoped recovery without replay",
-  async (mode) => {
-    const native = await fixture({
-      networkPolicy: "daytona-default",
-      publicSnapshot: true,
-      [mode]: true,
-    });
-
-    await native.use(async () => {
-      await runPrepared(native.factory, native.ledger, native.config.snapshotId, {
-        network: "daytona-default",
-        cleanupWaitMs: 1000,
-        selectedScenarios: new Set(["inspect"]),
-      });
-      await reconcileConnection(native.factory, native.ledger, 1000);
-    });
-    expect(native.organizationReads()).toBe(0);
-    expect(native.counters.create).toBe(1);
-    expect(native.counters.destroy).toBe(1);
-    expect((await native.ledger.read()).cleanup).toBe("confirmed");
-  },
-);
-
-test("Daytona default connection rejects a strict blocked request without fallback", async () => {
+test("Daytona default recovery rejects import into strict scope", async () => {
   const native = await fixture({ networkPolicy: "daytona-default", publicSnapshot: true });
-
-  const steps = await native.use(() =>
-    runPrepared(native.factory, native.ledger, native.config.snapshotId, {
-      network: "blocked",
-      cleanupWaitMs: 100,
-    }),
-  );
-
-  expect(steps.find((step) => step.scenario === "create-prepared")?.status).toBe("unsupported");
-  expect(native.counters.create).toBe(0);
-  expect(native.organizationReads()).toBe(0);
-  expect((await native.ledger.read()).cleanup).toBe("not-required");
-});
-
-test("Daytona default rejects a foreign private snapshot before allocation", async () => {
-  const native = await fixture({ networkPolicy: "daytona-default", foreignPrivateSnapshot: true });
-
-  const steps = await native.use(() =>
-    runPrepared(native.factory, native.ledger, native.config.snapshotId, {
-      network: "daytona-default",
-      cleanupWaitMs: 100,
-    }),
-  );
-
-  expect(steps.find((step) => step.scenario === "create-prepared")?.status).toBe("unsupported");
-  expect(native.counters.create).toBe(0);
-  expect((await native.ledger.read()).cleanup).toBe("not-required");
-});
-
-test("Daytona default recovery cannot be imported into a strict blocked connection", async () => {
-  const native = await fixture({ networkPolicy: "daytona-default", publicSnapshot: true });
-
   await native.use(async () => {
-    await runPrepared(native.factory, native.ledger, native.config.snapshotId, {
-      network: "daytona-default",
-      cleanupWaitMs: 1000,
-      selectedScenarios: new Set(["inspect"]),
-    });
-    const reference = (await native.ledger.read()).createReference!;
-
-    const strict = await daytonaConnection(
-      { ...native.config, networkPolicy: "blocked" },
-      "synthetic-fixture-key",
-    )(async () => {});
+    const t = resources(native);
 
     try {
-      await expect(strict.recover(reference)).rejects.toThrow();
+      await t.open();
+      await t.create("sandbox/source");
+
+      // SAFETY: This receipt was saved by the public SDK hook; recover validates schema and scope.
+      const ref = (await native.ledger.read()).stateMutations![0]!
+        .reference as import("sandbar-sdk").AdapterRecoveryReference;
+
+      const strict = await daytonaConnection(
+        { ...native.config, networkPolicy: "blocked" },
+        "synthetic-fixture-key",
+      )(async () => {});
+
+      try {
+        await expect(strict.recover(ref)).rejects.toThrow();
+      } finally {
+        await strict.close();
+      }
     } finally {
-      await strict.close();
+      await t.close();
     }
   });
   expect(native.counters.create).toBe(1);
   expect(native.counters.destroy).toBe(1);
 });
 
-test("Daytona asynchronous delete acknowledgment survives reconnect and confirms disappearance", async () => {
+test("Daytona legacy asynchronous delete receipt reconnects and observes without replay", async () => {
   const native = await fixture({
     networkPolicy: "daytona-default",
     publicSnapshot: true,
@@ -405,29 +376,25 @@ test("Daytona asynchronous delete acknowledgment survives reconnect and confirms
   });
 
   await native.use(async () => {
-    await native.ledger.update((value) => ({ ...value, createIntent: true }));
-    const client = await native.factory((reference) => recordReference(native.ledger, reference));
+    const client = await native.factory((ref) => recordReference(native.ledger, ref));
 
     const box = await client.sandboxes.create({
       environment: Image.prepared(native.config.snapshotId),
       networkPolicy: "daytona-default",
     });
 
-    await native.ledger.update((value) => ({ ...value, sandboxId: box.id }));
+    await native.ledger.update((v) => ({ ...v, createIntent: true, sandboxId: box.id }));
 
-    const deletion = await client.submit("destroy", { id: box.id }, () => undefined, {
+    const op = await client.submit("destroy", { id: box.id }, () => undefined, {
       sandboxId: box.id,
     });
 
-    expect(await deletion.observe()).toBeNull();
-    await recordReference(native.ledger, deletion.reference);
+    expect(await op.observe()).toBeNull();
+    await recordReference(native.ledger, op.reference);
     await client.close();
-    await native.ledger.update((value) => ({ ...value, cleanup: "unresolved" }));
-
-    const steps = await reconcileConnection(native.factory, native.ledger, 1000);
-    expect(steps.find((step) => step.scenario === "destroy")?.status).toBe("passed");
-    expect((await native.ledger.read()).cleanup).toBe("confirmed");
+    await cleanupLedger(native.factory, native.ledger, 1000);
   });
   expect(native.counters.create).toBe(1);
   expect(native.counters.destroy).toBe(1);
+  expect((await native.ledger.read()).cleanup).toBe("confirmed");
 });
