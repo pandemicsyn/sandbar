@@ -23,6 +23,7 @@ const profile: SnapshotProfile = {
   sourceAfter: "stopped",
   connections: "dropped",
   consistency: "crash-consistent",
+  restoreExecution: "fresh",
   mountHandling: "excluded",
   minimumRetentionSeconds: 3600,
 };
@@ -87,58 +88,62 @@ test("profiles never form a Cartesian product or downgrade exact preservation", 
     ...profile,
     id: "memory",
     preserve: "filesystem+memory",
+    restoreExecution: "resume",
     interruption: "pause",
     sourceAfter: "unchanged",
   };
 
-  const support = { status: "supported" as const, value: { profiles: [profile, memory] } };
-  expect(resolveSnapshot(support, { preserve: "filesystem" }, "running").status).toBe(
-    "unsupported",
-  );
-  expect(resolveSnapshot(support, { preserve: "filesystem+memory" }, "running").status).toBe(
-    "supported",
-  );
+  const support = {
+    status: "supported" as const,
+    value: { profiles: [profile, memory], defaultProfileId: profile.id },
+  };
+
+  expect(
+    resolveSnapshot(support, { requirements: { preserve: "filesystem" } }, "running").status,
+  ).toBe("supported");
+  expect(
+    resolveSnapshot(support, { requirements: { preserve: "filesystem+memory" } }, "running").status,
+  ).toBe("unsupported");
   expect(
     resolveSnapshot(
-      { status: "supported", value: { profiles: [memory] } },
-      { preserve: "filesystem", maxInterruption: "terminate" },
+      { status: "supported", value: { profiles: [memory], defaultProfileId: memory.id } },
+      { requirements: { preserve: "filesystem", maxInterruption: "terminate" } },
       "running",
     ).status,
   ).toBe("unsupported");
   expect(
     resolveSnapshot(
       support,
-      { preserve: "filesystem", maxInterruption: "stop", sourceAfter: "stopped" },
+      { requirements: { preserve: "filesystem", maxInterruption: "stop", sourceAfter: "stopped" } },
       "running",
     ),
   ).toMatchObject({
     status: "supported",
     value: { profile, sourceState: "running", restoreRestrictions: "unknown" },
   });
-  expect(resolveSnapshot(support, { preserve: "filesystem+memory" }, "unknown").status).toBe(
-    "unknown",
-  );
-  expect(resolveSnapshot(support, { preserve: "filesystem+memory" }, "destroyed").status).toBe(
-    "unavailable",
-  );
+  expect(resolveSnapshot(support, {}, "unknown").status).toBe("unknown");
+  expect(resolveSnapshot(support, {}, "destroyed").status).toBe("unavailable");
   const unknownRetention = { ...memory, minimumRetentionSeconds: undefined };
   expect(
     resolveSnapshot(
-      { status: "supported", value: { profiles: [unknownRetention] } },
-      { preserve: "filesystem+memory", retention: { minimumSeconds: 1 } },
+      {
+        status: "supported",
+        value: { profiles: [unknownRetention], defaultProfileId: unknownRetention.id },
+      },
+      { requirements: { preserve: "filesystem+memory" }, retention: { minimumSeconds: 1 } },
       "running",
     ).status,
   ).toBe("unknown");
   expect(
     resolveSnapshot(
       support,
-      { preserve: "filesystem+memory", retention: { minimumSeconds: 3601 } },
+      { requirements: { preserve: "filesystem+memory" }, retention: { minimumSeconds: 3601 } },
       "running",
     ).status,
   ).toBe("unsupported");
   expect(
     SnapshotRequest.safeParse({
-      preserve: "filesystem",
+      requirements: { preserve: "filesystem" },
       retention: { minimumSeconds: 10, cleanupAfterSeconds: 9 },
     }).success,
   ).toBe(false);
@@ -155,7 +160,7 @@ test("absent mutation cannot advertise capture and read checks propagate unavail
     snapshotProfiles: async () => {
       reads++;
 
-      return { status: "supported", value: { profiles: [profile] } };
+      return { status: "supported", value: { profiles: [profile], defaultProfileId: profile.id } };
     },
   };
 
@@ -210,28 +215,20 @@ test("service references reject credentials, query strings, fragments and non-HT
   }
 });
 
-test("unchanged source lifecycle is resolved against the observed state", () => {
-  const support = { status: "supported" as const, value: { profiles: [profile] } };
-  const request = { preserve: "filesystem" as const, maxInterruption: "stop" as const };
-  expect(resolveSnapshot(support, request, "stopped")).toMatchObject({
-    status: "supported",
-    value: { sourceState: "stopped", profile: { sourceAfter: "stopped" } },
-  });
-  expect(resolveSnapshot(support, request, "running").status).toBe("unsupported");
-  expect(resolveSnapshot(support, request, "unknown").status).toBe("unknown");
-  expect(resolveSnapshot(support, { ...request, sourceAfter: "stopped" }, "running").status).toBe(
-    "supported",
-  );
-  expect(resolveSnapshot(support, { ...request, sourceAfter: "destroyed" }, "stopped").status).toBe(
-    "unsupported",
-  );
+test("optional source lifecycle requirements validate only the default", () => {
+  const support = {
+    status: "supported" as const,
+    value: { profiles: [profile], defaultProfileId: profile.id },
+  };
+
+  expect(resolveSnapshot(support, {}, "running").status).toBe("supported");
   expect(
-    resolveSnapshot(
-      { status: "supported", value: { profiles: [{ ...profile, sourceAfter: "unchanged" }] } },
-      { ...request, sourceAfter: "stopped" },
-      "stopped",
-    ).status,
+    resolveSnapshot(support, { requirements: { sourceAfter: "unchanged" } }, "running").status,
+  ).toBe("unsupported");
+  expect(
+    resolveSnapshot(support, { requirements: { sourceAfter: "unchanged" } }, "stopped").status,
   ).toBe("supported");
+  expect(resolveSnapshot(support, {}, "unknown").status).toBe("unknown");
 });
 
 test("capability reads enforce their deadline and abort stalled hooks", async () => {
@@ -279,4 +276,29 @@ test("capability reads enforce their deadline and abort stalled hooks", async ()
   controller.abort(new Error("Caller aborted"));
   await expect(checking).rejects.toThrow("Caller aborted");
   expect(readSignal?.aborted).toBe(true);
+});
+
+test("snapshot list capabilities retain managed-only coverage and unknown declarations", async () => {
+  const session: RuntimeSession = {
+    scope,
+    supports: { images: [], network: [] },
+    async create() {
+      throw new Error("No effects");
+    },
+    async destroy() {
+      throw new Error("No effects");
+    },
+    async snapshotList() {
+      return { items: [], coverage: "sandbar-managed" };
+    },
+    snapshotListCoverage: "sandbar-managed",
+  };
+
+  const context = { signal: new AbortController().signal, deadline: Date.now() + 1000 };
+  expect((await stateCapabilities(session, {}, context)).snapshots.list).toEqual({
+    status: "supported",
+    value: { coverage: "sandbar-managed" },
+  });
+  delete session.snapshotListCoverage;
+  expect((await stateCapabilities(session, {}, context)).snapshots.list.status).toBe("unknown");
 });

@@ -1,5 +1,10 @@
-import { certifyRecoveryReference, freezeRecoveryToken } from "./recovery-diagnostics";
-import { ReferenceSchema, type AdapterRecoveryReference } from "./adapter-reference";
+import { freezeReference } from "./freeze-reference";
+import { certifyRecoveryReference } from "./recovery-diagnostics";
+import {
+  ReferenceSchema,
+  CaptureExpectation,
+  type AdapterRecoveryReference,
+} from "./adapter-reference";
 import {
   Telemetry,
   instrument,
@@ -19,21 +24,33 @@ import {
   type SnapshotRequest,
   type SnapshotPlan,
   type CreatePlan,
-  type Capabilities,
+  type DirectCapabilities,
 } from "sandbar-adapter";
 import { z } from "zod";
+import {
+  resourceManagers,
+  decodeResourceResult,
+  decodeCapture,
+  type SnapshotResult,
+  type WaitOptions,
+} from "./resources";
+import {
+  ResourceReference,
+  MountSpec as importMountSpec,
+  assertResourceScope,
+  type OperationInput,
+} from "sandbar-adapter";
 import {
   AdapterError,
   connectAdapter,
   observeOperation,
   prepareOperation,
   submitOperation,
+  continueOperation,
   type AdapterConnection,
   type AdapterDefinition,
   type RuntimeSession,
   type CreateInput as AdapterCreateInput,
-  type ExecInput as AdapterExecInput,
-  type FileWriteInput,
   type ImageBuildInput,
   type Json,
   type OperationKind,
@@ -80,23 +97,44 @@ function canonicalScope(scope: Scope): string {
 function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryReference {
   const parsed = ReferenceSchema.parse(value);
 
-  if (JSON.stringify(parsed).length > 16_384)
+  if (new TextEncoder().encode(JSON.stringify(parsed)).length > 16_384)
     throw new SandbarError("INVALID_ARGUMENT", "Recovery reference exceeds 16384 bytes");
   const copy = structuredClone(parsed);
-  Object.freeze(copy.scope.authority);
-  Object.freeze(copy.scope.partition);
-  Object.freeze(copy.scope);
 
-  if (copy.file) Object.freeze(copy.file);
+  freezeReference(copy);
 
-  if (copy.token !== undefined) freezeRecoveryToken(copy.token);
-  Object.freeze(copy);
-  const createsResource = copy.kind === "create" || copy.kind === "image_build";
-  const boundSandbox = createsResource ? !copy.sandboxId : !!copy.sandboxId;
+  const createsResource = ["create", "image_build", "volume_create", "snapshot_restore"].includes(
+    copy.kind,
+  );
 
-  return boundSandbox && (copy.kind === "file_write") === !!copy.file
+  const artifactOperation = ["snapshot_delete", "volume_delete"].includes(copy.kind);
+  const boundSandbox = createsResource || artifactOperation ? !copy.sandboxId : !!copy.sandboxId;
+
+  const boundResource = ["snapshot_restore", "snapshot_delete"].includes(copy.kind)
+    ? copy.resource?.kind === "snapshot"
+    : copy.kind === "volume_delete"
+      ? copy.resource?.kind === "volume"
+      : !copy.resource;
+
+  const boundCapture = (copy.kind === "snapshot_capture") === !!copy.capture;
+
+  return boundSandbox &&
+    boundResource &&
+    boundCapture &&
+    (copy.kind === "file_write") === !!copy.file
     ? certifyRecoveryReference(copy)
     : copy;
+}
+
+function assertRecoveryResourceKind(kind: string, resource?: ResourceReference): void {
+  const expected = ["snapshot_restore", "snapshot_delete"].includes(kind)
+    ? "snapshot"
+    : kind === "volume_delete"
+      ? "volume"
+      : null;
+
+  if (expected && resource?.kind !== expected)
+    throw new SandbarError("INVALID_ARGUMENT", "Recovery resource kind differs from operation");
 }
 
 function identity() {
@@ -128,6 +166,35 @@ function abortWaiting(ref: AdapterRecoveryReference, reason: unknown): never {
   throw new WaitAbortedError(ref, reason);
 }
 
+async function waitForSubmission<T>(
+  work: Promise<T>,
+  signal: AbortSignal,
+  closed: AbortSignal,
+  finalizeDeletion: boolean,
+): Promise<T> {
+  if (!finalizeDeletion) return raceAbort(work, signal);
+  const finalization = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const abort = () => {
+    signal.removeEventListener("abort", abort);
+
+    if (timer !== undefined) return;
+    timer = setTimeout(() => finalization.abort(signal.reason), 1000);
+  };
+
+  signal.addEventListener("abort", abort, { once: true });
+
+  if (signal.aborted) abort();
+
+  try {
+    return await raceAbort(work, AbortSignal.any([closed, finalization.signal]));
+  } finally {
+    signal.removeEventListener("abort", abort);
+    clearTimeout(timer);
+  }
+}
+
 function assertSignal(signal?: AbortSignal) {
   if (signal?.aborted)
     throw new SandbarError("WAIT_ABORTED", "Waiting stopped before submission", "none");
@@ -145,11 +212,15 @@ async function readWhileOpen<T>(client: AdapterDirectClient, work: Promise<T>): 
   }
 }
 
-export type AdapterCapabilities = Capabilities;
+export type AdapterCapabilities = DirectCapabilities;
 
 export class AdapterOperation<T> {
   readonly durability = "process" as const;
   private first: RuntimeResult | undefined;
+  private continuing = false;
+  private revision = 0;
+  private persistence: Promise<void> = Promise.resolve();
+  private persistedReference?: AdapterRecoveryReference;
   private terminal?: { value: T } | { error: Error };
   private pendingAt: number | null = null;
   private nextPollAt = 0;
@@ -160,6 +231,17 @@ export class AdapterOperation<T> {
     first?: RuntimeResult,
   ) {
     this.first = first;
+
+    if (first?.kind === "pending")
+      this.reference = sealedReference({
+        ...reference,
+        token: first.token,
+        tokenVersion: first.version,
+      });
+
+    // Submitted pending references were saved before constructing the handle; recovered
+    // references are the caller's saved input. Later local revisions must be saved here.
+    this.persistedReference = this.reference;
 
     if (first)
       noteOperation(
@@ -177,11 +259,94 @@ export class AdapterOperation<T> {
       origin: first ? activeTraceParent() : undefined,
     });
   }
+  /** Advance proven unsubmitted stages. Applications serialize continuation across processes. */
+  async continue(options: { signal?: AbortSignal } = {}): Promise<this> {
+    this.client.ensureOpen();
+
+    if (this.continuing)
+      throw new SandbarError("CONFLICT", "Operation continuation is already active");
+    assertSignal(options.signal);
+
+    const signal = options.signal
+      ? AbortSignal.any([this.client.signal, options.signal])
+      : this.client.signal;
+
+    this.continuing = true;
+    this.revision++;
+    this.first = undefined;
+    this.terminal = undefined;
+    this.pendingAt = null;
+    this.nextPollAt = 0;
+
+    try {
+      await this.persistence;
+
+      if (this.persistedReference !== this.reference) await this.persistReference();
+      this.reference = (await this.client.recover(this.reference)).reference;
+      this.first = await continueOperation(
+        this.client.session,
+        this.reference.kind,
+        {
+          operationId: this.reference.operationId,
+          submissionId: this.reference.submissionId,
+          sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+          resource: this.reference.resource,
+          mounts: this.reference.mounts,
+          capture: this.reference.capture,
+          token: this.reference.token,
+          version: this.reference.tokenVersion,
+        },
+        this.reference,
+        signal,
+        async (token, tokenVersion) => {
+          this.reference = sealedReference({ ...this.reference, token, tokenVersion });
+          await this.persistReference();
+        },
+      );
+
+      if (this.first.kind === "pending") {
+        this.reference = sealedReference({
+          ...this.reference,
+          token: this.first.token,
+          tokenVersion: this.first.version,
+        });
+        await this.persistReference();
+      }
+
+      return this;
+    } catch (error) {
+      if (error instanceof AdapterError && error.code === "UNSUPPORTED")
+        throw new UnsupportedFeatureError("operation continuation", [error.message]);
+      throw asUnknown(
+        this.reference,
+        "Continuation could not finish; persist the latest operation reference",
+      );
+    } finally {
+      this.continuing = false;
+    }
+  }
+
+  private persistReference(): Promise<void> {
+    const reference = this.reference;
+    const saved = this.persistence.then(() => this.client.persistReference(reference));
+    this.persistence = saved.then(
+      () => {
+        this.persistedReference = reference;
+      },
+      () => undefined,
+    );
+
+    return saved;
+  }
   async observe(): Promise<T | null> {
     return this.observeWithSignal(this.client.signal);
   }
   private async observeWithSignal(signal: AbortSignal): Promise<T | null> {
+    if (this.continuing)
+      throw new SandbarError("CONFLICT", "Operation continuation is already active");
+
     if (signal.aborted) abortWaiting(this.reference, signal.reason);
+    const revision = this.revision;
 
     if (this.terminal) {
       if ("error" in this.terminal) throw this.terminal.error;
@@ -194,13 +359,16 @@ export class AdapterOperation<T> {
     this.first = undefined;
 
     if (result?.kind === "pending") {
+      if (revision !== this.revision) return null;
       this.pendingAt = Date.now();
       this.nextPollAt = this.pendingAt + result.pollAfterMs;
+      this.revision++;
       this.reference = sealedReference({
         ...this.reference,
         token: result.token,
         tokenVersion: result.version,
       });
+      await this.persistReference();
 
       return null;
     }
@@ -216,6 +384,9 @@ export class AdapterOperation<T> {
             operationId: this.reference.operationId,
             submissionId: this.reference.submissionId,
             sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+            resource: this.reference.resource,
+            mounts: this.reference.mounts,
+            capture: this.reference.capture,
             token: this.reference.token,
             version: this.reference.tokenVersion,
           },
@@ -239,6 +410,8 @@ export class AdapterOperation<T> {
         return null;
       });
 
+      if (revision !== this.revision) return null;
+
       if (!observed)
         throw asUnknown(this.reference, "No correlated provider observation is available");
       result = observed;
@@ -246,14 +419,18 @@ export class AdapterOperation<T> {
 
     if (signal.aborted) abortWaiting(this.reference, signal.reason);
 
+    if (revision !== this.revision) return null;
+
     if (result.kind === "pending") {
       this.pendingAt = Date.now();
       this.nextPollAt = this.pendingAt + result.pollAfterMs;
+      this.revision++;
       this.reference = sealedReference({
         ...this.reference,
         token: result.token,
         tokenVersion: result.version,
       });
+      await this.persistReference();
 
       return null;
     }
@@ -310,7 +487,15 @@ export class AdapterOperation<T> {
     while (true) {
       if (this.client.isClosed()) abortWaiting(this.reference, this.client.signal.reason);
 
-      if (options.signal?.aborted) abortWaiting(this.reference, options.signal.reason);
+      const confirmedRejection =
+        this.first?.kind === "rejected" ||
+        (this.terminal &&
+          "error" in this.terminal &&
+          this.terminal.error instanceof SandbarError &&
+          this.terminal.error.effect === "none");
+
+      if (options.signal?.aborted && !confirmedRejection)
+        abortWaiting(this.reference, options.signal.reason);
 
       if (this.pendingAt !== null) {
         const eligibleAt = Math.max(this.nextPollAt, this.pendingAt + pollMs);
@@ -320,7 +505,9 @@ export class AdapterOperation<T> {
           await waitDelay(delay, signal).catch((error) => abortWaiting(this.reference, error));
       }
 
-      const value = await this.observeWithSignal(signal).catch((error) => {
+      const value = await this.observeWithSignal(
+        confirmedRejection ? this.client.signal : signal,
+      ).catch((error) => {
         this.client.telemetry.poll(
           error instanceof SandbarError && error.effect === "applied"
             ? "completed"
@@ -356,17 +543,71 @@ export class AdapterSandbox {
     instrument(this, "writeFile", client.telemetry, "sandbar.file.write", { effect: "applied" });
     instrument(this, "destroy", client.telemetry, "sandbar.sandbox.destroy", { effect: "applied" });
   }
+  async submitSnapshot(
+    request: SnapshotRequest = {},
+    options: WaitOptions = {},
+  ): Promise<AdapterOperation<SnapshotResult>> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+
+    const signal = AbortSignal.any([
+      this.client.signal,
+      ...(options.signal ? [options.signal] : []),
+    ]);
+
+    const plan = await this.checkSnapshotWithSignal(request, signal);
+
+    if (plan.status === "unsupported") throw new UnsupportedFeatureError("snapshot", [plan.reason]);
+
+    if (plan.status !== "supported") throw new SandbarError("UNAVAILABLE", plan.reason, "none");
+
+    return this.client.submit(
+      "snapshot_capture",
+      {
+        sandbox: { id: this.id },
+        request,
+        expectation: { profile: plan.value.profile, sourceState: plan.value.sourceState },
+      },
+      (result, ref) => {
+        if (result.kind !== "completed" || !("snapshot" in result.value)) throw asUnknown(ref);
+
+        return decodeCapture(this.client, result.value, ref);
+      },
+      {
+        ...options,
+        sandboxId: this.id,
+        capture: { profile: plan.value.profile, sourceState: plan.value.sourceState },
+      },
+    );
+  }
+  async snapshot(
+    request: SnapshotRequest = {},
+    options: WaitOptions = {},
+  ): Promise<SnapshotResult> {
+    return (await this.submitSnapshot(request, options)).wait(options);
+  }
   capabilities(): Promise<AdapterCapabilities> {
     return internalMethod(this.client.capabilities)({ sandbox: { id: this.id } });
   }
-  async checkSnapshot(request: SnapshotRequest): Promise<Support<SnapshotPlan>> {
-    const caps = await internalMethod(this.capabilities)();
+  async checkSnapshot(request: SnapshotRequest = {}): Promise<Support<SnapshotPlan>> {
+    return this.checkSnapshotWithSignal(request, this.client.signal);
+  }
+  private async checkSnapshotWithSignal(
+    request: SnapshotRequest,
+    signal: AbortSignal,
+  ): Promise<Support<SnapshotPlan>> {
+    assertSignal(signal);
+
+    const caps = await internalMethod(this.client.capabilities)(
+      { sandbox: { id: this.id } },
+      { signal },
+    );
 
     if (caps.snapshots.capture.status !== "supported")
       return resolveSnapshot(caps.snapshots.capture, request, "unknown");
 
     const state = this.client.session.inspect
-      ? (await internalMethod(this.inspect)()).state
+      ? (await internalMethod(this.inspect)({ signal })).state
       : "unknown";
 
     return resolveSnapshot(caps.snapshots.capture, request, state);
@@ -383,17 +624,30 @@ export class AdapterSandbox {
 
     return true;
   }
-  async inspect(): Promise<{ state: import("sandbar-adapter").SandboxState }> {
+  async inspect(
+    options: WaitOptions = {},
+  ): Promise<{ state: import("sandbar-adapter").SandboxState }> {
     this.client.ensureOpen();
 
     if (!this.client.session.inspect) unsupported("inspect");
 
+    assertSignal(options.signal);
+
+    const signal = AbortSignal.any([
+      this.client.signal,
+      ...(options.signal ? [options.signal] : []),
+      AbortSignal.timeout(30000),
+    ]);
+
     const result = await readWhileOpen(
       this.client,
-      this.client.session.inspect(
-        { id: this.id },
-        { signal: this.client.signal, deadline: Date.now() + 30_000 },
-      ),
+      raceAbort(
+        this.client.session.inspect({ id: this.id }, { signal, deadline: Date.now() + 30000 }),
+        signal,
+      ).catch((error) => {
+        assertSignal(options.signal);
+        throw error;
+      }),
     );
 
     if (!result) return { state: "unknown" };
@@ -538,10 +792,12 @@ export class AdapterSandbox {
 
     await waitFor(this.client.telemetry, op, options);
   }
-  async destroy(options: { signal?: AbortSignal } = {}): Promise<void> {
-    const op = await this.client.submit(
+  async submitDestroy(
+    options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
+  ): Promise<AdapterOperation<import("sandbar-adapter").DestroyValue>> {
+    const op = await this.client.submit<import("sandbar-adapter").DestroyValue>(
       "destroy",
-      { id: this.id },
+      { id: this.id, storage: options.storage },
       (result, ref) => {
         if (
           result.kind !== "completed" ||
@@ -549,11 +805,18 @@ export class AdapterSandbox {
           !result.value.computeStopped
         )
           throw asUnknown(ref, "Compute termination was not confirmed");
+
+        return result.value;
       },
       { ...options, sandboxId: this.id },
     );
 
-    await waitFor(this.client.telemetry, op, options);
+    return op;
+  }
+  async destroy(
+    options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
+  ): Promise<import("sandbar-adapter").DestroyValue> {
+    return waitFor(this.client.telemetry, await this.submitDestroy(options), options);
   }
 }
 
@@ -567,11 +830,14 @@ export type AdvancedOperationKind = OperationKind;
 export type AdvancedIdentity = { operationId: string; submissionId: string; invocationKey: string };
 
 export type AdvancedObservation = {
+  capture?: AdapterRecoveryReference["capture"];
   scope: Scope;
   kind: OperationKind;
   operationId: string;
   submissionId: string;
   sandboxId?: string;
+  resource?: ResourceReference;
+  mounts?: import("sandbar-adapter").MountSpec[];
   token?: Json;
   tokenVersion?: number;
 };
@@ -600,7 +866,11 @@ export class PreparedAdapterAttempt {
   /** The callback must durably record the submission marker; false cancels dispatch. */
   async submit(
     identity: AdvancedIdentity,
-    options: { beforeSubmit: () => Promise<boolean>; signal?: AbortSignal },
+    options: {
+      beforeSubmit: () => Promise<boolean>;
+      signal?: AbortSignal;
+      onCheckpoint?: (token: Json, version: number) => Promise<void>;
+    },
   ): Promise<AdvancedOperationResult | null> {
     if (this.used) throw new SandbarError("CONFLICT", "Prepared attempt was already used");
     this.used = true;
@@ -645,20 +915,36 @@ export class PreparedAdapterAttempt {
     if (!permitted) return null;
     this.client.telemetry.submitted();
 
+    const submissionWaitSignal =
+      this.kind === "snapshot_capture"
+        ? AbortSignal.any([this.client.signal, AbortSignal.timeout(85000)])
+        : signal;
+
     try {
-      return await raceAbort(
+      return await waitForSubmission(
         // Requirements were checked before the durable marker; no read hook may run after it.
         this.client.telemetry.run(
           "sandbar.submit",
           () =>
-            raceAbort(
+            waitForSubmission(
               submitOperation(
                 { ...this.prepared, revalidate: undefined },
                 checked,
                 signal,
                 this.kind === "exec" ? this.maxOutputBytes : undefined,
+                async (token, version) => {
+                  if (!options.onCheckpoint)
+                    throw new SandbarError(
+                      "INVALID_ARGUMENT",
+                      "Checkpointing submissions require onCheckpoint persistence",
+                    );
+
+                  await options.onCheckpoint(token, version);
+                },
               ),
-              signal,
+              submissionWaitSignal,
+              this.client.signal,
+              this.kind === "snapshot_delete" || this.kind === "volume_delete",
             ),
           {
             phase: true,
@@ -668,7 +954,9 @@ export class PreparedAdapterAttempt {
             signal,
           },
         ),
-        signal,
+        submissionWaitSignal,
+        this.client.signal,
+        this.kind === "snapshot_delete" || this.kind === "volume_delete",
       );
     } catch {
       if (signal.aborted)
@@ -698,7 +986,7 @@ export class AdapterDirectClient {
     }>;
     prepare: (
       kind: OperationKind,
-      input: AdapterCreateInput | ImageBuildInput | AdapterExecInput | FileWriteInput | Sandbox,
+      input: OperationInput,
       options?: { signal?: AbortSignal; maxOutputBytes?: number },
     ) => Promise<PreparedAdapterAttempt>;
     observe: (
@@ -715,6 +1003,8 @@ export class AdapterDirectClient {
       options?: { signal?: AbortSignal },
     ) => Promise<AdapterOperation<AdapterSandbox>>;
   };
+  readonly snapshots: ReturnType<typeof resourceManagers>["snapshots"];
+  readonly volumes: ReturnType<typeof resourceManagers>["volumes"];
   readonly images: {
     build: (
       input: ImageBuildInput,
@@ -732,6 +1022,9 @@ export class AdapterDirectClient {
     observability: ObservabilityOptions = {},
   ) {
     this.telemetry = new Telemetry(observability, "direct", provider);
+    const managers = resourceManagers(this);
+    this.snapshots = managers.snapshots;
+    this.volumes = managers.volumes;
     this.session = connection.session;
     this.scope = connection.scope;
     this.signal = connection.signal;
@@ -778,6 +1071,21 @@ export class AdapterDirectClient {
           ? AbortSignal.any([this.signal, options.signal])
           : this.signal;
 
+        if ("snapshot" in input)
+          assertResourceScope(ResourceReference.parse(input.snapshot), {
+            provider: this.provider,
+            scope: this.scope,
+          });
+
+        if ("kind" in input && ["snapshot", "volume"].includes(input.kind))
+          assertResourceScope(ResourceReference.parse(input), {
+            provider: this.provider,
+            scope: this.scope,
+          });
+
+        if ("mounts" in input)
+          for (const mount of input.mounts ?? [])
+            assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
         let prepared: PreparedOperation;
 
         try {
@@ -815,10 +1123,24 @@ export class AdapterDirectClient {
         const checked = z
           .strictObject({
             scope: ReferenceSchema.shape.scope,
-            kind: z.enum(["create", "destroy", "exec", "file_write", "image_build"]),
+            kind: z.enum([
+              "create",
+              "destroy",
+              "exec",
+              "file_write",
+              "image_build",
+              "snapshot_capture",
+              "snapshot_restore",
+              "snapshot_delete",
+              "volume_create",
+              "volume_delete",
+            ]),
             operationId: z.string().min(1).max(128),
             submissionId: z.string().min(1).max(128),
             sandboxId: z.string().min(1).max(512).optional(),
+            resource: ResourceReference.optional(),
+            capture: CaptureExpectation.optional(),
+            mounts: z.array(importMountSpec).max(32).optional(),
             token: z.json().optional(),
             tokenVersion: z.number().int().positive().optional(),
           })
@@ -830,11 +1152,36 @@ export class AdapterDirectClient {
             "Observation scope differs from the verified connection",
           );
 
+        assertRecoveryResourceKind(checked.kind, checked.resource);
+
+        if (checked.resource)
+          assertResourceScope(checked.resource, { provider: this.provider, scope: this.scope });
+
+        for (const mount of checked.mounts ?? [])
+          assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
+
         if (
-          ((checked.kind === "create" || checked.kind === "image_build") && checked.sandboxId) ||
-          (checked.kind !== "create" && checked.kind !== "image_build" && !checked.sandboxId)
+          ([
+            "create",
+            "image_build",
+            "volume_create",
+            "snapshot_restore",
+            "snapshot_delete",
+            "volume_delete",
+          ].includes(checked.kind) &&
+            checked.sandboxId) ||
+          (["destroy", "exec", "file_write", "snapshot_capture"].includes(checked.kind) &&
+            !checked.sandboxId) ||
+          (["snapshot_restore", "snapshot_delete", "volume_delete"].includes(checked.kind) &&
+            !checked.resource)
         )
           throw new SandbarError("INVALID_ARGUMENT", "Observation sandbox binding is invalid");
+
+        if (checked.kind === "snapshot_capture" && !checked.capture)
+          throw new SandbarError(
+            "INVALID_ARGUMENT",
+            "Capture observation requires saved expectations",
+          );
 
         let locallyValidated = false;
 
@@ -847,6 +1194,9 @@ export class AdapterDirectClient {
                 operationId: checked.operationId,
                 submissionId: checked.submissionId,
                 sandbox: checked.sandboxId ? { id: checked.sandboxId } : undefined,
+                resource: checked.resource,
+                capture: checked.capture,
+                mounts: checked.mounts,
                 token: checked.token,
                 version: checked.tokenVersion,
               },
@@ -913,15 +1263,24 @@ export class AdapterDirectClient {
   }
   async capabilities(
     target: { sandbox?: Sandbox; create?: AdapterCreateInput } = {},
+    options: WaitOptions = {},
   ): Promise<AdapterCapabilities> {
     this.ensureOpen();
+    assertSignal(options.signal);
     const support = this.session.supports;
+    const signal = AbortSignal.any([this.signal, ...(options.signal ? [options.signal] : [])]);
 
     const state = await readWhileOpen(
       this,
-      stateCapabilities(this.session, target, {
-        signal: this.signal,
-        deadline: Date.now() + 30_000,
+      raceAbort(
+        stateCapabilities(this.session, target, {
+          signal,
+          deadline: Date.now() + 30000,
+        }),
+        signal,
+      ).catch((error) => {
+        assertSignal(options.signal);
+        throw error;
       }),
     );
 
@@ -951,6 +1310,20 @@ export class AdapterDirectClient {
     const request = validateCreate(input);
     this.checkImageBinding(request);
 
+    for (const mount of request.mounts ?? [])
+      assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
+
+    if (request.mounts?.length)
+      sealedReference({
+        version: 2,
+        mode: "direct",
+        kind: "create",
+        provider: this.provider,
+        scope: this.connection.scope,
+        ...identity(),
+        mounts: request.mounts,
+      });
+
     return readWhileOpen(
       this,
       checkCreate(
@@ -961,6 +1334,7 @@ export class AdapterDirectClient {
           region: request.region,
           labels: request.labels,
           requirements: request.requirements,
+          mounts: request.mounts,
         },
         { signal, deadline: Date.now() + 30_000 },
       ),
@@ -981,6 +1355,9 @@ export class AdapterDirectClient {
   ): Promise<AdapterOperation<AdapterSandbox>> {
     const request = validateCreate(input);
     this.checkImageBinding(request);
+
+    for (const mount of request.mounts ?? [])
+      assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
     this.ensureOpen();
     assertSignal(options.signal);
     const signal = options.signal ? AbortSignal.any([this.signal, options.signal]) : this.signal;
@@ -1013,13 +1390,21 @@ export class AdapterDirectClient {
         region: request.region,
         labels: request.labels,
         requirements: request.requirements,
+        mounts: request.mounts,
       },
       (result, ref) => {
         if (result.kind !== "completed" || !("id" in result.value)) throw asUnknown(ref);
 
+        if (
+          request.mounts?.length &&
+          (result.value.state !== "running" ||
+            JSON.stringify(result.value.mounts) !== JSON.stringify(request.mounts))
+        )
+          throw asUnknown(ref, "Requested native mounts are not confirmed ready");
+
         return new AdapterSandbox(this, result.value.id);
       },
-      options,
+      { ...options, mounts: request.mounts },
     );
   }
   async submitBuild(
@@ -1049,11 +1434,14 @@ export class AdapterDirectClient {
   }
   async submit<T>(
     kind: OperationKind,
-    input: AdapterCreateInput | ImageBuildInput | AdapterExecInput | FileWriteInput | Sandbox,
+    input: OperationInput,
     decode: (result: RuntimeResult, ref: AdapterRecoveryReference) => T,
     options: {
       signal?: AbortSignal;
       sandboxId?: string;
+      resource?: ResourceReference;
+      capture?: z.infer<typeof CaptureExpectation>;
+      mounts?: import("sandbar-adapter").MountSpec[];
       file?: { path: string; bytes: number };
       maxOutputBytes?: number;
     } = {},
@@ -1065,7 +1453,7 @@ export class AdapterDirectClient {
     assertSignal(options.signal);
     const ids = identity();
 
-    const reference = sealedReference({
+    let reference = sealedReference({
       version: 2,
       mode: "direct",
       provider: this.provider,
@@ -1073,6 +1461,9 @@ export class AdapterDirectClient {
       scope: this.connection.scope,
       ...ids,
       sandboxId: options.sandboxId,
+      resource: options.resource,
+      capture: options.capture,
+      mounts: options.mounts,
       file: options.file,
       maxOutputBytes: options.maxOutputBytes,
     });
@@ -1084,7 +1475,7 @@ export class AdapterDirectClient {
     const waiting = AbortSignal.any(signals);
 
     try {
-      first = await raceAbort(
+      first = await waitForSubmission(
         prepared
           .submit(ids, {
             beforeSubmit: async () => {
@@ -1094,14 +1485,29 @@ export class AdapterDirectClient {
               return true;
             },
             signal: waiting,
+            onCheckpoint: async (token, tokenVersion) => {
+              reference = sealedReference({ ...reference, token, tokenVersion });
+              await this.onReference?.(reference);
+            },
           })
           .then((value) => {
             if (!value) throw new SandbarError("CONFLICT", "Submission was cancelled");
 
             return value;
           }),
-        waiting,
+        kind === "snapshot_capture" ? this.signal : waiting,
+        this.signal,
+        kind === "snapshot_delete" || kind === "volume_delete",
       );
+
+      if (first.kind === "pending") {
+        reference = sealedReference({
+          ...reference,
+          token: first.token,
+          tokenVersion: first.version,
+        });
+        await this.onReference?.(reference);
+      }
     } catch (error) {
       if (!barrierStarted) {
         this.ensureOpen();
@@ -1117,6 +1523,14 @@ export class AdapterDirectClient {
 
     return new AdapterOperation(this, reference, decode, first);
   }
+  async persistReference(reference: AdapterRecoveryReference): Promise<void> {
+    try {
+      await this.onReference?.(reference);
+    } catch {
+      throw asUnknown(reference, "Operation reference persistence failed after submission");
+    }
+  }
+
   async recover(reference: AdapterRecoveryReference): Promise<AdapterOperation<unknown>> {
     this.ensureOpen();
     reference = sealedReference(reference);
@@ -1127,17 +1541,66 @@ export class AdapterDirectClient {
     )
       throw new SandbarError("FORBIDDEN", "Recovery scope does not match the verified connection");
 
-    if ((reference.kind === "create" || reference.kind === "image_build") && reference.sandboxId)
+    if (
+      ["snapshot_restore", "snapshot_delete", "volume_delete"].includes(reference.kind) &&
+      !reference.resource
+    )
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery resource is missing");
+
+    if (reference.kind === "snapshot_capture" && !reference.capture)
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery capture expectations are missing");
+
+    assertRecoveryResourceKind(reference.kind, reference.resource);
+
+    if (reference.resource)
+      assertResourceScope(reference.resource, { provider: this.provider, scope: this.scope });
+
+    for (const mount of reference.mounts ?? [])
+      assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
+
+    if (
+      [
+        "create",
+        "image_build",
+        "volume_create",
+        "snapshot_restore",
+        "snapshot_delete",
+        "volume_delete",
+      ].includes(reference.kind) &&
+      reference.sandboxId
+    )
       throw new SandbarError("INVALID_ARGUMENT", "Create reference cannot have a sandbox");
 
-    if (reference.kind !== "create" && reference.kind !== "image_build" && !reference.sandboxId)
+    if (
+      ["destroy", "exec", "file_write", "snapshot_capture"].includes(reference.kind) &&
+      !reference.sandboxId
+    )
       throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox is missing");
 
     return new AdapterOperation(this, reference, (result, ref) => {
       if (result.kind !== "completed") throw asUnknown(ref);
       const value = result.value;
 
-      if (ref.kind === "create" && "id" in value) return new AdapterSandbox(this, value.id);
+      if (
+        [
+          "snapshot_capture",
+          "snapshot_restore",
+          "snapshot_delete",
+          "volume_create",
+          "volume_delete",
+        ].includes(ref.kind)
+      )
+        return decodeResourceResult(this, result, ref);
+
+      if (ref.kind === "create" && "id" in value) {
+        if (
+          ref.mounts?.length &&
+          (value.state !== "running" || JSON.stringify(value.mounts) !== JSON.stringify(ref.mounts))
+        )
+          throw asUnknown(ref, "Recovered mounts not confirmed ready");
+
+        return new AdapterSandbox(this, value.id);
+      }
 
       if (ref.kind === "image_build" && "preparedId" in value)
         return {
@@ -1158,7 +1621,7 @@ export class AdapterDirectClient {
       )
         return checkExec(execOutput(value.exitCode, value.stdout, value.stderr, value.truncated));
 
-      if (ref.kind === "destroy" && "computeStopped" in value && value.computeStopped) return;
+      if (ref.kind === "destroy" && "computeStopped" in value && value.computeStopped) return value;
 
       if (
         ref.kind === "file_write" &&

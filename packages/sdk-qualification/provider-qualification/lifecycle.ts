@@ -7,7 +7,8 @@ import {
   type AdapterDirectClient,
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
-import { LedgerStore } from "./ledger";
+import { z } from "zod";
+import { LedgerStore, operationCheckpoints } from "./ledger";
 import type { Scenario } from "./report";
 import { boundedRead } from "./bounds";
 import { AdapterError } from "sandbar-adapter";
@@ -32,6 +33,7 @@ export type Step = {
   issue?: string;
   diagnostic?: FailureDiagnostic;
   networkEvidence?: NetworkEvidence;
+  stateEvidence?: import("./state-evidence").StateEvidence;
 };
 
 export async function recordReference(
@@ -43,7 +45,10 @@ export async function recordReference(
 
     if (reference.kind === "destroy") return { ...value, destroyReference: reference };
 
-    return { ...value, operationReferences: [...(value.operationReferences ?? []), reference] };
+    return {
+      ...value,
+      operationReferences: operationCheckpoints(value.operationReferences, reference),
+    };
   });
 }
 
@@ -539,7 +544,12 @@ export type CleanupAccess = {
     signal?: AbortSignal,
   ): Promise<{ id: string } | null>;
   observeDestroy(reference: AdapterRecoveryReference, signal?: AbortSignal): Promise<boolean>;
-  sandbox(id: string): Pick<AdapterSandbox, "inspect" | "destroy">;
+  sandbox(id: string): {
+    inspect: AdapterSandbox["inspect"];
+    destroy: (options?: {
+      signal?: AbortSignal;
+    }) => Promise<void | import("sandbar-adapter").DestroyValue>;
+  };
 };
 
 export function publicCleanupAccess(
@@ -559,8 +569,9 @@ export function publicCleanupAccess(
       const operation = await client.recover(reference);
 
       try {
-        // The SDK decodes confirmed compute termination as undefined; pending is null.
-        return (await boundedRead(operation.observe(), signal)) === undefined;
+        const result = await boundedRead(operation.observe(), signal);
+
+        return z.object({ computeStopped: z.literal(true) }).safeParse(result).success;
       } finally {
         if (ledger) await recordReference(ledger, operation.reference);
       }

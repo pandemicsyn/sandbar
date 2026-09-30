@@ -1,10 +1,18 @@
-import { Sandbox, SandboxNotFoundError, Template } from "e2b";
+import { Sandbox, SandboxNotFoundError, Template, Volume } from "e2b";
 import { z } from "zod";
 import { classifyWriteFailure, E2BWriteFailure } from "./write-failure";
 
 export const E2B_ENDPOINT = "https://api.e2b.app";
 
 export const MAX_BYTES = 1_048_576;
+
+/** Positive native rejection; messages and response bodies never enter recovery. */
+export class E2BVolumeCreateRejected extends Error {
+  constructor(readonly status: 400 | 401 | 403) {
+    super(`E2B volume creation rejected (${status})`);
+    this.name = "E2BVolumeCreateRejected";
+  }
+}
 
 const Templates = z
   .array(
@@ -26,9 +34,41 @@ export type E2BRecord = {
   templateId: string;
   metadata: Record<string, string>;
   state: "running" | "paused";
+  envdVersion?: string;
+  volumeMounts?: { name: string; path: string }[];
+};
+
+export type E2BTemplateState = {
+  templateId: string;
+  names: string[];
+  public: boolean;
+  builds: { buildId: string; status: "building" | "waiting" | "ready" | "error" }[];
+};
+
+export type E2BStateTransport = {
+  template(id: string): Promise<E2BTemplateState | null>;
+  verifyAddress(id: string, names?: string[]): Promise<void>;
+  tags(id: string): Promise<{ tag: string; buildId: string }[]>;
+  capture(
+    id: string,
+    name?: string,
+    signal?: AbortSignal,
+  ): Promise<{ snapshotId: string; names: string[] }>;
+  snapshots(input: {
+    limit: number;
+    name?: string;
+    sandboxId?: string;
+    cursor?: string;
+  }): Promise<{ items: { snapshotId: string; names: string[] }[]; nextCursor?: string }>;
+  deleteSnapshot(id: string, signal?: AbortSignal): Promise<boolean>;
+  createVolume(name: string, signal?: AbortSignal): Promise<{ volumeId: string; name: string }>;
+  volume(id: string): Promise<{ volumeId: string; name: string }>;
+  volumes(): Promise<{ volumeId: string; name: string }[]>;
+  deleteVolume(id: string, signal?: AbortSignal): Promise<boolean>;
 };
 
 export type E2BTransport = {
+  state?: E2BStateTransport;
   verifyAuth(): Promise<void>;
   verifyTeam(teamId: string): Promise<void>;
   verifyTemplate(teamId: string | undefined, templateId: string): Promise<string>;
@@ -42,6 +82,8 @@ export type E2BTransport = {
     metadata: Record<string, string>;
     timeoutMs: number;
     allowInternetAccess: boolean;
+    volumeMounts?: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<string>;
   get(id: string): Promise<E2BRecord | null>;
   list(
@@ -49,7 +91,7 @@ export type E2BTransport = {
     limit: number,
     nextToken?: string,
   ): Promise<{ items: E2BRecord[]; nextToken?: string }>;
-  kill(id: string): Promise<boolean>;
+  kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
     id: string,
     script: string,
@@ -120,6 +162,8 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         templateId: info.templateId,
         metadata: info.metadata,
         state: info.state,
+        envdVersion: info.envdVersion,
+        volumeMounts: info.volumeMounts,
       };
     } catch (error) {
       if (error instanceof SandboxNotFoundError) return null;
@@ -134,16 +178,54 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     });
   }
 
-  async function readTemplates(response: Response) {
-    if (!response.body) throw new Error("E2B returned no template data");
+  async function readNative<S extends z.ZodType>(
+    response: Response,
+    schema: S,
+  ): Promise<z.output<S>> {
+    if (!response.ok) throw new Error(`E2B state read failed (${response.status})`);
+
+    if (!response.body) throw new Error("E2B returned no native data");
     const body = await collectBounded(response.body, MAX_BYTES);
 
-    if (body.truncated) throw new Error("E2B template response exceeded its byte bound");
+    if (body.truncated) throw new Error("E2B native response exceeded its byte bound");
 
-    return Templates.parse(
-      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body.bytes)),
-    );
+    return schema.parse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body.bytes)));
   }
+
+  async function readSnapshots(input: {
+    limit: number;
+    name?: string;
+    sandboxId?: string;
+    cursor?: string;
+  }) {
+    const query = new URLSearchParams({ limit: String(input.limit) });
+
+    if (input.name) query.set("name", input.name);
+
+    if (input.sandboxId) query.set("sandboxID", input.sandboxId);
+
+    if (input.cursor) query.set("nextToken", input.cursor);
+    const response = await controlGet(`/snapshots?${query}`);
+
+    const values = await readNative(
+      response,
+      z
+        .array(
+          z.object({
+            snapshotID: z.string().min(1).max(512),
+            names: z.array(z.string().min(1).max(512)).max(100),
+          }),
+        )
+        .max(input.limit),
+    );
+
+    return {
+      items: values.map((value) => ({ snapshotId: value.snapshotID, names: value.names })),
+      nextCursor: response.headers.get("X-Next-Token") ?? undefined,
+    };
+  }
+
+  const readTemplates = (response: Response) => readNative(response, Templates);
 
   async function* teamTemplates(teamId: string | undefined) {
     let nextToken: string | undefined;
@@ -170,6 +252,156 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
   }
 
   return {
+    state: {
+      async template(id) {
+        const response = await controlGet(`/templates/${encodeURIComponent(id)}?limit=100`);
+
+        if (response.status === 404) {
+          await response.body?.cancel();
+
+          return null;
+        }
+
+        if (response.headers.get("X-Next-Token"))
+          throw new Error("E2B template builds exceed the inspection bound");
+
+        const value = await readNative(
+          response,
+          z.object({
+            templateID: z.string().min(1).max(128),
+            names: z.array(z.string().max(256)).max(100),
+            public: z.boolean(),
+            builds: z
+              .array(
+                z.object({
+                  buildID: z.uuid(),
+                  status: z.enum(["building", "waiting", "ready", "error"]),
+                }),
+              )
+              .max(100),
+          }),
+        );
+
+        return {
+          templateId: value.templateID,
+          names: value.names,
+          public: value.public,
+          builds: value.builds.map((build) => ({ buildId: build.buildID, status: build.status })),
+        };
+      },
+      async verifyAddress(id, names = []) {
+        for await (const templates of teamTemplates(undefined)) {
+          for (const value of templates) {
+            if (
+              value.templateID !== id &&
+              value.names.some((name) => {
+                const local = name.slice(name.lastIndexOf("/") + 1).replace(/:default$/, "");
+
+                return local === id || name.replace(/:default$/, "") === id;
+              })
+            )
+              throw new Error("E2B raw template identity is shadowed by an alias");
+          }
+        }
+
+        let cursor: string | undefined;
+        let foundSnapshot = false;
+        const seen = new Set<string>();
+        const withoutTag = (value: string) => value.split(":")[0]!;
+
+        for (let count = 0; count < 100; count++) {
+          const page = await readSnapshots({ limit: 100, cursor });
+
+          for (const value of page.items) {
+            if (
+              withoutTag(value.snapshotId) === id ||
+              value.names.some((name) => names.includes(withoutTag(name)))
+            ) {
+              foundSnapshot = true;
+              continue;
+            }
+
+            if (
+              value.names.some((name) => {
+                const local = name.slice(name.lastIndexOf("/") + 1).replace(/:default$/, "");
+
+                return local === id || name.replace(/:default$/, "") === id;
+              })
+            )
+              throw new Error("E2B raw snapshot identity is shadowed by an alias");
+          }
+
+          cursor = page.nextCursor;
+
+          if (!cursor) {
+            if (!foundSnapshot) throw new Error("Native snapshot kind is unverified");
+
+            return;
+          }
+
+          if (seen.has(cursor)) throw new Error("E2B snapshot inventory repeated a cursor");
+          seen.add(cursor);
+        }
+
+        throw new Error("E2B snapshot address inventory exceeds its page bound");
+      },
+      async tags(id) {
+        const tags = await readNative(
+          await controlGet(`/templates/${encodeURIComponent(id)}/tags`),
+          z
+            .array(
+              z.object({ tag: z.string().min(1).max(128), buildID: z.string().min(1).max(128) }),
+            )
+            .max(100),
+        );
+
+        return tags.map((tag) => ({ tag: tag.tag, buildId: tag.buildID }));
+      },
+      capture: (id, name, signal) => Sandbox.createSnapshot(id, { ...opts, name, signal }),
+      snapshots: readSnapshots,
+      deleteSnapshot: (id, signal) => Sandbox.deleteSnapshot(id, { ...opts, signal }),
+      async createVolume(name, signal) {
+        const response = await fetcher(`${E2B_ENDPOINT}/volumes`, {
+          method: "POST",
+          headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+            : AbortSignal.timeout(30_000),
+        });
+
+        if (response.status === 400 || response.status === 401 || response.status === 403) {
+          void response.body?.cancel().catch(() => undefined);
+          throw new E2BVolumeCreateRejected(response.status);
+        }
+
+        if (response.status !== 201)
+          throw new Error(`E2B volume create acknowledgement unavailable (${response.status})`);
+
+        const volume = await readNative(
+          response,
+          z.object({ volumeID: z.string().min(1).max(128), name: z.string().min(1).max(128) }),
+        );
+
+        return { volumeId: volume.volumeID, name: volume.name };
+      },
+      async volume(id) {
+        const v = await Volume.getInfo(id, opts);
+
+        return { volumeId: v.volumeId, name: v.name };
+      },
+      async volumes() {
+        const values = await readNative(
+          await controlGet("/volumes"),
+          z.array(
+            z.object({ volumeID: z.string().min(1).max(128), name: z.string().min(1).max(128) }),
+          ),
+        );
+
+        return values.map((value) => ({ volumeId: value.volumeID, name: value.name }));
+      },
+      deleteVolume: (id, signal) => Volume.destroy(id, { ...opts, signal }),
+    },
     async verifyAuth() {
       const response = await controlGet("/v2/templates?limit=1");
 
@@ -248,25 +480,34 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         metadata: input.metadata,
         timeoutMs: input.timeoutMs,
         allowInternetAccess: input.allowInternetAccess,
+        volumeMounts: input.volumeMounts,
+        signal: input.signal,
       });
 
       return sandbox.sandboxId;
     },
     get,
     async list(metadata, limit, nextToken) {
-      const paginator = Sandbox.list({ ...opts, limit, nextToken, query: { metadata } });
+      const paginator = Sandbox.list({
+        ...opts,
+        limit,
+        nextToken,
+        query: Object.keys(metadata).length ? { metadata } : undefined,
+      });
 
       const items = (await paginator.nextItems()).map((info) => ({
         id: info.sandboxId,
         templateId: info.templateId,
         metadata: info.metadata,
         state: info.state,
+        envdVersion: info.envdVersion,
+        volumeMounts: info.volumeMounts,
       }));
 
       return { items, nextToken: paginator.nextToken };
     },
-    async kill(id) {
-      return Sandbox.kill(id, opts);
+    async kill(id, signal) {
+      return Sandbox.kill(id, { ...opts, signal });
     },
     async run(id, script, options) {
       const sandbox = await Sandbox.connect(id, opts);

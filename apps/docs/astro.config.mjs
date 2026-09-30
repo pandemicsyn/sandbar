@@ -80,6 +80,7 @@ export default defineConfig({
           label: "Using the SDK",
           items: [
             { slug: "docs/guides/resources" },
+            { slug: "docs/guides/snapshots-and-volumes" },
             { slug: "docs/guides/files-and-output" },
             { slug: "docs/guides/images-and-networking" },
             { slug: "docs/guides/recovery" },

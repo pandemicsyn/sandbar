@@ -1770,3 +1770,290 @@ test("file reads enforce the SDK ceiling and reject invalid adapter limits befor
     await bad.client.close();
   }
 });
+
+test("stale observation cannot replace a continued dispatch checkpoint or replay an effect", async () => {
+  const token = z.strictObject({ stage: z.enum(["not-submitted", "uncertain", "completed"]) });
+  let effects = 0;
+  let releaseRead!: () => void;
+  let readStarted!: () => void;
+  const heldRead = new Promise<void>((resolve) => (releaseRead = resolve));
+  const readEntered = new Promise<void>((resolve) => (readStarted = resolve));
+  const saved: unknown[] = [];
+
+  const adapter = defineAdapter({
+    name: "example.stale-observation",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          return { id: "box", state: "running" as const };
+        },
+        destroy: {
+          recovery: { version: 1, token },
+          async submit(_box, ctx) {
+            return ctx.pending({ stage: "not-submitted" }, { pollAfterMs: 0 });
+          },
+          async observe(attempt, ctx) {
+            readStarted();
+            await heldRead;
+
+            return ctx.pending(attempt.token!);
+          },
+          async continue(attempt, ctx) {
+            if (token.parse(attempt.token).stage === "not-submitted") {
+              await ctx.checkpoint({ stage: "uncertain" });
+              effects++;
+              await ctx.checkpoint({ stage: "completed" });
+            }
+
+            return ctx.pending({ stage: "completed" });
+          },
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {},
+    credentials: {},
+    onReference(reference) {
+      saved.push(reference.token);
+    },
+  });
+
+  try {
+    const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await box.submitDestroy();
+    await operation.observe();
+    const staleRead = operation.observe();
+    await readEntered;
+    await operation.continue();
+    expect(effects).toBe(1);
+    releaseRead();
+    await staleRead;
+    expect(operation.reference.token).toEqual({ stage: "completed" });
+    expect(saved.at(-1)).toEqual({ stage: "completed" });
+    await operation.continue();
+    expect(effects).toBe(1);
+  } finally {
+    releaseRead();
+    await client.close();
+  }
+});
+
+test("reference persistence recovers after one failed observation save before continuation", async () => {
+  const token = z.strictObject({
+    stage: z.enum(["not-submitted", "validated", "uncertain", "completed"]),
+  });
+
+  let notSubmittedSaves = 0;
+  let effects = 0;
+  let saved: unknown;
+
+  const adapter = defineAdapter({
+    name: "example.recovered-persistence",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          return { id: "box", state: "running" as const };
+        },
+        destroy: {
+          recovery: { version: 1, token },
+          async submit(_box, ctx) {
+            return ctx.pending({ stage: "not-submitted" }, { pollAfterMs: 0 });
+          },
+          async observe(attempt, ctx) {
+            return ctx.pending({ stage: "validated" });
+          },
+          async continue(attempt, ctx) {
+            if (token.parse(attempt.token).stage === "validated") {
+              await ctx.checkpoint({ stage: "uncertain" });
+              effects++;
+              await ctx.checkpoint({ stage: "completed" });
+            }
+
+            return ctx.pending({ stage: "completed" });
+          },
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {},
+    credentials: {},
+    onReference(reference) {
+      if (
+        token.safeParse(reference.token).data?.stage === "not-submitted" &&
+        ++notSubmittedSaves === 2
+      )
+        throw new Error("Temporary store failure");
+
+      saved = reference.token;
+    },
+  });
+
+  try {
+    const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await box.submitDestroy();
+    await expect(operation.observe()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(effects).toBe(0);
+    await operation.observe();
+    expect(saved).toEqual({ stage: "validated" });
+    await operation.continue();
+    expect(effects).toBe(1);
+    expect(saved).toEqual({ stage: "completed" });
+    await operation.continue();
+    expect(effects).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("advanced checkpointing submissions require a persistence callback before effects", async () => {
+  let effects = 0;
+
+  const adapter = defineAdapter({
+    name: "example.advanced-checkpoint",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        create: {
+          recovery: {
+            version: 1,
+            token: z.strictObject({ state: z.enum(["uncertain", "accepted"]) }),
+          },
+          async submit(_input, ctx) {
+            await ctx.checkpoint({ state: "uncertain" });
+            effects++;
+            await ctx.checkpoint({ state: "accepted" });
+
+            return { id: "checkpointed", state: "running" as const };
+          },
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const input = { image: { kind: "prepared" as const, value: "image" }, networkPolicy: "blocked" };
+  const identity = { operationId: "op", submissionId: "submission", invocationKey: "invocation" };
+
+  try {
+    const missing = await client.operations.prepare("create", input);
+    expect(await missing.submit(identity, { beforeSubmit: async () => true })).toMatchObject({
+      kind: "unknown",
+    });
+    expect(effects).toBe(0);
+    const failed = await client.operations.prepare("create", input);
+    expect(
+      await failed.submit(identity, {
+        beforeSubmit: async () => true,
+        onCheckpoint: async () => {
+          throw Error("Persistence failed");
+        },
+      }),
+    ).toMatchObject({ kind: "unknown" });
+    expect(effects).toBe(0);
+    const saved: string[] = [];
+    const durable = await client.operations.prepare("create", input);
+    expect(
+      await durable.submit(identity, {
+        beforeSubmit: async () => true,
+        onCheckpoint: async (token, version) => {
+          saved.push(JSON.stringify({ token, version }));
+        },
+      }),
+    ).toMatchObject({ kind: "completed" });
+    expect(saved.map((value) => JSON.parse(value))).toEqual([
+      { token: { state: "uncertain" }, version: 1 },
+      { token: { state: "accepted" }, version: 1 },
+    ]);
+    expect(effects).toBe(1);
+    await client.sandboxes.create({ environment: Image.prepared("image") });
+    expect(effects).toBe(2);
+  } finally {
+    await client.close();
+  }
+});
+
+test.each(["snapshot_restore", "snapshot_delete", "volume_delete"] as const)(
+  "ordinary and advanced recovery bind resource kind: %s",
+  async (kind) => {
+    let observations = 0;
+
+    const adapter = defineAdapter({
+      name: "example.resource-kind",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          create: {
+            recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
+            async submit(_input, ctx) {
+              return ctx.pending({ jobId: "seed" });
+            },
+            async observe() {
+              observations++;
+
+              return { id: "box", state: "running" as const };
+            },
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+    try {
+      const seed = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+
+      const resource = {
+        version: 1 as const,
+        kind: kind === "volume_delete" ? ("snapshot" as const) : ("volume" as const),
+        provider: adapter.name,
+        scope: client.scope,
+        nativeId: "wrong-kind",
+        ownership: "unknown" as const,
+      };
+
+      await expect(client.recover({ ...seed.reference, kind, resource })).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+      });
+      await expect(
+        client.operations.observe({
+          scope: client.scope,
+          kind,
+          operationId: "op",
+          submissionId: "sub",
+          resource,
+          token: { jobId: "seed" },
+          tokenVersion: 1,
+        }),
+      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+      expect(observations).toBe(0);
+    } finally {
+      await client.close();
+    }
+  },
+);

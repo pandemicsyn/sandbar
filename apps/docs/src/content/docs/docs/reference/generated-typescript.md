@@ -18,10 +18,13 @@ Import from `sandbar-sdk`.
 | `AdapterOperation`          | re-export |
 | `AdapterRecoveryReference`  | type      |
 | `AdapterSandbox`            | re-export |
+| `AdapterSnapshot`           | re-export |
+| `AdapterVolume`             | re-export |
 | `AdvancedIdentity`          | type      |
 | `AdvancedObservation`       | type      |
 | `AdvancedOperationKind`     | type      |
 | `AdvancedOperationResult`   | type      |
+| `ArtifactDeletionResult`    | re-export |
 | `assertResourceIdentity`    | re-export |
 | `assertResourceScope`       | re-export |
 | `Capabilities`              | type      |
@@ -29,11 +32,14 @@ Import from `sandbar-sdk`.
 | `CreatePlan`                | type      |
 | `diagnosticContext`         | re-export |
 | `DiagnosticContext`         | type      |
+| `DirectCapabilities`        | type      |
 | `ExecInput`                 | type      |
 | `ExecOutput`                | type      |
 | `Image`                     | re-export |
 | `ImageBuildResult`          | type      |
 | `ImageInput`                | type      |
+| `MountCapabilities`         | type      |
+| `MountSpec`                 | re-export |
 | `NoExitCodeError`           | re-export |
 | `NonzeroExitError`          | re-export |
 | `ObservabilityOptions`      | type      |
@@ -45,18 +51,27 @@ Import from `sandbar-sdk`.
 | `RecoveryReference`         | type      |
 | `ResourceKind`              | re-export |
 | `ResourceReference`         | re-export |
+| `RestoreCapabilities`       | type      |
+| `RestoreRequest`            | re-export |
 | `Sandbar`                   | value     |
 | `SandbarClient`             | type      |
 | `SandbarError`              | re-export |
 | `SandboxHandle`             | type      |
 | `SandboxState`              | type      |
+| `SnapshotInfo`              | re-export |
 | `SnapshotPlan`              | type      |
 | `SnapshotProfile`           | type      |
 | `SnapshotRequest`           | re-export |
+| `SnapshotRequirements`      | re-export |
+| `SnapshotResult`            | type      |
 | `Support`                   | type      |
 | `UnsupportedFeatureError`   | re-export |
 | `validateResourceReference` | re-export |
+| `VolumeCapabilities`        | type      |
+| `VolumeCreateInput`         | re-export |
+| `VolumeInfo`                | re-export |
 | `WaitAbortedError`          | re-export |
+| `WaitOptions`               | type      |
 
 ## Daytona adapter
 
@@ -93,6 +108,7 @@ Import from `sandbar-adapter`.
 
 | Export                         | Kind      |
 | ------------------------------ | --------- |
+| `AdapterCheckpointError`       | class     |
 | `AdapterConnection`            | type      |
 | `AdapterDefinition`            | type      |
 | `AdapterError`                 | re-export |
@@ -101,6 +117,7 @@ Import from `sandbar-adapter`.
 | `AttemptContext`               | type      |
 | `Command`                      | type      |
 | `connectAdapter`               | function  |
+| `continueOperation`            | re-export |
 | `createAttemptContext`         | function  |
 | `CreateInput`                  | type      |
 | `createObserveContext`         | function  |
@@ -124,6 +141,7 @@ Import from `sandbar-adapter`.
 | `Mutation`                     | type      |
 | `ObserveContext`               | type      |
 | `observeOperation`             | re-export |
+| `OperationInput`               | type      |
 | `OperationKind`                | type      |
 | `operationParts`               | function  |
 | `OperationParts`               | type      |

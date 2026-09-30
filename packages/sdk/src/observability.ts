@@ -191,7 +191,18 @@ export function activeTraceParent(): string | undefined {
   });
 }
 
-const operationKinds = new Set(["create", "exec", "destroy", "file_write", "image_build"]);
+const operationKinds = new Set([
+  "create",
+  "exec",
+  "destroy",
+  "file_write",
+  "image_build",
+  "snapshot_capture",
+  "snapshot_restore",
+  "snapshot_delete",
+  "volume_create",
+  "volume_delete",
+]);
 
 function operationKind(value: unknown): string | undefined {
   return typeof value === "string" && operationKinds.has(value) ? value : undefined;

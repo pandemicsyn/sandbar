@@ -1,7 +1,7 @@
 /* oxlint-disable anti-slop/no-chained-type-assertions -- Fault-injection objects intentionally violate the OTel interface to prove that broken application providers cannot change SDK behavior. */
 import { afterAll, expect, test } from "bun:test";
 import type { AdapterRecoveryReference } from "./index";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter, type SnapshotProfile } from "sandbar-adapter";
 import { z } from "zod";
 import {
   context,
@@ -1279,4 +1279,102 @@ test("certified direct recovery tokens are immutable through nested JSON contain
   expect(Reflect.set(nested[0], "secret", "CHANGED")).toBe(false);
   expect(diagnosticContext(operation).recoveryAvailable).toBe(true);
   await client.close();
+});
+
+test("state recovery remains certified and bounded after telemetry composition", async () => {
+  const { provider, exporter } = setup();
+
+  const profile: SnapshotProfile = {
+    id: "private-profile-canary",
+    preserve: "filesystem+memory",
+    sourceStates: ["running"],
+    interruption: "pause",
+    sourceAfter: "unchanged",
+    consistency: "crash-consistent",
+    connections: "dropped",
+    mountHandling: "none",
+    restoreExecution: "resume",
+  };
+
+  const adapter = defineAdapter({
+    name: "fixture.state.telemetry",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "native-secret-scope" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          return { id: "native-secret-box", state: "running" };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        async inspect(box) {
+          return { id: box.id, state: "running" };
+        },
+        async snapshotProfiles() {
+          return {
+            status: "supported",
+            value: { profiles: [profile], defaultProfileId: profile.id },
+          };
+        },
+        snapshotCapture: {
+          recovery: { version: 1, token: z.strictObject({}) },
+          async submit(_input, ctx) {
+            return ctx.unknown("private native failure");
+          },
+          async observe(_attempt, ctx) {
+            return ctx.unknown("private native failure");
+          },
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {},
+    credentials: {},
+    tracing: { tracerProvider: provider },
+  });
+
+  try {
+    const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await box.submitSnapshot();
+
+    try {
+      await operation.wait();
+      throw new Error("Expected unknown capture");
+    } catch (error) {
+      expect(error).toBeInstanceOf(OutcomeUnknownError);
+      expect(diagnosticContext(error)).toMatchObject({
+        recoveryAvailable: true,
+        operationState: "unknown",
+      });
+    }
+
+    expect(Object.isFrozen(operation.reference.capture?.profile.sourceStates)).toBe(true);
+    expect(Object.isFrozen(operation.reference.scope.authority)).toBe(true);
+    const recovered = await client.recover(operation.reference);
+    await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(diagnosticContext(recovered).recoveryAvailable).toBe(true);
+    const spans = exporter.getFinishedSpans();
+    expect(
+      spans.some((span) => span.attributes["sandbar.operation.type"] === "snapshot_capture"),
+    ).toBe(true);
+    const serialized = JSON.stringify(spans.map((span) => span.attributes));
+
+    for (const canary of [
+      "private-profile-canary",
+      "native-secret-scope",
+      "native-secret-box",
+      "private native failure",
+    ])
+      expect(serialized).not.toContain(canary);
+    await box.destroy();
+  } finally {
+    await client.close();
+    await provider.shutdown();
+  }
 });

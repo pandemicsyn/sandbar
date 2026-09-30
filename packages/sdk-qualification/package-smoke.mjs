@@ -227,16 +227,28 @@ void flow;
 `;
   else if (mode === "direct")
     source = `
-import { Sandbar, Image } from "sandbar-sdk";
+import { Sandbar, Image, type SandbarClient, type SandboxHandle } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 async function flow() {
   const client = await Sandbar.connect({ adapter: createFakeAdapter({ url: "http://127.0.0.1:1234", token: "example-token-123456" }), config: {}, credentials: {} });
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
+  const commonClient: SandbarClient = client;
+  const commonSandbox: SandboxHandle = box;
+  const destroy: SandboxHandle["destroy"] = box.destroy;
+  void commonClient; void commonSandbox; void destroy;
   const argv = ["fixture"] as const;
   const result = await box.exec(argv);
   const operation = await box.submitExec(argv);
   await operation.wait();
   const text: string = result.stdoutText();
+  const volume=await client.volumes.create({name:"consumer-state"});
+  const mounted=await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});
+  const captured=await box.snapshot();
+  const snapshot=await client.snapshots.get(captured.snapshot.reference);
+  const restored=await snapshot.restore({networkPolicy:"blocked"});
+  await restored.destroy();
+  await mounted.destroy({storage:"allow-unconfirmed"});
+  await snapshot.delete();await volume.delete();
   await client.close();
   return text;
 }
@@ -439,18 +451,20 @@ import { createE2BAdapter } from "sandbar-sdk/e2b";
 let creates = 0, kills = 0, closes = 0, buildName = "", retained = "";
 let record;
 let failWrite = false;
+const snapshots=new Map(),volumes=new Map();
 const files = new Map();
 const binary = Uint8Array.from([0, 255, 129]);
 const transport = {
+  state:{async template(id){return snapshots.has(id+":default")?{templateId:id,names:[],public:false,builds:[{buildId:"11111111-1111-4111-8111-111111111111",status:"ready"}]}:null;},async verifyAddress(){},async tags(){return [{tag:"default",buildId:"11111111-1111-4111-8111-111111111111"}];},async capture(){const value={snapshotId:"snapshot_packed:default",names:[]};snapshots.set(value.snapshotId,value);return value;},async snapshots(input){return {items:[...snapshots.values()].filter(value=>!input.name||value.snapshotId===input.name).slice(0,input.limit)};},async deleteSnapshot(id){return snapshots.delete(id+":default");},async createVolume(name){const value={volumeId:"volume_packed",name};volumes.set(value.volumeId,value);return value;},async volume(id){return volumes.get(id);},async volumes(){return [...volumes.values()];},async deleteVolume(id){return volumes.delete(id);}},
   async verifyAuth() {},
   async verifyTeam(id) { if (id !== "team_1") throw Error("Wrong team"); },
   async verifyTemplate(team, template) { if ((team !== undefined && team !== "team_1") || !["template_1", "template_oci"].includes(template)) throw Error("Wrong template"); return template; },
   async buildImage(reference, name) { if (reference !== "node:24") throw Error("Wrong OCI reference"); buildName = name; return { templateId: "template_oci", buildId: "build_1" }; },
   async findBuild(_team, name) { return name === buildName ? { templateId: "template_oci", buildId: "build_1", status: "ready" } : null; },
   async create(input) {
-    if (!["base", "template_1", "template_oci"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
+    if (!["base", "template_1", "template_oci", "snapshot_packed:11111111-1111-4111-8111-111111111111"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
     creates++;
-    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId, metadata: input.metadata, state: "running" };
+    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
     return record.id;
   },
   async get(id) { return record?.id === id ? record : null; },
@@ -494,7 +508,22 @@ try {
   }
   if (!failed) throw Error("Packed E2B native write failure classification lost");
   await box.writeFile("/tmp/packed-lost-ack.bin", binary, {overwrite: true});
+  const capture=await box.snapshot();
+  const saved=structuredClone(capture.snapshot.reference);
   await box.destroy();
+  const snapshot=await client.snapshots.get(saved);
+  const caps=await client.capabilities();
+  if(caps.snapshots.restore.status!=="supported"||caps.mounts.status!=="unsupported")throw Error("Packed state capabilities differ");
+  if(saved.nativeId!=="snapshot_packed"||saved.generation!=="11111111-1111-4111-8111-111111111111")throw Error("Captured build identity missing");
+  const restored=await snapshot.restore({networkPolicy:"blocked"});
+  if(record.metadata.sandbar_snapshot!=="snapshot_packed:11111111-1111-4111-8111-111111111111")throw Error("Restore did not pin the captured UUID");
+  await restored.destroy();
+  await snapshot.delete();
+  if(snapshots.size)throw Error("Containing snapshot cleanup failed");
+  const volume=await client.volumes.create({name:"packed-data"});
+  let mountRejected=false;try{await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});}catch(error){mountRejected=error.code==="UNSUPPORTED"&&error.effect==="none";}
+  if(!mountRejected||!volumes.size)throw Error("Unsafe name-only mount dispatched");
+  await volume.delete();if(volumes.size||snapshots.size)throw Error("Packed state artifact cleanup failed");
   const oci = await client.sandboxes.create({ environment: Image.oci("node:24"), networkPolicy: "blocked" });
   await oci.destroy();
   if (!buildName || retained !== "template_oci") throw Error("OCI retained template was hidden");
@@ -503,7 +532,7 @@ try {
   const fromBuild = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
   await fromBuild.destroy();
 } finally { await client.close(); }
-if (creates !== 3 || kills !== 3 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
+if (creates !== 4 || kills !== 4 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
 process.stdout.write("packed E2B fixture flow passed\\n");
 `;
 
@@ -592,8 +621,8 @@ try {
   const box = await client.sandboxes.create({ environment: Image.prepared("image-1") });
   const caps = await client.capabilities();
   if (caps.snapshots.capture.status !== "unsupported" || caps.volumes.status !== "unsupported") throw Error("Unimplemented state support was advertised");
-  if ((await box.checkSnapshot({ preserve: "filesystem" })).status !== "unsupported") throw Error("Snapshot support mismatch");
-  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { preserve: "filesystem" } } };
+  if ((await box.checkSnapshot({ requirements: { preserve: "filesystem" } })).status !== "unsupported") throw Error("Snapshot support mismatch");
+  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { requirements: { preserve: "filesystem" } } } };
   if ((await client.sandboxes.checkCreate(required)).status !== "unsupported") throw Error("Required snapshot was accepted");
   try { await client.sandboxes.create(required); throw Error("Required snapshot allocated compute"); } catch (error) { if (error.code !== "UNSUPPORTED" || error.effect !== "none") throw error; }
   for (const kind of ["snapshot", "volume", "mount", "session"]) {
@@ -662,7 +691,7 @@ try {
     return fetch(origin + target.pathname + target.search, init);
   }, { preconnect() {} }) });
   if ((await client.capabilities()).snapshots.capture.status !== "unsupported") throw Error("Service advertised capture");
-  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { preserve: "filesystem" } } };
+  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { requirements: { preserve: "filesystem" } } } };
   if ((await client.sandboxes.checkCreate(required)).status !== "unsupported") throw Error("Service check accepted capture");
   try { await client.sandboxes.create(required); throw Error("Service allocated required capture"); } catch (error) { if (error.code !== "UNSUPPORTED" || error.effect !== "none") throw error; }
   const build = await client.images.submitBuild({ source: Image.oci("fixture/image:1"), connectionId: conn.body.id });

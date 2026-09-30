@@ -2,7 +2,15 @@ import { expect, test } from "bun:test";
 import { z } from "zod";
 import { adapterSuite } from "sandbar-adapter/testing";
 import { createDaytonaAdapter } from "./adapter";
-import { Sandbar, Image } from "sandbar-sdk";
+import {
+  Sandbar,
+  SandbarError,
+  Image,
+  AdapterSandbox,
+  OutcomeUnknownError,
+  WaitAbortedError,
+  type AdapterRecoveryReference,
+} from "sandbar-sdk";
 
 test.each([
   "normal",
@@ -492,14 +500,29 @@ test("lost exec, write and destroy responses recover by read-only evidence after
   ) => {
     const prepared = await client.operations.prepare(kind, input, { maxOutputBytes: 10 });
 
+    let saved: { token: z.infer<ReturnType<typeof z.json>>; version: number } | undefined;
+
     const result = await prepared.submit(
       { operationId: `op-${submissionId}`, submissionId, invocationKey: `key-${submissionId}` },
-      { beforeSubmit: async () => true },
+      {
+        beforeSubmit: async () => true,
+        onCheckpoint: async (token, version) => {
+          saved = { token: structuredClone(token), version };
+        },
+      },
     );
 
     expect(result?.kind).toBe("pending");
 
-    return result!;
+    if (result?.kind !== "pending") throw Error("Expected pending submission");
+
+    if (kind === "destroy") {
+      expect(saved).toBeDefined();
+
+      return { ...result, token: saved!.token, version: saved!.version };
+    }
+
+    return result;
   };
 
   const exec = await submit(
@@ -640,18 +663,10 @@ test("destroy preflight failure rejects without attempting DELETE", async () => 
   });
 
   try {
-    const prepared = await client.operations.prepare("destroy", { id: "native-1" });
-
-    const result = await prepared.submit(
-      {
-        operationId: "op-preflight-delete",
-        submissionId: "preflight-delete",
-        invocationKey: "key-preflight-delete",
-      },
-      { beforeSubmit: async () => true },
-    );
-
-    expect(result).toMatchObject({ kind: "rejected", code: "UNAVAILABLE" });
+    await expect(client.operations.prepare("destroy", { id: "native-1" })).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+      effect: "none",
+    });
     expect(deletes).toBe(0);
   } finally {
     await client.close();
@@ -1010,3 +1025,767 @@ test.each(["lost-name", "known-id", "known-id-throw"] as const)(
     }
   },
 );
+
+test.each(["started", "stopped", "destroyed"])(
+  "Daytona inspection maps %s from exactly one native read",
+  async (state) => {
+    let reads = 0;
+
+    const fetchImpl: typeof fetch = Object.assign(
+      async (input: RequestInfo | URL) => {
+        const path = new URL(String(input)).pathname;
+
+        if (path === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (path === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (path === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (path === "/api/sandbox/native-1") {
+          reads++;
+
+          if (reads > 1) return new Response(null, { status: 404 });
+
+          return Response.json({
+            id: "native-1",
+            name: "fixture-box",
+            organizationId: "org-1",
+            target: "us",
+            state,
+            public: false,
+            networkBlockAll: true,
+          });
+        }
+
+        throw new Error("Unexpected fixture route");
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(fetchImpl),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+    try {
+      expect(await new AdapterSandbox(client, "native-1").inspect()).toMatchObject({
+        state: state === "started" ? "running" : state,
+      });
+      expect(reads).toBe(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each([
+  ["immediate", "matching"],
+  ["immediate", "name"],
+  ["immediate", "replacement-name"],
+  ["immediate", "missing"],
+  ["immediate", "wrong"],
+  ["pending", "matching"],
+  ["pending", "name"],
+  ["pending", "replacement-name"],
+  ["pending", "missing"],
+  ["pending", "wrong"],
+  ["lost", "matching"],
+  ["lost", "name"],
+  ["lost", "replacement-name"],
+  ["lost", "missing"],
+  ["lost", "wrong"],
+] as const)("restore verifies native snapshot identity: %s / %s", async (path, evidence) => {
+  let state = "started";
+  let snapshotName = "";
+  let restoreCreates = 0;
+  let sourceName = "";
+  let restoreName = "";
+  let restoreLabels: Record<string, string> = {};
+  let confirmed = evidence === "matching" || evidence === "name";
+
+  const snapshot = () => ({
+    id: "captured-1",
+    general: false,
+    name: snapshotName,
+    organizationId: "org-1",
+    state: "active",
+    sandboxClass: "container",
+    sourceSandboxId: "source",
+    regionIds: ["us"],
+  });
+
+  const restored = (creating = false) => ({
+    id: "restored",
+    name: restoreName,
+    organizationId: "org-1",
+    target: "us",
+    state: creating ? "creating" : "started",
+    networkBlockAll: true,
+    public: false,
+    snapshot:
+      creating || confirmed
+        ? evidence === "name"
+          ? snapshotName
+          : "captured-1"
+        : evidence === "missing"
+          ? undefined
+          : evidence === "replacement-name"
+            ? snapshotName
+            : "other-snapshot",
+    labels: restoreLabels,
+  });
+
+  const fetchImpl: typeof fetch = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const route = url.pathname;
+
+      if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (route === "/api/regions")
+        return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+      if (route === "/api/organizations/org-1")
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+      if (route === "/api/warm-pools") return Response.json([]);
+
+      if (route === "/api/snapshots")
+        return Response.json({ items: [snapshot()], page: 1, totalPages: 1 });
+
+      if (route === "/api/snapshots/base")
+        return Response.json({ ...snapshot(), id: "base", name: "base" });
+
+      if (route.startsWith("/api/snapshots/"))
+        return snapshotName
+          ? Response.json({
+              ...snapshot(),
+              id:
+                restoreCreates > 0 &&
+                !confirmed &&
+                evidence === "replacement-name" &&
+                route.endsWith(snapshotName)
+                  ? "replacement"
+                  : "captured-1",
+            })
+          : new Response(null, { status: 404 });
+
+      if (route === "/api/sandbox/source/stop" || route === "/api/sandbox/source/start") {
+        state = route.endsWith("/stop") ? "stopped" : "started";
+
+        return Response.json({});
+      }
+
+      if (route === "/api/sandbox/source/snapshot") {
+        snapshotName = z.object({ name: z.string() }).parse(JSON.parse(String(init?.body))).name;
+
+        return Response.json({ id: "source", state });
+      }
+
+      if (route === "/api/sandbox/source")
+        return Response.json({
+          id: "source",
+          name: sourceName,
+          organizationId: "org-1",
+          target: "us",
+          state,
+          networkBlockAll: true,
+          public: false,
+          sandboxClass: "container",
+          volumes: [],
+        });
+
+      if (route === "/api/sandbox" && method === "POST") {
+        const body = z
+          .object({
+            name: z.string(),
+            snapshot: z.string(),
+            labels: z.record(z.string(), z.string()),
+          })
+          .parse(JSON.parse(String(init?.body)));
+
+        if (body.snapshot === "base") {
+          sourceName = body.name;
+
+          return Response.json({
+            id: "source",
+            name: sourceName,
+            organizationId: "org-1",
+            target: "us",
+            state,
+            networkBlockAll: true,
+            public: false,
+            snapshot: "base",
+            labels: body.labels,
+          });
+        }
+
+        expect(body.snapshot).toBe("captured-1");
+        restoreCreates++;
+        restoreName = body.name;
+        restoreLabels = body.labels;
+
+        if (path === "lost") throw new Error("Lost restore acknowledgement");
+
+        return Response.json(restored(path === "pending"));
+      }
+
+      if (route === "/api/sandbox") return Response.json({ items: [restored()] });
+
+      if (route === "/api/sandbox/restored") return Response.json(restored());
+      throw new Error(`Unexpected restore fixture route: ${method} ${route}`);
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const connect = () =>
+    Sandbar.connect({
+      adapter: createDaytonaAdapter(fetchImpl),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+  let client = await connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const capture = await source.snapshot();
+    const listed = await client.snapshots.list({ limit: 10 });
+    const capabilities = await client.capabilities();
+    expect(listed.items[0]!.restore.networkPolicies).toEqual(
+      (await capture.snapshot.inspect()).restore.networkPolicies,
+    );
+    expect(listed.items[0]!.restore.networkPolicies).toEqual(
+      capabilities.snapshots.restore.status === "supported"
+        ? capabilities.snapshots.restore.value.networkPolicies
+        : [],
+    );
+
+    const operation = await capture.snapshot.submitRestore({
+      networkPolicy: "blocked",
+      resources: {},
+      mounts: {},
+    });
+
+    const reference = structuredClone(operation.reference);
+
+    if (!["matching", "name"].includes(evidence) || path === "lost")
+      await expect(operation.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    else expect((await operation.wait()).id).toBe("restored");
+
+    await client.close();
+    client = await connect();
+    const recovered = await client.recover(reference);
+
+    if (!["matching", "name"].includes(evidence)) {
+      await expect(recovered.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+      confirmed = true;
+    }
+
+    expect(await (await client.recover(reference)).wait()).toMatchObject({ id: "restored" });
+    expect(restoreCreates).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test.each(["immediate", "pending", "lost"] as const)(
+  "mounted create reuses one native detail per observation: %s",
+  async (mode) => {
+    let name = "";
+    let labels: Record<string, string> = {};
+    let detailReads = 0;
+    let creates = 0;
+
+    const native = (state = "started") => ({
+      id: "mounted-box",
+      name,
+      labels,
+      state,
+      organizationId: "org-1",
+      target: "us",
+      networkBlockAll: true,
+      public: false,
+      volumes: [{ volumeId: "volume-1", mountPath: "/mnt/data", subpath: "fixture" }],
+    });
+
+    const fetcher = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const route = url.pathname;
+        const method = init?.method ?? "GET";
+
+        if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (route === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (route === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (route === "/api/snapshots/base")
+          return Response.json({
+            id: "base",
+            organizationId: "org-1",
+            state: "active",
+            general: true,
+            regionIds: ["us"],
+            sandboxClass: "container",
+          });
+
+        if (route.startsWith("/api/volumes/by-name/")) return new Response(null, { status: 404 });
+
+        if (route === "/api/volumes" || route === "/api/volumes/volume-1")
+          return Response.json({
+            id: "volume-1",
+            name: "fixture-volume",
+            organizationId: "org-1",
+            state: "ready",
+          });
+
+        if (route === "/api/sandbox" && method === "POST") {
+          const body = z
+            .object({ name: z.string(), labels: z.record(z.string(), z.string()) })
+            .parse(JSON.parse(String(init?.body)));
+
+          name = body.name;
+          labels = body.labels;
+          creates++;
+
+          if (mode === "lost") throw new Error("Lost create acknowledgement");
+
+          return Response.json(native(mode === "pending" ? "starting" : "started"));
+        }
+
+        if (route === "/api/sandbox") return Response.json({ items: [native()] });
+
+        if (route === "/api/sandbox/mounted-box") {
+          detailReads++;
+
+          if (detailReads > (mode === "pending" ? 2 : 1))
+            throw new Error("Redundant detail read failed");
+
+          return Response.json(
+            native(mode === "pending" && detailReads === 1 ? "starting" : "started"),
+          );
+        }
+
+        throw new Error(`Unexpected route ${route}`);
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(fetcher),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+    try {
+      const volume = await client.volumes.create({ name: "fixture-volume" });
+      const mounts = [volume.at("/mnt/data", { subpath: "fixture" })];
+
+      const operation = await client.sandboxes.submitCreate({
+        environment: Image.prepared("base"),
+        mounts,
+      });
+
+      if (mode === "lost")
+        await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+
+      const box =
+        mode === "lost"
+          ? await (await client.recover(operation.reference)).wait()
+          : await operation.wait();
+
+      expect(box).toMatchObject({ id: "mounted-box" });
+      expect(creates).toBe(1);
+      expect(detailReads).toBe(mode === "pending" ? 2 : 1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each([
+  [497, "tombstone"],
+  [498, "tombstone"],
+  [512, "tombstone"],
+  [512, "absence"],
+] as const)(
+  "Daytona confirmed mounted destroy preserves bounded retained identity: %s / %s",
+  async (size, confirmation) => {
+    const volumeId = "v".repeat(size);
+    let deleted = false;
+    let deletes = 0;
+
+    const fetcher = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const route = new URL(String(input)).pathname;
+
+        if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (route === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (route === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (route === "/api/sandbox/mounted-box") {
+          if (init?.method === "DELETE") {
+            deletes++;
+            deleted = true;
+
+            return Response.json({});
+          }
+
+          if (deleted && confirmation === "absence") return new Response(null, { status: 404 });
+
+          return Response.json({
+            id: "mounted-box",
+            name: "fixture",
+            labels: {},
+            state: deleted ? "destroyed" : "started",
+            organizationId: "org-1",
+            target: "us",
+            networkBlockAll: true,
+            public: false,
+            volumes: [{ volumeId, mountPath: "/mnt/data" }],
+          });
+        }
+
+        throw new Error(`Unexpected fixture route: ${route}`);
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(fetcher),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+    try {
+      const result = await new AdapterSandbox(client, "mounted-box").destroy({
+        storage: "allow-unconfirmed",
+      });
+
+      expect(result.computeStopped).toBe(true);
+      expect(result.retainedResources[0]).toBe(
+        size <= 497 ? `daytona-volume:${volumeId}` : volumeId,
+      );
+      expect(result.retainedResources[0]!.length).toBeLessThanOrEqual(512);
+      expect(result.mountDurability?.[0]!.volume.nativeId).toBe(volumeId);
+      expect(deletes).toBe(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each(["prepare", "submit"] as const)(
+  "Daytona oversized destroy custody rejects before DELETE: %s",
+  async (stage) => {
+    let expanded = stage === "prepare";
+    let deletes = 0;
+    let saved: AdapterRecoveryReference | undefined;
+
+    const longMounts = Array.from({ length: 8 }, (_, index) => ({
+      volumeId: `v${index}${"x".repeat(510)}`,
+      mountPath: `/mnt/${index}`,
+    }));
+
+    const fetcher = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const route = new URL(String(input)).pathname;
+
+        if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (route === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (route === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (route === "/api/sandbox/mounted-box") {
+          if (init?.method === "DELETE") {
+            deletes++;
+
+            return Response.json({});
+          }
+
+          return Response.json({
+            id: "mounted-box",
+            name: "fixture",
+            labels: {},
+            state: "started",
+            organizationId: "org-1",
+            target: "us",
+            networkBlockAll: true,
+            public: false,
+            volumes: expanded ? longMounts : [{ volumeId: "short", mountPath: "/mnt/short" }],
+          });
+        }
+
+        throw new Error(`Unexpected fixture route: ${route}`);
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(fetcher),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+      onReference(reference) {
+        if (reference.kind !== "destroy") return;
+        saved = structuredClone(reference);
+
+        if (!reference.token) expanded = true;
+      },
+    });
+
+    try {
+      await expect(
+        new AdapterSandbox(client, "mounted-box").destroy({ storage: "allow-unconfirmed" }),
+      ).rejects.toMatchObject(
+        stage === "prepare" ? { code: "CAPACITY" } : { code: "CAPACITY", effect: "none" },
+      );
+      expect(deletes).toBe(0);
+
+      if (stage === "prepare") expect(saved).toBeUndefined();
+      else {
+        expect(saved?.token).toMatchObject({ stage: "rejected", rejectionCode: "CAPACITY" });
+        const recovered = await client.recover(saved!);
+        await expect((await recovered.continue()).wait()).rejects.toMatchObject({
+          code: "CAPACITY",
+          effect: "none",
+        });
+        expect(deletes).toBe(0);
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+async function interruptedMountedDestroy(mode: "tombstone" | "absent") {
+  let deleted = false;
+  let deletes = 0;
+  let saved: AdapterRecoveryReference | undefined;
+  const abort = new AbortController();
+
+  const fetcher = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const route = new URL(String(input)).pathname;
+
+      if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (route === "/api/regions")
+        return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+      if (route === "/api/organizations/org-1")
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+      if (route === "/api/sandbox/mounted-box") {
+        if (init?.method === "DELETE") {
+          expect(saved?.token).toMatchObject({
+            sandboxId: "mounted-box",
+            stage: "uncertain",
+            mountDurability: [{ volume: { nativeId: "retained-volume" } }],
+          });
+          deletes++;
+          deleted = true;
+          abort.abort();
+
+          return new Promise<Response>(() => undefined);
+        }
+
+        if (deleted && mode === "absent") return new Response(null, { status: 404 });
+
+        return Response.json({
+          id: "mounted-box",
+          name: "fixture",
+          labels: {},
+          state: deleted ? "destroyed" : "started",
+          organizationId: "org-1",
+          target: "us",
+          networkBlockAll: true,
+          public: false,
+          volumes: [{ volumeId: "retained-volume", mountPath: "/mnt/data" }],
+        });
+      }
+
+      throw new Error(`Unexpected fixture route: ${route}`);
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const connect = () =>
+    Sandbar.connect({
+      adapter: createDaytonaAdapter(fetcher),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+      onReference(reference) {
+        saved = structuredClone(reference);
+      },
+    });
+
+  const client = await connect();
+
+  try {
+    await expect(
+      new AdapterSandbox(client, "mounted-box").destroy({
+        storage: "allow-unconfirmed",
+        signal: abort.signal,
+      }),
+    ).rejects.toMatchObject({ code: "WAIT_ABORTED" });
+    expect(deletes).toBe(1);
+    expect(saved).toBeDefined();
+    const reopened = await connect();
+
+    try {
+      const persisted = structuredClone(saved!);
+      expect(persisted.token).toMatchObject({ stage: "uncertain" });
+
+      if (mode === "absent") {
+        const legacy = structuredClone(persisted);
+
+        const token = z.object({ stage: z.string().optional() }).passthrough().parse(legacy.token);
+
+        delete token.stage;
+        legacy.token = z.json().parse(token);
+        const old = await reopened.recover(legacy);
+        await expect(old.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      }
+
+      const recovered = await (await reopened.recover(persisted)).wait();
+      expect(recovered).toMatchObject({
+        computeStopped: true,
+        retainedResources: ["daytona-volume:retained-volume"],
+        mountDurability: [{ volume: { nativeId: "retained-volume" }, status: "unconfirmed" }],
+      });
+      expect(deletes).toBe(1);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await client.close();
+  }
+}
+
+test.each(["tombstone", "absent"] as const)(
+  "Daytona interrupted mounted destroy retains custody before DELETE: %s",
+  interruptedMountedDestroy,
+);
+
+for (const mode of ["gateway", "abort", "policy"] as const) {
+  test(`Daytona pre-dispatch destroy rejection survives recovery: ${mode}`, async () => {
+    let armed = false;
+    let reads = 0;
+    let deletes = 0;
+    let saved: AdapterRecoveryReference | undefined;
+    const controller = new AbortController();
+
+    const fetcher = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const route = new URL(String(input)).pathname;
+
+        if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (route === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (route === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (route === "/api/sandbox/pre-delete") {
+          if (init?.method === "DELETE") {
+            deletes++;
+
+            return new Response(null, { status: 204 });
+          }
+
+          reads++;
+
+          if (armed && mode !== "policy") {
+            if (mode === "abort") {
+              controller.abort();
+              throw controller.signal.reason;
+            }
+
+            return new Response(null, { status: 503 });
+          }
+
+          return Response.json({
+            id: "pre-delete",
+            name: "fixture",
+            labels: {},
+            state: "started",
+            organizationId: "org-1",
+            target: "us",
+            networkBlockAll: true,
+            public: false,
+            volumes:
+              armed && mode === "policy" ? [{ volumeId: "retained", mountPath: "/mnt/data" }] : [],
+          });
+        }
+
+        throw Error(`Unexpected fixture route ${route}`);
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const connect = () =>
+      Sandbar.connect({
+        adapter: createDaytonaAdapter(fetcher),
+        config: { target: "us" },
+        credentials: { apiKey: "fixture" },
+        onReference(reference) {
+          if (reference.kind !== "destroy") return;
+          saved = structuredClone(reference);
+
+          if (!reference.token) armed = true;
+        },
+      });
+
+    const client = await connect();
+
+    try {
+      try {
+        await new AdapterSandbox(client, "pre-delete").destroy({ signal: controller.signal });
+        throw Error("Expected pre-dispatch failure");
+      } catch (error) {
+        expect(
+          error instanceof WaitAbortedError ||
+            (error instanceof SandbarError && error.effect === "none"),
+        ).toBe(true);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(saved?.token).toMatchObject({ sandboxId: "pre-delete", stage: "rejected" });
+      expect(deletes).toBe(0);
+      const before = reads;
+      const reopened = await connect();
+
+      try {
+        const recovered = await reopened.recover(saved!);
+        await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+        await recovered.continue();
+        await expect(recovered.wait()).rejects.toMatchObject({
+          code: mode === "policy" ? "UNSUPPORTED" : "UNAVAILABLE",
+          effect: "none",
+        });
+        expect(reads).toBe(before);
+        expect(deletes).toBe(0);
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+}

@@ -9,7 +9,7 @@ For the concise overview, see [Tested provider support](/docs/providers/support/
 
 These results cover only the stated image, requested network policy and region classes. A blocked-requested policy is a create setting, not a measured egress-isolation result. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.
 
-Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot capture/restore is unsupported by the current public SDK; a prepared-image create is not snapshot qualification.
+Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot and volume workflows have separate explicit observations and retained-storage teardown. Prepared-image creation does not qualify either feature. New workflows remain not-run until approved merged-source evidence is published.
 
 ## Daytona
 

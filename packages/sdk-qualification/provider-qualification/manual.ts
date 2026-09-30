@@ -1,3 +1,5 @@
+import { runState, reconcileState } from "./state-profile";
+import { ResourceReference } from "sandbar-sdk";
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { readFile, realpath, writeFile } from "node:fs/promises";
@@ -12,7 +14,14 @@ import { LedgerStore, requirePrivateDirectory, reportedCleanup } from "./ledger"
 import { reconcileConnection, runPrepared, type Step } from "./lifecycle";
 import { runNetworkPair, type NetworkRun } from "./network-profile";
 import { networkProbeId } from "./network-probe";
-import { parseReport, publicIssue, scenarios, type Scenario } from "./report";
+import {
+  parseReport,
+  publicIssue,
+  scenarios,
+  unselectedRecord,
+  type Scenario,
+  type QualificationRecord,
+} from "./report";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 
@@ -62,8 +71,15 @@ function within(directory: string, parent: string): boolean {
   return directory === parent || directory.startsWith(`${parent}${sep}`);
 }
 
-if (action !== "live-prepared" && action !== "live-network" && action !== "reconcile")
-  throw new Error("Usage: bun manual.ts live-prepared | live-network | reconcile <run UUID>");
+if (
+  action !== "live-state" &&
+  action !== "live-prepared" &&
+  action !== "live-network" &&
+  action !== "reconcile"
+)
+  throw new Error(
+    "Usage: bun manual.ts live-prepared | live-network | live-state | reconcile <run UUID>",
+  );
 
 const provider = z.enum(["e2b", "daytona"]).parse(required("SANDBAR_QUAL_PROVIDER"));
 
@@ -173,6 +189,26 @@ const fileRoot = z
   );
 
 const selected = action === "live-prepared" ? selectedScenarios() : undefined;
+
+const stateSelected = new Set(
+  z
+    .array(z.enum(["snapshot-roundtrip", "volume-persistence"]))
+    .min(1)
+    .max(2)
+    .parse(
+      action === "live-state"
+        ? (process.env.SANDBAR_QUAL_SCENARIOS?.split(",") ?? [
+            "snapshot-roundtrip",
+            "volume-persistence",
+          ])
+        : (saved?.stateSelection ?? ["snapshot-roundtrip", "volume-persistence"]),
+    ),
+);
+
+const borrowedVolume =
+  action === "live-state" && process.env.SANDBAR_QUAL_BORROWED_VOLUME_REF
+    ? ResourceReference.parse(JSON.parse(process.env.SANDBAR_QUAL_BORROWED_VOLUME_REF))
+    : undefined;
 
 const requestedEvidenceRef =
   action !== "reconcile"
@@ -296,7 +332,29 @@ const exercise = async () => {
   let steps: Step[];
   let networkRuns: NetworkRun[] | undefined;
 
-  if (action === "live-network") {
+  if (action === "live-state")
+    steps = await runState(factory, ledger, imageId, {
+      network: daytonaConfig?.networkPolicy ?? "blocked",
+      provider,
+      selected: stateSelected,
+      signal: controller.signal,
+      cleanupWaitMs: 60000,
+      redactions,
+      borrowedVolume,
+    });
+  else if (action === "reconcile" && saved?.stateMode === "live-state") {
+    const connected = await factory((reference) => ledger.saveStateReference(reference));
+
+    try {
+      steps = await ledger.withLock(() =>
+        reconcileState(connected, ledger, 60000, async (name) => {
+          await ledger.update((value) => ({ ...value, stateRole: name }));
+        }),
+      );
+    } finally {
+      await connected.close();
+    }
+  } else if (action === "live-network") {
     networkRuns = await runNetworkPair(factory, ledger, companion!, imageId, {
       signal: controller.signal,
       cleanupWaitMs: 60_000,
@@ -352,9 +410,37 @@ const exercise = async () => {
           envd: state.envd,
         }));
 
-    const records = sourcedSteps.map(({ step, policy, envd }) => ({
+    const records: QualificationRecord[] = sourcedSteps.map(({ step, policy, envd }) => ({
       ...metadata,
-      configuration: { ...metadata.configuration, network: `${policy}-requested` },
+      configuration: {
+        ...metadata.configuration,
+        network: `${policy}-requested`,
+        stateProbe:
+          step.scenario === "snapshot-roundtrip"
+            ? "snapshot-roundtrip-v3"
+            : step.scenario === "volume-persistence"
+              ? "volume-persistence-v1"
+              : undefined,
+        preserve:
+          step.scenario === "snapshot-roundtrip"
+            ? provider === "daytona"
+              ? "filesystem"
+              : "filesystem+memory"
+            : undefined,
+        restoreExecution:
+          step.scenario === "snapshot-roundtrip"
+            ? provider === "daytona"
+              ? "fresh"
+              : "resume"
+            : undefined,
+        sourceAfter: step.scenario === "snapshot-roundtrip" ? "running" : undefined,
+        volumeOwnership:
+          step.scenario === "volume-persistence"
+            ? state.stateBorrowedVolume
+              ? "borrowed"
+              : "created"
+            : undefined,
+      },
       scenario: step.scenario,
       status: step.status,
       runCleanup: cleanup,
@@ -362,6 +448,7 @@ const exercise = async () => {
       issue: publicIssue(step.issue),
       diagnostic: step.diagnostic,
       networkEvidence: step.networkEvidence,
+      stateEvidence: step.stateEvidence,
       envd: envd ?? { status: "not-collected" as const },
     }));
 
@@ -376,7 +463,7 @@ const exercise = async () => {
       }
     }
 
-    const combined = previous
+    const combined: QualificationRecord[] = previous
       ? [
           ...previous.records.map((record) => ({
             ...record,
@@ -389,13 +476,7 @@ const exercise = async () => {
     if (!previous)
       for (const scenario of scenarios)
         if (!combined.some((record) => record.scenario === scenario))
-          combined.push({
-            ...records[0]!,
-            scenario,
-            status: scenario === "snapshot-roundtrip" ? "unsupported" : "not-run",
-            issue: scenario === "snapshot-roundtrip" ? "unsupported-capability" : "not-selected",
-            networkEvidence: undefined,
-          });
+          combined.push(unselectedRecord(records[0]!, scenario));
     const report = parseReport({ schemaVersion: 1, records: combined });
 
     const publicPath =

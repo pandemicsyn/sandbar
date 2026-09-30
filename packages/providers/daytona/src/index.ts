@@ -67,6 +67,15 @@ const NativeSandbox = z.object({
   toolboxProxyUrl: z.url().optional(),
   snapshot: z.string().optional(),
   labels: z.record(z.string(), z.string()).optional(),
+  volumes: z
+    .array(
+      z.object({
+        volumeId: z.string(),
+        mountPath: z.string(),
+        subpath: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 const ListedSandbox = NativeSandbox.omit({ networkBlockAll: true, public: true });
@@ -115,6 +124,18 @@ export type DaytonaInput = {
 type Config = z.infer<typeof Input>;
 
 type Sandbox = z.infer<typeof NativeSandbox>;
+
+type DaytonaCreateResult = DriverResult & { nativeSandbox?: Sandbox };
+
+function volumeContains(native: Sandbox, path: string): boolean {
+  const normalized = path.replace(/\/+/g, "/");
+
+  return (native.volumes ?? []).some((mount) => {
+    const root = mount.mountPath.replace(/\/+/g, "/").replace(/\/$/, "");
+
+    return normalized === root || normalized.startsWith(root + "/");
+  });
+}
 
 type DaytonaInventoryPage = Awaited<ReturnType<ProviderDriver["inventory"]>>;
 
@@ -303,7 +324,12 @@ async function boundedJson<T extends z.ZodType>(
 
 type DaytonaRequestBody = Record<
   string,
-  string | number | boolean | Record<string, string> | undefined
+  | string
+  | number
+  | boolean
+  | Record<string, string>
+  | { volumeId: string; mountPath: string; subpath?: string }[]
+  | undefined
 >;
 
 /** One HTTP attempt per request. No upstream SDK retry middleware is in the mutation path. */
@@ -386,6 +412,27 @@ export class DaytonaDriver implements ProviderDriver {
       throw new Error("Daytona sandbox identity or scope mismatch");
 
     return sandbox;
+  }
+  private async matchesSnapshot(
+    reported: string | undefined,
+    expectedId: string,
+  ): Promise<boolean> {
+    if (!reported) return false;
+
+    if (reported === expectedId) return true;
+
+    // Daytona creates from the immutable ID but reports the native snapshot name.
+    // Resolve that returned name and positively compare its ID; replacement names never match.
+    const response = await this.request("GET", `/snapshots/${encodeURIComponent(reported)}`);
+
+    if (!response.ok) return false;
+    const snapshot = await boundedJson(response, Snapshot);
+
+    return (
+      snapshot.id === expectedId &&
+      snapshot.name === reported &&
+      (snapshot.general || snapshot.organizationId === this.scope.accountId)
+    );
   }
   private async sandbox(id: string): Promise<Sandbox | null> {
     const sandbox = await this.sandboxDetail(id);
@@ -695,10 +742,12 @@ export class DaytonaDriver implements ProviderDriver {
     identity: InvocationIdentity;
     image: string;
     imageKind?: "prepared" | "oci";
+    requireSnapshotIdentity?: boolean;
     networkPolicy: string;
     labels?: Record<string, string>;
+    mounts?: import("sandbar-adapter").MountSpec[];
     signal?: AbortSignal;
-  }): Promise<DriverResult> {
+  }): Promise<DaytonaCreateResult> {
     this.sameScope(input.scope);
 
     if ("sandbar.imageSnapshot" in (input.labels ?? {}))
@@ -832,6 +881,11 @@ export class DaytonaDriver implements ProviderDriver {
         target: this.scope.region,
         public: false,
         labels,
+        volumes: input.mounts?.map((mount) => ({
+          volumeId: mount.volume.nativeId,
+          mountPath: mount.path,
+          subpath: mount.subpath,
+        })),
         ttlMinutes: this.config.configuration.ttlMinutes,
       };
 
@@ -839,19 +893,53 @@ export class DaytonaDriver implements ProviderDriver {
 
       if (value.name !== name) return uncertain("Daytona returned a different sandbox name");
 
-      if (value.snapshot && value.snapshot !== snapshotId)
-        return uncertain("Daytona returned a different snapshot");
-      const observation = observed(this.scope, value, this.config.configuration.networkPolicy);
+      if (
+        (input.requireSnapshotIdentity || value.snapshot !== undefined) &&
+        !(await this.matchesSnapshot(value.snapshot, snapshotId))
+      )
+        return uncertain("Daytona sandbox snapshot identity is unconfirmed");
 
-      if (["destroyed", "error", "build_failed"].includes(value.state))
+      let mountDetail: Sandbox | null = null;
+
+      if (input.mounts?.length) {
+        mountDetail = await this.sandbox(value.id);
+
+        if (
+          !mountDetail ||
+          mountDetail.name !== name ||
+          mountDetail.labels?.["sandbar.submission"] !== input.identity.submissionId ||
+          mountDetail.labels?.["sandbar.operation"] !== input.identity.operationId ||
+          input.mounts.some(
+            (mount) =>
+              !mountDetail!.volumes?.some(
+                (attached) =>
+                  attached.volumeId === mount.volume.nativeId &&
+                  attached.mountPath === mount.path &&
+                  attached.subpath === mount.subpath,
+              ),
+          )
+        )
+          return uncertain("Native mount readiness/identity is unconfirmed");
+      }
+
+      const nativeSandbox = mountDetail ?? value;
+
+      const observation = observed(
+        this.scope,
+        nativeSandbox,
+        this.config.configuration.networkPolicy,
+      );
+
+      if (["destroyed", "error", "build_failed"].includes(nativeSandbox.state))
         return uncertain("Daytona sandbox did not reach running state");
 
-      if (["stopped", "paused", "archived"].includes(value.state))
+      if (["stopped", "paused", "archived"].includes(nativeSandbox.state))
         return {
           status: "completed",
           effect: "applied",
           submissionId: input.identity.submissionId,
           value: { kind: "sandbox", observation },
+          nativeSandbox,
         };
 
       if (observation.state !== "running")
@@ -867,16 +955,22 @@ export class DaytonaDriver implements ProviderDriver {
         effect: "applied",
         submissionId: input.identity.submissionId,
         value: { kind: "sandbox", observation },
+        nativeSandbox,
       };
     } catch {
       return uncertain("Daytona create response unavailable; observe without replay");
     }
   }
-  async inspect(value: SandboxRef): Promise<SandboxObservation | null> {
+  async inspect(value: SandboxRef): Promise<(SandboxObservation & { nativeState: string }) | null> {
     this.sameScope(value);
     const sandbox = await this.sandbox(value.nativeId);
 
-    return sandbox ? observed(this.scope, sandbox, this.config.configuration.networkPolicy) : null;
+    return sandbox
+      ? {
+          ...observed(this.scope, sandbox, this.config.configuration.networkPolicy),
+          nativeState: sandbox.state,
+        }
+      : null;
   }
   async inventory(input: { scope: NativeScope; cursor?: string; limit: number }) {
     this.sameScope(input.scope);
@@ -913,7 +1007,8 @@ export class DaytonaDriver implements ProviderDriver {
     scope: NativeScope;
     submissionId: string;
     operationId?: string;
-  }): Promise<DriverResult | null> {
+    expectedSnapshotId?: string;
+  }): Promise<DaytonaCreateResult | null> {
     this.sameScope(input.scope);
     const name = `sandbar-${input.submissionId}`;
 
@@ -981,6 +1076,12 @@ export class DaytonaDriver implements ProviderDriver {
     )
       return null;
 
+    if (
+      input.expectedSnapshotId !== undefined &&
+      !(await this.matchesSnapshot(detail.snapshot, input.expectedSnapshotId))
+    )
+      return unknown(input.submissionId, "Daytona sandbox snapshot identity is unconfirmed");
+
     const observation = observed(this.scope, detail, this.config.configuration.networkPolicy);
 
     if (["destroyed", "error", "build_failed"].includes(detail.state))
@@ -992,6 +1093,7 @@ export class DaytonaDriver implements ProviderDriver {
         effect: "applied",
         submissionId: input.submissionId,
         value: { kind: "sandbox", observation },
+        nativeSandbox: detail,
       };
 
     if (observation.state !== "running")
@@ -1007,6 +1109,7 @@ export class DaytonaDriver implements ProviderDriver {
       effect: "applied",
       submissionId: input.submissionId,
       value: { kind: "sandbox", observation },
+      nativeSandbox: detail,
     };
   }
   async exec(input: {
@@ -1289,7 +1392,24 @@ export class DaytonaDriver implements ProviderDriver {
       };
     }
 
-    const stageDirectory = `${input.path.slice(0, input.path.lastIndexOf("/") + 1)}.sandbar-${Buffer.from(
+    const mounted = volumeContains(native, input.path);
+
+    if (mounted && !input.overwrite)
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code: "unsupported",
+          message: "Daytona mounted volumes cannot enforce atomic no-clobber writes",
+          effect: "none",
+          retry: "never",
+        },
+      };
+
+    // Object-backed mounts cannot chmod a private stage; overwrite commits do not require a same-filesystem link.
+    const stageParent = mounted ? "/tmp/" : input.path.slice(0, input.path.lastIndexOf("/") + 1);
+
+    const stageDirectory = `${stageParent}.sandbar-${Buffer.from(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.identity.submissionId)),
     )
       .toString("hex")
@@ -1317,6 +1437,18 @@ export class DaytonaDriver implements ProviderDriver {
     try {
       const markerPath = await receiptPath("write", input.identity.submissionId);
       const receiptDirectory = markerPath.slice(0, markerPath.lastIndexOf("/"));
+
+      if (volumeContains(native, stageDirectory) || volumeContains(native, receiptDirectory))
+        return {
+          status: "rejected",
+          effect: "none",
+          error: {
+            code: "unsupported",
+            message: "Daytona mounted volume covers private file staging or receipt storage",
+            effect: "none",
+            retry: "never",
+          },
+        };
 
       const reserved = await this.json(
         "POST",
@@ -1380,8 +1512,8 @@ export class DaytonaDriver implements ProviderDriver {
       if (input.signal?.aborted)
         return unknown(input.identity.submissionId, "Daytona file write wait was aborted");
 
-      // The stage and destination share a directory. POSIX link(2) is atomic
-      // create-if-absent; overwrite uses a shell copy and verifies final bytes.
+      // Root no-clobber stages share the destination directory for atomic link(2).
+      // Overwrite copies verified private bytes and checks the completed destination.
       const action = input.overwrite
         ? `cat ${quote(temporaryPath)} > ${quote(input.path)}`
         : `ln -T -- ${quote(temporaryPath)} ${quote(input.path)}`;
@@ -1546,7 +1678,16 @@ export class DaytonaDriver implements ProviderDriver {
     this.sameScope(input.sandbox);
 
     if (input.signal?.aborted)
-      return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code: "unavailable",
+          message: "Daytona deletion cancelled before dispatch",
+          effect: "none",
+          retry: "never",
+        },
+      };
 
     let retainedResources: string[] | undefined;
 
@@ -1570,7 +1711,16 @@ export class DaytonaDriver implements ProviderDriver {
 
     try {
       if (input.signal?.aborted)
-        return unknown(input.identity.submissionId, "Daytona deletion wait was aborted");
+        return {
+          status: "rejected",
+          effect: "none",
+          error: {
+            code: "unavailable",
+            message: "Daytona deletion cancelled before dispatch",
+            effect: "none",
+            retry: "never",
+          },
+        };
 
       const response = await this.request(
         "DELETE",
@@ -1642,13 +1792,13 @@ export class DaytonaDriver implements ProviderDriver {
     sandbox: SandboxRef,
     submissionId: string,
     retainedResources?: string[],
-    deletionAccepted = false,
+    deletionMayHaveDispatched = false,
   ): Promise<DriverResult | null> {
     this.sameScope(sandbox);
     const value = await this.sandboxDetail(sandbox.nativeId);
 
     if (!value) {
-      if (!deletionAccepted || retainedResources === undefined) return null;
+      if (!deletionMayHaveDispatched || retainedResources === undefined) return null;
 
       return {
         status: "completed",

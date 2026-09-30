@@ -10,7 +10,7 @@ import { Sandbar } from "../../../packages/sdk/src/index";
 import { Operation } from "./http-contracts";
 import { openDomainRuntime } from "./runtime";
 
-test("custom adapter catalog, encrypted structured connection, and pending restart observation", async () => {
+async function exerciseAdapterCheckpoint(mode: "pending" | "lost-ack" | "checkpoint-failure") {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-adapter-http-"));
   const keyFile = join(directory, "key");
   const setupTokenFile = join(directory, "setup");
@@ -62,7 +62,23 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
           async submit(input, ctx) {
             expect(input.networkPolicy).toBe("blocked");
             expect(input.image.value).toBe(nativeImage);
+            await ctx.checkpoint({ jobId: "job-1" });
+
+            const checkpoint = await runtime.store.backend.row<{
+              adapter_token_ciphertext: string;
+              lease_owner: string;
+              status: string;
+            }>(
+              sql`SELECT adapter_token_ciphertext,lease_owner,status FROM operations WHERE id=${ctx.operationId}`,
+            );
+
+            expect(checkpoint?.adapter_token_ciphertext).toBeTruthy();
+            expect(checkpoint?.adapter_token_ciphertext).not.toContain("job-1");
+            expect(checkpoint?.lease_owner).toBeTruthy();
+            expect(checkpoint?.status).toBe("running");
             submissions++;
+
+            if (mode === "lost-ack") throw Error("Create acknowledgement lost");
 
             return ctx.pending({ jobId: "job-1" });
           },
@@ -92,7 +108,14 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
   expect(direct.scope.partition.endpoint).toBe("cluster-a");
   await direct.close();
 
-  const config = { databaseUrl, keyFile, setupTokenFile, startRunner: false, adapters: [adapter] };
+  const config = {
+    databaseUrl,
+    keyFile,
+    setupTokenFile,
+    startRunner: false,
+    adapters: [adapter],
+  };
+
   let runtime = await openDomainRuntime(config);
   let bearer = "";
 
@@ -206,7 +229,22 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
       .object({ id: z.string(), sandboxId: z.string().optional() })
       .parse(create.body.operation);
 
+    if (mode === "checkpoint-failure")
+      await runtime.store.backend.run(
+        sql`CREATE TRIGGER fail_adapter_checkpoint BEFORE UPDATE OF adapter_token_ciphertext ON operations WHEN NEW.adapter_token_ciphertext IS NOT NULL BEGIN SELECT RAISE(ABORT, 'injected checkpoint failure'); END`,
+      );
+
     expect(await runtime.runner.tick()).toBe(true);
+
+    if (mode === "checkpoint-failure") {
+      expect(submissions).toBe(0);
+      const failed = await runtime.store.getOperation(projectId, String(operation.id));
+      expect(failed?.status).toBe("unknown");
+      expect(failed?.adapter_token_ciphertext).toBeNull();
+
+      return;
+    }
+
     expect(submissions).toBe(1);
     const pending = await runtime.store.getOperation(projectId, String(operation.id));
     expect(pending?.adapter_token_ciphertext).toBeTruthy();
@@ -267,7 +305,12 @@ test("custom adapter catalog, encrypted structured connection, and pending resta
     await runtime.close();
     await rm(directory, { recursive: true, force: true });
   }
-});
+}
+
+test.each(["pending", "lost-ack", "checkpoint-failure"] as const)(
+  "custom adapter encrypted checkpoints and restart observation: %s",
+  exerciseAdapterCheckpoint,
+);
 
 test("transformed adapter inputs remain raw in encrypted service connections", async () => {
   const directory = await mkdtemp(join(tmpdir(), "sandbar-transform-connection-"));

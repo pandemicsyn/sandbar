@@ -333,7 +333,18 @@ export class DurableRunner {
         submissionId: op.provider_token,
         invocationKey: key,
       },
-      { beforeSubmit: () => store.beginSubmission(claim) },
+      {
+        beforeSubmit: () => store.beginSubmission(claim),
+        onCheckpoint: async (token, version) => {
+          const ciphertext = await secrets.seal(
+            "adapter-recovery-token",
+            op.id,
+            JSON.stringify({ version, token }),
+          );
+
+          await store.checkpointAdapterToken(claim, ciphertext);
+        },
+      },
     );
 
     if (result) await this.handleAdapterResult(claim, lease.scope, result);

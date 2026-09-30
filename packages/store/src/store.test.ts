@@ -175,6 +175,55 @@ if (process.env.SANDBAR_TEST_MYSQL_URL) dialects.push("mysql");
 
 for (const dialect of dialects)
   describe(`${dialect} durable admission`, () => {
+    test("adapter checkpoints retain the lease and reject a stale generation", async () => {
+      const { store, project, connection } = await fixture(dialect);
+
+      try {
+        const accepted = await store.admitCreate({
+          projectId: project.id,
+          endpoint: "POST /sandboxes",
+          key: Bun.randomUUIDv7(),
+          intentHash: "checkpoint",
+          request: { environment: { kind: "prepared", imageId: "fake-starter" } },
+          connectionId: connection.id,
+        });
+
+        const claim = (await store.claimDue("first", 1000, project.id))!;
+        await expect(store.checkpointAdapterToken(claim, "before-marker")).rejects.toMatchObject({
+          code: "CONFLICT",
+        });
+        expect(await store.beginSubmission(claim)).toBe(true);
+        // Expired but not yet reclaimed: the fenced checkpoint must renew atomically.
+        await store.backend.run(
+          sql`UPDATE operations SET lease_expires_at=0 WHERE id=${accepted.operation.id}`,
+        );
+        const checkpointTime = Date.now();
+        await store.checkpointAdapterToken(claim, "first-encrypted-token");
+        const saved = await store.getOperation(project.id, accepted.operation.id);
+        expect(saved?.adapter_token_ciphertext).toBe("first-encrypted-token");
+        expect(Number(saved?.lease_expires_at)).toBeGreaterThanOrEqual(checkpointTime + 1000);
+        expect(saved?.lease_owner).toBe("first");
+        expect(Number(saved?.lease_generation)).toBe(claim.generation);
+        expect(saved?.status).toBe("running");
+        expect(saved?.next_attempt_at).toBeNull();
+        expect(await store.claimDue("second", 1000, project.id)).toBeUndefined();
+        await store.backend.run(
+          sql`UPDATE operations SET lease_expires_at=0 WHERE id=${accepted.operation.id}`,
+        );
+        const replacement = (await store.claimDue("second", 1000, project.id))!;
+        expect(replacement.observeOnly).toBe(true);
+        expect(replacement.operation.adapter_token_ciphertext).toBe("first-encrypted-token");
+        await expect(store.checkpointAdapterToken(claim, "stale-token")).rejects.toMatchObject({
+          code: "CONFLICT",
+        });
+        expect(
+          (await store.getOperation(project.id, accepted.operation.id))?.adapter_token_ciphertext,
+        ).toBe("first-encrypted-token");
+      } finally {
+        await store.close();
+      }
+    });
+
     test("unresolved admission quota counts queued and pending work while allowing lookup and cleanup", async () => {
       const { store, project, connection } = await fixture(dialect);
       const endpoint = "POST /sandboxes";

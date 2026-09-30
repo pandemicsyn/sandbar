@@ -13,7 +13,7 @@ import {
   runPrepared,
   type CleanupAccess,
 } from "./lifecycle";
-import { parseReport, renderLiveMatrix } from "./report";
+import { parseReport, renderLiveMatrix, unselectedRecord } from "./report";
 
 const directories: string[] = [];
 
@@ -640,4 +640,139 @@ test("directory admission blocks unrelated runs and unresolved resources before 
     await previous.update((value) => ({ ...value, cleanup: "confirmed" }));
     await next.requirePreviousCleanup();
   });
+});
+
+test("unselected scenarios do not inherit snapshot or volume configuration", () => {
+  const sample = parseReport({
+    schemaVersion: 1,
+    records: [
+      {
+        schemaVersion: 1,
+        provider: "daytona",
+        scenario: "snapshot-roundtrip",
+        mode: "fixture",
+        status: "failed",
+        sdkCommit: "a".repeat(40),
+        sdkVersion: "0.0.0",
+        runtime: "Bun 1.3.14",
+        platform: "macos-arm64",
+        timestamp: "2026-09-28T00:00:00Z",
+        configuration: {
+          imageClass: "prepared",
+          network: "daytona-default",
+          regionClass: "us",
+          stateProbe: "snapshot-roundtrip-v3",
+          preserve: "filesystem",
+          restoreExecution: "fresh",
+          sourceAfter: "running",
+          volumeOwnership: "created",
+        },
+      },
+    ],
+  }).records[0]!;
+
+  for (const scenario of ["volume-persistence", "inspect"] as const) {
+    const record = unselectedRecord(sample, scenario);
+    expect(JSON.parse(JSON.stringify(record.configuration))).toEqual({
+      imageClass: "prepared",
+      network: "daytona-default",
+      regionClass: "us",
+    });
+    expect(record.status).toBe("not-run");
+    expect(record.scenario).toBe(scenario);
+    expect(record.stateEvidence).toBeUndefined();
+    expect(record.diagnostic).toBeUndefined();
+    expect(parseReport({ schemaVersion: 1, records: [record] }).records).toHaveLength(1);
+  }
+
+  expect(sample.configuration.stateProbe).toBe("snapshot-roundtrip-v3");
+});
+
+test("state reconciliation checkpoints update original custody without exhausting the mutation bound", async () => {
+  const store = await ledger();
+  await store.update((value) => ({
+    ...value,
+    stateMutations: [{ role: "snapshot/capture", reference, creation: true, cleanup: "pending" }],
+  }));
+
+  for (let stage = 0; stage < 70; stage++)
+    await store.saveStateReference({ ...reference, tokenVersion: 1, token: { stage } });
+  const state = await store.read();
+
+  expect(state.stateMutations).toHaveLength(1);
+  expect(state.stateMutations?.[0]).toMatchObject({
+    role: "snapshot/capture",
+    creation: true,
+    cleanup: "pending",
+    reference: { token: { stage: 69 } },
+  });
+});
+
+test("full legacy checkpoint ledger normalizes custody before recording new cleanup", async () => {
+  const store = await ledger();
+  await store.update((value) => ({
+    ...value,
+    stateMutations: Array.from({ length: 64 }, (_, stage) => ({
+      role: stage === 0 ? "snapshot/capture" : "reconcile/delete",
+      reference: { ...reference, token: { stage } },
+      creation: stage === 0,
+      cleanup: stage === 0 ? "pending" : "not-required",
+      sandboxId: "original",
+    })),
+  }));
+  await store.saveStateReference({ ...reference, token: { stage: 64 } });
+  await store.saveStateReference({
+    ...reference,
+    kind: "destroy",
+    operationId: "delete-op",
+    submissionId: "delete-sub",
+    invocationKey: "delete-inv",
+    sandboxId: "original",
+  });
+  const state = await store.read();
+
+  expect(state.stateMutations).toHaveLength(2);
+  expect(state.stateMutations?.[0]).toMatchObject({
+    role: "snapshot/capture",
+    creation: true,
+    cleanup: "pending",
+    sandboxId: "original",
+    reference: { token: { stage: 64 } },
+  });
+  expect(state.stateMutations?.[1]).toMatchObject({
+    creation: false,
+    reference: { kind: "destroy" },
+  });
+  await expect(store.saveStateReference({ ...reference, provider: "e2b" })).rejects.toThrow(
+    "identity conflicts",
+  );
+  await expect(
+    store.saveStateReference({
+      ...reference,
+      scope: { authority: { kind: "app", id: "foreign" }, partition: {} },
+    }),
+  ).rejects.toThrow("identity conflicts");
+  expect((await store.read()).stateMutations).toHaveLength(2);
+});
+
+test("baseline observation checkpoints do not grow the bounded operation inventory", async () => {
+  const store = await ledger();
+  const exec = { ...reference, kind: "exec" as const, sandboxId: "original" };
+  await store.update((value) => ({
+    ...value,
+    operationReferences: Array.from({ length: 32 }, () => exec),
+  }));
+
+  for (let stage = 0; stage < 70; stage++)
+    await recordReference(store, { ...exec, token: { stage } });
+  await recordReference(store, {
+    ...exec,
+    operationId: "second-op",
+    submissionId: "second-sub",
+    invocationKey: "second-inv",
+  });
+  const state = await store.read();
+
+  expect(state.operationReferences).toHaveLength(2);
+  expect(state.operationReferences?.[0]).toMatchObject({ token: { stage: 69 } });
 });

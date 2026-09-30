@@ -1,4 +1,22 @@
-import { checkCreate, SnapshotRequest } from "./state";
+import {
+  checkCreate,
+  stateCapabilities,
+  resolveSnapshot,
+  SnapshotRequest,
+  ResourceReference,
+  assertResourceScope,
+} from "./state";
+import {
+  MountSpec,
+  DestroyInput,
+  MountDurability,
+  SnapshotCaptureInput,
+  SnapshotCaptureValue,
+  SnapshotRestoreInput,
+  ArtifactDeletionResult,
+  VolumeCreateInput,
+  VolumeInfo,
+} from "./resources";
 import { z } from "zod";
 import { CreateSandboxInput, ExecRequest, FilePath } from "./portable";
 import {
@@ -27,9 +45,23 @@ import {
 
 export type RuntimeSession = Omit<
   AdapterSession,
-  "create" | "destroy" | "exec" | "files" | "imageBuild"
+  | "create"
+  | "destroy"
+  | "exec"
+  | "files"
+  | "imageBuild"
+  | "snapshotCapture"
+  | "snapshotRestore"
+  | "snapshotDelete"
+  | "volumeCreate"
+  | "volumeDelete"
 > & {
   create: unknown;
+  snapshotCapture?: unknown;
+  snapshotRestore?: unknown;
+  snapshotDelete?: unknown;
+  volumeCreate?: unknown;
+  volumeDelete?: unknown;
   imageBuild?: unknown;
   destroy: unknown;
   exec?: unknown;
@@ -40,16 +72,41 @@ export type RuntimeSession = Omit<
   };
 };
 
-export type OperationKind = "create" | "destroy" | "exec" | "file_write" | "image_build";
+export type OperationKind =
+  | "create"
+  | "destroy"
+  | "exec"
+  | "file_write"
+  | "image_build"
+  | "snapshot_capture"
+  | "snapshot_restore"
+  | "snapshot_delete"
+  | "volume_create"
+  | "volume_delete";
+
+export type OperationInput =
+  | import("./resources").DestroyInput
+  | CreateInput
+  | ImageBuildInput
+  | ExecInput
+  | FileWriteInput
+  | Sandbox
+  | import("./resources").SnapshotCaptureInput
+  | import("./resources").SnapshotRestoreInput
+  | import("./resources").VolumeCreateInput
+  | import("./state").ResourceReference;
 
 export type SpecialOutcome = Pending | Unknown | Rejected;
 
 export type OperationResult =
-  | { id: string; state: "running" | "unknown" }
+  | import("./index").CreateValue
   | DestroyValue
   | ExecValue
   | ImageBuildValue
-  | { bytesWritten: number };
+  | { bytesWritten: number }
+  | import("./resources").SnapshotCaptureValue
+  | import("./resources").VolumeInfo
+  | import("./resources").ArtifactDeletionResult;
 
 export type PreparedOperation = {
   readonly kind: OperationKind;
@@ -80,6 +137,7 @@ const CreateInputSchema = z.strictObject({
   region: z.string().min(1).max(128).optional(),
   labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
   requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
+  mounts: z.array(MountSpec).max(32).optional(),
 });
 
 const ImageBuildInputSchema = z.strictObject({
@@ -108,7 +166,11 @@ const FileWriteInputSchema = z.strictObject({
   overwrite: z.boolean(),
 });
 
-const CreateValueSchema = z.strictObject({ id: Id, state: z.enum(["running", "unknown"]) });
+const CreateValueSchema = z.strictObject({
+  id: Id,
+  state: z.enum(["running", "unknown"]),
+  mounts: z.array(MountSpec).max(32).optional(),
+});
 
 const ImageBuildValueSchema = z.strictObject({
   preparedId: Id,
@@ -127,6 +189,7 @@ const ImageBuildValueSchema = z.strictObject({
 const DestroyValueSchema = z.strictObject({
   computeStopped: z.boolean(),
   retainedResources: z.array(z.string().min(1).max(512)).max(128),
+  mountDurability: z.array(MountDurability).max(32).optional(),
 });
 
 const WriteValueSchema = z.strictObject({
@@ -267,7 +330,14 @@ async function validateValue(
 ): Promise<OperationResult> {
   if (signal.aborted) throw abortReason(signal);
 
-  if (kind === "create") return CreateValueSchema.parse(value);
+  if (kind === "create" || kind === "snapshot_restore") return CreateValueSchema.parse(value);
+
+  if (kind === "snapshot_capture") return SnapshotCaptureValue.parse(value);
+
+  if (kind === "volume_create") return VolumeInfo.parse(value);
+
+  if (kind === "snapshot_delete" || kind === "volume_delete")
+    return ArtifactDeletionResult.parse(value);
 
   if (kind === "image_build") return ImageBuildValueSchema.parse(value);
 
@@ -361,6 +431,21 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
   let op: unknown;
 
   switch (kind) {
+    case "snapshot_capture":
+      op = session.snapshotCapture;
+      break;
+    case "snapshot_restore":
+      op = session.snapshotRestore;
+      break;
+    case "snapshot_delete":
+      op = session.snapshotDelete;
+      break;
+    case "volume_create":
+      op = session.volumeCreate;
+      break;
+    case "volume_delete":
+      op = session.volumeDelete;
+      break;
     case "create":
       op = session.create;
       break;
@@ -387,8 +472,34 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
 function checkCapability(
   session: RuntimeSession,
   kind: OperationKind,
-  input: CreateInput | ImageBuildInput | ExecInput | FileWriteInput | Sandbox,
-): CreateInput | ImageBuildInput | ExecInput | FileWriteInput | Sandbox {
+  input: OperationInput,
+): OperationInput {
+  if (kind === "snapshot_capture") return SnapshotCaptureInput.parse(input);
+
+  if (kind === "snapshot_restore") {
+    const value = SnapshotRestoreInput.parse(input);
+    assertResourceScope(value.snapshot, {
+      provider: value.snapshot.provider,
+      scope: session.scope,
+    });
+
+    return value;
+  }
+
+  if (kind === "snapshot_delete" || kind === "volume_delete") {
+    const ref = ResourceReference.parse(input);
+
+    if (ref.kind !== (kind === "snapshot_delete" ? "snapshot" : "volume"))
+      throw new AdapterError("INVALID_ARGUMENT", "Wrong resource kind");
+    assertResourceScope(ref, { provider: ref.provider, scope: session.scope });
+
+    return ref;
+  }
+
+  if (kind === "volume_create") return VolumeCreateInput.parse(input);
+
+  if (kind === "destroy") return DestroyInput.parse(input);
+
   if (kind === "image_build") return ImageBuildInputSchema.parse(input);
 
   if (kind === "create") {
@@ -456,11 +567,11 @@ function checkCapability(
 export async function prepareOperation(
   session: RuntimeSession,
   kind: OperationKind,
-  input: CreateInput | ImageBuildInput | ExecInput | FileWriteInput | Sandbox,
+  input: OperationInput,
   signal: AbortSignal,
 ): Promise<PreparedOperation> {
   const operation = select(session, kind);
-  let checkedInput: CreateInput | ImageBuildInput | ExecInput | FileWriteInput | Sandbox;
+  let checkedInput: OperationInput;
 
   try {
     checkedInput = checkCapability(session, kind, input);
@@ -483,6 +594,56 @@ export async function prepareOperation(
       );
   }
 
+  const captureInput =
+    kind === "snapshot_capture" ? SnapshotCaptureInput.parse(checkedInput) : undefined;
+
+  const validateCapture = async (signal: AbortSignal): Promise<RuntimeResult | null> => {
+    if (!captureInput) return null;
+    const context = { signal, deadline: Date.now() + 30000 };
+    const caps = await stateCapabilities(session, { sandbox: captureInput.sandbox }, context);
+
+    const source = session.inspect
+      ? await prepareBeforeDeadline(
+          async (_input, ctx) => session.inspect!(captureInput.sandbox, ctx),
+          captureInput,
+          signal,
+        )
+      : { state: "unknown" as const };
+
+    const plan = resolveSnapshot(
+      caps.snapshots.capture,
+      captureInput.request,
+      source?.state ?? "unknown",
+    );
+
+    if (
+      plan.status === "supported" &&
+      captureInput.expectation &&
+      (plan.value.sourceState !== captureInput.expectation.sourceState ||
+        JSON.stringify(plan.value.profile) !== JSON.stringify(captureInput.expectation.profile))
+    )
+      return {
+        kind: "rejected",
+        code: "UNAVAILABLE",
+        message: "Snapshot capture plan changed before submission",
+      };
+
+    return plan.status === "supported"
+      ? null
+      : {
+          kind: "rejected",
+          code: plan.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
+          message: plan.reason,
+        };
+  };
+
+  const captureCheck = await validateCapture(signal);
+
+  if (captureCheck?.kind === "rejected")
+    throw new AdapterError(
+      captureCheck.code === "UNSUPPORTED" ? "UNSUPPORTED" : "UNAVAILABLE",
+      captureCheck.message,
+    );
   const parts = operationParts(operation);
 
   if (parts.recovery) checkedRecoveryVersion(parts.recovery.version);
@@ -492,7 +653,9 @@ export async function prepareOperation(
     : structuredClone(checkedInput);
 
   const createInput =
-    kind === "create" && CreateInputSchema.parse(checkedInput).requirements
+    kind === "create" &&
+    (CreateInputSchema.parse(checkedInput).requirements ||
+      CreateInputSchema.parse(checkedInput).mounts?.length)
       ? structuredClone(CreateInputSchema.parse(checkedInput))
       : undefined;
 
@@ -515,7 +678,9 @@ export async function prepareOperation(
                 message: result.reason,
               };
         }
-      : undefined,
+      : captureInput
+        ? validateCapture
+        : undefined,
   };
 }
 
@@ -611,13 +776,23 @@ export async function submitOperation(
   identity: Pick<AttemptContext, "operationId" | "submissionId" | "invocationKey">,
   signal: AbortSignal,
   maxOutputBytes = MAX_OUTPUT,
+  onCheckpoint?: (token: Json, version: number) => Promise<void>,
 ): Promise<RuntimeResult> {
   const rejected = await prepared.revalidate?.(signal);
 
   if (rejected) return rejected;
   const parts = operationParts(prepared.operation);
 
-  const context = createAttemptContext({ ...identity, signal }, parts.recovery?.token);
+  const context = createAttemptContext(
+    {
+      ...identity,
+      signal,
+      onCheckpoint: onCheckpoint
+        ? (token) => onCheckpoint(token, checkedRecoveryVersion(parts.recovery!.version))
+        : undefined,
+    },
+    parts.recovery?.token,
+  );
 
   const value = await parts.submit(prepared.input, context);
 
@@ -637,6 +812,8 @@ export async function observeOperation(
     submissionId: string;
     sandbox?: Sandbox;
     resource?: import("./state").ResourceReference;
+    mounts?: import("./state").MountSpec[];
+    capture?: import("./state").SnapshotCaptureInput["expectation"];
     token?: Json;
     version?: number;
   },
@@ -677,4 +854,35 @@ export async function observeOperation(
   }
 
   return { kind: "completed", value: await validateValue(kind, value, maxOutputBytes, signal) };
+}
+
+/** Explicit mutation continuation. Read-only observation never calls this function. */
+export async function continueOperation(
+  session: RuntimeSession,
+  kind: OperationKind,
+  attempt: Parameters<typeof observeOperation>[2],
+  identity: Pick<AttemptContext, "operationId" | "submissionId" | "invocationKey">,
+  signal: AbortSignal,
+  onCheckpoint: (token: Json, version: number) => Promise<void>,
+): Promise<RuntimeResult> {
+  const operation = select(session, kind);
+  const parts = operationParts(operation);
+
+  if (!parts.continue || !parts.recovery)
+    throw new AdapterError("UNSUPPORTED", "Operation continuation is unsupported");
+
+  if (attempt.version !== parts.recovery.version)
+    throw new AdapterError("CONFLICT", "Continuation token version differs");
+
+  const context = createAttemptContext(
+    { ...identity, signal, onCheckpoint: (token) => onCheckpoint(token, parts.recovery!.version) },
+    parts.recovery.token,
+  );
+
+  const token = context.pending(attempt.token!).token;
+  const value = await parts.continue({ ...attempt, token, sandbox: attempt.sandbox }, context);
+
+  if (isOutcome(value)) return normalizeSpecial(value, operation);
+
+  return { kind: "completed", value: await validateValue(kind, value, MAX_OUTPUT, signal) };
 }

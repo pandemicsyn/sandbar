@@ -122,6 +122,7 @@ export interface Claimed {
   attemptId: string;
   generation: number;
   observeOnly: boolean;
+  leaseMs: number;
 }
 
 function id(prefix: string): string {
@@ -939,6 +940,7 @@ export class ControlStore {
         attemptId,
         generation,
         observeOnly,
+        leaseMs,
       };
     });
   }
@@ -999,6 +1001,26 @@ export class ControlStore {
       );
 
       return true;
+    });
+  }
+  async checkpointAdapterToken(claim: Claimed, ciphertext: string): Promise<void> {
+    await this.backend.transaction(async (tx) => {
+      const op = await this.lockOperation(tx, claim.operation.id);
+
+      if (
+        !op ||
+        op.lease_owner !== claim.operation.lease_owner ||
+        Number(op.lease_generation) !== claim.generation ||
+        !Number(op.submission_possible) ||
+        op.status !== "running"
+      )
+        throw new StoreError("CONFLICT", "Operation checkpoint lease is unavailable");
+
+      const time = now();
+
+      await tx.run(
+        sql`UPDATE operations SET adapter_token_ciphertext=${ciphertext},lease_expires_at=${time + claim.leaseMs},updated_at=${time} WHERE id=${op.id}`,
+      );
     });
   }
   async completeDestroyWithoutNative(claim: Claimed): Promise<boolean> {

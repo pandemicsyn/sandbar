@@ -1,7 +1,10 @@
 import { certifyRecoveryReference } from "./recovery-diagnostics";
 import {
   SnapshotRequest,
+  MountSpec,
   type Capabilities,
+  type DirectCapabilities,
+  type DestroyValue,
   type Support,
   type SnapshotPlan,
   type CreatePlan,
@@ -65,6 +68,7 @@ export const Image = {
 export type CreateInput = {
   environment: ImageInput;
   requirements?: { snapshot: SnapshotRequest };
+  mounts?: MountSpec[];
   networkPolicy?: string;
   region?: string;
   labels?: Record<string, string>;
@@ -100,15 +104,15 @@ export type RecoveryReference = {
 
 export interface OperationHandle<T> {
   readonly durability: "process" | "service";
-  readonly reference: RecoveryReference;
+  readonly reference: RecoveryReference | AdapterRecoveryReference;
   observe(): Promise<T | null>;
   wait(options?: { signal?: AbortSignal; pollMs?: number }): Promise<T>;
 }
 
 export interface SandboxHandle {
   readonly id: string;
-  capabilities(): Promise<Capabilities>;
-  checkSnapshot(request: SnapshotRequest): Promise<Support<SnapshotPlan>>;
+  capabilities(): Promise<Capabilities | DirectCapabilities>;
+  checkSnapshot(request?: SnapshotRequest): Promise<Support<SnapshotPlan>>;
   inspect(): Promise<{ state: string; observedAt?: string }>;
   exec(
     input: ExecInput | readonly string[],
@@ -124,11 +128,14 @@ export interface SandboxHandle {
     bytes: Uint8Array,
     options?: { overwrite?: boolean; signal?: AbortSignal },
   ): Promise<void>;
-  destroy(options?: { signal?: AbortSignal }): Promise<void>;
+  destroy(options?: {
+    signal?: AbortSignal;
+    storage?: "require-durable" | "allow-unconfirmed";
+  }): Promise<void | DestroyValue>;
 }
 
 export interface SandbarClient {
-  capabilities(): Promise<Capabilities>;
+  capabilities(): Promise<Capabilities | DirectCapabilities>;
   readonly images: {
     build(
       input: { source: { kind: "oci"; value: string } },
@@ -147,7 +154,9 @@ export interface SandbarClient {
       options?: { signal?: AbortSignal },
     ): Promise<OperationHandle<SandboxHandle>>;
   };
-  recover(reference: RecoveryReference): Promise<OperationHandle<unknown>>;
+  recover(
+    reference: RecoveryReference | AdapterRecoveryReference,
+  ): Promise<OperationHandle<unknown>>;
   close(): Promise<void>;
 }
 
@@ -291,6 +300,7 @@ export function validateCreate(input: CreateInput): CreateInput {
         z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
       ]),
       requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
+      mounts: z.array(MountSpec).max(32).optional(),
       networkPolicy: z.string().min(1).max(128).optional(),
       region: z.string().min(1).max(128).optional(),
       labels: z.record(z.string(), z.string()).optional(),

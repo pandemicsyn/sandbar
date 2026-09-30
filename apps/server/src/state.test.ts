@@ -3,7 +3,7 @@ import { mkdtemp, chmod, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { AdapterError, defineAdapter, type SnapshotProfile } from "sandbar-adapter";
+import { AdapterError, defineAdapter, Capabilities, type SnapshotProfile } from "sandbar-adapter";
 import { Sandbar as Direct, Image } from "sandbar-sdk";
 import { Sandbar } from "../../../packages/service/src/client";
 import { openDomainRuntime } from "./runtime";
@@ -16,11 +16,12 @@ const profile: SnapshotProfile = {
   sourceAfter: "unchanged",
   connections: "dropped",
   consistency: "crash-consistent",
+  restoreExecution: "resume",
   mountHandling: "none",
   minimumRetentionSeconds: 900,
 };
 
-test("service and direct read checks agree, admission and runtime reject before effects, recovery never replays", async () => {
+test("service create checks agree with direct checks, unavailable capture is gated, and recovery never replays", async () => {
   let creates = 0;
   let destroys = 0;
   let captures = 0;
@@ -78,7 +79,7 @@ test("service and direct read checks agree, admission and runtime reject before 
           }
 
           return status === "supported"
-            ? { status, value: { profiles: [profile] } }
+            ? { status, value: { profiles: [profile], defaultProfileId: profile.id } }
             : { status, reason };
         },
         async snapshotCapture() {
@@ -164,7 +165,7 @@ test("service and direct read checks agree, admission and runtime reject before 
 
     const input = {
       environment: Image.prepared("base"),
-      requirements: { snapshot: { preserve: "filesystem+memory" as const } },
+      requirements: { snapshot: { requirements: { preserve: "filesystem+memory" as const } } },
     };
 
     const ociInput = { ...input, environment: Image.oci("registry.test/base:stable") };
@@ -178,7 +179,17 @@ test("service and direct read checks agree, admission and runtime reject before 
 
     const remoteCaps = await client.capabilities();
     const directCaps = await direct.capabilities();
-    expect({ ...remoteCaps, observedAt: "dated" }).toEqual({ ...directCaps, observedAt: "dated" });
+    expect(directCaps.snapshots.capture.status).toBe("supported");
+    expect(remoteCaps.snapshots.capture.status).toBe("unsupported");
+    const { mounts: _mounts, ...legacyDirectCaps } = directCaps;
+    expect({ ...remoteCaps, observedAt: "dated" }).toEqual({
+      ...Capabilities.parse(legacyDirectCaps),
+      snapshots: {
+        ...remoteCaps.snapshots,
+        capture: { status: "unsupported", reason: "Operation is not implemented" },
+      },
+      observedAt: "dated",
+    });
     expect(await client.sandboxes.checkCreate(input)).toEqual(
       await direct.sandboxes.checkCreate(input),
     );
@@ -186,12 +197,15 @@ test("service and direct read checks agree, admission and runtime reject before 
       (
         await client.sandboxes.checkCreate({
           ...input,
-          requirements: { snapshot: { preserve: "filesystem" } },
+          requirements: { snapshot: { requirements: { preserve: "filesystem" } } },
         })
       ).status,
     ).toBe("unsupported");
     await expect(
-      client.sandboxes.create({ ...input, requirements: { snapshot: { preserve: "filesystem" } } }),
+      client.sandboxes.create({
+        ...input,
+        requirements: { snapshot: { requirements: { preserve: "filesystem" } } },
+      }),
     ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
 
     for (const value of ["unknown", "unavailable"] as const) {
@@ -299,17 +313,19 @@ test("service and direct read checks agree, admission and runtime reject before 
     const parsedBox = z
       .custom<{
         id: string;
-        checkSnapshot: (request: { preserve: "filesystem+memory" }) => Promise<object>;
+        checkSnapshot: (request: {
+          requirements: { preserve: "filesystem+memory" };
+        }) => Promise<object>;
       }>()
       .parse(box);
 
-    expect(await parsedBox.checkSnapshot({ preserve: "filesystem+memory" })).toMatchObject({
-      status: "supported",
-    });
+    expect(
+      await parsedBox.checkSnapshot({ requirements: { preserve: "filesystem+memory" } }),
+    ).toMatchObject({ status: "unsupported", reason: "Operation is not implemented" });
     const directBox = new (await import("sandbar-sdk")).AdapterSandbox(direct, "box1");
-    expect(await parsedBox.checkSnapshot({ preserve: "filesystem+memory" })).toEqual(
-      await directBox.checkSnapshot({ preserve: "filesystem+memory" }),
-    );
+    expect(
+      await directBox.checkSnapshot({ requirements: { preserve: "filesystem+memory" } }),
+    ).toMatchObject({ status: "supported" });
     expect(creates).toBe(1);
     expect(captures).toBe(0);
     expect(destroys).toBe(0);

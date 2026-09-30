@@ -1,7 +1,20 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { AdapterError, defineAdapter, type SnapshotProfile } from "sandbar-adapter";
-import { Sandbar, Image, UnsupportedFeatureError } from "./index";
+import {
+  AdapterError,
+  defineAdapter,
+  ResourceReference,
+  type SnapshotProfile,
+} from "sandbar-adapter";
+import {
+  Sandbar,
+  SandbarError,
+  AdapterSnapshot,
+  AdapterVolume,
+  Image,
+  UnsupportedFeatureError,
+  OutcomeUnknownError,
+} from "./index";
 
 const profile: SnapshotProfile = {
   id: "memory",
@@ -12,6 +25,7 @@ const profile: SnapshotProfile = {
   consistency: "crash-consistent",
   connections: "dropped",
   mountHandling: "none",
+  restoreExecution: "resume",
 };
 
 test("direct checks are read-only, required guarantees gate create, and minimal adapters still work", async () => {
@@ -43,7 +57,7 @@ test("direct checks are read-only, required guarantees gate create, and minimal 
         },
         async snapshotProfiles() {
           return status === "supported"
-            ? { status, value: { profiles: [profile] } }
+            ? { status, value: { profiles: [profile], defaultProfileId: profile.id } }
             : { status, reason: "fixture evidence" };
         },
         async snapshotCapture() {
@@ -58,7 +72,7 @@ test("direct checks are read-only, required guarantees gate create, and minimal 
 
   const input = {
     environment: Image.prepared("base"),
-    requirements: { snapshot: { preserve: "filesystem" as const } },
+    requirements: { snapshot: { requirements: { preserve: "filesystem" as const } } },
   };
 
   expect((await client.sandboxes.checkCreate(input)).status).toBe("unsupported");
@@ -69,7 +83,9 @@ test("direct checks are read-only, required guarantees gate create, and minimal 
   });
   expect(creates).toBe(0);
   const box = await client.sandboxes.create({ environment: input.environment });
-  expect((await box.checkSnapshot({ preserve: "filesystem+memory" })).status).toBe("supported");
+  expect(
+    (await box.checkSnapshot({ requirements: { preserve: "filesystem+memory" } })).status,
+  ).toBe("supported");
   expect((await client.capabilities()).snapshots.capture.status).toBe("supported");
   const caps = await box.capabilities();
   caps.network.push("all");
@@ -80,7 +96,7 @@ test("direct checks are read-only, required guarantees gate create, and minimal 
 
     const required = {
       environment: input.environment,
-      requirements: { snapshot: { preserve: "filesystem+memory" as const } },
+      requirements: { snapshot: { requirements: { preserve: "filesystem+memory" as const } } },
     };
 
     expect((await client.sandboxes.checkCreate(required)).status).toBe(value);
@@ -116,7 +132,10 @@ for (const status of ["unsupported", "unknown", "unavailable"] as const) {
             reads++;
 
             return reads === 1
-              ? { status: "supported" as const, value: { profiles: [profile] } }
+              ? {
+                  status: "supported" as const,
+                  value: { profiles: [profile], defaultProfileId: profile.id },
+                }
               : { status, reason: "evidence changed" };
           },
           async snapshotCapture() {
@@ -149,7 +168,7 @@ for (const status of ["unsupported", "unknown", "unavailable"] as const) {
       try {
         await client.sandboxes.create({
           environment: Image.prepared("base"),
-          requirements: { snapshot: { preserve: "filesystem+memory" } },
+          requirements: { snapshot: { requirements: { preserve: "filesystem+memory" } } },
         });
       } catch (error) {
         if (!(error instanceof Error)) throw error;
@@ -191,7 +210,10 @@ for (const mode of ["direct", "advanced"] as const) {
 
             if (marked) throw new Error("Capability read after marker");
 
-            return { status: "supported" as const, value: { profiles: [profile] } };
+            return {
+              status: "supported" as const,
+              value: { profiles: [profile], defaultProfileId: profile.id },
+            };
           },
           async snapshotCapture() {
             throw new Error("Must not capture");
@@ -230,7 +252,7 @@ for (const mode of ["direct", "advanced"] as const) {
       if (mode === "direct") {
         const operation = await client.sandboxes.submitCreate({
           environment: Image.prepared("base"),
-          requirements: { snapshot: { preserve: "filesystem+memory" } },
+          requirements: { snapshot: { requirements: { preserve: "filesystem+memory" } } },
         });
 
         expect(creates).toBe(1);
@@ -242,7 +264,7 @@ for (const mode of ["direct", "advanced"] as const) {
         const prepared = await client.operations.prepare("create", {
           image: { kind: "prepared", value: "base" },
           networkPolicy: "blocked",
-          requirements: { snapshot: { preserve: "filesystem+memory" } },
+          requirements: { snapshot: { requirements: { preserve: "filesystem+memory" } } },
         });
 
         const result = await prepared.submit(
@@ -316,7 +338,7 @@ test("create preflight observes caller abort and skips reads for pre-aborted cal
 
   const input = {
     environment: Image.prepared("base"),
-    requirements: { snapshot: { preserve: "filesystem+memory" as const } },
+    requirements: { snapshot: { requirements: { preserve: "filesystem+memory" as const } } },
   };
 
   try {
@@ -366,7 +388,10 @@ for (const mode of ["direct", "advanced"] as const) {
                 return new Promise<never>(() => {});
               }
 
-              return { status: "supported" as const, value: { profiles: [profile] } };
+              return {
+                status: "supported" as const,
+                value: { profiles: [profile], defaultProfileId: profile.id },
+              };
             },
             async snapshotCapture() {
               throw new Error("Must not capture");
@@ -400,7 +425,7 @@ for (const mode of ["direct", "advanced"] as const) {
             ? client.sandboxes.submitCreate(
                 {
                   environment: Image.prepared("base"),
-                  requirements: { snapshot: { preserve: "filesystem+memory" } },
+                  requirements: { snapshot: { requirements: { preserve: "filesystem+memory" } } },
                 },
                 { signal: controller.signal },
               )
@@ -408,7 +433,7 @@ for (const mode of ["direct", "advanced"] as const) {
                 await client.operations.prepare("create", {
                   image: { kind: "prepared", value: "base" },
                   networkPolicy: "blocked",
-                  requirements: { snapshot: { preserve: "filesystem+memory" } },
+                  requirements: { snapshot: { requirements: { preserve: "filesystem+memory" } } },
                 })
               ).submit(
                 { operationId: "op", submissionId: "submission", invocationKey: "invocation" },
@@ -438,4 +463,662 @@ for (const mode of ["direct", "advanced"] as const) {
       }
     });
   }
+}
+
+for (const contradiction of [
+  "preserve",
+  "source",
+  "state",
+  "mounts",
+  "connections",
+  "retained-scope",
+  "consistency",
+  "restore-execution",
+  "none",
+] as const) {
+  test(`capture recovery preserves accepted expectations: ${contradiction}`, async () => {
+    const scope = { authority: { kind: "account", id: "one" }, partition: {} };
+
+    const reference = {
+      version: 1 as const,
+      kind: "snapshot" as const,
+      provider: "fixture.capture",
+      scope,
+      nativeId: "artifact",
+      ownership: "unknown" as const,
+    };
+
+    const adapter = defineAdapter({
+      name: "fixture.capture",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        const capture = () => ({
+          capture: {
+            preserve: "filesystem+memory" as const,
+            interruption: "pause" as const,
+            restoreExecution: "resume" as const,
+          },
+          snapshot: {
+            reference,
+            preserve:
+              contradiction === "preserve"
+                ? ("filesystem" as const)
+                : ("filesystem+memory" as const),
+            source: { id: contradiction === "source" ? "other" : "box", class: "fixture" },
+            state: "ready" as const,
+            createdAt: null,
+            expiration: "unknown" as const,
+            excludedPaths: null,
+            mounts: [],
+            mountHandling: contradiction === "mounts" ? ("excluded" as const) : ("none" as const),
+            restore: {
+              networkPolicies: ["blocked"],
+              resources: false,
+              mounts: false,
+              independentLifecycle: true,
+            },
+            dependencies: [],
+            restoreExecution:
+              contradiction === "restore-execution" ? ("fresh" as const) : ("resume" as const),
+            consistency:
+              contradiction === "consistency" ? ("unknown" as const) : profile.consistency,
+            nativeDependencies: [],
+          },
+          source: {
+            state: contradiction === "state" ? ("stopped" as const) : ("running" as const),
+            connections:
+              contradiction === "connections" ? ("preserved" as const) : ("dropped" as const),
+          },
+          retainedResources: [
+            contradiction === "retained-scope" ? { ...reference, provider: "other" } : reference,
+          ],
+        });
+
+        return {
+          scope,
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async create() {
+            return { id: "box", state: "running" };
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+          async inspect(box) {
+            return { id: box.id, state: "running" };
+          },
+          async snapshotProfiles() {
+            return {
+              status: "supported",
+              value: { profiles: [profile], defaultProfileId: profile.id },
+            };
+          },
+          snapshotCapture: {
+            recovery: { version: 1, token: z.strictObject({}) },
+            async submit() {
+              return capture();
+            },
+            async observe() {
+              return capture();
+            },
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+    const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await box.submitSnapshot({ requirements: { preserve: "filesystem+memory" } });
+
+    if (contradiction === "none") {
+      expect((await operation.wait()).capture).toMatchObject({
+        preserve: "filesystem+memory",
+        restoreExecution: "resume",
+      });
+      await client.close();
+
+      return;
+    }
+
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    const saved = JSON.parse(JSON.stringify(operation.reference));
+    expect(saved.capture).toEqual({ profile, sourceState: "running" });
+    const recovered = await client.recover(saved);
+    await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    await client.close();
+  });
+}
+
+for (const stalled of ["profiles", "inspect"] as const) {
+  test(`snapshot preflight propagates caller abort during ${stalled} and creates no custody marker`, async () => {
+    let reads = 0;
+    let markers = 0;
+    let captures = 0;
+    let readSignal: AbortSignal | undefined;
+    let entered!: () => void;
+
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+
+    const adapter = defineAdapter({
+      name: "fixture.snapshot-abort",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async create() {
+            return { id: "box", state: "running" };
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+          async snapshotProfiles(_target, context) {
+            reads++;
+
+            if (stalled === "profiles") {
+              readSignal = context.signal;
+              entered();
+
+              return new Promise<never>(() => {});
+            }
+
+            return {
+              status: "supported" as const,
+              value: { profiles: [profile], defaultProfileId: profile.id },
+            };
+          },
+          async inspect(box, context) {
+            reads++;
+            readSignal = context.signal;
+            entered();
+
+            return new Promise<never>(() => {});
+          },
+          async snapshotCapture() {
+            captures++;
+            throw new Error("Unexpected capture");
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({
+      adapter,
+      config: {},
+      credentials: {},
+      onReference() {
+        markers++;
+      },
+    });
+
+    try {
+      const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+      markers = 0;
+      const aborted = new AbortController();
+      aborted.abort();
+      await expect(box.snapshot(undefined, { signal: aborted.signal })).rejects.toMatchObject({
+        code: "WAIT_ABORTED",
+        effect: "none",
+      });
+      expect(reads).toBe(0);
+      const controller = new AbortController();
+      const pending = box.snapshot(undefined, { signal: controller.signal });
+      await ready;
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ code: "WAIT_ABORTED", effect: "none" });
+      expect(readSignal?.aborted).toBe(true);
+      expect(markers).toBe(0);
+      expect(captures).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("recovery and advanced observation reject foreign mounted volume scopes before adapter IO", async () => {
+  let creates = 0;
+  const scope = { authority: { kind: "account", id: "one" }, partition: { region: "us" } };
+
+  const adapter = defineAdapter({
+    name: "fixture.mount-scope",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope,
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          creates++;
+
+          return { id: "box", state: "running" };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        async inspect(box) {
+          return { id: box.id, state: "running" };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+  try {
+    const operation = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+
+    for (const foreign of [
+      { provider: "other", scope },
+      { provider: adapter.name, scope: { ...scope, authority: { kind: "account", id: "two" } } },
+      { provider: adapter.name, scope: { ...scope, partition: { region: "eu" } } },
+    ]) {
+      const reference = structuredClone(operation.reference);
+      reference.mounts = [
+        {
+          volume: {
+            version: 1,
+            kind: "volume",
+            ...foreign,
+            nativeId: "vol-one",
+            ownership: "verified-created",
+          },
+          path: "/mnt/data",
+          access: "read-write",
+        },
+      ];
+      await expect(client.recover(reference)).rejects.toMatchObject({ code: "CONFLICT" });
+      await expect(
+        client.operations.observe({
+          scope: reference.scope,
+          kind: reference.kind,
+          operationId: reference.operationId,
+          submissionId: reference.submissionId,
+          mounts: reference.mounts,
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+    }
+
+    expect(creates).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("create mount preflight enforces aggregate recovery capacity before provider reads", async () => {
+  let checks = 0;
+  let creates = 0;
+  let references = 0;
+  const scope = { authority: { kind: "account", id: "one" }, partition: {} };
+
+  const adapter = defineAdapter({
+    name: "fixture.mount-capacity",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope,
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async checkMounts() {
+          checks++;
+
+          return { status: "supported", value: {} };
+        },
+        async create(input) {
+          creates++;
+
+          return { id: "box", state: "running", mounts: input.mounts };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        async inspect(box) {
+          return { id: box.id, state: "running" };
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {},
+    credentials: {},
+    onReference() {
+      references++;
+    },
+  });
+
+  const mount = (suffix: string) => ({
+    volume: {
+      version: 1 as const,
+      kind: "volume" as const,
+      provider: adapter.name,
+      scope,
+      nativeId: suffix,
+      ownership: "verified-created" as const,
+      receipt: "r".repeat(4096),
+    },
+    path: "/" + suffix + "p".repeat(4000),
+    subpath: "s".repeat(4096),
+    access: "read-write" as const,
+  });
+
+  try {
+    const oversized = { environment: Image.prepared("base"), mounts: [mount("a"), mount("b")] };
+    await expect(client.sandboxes.checkCreate(oversized)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+    await expect(client.sandboxes.submitCreate(oversized)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+
+    const unicode = {
+      environment: Image.prepared("base"),
+      mounts: [{ ...mount("a"), subpath: "界".repeat(4096) }],
+    };
+
+    await expect(client.sandboxes.checkCreate(unicode)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+    await expect(client.sandboxes.submitCreate(unicode)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      effect: "none",
+    });
+    expect(checks).toBe(0);
+    expect(creates).toBe(0);
+    expect(references).toBe(0);
+    const accepted = { environment: Image.prepared("base"), mounts: [mount("a")] };
+    expect((await client.sandboxes.checkCreate(accepted)).status).toBe("supported");
+    const box = await client.sandboxes.create(accepted);
+    expect(creates).toBe(1);
+    await box.destroy({ storage: "allow-unconfirmed" });
+  } finally {
+    await client.close();
+  }
+});
+
+test("advanced capture observation forwards saved expectations on a fresh connection", async () => {
+  let observations = 0;
+  let captures = 0;
+  const expectation = { profile, sourceState: "running" as const };
+
+  const adapter = defineAdapter({
+    name: "fixture.advanced-capture",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: { images: ["prepared"], network: ["blocked"] },
+        async create() {
+          return { id: "box", state: "running" };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        async inspect(box) {
+          return { id: box.id, state: "running" };
+        },
+        async snapshotProfiles() {
+          return {
+            status: "supported",
+            value: { profiles: [profile], defaultProfileId: profile.id },
+          };
+        },
+        snapshotCapture: {
+          recovery: { version: 1, token: z.strictObject({ stage: z.literal("accepted") }) },
+          async submit(_input, ctx) {
+            captures++;
+
+            return ctx.pending({ stage: "accepted" });
+          },
+          async observe(attempt, ctx) {
+            observations++;
+
+            if (
+              attempt.capture?.sourceState !== expectation.sourceState ||
+              attempt.capture?.profile.id !== profile.id
+            )
+              return ctx.unknown("Original capture plan differs");
+
+            return ctx.pending({ stage: "accepted" });
+          },
+        },
+      };
+    },
+  });
+
+  const first = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+  const box = await first.sandboxes.create({ environment: Image.prepared("base") });
+  const operation = await box.submitSnapshot();
+  const saved = JSON.parse(JSON.stringify(operation.reference));
+  await first.close();
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+  try {
+    const input = {
+      scope: saved.scope,
+      kind: saved.kind,
+      operationId: saved.operationId,
+      submissionId: saved.submissionId,
+      sandboxId: saved.sandboxId,
+      token: saved.token,
+      tokenVersion: saved.tokenVersion,
+    };
+
+    await expect(client.operations.observe(input)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    expect(observations).toBe(0);
+    expect((await client.operations.observe({ ...input, capture: saved.capture }))?.kind).toBe(
+      "pending",
+    );
+    expect(
+      (
+        await client.operations.observe({
+          ...input,
+          capture: { ...saved.capture, sourceState: "stopped" },
+        })
+      )?.kind,
+    ).toBe("unknown");
+    expect(observations).toBe(2);
+    expect(captures).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+for (const mode of ["rejects", "hung"] as const) {
+  test(`delete cancellation finalization is joined with a finite bound: ${mode}`, async () => {
+    const scope = { authority: { kind: "account", id: "one" }, partition: {} };
+
+    const reference = ResourceReference.parse({
+      version: 1,
+      kind: "volume",
+      provider: "fixture.delete-finalization",
+      scope,
+      nativeId: "borrowed",
+      ownership: "borrowed",
+    });
+
+    const controller = new AbortController();
+    let deletes = 0;
+
+    const adapter = defineAdapter({
+      name: "fixture.delete-finalization",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope,
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async create() {
+            throw Error("No allocation in this fixture");
+          },
+          async destroy() {
+            throw Error("No compute deletion in this fixture");
+          },
+          async volumeInspect() {
+            return {
+              reference,
+              name: "borrowed",
+              state: "ready",
+              filesystem: "object-backed",
+              visibility: "unknown",
+              durability: "unknown",
+              locking: "unknown",
+              rename: "unknown",
+              conflicts: "unknown",
+            };
+          },
+          volumeDelete: {
+            recovery: {
+              version: 1,
+              token: z.strictObject({ stage: z.enum(["uncertain", "rejected"]) }),
+            },
+            async submit(_reference, ctx) {
+              await ctx.checkpoint({ stage: "uncertain" });
+
+              if (mode === "hung") await new Promise<never>(() => undefined);
+
+              if (ctx.signal.aborted) {
+                await ctx.checkpoint({ stage: "rejected" });
+
+                return ctx.reject("UNAVAILABLE", "No delete was dispatched");
+              }
+
+              deletes++;
+
+              return { deleted: true, reference };
+            },
+            async observe(_attempt, ctx) {
+              return ctx.unknown("No mutation replay");
+            },
+          },
+          async close() {},
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({
+      adapter,
+      config: {},
+      credentials: {},
+      onReference(saved) {
+        if (
+          saved.kind === "volume_delete" &&
+          z.object({ stage: z.literal("uncertain") }).safeParse(saved.token).success
+        )
+          controller.abort();
+      },
+    });
+
+    try {
+      const volume = await client.volumes.get(reference);
+      await expect(volume.delete({ signal: controller.signal })).rejects.toMatchObject({
+        code: mode === "rejects" ? "UNAVAILABLE" : "WAIT_ABORTED",
+        effect: mode === "rejects" ? "none" : "possible",
+      });
+      expect(deletes).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+for (const kind of ["snapshot", "volume"] as const) {
+  test(`SDK ${kind} reference validation returns no-effect SDK errors before provider I/O`, async () => {
+    let reads = 0;
+    let mutations = 0;
+    const scope = { authority: { kind: "account", id: "one" }, partition: {} };
+
+    const adapter = defineAdapter({
+      name: "fixture.resource-errors",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope,
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async snapshotInspect() {
+            reads++;
+            throw new Error("Must not inspect");
+          },
+          async volumeInspect() {
+            reads++;
+            throw new Error("Must not inspect");
+          },
+          async snapshotDelete() {
+            mutations++;
+            throw new Error("Must not delete");
+          },
+          async volumeDelete() {
+            mutations++;
+            throw new Error("Must not delete");
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+    const valid = ResourceReference.parse({
+      version: 1,
+      kind,
+      provider: adapter.name,
+      scope,
+      nativeId: "artifact",
+      ownership: "unknown",
+    });
+
+    // An untyped JavaScript caller can supply null despite the TypeScript contract.
+    const malformed: ResourceReference = JSON.parse("null");
+
+    const cases = [
+      { ref: malformed, code: "INVALID_ARGUMENT" },
+      {
+        ref: { ...valid, kind: kind === "snapshot" ? ("volume" as const) : ("snapshot" as const) },
+        code: "INVALID_ARGUMENT",
+      },
+      { ref: { ...valid, provider: "foreign" }, code: "CONFLICT" },
+      {
+        ref: { ...valid, scope: { ...scope, authority: { kind: "account", id: "other" } } },
+        code: "CONFLICT",
+      },
+    ];
+
+    try {
+      for (const { ref, code } of cases) {
+        const manager = kind === "snapshot" ? client.snapshots : client.volumes;
+
+        const actions = [
+          async () => {
+            await manager.get(ref);
+          },
+          async () => {
+            await manager.delete(ref);
+          },
+          async () => {
+            if (kind === "snapshot") new AdapterSnapshot(client, ref);
+            else new AdapterVolume(client, ref);
+          },
+        ];
+
+        for (const action of actions) {
+          await expect(action()).rejects.toBeInstanceOf(SandbarError);
+          await expect(action()).rejects.toMatchObject({ code, effect: "none" });
+        }
+      }
+
+      expect(reads).toBe(0);
+      expect(mutations).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
 }

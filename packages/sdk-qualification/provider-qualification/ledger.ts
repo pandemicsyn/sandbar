@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import type { AdapterRecoveryReference } from "sandbar-sdk";
 import { z } from "zod";
+import { ResourceScope, ResourceReference } from "sandbar-adapter";
 import { envdSchema, failureDiagnosticSchema } from "./diagnostics";
 import { networkEvidenceSchema, networkProbeId } from "./network-probe";
 
@@ -56,6 +57,27 @@ const ledgerSchema = z.strictObject({
     .array(failureDiagnosticSchema.extend({ scenario: z.string().max(80) }))
     .max(64)
     .optional(),
+  stateMode: z.literal("live-state").optional(),
+  stateRole: z.string().max(80).optional(),
+  stateBorrowedVolume: z.unknown().optional(),
+  stateSelection: z
+    .array(z.enum(["snapshot-roundtrip", "volume-persistence"]))
+    .max(2)
+    .optional(),
+  stateMutations: z
+    .array(
+      z.strictObject({
+        role: z.string().max(80),
+        reference: z.unknown(),
+        resource: z.unknown().optional(),
+        sandboxId: z.string().max(512).optional(),
+        cleanup: z.enum(["pending", "confirmed", "borrowed", "not-required"]),
+        creation: z.boolean(),
+      }),
+    )
+    .max(64)
+    .optional(),
+  stateObservations: z.record(z.string().max(80), z.unknown()).optional(),
   createIntent: z.boolean(),
   createReference: z.unknown().optional(),
   destroyReference: z.unknown().optional(),
@@ -91,6 +113,110 @@ export async function requirePrivateDirectory(directory: string): Promise<void> 
     (process.getuid && info.uid !== process.getuid())
   )
     throw new Error("Unsafe ledger directory permissions");
+}
+
+type StateCustody = NonNullable<RunLedger["stateMutations"]>[number];
+
+const custodyIdentity = z.object({
+  version: z.number().int(),
+  mode: z.literal("direct"),
+  provider: z.string(),
+  kind: z.string(),
+  operationId: z.string(),
+  submissionId: z.string(),
+  invocationKey: z.string(),
+  scope: ResourceScope,
+  sandboxId: z.string().optional(),
+  resource: ResourceReference.optional(),
+});
+
+function operationIdentity(entry: StateCustody) {
+  const value = custodyIdentity.parse(entry.reference);
+
+  return JSON.stringify([
+    value.version,
+    value.mode,
+    value.provider,
+    value.kind,
+    value.operationId,
+    value.submissionId,
+    value.invocationKey,
+    value.sandboxId,
+    value.resource ? resourceIdentity(value.resource) : null,
+    value.scope.authority,
+    Object.entries(value.scope.partition).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  ]);
+}
+
+function resourceIdentity(resource: ResourceReference) {
+  return JSON.stringify([
+    resource.kind,
+    resource.provider,
+    resource.nativeId,
+    resource.generation,
+    resource.scope.authority,
+    Object.entries(resource.scope.partition).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  ]);
+}
+
+function normalizedCustody(entries: StateCustody[]) {
+  const unique = new Map<string, StateCustody>();
+
+  for (const entry of entries) {
+    const id = custodyIdentity.parse(entry.reference).submissionId;
+    const first = unique.get(id);
+
+    if (!first) {
+      unique.set(id, entry);
+      continue;
+    }
+
+    if (operationIdentity(first) !== operationIdentity(entry))
+      throw new Error("Checkpoint operation identity conflicts with saved custody");
+
+    if (first.sandboxId && entry.sandboxId && first.sandboxId !== entry.sandboxId)
+      throw new Error("Checkpoint sandbox identity conflicts with saved custody");
+
+    if (
+      first.resource &&
+      entry.resource &&
+      resourceIdentity(ResourceReference.parse(first.resource)) !==
+        resourceIdentity(ResourceReference.parse(entry.resource))
+    )
+      throw new Error("Checkpoint resource identity conflicts with saved custody");
+
+    if (
+      first.creation &&
+      entry.creation &&
+      (first.role !== entry.role || first.cleanup !== entry.cleanup)
+    )
+      throw new Error("Checkpoint cleanup obligation conflicts with saved custody");
+    const owner = !first.creation && entry.creation ? entry : first;
+    unique.set(id, {
+      ...owner,
+      reference: entry.reference,
+      resource: first.resource ?? entry.resource,
+      sandboxId: first.sandboxId ?? entry.sandboxId,
+    });
+  }
+
+  return [...unique.values()];
+}
+
+export function operationCheckpoints(
+  entries: RunLedger["operationReferences"],
+  reference: AdapterRecoveryReference,
+) {
+  // SAFETY: Every entry came from a schema-read ledger or the SDK recovery-reference hook.
+  return normalizedCustody([
+    ...(entries ?? []).map((saved) => ({
+      role: "operation",
+      reference: saved,
+      creation: false,
+      cleanup: "not-required" as const,
+    })),
+    { role: "operation", reference, creation: false, cleanup: "not-required" },
+  ]).map((entry) => entry.reference as AdapterRecoveryReference);
 }
 
 /** Private crash-recovery state. The caller must put directory on persistent restricted storage. */
@@ -173,7 +299,10 @@ export class LedgerStore {
       const previous = await new LedgerStore(dirname(this.path), runId).read();
 
       if (
-        previous.createReference &&
+        (previous.createReference ||
+          previous.stateMutations?.some(
+            (entry) => entry.creation && entry.cleanup === "pending",
+          )) &&
         previous.cleanup !== "confirmed" &&
         previous.cleanup !== "not-required"
       )
@@ -211,6 +340,39 @@ export class LedgerStore {
     }
 
     await this.checkpoint?.(await this.read());
+  }
+
+  async saveStateReference(reference: AdapterRecoveryReference): Promise<void> {
+    const before = await this.read();
+    const normalized = normalizedCustody(before.stateMutations ?? []);
+
+    if (normalized.length !== (before.stateMutations ?? []).length) {
+      const backup = await open(
+        `${this.path}.checkpoint-history-${crypto.randomUUID()}`,
+        "wx",
+        0o600,
+      );
+
+      try {
+        await backup.writeFile(JSON.stringify(before));
+        await backup.sync();
+      } finally {
+        await backup.close();
+      }
+    }
+
+    await this.update((value) => {
+      const entries = normalizedCustody(value.stateMutations ?? []);
+
+      const incoming: StateCustody = {
+        role: value.stateRole ?? "reconcile/delete",
+        reference,
+        cleanup: "not-required",
+        creation: false,
+      };
+
+      return { ...value, stateMutations: normalizedCustody([...entries, incoming]) };
+    });
   }
 
   update(change: (value: RunLedger) => RunLedger): Promise<void> {

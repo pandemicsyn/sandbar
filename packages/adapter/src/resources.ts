@@ -1,0 +1,17 @@
+export {
+  MountSpec,
+  VolumeCreateInput,
+  VolumeInfo,
+  RestoreRequest,
+  SnapshotInfo,
+  SnapshotCaptureInput,
+  SnapshotCaptureValue,
+  SnapshotRestoreInput,
+  ArtifactDeletionResult,
+  MountCapabilities,
+  RestoreCapabilities,
+  VolumeCapabilities,
+  InventoryInput,
+  DestroyInput,
+  MountDurability,
+} from "./state";

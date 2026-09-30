@@ -13,6 +13,32 @@ const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
 /** Injectable E2B native boundary for deterministic qualification. */
 export interface E2BTransport {
+  state?: {
+    template(id: string): Promise<{
+      templateId: string;
+      names: string[];
+      public: boolean;
+      builds: { buildId: string; status: "building" | "waiting" | "ready" | "error" }[];
+    } | null>;
+    verifyAddress(id: string, names?: string[]): Promise<void>;
+    tags(id: string): Promise<{ tag: string; buildId: string }[]>;
+    capture(
+      id: string,
+      name?: string,
+      signal?: AbortSignal,
+    ): Promise<{ snapshotId: string; names: string[] }>;
+    snapshots(input: {
+      limit: number;
+      name?: string;
+      sandboxId?: string;
+      cursor?: string;
+    }): Promise<{ items: { snapshotId: string; names: string[] }[]; nextCursor?: string }>;
+    deleteSnapshot(id: string, signal?: AbortSignal): Promise<boolean>;
+    createVolume(name: string, signal?: AbortSignal): Promise<{ volumeId: string; name: string }>;
+    volume(id: string): Promise<{ volumeId: string; name: string }>;
+    volumes(): Promise<{ volumeId: string; name: string }[]>;
+    deleteVolume(id: string, signal?: AbortSignal): Promise<boolean>;
+  };
   verifyAuth(): Promise<void>;
   verifyTeam(teamId: string): Promise<void>;
   verifyTemplate(teamId: string | undefined, templateId: string): Promise<string>;
@@ -26,12 +52,16 @@ export interface E2BTransport {
     metadata: Record<string, string>;
     timeoutMs: number;
     allowInternetAccess: boolean;
+    volumeMounts?: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<string>;
   get(id: string): Promise<{
     id: string;
     templateId: string;
     metadata: Record<string, string>;
     state: "running" | "paused";
+    envdVersion?: string;
+    volumeMounts?: { name: string; path: string }[];
   } | null>;
   list(
     metadata: Record<string, string>,
@@ -43,10 +73,12 @@ export interface E2BTransport {
       templateId: string;
       metadata: Record<string, string>;
       state: "running" | "paused";
+      envdVersion?: string;
+      volumeMounts?: { name: string; path: string }[];
     }[];
     nextToken?: string;
   }>;
-  kill(id: string): Promise<boolean>;
+  kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
     id: string,
     script: string,

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { z } from "zod";
 import {
   mkdtemp,
   mkdir,
@@ -17,8 +18,10 @@ import { Image, Sandbar } from "sandbar-sdk";
 import {
   connectAdapter,
   observeOperation,
+  continueOperation,
   prepareOperation,
   submitOperation,
+  type Json,
 } from "sandbar-adapter";
 import { createE2BAdapter } from "./index";
 import {
@@ -981,6 +984,7 @@ test("uncertain writes and destroy reconcile after reconnect without replay", as
       sandbar_build: "sandbar-build",
     },
     state: "running",
+    volumeMounts: [{ name: "kept-volume", path: "/data" }],
   };
 
   let writes = 0;
@@ -1106,11 +1110,31 @@ test("uncertain writes and destroy reconcile after reconnect without replay", as
     const prepared = await prepareOperation(
       connection.session,
       "destroy",
-      identity.sandbox,
+      { ...identity.sandbox, storage: "allow-unconfirmed" },
       signal,
     );
 
-    const result = await submitOperation(prepared, identity, signal);
+    let checkpoint: Json | undefined;
+    let checkpointVersion: number | undefined;
+
+    const result = await submitOperation(
+      prepared,
+      identity,
+      signal,
+      undefined,
+      async (token, version) => {
+        expect(kills).toBe(0);
+        checkpoint = JSON.parse(JSON.stringify(token));
+        checkpointVersion = version;
+      },
+    );
+
+    expect(checkpoint).toEqual({
+      stage: "uncertain",
+      sandboxId: "sandbox_1",
+      retainedTemplateId: "built_template",
+      retainedVolumeNames: ["kept-volume"],
+    });
     expect(result.kind).toBe("pending");
 
     if (result.kind !== "pending") throw new Error("missing destroy recovery token");
@@ -1121,16 +1145,365 @@ test("uncertain writes and destroy reconcile after reconnect without replay", as
     const observed = await observeOperation(
       connection.session,
       "destroy",
-      { ...identity, token: result.token, version: result.version },
+      { ...identity, token: checkpoint, version: checkpointVersion },
       signal,
     );
 
     expect(observed).toEqual({
       kind: "completed",
-      value: { computeStopped: true, retainedResources: ["e2b-template:built_template"] },
+      value: {
+        computeStopped: true,
+        retainedResources: ["e2b-template:built_template", "e2b-volume-name:kept-volume"],
+      },
     });
     expect(kills).toBe(1);
   } finally {
     await connection.close();
   }
 });
+
+test("pinned E2B forwards immutable build selector and blocked network policy in one create request", async () => {
+  const requests: { path: string; body: unknown }[] = [];
+
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      requests.push({ path: new URL(request.url).pathname, body: await request.json() });
+
+      return new Response("fixture rejection", { status: 429, headers: { "Retry-After": "0" } });
+    },
+  });
+
+  const selector = "snapshot_raw:11111111-1111-4111-8111-111111111111";
+
+  try {
+    await expect(
+      Sandbox.create(selector, {
+        apiKey: "fixture-key",
+        apiUrl: `http://127.0.0.1:${server.port}`,
+        retries: 0,
+        requestTimeoutMs: 1000,
+        allowInternetAccess: false,
+      }),
+    ).rejects.toThrow();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      path: "/v2/sandboxes",
+      body: { templateID: selector, allow_internet_access: false },
+    });
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("native unfiltered inventory omits the invalid empty metadata parameter", async () => {
+  const original = globalThis.fetch;
+  const requests: URL[] = [];
+  // SAFETY: This deterministic fetch boundary matches Bun's fetch/preconnect shape and receives only fixture credentials.
+  globalThis.fetch = Object.assign(
+    async (input: RequestInfo | URL) => {
+      requests.push(new URL(input instanceof Request ? input.url : String(input)));
+
+      return Response.json([]);
+    },
+    { preconnect() {} },
+  ) as typeof fetch;
+
+  try {
+    const transport = createSdkTransport("fixture-key");
+    expect(await transport.list({}, 100)).toMatchObject({ items: [] });
+    expect(requests[0]?.searchParams.has("metadata")).toBe(false);
+    await transport.list({ owner: "fixture" }, 100);
+    expect(requests[1]?.searchParams.get("metadata")).toBeTruthy();
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+for (const barrier of ["reject-before", "abort-before", "reject-after"] as const) {
+  test(`destroy checkpoint ${barrier} preserves custody and never replays kill`, async () => {
+    let kills = 0;
+    let present = true;
+
+    const record: E2BRecord = {
+      id: "box",
+      templateId: "built_template",
+      state: "running",
+      metadata: {
+        sandbar_scope: "team_one:template_1",
+        sandbar_build: "owned-build",
+        sandbar_template: "built_template",
+        sandbar_submission: "seed-sub",
+        sandbar_operation: "seed-op",
+      },
+      volumeMounts: [{ name: "retained-name", path: "/data" }],
+    };
+
+    const adapter = createE2BAdapter(() => ({
+      async verifyAuth() {},
+      async verifyTeam() {},
+      async verifyTemplate(_team, id) {
+        return id;
+      },
+      async buildImage() {
+        throw Error("unused");
+      },
+      async findBuild() {
+        return null;
+      },
+      async create() {
+        throw Error("unused");
+      },
+      async get() {
+        return present ? record : null;
+      },
+      async list() {
+        return { items: present ? [record] : [] };
+      },
+      async kill() {
+        kills++;
+        present = false;
+
+        return true;
+      },
+      async run() {
+        return "";
+      },
+      async read() {
+        return { bytes: new Uint8Array(), truncated: false };
+      },
+      async write() {},
+      async remove() {},
+      close() {},
+    }));
+
+    const connect = (apiKey: string) =>
+      connectAdapter(adapter, {
+        config: { teamId: "team_one", templateId: "template_1" },
+        credentials: { apiKey },
+      });
+
+    let connection = await connect("first-key");
+    const controller = new AbortController();
+
+    const identity = {
+      operationId: "destroy-op",
+      submissionId: "destroy-sub",
+      invocationKey: "destroy-inv",
+      sandbox: { id: "box" },
+    };
+
+    let saved: Json | undefined;
+    let version: number | undefined;
+
+    try {
+      const prepared = await prepareOperation(
+        connection.session,
+        "destroy",
+        { ...identity.sandbox, storage: "allow-unconfirmed" },
+        controller.signal,
+      );
+
+      const submitted = submitOperation(
+        prepared,
+        identity,
+        controller.signal,
+        undefined,
+        async (token, tokenVersion) => {
+          saved = JSON.parse(JSON.stringify(token));
+          version = tokenVersion;
+          const stage = z.object({ stage: z.string() }).parse(token).stage;
+          expect(kills).toBe(stage === "accepted" ? 1 : 0);
+
+          if (barrier === "abort-before") controller.abort();
+          else if (
+            (barrier === "reject-before" && stage === "uncertain") ||
+            (barrier === "reject-after" && stage === "accepted")
+          )
+            throw Error("durable store unavailable");
+        },
+      );
+
+      if (barrier === "abort-before")
+        expect(await submitted).toMatchObject({ kind: "rejected", code: "UNAVAILABLE" });
+      else await expect(submitted).rejects.toThrow("reference persistence failed");
+      expect(kills).toBe(barrier === "reject-after" ? 1 : 0);
+      expect(saved).toMatchObject({
+        retainedTemplateId: "built_template",
+        retainedVolumeNames: ["retained-name"],
+      });
+      await connection.close();
+      connection = await connect("rotated-key");
+
+      const observed = await observeOperation(
+        connection.session,
+        "destroy",
+        { ...identity, token: saved, version },
+        new AbortController().signal,
+      );
+
+      if (barrier === "reject-after")
+        expect(observed).toMatchObject({
+          kind: "completed",
+          value: {
+            computeStopped: true,
+            retainedResources: ["e2b-template:built_template", "e2b-volume-name:retained-name"],
+          },
+        });
+      else if (barrier === "abort-before") {
+        expect(saved).toMatchObject({ stage: "rejected", sandboxId: "box" });
+        expect(observed?.kind).toBe("unknown");
+        expect(
+          await continueOperation(
+            connection.session,
+            "destroy",
+            { ...identity, token: saved, version },
+            identity,
+            new AbortController().signal,
+            async () => {},
+          ),
+        ).toMatchObject({ kind: "rejected", code: "UNAVAILABLE" });
+      } else expect(observed?.kind).toBe("pending");
+      expect(kills).toBe(barrier === "reject-after" ? 1 : 0);
+    } finally {
+      await connection.close();
+    }
+  });
+}
+
+test.each(["prepare", "submit"] as const)(
+  "E2B oversized destroy custody rejects before kill: %s",
+  async (stage) => {
+    let kills = 0;
+
+    const record: E2BRecord = {
+      id: "box",
+      templateId: "built_template",
+      state: "running",
+      metadata: {
+        sandbar_scope: "team_one:template_1",
+        sandbar_build: "owned-build",
+        sandbar_template: "built_template",
+        sandbar_submission: "seed-sub",
+        sandbar_operation: "seed-op",
+      },
+      volumeMounts:
+        stage === "prepare"
+          ? Array.from({ length: 32 }, (_, index) => ({
+              name: `v${index}_${"x".repeat(123)}`,
+              path: `/mnt/${index}`,
+            }))
+          : [{ name: "short", path: "/mnt/short" }],
+    };
+
+    const adapter = createE2BAdapter(() => ({
+      async verifyAuth() {},
+      async verifyTeam() {},
+      async verifyTemplate(_team, id) {
+        return id;
+      },
+      async buildImage() {
+        throw Error("unused");
+      },
+      async findBuild() {
+        return null;
+      },
+      async create() {
+        throw Error("unused");
+      },
+      async get() {
+        return record;
+      },
+      async list() {
+        return { items: [record] };
+      },
+      async kill() {
+        kills++;
+
+        return true;
+      },
+      async run() {
+        return "";
+      },
+      async read() {
+        return { bytes: new Uint8Array(), truncated: false };
+      },
+      async write() {},
+      async remove() {},
+      close() {},
+    }));
+
+    const connection = await connectAdapter(adapter, {
+      config: { teamId: "team_one", templateId: "template_1" },
+      credentials: { apiKey: "fixture-key" },
+    });
+
+    const identity = {
+      operationId: "bounded-destroy-op",
+      submissionId: "bounded-destroy-sub",
+      invocationKey: "bounded-destroy-inv",
+      sandbox: { id: "box" },
+    };
+
+    try {
+      if (stage === "prepare")
+        await expect(
+          prepareOperation(
+            connection.session,
+            "destroy",
+            {
+              id: "box",
+              storage: "allow-unconfirmed",
+            },
+            new AbortController().signal,
+          ),
+        ).rejects.toMatchObject({ code: "CAPACITY" });
+      else {
+        const prepared = await prepareOperation(
+          connection.session,
+          "destroy",
+          {
+            id: "box",
+            storage: "allow-unconfirmed",
+          },
+          new AbortController().signal,
+        );
+
+        record.volumeMounts = Array.from({ length: 32 }, (_, index) => ({
+          name: `v${index}_${"x".repeat(123)}`,
+          path: `/mnt/${index}`,
+        }));
+        let saved: Json | undefined;
+        let version: number | undefined;
+
+        const result = await submitOperation(
+          prepared,
+          identity,
+          new AbortController().signal,
+          undefined,
+          async (token, tokenVersion) => {
+            saved = structuredClone(token);
+            version = tokenVersion;
+          },
+        );
+
+        expect(result).toMatchObject({ kind: "rejected", code: "CAPACITY" });
+        expect(saved).toMatchObject({ stage: "rejected", rejectionCode: "CAPACITY" });
+        expect(
+          await continueOperation(
+            connection.session,
+            "destroy",
+            { ...identity, token: saved, version },
+            identity,
+            new AbortController().signal,
+            async () => {},
+          ),
+        ).toMatchObject({ kind: "rejected", code: "CAPACITY" });
+      }
+
+      expect(kills).toBe(0);
+    } finally {
+      await connection.close();
+    }
+  },
+);

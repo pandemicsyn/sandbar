@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import type { LedgerStore } from "./ledger";
 import type { Scenario } from "./report";
 
@@ -138,29 +139,54 @@ export async function sensitiveValues(ledger: LedgerStore, secrets: readonly str
     state.createReference,
     state.destroyReference,
     ...(state.operationReferences ?? []),
+    ...(state.stateMutations ?? []).map((entry) => entry.reference),
   ];
 
   return [
     ...secrets,
     state.runId,
     state.sandboxId ?? "",
+    ...(state.stateMutations ?? []).flatMap((entry) => [
+      entry.sandboxId ?? "",
+      ...tokenStrings(z.json().parse(entry.resource ?? null)),
+    ]),
     ...(state.connection && "teamId" in state.connection
       ? [state.connection.teamId ?? "", state.connection.templateId]
       : []),
-    ...refs.flatMap((ref) =>
-      ref
-        ? [
-            ref.scope.authority.id,
-            ...Object.values(ref.scope.partition),
-            ref.operationId,
-            ref.submissionId,
-            ref.invocationKey,
-            ref.sandboxId ?? "",
-            ref.file?.path ?? "",
-            ...tokenStrings(ref.token ?? null),
-          ]
-        : [],
-    ),
+    ...refs.flatMap((value) => {
+      const parsed = z
+        .object({
+          scope: z.object({
+            authority: z.object({ id: z.string() }),
+            partition: z.record(z.string(), z.string()),
+          }),
+          operationId: z.string(),
+          submissionId: z.string(),
+          invocationKey: z.string(),
+          sandboxId: z.string().optional(),
+          file: z.object({ path: z.string() }).optional(),
+          token: z.json().optional(),
+          resource: z.json().optional(),
+          mounts: z.json().optional(),
+        })
+        .safeParse(value);
+
+      if (!parsed.success) return [];
+      const ref = parsed.data;
+
+      return [
+        ref.scope.authority.id,
+        ...Object.values(ref.scope.partition),
+        ref.operationId,
+        ref.submissionId,
+        ref.invocationKey,
+        ref.sandboxId ?? "",
+        ref.file?.path ?? "",
+        ...tokenStrings(ref.token ?? null),
+        ...tokenStrings(ref.resource ?? null),
+        ...tokenStrings(ref.mounts ?? null),
+      ];
+    }),
   ];
 }
 
