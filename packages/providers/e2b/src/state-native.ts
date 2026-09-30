@@ -14,12 +14,13 @@ import {
   type ReadContext,
   type AttemptContext,
 } from "sandbar-adapter";
-import { type E2BTransport, type E2BRecord } from "./transport";
+import { E2BVolumeCreateRejected, type E2BTransport, type E2BRecord } from "./transport";
 
 const VolumeCreateToken = z.strictObject({
   state: z.enum(["uncertain", "accepted", "rejected"]),
   name: z.string().min(1).max(128),
   volume: ResourceReference.optional(),
+  rejectionStatus: z.union([z.literal(400), z.literal(401), z.literal(403)]).optional(),
 });
 
 const CaptureToken = z.strictObject({
@@ -856,10 +857,25 @@ export function e2bState(input: {
           return ctx.reject("UNAVAILABLE", "Volume create cancelled before dispatch");
         }
 
-        const info = volumeInfo(
-          await need().createVolume(value.name, ctx.signal),
-          "verified-created",
-        );
+        let created: { volumeId: string; name: string };
+
+        try {
+          created = await need().createVolume(value.name, ctx.signal);
+        } catch (error) {
+          if (!(error instanceof E2BVolumeCreateRejected)) throw error;
+          await ctx.checkpoint({
+            state: "rejected",
+            name: value.name,
+            rejectionStatus: error.status,
+          });
+
+          return ctx.reject(
+            error.status === 400 ? "INVALID_ARGUMENT" : "UNAVAILABLE",
+            `Native volume creation rejected (${error.status})`,
+          );
+        }
+
+        const info = volumeInfo(created, "verified-created");
 
         info.reference.history = history.issue({
           version: 1,
@@ -899,7 +915,12 @@ export function e2bState(input: {
         const parsed = VolumeCreateToken.safeParse(attempt.token);
 
         if (parsed.success && parsed.data.state === "rejected" && !parsed.data.volume)
-          return ctx.reject("UNAVAILABLE", "Volume create cancelled before dispatch");
+          return ctx.reject(
+            parsed.data.rejectionStatus === 400 ? "INVALID_ARGUMENT" : "UNAVAILABLE",
+            parsed.data.rejectionStatus
+              ? `Native volume creation rejected (${parsed.data.rejectionStatus})`
+              : "Volume create cancelled before dispatch",
+          );
 
         return ctx.unknown("Volume creation cannot be replayed");
       },

@@ -10,7 +10,12 @@ import {
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
 import { createE2BAdapter } from "./index";
-import { createSdkTransport, type E2BTransport, type E2BRecord } from "./transport";
+import {
+  E2BVolumeCreateRejected,
+  createSdkTransport,
+  type E2BTransport,
+  type E2BRecord,
+} from "./transport";
 
 function fixture() {
   const boxes = new Map<string, E2BRecord>();
@@ -47,6 +52,8 @@ function fixture() {
     tagsDenied: false,
     aliasShadowed: false,
     loseRestore: false,
+    // SAFETY: The fixture injects only Error instances or no failure.
+    volumeCreateFailure: undefined as Error | undefined,
   };
 
   const transport: E2BTransport = {
@@ -195,6 +202,8 @@ function fixture() {
       },
       async createVolume(name) {
         calls.volumeCreate++;
+
+        if (modes.volumeCreateFailure) throw modes.volumeCreateFailure;
         const volume = { volumeId: `volume_${calls.volumeCreate}`, name };
         volumes.set(volume.volumeId, volume);
 
@@ -1406,4 +1415,124 @@ test("E2B delete cancellation keeps a compact token for large valid references",
     release?.();
     await client.close();
   }
+});
+
+for (const status of [400, 401, 403] as const) {
+  test(`E2B volume create HTTP ${status} persists rejection without replay`, async () => {
+    const f = fixture();
+    f.modes.volumeCreateFailure = new E2BVolumeCreateRejected(status);
+    let saved: AdapterRecoveryReference | undefined;
+
+    const client = await f.connect("fixture-key", (ref) => {
+      saved = JSON.parse(JSON.stringify(ref));
+    });
+
+    try {
+      await expect(client.volumes.create({ name: "denied" })).rejects.toMatchObject({
+        effect: "none",
+      });
+      expect(saved?.token).toMatchObject({ state: "rejected", rejectionStatus: status });
+      const reopened = await f.connect("fixture-key");
+
+      try {
+        const operation = await reopened.recover(saved!);
+        await operation.continue();
+        await expect(operation.wait()).rejects.toMatchObject({
+          effect: "none",
+          code: status === 400 ? "INVALID_ARGUMENT" : "UNAVAILABLE",
+        });
+        expect(f.calls.volumeCreate).toBe(1);
+        expect(f.volumes.size).toBe(0);
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+for (const status of [201, 400, 401, 403, 429, 500]) {
+  test(`E2B volume transport preserves HTTP ${status} without mutation retry`, async () => {
+    let calls = 0;
+
+    // SAFETY: The fixture implements the fetch shape used by the transport.
+    const fetcher = Object.assign(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        calls++;
+        expect(init?.method).toBe("POST");
+        expect(init?.body).toBe(JSON.stringify({ name: "native-volume" }));
+
+        return Response.json(
+          status === 201
+            ? { volumeID: "native-id", name: "native-volume" }
+            : { message: "native detail" },
+          { status },
+        );
+      },
+      { preconnect() {} },
+    ) as typeof fetch;
+
+    const transport = createSdkTransport("fixture-key", fetcher);
+
+    if (status === 201)
+      expect(await transport.state!.createVolume("native-volume")).toEqual({
+        volumeId: "native-id",
+        name: "native-volume",
+      });
+    else {
+      try {
+        await transport.state!.createVolume("native-volume");
+        throw new Error("Expected native failure");
+      } catch (error) {
+        expect(error instanceof E2BVolumeCreateRejected).toBe([400, 401, 403].includes(status));
+      }
+    }
+
+    expect(calls).toBe(1);
+  });
+}
+
+test("E2B ambiguous volume create remains uncertain without replay", async () => {
+  const f = fixture();
+  f.modes.volumeCreateFailure = new Error("Transport acknowledgement unavailable");
+  let saved: AdapterRecoveryReference | undefined;
+
+  const client = await f.connect("fixture-key", (ref) => {
+    saved = JSON.parse(JSON.stringify(ref));
+  });
+
+  try {
+    await expect(client.volumes.create({ name: "uncertain" })).rejects.toBeInstanceOf(
+      OutcomeUnknownError,
+    );
+    expect(saved?.token).toMatchObject({ state: "uncertain" });
+    const operation = await client.recover(saved!);
+    await operation.continue();
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(f.calls.volumeCreate).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B volume rejection does not wait for body cancellation", async () => {
+  // SAFETY: The fixture returns a real Response and implements the used fetch shape.
+  const fetcher = Object.assign(
+    async () =>
+      new Response(
+        new ReadableStream({
+          cancel() {
+            return new Promise<void>(() => {});
+          },
+        }),
+        { status: 403 },
+      ),
+    { preconnect() {} },
+  ) as typeof fetch;
+
+  const transport = createSdkTransport("fixture-key", fetcher);
+  await expect(transport.state!.createVolume("denied")).rejects.toBeInstanceOf(
+    E2BVolumeCreateRejected,
+  );
 });

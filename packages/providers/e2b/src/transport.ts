@@ -6,6 +6,14 @@ export const E2B_ENDPOINT = "https://api.e2b.app";
 
 export const MAX_BYTES = 1_048_576;
 
+/** Positive native rejection; messages and response bodies never enter recovery. */
+export class E2BVolumeCreateRejected extends Error {
+  constructor(readonly status: 400 | 401 | 403) {
+    super(`E2B volume creation rejected (${status})`);
+    this.name = "E2BVolumeCreateRejected";
+  }
+}
+
 const Templates = z
   .array(
     z.object({
@@ -353,9 +361,29 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       snapshots: readSnapshots,
       deleteSnapshot: (id, signal) => Sandbox.deleteSnapshot(id, { ...opts, signal }),
       async createVolume(name, signal) {
-        const v = await Volume.create(name, { ...opts, signal });
+        const response = await fetcher(`${E2B_ENDPOINT}/volumes`, {
+          method: "POST",
+          headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+            : AbortSignal.timeout(30_000),
+        });
 
-        return { volumeId: v.volumeId, name: v.name };
+        if (response.status === 400 || response.status === 401 || response.status === 403) {
+          void response.body?.cancel().catch(() => undefined);
+          throw new E2BVolumeCreateRejected(response.status);
+        }
+
+        if (response.status !== 201)
+          throw new Error(`E2B volume create acknowledgement unavailable (${response.status})`);
+
+        const volume = await readNative(
+          response,
+          z.object({ volumeID: z.string().min(1).max(128), name: z.string().min(1).max(128) }),
+        );
+
+        return { volumeId: volume.volumeID, name: volume.name };
       },
       async volume(id) {
         const v = await Volume.getInfo(id, opts);
