@@ -15,7 +15,7 @@ import {
 import type { SandboxRef, NativeScope, DriverResult } from "@sandbar/provider-spi";
 import { ProviderReadError } from "@sandbar/provider-spi";
 import { ExecRequest } from "sandbar-adapter/portable";
-import { ControlStore, type Claimed, type SandboxRow } from "@sandbar/store";
+import { ControlStore, StoreError, type Claimed, type SandboxRow } from "@sandbar/store";
 import { SecretBox } from "./crypto";
 import {
   ProviderConfigurationError,
@@ -32,6 +32,14 @@ import {
   captureBoundedOutput,
 } from "@sandbar/core";
 
+const PollErrorCode = z.enum([
+  "SQLITE_BUSY",
+  "SQLITE_LOCKED",
+  "SQLITE_MISUSE",
+  "SQLITE_ERROR",
+  "CONFLICT",
+]);
+
 export interface RunnerOptions {
   store: ControlStore;
   registry: ProviderRegistry;
@@ -44,6 +52,7 @@ export class DurableRunner {
   readonly owner: string;
   private timer?: ReturnType<typeof setInterval>;
   private active = false;
+  private pollStage = "idle";
   constructor(private readonly options: RunnerOptions) {
     this.owner = options.owner ?? `runner_${crypto.randomUUID()}`;
   }
@@ -51,9 +60,17 @@ export class DurableRunner {
     if (this.timer) return;
 
     const poll = () => {
-      void this.tick().catch(() =>
-        console.error("Durable runner poll failed; retrying on next interval"),
-      );
+      void this.tick().catch((error) => {
+        // Never print messages, causes or provider payloads: they may contain credentials.
+        const code = error instanceof Error && "code" in error ? error.code : undefined;
+        const parsedCode = PollErrorCode.safeParse(code);
+
+        console.error("Durable runner poll failed; retrying on next interval", {
+          stage: this.pollStage,
+          category: error instanceof StoreError ? "store" : "unexpected",
+          code: parsedCode.success ? parsedCode.data : "UNCLASSIFIED",
+        });
+      });
     };
 
     this.timer = setInterval(poll, this.options.pollMs ?? 500);
@@ -68,10 +85,13 @@ export class DurableRunner {
     this.active = true;
 
     try {
+      this.pollStage = "expire_outputs";
       await this.options.store.expireOutputs();
+      this.pollStage = "claim_due";
       const claim = await this.options.store.claimDue(this.owner);
 
       if (!claim) return false;
+      this.pollStage = "process_claim";
       await this.process(claim);
 
       return true;

@@ -209,13 +209,19 @@ async function waitForEffect(action: string, count: number): Promise<void> {
 }
 
 beforeAll(async () => {
-  const build = Bun.spawnSync(["bun", "run", "--filter", "@sandbar/web", "build"], {
-    cwd: root,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
+  // CI restores apps/web/dist from this run's build job; standalone tests build it.
+  if (process.env.SANDBAR_TEST_BUILT_WEB !== "true") {
+    const build = Bun.spawnSync(["bun", "run", "--filter", "@sandbar/web", "build"], {
+      cwd: root,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
 
-  if (build.exitCode !== 0) throw new Error("Web build failed before E2E");
+    if (build.exitCode !== 0) throw new Error("Web build failed before E2E");
+  } else if (!(await Bun.file(join(root, "apps/web/dist/index.html")).exists())) {
+    throw new Error("Missing web build from CI artifact");
+  }
+
   temp = await mkdtemp(join(tmpdir(), "sandbar-e2e-"));
   await writeFile(
     join(temp, "key"),
