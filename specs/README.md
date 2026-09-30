@@ -7,7 +7,7 @@ New features target the direct SDK and public adapter API. Service expansion is 
 ## Current implementation and next unit
 
 - [Provider state portability](provider-state-portability.md) — the snapshot/volume slice is in [PR #25](https://github.com/pandemicsyn/sandbar/pull/25); its [current completion criteria](provider-state-portability.md#9-current-pr-completion-and-follow-up-boundary) separate correctness fixes from later extensions. Remaining lifecycle features are planned.
-- [SDK recovery outcomes and adapter support](sdk-recovery-dx.md) — the next bounded unit: typed partial outcomes and shared recovery helpers/conformance. Richer volume semantics and mounted restore wait for concrete provider work.
+- [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) — revise PR #33 around ordinary calls, provider identity, minimal saved references and clear partial/unknown outcomes. Expanded persistence callbacks and durable workflow machinery are deferred. Richer volume semantics and mounted restore wait for concrete provider work.
 
 ## Implemented observability contract
 

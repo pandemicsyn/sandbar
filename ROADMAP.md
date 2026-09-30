@@ -4,20 +4,20 @@ SDK usability comes before more adapters. This file is the authoritative order o
 
 ## Now: finish the SDK foundation and DX cleanup
 
-Snapshot/volume support merged in [PR #25](https://github.com/pandemicsyn/sandbar/pull/25). Direct tracing and diagnostics merged in PR #24. Four follow-ups are in progress:
+Snapshot/volume support merged in [PR #25](https://github.com/pandemicsyn/sandbar/pull/25), direct tracing and diagnostics in PR #24, and CI cleanup in [PR #29](https://github.com/pandemicsyn/sandbar/pull/29). See [CI validation](CI.md) for the implemented build reuse, independently rerunnable jobs and fixture fixes.
 
-| Work                | Outcome                                                                                                                                                                                                               | Detail                                          |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| CI cleanup          | Remove duplicate runs/builds, make checks independently rerunnable, and fix flaky fixtures without hiding regressions.                                                                                                | Existing CI cleanup task.                       |
-| Provider acceptance | One maintained public-SDK runner, a generated support table, and clear provider limitations and live validation status.                                                                                               | [Acceptance plan](plans/provider-acceptance.md) |
-| Recovery DX         | Typed partial outcomes, retained resource access, useful recovered result types, continuation status, and persistence hooks on normal connections. Reduce repeated adapter checkpoint code with small shared helpers. | [Recovery spec](specs/sdk-recovery-dx.md)       |
-| Documentation pass  | Short working examples, accurate support claims, explicit cleanup responsibilities, and current implementation status.                                                                                                | SDK guides, provider docs and plan indexes.     |
+| Work                         | Status                                                | Outcome / detail                                                                                                                                                                                                                                    |
+| ---------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider acceptance          | Implementation and validation in progress; not merged | One maintained public-SDK runner, generated support table, and honest provider limitations and validation status. [Acceptance plan](plans/provider-acceptance.md).                                                                                  |
+| Recovery DX                  | Implementation and validation in progress; not merged | Clear call results/errors, provider-identifying resource handles, minimal saved references and direct partial results. Revise PR #33; expanded persistence hooks and workflow continuation are deferred. [Recovery spec](specs/sdk-recovery-dx.md). |
+| Documentation pass           | Awaiting integration into main                        | [PR #30](https://github.com/pandemicsyn/sandbar/pull/30) merged into `agent/ci-cleanup` after #29 merged. Its clearer examples, provider limitations and plan updates are not on main yet; integrate the docs changes before marking this complete. |
+| Volume cleanup configuration | Delegated; waiting for a committed recovery API base  | Add upfront connection policy and per-call overrides in one small PR; preserve existing unconfigured behavior. Details below.                                                                                                                       |
 
 E2B volume creation remains unqualified because the test account receives HTTP 403; E2B mounts are unsupported in Sandbar. Existing snapshot and Daytona volume live results must retain their actual tested revision/configuration. Missing access is not proof that E2B lacks native volumes, and a historical pass is not a new-code pass.
 
 ## Next: make everyday sandbox and storage lifecycles usable
 
-### Volume cleanup ergonomics — direction approved, implementation not started
+### Volume cleanup ergonomics — approved and delegated
 
 Applications can select the writable-volume cleanup policy upfront for a client connection, with an explicit per-call override. Precedence is per-call choice, then configured choice, then the existing SDK default. Preserve `require-durable` as the unconfigured default unless a separate decision changes it.
 
@@ -25,14 +25,19 @@ Choosing `allow-unconfirmed` permits compute destruction; it never promises flus
 
 Keep this a small SDK/API task with compiled configuration and cleanup examples. No new flush implementation, background cleanup service or expanded storage guarantees are required. See the [state contract](specs/provider-state-portability.md#3-persistent-volumes-and-mount-sessions).
 
-### Sandbox lifecycle — needs a focused spec before implementation
+### Sandbox lifecycle — scoped; implementation not started
 
-The [existing lifecycle direction](specs/provider-state-portability.md#4-suspension-resumption-and-expiry) is not yet a complete implementation brief. Split it into two bounded slices:
+The focused [lifecycle spec](specs/sandbox-lifecycle.md) merged in [PR #31](https://github.com/pandemicsyn/sandbar/pull/31). It defines native mappings, proposed signatures, explicit unsupported behavior and acceptance cases. Deliver up to three independently useful PRs, each with its API, adapter implementation, focused tests and docs:
 
-1. **Reconnect and lifetime:** reopen existing compute from a scoped saved identity in a fresh process, inspect its state and available expiry information, and extend a running session's lifetime where supported. Missing/expired compute must fail clearly; reconnect must not create or resume it implicitly.
-2. **Suspend and resume:** explicitly preserve supported state, resume the same logical sandbox, and report process/execution changes and connection loss. No checkpoint/delete/recreate emulation presented as native suspension.
+| Slice                   | Scope                                                                                                                                                                      | Dependency / readiness                                                                                                                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Reopen and inspect   | Reopen Sandbar-created compute from a saved scoped reference in a fresh process; inspect state and available deadlines. No implicit creation, resume or timeout extension. | Scoped for handoff. Coordinate create/restore reference changes with recovery DX. Verify the pinned E2B guest-attachment path before claiming support; use the spec's cut line if unavailable.  |
+| 2. Reset native timeout | Explicit timeout scope, bounded native units, acknowledgement and no-replay recovery.                                                                                      | After slice 1 and recovery DX. Accept the proposed distinction between E2B session timeout and explicit Daytona sandbox-wide TTL before implementation.                                         |
+| 3. Suspend/resume       | Daytona container filesystem preservation and E2B memory pause, with explicit native resume of the same logical resource.                                                  | After slice 1 and recovery DX; slice 2 is recommended but not mechanically required. Accept native defaults with optional exact requirements and native execution identity or explicit unknown. |
 
-Before handoff, settle exact public signatures, saved-reference and state types, expiration/time-origin semantics, optional native fields, credential/scope behavior, cancellation and uncertain outcomes. Verify Daytona/E2B native mappings and enumerate unsupported cases. Define focused offline cases and representative live acceptance scenarios; paid validation needs separate authorization. Do not reopen the general recovery architecture or add service parity.
+The proposed defaults and execution-evidence choices are recorded in [the spec's remaining product decisions](specs/sandbox-lifecycle.md#decisions-to-accept-and-later-documentation-edits); merging the research spec does not mark these APIs implemented or all decisions accepted. Slice 1 does not depend on accepting slice 2/3 choices.
+
+Keep each PR bounded. The spec supplies scope cuts if guest attachment or provider transitions grow too large; do not introduce a generic lifecycle engine. No mounted suspension, snapshot emulation, service parity or new providers. Representative live acceptance requires separate paid-run authorization.
 
 ## Then: interactive execution and useful storage composition
 
