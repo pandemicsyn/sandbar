@@ -187,7 +187,8 @@ test("E2B pending destroy checkpoints its token and reconciles after restart wit
   const native = await fixture({ pendingDestroy: true });
   await runPrepared(native.factory, native.ledger, config.templateId, {
     network: "blocked",
-    cleanupWaitMs: 30,
+    // Allow the accepted destroy checkpoint to persist on loaded CI runners.
+    cleanupWaitMs: 1000,
     selectedScenarios: new Set(["inspect"]),
   });
   const state = await native.ledger.read();
