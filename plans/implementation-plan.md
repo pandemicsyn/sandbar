@@ -30,14 +30,15 @@ Do not expand this PR into richer volume metadata, mounted restore, or a new pub
 
 Follow [the provider acceptance plan](provider-acceptance.md): retain meaningful live SDK workflows, consolidate branch and release testing into one maintained runner, and generate a small support matrix with explicit provider limitations and validation status. Schedule this cleanup before onboarding more adapters; it does not block or expand PR #25.
 
-## Next SDK feature: recovery outcomes and adapter support
+## Current SDK DX: results, errors and resource identities
 
-Implement [the focused follow-up spec](../specs/sdk-recovery-dx.md):
+Follow the September 30 direction in [the focused spec](../specs/sdk-recovery-dx.md) when revising PR #33:
 
-1. Stable typed partial outcomes on errors, operation handles, and recovered operations, including retained resources, completed work, observed source state, unresolved steps, and continuation eligibility. Application code must not decode provider tokens.
-2. Small shared checkpoint/dispatch helpers and reusable recovery conformance tests. Keep native evidence and transitions in adapters; preserve application-owned persistence and explicit continuation without replay.
+1. Ordinary calls return clear confirmations or errors and preserve known partial results directly.
+2. Snapshot and volume handles identify their provider; minimal serializable references reopen the exact native artifact with current credentials in a fresh process.
+3. Ambiguous native responses remain unconfirmed, without automatic replay. Applications own persistence and recovery policy and can use supported native discovery/inspection.
 
-This remains the next SDK feature unit, separate from the acceptance cleanup and not a prerequisite for fixing the current PR’s correctness findings. No general workflow engine or service persistence is included.
+Expanded persistence callbacks, generic completion-facts envelopes, application-backed dispatch barriers and generic continuation advice are deferred. Preserve necessary shipped compatibility and safety guards; do not expand legacy operation recovery into a prerequisite for usable resource APIs. The root [roadmap](../ROADMAP.md) controls sequencing and status.
 
 ## Later state extensions with concrete provider requirements
 
