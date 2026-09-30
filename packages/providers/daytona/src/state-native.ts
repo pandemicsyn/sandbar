@@ -4,6 +4,9 @@ import { resourceHistory } from "./resource-history";
 import {
   AdapterError,
   AdapterCheckpointError,
+  checkpointBeforeDispatch,
+  type RecoveryFacts,
+  type Json,
   type AttemptContext,
   type ObserveContext,
   assertResourceScope,
@@ -87,6 +90,10 @@ const Token = z.strictObject({
   snapshotId: z.string().min(1).max(512).optional(),
   captureState: z.enum(["not-submitted", "uncertain", "accepted", "completed", "failed"]),
   sourceState: z.enum(["running", "stopped", "unknown"]),
+  sourceUnavailable: z.literal(true).optional(),
+  sourceObservedState: z.enum(["running", "stopped", "unknown"]).optional(),
+  sourceObservedAt: z.iso.datetime().optional(),
+  sourceProvenance: z.enum(["provider-read", "acknowledgement"]).optional(),
   capture: CaptureFacts,
   consistency: z.enum(["crash-consistent", "caller-quiesced", "unknown"]),
   snapshot: z.json().optional(),
@@ -810,6 +817,151 @@ export function daytonaState(input: {
     );
   }
 
+  function observedSourceState(token: z.infer<typeof Token>, state: string) {
+    let normalized: z.infer<typeof Token>["sourceState"] = "unknown";
+
+    if (state === "started") normalized = "running";
+    else if (state === "stopped") normalized = "stopped";
+
+    // Repeated agreeing reads preserve the timestamp of the recorded state observation.
+    if (token.sourceObservedState !== normalized || !token.sourceObservedAt) {
+      token.sourceObservedState = normalized;
+      token.sourceObservedAt = new Date().toISOString();
+      token.sourceProvenance = "provider-read";
+    }
+
+    delete token.sourceUnavailable;
+    token.sourceState = normalized;
+  }
+
+  function captureRecoveryFacts(checkpoint: Json): RecoveryFacts {
+    const token = Token.parse(checkpoint);
+    const saved = savedSnapshot(token);
+
+    const retained =
+      saved.success && saved.data.reference.nativeId === token.snapshotId
+        ? [saved.data.reference]
+        : [];
+
+    const state = (value: string): RecoveryFacts["steps"][number]["status"] => {
+      switch (value) {
+        case "not-submitted":
+        case "accepted":
+          return "pending";
+        case "completed":
+          return "completed";
+        case "failed":
+          return "failed";
+        default:
+          return "uncertain";
+      }
+    };
+
+    const terminal = token.captureState === "completed" || token.captureState === "failed";
+
+    const mayContinue =
+      !token.rejectedBeforeDispatch &&
+      !token.sourceUnavailable &&
+      ((token.sourceState === "running" &&
+        token.stopState === "not-submitted" &&
+        token.captureState === "not-submitted") ||
+        (token.sourceState === "stopped" &&
+          token.stopState === "completed" &&
+          (token.captureState === "not-submitted" ||
+            (terminal && token.restartRequired && token.restartState === "not-submitted"))));
+
+    const uncertain = [token.stopState, token.captureState, token.restartState].some(
+      (value) => value === "uncertain" || value === "accepted",
+    );
+
+    const captureStep: RecoveryFacts["steps"][number] = {
+      step: "capture",
+      status: state(token.captureState),
+    };
+
+    const restartStep: RecoveryFacts["steps"][number] = {
+      step: "restart",
+      status: state(token.restartState),
+    };
+
+    if (token.captureFailure) captureStep.reason = token.captureFailure;
+
+    if (token.restartFailure) restartStep.reason = token.restartFailure;
+
+    const facts: RecoveryFacts = {
+      version: 1,
+      retainedResources: retained,
+      completed:
+        token.captureState === "completed" && retained.length
+          ? [{ step: "capture", capture: token.capture }]
+          : [],
+      steps: [{ step: "stop", status: state(token.stopState) }, captureStep, restartStep],
+      continuation: token.sourceUnavailable
+        ? {
+            supported: true,
+            status: "unavailable",
+            reason:
+              "The source is unavailable; use the retained snapshot directly instead of continuing source stages",
+          }
+        : mayContinue
+          ? {
+              supported: true,
+              status: "eligible",
+              reason:
+                "An unsubmitted capture or source restart remains; continuation revalidates source state and authorization",
+            }
+          : uncertain
+            ? {
+                supported: true,
+                status: "unknown",
+                reason:
+                  "Observe dispatched stages before choosing continuation; uncertain mutations cannot be replayed",
+              }
+            : {
+                supported: true,
+                status: "unavailable",
+                reason:
+                  "No safe unsubmitted capture or restart is currently established; observe or handle retained resources directly",
+              },
+    };
+
+    if (token.sourceObservedState && token.sourceObservedAt && token.sourceProvenance)
+      facts.source = {
+        state: token.sourceObservedState,
+        observedAt: token.sourceObservedAt,
+        provenance: token.sourceProvenance,
+      };
+
+    return facts;
+  }
+
+  function volumeRecoveryFacts(saved: Json): RecoveryFacts {
+    const token = VolumeCreateToken.parse(saved);
+
+    return {
+      version: 1,
+      retainedResources: token.volume ? [scopedReference(token.volume)] : [],
+      completed: [],
+      steps: [
+        {
+          step: "volume_create",
+          status:
+            token.state === "rejected"
+              ? "failed"
+              : token.state === "accepted"
+                ? "pending"
+                : "uncertain",
+        },
+      ],
+      continuation: {
+        supported: true,
+        status: "unavailable",
+        reason:
+          "Volume creation cannot be replayed; observe the acknowledged identity or handle retained storage directly",
+      },
+    };
+  }
+
   async function captureResult(
     token: z.infer<typeof Token>,
     ctx: ObserveContext | AttemptContext,
@@ -878,16 +1030,23 @@ export function daytonaState(input: {
 
   async function reconcileCapture(token: z.infer<typeof Token>, ctx: ReadContext) {
     let captureObserved = false;
-    const source = await box(token.sourceId, ctx);
-    token.sourceState =
-      source.state === "started" ? "running" : source.state === "stopped" ? "stopped" : "unknown";
+    let source: z.infer<typeof NativeBox> | undefined;
 
-    if (["uncertain", "accepted"].includes(token.stopState) && source.state === "stopped")
+    try {
+      source = await box(token.sourceId, ctx);
+      observedSourceState(token, source.state);
+    } catch (error) {
+      if (!(error instanceof AdapterError) || error.code !== "NOT_FOUND") throw error;
+      token.sourceUnavailable = true;
+      token.sourceState = "unknown";
+    }
+
+    if (["uncertain", "accepted"].includes(token.stopState) && source?.state === "stopped")
       token.stopState = "completed";
 
     if (
       ["uncertain", "accepted"].includes(token.restartState) &&
-      source.state === "started" &&
+      source?.state === "started" &&
       ["completed", "failed"].includes(token.captureState)
     ) {
       token.restartState = "completed";
@@ -940,6 +1099,7 @@ export function daytonaState(input: {
   ) {
     const context = { signal: ctx.signal, deadline: Date.now() + 60000 };
     const source = await box(token.sourceId, context);
+    observedSourceState(token, source.state);
     const name = token.name;
     const pending = () => ctx.pending(token, { pollAfterMs: 500 });
 
@@ -959,6 +1119,8 @@ export function daytonaState(input: {
         signal: AbortSignal.timeout(5000),
         deadline: Date.now() + 5000,
       });
+
+      observedSourceState(token, observedSource.state);
 
       if (observedSource.state !== "stopped") return;
       token.restartState = "uncertain";
@@ -990,12 +1152,7 @@ export function daytonaState(input: {
           await ctx.checkpoint(token);
           token.restartFailure = "Source start response was not successful; no replay";
           const observed = await box(source.id, finalization);
-          token.sourceState =
-            observed.state === "started"
-              ? "running"
-              : observed.state === "stopped"
-                ? "stopped"
-                : "unknown";
+          observedSourceState(token, observed.state);
 
           return;
         }
@@ -1009,7 +1166,7 @@ export function daytonaState(input: {
           return;
         }
 
-        token.sourceState = "running";
+        observedSourceState(token, "started");
         token.restartState = "completed";
         token.stage = "complete";
         await ctx.checkpoint(token);
@@ -1019,12 +1176,7 @@ export function daytonaState(input: {
 
         try {
           const observed = await box(source.id, finalization);
-          token.sourceState =
-            observed.state === "started"
-              ? "running"
-              : observed.state === "stopped"
-                ? "stopped"
-                : "unknown";
+          observedSourceState(token, observed.state);
         } catch {
           /* State stays unknown when read cannot confirm it. */
         }
@@ -1075,7 +1227,7 @@ export function daytonaState(input: {
           token.stopState = "failed";
           await ctx.checkpoint(token);
           const unchanged = await box(source.id, context);
-          token.sourceState = unchanged.state === "started" ? "running" : "unknown";
+          observedSourceState(token, unchanged.state);
           await ctx.checkpoint(token);
 
           if (unchanged.state === "started")
@@ -1090,7 +1242,7 @@ export function daytonaState(input: {
         }
 
         if (!stopped.ok || !(await settledSource(source.id, "stopped", context))) return pending();
-        token.sourceState = "stopped";
+        observedSourceState(token, "stopped");
         token.stopState = "completed";
         await ctx.checkpoint(token);
       } catch (error) {
@@ -1260,7 +1412,7 @@ export function daytonaState(input: {
       };
     },
     snapshotCapture: {
-      recovery: { version: 1, token: Token },
+      recovery: { version: 1, token: Token, facts: captureRecoveryFacts },
       async prepare(value, ctx) {
         const support = await profiles({ sandbox: value.sandbox }, ctx);
         const source = await box(value.sandbox.id, ctx);
@@ -1349,6 +1501,9 @@ export function daytonaState(input: {
           sourceId: source.id,
           initialState: initial,
           sourceState: initial,
+          sourceObservedState: initial,
+          sourceObservedAt: new Date().toISOString(),
+          sourceProvenance: "provider-read",
           restartRequired: initial === "running" && input.restartAfterCapture !== false,
           stopState: initial === "running" ? "not-submitted" : "completed",
           restartState:
@@ -1365,9 +1520,7 @@ export function daytonaState(input: {
           },
         };
 
-        await ctx.checkpoint(token);
-
-        if (ctx.signal.aborted) {
+        if (!(await checkpointBeforeDispatch(ctx, token))) {
           token.rejectedBeforeDispatch = true;
           await ctx.checkpoint(token);
 
@@ -1441,7 +1594,7 @@ export function daytonaState(input: {
       return { items: values.map((v) => volumeInfo(v)), coverage: "provider-scope" };
     },
     volumeCreate: {
-      recovery: { version: 1, token: VolumeCreateToken },
+      recovery: { version: 1, token: VolumeCreateToken, facts: volumeRecoveryFacts },
       async submit(value, ctx) {
         const context = { signal: ctx.signal, deadline: Date.now() + 30000 };
 
@@ -1464,9 +1617,7 @@ export function daytonaState(input: {
         if (prior.status !== 404)
           return ctx.reject("CONFLICT", "Volume exists or absence is unverified");
 
-        await ctx.checkpoint({ state: "uncertain", name: value.name });
-
-        if (ctx.signal.aborted) {
+        if (!(await checkpointBeforeDispatch(ctx, { state: "uncertain", name: value.name }))) {
           await ctx.checkpoint({ state: "rejected", name: value.name });
 
           return ctx.reject("UNAVAILABLE", "Volume create cancelled before dispatch");

@@ -47,7 +47,7 @@ test("plain create/destroy, unsupported local calls, and close once", async () =
     onReference(ref) {
       saved.push(ref);
 
-      if (ref.kind === "create") expect(creates).toBe(0);
+      if (ref.kind === "create" && !ref.facts) expect(creates).toBe(0);
     },
   });
 
@@ -57,7 +57,7 @@ test("plain create/destroy, unsupported local calls, and close once", async () =
   await expect(box.exec({ command: { kind: "argv", argv: ["true"] } })).rejects.toMatchObject({
     code: "UNSUPPORTED",
   });
-  expect(saved).toHaveLength(1);
+  expect(saved).toHaveLength(2);
   await box.destroy();
   expect(creates).toBe(1);
   expect(destroys).toBe(1);

@@ -517,7 +517,50 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           },
         },
         destroy: {
-          recovery: { version: 2, token: DestroyToken },
+          recovery: {
+            version: 2,
+            token: DestroyToken,
+            facts(saved) {
+              const token = DestroyToken.parse(saved);
+
+              return {
+                version: 1,
+                retainedResources: [
+                  ...(token.mountDurability?.map((mount) => mount.volume) ?? []),
+                  ...(token.retainedTemplateId
+                    ? [
+                        {
+                          version: 1 as const,
+                          kind: "image" as const,
+                          provider: "e2b",
+                          scope: boundScope,
+                          nativeId: token.retainedTemplateId,
+                          ownership: "unknown" as const,
+                        },
+                      ]
+                    : []),
+                ],
+                completed: [],
+                steps: [
+                  {
+                    step: "destroy",
+                    status:
+                      token.stage === "rejected"
+                        ? "failed"
+                        : token.stage === "accepted"
+                          ? "pending"
+                          : "uncertain",
+                  },
+                ],
+                continuation: {
+                  supported: true,
+                  status: "unavailable",
+                  reason:
+                    "Termination cannot be replayed; observe compute while retaining independent storage",
+                },
+              };
+            },
+          },
           async prepare(box) {
             const record = await find(box.id);
 

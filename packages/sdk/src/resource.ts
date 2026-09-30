@@ -1,3 +1,4 @@
+import { recoveryOutcome, type RecoveryOutcome } from "./recovery-outcome";
 import { certifyRecoveryReference } from "./recovery-diagnostics";
 import {
   SnapshotRequest,
@@ -165,6 +166,7 @@ export class SandbarError extends Error {
     readonly code: string,
     message: string,
     readonly effect: SafeError["effect"] = "none",
+    readonly outcome?: RecoveryOutcome,
   ) {
     super(message);
     this.name = "SandbarError";
@@ -175,8 +177,14 @@ export class UnsupportedFeatureError extends SandbarError {
   constructor(
     readonly feature: string,
     readonly unmetRequirements: readonly string[],
+    outcome?: RecoveryOutcome,
   ) {
-    super("UNSUPPORTED", `${feature} is unsupported: ${unmetRequirements.join("; ")}`, "none");
+    super(
+      "UNSUPPORTED",
+      `${feature} is unsupported: ${unmetRequirements.join("; ")}`,
+      "none",
+      outcome,
+    );
     this.name = "UnsupportedFeatureError";
   }
 }
@@ -188,7 +196,7 @@ export class OutcomeUnknownError<
     readonly reference: R,
     message = "Outcome unknown; observe this reference without resubmitting",
   ) {
-    super("OUTCOME_UNKNOWN", message, "possible");
+    super("OUTCOME_UNKNOWN", message, "possible", recoveryOutcome(reference));
     this.name = "OutcomeUnknownError";
   }
 }
@@ -205,6 +213,7 @@ export class WaitAbortedError<
       "WAIT_ABORTED",
       "Waiting stopped after submission; recover with this reference",
       "possible",
+      recoveryOutcome(reference),
     );
     this.name = "AbortError";
     this.cause = reason;

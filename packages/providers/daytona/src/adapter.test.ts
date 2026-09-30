@@ -1275,7 +1275,13 @@ test.each([
 
     if (!["matching", "name"].includes(evidence) || path === "lost")
       await expect(operation.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
-    else expect((await operation.wait()).id).toBe("restored");
+    else {
+      expect((await operation.wait()).id).toBe("restored");
+      expect(operation.outcome.completed).toContainEqual({
+        step: "restore",
+        restoreExecution: "fresh",
+      });
+    }
 
     await client.close();
     client = await connect();
@@ -1597,6 +1603,9 @@ async function interruptedMountedDestroy(mode: "tombstone" | "absent") {
             stage: "uncertain",
             mountDurability: [{ volume: { nativeId: "retained-volume" } }],
           });
+          expect(saved?.facts?.retainedResources).toMatchObject([
+            { kind: "volume", provider: "daytona", nativeId: "retained-volume" },
+          ]);
           deletes++;
           deleted = true;
           abort.abort();
@@ -1662,7 +1671,11 @@ async function interruptedMountedDestroy(mode: "tombstone" | "absent") {
         await expect(old.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
       }
 
-      const recovered = await (await reopened.recover(persisted)).wait();
+      const operation = await reopened.recover(persisted);
+      const recovered = await operation.wait();
+      expect(operation.outcome.retainedResources).toMatchObject([
+        { kind: "volume", nativeId: "retained-volume" },
+      ]);
       expect(recovered).toMatchObject({
         computeStopped: true,
         retainedResources: ["daytona-volume:retained-volume"],

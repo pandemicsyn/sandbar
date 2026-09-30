@@ -1,20 +1,30 @@
 # SDK recovery outcomes and adapter support
 
-Accepted follow-up direction · September 29, 2026 · Planned, not implemented
+SDK and public-adapter implementation contract · September 29, 2026
 
-After the current snapshot/volume slice, make partially completed operations understandable without decoding provider tokens, and reduce repeated recovery sequencing work for adapter authors. Keep the existing public snapshot, restore, volume, and explicit continuation methods. This specifies the next bounded SDK/public-adapter unit, not a redesign of the successful call flow.
+This bounded SDK/public-adapter unit makes partially completed operations understandable without decoding provider tokens and reduces repeated recovery sequencing work for adapter authors. It preserves existing successful sandbox, snapshot, restore and volume call shapes, native defaults and explicit continuation methods.
 
-## Boundary with the current PR
+## Boundary with the completed portability slice
 
-The [state portability completion criteria](provider-state-portability.md#9-current-pr-completion-and-follow-up-boundary) remain in PR #25: stale observation/continuation ordering, retained-volume custody before destruction, valid isolation assertions, and accurate release/evidence claims. Those bugs must not be deferred to this follow-up. This unit builds on their fixes.
+The [state portability completion criteria](provider-state-portability.md#9-current-pr-completion-and-follow-up-boundary) landed in merged PR #25: stale observation/continuation ordering, retained-volume custody before destruction, valid isolation assertions, and accurate release/evidence claims. This unit builds on their fixes.
 
 Keep the [credential-independent reference and continuation contract](provider-state-portability.md#application-owned-persistence-and-credential-independent-references): application-owned JSON persistence, current provider authorization, read-only observation, and explicit continuation of proven unsubmitted stages. No SDK database, provider-key HMAC, implicit replay, or service dependency. Applications still serialize continuation across processes.
 
 ## 1. Stable typed partial outcomes
 
-A caller must be able to answer “did capture finish, where is the retained snapshot, what happened to the source, and can this operation continue?” using public types. Today those facts can require parsing provider-specific recovery tokens. Keep those tokens opaque to application code.
+A caller must be able to answer “did capture finish, where is the retained snapshot, what happened to the source, and can this operation continue?” using public types. The normalized outcome removes the need to parse provider-specific recovery tokens. Keep those tokens opaque to application code.
 
-Expose the same normalized facts through operation handles, recovered operations, and errors that end a convenience wait. Fit the result into existing operation/error types where possible; a new exception class is not itself a requirement. Resolve final field names and additive signatures during implementation, with compiled examples proving consistent access across these surfaces.
+Direct `AdapterOperation.outcome` and optional `SandbarError.outcome` expose `RecoveryOutcome`: the direct operation `reference` plus `RecoveryFacts`. `OutcomeUnknownError` and `WaitAbortedError` attach these facts for direct recovery references; service errors and failures before recovery evidence exists may omit them. `recoveryOutcome(reference)` provides the same normalization for a saved direct reference. Provider tokens remain opaque. Compiled examples prove consistent access across these surfaces.
+
+`RecoveryFacts` version `1` uses these fields:
+
+- `retainedResources: ResourceReference[]` for known surviving artifacts.
+- `completed[]` entries with a logical `step`, optional `capture` guarantees and optional `restoreExecution` facts.
+- Optional `source: { state, observedAt, provenance }`, where the time is ISO and provenance is `provider-read` or `acknowledgement`.
+- `steps[]` entries with `step`, `status: "pending" | "uncertain" | "failed" | "completed"` and an optional reason.
+- `continuation: { supported, status, reason }`, separating support (`true | false | "unknown"`) from eligibility (`"eligible" | "unavailable" | "unknown"`).
+
+The facts schema validates a maximum of 16 KiB serialized UTF-8 JSON, 32 retained resources, 16 completed entries and 16 steps. Step names are bounded to 128 characters and reasons to 1,024. The existing 16 KiB budget still applies to the base reference; the complete reference including facts is capped at 48 KiB. The public outcome combines saved facts with up to 32 envelope mount references, exposing at most 64 known resource references without persisting duplicate histories. References and outcomes are sealed copies; public edits cannot change internal dispatch authority. `AdapterRecoveryReference.facts` is optional for compatible older references, which normalize to unknown completion and continuation evidence instead of success. An unsupported facts version is rejected.
 
 The public model must express:
 
@@ -28,11 +38,15 @@ For example, successful capture followed by failed restart exposes the snapshot 
 
 The normalized facts must be bounded, serializable, and retained through the existing persistence lifecycle. They must survive JSON roundtrips, a fresh SDK connection, credential rotation, and source deletion where the resource itself survives. Do not depend on an in-memory result cache or require a provider-specific JSON parser. Persisted formats need explicit version handling; an older reference missing facts reports unknown instead of fabricating them.
 
-Application examples must show both convenience error handling and explicit submission/recovery. They must obtain and reopen a retained snapshot without inspecting a token, and distinguish a currently eligible continuation from an uncertain request that must only be observed.
+The [compiled public example](../apps/docs/examples/recovery-outcomes.ts) shows convenience error handling and explicit submission/recovery, reopens retained snapshots without inspecting tokens, and distinguishes currently eligible continuation from uncertain work that must only be observed. The [recovery guide](../apps/docs/src/content/docs/docs/guides/recovery.md) explains the application contract.
+
+`Sandbar.connect(daytona(config), { onReference })` and the equivalent E2B bound-adapter form accept the awaited application persistence hook alongside observability. Empty `config`/`credentials` boilerplate is unnecessary. `DirectConnectOptions` names these connection options. Successful calls retain their existing shapes and defaults.
+
+Direct `recover(reference)` returns a `RecoveredOperation` union, narrowed by `operation.kind`: snapshot capture produces `SnapshotResult`, volume creation a volume handle, create/restore a sandbox handle, and the other kinds their existing safe results. There are no unchecked caller-supplied result generics. Exported `DirectClient` and `DirectSandboxHandle` make direct snapshots and volumes discoverable without adding them to the service `SandbarClient` contract.
 
 ## 2. Small shared recovery helpers and conformance
 
-The shared runtime owns ordering of operation state installation and persistence. An older observation must not replace a newer dispatch checkpoint; this correctness fix lands in the current PR. The follow-up adds reusable support around the repeated provider sequence:
+The shared runtime owns ordering of operation state installation and persistence. An older observation must not replace a newer dispatch checkpoint; this correctness fix landed in PR #25. The follow-up adds reusable support around the repeated provider sequence:
 
 1. Prepare a bounded stage checkpoint containing known resource and correlation facts.
 2. Await its durable dispatch barrier.
@@ -40,7 +54,7 @@ The shared runtime owns ordering of operation state installation and persistence
 4. Dispatch once and retain the acknowledgement/new native identities.
 5. Persist new facts and reconcile unresolved effects through reads.
 
-Extract helpers only for repetition demonstrated by the Daytona/E2B implementations. Providers still define native stages, identity evidence, safe transitions, and terminal-state meaning. Helpers must not infer provider guarantees, auto-retry an uncertain mutation, or become a general workflow engine. Keep the distinction between explicit caller-selected resource deletion and correlated incidental cleanup.
+The shared `checkpointBeforeDispatch(ctx, token)` helper awaits `ctx.checkpoint(token)` and returns whether cancellation still permits dispatch. Providers return pending when it returns false. A pure `Mutation.recovery.facts(token)` mapper derives normalized public evidence, validated by the runtime and persisted through the existing SDK checkpoint path. Extract helpers only for repetition demonstrated by the Daytona/E2B implementations. Providers still define native stages, identity evidence, safe transitions, and terminal-state meaning. Helpers must not infer provider guarantees, auto-retry an uncertain mutation, or become a general workflow engine. Keep the distinction between explicit caller-selected resource deletion and correlated incidental cleanup.
 
 Add shared conformance scenarios for failure before/after checkpoint persistence, lost acknowledgements, cancellation while checkpointing, stale observations racing continuation, delayed capture, retained resources after partial failure, and recovery with a fresh connection. Include adversarial fixtures that would duplicate effects if ordering regressed. Reuse the SDK's actual persistence path rather than testing a separate model of it.
 

@@ -33,6 +33,9 @@ Import from `sandbar-sdk`.
 | `diagnosticContext`         | re-export |
 | `DiagnosticContext`         | type      |
 | `DirectCapabilities`        | type      |
+| `DirectClient`              | type      |
+| `DirectConnectOptions`      | type      |
+| `DirectSandboxHandle`       | type      |
 | `ExecInput`                 | type      |
 | `ExecOutput`                | type      |
 | `Image`                     | re-export |
@@ -48,6 +51,10 @@ Import from `sandbar-sdk`.
 | `outputText`                | re-export |
 | `PreparedAdapterAttempt`    | re-export |
 | `PreparedImage`             | type      |
+| `RecoveredOperation`        | type      |
+| `RecoveryFacts`             | re-export |
+| `recoveryOutcome`           | re-export |
+| `RecoveryOutcome`           | type      |
 | `RecoveryReference`         | type      |
 | `ResourceKind`              | re-export |
 | `ResourceReference`         | re-export |
@@ -115,6 +122,7 @@ Import from `sandbar-adapter`.
 | `AdapterErrorCode`             | type      |
 | `AdapterSession`               | type      |
 | `AttemptContext`               | type      |
+| `checkpointBeforeDispatch`     | function  |
 | `Command`                      | type      |
 | `connectAdapter`               | function  |
 | `continueOperation`            | re-export |
@@ -152,6 +160,7 @@ Import from `sandbar-adapter`.
 | `prepareOperation`             | re-export |
 | `ReadContext`                  | type      |
 | `RecoveryAttempt`              | type      |
+| `RecoveryFacts`                | re-export |
 | `RecoveryResource`             | type      |
 | `Rejected`                     | type      |
 | `RetainedArtifact`             | type      |

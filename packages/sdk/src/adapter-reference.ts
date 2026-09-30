@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { ResourceReference, MountSpec, SnapshotProfile, SandboxState } from "sandbar-adapter";
+import {
+  ResourceReference,
+  MountSpec,
+  SnapshotProfile,
+  SandboxState,
+  RecoveryFacts,
+} from "sandbar-adapter";
 
 export const CaptureExpectation = z.strictObject({
   profile: SnapshotProfile,
@@ -40,6 +46,7 @@ export const ReferenceSchema = z.strictObject({
     })
     .optional(),
   maxOutputBytes: z.number().int().nonnegative().max(1_048_576).optional(),
+  facts: RecoveryFacts.optional(),
   tokenVersion: z.number().int().positive().optional(),
   token: z.json().optional(),
 });

@@ -499,6 +499,75 @@ test("Daytona retained capture remains inspectable and owned when source restart
   }
 });
 
+test("Daytona normalized partial capture facts survive JSON recovery, rotated credentials and source loss", async () => {
+  const f = fixture();
+  f.modes.restartRejected = true;
+  const client = await f.connect();
+  let saved: AdapterRecoveryReference;
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    let failure: unknown;
+
+    try {
+      await source.snapshot();
+    } catch (error) {
+      failure = error;
+    }
+
+    if (!(failure instanceof OutcomeUnknownError)) throw new Error("Expected partial capture");
+    const outcome = failure.outcome;
+
+    if (!outcome?.source) throw new Error("Expected observed source facts");
+    expect(outcome.completed).toEqual([
+      {
+        step: "capture",
+        capture: { preserve: "filesystem", interruption: "stop", restoreExecution: "fresh" },
+      },
+    ]);
+    expect(outcome.steps).toEqual(
+      expect.arrayContaining([
+        { step: "capture", status: "completed" },
+        {
+          step: "restart",
+          status: "failed",
+          reason: "Source start response was not successful; no replay",
+        },
+      ]),
+    );
+    expect(outcome.source).toMatchObject({ state: "stopped", provenance: "provider-read" });
+    expect(Number.isFinite(Date.parse(outcome.source.observedAt))).toBe(true);
+    expect(outcome.continuation).toMatchObject({ supported: true, status: "unavailable" });
+    saved = JSON.parse(JSON.stringify(outcome.reference));
+  } finally {
+    await client.close();
+  }
+
+  f.modes.sourceReadStatus = 404;
+  const reopened = await f.connect(undefined, "rotated-key");
+
+  try {
+    const recovered = await reopened.recover(saved!);
+    await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+
+    const retained = recovered.outcome.retainedResources.find(
+      (resource) => resource.kind === "snapshot",
+    );
+
+    if (!retained) throw new Error("Expected public retained snapshot reference");
+    expect(recovered.outcome.completed).toMatchObject([
+      { step: "capture", capture: { preserve: "filesystem", restoreExecution: "fresh" } },
+    ]);
+    expect(recovered.outcome.continuation.status).toBe("unavailable");
+    expect(await (await reopened.snapshots.get(retained)).inspect()).toMatchObject({
+      state: "ready",
+    });
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+  } finally {
+    await reopened.close();
+  }
+});
+
 test("Daytona reports capture and restart failures independently", async () => {
   const f = fixture();
   f.modes.captureRejected = true;
@@ -514,6 +583,17 @@ test("Daytona reports capture and restart failures independently", async () => {
       captureFailure: "Native capture definitively rejected",
       restartFailure: "Source start response was not successful; no replay",
     });
+    expect(operation.outcome.completed).toEqual([]);
+    expect(operation.outcome.steps).toEqual(
+      expect.arrayContaining([
+        { step: "capture", status: "failed", reason: "Native capture definitively rejected" },
+        {
+          step: "restart",
+          status: "failed",
+          reason: "Source start response was not successful; no replay",
+        },
+      ]),
+    );
   } finally {
     await client.close();
   }

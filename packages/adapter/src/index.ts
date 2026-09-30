@@ -31,6 +31,8 @@ export type ImageBuildValue = { preparedId: string; retainedResources: RetainedA
 
 export * from "./resources";
 
+export { RecoveryFacts } from "./recovery";
+
 export type CreateInput = {
   image: Image;
   networkPolicy: string;
@@ -149,6 +151,16 @@ export type AttemptContext<T extends Json = Json> = {
   unknown(reason: string): Unknown;
 };
 
+/** Await the persistence barrier, then recheck cancellation before a native stage. */
+export async function checkpointBeforeDispatch<T extends Json>(
+  ctx: Pick<AttemptContext<T>, "checkpoint" | "signal">,
+  token: T,
+): Promise<boolean> {
+  await ctx.checkpoint(token);
+
+  return !ctx.signal.aborted;
+}
+
 export type ObserveContext<T extends Json = Json> = ReadContext & {
   pending(token: T, options?: { pollAfterMs?: number }): Pending;
   unknown(reason: string): Unknown;
@@ -178,7 +190,12 @@ export type Mutation<
       ? (input: P, ctx: AttemptContext<T>) => Promise<V | Pending | Unknown | Rejected>
       : never)
   | {
-      recovery?: { version: number; token: z.ZodType<T> };
+      recovery?: {
+        version: number;
+        token: z.ZodType<T>;
+        /** Derive public evidence from an opaque token; facts never authorize dispatch. */
+        facts?: (token: T) => import("./recovery").RecoveryFacts;
+      };
       continue?: (
         attempt: RecoveryAttempt<T, S>,
         ctx: AttemptContext<T>,
@@ -476,7 +493,11 @@ export type OperationParts<I, V, P, T extends Json, S extends RecoveryResource |
     attempt: RecoveryAttempt<T, S>,
     ctx: AttemptContext<T>,
   ) => Promise<V | Pending | Unknown | Rejected>;
-  recovery?: { version: number; token: z.ZodType<T> };
+  recovery?: {
+    version: number;
+    token: z.ZodType<T>;
+    facts?: (token: T) => import("./recovery").RecoveryFacts;
+  };
 };
 
 export function operationParts<I, V, P, T extends Json, S extends RecoveryResource | undefined>(

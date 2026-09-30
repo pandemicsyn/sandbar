@@ -1,4 +1,4 @@
-import { certifiedRecoveryAvailable } from "./recovery-diagnostics";
+import { certifiedRecoveryAvailable, certifiedOperationReference } from "./recovery-diagnostics";
 import packageMetadata from "../package.json";
 /* oxlint-disable anti-slop/no-runtime-typeof -- This bounded allowlist helper checks primitives in memory without serializing arbitrary values or allocating a schema per span. */
 /* oxlint-disable anti-slop/no-unknown-returns -- The heterogeneous instance wrapper is internal and preserves the target method's existing generic return type. */
@@ -120,7 +120,9 @@ export function diagnosticContext(value: unknown): Readonly<DiagnosticContext> {
       }
 
       // Data properties only: diagnostic collection never invokes application accessors.
-      const ref = Object.getOwnPropertyDescriptor(value, "reference")?.value;
+      const ref =
+        certifiedOperationReference(value) ??
+        Object.getOwnPropertyDescriptor(value, "reference")?.value;
 
       if (ref && typeof ref === "object") {
         record.operationId = safeIdentity(
@@ -211,7 +213,10 @@ function operationKind(value: unknown): string | undefined {
 function identityKind(value: unknown): string | undefined {
   return attempt(() => {
     if (!value || typeof value !== "object") return;
-    const reference = Object.getOwnPropertyDescriptor(value, "reference")?.value;
+
+    const reference =
+      certifiedOperationReference(value) ??
+      Object.getOwnPropertyDescriptor(value, "reference")?.value;
 
     if (!reference || typeof reference !== "object") return;
 

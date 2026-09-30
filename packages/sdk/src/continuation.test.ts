@@ -106,8 +106,13 @@ test("continuation awaits durable dispatch checkpoint and guards one handle agai
 
 for (const failure of ["uncertain", "completed"] as const) {
   test(`continuation checkpoint failure at ${failure} retains latest evidence without replay`, async () => {
+    let storeAvailable = false;
+
     const f = fixture((reference) => {
-      if (z.object({ stage: z.literal(failure) }).safeParse(reference.token).success)
+      if (
+        !storeAvailable &&
+        z.object({ stage: z.literal(failure) }).safeParse(reference.token).success
+      )
         throw new Error("Store failed");
     });
 
@@ -121,6 +126,7 @@ for (const failure of ["uncertain", "completed"] as const) {
         reference: { token: { stage: failure } },
       });
       expect(f.effects()).toBe(failure === "completed" ? 1 : 0);
+      storeAvailable = true;
       const reference = JSON.parse(JSON.stringify(operation.reference));
       const recovered = await client.recover(reference);
 
@@ -142,12 +148,13 @@ for (const persistenceFailure of [false, true]) {
     "returned pending acknowledgement persists before submit returns: " + persistenceFailure,
     async () => {
       let saved: AdapterRecoveryReference | undefined;
+      let storeAvailable = !persistenceFailure;
 
       const f = fixture((reference) => {
         if (!z.object({ stage: z.literal("completed") }).safeParse(reference.token).success) return;
         saved = reference;
 
-        if (persistenceFailure) throw Error("Persistence failed after effect");
+        if (!storeAvailable) throw Error("Persistence failed after effect");
       }, true);
 
       const client = await f.connect();
@@ -162,6 +169,7 @@ for (const persistenceFailure of [false, true]) {
           });
         else await box.submitDestroy();
         expect(saved?.token).toEqual({ stage: "completed" });
+        storeAvailable = true;
         const fresh = await f.connect();
 
         try {

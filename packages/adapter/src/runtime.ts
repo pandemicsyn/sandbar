@@ -18,6 +18,7 @@ import {
   VolumeInfo,
 } from "./resources";
 import { z } from "zod";
+import { RecoveryFacts } from "./recovery";
 import { CreateSandboxInput, ExecRequest, FilePath } from "./portable";
 import {
   AdapterError,
@@ -116,10 +117,10 @@ export type PreparedOperation = {
 };
 
 export type RuntimeResult =
-  | { kind: "completed"; value: OperationResult }
-  | { kind: "pending"; token: Json; pollAfterMs: number; version: number }
-  | { kind: "unknown"; reason: string }
-  | { kind: "rejected"; code: string; message: string };
+  | { kind: "completed"; value: OperationResult; facts?: RecoveryFacts }
+  | { kind: "pending"; token: Json; pollAfterMs: number; version: number; facts?: RecoveryFacts }
+  | { kind: "unknown"; reason: string; facts?: RecoveryFacts }
+  | { kind: "rejected"; code: string; message: string; facts?: RecoveryFacts };
 
 const Id = z.string().min(1).max(512);
 
@@ -736,9 +737,56 @@ function prepareBeforeDeadline<I, P>(
   });
 }
 
+function recoveryFacts(
+  operation: Mutation<unknown, unknown, unknown>,
+  token: Json | undefined,
+): RecoveryFacts | undefined {
+  const parts = operationParts(operation);
+  const mapper = parts.recovery?.facts;
+
+  if (!mapper || token === undefined) return undefined;
+  const mapped = RecoveryFacts.safeParse(mapper(structuredClone(token)));
+
+  if (!mapped.success) throw new AdapterError("INVALID_ARGUMENT", "Invalid recovery facts");
+
+  const parsed = RecoveryFacts.safeParse({
+    ...mapped.data,
+    continuation: parts.continue
+      ? { ...mapped.data.continuation, supported: true }
+      : {
+          supported: false,
+          status: "unavailable",
+          reason: "Explicit continuation is unsupported",
+        },
+  });
+
+  if (!parsed.success) throw new AdapterError("INVALID_ARGUMENT", "Invalid recovery facts");
+
+  return structuredClone(parsed.data);
+}
+
+function completedFacts(facts: RecoveryFacts | undefined): RecoveryFacts | undefined {
+  if (!facts) return undefined;
+
+  const parsed = RecoveryFacts.safeParse({
+    ...facts,
+    continuation: {
+      supported: facts.continuation.supported,
+      status: "unavailable",
+      reason: "Operation completed",
+    },
+  });
+
+  if (!parsed.success)
+    throw new AdapterError("INVALID_ARGUMENT", "Invalid completed recovery facts");
+
+  return parsed.data;
+}
+
 function normalizeSpecial(
   value: SpecialOutcome,
   operation: Mutation<unknown, unknown, unknown>,
+  facts?: RecoveryFacts,
 ): RuntimeResult {
   const parts = operationParts(operation);
   const kind = outcomeKind(value);
@@ -755,6 +803,7 @@ function normalizeSpecial(
       token: pending.token,
       pollAfterMs: pending.pollAfterMs ?? 500,
       version: checkedRecoveryVersion(parts.recovery.version),
+      facts: recoveryFacts(operation, pending.token),
     };
   }
 
@@ -762,13 +811,13 @@ function normalizeSpecial(
     // SAFETY: outcomeKind read the private outcome brand and selected Unknown.
     const unknownValue = value as Unknown;
 
-    return { kind: "unknown", reason: unknownValue.reason };
+    return { kind: "unknown", reason: unknownValue.reason, facts };
   }
 
   // SAFETY: Pending and Unknown were handled above; the branded outcome is Rejected.
   const rejected = value as Rejected;
 
-  return { kind: "rejected", code: rejected.code, message: rejected.message };
+  return { kind: "rejected", code: rejected.code, message: rejected.message, facts };
 }
 
 export async function submitOperation(
@@ -776,31 +825,40 @@ export async function submitOperation(
   identity: Pick<AttemptContext, "operationId" | "submissionId" | "invocationKey">,
   signal: AbortSignal,
   maxOutputBytes = MAX_OUTPUT,
-  onCheckpoint?: (token: Json, version: number) => Promise<void>,
+  onCheckpoint?: (token: Json, version: number, facts?: RecoveryFacts) => Promise<void>,
 ): Promise<RuntimeResult> {
   const rejected = await prepared.revalidate?.(signal);
 
   if (rejected) return rejected;
   const parts = operationParts(prepared.operation);
 
+  let facts: RecoveryFacts | undefined;
+
   const context = createAttemptContext(
     {
       ...identity,
       signal,
-      onCheckpoint: onCheckpoint
-        ? (token) => onCheckpoint(token, checkedRecoveryVersion(parts.recovery!.version))
-        : undefined,
+      onCheckpoint: async (token) => {
+        const next = recoveryFacts(prepared.operation, token);
+        await onCheckpoint?.(
+          token,
+          checkedRecoveryVersion(parts.recovery!.version),
+          structuredClone(next),
+        );
+        facts = next;
+      },
     },
     parts.recovery?.token,
   );
 
   const value = await parts.submit(prepared.input, context);
 
-  if (isOutcome(value)) return normalizeSpecial(value, prepared.operation);
+  if (isOutcome(value)) return normalizeSpecial(value, prepared.operation, facts);
 
   return {
     kind: "completed",
     value: await validateValue(prepared.kind, value, maxOutputBytes, signal),
+    facts: completedFacts(facts),
   };
 }
 
@@ -840,6 +898,7 @@ export async function observeOperation(
     token = context.pending(token).token;
   }
 
+  const facts = recoveryFacts(operation, token);
   onValidated?.();
 
   const value = await parts.observe({ ...attempt, token, sandbox: attempt.sandbox }, context);
@@ -850,10 +909,14 @@ export async function observeOperation(
     if (outcomeKind(value) === "rejected")
       throw new AdapterError("INVALID_ARGUMENT", "Observation cannot certify rejection");
 
-    return normalizeSpecial(value, operation);
+    return normalizeSpecial(value, operation, facts);
   }
 
-  return { kind: "completed", value: await validateValue(kind, value, maxOutputBytes, signal) };
+  return {
+    kind: "completed",
+    value: await validateValue(kind, value, maxOutputBytes, signal),
+    facts: completedFacts(facts),
+  };
 }
 
 /** Explicit mutation continuation. Read-only observation never calls this function. */
@@ -863,7 +926,7 @@ export async function continueOperation(
   attempt: Parameters<typeof observeOperation>[2],
   identity: Pick<AttemptContext, "operationId" | "submissionId" | "invocationKey">,
   signal: AbortSignal,
-  onCheckpoint: (token: Json, version: number) => Promise<void>,
+  onCheckpoint: (token: Json, version: number, facts?: RecoveryFacts) => Promise<void>,
 ): Promise<RuntimeResult> {
   const operation = select(session, kind);
   const parts = operationParts(operation);
@@ -874,15 +937,30 @@ export async function continueOperation(
   if (attempt.version !== parts.recovery.version)
     throw new AdapterError("CONFLICT", "Continuation token version differs");
 
+  let facts: RecoveryFacts | undefined;
+
   const context = createAttemptContext(
-    { ...identity, signal, onCheckpoint: (token) => onCheckpoint(token, parts.recovery!.version) },
+    {
+      ...identity,
+      signal,
+      onCheckpoint: async (token) => {
+        const next = recoveryFacts(operation, token);
+        await onCheckpoint(token, parts.recovery!.version, structuredClone(next));
+        facts = next;
+      },
+    },
     parts.recovery.token,
   );
 
   const token = context.pending(attempt.token!).token;
+  facts = recoveryFacts(operation, token);
   const value = await parts.continue({ ...attempt, token, sandbox: attempt.sandbox }, context);
 
-  if (isOutcome(value)) return normalizeSpecial(value, operation);
+  if (isOutcome(value)) return normalizeSpecial(value, operation, facts);
 
-  return { kind: "completed", value: await validateValue(kind, value, MAX_OUTPUT, signal) };
+  return {
+    kind: "completed",
+    value: await validateValue(kind, value, MAX_OUTPUT, signal),
+    facts: completedFacts(facts),
+  };
 }
