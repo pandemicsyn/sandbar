@@ -33,6 +33,12 @@ Preserve the independently reviewed provider-scoped admission correction and sha
 
 ## Delivery
 
-Demonstrate the snapshot slice offline, migrate remaining workflows with native-boundary parity, remove duplicate executors, rewrite qualification guidance and revise the draft PR description. Obtain independent reviews of coverage, cleanup and remaining custom machinery before marking ready. Run focused and required checks appropriate to the change; report that the new Bun path has not received live validation. Do not merge, publish, deploy, schedule monitoring or implement unrelated recovery DX, lifecycle changes, providers or CI architecture.
+Demonstrate the snapshot slice offline, migrate remaining workflows with native-boundary parity, remove duplicate executors, rewrite qualification guidance and revise the draft PR description. Obtain independent reviews of coverage, cleanup and remaining custom machinery before marking ready. Run focused and required checks appropriate to the change; retain exact live results and cleanup evidence without weakening a failed assertion. Do not merge, publish, deploy, schedule monitoring or implement unrelated recovery DX, lifecycle changes, providers or CI architecture.
 
 See the [operator README](../packages/sdk-qualification/provider-qualification/README.md) for invocations, finite per-suite budgets, cleanup and evidence review.
+
+## Authorized live validation
+
+The user subsequently authorized live tests with failure cleanup checks. At clean source `1505ee0`, the ordinary Daytona Bun suites produced five passing tests and one lifecycle failure: the running owned sandbox was absent from managed inventory. Execution, files, snapshot roundtrip, volume CRUD and mounted persistence passed. The finite run used six total compute allocations (peak two), one snapshot and one volume; every creator has confirmed cleanup and all clients closed. A final read-only inventory found no known owned retained artifacts, but the failed managed inventory assertion means empty compute inventory is not independent cleanup proof.
+
+E2B reconciliation made no allocation and still returned `OUTCOME_UNKNOWN` for the preserved original volume receipt. No new E2B tests were admitted. Raw JUnit, provider logs and receipts remain private; sanitized records retain exact source/configuration and failed lifecycle evidence. No creator retry, image build or additional live budget is included. PR #32 remains draft and unmerged.

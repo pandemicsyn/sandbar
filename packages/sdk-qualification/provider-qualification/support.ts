@@ -62,7 +62,7 @@ export const builtinSupport: SupportMetadata[] = [
     features: {
       lifecycle: {
         support: "supported",
-        note: "Prepared baseline passed at 3be54464 in us with daytona-small and daytona-default. Other images/regions are unverified.",
+        note: "The Bun lifecycle test at 1505ee0 in us with daytona-default failed because managed inventory omitted the running owned sandbox. Teardown and client close were confirmed. The earlier 3be54464 baseline passed; other images/regions are unverified.",
       },
       execution: {
         support: "supported",
@@ -82,15 +82,15 @@ export const builtinSupport: SupportMetadata[] = [
       },
       snapshots: {
         support: "conditional",
-        note: "Eligible containers only: stop/cold filesystem capture/restart, fresh restored execution; no RAM. Roundtrip passed at 9a6c1c1 in us with daytona-default, including later guards/recovery, two-way filesystem isolation, fresh-process reference reopen and confirmed owned cleanup.",
+        note: "Eligible containers only: stop/cold filesystem capture/restart, fresh restored execution; no RAM. The Bun roundtrip passed at 1505ee0 in us with daytona-default, including two-way filesystem isolation, separate-process reference reopen, source deletion, second restore and confirmed owned cleanup.",
       },
       volumes: {
         support: "supported",
-        note: "Independent native create/inspect/delete passed at 9a6c1c1 in us with daytona-default, without compute allocation for the CRUD probe; owned deletion was confirmed.",
+        note: "The Bun native create/readiness/inspect/delete test passed at 1505ee0 in us with daytona-default. CRUD is independent of mounts; owned deletion was confirmed.",
       },
       persistence: {
         support: "conditional",
-        note: "Writable create-time mounts/subpaths; read-only unsupported. Historical 5db0558 producer/destroy/remount/readback and deletion passed. Later custody/recovery guards have offline coverage, not a current-head live rerun.",
+        note: "Writable create-time mounts/subpaths; read-only unsupported. The Bun producer write/flush/readback, producer destruction, independent consumer remount/readback and owned deletion passed at 1505ee0 in us with daytona-default.",
       },
     },
   },
@@ -253,7 +253,7 @@ export function renderSupportMatrix(
     "",
     ...markdownTable(["Feature", ...profiles.map((profile) => profile.name)], rows),
     "",
-    "The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. The scoped Daytona snapshot/fresh-process and independent volume CRUD acceptance at 9a6c1c1 has confirmed cleanup. Other operation/configuration claims retain their own recorded revisions and limitations below.",
+    "The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. The Daytona Bun tests at 1505ee0 passed execution, files, snapshot roundtrip, volume CRUD and mounted persistence with confirmed cleanup. The lifecycle case failed its managed inventory assertion; its teardown was also confirmed. Other operation/configuration claims retain their own recorded revisions and limitations below.",
     "",
   ];
 
@@ -282,7 +282,7 @@ export function renderSupportMatrix(
     "",
     "## Updating support",
     "",
-    "Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The Bun migration itself has not been live-run. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.",
+    "Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The bounded Daytona Bun run at 1505ee0 is recorded, including its lifecycle failure. E2B allocation remains blocked by the preserved unresolved volume receipt. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.",
     "",
   );
 

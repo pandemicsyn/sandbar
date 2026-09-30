@@ -17,29 +17,65 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
-- SDK: 0.0.0, commit `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- SDK: 0.0.0, commit `1505ee0db85276224d0b3d846c50acc681f4ae06`.
 - Fresh-process reopen: not recorded.
-- Harness commit: `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- Harness commit: `1505ee0db85276224d0b3d846c50acc681f4ae06`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
 
-| Scenario        | Latest live result | Date       |
-| --------------- | ------------------ | ---------- |
-| close           | passed             | 2026-09-30 |
-| confirm-cleanup | passed             | 2026-09-30 |
-| connect         | passed             | 2026-09-30 |
+| Scenario    | Latest live result | Date       |
+| ----------- | ------------------ | ---------- |
+| volume-crud | passed             | 2026-09-30 |
 
 ### daytona-default-requested · us · /tmp
 
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
-- SDK: 0.0.0, commit `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- SDK: 0.0.0, commit `1505ee0db85276224d0b3d846c50acc681f4ae06`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `1505ee0db85276224d0b3d846c50acc681f4ae06`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
+| Scenario           | Latest live result | Date       |
+| ------------------ | ------------------ | ---------- |
+| volume-persistence | passed             | 2026-09-30 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `1505ee0db85276224d0b3d846c50acc681f4ae06`.
 - Fresh-process reopen: required.
-- Harness commit: `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- Harness commit: `1505ee0db85276224d0b3d846c50acc681f4ae06`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
 
 | Scenario           | Latest live result | Date       |
 | ------------------ | ------------------ | ---------- |
 | snapshot-roundtrip | passed             | 2026-09-30 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `1505ee0db85276224d0b3d846c50acc681f4ae06`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `1505ee0db85276224d0b3d846c50acc681f4ae06`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
+| Scenario               | Latest live result | Date       |
+| ---------------------- | ------------------ | ---------- |
+| close                  | failed             | 2026-09-30 |
+| confirm-cleanup        | failed             | 2026-09-30 |
+| connect                | failed             | 2026-09-30 |
+| create-prepared        | failed             | 2026-09-30 |
+| destroy                | failed             | 2026-09-30 |
+| exec-argv              | passed             | 2026-09-30 |
+| exec-nonzero           | passed             | 2026-09-30 |
+| exec-shell             | passed             | 2026-09-30 |
+| file-binary (/tmp)     | passed             | 2026-09-30 |
+| file-no-clobber (/tmp) | passed             | 2026-09-30 |
+| file-overwrite (/tmp)  | passed             | 2026-09-30 |
+| inspect                | failed             | 2026-09-30 |
+| inventory              | failed             | 2026-09-30 |
 
 ### daytona-default-requested · us · /tmp
 
@@ -66,16 +102,6 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 | Scenario                                                          | Latest live result | Date       |
 | ----------------------------------------------------------------- | ------------------ | ---------- |
 | build-oci                                                         | not-run            | 2026-09-28 |
-| create-prepared                                                   | passed             | 2026-09-28 |
-| destroy                                                           | passed             | 2026-09-28 |
-| exec-argv                                                         | passed             | 2026-09-28 |
-| exec-nonzero                                                      | passed             | 2026-09-28 |
-| exec-shell                                                        | passed             | 2026-09-28 |
-| file-binary (/tmp)                                                | passed             | 2026-09-28 |
-| file-no-clobber (/tmp)                                            | passed             | 2026-09-28 |
-| file-overwrite (/tmp)                                             | passed             | 2026-09-28 |
-| inspect                                                           | passed             | 2026-09-28 |
-| inventory                                                         | passed             | 2026-09-28 |
 | network-blocked (daytona-default-requested / probe not recorded)  | not-run            | 2026-09-28 |
 | network-internet (daytona-default-requested / probe not recorded) | not-run            | 2026-09-28 |
 | snapshot-roundtrip                                                | unsupported        | 2026-09-28 |

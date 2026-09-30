@@ -1101,6 +1101,479 @@
         "regionClass": "us"
       },
       "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "connect",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "create-prepared",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "inspect",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "inventory",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "destroy",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "confirm-cleanup",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "close",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "exec-argv",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "execution"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "exec-shell",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "execution"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "exec-nonzero",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "execution"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "file-binary",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "files"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "file-overwrite",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "files"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:11:00.771Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "file-no-clobber",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "files"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:13:30.653Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us",
+        "stateProbe": "snapshot-roundtrip-v3",
+        "freshProcess": true,
+        "preserve": "filesystem",
+        "restoreExecution": "fresh",
+        "sourceAfter": "running"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "snapshot-roundtrip",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "snapshot-roundtrip"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:15:53.613Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us",
+        "stateProbe": "volume-crud-v1",
+        "volumeOwnership": "created"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "volume-crud",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "volume-crud"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "harnessCommit": "1505ee0db85276224d0b3d846c50acc681f4ae06",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:15:53.613Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us",
+        "stateProbe": "volume-persistence-v1",
+        "volumeOwnership": "created"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "volume-persistence",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "volume-persistence"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
     }
   ],
   "historicalEvidence": [

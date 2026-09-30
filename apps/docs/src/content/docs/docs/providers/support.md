@@ -7,18 +7,18 @@ description: Declared adapter support and dated live acceptance, with provider c
 
 Adapter support and live validation are separate facts. **Supported** means implemented; **conditional** requires the configuration in the linked note; **unsupported** means the adapter does not expose the workflow. Live results are **passed**, **failed**, **blocked**, or **not-run**. Each pass applies to its recorded source/configuration, not the current head or every provider account. Fixture and packed tests never produce live passes.
 
-| Feature                       | Daytona                                                              | E2B                                                                               |
-| ----------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Sandbox lifecycle             | [Supported · not-run](#daytona-lifecycle)                            | [Supported · passed at 3be54464](#e2b-lifecycle)                                  |
-| Execution and captured output | [Supported · passed at 3be54464](#daytona-execution)                 | [Supported · passed at 3be54464](#e2b-execution)                                  |
-| Binary files and overwrite    | [Conditional · passed at 3be54464](#daytona-files)                   | [Conditional · passed at 3be54464](#e2b-files)                                    |
-| OCI image builds              | [Conditional · not-run](#daytona-oci)                                | [Conditional · not-run](#e2b-oci)                                                 |
-| Measured network controls     | [Conditional · not-run](#daytona-network)                            | [Supported · not-run](#e2b-network)                                               |
-| Snapshot roundtrip            | [Conditional · passed at 9a6c1c19](#daytona-snapshots)               | [Conditional · passed at 5db0558 (historical)](#e2b-snapshots)                    |
-| Volume CRUD                   | [Supported · passed at 9a6c1c19](#daytona-volumes)                   | [Conditional · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
-| Mounted persistence           | [Conditional · passed at 5db0558 (historical)](#daytona-persistence) | [Unsupported · not-run](#e2b-persistence)                                         |
+| Feature                       | Daytona                                                  | E2B                                                                               |
+| ----------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Sandbox lifecycle             | [Supported · failed](#daytona-lifecycle)                 | [Supported · passed at 3be54464](#e2b-lifecycle)                                  |
+| Execution and captured output | [Supported · passed at 1505ee0d](#daytona-execution)     | [Supported · passed at 3be54464](#e2b-execution)                                  |
+| Binary files and overwrite    | [Conditional · passed at 1505ee0d](#daytona-files)       | [Conditional · passed at 3be54464](#e2b-files)                                    |
+| OCI image builds              | [Conditional · not-run](#daytona-oci)                    | [Conditional · not-run](#e2b-oci)                                                 |
+| Measured network controls     | [Conditional · not-run](#daytona-network)                | [Supported · not-run](#e2b-network)                                               |
+| Snapshot roundtrip            | [Conditional · passed at 1505ee0d](#daytona-snapshots)   | [Conditional · passed at 5db0558 (historical)](#e2b-snapshots)                    |
+| Volume CRUD                   | [Supported · passed at 1505ee0d](#daytona-volumes)       | [Conditional · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
+| Mounted persistence           | [Conditional · passed at 1505ee0d](#daytona-persistence) | [Unsupported · not-run](#e2b-persistence)                                         |
 
-The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. The scoped Daytona snapshot/fresh-process and independent volume CRUD acceptance at 9a6c1c1 has confirmed cleanup. Other operation/configuration claims retain their own recorded revisions and limitations below.
+The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. The Daytona Bun tests at 1505ee0 passed execution, files, snapshot roundtrip, volume CRUD and mounted persistence with confirmed cleanup. The lifecycle case failed its managed inventory assertion; its teardown was also confirmed. Other operation/configuration claims retain their own recorded revisions and limitations below.
 
 ## Daytona caveats
 
@@ -26,7 +26,7 @@ The [live evidence detail](/docs/providers/live-qualification/) retains exact av
 
 ### Sandbox lifecycle
 
-Prepared baseline passed at 3be54464 in us with daytona-small and daytona-default. Other images/regions are unverified.
+The Bun lifecycle test at 1505ee0 in us with daytona-default failed because managed inventory omitted the running owned sandbox. Teardown and client close were confirmed. The earlier 3be54464 baseline passed; other images/regions are unverified.
 
 <a id="daytona-execution"></a>
 
@@ -56,19 +56,19 @@ daytona-default permits essential services and is not strict blocked egress. Tie
 
 ### Snapshot roundtrip
 
-Eligible containers only: stop/cold filesystem capture/restart, fresh restored execution; no RAM. Roundtrip passed at 9a6c1c1 in us with daytona-default, including later guards/recovery, two-way filesystem isolation, fresh-process reference reopen and confirmed owned cleanup.
+Eligible containers only: stop/cold filesystem capture/restart, fresh restored execution; no RAM. The Bun roundtrip passed at 1505ee0 in us with daytona-default, including two-way filesystem isolation, separate-process reference reopen, source deletion, second restore and confirmed owned cleanup.
 
 <a id="daytona-volumes"></a>
 
 ### Volume CRUD
 
-Independent native create/inspect/delete passed at 9a6c1c1 in us with daytona-default, without compute allocation for the CRUD probe; owned deletion was confirmed.
+The Bun native create/readiness/inspect/delete test passed at 1505ee0 in us with daytona-default. CRUD is independent of mounts; owned deletion was confirmed.
 
 <a id="daytona-persistence"></a>
 
 ### Mounted persistence
 
-Writable create-time mounts/subpaths; read-only unsupported. Historical 5db0558 producer/destroy/remount/readback and deletion passed. Later custody/recovery guards have offline coverage, not a current-head live rerun.
+Writable create-time mounts/subpaths; read-only unsupported. The Bun producer write/flush/readback, producer destruction, independent consumer remount/readback and owned deletion passed at 1505ee0 in us with daytona-default.
 
 ## E2B caveats
 
@@ -130,4 +130,4 @@ The SDK targets server-side Node.js and Bun. Packed consumer checks exercise emi
 
 ## Updating support
 
-Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The Bun migration itself has not been live-run. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.
+Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The bounded Daytona Bun run at 1505ee0 is recorded, including its lifecycle failure. E2B allocation remains blocked by the preserved unresolved volume receipt. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.
