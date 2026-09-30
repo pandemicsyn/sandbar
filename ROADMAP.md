@@ -6,12 +6,12 @@ SDK usability comes before more adapters. This file is the authoritative order o
 
 Snapshot/volume support merged in [PR #25](https://github.com/pandemicsyn/sandbar/pull/25). Direct tracing and diagnostics merged in PR #24. Four follow-ups are in progress:
 
-| Work | Outcome | Detail |
-| --- | --- | --- |
-| CI cleanup | Remove duplicate runs/builds, make checks independently rerunnable, and fix flaky fixtures without hiding regressions. | Existing CI cleanup task. |
-| Provider acceptance | One maintained public-SDK runner, a generated support table, and clear provider limitations and live validation status. | [Acceptance plan](plans/provider-acceptance.md) |
-| Recovery DX | Typed partial outcomes, retained resource access, useful recovered result types, continuation status, and persistence hooks on normal connections. Reduce repeated adapter checkpoint code with small shared helpers. | [Recovery spec](specs/sdk-recovery-dx.md) |
-| Documentation pass | Short working examples, accurate support claims, explicit cleanup responsibilities, and current implementation status. | SDK guides, provider docs and plan indexes. |
+| Work                | Outcome                                                                                                                                                                                                               | Detail                                          |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| CI cleanup          | Remove duplicate runs/builds, make checks independently rerunnable, and fix flaky fixtures without hiding regressions.                                                                                                | Existing CI cleanup task.                       |
+| Provider acceptance | One maintained public-SDK runner, a generated support table, and clear provider limitations and live validation status.                                                                                               | [Acceptance plan](plans/provider-acceptance.md) |
+| Recovery DX         | Typed partial outcomes, retained resource access, useful recovered result types, continuation status, and persistence hooks on normal connections. Reduce repeated adapter checkpoint code with small shared helpers. | [Recovery spec](specs/sdk-recovery-dx.md)       |
+| Documentation pass  | Short working examples, accurate support claims, explicit cleanup responsibilities, and current implementation status.                                                                                                | SDK guides, provider docs and plan indexes.     |
 
 E2B volume creation remains unqualified because the test account receives HTTP 403; E2B mounts are unsupported in Sandbar. Existing snapshot and Daytona volume live results must retain their actual tested revision/configuration. Missing access is not proof that E2B lacks native volumes, and a historical pass is not a new-code pass.
 

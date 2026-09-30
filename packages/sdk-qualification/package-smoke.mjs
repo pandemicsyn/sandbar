@@ -577,6 +577,9 @@ export const acme = defineAdapter({
     };
   },
 });
+// Keep recovery pending until the consumer has closed and reopened the service.
+// The long poll hint prevents automatic observation from racing the restart barrier.
+export const recovery = { ready: false };
 export const asyncAcme = defineAdapter({
   name: "example.async-acme",
   config: z.strictObject({ region: z.string().min(1) }),
@@ -588,17 +591,21 @@ export const asyncAcme = defineAdapter({
       supports: { images: ["prepared"], network: ["blocked"] },
       imageBuild: {
         recovery: { version: 1, token: z.strictObject({ buildId: z.string() }) },
-        async submit(_input, ctx) { metrics.builds++; return ctx.pending({ buildId: "build-1" }, { pollAfterMs: 1000 }); },
-        async observe(attempt) {
-          if (z.strictObject({ buildId: z.string() }).parse(attempt.token).buildId !== "build-1") throw Error("Wrong image recovery token");
+        async submit(_input, ctx) { metrics.builds++; return ctx.pending({ buildId: "build-1" }, { pollAfterMs: 60000 }); },
+        async observe(attempt, ctx) {
+          const token = z.strictObject({ buildId: z.string() }).parse(attempt.token);
+          if (token.buildId !== "build-1") throw Error("Wrong image recovery token");
+          if (!recovery.ready) return ctx.pending(token, { pollAfterMs: 60000 });
           return { preparedId: "image-1", retainedResources: [{ kind: "template", id: "image-1", ownership: "unknown", cleanup: "manual" }] };
         },
       },
       create: {
         recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
-        async submit(_input, ctx) { metrics.creates++; return ctx.pending({ jobId: "job-1" }, { pollAfterMs: 1000 }); },
-        async observe(attempt) {
-          if (z.strictObject({ jobId: z.string() }).parse(attempt.token).jobId !== "job-1") throw Error("Wrong recovery token");
+        async submit(_input, ctx) { metrics.creates++; return ctx.pending({ jobId: "job-1" }, { pollAfterMs: 60000 }); },
+        async observe(attempt, ctx) {
+          const token = z.strictObject({ jobId: z.string() }).parse(attempt.token);
+          if (token.jobId !== "job-1") throw Error("Wrong recovery token");
+          if (!recovery.ready) return ctx.pending(token, { pollAfterMs: 60000 });
           metrics.observes++;
           return { id: "box-1", state: "running" };
         },
@@ -639,7 +646,7 @@ process.stdout.write("packed external adapter flow passed\\n");
 const serviceSource = `
 import { createService } from "sandbar-service";
 import { Sandbar, Image } from "sandbar-service/client";
-import { asyncAcme, metrics } from "@acme/sandbar-adapter";
+import { asyncAcme, metrics, recovery } from "@acme/sandbar-adapter";
 import { writeFile, chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -660,11 +667,21 @@ const request = async (path, method = "GET", body, key) => {
   const response = await fetch(origin + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   return { status: response.status, body: await response.json() };
 };
-const until = async (check) => {
+const until = async (stage, operationId, expectedPhase) => {
   const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) { if (await check()) return; await new Promise((r) => setTimeout(r, 20)); }
-  throw Error("Timed out waiting for packed service recovery");
+  let last;
+  while (Date.now() < deadline) {
+    const response = await request(\`/v1/projects/\${projectId}/operations/\${operationId}\`);
+    const op = response.body;
+    last = { httpStatus: response.status, status: op.status, phase: op.phase, creates: metrics.creates, builds: metrics.builds, observes: metrics.observes };
+    if (response.status !== 200 || ["failed", "cancelled"].includes(op.status))
+      throw Error(stage + ": unexpected operation state " + JSON.stringify(last));
+    if (op.phase === expectedPhase) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw Error(stage + ": timed out " + JSON.stringify(last));
 };
+let projectId;
 try {
   await start();
   const page = await fetch(origin + "/", { headers: { Accept: "text/html" } });
@@ -679,7 +696,7 @@ try {
   bearer = setup.body.token;
   if (setup.status !== 200 && setup.status !== 201) throw Error("Setup failed: " + JSON.stringify(setup));
   const project = await request("/v1/projects", "POST", { name: "Packed" });
-  const projectId = project.body.id;
+  projectId = project.body.id;
   const conn = await request(\`/v1/projects/\${projectId}/provider-connections\`, "POST", {
     provider: "example.async-acme", name: "Acme", configuration: { region: "us" }, credentials: { token: "fixture" },
   });
@@ -695,22 +712,24 @@ try {
   if ((await client.sandboxes.checkCreate(required)).status !== "unsupported") throw Error("Service check accepted capture");
   try { await client.sandboxes.create(required); throw Error("Service allocated required capture"); } catch (error) { if (error.code !== "UNSUPPORTED" || error.effect !== "none") throw error; }
   const build = await client.images.submitBuild({ source: Image.oci("fixture/image:1"), connectionId: conn.body.id });
-  await until(async () => metrics.builds === 1 && (await request(\`/v1/projects/\${projectId}/operations/\${build.reference.operationId}\`)).body.status === "running");
+  await until("image build persisted pending token before restart", build.reference.operationId, "awaiting_observation");
   const admitted = await request(\`/v1/projects/\${projectId}/sandboxes\`, "POST", {
     environment: { kind: "prepared", imageId: "image-1" }, network: { policy: "blocked" }, connectionId: conn.body.id,
   }, Bun.randomUUIDv7());
   if (admitted.status !== 202) throw Error("Admission failed: " + JSON.stringify(admitted));
   const operationId = admitted.body.operation.id;
-  await until(async () => {
-    const op = await request(\`/v1/projects/\${projectId}/operations/\${operationId}\`);
-    return metrics.creates === 1 && op.body.status === "running";
-  });
+  await until("create persisted pending token before restart", operationId, "awaiting_observation");
+  if (metrics.builds !== 1 || metrics.creates !== 1) throw Error("Submission count before restart mismatch");
   await service.close();
+  recovery.ready = true;
   service = await createService(options);
   await start();
-  await request(\`/v1/projects/\${projectId}/operations/\${build.reference.operationId}/reconcile\`, "POST");
-  await request(\`/v1/projects/\${projectId}/operations/\${operationId}/reconcile\`, "POST");
-  await until(async () => (await request(\`/v1/projects/\${projectId}/operations/\${operationId}\`)).body.status === "succeeded");
+  for (const id of [build.reference.operationId, operationId]) {
+    const reconciled = await request(\`/v1/projects/\${projectId}/operations/\${id}/reconcile\`, "POST");
+    if (reconciled.status !== 200 && reconciled.status !== 202) throw Error("Reconcile failed: HTTP " + reconciled.status);
+  }
+  await until("create recovered after restart", operationId, "completed");
+  await until("image build recovered after restart", build.reference.operationId, "completed");
   if (metrics.creates !== 1 || metrics.observes < 1) throw Error("Packed service replayed an effect or skipped observation");
   const image = await (await client.recover(JSON.parse(JSON.stringify(build.reference)))).wait();
   if (metrics.builds !== 1 || image.prepared.value !== "image-1" || image.prepared.connectionId !== conn.body.id || image.prepared.provider !== "example.async-acme" || image.retainedResources[0]?.ownership !== "unknown") throw Error("Packed service image-build recovery or scope mismatch");
