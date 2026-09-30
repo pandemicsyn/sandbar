@@ -36,7 +36,7 @@ jobs:
             echo 'release=true' >> "$GITHUB_OUTPUT"
           else
             git diff --name-only "$BASE" HEAD > "$RUNNER_TEMP/changed-files"
-            if grep -Eq '(^package.json$|^bun.lock$|^tsconfig.json$|^\.github/|^\.changeset/|^scripts/|(^|/)(package.json|tsconfig[^/]*\.json|build-assets.ts|flatten-declarations\.mjs|\.npmignore)$)|^apps/web/(vite\.config\.[^/]+|index\.html)$' "$RUNNER_TEMP/changed-files"; then
+            if grep -Eq '(^package.json$|^bun.lock$|^tsconfig.json$|^\.github/|^\.changeset/(config\.json|pre\.json)$|^scripts/|(^|/)(package.json|tsconfig[^/]*\.json|build-assets.ts|flatten-declarations\.mjs|\.npmignore)$)|^apps/web/(vite\.config\.[^/]+|index\.html)$' "$RUNNER_TEMP/changed-files"; then
               echo 'release=true' >> "$GITHUB_OUTPUT"
             else
               test "$?" -eq 1
