@@ -1487,6 +1487,91 @@ test.each([
   },
 );
 
+test.each(["prepare", "submit"] as const)(
+  "Daytona oversized destroy custody rejects before DELETE: %s",
+  async (stage) => {
+    let expanded = stage === "prepare";
+    let deletes = 0;
+    let saved: AdapterRecoveryReference | undefined;
+
+    const longMounts = Array.from({ length: 8 }, (_, index) => ({
+      volumeId: `v${index}${"x".repeat(510)}`,
+      mountPath: `/mnt/${index}`,
+    }));
+
+    const fetcher = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const route = new URL(String(input)).pathname;
+
+        if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+        if (route === "/api/regions")
+          return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+        if (route === "/api/organizations/org-1")
+          return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+        if (route === "/api/sandbox/mounted-box") {
+          if (init?.method === "DELETE") {
+            deletes++;
+
+            return Response.json({});
+          }
+
+          return Response.json({
+            id: "mounted-box",
+            name: "fixture",
+            labels: {},
+            state: "started",
+            organizationId: "org-1",
+            target: "us",
+            networkBlockAll: true,
+            public: false,
+            volumes: expanded ? longMounts : [{ volumeId: "short", mountPath: "/mnt/short" }],
+          });
+        }
+
+        throw new Error(`Unexpected fixture route: ${route}`);
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(fetcher),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+      onReference(reference) {
+        if (reference.kind !== "destroy") return;
+        saved = structuredClone(reference);
+
+        if (!reference.token) expanded = true;
+      },
+    });
+
+    try {
+      await expect(
+        new AdapterSandbox(client, "mounted-box").destroy({ storage: "allow-unconfirmed" }),
+      ).rejects.toMatchObject(
+        stage === "prepare" ? { code: "CAPACITY" } : { code: "CAPACITY", effect: "none" },
+      );
+      expect(deletes).toBe(0);
+
+      if (stage === "prepare") expect(saved).toBeUndefined();
+      else {
+        expect(saved?.token).toMatchObject({ stage: "rejected", rejectionCode: "CAPACITY" });
+        const recovered = await client.recover(saved!);
+        await expect((await recovered.continue()).wait()).rejects.toMatchObject({
+          code: "CAPACITY",
+          effect: "none",
+        });
+        expect(deletes).toBe(0);
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
+
 async function interruptedMountedDestroy(mode: "tombstone" | "absent") {
   let deleted = false;
   let deletes = 0;

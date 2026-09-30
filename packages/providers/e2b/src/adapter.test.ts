@@ -1370,3 +1370,140 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
     }
   });
 }
+
+test.each(["prepare", "submit"] as const)(
+  "E2B oversized destroy custody rejects before kill: %s",
+  async (stage) => {
+    let kills = 0;
+
+    const record: E2BRecord = {
+      id: "box",
+      templateId: "built_template",
+      state: "running",
+      metadata: {
+        sandbar_scope: "team_one:template_1",
+        sandbar_build: "owned-build",
+        sandbar_template: "built_template",
+        sandbar_submission: "seed-sub",
+        sandbar_operation: "seed-op",
+      },
+      volumeMounts:
+        stage === "prepare"
+          ? Array.from({ length: 32 }, (_, index) => ({
+              name: `v${index}_${"x".repeat(123)}`,
+              path: `/mnt/${index}`,
+            }))
+          : [{ name: "short", path: "/mnt/short" }],
+    };
+
+    const adapter = createE2BAdapter(() => ({
+      async verifyAuth() {},
+      async verifyTeam() {},
+      async verifyTemplate(_team, id) {
+        return id;
+      },
+      async buildImage() {
+        throw Error("unused");
+      },
+      async findBuild() {
+        return null;
+      },
+      async create() {
+        throw Error("unused");
+      },
+      async get() {
+        return record;
+      },
+      async list() {
+        return { items: [record] };
+      },
+      async kill() {
+        kills++;
+
+        return true;
+      },
+      async run() {
+        return "";
+      },
+      async read() {
+        return { bytes: new Uint8Array(), truncated: false };
+      },
+      async write() {},
+      async remove() {},
+      close() {},
+    }));
+
+    const connection = await connectAdapter(adapter, {
+      config: { teamId: "team_one", templateId: "template_1" },
+      credentials: { apiKey: "fixture-key" },
+    });
+
+    const identity = {
+      operationId: "bounded-destroy-op",
+      submissionId: "bounded-destroy-sub",
+      invocationKey: "bounded-destroy-inv",
+      sandbox: { id: "box" },
+    };
+
+    try {
+      if (stage === "prepare")
+        await expect(
+          prepareOperation(
+            connection.session,
+            "destroy",
+            {
+              id: "box",
+              storage: "allow-unconfirmed",
+            },
+            new AbortController().signal,
+          ),
+        ).rejects.toMatchObject({ code: "CAPACITY" });
+      else {
+        const prepared = await prepareOperation(
+          connection.session,
+          "destroy",
+          {
+            id: "box",
+            storage: "allow-unconfirmed",
+          },
+          new AbortController().signal,
+        );
+
+        record.volumeMounts = Array.from({ length: 32 }, (_, index) => ({
+          name: `v${index}_${"x".repeat(123)}`,
+          path: `/mnt/${index}`,
+        }));
+        let saved: Json | undefined;
+        let version: number | undefined;
+
+        const result = await submitOperation(
+          prepared,
+          identity,
+          new AbortController().signal,
+          undefined,
+          async (token, tokenVersion) => {
+            saved = structuredClone(token);
+            version = tokenVersion;
+          },
+        );
+
+        expect(result).toMatchObject({ kind: "rejected", code: "CAPACITY" });
+        expect(saved).toMatchObject({ stage: "rejected", rejectionCode: "CAPACITY" });
+        expect(
+          await continueOperation(
+            connection.session,
+            "destroy",
+            { ...identity, token: saved, version },
+            identity,
+            new AbortController().signal,
+            async () => {},
+          ),
+        ).toMatchObject({ kind: "rejected", code: "CAPACITY" });
+      }
+
+      expect(kills).toBe(0);
+    } finally {
+      await connection.close();
+    }
+  },
+);

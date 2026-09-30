@@ -54,10 +54,40 @@ type WriteTokenData = z.infer<typeof WriteToken>;
 const DestroyToken = z.strictObject({
   stage: z.enum(["uncertain", "accepted", "rejected"]),
   sandboxId: z.string().min(1).max(512).optional(),
+  rejectionCode: z.enum(["UNAVAILABLE", "CAPACITY"]).optional(),
   retainedTemplateId: z.string().max(128).optional(),
   retainedVolumeNames: z.array(z.string().min(1).max(128)).max(32).optional(),
   mountDurability: z.array(importMountDurability).max(32).optional(),
 });
+
+function destroyToken(record: E2BRecord, sandboxId: string): z.infer<typeof DestroyToken> {
+  const token: z.infer<typeof DestroyToken> = {
+    stage: "uncertain",
+    sandboxId,
+  };
+
+  if (record.volumeMounts?.length) {
+    // Native mount observations expose reusable names, never immutable volume IDs.
+    token.retainedVolumeNames = record.volumeMounts.map((mount) => mount.name);
+  }
+
+  if (record.metadata.sandbar_build) token.retainedTemplateId = record.templateId;
+
+  const rejected: z.infer<typeof DestroyToken> = {
+    ...token,
+    stage: "rejected",
+    rejectionCode: "UNAVAILABLE",
+  };
+
+  if (
+    !DestroyToken.safeParse(token).success ||
+    !DestroyToken.safeParse(rejected).success ||
+    new TextEncoder().encode(JSON.stringify(rejected)).length > 4096
+  )
+    throw new AdapterError("CAPACITY", "E2B destroy custody exceeds recovery token bound");
+
+  return token;
+}
 
 function destroyValue(token: z.infer<typeof DestroyToken>): import("sandbar-adapter").DestroyValue {
   const value: import("sandbar-adapter").DestroyValue = {
@@ -500,6 +530,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 "Writable shutdown durability is unverified; explicit allow-unconfirmed required",
               );
 
+            destroyToken(record, box.id);
+
             return box;
           },
           async submit(box, ctx) {
@@ -511,19 +543,26 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             if (record.volumeMounts?.length && box.storage !== "allow-unconfirmed")
               return ctx.reject("UNSUPPORTED", "Writable cleanup durability is unverified");
 
-            const token: z.infer<typeof DestroyToken> = { stage: "uncertain", sandboxId: box.id };
+            let token: z.infer<typeof DestroyToken>;
 
-            if (record.volumeMounts?.length) {
-              // Native mount observations expose reusable names, never immutable volume IDs.
-              token.retainedVolumeNames = record.volumeMounts.map((mount) => mount.name);
+            try {
+              token = destroyToken(record, box.id);
+            } catch (error) {
+              if (!(error instanceof AdapterError) || error.code !== "CAPACITY") throw error;
+              await ctx.checkpoint({
+                stage: "rejected",
+                sandboxId: box.id,
+                rejectionCode: "CAPACITY",
+              });
+
+              return ctx.reject("CAPACITY", error.message);
             }
-
-            if (record.metadata.sandbar_build) token.retainedTemplateId = record.templateId;
 
             await ctx.checkpoint(token);
 
             if (ctx.signal.aborted) {
               token.stage = "rejected";
+              token.rejectionCode = "UNAVAILABLE";
               await ctx.checkpoint(token);
 
               return ctx.reject("UNAVAILABLE", "E2B termination cancelled before dispatch");
@@ -574,7 +613,10 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               token.data.stage === "rejected" &&
               token.data.sandboxId === attempt.sandbox?.id
             )
-              return ctx.reject("UNAVAILABLE", "E2B termination cancelled before dispatch");
+              return ctx.reject(
+                token.data.rejectionCode ?? "UNAVAILABLE",
+                "E2B termination rejected before dispatch",
+              );
 
             return ctx.unknown("E2B termination cannot be replayed");
           },

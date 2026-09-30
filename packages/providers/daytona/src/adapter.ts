@@ -67,6 +67,23 @@ const DestroyToken = z.strictObject({
   mountDurability: z.array(importMountDurability).max(32).optional(),
 });
 
+function requireDestroyTokenCapacity(token: z.infer<typeof DestroyToken>): void {
+  const versions: z.infer<typeof DestroyToken>[] = [
+    token,
+    { ...token, stage: "accepted", deletionAccepted: true },
+    { ...token, stage: "rejected", rejectionCode: "INVALID_ARGUMENT" },
+  ];
+
+  if (
+    versions.some(
+      (version) =>
+        !DestroyToken.safeParse(version).success ||
+        new TextEncoder().encode(JSON.stringify(version)).length > 4096,
+    )
+  )
+    throw new AdapterError("CAPACITY", "Daytona destroy custody exceeds recovery token bound");
+}
+
 // Retained labels are summaries; mountDurability preserves the full scoped native identity.
 function retainedVolumeLabel(nativeId: string): string {
   const label = `daytona-volume:${nativeId}`;
@@ -227,6 +244,34 @@ export function createDaytonaAdapter(
         restartAfterCapture: config.snapshots.restartAfterCapture,
         fetch: fetchImpl ?? fetch,
       });
+
+      const destroyToken = (
+        sandboxId: string,
+        mounts: Awaited<ReturnType<typeof resourceState.box>>["volumes"],
+        retainedResources?: string[],
+      ): z.infer<typeof DestroyToken> => {
+        const token: z.infer<typeof DestroyToken> = {
+          sandboxId,
+          stage: "uncertain",
+          mountDurability: mounts.map((mount) => ({
+            volume: {
+              version: 1,
+              kind: "volume",
+              provider: "daytona",
+              scope: { authority: { kind: "organization", id: scope.accountId! }, partition },
+              nativeId: mount.volumeId,
+              ownership: "unknown",
+            },
+            path: mount.mountPath,
+            status: "unconfirmed",
+          })),
+        };
+
+        if (retainedResources !== undefined) token.retainedResources = retainedResources;
+        requireDestroyTokenCapacity(token);
+
+        return token;
+      };
 
       const createMutation = {
         recovery: { version: 1, token: Token },
@@ -545,6 +590,16 @@ export function createDaytonaAdapter(
                 "Writable mount shutdown durability is unverified; select allow-unconfirmed for compute cleanup",
               );
 
+            let retainedResources: string[] | undefined;
+
+            try {
+              retainedResources = await driver.destroyRetainedResources(native(box.id));
+            } catch {
+              throw new AdapterError("UNAVAILABLE", "Daytona inspection failed before deletion");
+            }
+
+            destroyToken(box.id, nativeBox.volumes, retainedResources);
+
             return box;
           },
           async submit(box, ctx) {
@@ -591,24 +646,21 @@ export function createDaytonaAdapter(
               return ctx.reject("UNAVAILABLE", "Daytona inspection failed before deletion");
             }
 
-            const token: z.infer<typeof DestroyToken> = {
-              sandboxId: box.id,
-              stage: "uncertain",
-              mountDurability: mounts.map((mount) => ({
-                volume: {
-                  version: 1,
-                  kind: "volume",
-                  provider: "daytona",
-                  scope: { authority: { kind: "organization", id: scope.accountId! }, partition },
-                  nativeId: mount.volumeId,
-                  ownership: "unknown",
-                },
-                path: mount.mountPath,
-                status: "unconfirmed",
-              })),
-            };
+            let token: z.infer<typeof DestroyToken>;
 
-            if (retainedResources !== undefined) token.retainedResources = retainedResources;
+            try {
+              token = destroyToken(box.id, mounts, retainedResources);
+            } catch (error) {
+              if (!(error instanceof AdapterError) || error.code !== "CAPACITY") throw error;
+              await ctx.checkpoint({
+                sandboxId: box.id,
+                stage: "rejected",
+                rejectionCode: "CAPACITY",
+              });
+
+              return ctx.reject("CAPACITY", error.message);
+            }
+
             await ctx.checkpoint(token);
 
             if (ctx.signal.aborted) {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { resourceHistory } from "./resource-history";
 import {
   AdapterError,
@@ -90,9 +91,27 @@ class TerminalCaptureError extends Error {
   }
 }
 
+const DeleteIdentity = z.strictObject({
+  kind: z.enum(["snapshot", "volume"]),
+  provider: z.literal("daytona"),
+  nativeId: z.string().min(1).max(512),
+  generation: z.string().min(1).max(512).optional(),
+});
+
+function captureName(submissionId: string): string {
+  return `sandbar-capture-${createHash("sha256").update(submissionId).digest("hex")}`;
+}
+
+function matchesCaptureName(name: string, submissionId: string): boolean {
+  return (
+    name === captureName(submissionId) ||
+    (name.length <= 128 && name === `sandbar-capture-${submissionId}`)
+  );
+}
+
 const DeleteToken = z
   .strictObject({
-    reference: z.json(),
+    reference: z.union([DeleteIdentity, ResourceReference]),
     accepted: z.boolean(),
     stage: z.enum(["uncertain", "accepted", "rejected"]).optional(),
     rejection: z.enum(["before-dispatch", "native-response"]).optional(),
@@ -507,6 +526,39 @@ export function daytonaState(input: {
     return current.state === wanted ? current : null;
   }
 
+  function compactDeletionReference(ref: ResourceReference): z.infer<typeof DeleteIdentity> {
+    if (ref.kind !== "snapshot" && ref.kind !== "volume")
+      throw new AdapterError("INVALID_ARGUMENT", "Artifact deletion kind differs");
+
+    const identity: z.infer<typeof DeleteIdentity> = {
+      kind: ref.kind,
+      provider: "daytona",
+      nativeId: ref.nativeId,
+    };
+
+    if (ref.generation) identity.generation = ref.generation;
+
+    return identity;
+  }
+
+  function matchesDeletionReference(
+    saved: z.infer<typeof DeleteToken>["reference"],
+    ref: ResourceReference,
+  ): boolean {
+    if (
+      saved.kind !== ref.kind ||
+      saved.provider !== ref.provider ||
+      saved.nativeId !== ref.nativeId ||
+      saved.generation !== ref.generation
+    )
+      return false;
+
+    // Legacy checkpoints duplicated scoped references; continue validating that scope.
+    if ("scope" in saved) check(saved);
+
+    return true;
+  }
+
   const deletion = (
     kind: "snapshot" | "volume",
   ): NonNullable<AdapterSession["snapshotDelete"]> => ({
@@ -534,6 +586,7 @@ export function daytonaState(input: {
     },
     async submit(ref, ctx) {
       check(ref);
+      const retained = compactDeletionReference(ref);
       const context = { signal: ctx.signal, deadline: Date.now() + 30000 };
 
       let info: SnapshotInfo | VolumeInfo;
@@ -545,7 +598,7 @@ export function daytonaState(input: {
       } catch (error) {
         if (!ctx.signal.aborted) throw error;
         await ctx.checkpoint({
-          reference: ref,
+          reference: retained,
           accepted: false,
           stage: "rejected",
           rejection: "before-dispatch",
@@ -556,7 +609,7 @@ export function daytonaState(input: {
 
       if (ctx.signal.aborted) {
         await ctx.checkpoint({
-          reference: ref,
+          reference: retained,
           accepted: false,
           stage: "rejected",
           rejection: "before-dispatch",
@@ -572,11 +625,11 @@ export function daytonaState(input: {
       )
         return ctx.reject("CONFLICT", "Snapshot deletion dependencies are present or unverified");
 
-      await ctx.checkpoint({ reference: ref, accepted: false, stage: "uncertain" });
+      await ctx.checkpoint({ reference: retained, accepted: false, stage: "uncertain" });
 
       if (ctx.signal.aborted) {
         await ctx.checkpoint({
-          reference: ref,
+          reference: retained,
           accepted: false,
           stage: "rejected",
           rejection: "before-dispatch",
@@ -596,7 +649,7 @@ export function daytonaState(input: {
         const rejected = [400, 401, 403, 422].includes(response.status);
 
         const checkpoint: z.infer<typeof DeleteToken> = {
-          reference: ref,
+          reference: retained,
           accepted: response.ok,
           stage: response.ok ? "accepted" : rejected ? "rejected" : "uncertain",
         };
@@ -606,7 +659,7 @@ export function daytonaState(input: {
 
         if (response.ok)
           return ctx.pending(
-            { reference: ref, accepted: true, stage: "accepted" },
+            { reference: retained, accepted: true, stage: "accepted" },
             { pollAfterMs: 500 },
           );
 
@@ -614,14 +667,14 @@ export function daytonaState(input: {
           return ctx.reject("UNAVAILABLE", `Artifact delete rejected with HTTP ${response.status}`);
 
         return ctx.pending(
-          { reference: ref, accepted: false, stage: "uncertain" },
+          { reference: retained, accepted: false, stage: "uncertain" },
           { pollAfterMs: 500 },
         );
       } catch (error) {
         if (error instanceof AdapterCheckpointError) throw error;
 
         return ctx.pending(
-          { reference: ref, accepted: false, stage: "uncertain" },
+          { reference: retained, accepted: false, stage: "uncertain" },
           { pollAfterMs: 500 },
         );
       }
@@ -635,17 +688,9 @@ export function daytonaState(input: {
 
       if (!token.success || !canObserveDelete(token.data))
         return ctx.unknown("Artifact delete dispatch evidence is unavailable; no replay");
-      const saved = ResourceReference.safeParse(token.data.reference);
 
-      if (
-        !saved.success ||
-        saved.data.kind !== ref.kind ||
-        saved.data.provider !== ref.provider ||
-        saved.data.nativeId !== ref.nativeId ||
-        saved.data.generation !== ref.generation
-      )
+      if (!matchesDeletionReference(token.data.reference, ref))
         return ctx.unknown("Artifact delete checkpoint identity differs");
-      check(saved.data);
 
       const response = await request(
         "GET",
@@ -679,7 +724,6 @@ export function daytonaState(input: {
     async continue(attempt, ctx) {
       const token = DeleteToken.safeParse(attempt.token);
       const ref = attempt.resource;
-      const saved = token.success ? ResourceReference.safeParse(token.data.reference) : null;
 
       if (
         !ref ||
@@ -688,15 +732,10 @@ export function daytonaState(input: {
         token.data.stage !== "rejected" ||
         !token.data.rejection ||
         token.data.accepted ||
-        !saved?.success ||
-        saved.data.kind !== ref.kind ||
-        saved.data.provider !== ref.provider ||
-        saved.data.nativeId !== ref.nativeId ||
-        saved.data.generation !== ref.generation
+        !matchesDeletionReference(token.data.reference, ref)
       )
         return ctx.unknown("Artifact delete rejection evidence is unavailable; no replay");
       check(ref);
-      check(saved.data);
 
       return ctx.reject("UNAVAILABLE", "Artifact deletion was rejected; no replay");
     },
@@ -1209,7 +1248,7 @@ export function daytonaState(input: {
       },
       async submit(value, ctx) {
         const context = { signal: ctx.signal, deadline: Date.now() + 60000 };
-        const name = `sandbar-capture-${ctx.submissionId}`;
+        const name = captureName(ctx.submissionId);
 
         let prior: Response;
 
@@ -1286,7 +1325,7 @@ export function daytonaState(input: {
         if (
           !parsed.success ||
           parsed.data.sourceId !== attempt.sandbox?.id ||
-          parsed.data.name !== `sandbar-capture-${attempt.submissionId}` ||
+          !matchesCaptureName(parsed.data.name, attempt.submissionId) ||
           !matchesCaptureIntent(parsed.data, attempt.capture)
         )
           return ctx.unknown("Capture stage correlation missing");
@@ -1303,7 +1342,7 @@ export function daytonaState(input: {
         if (
           !parsed.success ||
           parsed.data.sourceId !== attempt.sandbox?.id ||
-          parsed.data.name !== `sandbar-capture-${attempt.submissionId}` ||
+          !matchesCaptureName(parsed.data.name, attempt.submissionId) ||
           !matchesCaptureIntent(parsed.data, attempt.capture)
         )
           return ctx.unknown("Capture stage correlation missing");

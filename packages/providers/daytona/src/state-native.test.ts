@@ -302,6 +302,9 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
     calls,
     modes,
     state: () => state,
+    renameSnapshot(name: string) {
+      if (snapshot) snapshot.name = name;
+    },
     replaceSnapshot() {
       if (snapshot) snapshot = { ...snapshot, id: "replacement-artifact" };
     },
@@ -1216,7 +1219,11 @@ for (const kind of ["snapshot", "volume"] as const) {
             const mismatched = structuredClone(saved!);
 
             const token = z
-              .object({ reference: ResourceReference, accepted: z.boolean(), stage: z.string() })
+              .object({
+                reference: z.object({ nativeId: z.string() }).catchall(z.json()),
+                accepted: z.boolean(),
+                stage: z.string(),
+              })
               .parse(mismatched.token);
 
             token.reference.nativeId = "other-artifact";
@@ -1625,6 +1632,181 @@ test("Daytona oversized native volume inventory reports SDK capacity", async () 
     await client.volumes.create({ name: "second" });
     await expect(client.volumes.list({ limit: 1 })).rejects.toMatchObject({ code: "CAPACITY" });
     expect((await client.volumes.list({ limit: 2 })).items).toHaveLength(2);
+  } finally {
+    await client.close();
+  }
+});
+
+for (const kind of ["snapshot", "volume"] as const) {
+  test.each([false, true])(
+    `Daytona ${kind} deletion checkpoints large valid metadata compactly: cancelled %s`,
+    async (cancelled) => {
+      const f = fixture();
+      const controller = new AbortController();
+      let saved: AdapterRecoveryReference | undefined;
+
+      const client = await f.connect((reference) => {
+        if (reference.kind !== `${kind}_delete`) return;
+        saved = structuredClone(reference);
+
+        if (
+          cancelled &&
+          z.object({ stage: z.literal("uncertain") }).safeParse(reference.token).success
+        )
+          controller.abort();
+      });
+
+      try {
+        const artifact =
+          kind === "snapshot"
+            ? (
+                await (
+                  await client.sandboxes.create({ environment: Image.prepared("base") })
+                ).snapshot()
+              ).snapshot
+            : await client.volumes.create({ name: "large-reference" });
+
+        const selected = ResourceReference.parse({
+          ...artifact.reference,
+          history: { padding: "x".repeat(3000) },
+          receipt: "x".repeat(4096),
+        });
+
+        const opened =
+          kind === "snapshot"
+            ? await client.snapshots.get(selected)
+            : await client.volumes.get(selected);
+
+        if (cancelled)
+          await expect(opened.delete({ signal: controller.signal })).rejects.toMatchObject({
+            code: "UNAVAILABLE",
+            effect: "none",
+          });
+        else expect(await opened.delete()).toMatchObject({ deleted: true });
+
+        const token = z
+          .object({ reference: z.object({ nativeId: z.string() }) })
+          .parse(saved?.token);
+
+        expect(token.reference.nativeId).toBe(selected.nativeId);
+        expect(new TextEncoder().encode(JSON.stringify(saved?.token)).length).toBeLessThan(4096);
+        const reopened = await f.connect(undefined, "rotated-key");
+
+        try {
+          const recovered = await reopened.recover(saved!);
+
+          if (cancelled)
+            await expect((await recovered.continue()).wait()).rejects.toMatchObject({
+              code: "UNAVAILABLE",
+              effect: "none",
+            });
+          else expect(await recovered.wait()).toMatchObject({ deleted: true });
+          expect(f.calls.delete).toBe(cancelled ? 0 : 1);
+        } finally {
+          await reopened.close();
+        }
+      } finally {
+        await client.close();
+      }
+    },
+  );
+}
+
+test("Daytona accepted legacy full-reference delete checkpoints still recover", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const volume = await client.volumes.create({ name: "legacy-delete" });
+    const operation = await volume.submitDelete();
+    const legacy = structuredClone(operation.reference);
+    legacy.token = { reference: volume.reference, accepted: true, stage: "accepted" };
+    expect(await (await client.recover(legacy)).wait()).toMatchObject({ deleted: true });
+    expect(f.calls.delete).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test.each(["x".repeat(128), "🚀".repeat(64)])(
+  "Daytona bounds advanced capture names and fresh recovery: %s",
+  async (submissionId) => {
+    const f = fixture();
+    const client = await f.connect();
+    let token: import("sandbar-adapter").Json | undefined;
+    let tokenVersion: number | undefined;
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const plan = await source.checkSnapshot();
+
+      if (plan.status !== "supported") throw new Error("capture unsupported");
+
+      const prepared = await client.operations.prepare("snapshot_capture", {
+        sandbox: { id: source.id },
+        request: {},
+      });
+
+      const identity = {
+        operationId: "advanced-capture",
+        submissionId,
+        invocationKey: "long-identity",
+      };
+
+      const result = await prepared.submit(identity, {
+        beforeSubmit: async () => true,
+        onCheckpoint: async (value, version) => {
+          token = structuredClone(value);
+          tokenVersion = version;
+        },
+      });
+
+      expect(result).toMatchObject({ kind: "completed" });
+      expect(z.object({ name: z.string() }).parse(token).name).toMatch(
+        /^sandbar-capture-[a-f0-9]{64}$/,
+      );
+      const reopened = await f.connect(undefined, "rotated-key");
+
+      try {
+        expect(
+          await reopened.operations.observe({
+            scope: reopened.scope,
+            kind: "snapshot_capture",
+            operationId: identity.operationId,
+            submissionId,
+            sandboxId: source.id,
+            capture: { profile: plan.value.profile, sourceState: plan.value.sourceState },
+            token,
+            tokenVersion,
+          }),
+        ).toMatchObject({ kind: "completed" });
+        expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test("Daytona capture recovery accepts bounded legacy names", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    const legacy = structuredClone(operation.reference);
+    const token = z.record(z.string(), z.json()).parse(legacy.token);
+    const name = `sandbar-capture-${legacy.submissionId}`;
+    token.name = name;
+    legacy.token = token;
+    f.renameSnapshot(name);
+    expect(await (await client.recover(legacy)).wait()).toMatchObject({
+      snapshot: { reference: { nativeId: "snapshot-one" } },
+    });
+    expect(f.calls.capture).toBe(1);
   } finally {
     await client.close();
   }
