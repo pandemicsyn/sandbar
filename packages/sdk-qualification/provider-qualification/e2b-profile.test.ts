@@ -200,11 +200,25 @@ test("E2B lost create is observed and owned compute removed without retry", asyn
 
 test("E2B pending deletion checkpoints and reconciles with a fresh client without replay", async () => {
   const native = await fixture({ pendingDestroy: true });
-  const t = resources(native, 30);
+  const connect = native.factory;
+  let interrupted = false;
+
+  // Interrupt only after the accepted deletion checkpoint is durable, regardless of disk speed.
+  native.factory = (onReference, onDiagnostic) =>
+    connect(async (reference) => {
+      await onReference(reference);
+
+      if (reference.kind === "destroy" && native.counters.kill === 1 && !interrupted) {
+        interrupted = true;
+        throw new Error("Fixture interruption after accepted delete checkpoint");
+      }
+    }, onDiagnostic);
+  const t = resources(native, 5000);
   await t.open();
   await t.create("sandbox/source");
   await expect(t.close()).rejects.toThrow();
   const state = await native.ledger.read();
+  expect(interrupted).toBe(true);
   const deletion = state.stateMutations!.find((e) => !e.creation)!;
   expect(deletion.reference).toMatchObject({
     token: { stage: "accepted", sandboxId: "sandbox_fixture" },
@@ -212,7 +226,7 @@ test("E2B pending deletion checkpoints and reconciles with a fresh client withou
   });
   expect(state.cleanup).toBe("unresolved");
   native.stop();
-  await cleanupLedger(native.factory, native.ledger, 100);
+  await cleanupLedger(native.factory, native.ledger, 5000);
   expect(native.counters).toEqual({ create: 1, kill: 1, close: 2, build: 0 });
   expect((await native.ledger.read()).cleanup).toBe("confirmed");
 });
