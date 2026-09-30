@@ -126,6 +126,17 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
     : copy;
 }
 
+function assertRecoveryResourceKind(kind: string, resource?: ResourceReference): void {
+  const expected = ["snapshot_restore", "snapshot_delete"].includes(kind)
+    ? "snapshot"
+    : kind === "volume_delete"
+      ? "volume"
+      : null;
+
+  if (expected && resource?.kind !== expected)
+    throw new SandbarError("INVALID_ARGUMENT", "Recovery resource kind differs from operation");
+}
+
 function identity() {
   const id = () => `sdk_${crypto.randomUUID().replaceAll("-", "")}`;
 
@@ -1141,6 +1152,8 @@ export class AdapterDirectClient {
             "Observation scope differs from the verified connection",
           );
 
+        assertRecoveryResourceKind(checked.kind, checked.resource);
+
         if (checked.resource)
           assertResourceScope(checked.resource, { provider: this.provider, scope: this.scope });
 
@@ -1536,6 +1549,8 @@ export class AdapterDirectClient {
 
     if (reference.kind === "snapshot_capture" && !reference.capture)
       throw new SandbarError("INVALID_ARGUMENT", "Recovery capture expectations are missing");
+
+    assertRecoveryResourceKind(reference.kind, reference.resource);
 
     if (reference.resource)
       assertResourceScope(reference.resource, { provider: this.provider, scope: this.scope });

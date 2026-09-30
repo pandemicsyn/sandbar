@@ -12,6 +12,7 @@ import {
   type VolumeInfo,
   type SnapshotProfile,
   type ReadContext,
+  type AttemptContext,
 } from "sandbar-adapter";
 import { type E2BTransport, type E2BRecord } from "./transport";
 
@@ -34,6 +35,15 @@ const DeleteToken = z
   .strictObject({
     accepted: z.boolean(),
     stage: z.enum(["uncertain", "accepted", "rejected"]).optional(),
+    rejection: z.literal("before-dispatch").optional(),
+    resource: z
+      .strictObject({
+        kind: z.enum(["snapshot", "volume"]),
+        provider: z.literal("e2b"),
+        nativeId: z.string().min(1).max(512),
+        generation: z.string().min(1).max(512).optional(),
+      })
+      .optional(),
   })
   .refine((token) => !token.stage || token.accepted === (token.stage === "accepted"));
 
@@ -176,7 +186,78 @@ export function e2bState(input: {
     return info;
   }
 
-  async function deleteSnapshotPreflight(reference: ResourceReference) {
+  async function deletionRead<T>(read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return read();
+    signal.throwIfAborted();
+    let abort!: () => void;
+
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+    });
+
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => {
+          signal.throwIfAborted();
+
+          return read();
+        }),
+        cancelled,
+      ]);
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
+  async function rejectDeletion(reference: ResourceReference, ctx: AttemptContext) {
+    if (reference.kind !== "snapshot" && reference.kind !== "volume")
+      throw new AdapterError("INVALID_ARGUMENT", "Artifact deletion kind differs");
+
+    const resource: NonNullable<z.infer<typeof DeleteToken>["resource"]> = {
+      kind: reference.kind,
+      provider: "e2b",
+      nativeId: reference.nativeId,
+    };
+
+    if (reference.generation) resource.generation = reference.generation;
+    await ctx.checkpoint({
+      accepted: false,
+      stage: "rejected",
+      rejection: "before-dispatch",
+      resource,
+    });
+
+    return ctx.reject("UNAVAILABLE", "Artifact deletion cancelled before dispatch");
+  }
+
+  function continueRejectedDeletion(kind: "snapshot" | "volume") {
+    return async (attempt: import("sandbar-adapter").RecoveryAttempt, ctx: AttemptContext) => {
+      const token = DeleteToken.safeParse(attempt.token);
+      const ref = attempt.resource;
+      const saved = token.success ? token.data.resource : undefined;
+
+      if (
+        !token.success ||
+        token.data.stage !== "rejected" ||
+        token.data.accepted ||
+        !token.data.rejection ||
+        !ref ||
+        !saved ||
+        ref.kind !== kind ||
+        saved.kind !== kind ||
+        ref.nativeId !== saved.nativeId ||
+        ref.provider !== saved.provider ||
+        ref.generation !== saved.generation
+      )
+        return ctx.unknown("Artifact deletion rejection evidence is unavailable; no replay");
+      check(ref);
+
+      return ctx.reject("UNAVAILABLE", "Artifact deletion cancelled before dispatch");
+    };
+  }
+
+  async function deleteSnapshotPreflight(reference: ResourceReference, signal?: AbortSignal) {
     check(reference);
 
     if (reference.kind !== "snapshot" || !/^[A-Za-z0-9_-]+$/.test(reference.nativeId))
@@ -184,7 +265,7 @@ export function e2bState(input: {
         "INVALID_ARGUMENT",
         "Snapshot deletion requires a raw containing-template identity",
       );
-    const native = await need().template(reference.nativeId);
+    const native = await deletionRead(() => need().template(reference.nativeId), signal);
 
     if (!native) throw new AdapterError("NOT_FOUND", "Snapshot template is unavailable");
 
@@ -193,7 +274,7 @@ export function e2bState(input: {
         "CONFLICT",
         "Snapshot template identity or private visibility differs",
       );
-    await need().verifyAddress(reference.nativeId, native.names);
+    await deletionRead(() => need().verifyAddress(reference.nativeId, native.names), signal);
     const baseline = history.read(reference)?.deletion;
 
     if (
@@ -227,7 +308,7 @@ export function e2bState(input: {
         );
     }
 
-    const dependencies = await transport.list({}, 100);
+    const dependencies = await deletionRead(() => transport.list({}, 100), signal);
 
     if (
       dependencies.nextToken ||
@@ -587,16 +668,19 @@ export function e2bState(input: {
         return value;
       },
       async submit(value, ctx) {
-        await deleteSnapshotPreflight(value);
+        try {
+          await deleteSnapshotPreflight(value, ctx.signal);
+        } catch (error) {
+          if (!ctx.signal.aborted) throw error;
 
-        if (ctx.signal.aborted)
-          return ctx.reject("UNAVAILABLE", "Delete cancelled before dispatch");
+          return rejectDeletion(value, ctx);
+        }
+
+        if (ctx.signal.aborted) return rejectDeletion(value, ctx);
         await ctx.checkpoint({ accepted: false, stage: "uncertain" });
 
         if (ctx.signal.aborted) {
-          await ctx.checkpoint({ accepted: false, stage: "rejected" });
-
-          return ctx.reject("UNAVAILABLE", "Snapshot delete cancelled before dispatch");
+          return rejectDeletion(value, ctx);
         }
 
         const accepted = await need().deleteSnapshot(value.nativeId, ctx.signal);
@@ -611,7 +695,12 @@ export function e2bState(input: {
       async observe(attempt, ctx) {
         const token = DeleteToken.safeParse(attempt.token);
 
-        if (!attempt.resource || !token.success || !canObserveDelete(token.data))
+        if (
+          !attempt.resource ||
+          attempt.resource.kind !== "snapshot" ||
+          !token.success ||
+          !canObserveDelete(token.data)
+        )
           return ctx.unknown("Snapshot delete dispatch evidence is unavailable; no replay");
         check(attempt.resource);
 
@@ -620,6 +709,7 @@ export function e2bState(input: {
 
         return { deleted: true, reference: attempt.resource };
       },
+      continue: continueRejectedDeletion("snapshot"),
     },
     snapshotRestore: {
       recovery: { version: 1, token: restoreToken },
@@ -913,16 +1003,20 @@ export function e2bState(input: {
     },
     async submit(reference, ctx) {
       check(reference);
-      await volumeInspect(reference);
 
-      if (ctx.signal.aborted)
-        return ctx.reject("UNAVAILABLE", "Deletion cancelled before dispatch");
+      try {
+        await deletionRead(() => volumeInspect(reference), ctx.signal);
+      } catch (error) {
+        if (!ctx.signal.aborted) throw error;
+
+        return rejectDeletion(reference, ctx);
+      }
+
+      if (ctx.signal.aborted) return rejectDeletion(reference, ctx);
       await ctx.checkpoint({ accepted: false, stage: "uncertain" });
 
       if (ctx.signal.aborted) {
-        await ctx.checkpoint({ accepted: false, stage: "rejected" });
-
-        return ctx.reject("UNAVAILABLE", "Volume delete cancelled before dispatch");
+        return rejectDeletion(reference, ctx);
       }
 
       let stage: "uncertain" | "accepted" | "rejected" = "uncertain";
@@ -959,6 +1053,7 @@ export function e2bState(input: {
 
       return ctx.pending(token.data, { pollAfterMs: 500 });
     },
+    continue: continueRejectedDeletion("volume"),
   };
 
   return { fields: state ? fields : {}, volumeInspect };

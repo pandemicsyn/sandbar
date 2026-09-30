@@ -1991,3 +1991,69 @@ test("advanced checkpointing submissions require a persistence callback before e
     await client.close();
   }
 });
+
+test.each(["snapshot_restore", "snapshot_delete", "volume_delete"] as const)(
+  "ordinary and advanced recovery bind resource kind: %s",
+  async (kind) => {
+    let observations = 0;
+
+    const adapter = defineAdapter({
+      name: "example.resource-kind",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope: { authority: { kind: "account", id: "one" }, partition: {} },
+          supports: { images: ["prepared"], network: ["blocked"] },
+          create: {
+            recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
+            async submit(_input, ctx) {
+              return ctx.pending({ jobId: "seed" });
+            },
+            async observe() {
+              observations++;
+
+              return { id: "box", state: "running" as const };
+            },
+          },
+          async destroy() {
+            return { computeStopped: true, retainedResources: [] };
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+    try {
+      const seed = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+
+      const resource = {
+        version: 1 as const,
+        kind: kind === "volume_delete" ? ("snapshot" as const) : ("volume" as const),
+        provider: adapter.name,
+        scope: client.scope,
+        nativeId: "wrong-kind",
+        ownership: "unknown" as const,
+      };
+
+      await expect(client.recover({ ...seed.reference, kind, resource })).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+      });
+      await expect(
+        client.operations.observe({
+          scope: client.scope,
+          kind,
+          operationId: "op",
+          submissionId: "sub",
+          resource,
+          token: { jobId: "seed" },
+          tokenVersion: 1,
+        }),
+      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+      expect(observations).toBe(0);
+    } finally {
+      await client.close();
+    }
+  },
+);

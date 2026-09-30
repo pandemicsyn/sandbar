@@ -24,6 +24,8 @@ function fixture() {
   let postCaptureRead: (() => void) | undefined;
   let inventoryBarrier: (() => Promise<void>) | undefined;
   let getBarrier: (() => Promise<void>) | undefined;
+  let deleteReadStage: "template" | "address" | "dependencies" | "volume" | undefined;
+  let deleteReadBarrier: (() => Promise<void>) | undefined;
 
   const calls = {
     create: 0,
@@ -102,6 +104,8 @@ function fixture() {
       return box;
     },
     async list(metadata, limit) {
+      if (deleteReadStage === "dependencies") await deleteReadBarrier?.();
+
       return {
         items: [...boxes.values()]
           .filter((box) =>
@@ -130,6 +134,8 @@ function fixture() {
     close() {},
     state: {
       async template(id) {
+        if (deleteReadStage === "template") await deleteReadBarrier?.();
+
         if (!snapshots.has(`${id}:default`)) return null;
 
         return {
@@ -145,6 +151,8 @@ function fixture() {
         };
       },
       async verifyAddress() {
+        if (deleteReadStage === "address") await deleteReadBarrier?.();
+
         if (modes.aliasShadowed)
           throw new Error("Snapshot address shadowed by another template alias");
       },
@@ -193,6 +201,8 @@ function fixture() {
         return volume;
       },
       async volume(id) {
+        if (deleteReadStage === "volume") await deleteReadBarrier?.();
+
         const volume = volumes.get(id);
 
         if (!volume) throw new Error("404 volume");
@@ -242,6 +252,10 @@ function fixture() {
     },
     postCaptureRead(value: () => void) {
       postCaptureRead = value;
+    },
+    deleteReadBarrier(stage: typeof deleteReadStage, callback: () => Promise<void>) {
+      deleteReadStage = stage;
+      deleteReadBarrier = callback;
     },
     getBarrier(value: () => Promise<void>) {
       getBarrier = value;
@@ -1255,7 +1269,9 @@ for (const kind of ["snapshot", "volume"] as const) {
 
           if (present) {
             expect(await recovered.observe()).toBeNull();
-            await expect(recovered.continue()).rejects.toMatchObject({ code: "UNSUPPORTED" });
+            await expect((await recovered.continue()).wait()).rejects.toBeInstanceOf(
+              OutcomeUnknownError,
+            );
           } else expect(await recovered.wait()).toMatchObject({ deleted: true });
           expect(kind === "snapshot" ? f.calls.snapshotDelete : f.calls.volumeDelete).toBe(1);
         } finally {
@@ -1267,3 +1283,127 @@ for (const kind of ["snapshot", "volume"] as const) {
     },
   );
 }
+
+test.each(["template", "address", "dependencies", "volume"] as const)(
+  "E2B cancellation interrupts submit-time delete preflight: %s",
+  async (stage) => {
+    const f = fixture();
+    const controller = new AbortController();
+    let saved: AdapterRecoveryReference | undefined;
+    let release: (() => void) | undefined;
+
+    const client = await f.connect(
+      "fixture-key",
+      (reference) => {
+        if (reference.kind !== (stage === "volume" ? "volume_delete" : "snapshot_delete")) return;
+        saved = structuredClone(reference);
+
+        if (!reference.token)
+          f.deleteReadBarrier(
+            stage,
+            () =>
+              new Promise<void>((resolve) => {
+                release = resolve;
+                setTimeout(() => controller.abort(), 0);
+              }),
+          );
+      },
+      "team-fixture",
+    );
+
+    try {
+      const artifact =
+        stage === "volume"
+          ? await client.volumes.create({ name: "cancelled-preflight" })
+          : (
+              await (
+                await client.sandboxes.create({ environment: Image.prepared("base") })
+              ).snapshot()
+            ).snapshot;
+
+      await expect(artifact.delete({ signal: controller.signal })).rejects.toMatchObject({
+        code: "UNAVAILABLE",
+        effect: "none",
+      });
+      expect(saved?.token).toMatchObject({
+        accepted: false,
+        stage: "rejected",
+        rejection: "before-dispatch",
+        resource: { nativeId: artifact.reference.nativeId },
+      });
+      const reopened = await f.connect("rotated-key", undefined, "team-fixture");
+
+      try {
+        const recovered = await reopened.recover(saved!);
+        await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+        await expect((await recovered.continue()).wait()).rejects.toMatchObject({
+          code: "UNAVAILABLE",
+          effect: "none",
+        });
+        release?.();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(f.calls.snapshotDelete + f.calls.volumeDelete).toBe(0);
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      release?.();
+      await client.close();
+    }
+  },
+);
+
+test("E2B delete cancellation keeps a compact token for large valid references", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  let saved: AdapterRecoveryReference | undefined;
+  let release: (() => void) | undefined;
+
+  const client = await f.connect(
+    "fixture-key",
+    (reference) => {
+      if (reference.kind !== "volume_delete") return;
+      saved = structuredClone(reference);
+
+      if (!reference.token)
+        f.deleteReadBarrier(
+          "volume",
+          () =>
+            new Promise<void>((resolve) => {
+              release = resolve;
+              setTimeout(() => controller.abort(), 0);
+            }),
+        );
+    },
+    "team-fixture",
+  );
+
+  try {
+    const volume = await client.volumes.create({ name: "large-reference" });
+    const selected = structuredClone(volume.reference);
+    selected.history = { padding: "x".repeat(3000) };
+    selected.receipt = "x".repeat(4096);
+    await expect(
+      client.volumes.delete(selected, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+    expect(saved?.token).toMatchObject({
+      stage: "rejected",
+      resource: { nativeId: selected.nativeId },
+    });
+    expect(new TextEncoder().encode(JSON.stringify(saved?.token)).length).toBeLessThan(4096);
+    const reopened = await f.connect("rotated-key", undefined, "team-fixture");
+
+    try {
+      await expect(
+        (await (await reopened.recover(saved!)).continue()).wait(),
+      ).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+      expect(f.calls.volumeDelete).toBe(0);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    release?.();
+    await client.close();
+  }
+});

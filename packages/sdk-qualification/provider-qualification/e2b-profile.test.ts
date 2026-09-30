@@ -192,7 +192,10 @@ test("E2B pending destroy checkpoints its token and reconciles after restart wit
   });
   const state = await native.ledger.read();
   expect(state.cleanup).toBe("unresolved");
-  expect(state.destroyReference?.token).toEqual({ stage: "accepted" });
+  expect(state.destroyReference?.token).toEqual({
+    stage: "accepted",
+    sandboxId: "sandbox_fixture",
+  });
   expect(state.destroyReference?.tokenVersion).toBe(2);
   native.stop();
   const client = await native.factory((reference) => recordReference(native.ledger, reference));
