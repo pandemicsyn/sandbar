@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineAdapter } from "sandbar-adapter";
@@ -623,11 +623,13 @@ test("cleanup waits for eventual create discovery before deleting exactly once",
   expect(fixture.calls()).toBe(1);
 });
 
-test("directory admission blocks unrelated runs and unresolved resources before allocation", async () => {
+test("directory admission serializes different providers and blocks same-provider unresolved resources", async () => {
   const previous = await ledger();
   const next = new LedgerStore(join(previous.path, ".."), crypto.randomUUID());
   await previous.withAdmissionLock(async () => {
-    await expect(next.withAdmissionLock(async () => {})).rejects.toMatchObject({ code: "EEXIST" });
+    await expect(
+      next.withAdmissionLock(() => next.requirePreviousCleanup("e2b")),
+    ).rejects.toMatchObject({ code: "EEXIST" });
   });
   await previous.update((value) => ({
     ...value,
@@ -636,9 +638,9 @@ test("directory admission blocks unrelated runs and unresolved resources before 
     cleanup: "unresolved",
   }));
   await next.withAdmissionLock(async () => {
-    await expect(next.requirePreviousCleanup()).rejects.toThrow("unresolved resources");
+    await expect(next.requirePreviousCleanup("daytona")).rejects.toThrow("unresolved resources");
     await previous.update((value) => ({ ...value, cleanup: "confirmed" }));
-    await next.requirePreviousCleanup();
+    await next.requirePreviousCleanup("daytona");
   });
 });
 
@@ -775,4 +777,107 @@ test("baseline observation checkpoints do not grow the bounded operation invento
 
   expect(state.operationReferences).toHaveLength(2);
   expect(state.operationReferences?.[0]).toMatchObject({ token: { stage: 69 } });
+});
+
+test("identified unresolved E2B volume permits Daytona without altering E2B custody", async () => {
+  const previous = await ledger();
+  await previous.update((value) => ({
+    ...value,
+    provider: "e2b",
+    cleanup: "unresolved",
+    stateMutations: [
+      {
+        role: "volume/create",
+        reference: { ...reference, provider: "e2b", kind: "volume_create" },
+        creation: true,
+        cleanup: "pending",
+      },
+    ],
+  }));
+  const before = await readFile(previous.path, "utf8");
+  const next = new LedgerStore(join(previous.path, ".."), crypto.randomUUID());
+  await next.withAdmissionLock(async () => {
+    await next.requirePreviousCleanup("daytona");
+    await expect(next.requirePreviousCleanup("e2b")).rejects.toThrow("unresolved resources");
+  });
+  expect(await readFile(previous.path, "utf8")).toBe(before);
+});
+
+test("cross-provider admission rejects missing, malformed and conflicting custody identity", async () => {
+  const previous = await ledger();
+  const next = new LedgerStore(join(previous.path, ".."), crypto.randomUUID());
+
+  for (const pendingReference of [
+    {},
+    { ...reference, provider: undefined },
+    { ...reference, provider: "daytona" },
+    { ...reference, provider: "e2b", scope: undefined },
+    { ...reference, provider: "e2b", version: -1 },
+    { ...reference, provider: "e2b", version: 1 },
+    { ...reference, provider: "e2b", kind: "" },
+    { ...reference, provider: "e2b", kind: "exec" },
+    { ...reference, provider: "e2b", operationId: "" },
+    { ...reference, provider: "e2b", submissionId: "" },
+    { ...reference, provider: "e2b", invocationKey: "" },
+    { ...reference, provider: "e2b", operationId: "x".repeat(129) },
+    { ...reference, provider: "e2b", tokenVersion: 0 },
+  ]) {
+    await previous.update((value) => ({
+      ...value,
+      provider: "e2b",
+      stateMutations: [
+        {
+          role: "volume/create",
+          reference: pendingReference,
+          creation: true,
+          cleanup: "pending",
+        },
+      ],
+      cleanup: "unresolved",
+    }));
+    await expect(next.requirePreviousCleanup("daytona")).rejects.toThrow("unverified identity");
+  }
+});
+
+test("cross-provider admission rejects conflicting retained resource identity", async () => {
+  const previous = await ledger();
+  const next = new LedgerStore(join(previous.path, ".."), crypto.randomUUID());
+  await previous.update((value) => ({
+    ...value,
+    provider: "e2b",
+    cleanup: "unresolved",
+    stateMutations: [
+      {
+        role: "volume/create",
+        reference: { ...reference, provider: "e2b", kind: "volume_create" },
+        resource: {
+          version: 1,
+          kind: "volume",
+          provider: "daytona",
+          scope: reference.scope,
+          nativeId: "fixture-volume",
+          ownership: "verified-created",
+        },
+        creation: true,
+        cleanup: "pending",
+      },
+    ],
+  }));
+  await expect(next.requirePreviousCleanup("daytona")).rejects.toThrow("unverified identity");
+});
+
+test("unknown legacy ledger provider fails closed even for a different selected provider", async () => {
+  const previous = await ledger();
+  const next = new LedgerStore(join(previous.path, ".."), crypto.randomUUID());
+  await previous.update((value) => ({
+    ...value,
+    createReference: reference,
+    cleanup: "unresolved",
+  }));
+  // Simulate a historical record outside the maintained schema; never migrate away custody.
+  const stored = JSON.parse(await readFile(previous.path, "utf8"));
+  delete stored.provider;
+  await writeFile(previous.path, JSON.stringify(stored));
+  await expect(next.requirePreviousCleanup("e2b")).rejects.toThrow();
+  expect(await readFile(previous.path, "utf8")).toBe(JSON.stringify(stored));
 });

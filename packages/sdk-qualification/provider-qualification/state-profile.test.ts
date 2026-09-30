@@ -590,7 +590,7 @@ test("lost capture remains in custody, preserves its source, blocks new admissio
   expect(f.boxes.size).toBe(1);
   expect(f.snapshots.size).toBe(1);
   expect(f.calls.capture).toBe(1);
-  await expect(f.ledger.requirePreviousCleanup()).rejects.toThrow("unresolved resources");
+  await expect(f.ledger.requirePreviousCleanup("daytona")).rejects.toThrow("unresolved resources");
   const state = await f.ledger.read();
 
   const client = await f.connect(async (reference) => {
@@ -948,8 +948,8 @@ for (const volumeFailure of ["rejected", "uncertain"] as const) {
     expect(f.calls.volumeCreate).toBe(1);
     expect(f.calls.volumeDelete).toBe(0);
 
-    if (volumeFailure === "rejected") await f.ledger.requirePreviousCleanup();
-    else await expect(f.ledger.requirePreviousCleanup()).rejects.toThrow("unresolved");
+    if (volumeFailure === "rejected") await f.ledger.requirePreviousCleanup("daytona");
+    else await expect(f.ledger.requirePreviousCleanup("daytona")).rejects.toThrow("unresolved");
     const client = await f.connect(async (reference) => f.ledger.saveStateReference(reference));
 
     try {

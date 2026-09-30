@@ -393,7 +393,7 @@ process.once("SIGTERM", interrupt);
 
 const exercise = async () => {
   if (action !== "reconcile") {
-    await ledger.requirePreviousCleanup();
+    await ledger.requirePreviousCleanup(provider);
     await ledger.initialize(provider, { kind: "borrowed-prepared", class: "prepared" }, config);
     await ledger.update((value) => ({
       ...value,
