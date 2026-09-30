@@ -561,7 +561,11 @@ export function publicCleanupAccess(
       await client.recover(reference);
     },
     async observeCreate(reference, signal) {
-      const result = await boundedRead((await client.recover(reference)).observe(), signal);
+      const operation = await client.recover(reference);
+
+      if (operation.kind !== "create") return null;
+
+      const result = await boundedRead(operation.observe(), signal);
 
       return result instanceof AdapterSandbox ? { id: result.id } : null;
     },
@@ -569,6 +573,8 @@ export function publicCleanupAccess(
       const operation = await client.recover(reference);
 
       try {
+        if (operation.kind !== "destroy") return false;
+
         const result = await boundedRead(operation.observe(), signal);
 
         return z.object({ computeStopped: z.literal(true) }).safeParse(result).success;

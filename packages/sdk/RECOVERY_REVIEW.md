@@ -10,9 +10,9 @@ Regressions cover checkpoint failures before/after effects, lost acknowledgement
 
 No live provider qualification, service outcome expansion, publication or deployment was performed.
 
-## Integration follow-up
+## Integration repair
 
-The stronger recovered-operation union requires kind narrowing before passing `observe()` to a generic promise helper. `packages/sdk-qualification/provider-qualification/lifecycle.ts` has two existing cleanup calls (observeCreate and observeDestroy) that need that narrowing. This runner belongs to the concurrent provider-acceptance task and was preserved. `observability:check` currently stops at those two TypeScript diagnostics before running its qualification harness. SDK/package/example typechecks and the actual SDK observability regressions pass. Integrate the owner’s kind checks, then rerun the standalone qualification command before merge.
+CI run `36663305841` confirmed that `observability:check` stopped at the two provider-acceptance cleanup reads passing an un-narrowed recovered-operation union to a generic promise helper. The requested PR repair adds create/destroy kind checks before observation, preserving the cleanup bounds and destroy checkpoint persistence. The qualification TypeScript check and complete local OpenTelemetry, Sentry and Datadog fixtures now pass, along with all 30 focused cleanup regressions and source lint/format checks.
 
 ## Validation
 
