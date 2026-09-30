@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadProviderProfile, profileRouting } from "./profile";
-import { runPrepared } from "./lifecycle";
+import { TestResources } from "../live/fixtures/resources";
 import { LedgerStore } from "./ledger";
 import { reopenInFreshProcess } from "./reopen";
 
@@ -28,27 +28,22 @@ test("external profile loads its public adapter through the maintained baseline 
     { profile: profile.id, routing },
   );
 
-  const steps = await runPrepared(
+  const t = new TestResources(
     profile.connection(routing, { SANDBAR_EXTERNAL_FIXTURE_TOKEN: "offline" }),
     ledger,
     String(routing.imageId),
-    {
-      network: "blocked",
-      selectedScenarios: new Set(["inspect"]),
-      signal: AbortSignal.timeout(5000),
-      cleanupWaitMs: 1000,
-    },
+    "blocked",
+    { compute: 1, snapshots: 0, volumes: 0, exerciseMs: 5000, cleanupMs: 1000 },
   );
 
-  expect(
-    steps
-      .filter((step) =>
-        ["connect", "create-prepared", "inspect", "confirm-cleanup", "close"].includes(
-          step.scenario,
-        ),
-      )
-      .map((step) => step.status),
-  ).toEqual(["passed", "passed", "passed", "passed", "passed"]);
+  try {
+    await t.open();
+    const box = await t.create("sandbox/source");
+    expect((await box.inspect()).state).toBe("running");
+  } finally {
+    await t.close();
+  }
+
   expect((await ledger.read()).cleanup).toBe("confirmed");
 });
 

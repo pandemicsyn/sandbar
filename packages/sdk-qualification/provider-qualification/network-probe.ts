@@ -1,6 +1,4 @@
 import { z } from "zod";
-import type { AdapterSandbox } from "sandbar-sdk";
-import type { FailureCapture } from "./diagnostics";
 
 export const networkProbeId = "cloudflare-tcp443-hostname-ipv4-v1" as const;
 
@@ -51,33 +49,6 @@ for target, host in [("hostname", "one.one.one.one"), ("ipv4", "1.1.1.1")]:
     attempts.append(result)
 print(json.dumps({"attempts": attempts}))
 `;
-
-export async function probeNetwork(
-  sandbox: AdapterSandbox,
-  phase: NetworkSample["phase"],
-  capture: FailureCapture,
-  signal?: AbortSignal,
-): Promise<NetworkSample> {
-  capture.at("exec");
-  capture.networkPhase(phase);
-
-  const result = await sandbox.exec(
-    {
-      command: { kind: "argv", argv: ["python3", "-c", networkScript] },
-      deadlineSeconds: 20,
-      maxOutputBytes: 4096,
-    },
-    { signal },
-  );
-
-  capture.output(result, "two complete TCP probe outcomes", "");
-
-  if (result.truncated || result.exitCode !== 0 || result.stderr.length)
-    throw new Error("Network probe did not complete cleanly");
-  const sample = networkSampleSchema.parse({ ...JSON.parse(result.stdoutText()), phase });
-
-  return sample;
-}
 
 export function requireInternet(sample: NetworkSample): void {
   if (sample.attempts.some((entry) => !entry.connected))

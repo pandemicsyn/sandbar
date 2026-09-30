@@ -17,6 +17,47 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
+| Scenario        | Latest live result | Date       |
+| --------------- | ------------------ | ---------- |
+| close           | passed             | 2026-09-30 |
+| confirm-cleanup | passed             | 2026-09-30 |
+| connect         | passed             | 2026-09-30 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- Fresh-process reopen: required.
+- Harness commit: `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
+| Scenario           | Latest live result | Date       |
+| ------------------ | ------------------ | ---------- |
+| snapshot-roundtrip | passed             | 2026-09-30 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
+| Scenario    | Latest live result | Date       |
+| ----------- | ------------------ | ---------- |
+| volume-crud | passed             | 2026-09-30 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
 - SDK: 0.0.0, commit `3be544646df54a2e1f85a3772d2961eaf69a7cc6`.
 - Fresh-process reopen: not recorded.
 - Harness commit: `3be544646df54a2e1f85a3772d2961eaf69a7cc6`.
@@ -25,9 +66,6 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 | Scenario                                                          | Latest live result | Date       |
 | ----------------------------------------------------------------- | ------------------ | ---------- |
 | build-oci                                                         | not-run            | 2026-09-28 |
-| close                                                             | passed             | 2026-09-28 |
-| confirm-cleanup                                                   | passed             | 2026-09-28 |
-| connect                                                           | passed             | 2026-09-28 |
 | create-prepared                                                   | passed             | 2026-09-28 |
 | destroy                                                           | passed             | 2026-09-28 |
 | exec-argv                                                         | passed             | 2026-09-28 |

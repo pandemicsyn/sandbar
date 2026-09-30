@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { pathToFileURL } from "node:url";
 import { supportMetadataSchema, type SupportMetadata } from "./support";
-import type { ConnectionFactory } from "./lifecycle";
+import type { ConnectionFactory } from "./connection";
 import type { QualificationRecord } from "./report";
 
 export const providerId = z.string().regex(/^[a-z][a-z0-9.-]{0,79}$/);

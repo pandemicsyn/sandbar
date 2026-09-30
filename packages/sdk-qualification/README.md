@@ -28,6 +28,6 @@ Run shared builds sequentially. Focused tests are useful during iteration; packa
 
 ## Provider evidence
 
-The [provider qualification harness](provider-qualification/README.md) defines bounded live scenarios. [Reviewed result records](provider-qualification/results/README.md) feed the [public live matrix](../../apps/docs/src/content/docs/docs/providers/live-qualification.md). Keep fixture, packed, diagnostic and merged-source live results separate, including skipped and failed scenarios.
+The [ordinary Bun SDK integration suites](provider-qualification/README.md) exercise explicitly authorized provider workflows with bounded owned-resource setup and cleanup. Standard Bun JUnit plus a thin provenance/cleanup mapping produces [reviewed exact-revision records](provider-qualification/results/README.md) for the [public support table](../../apps/docs/src/content/docs/docs/providers/support.md). Keep fixture, packed and live evidence distinct; preserve failed/skipped cases and original source provenance before and after merge.
 
 Live calls, paid resources and publication require explicit authorization. Do not move private diagnostics, credentials, native IDs or cleanup ledgers into specs or committed evidence.

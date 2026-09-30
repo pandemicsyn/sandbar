@@ -5,7 +5,9 @@ import { join } from "node:path";
 import type { E2BTransport } from "sandbar-sdk/e2b";
 import { e2bConfiguration, e2bConnection } from "./e2b-profile";
 import { LedgerStore, requirePrivateDirectory } from "./ledger";
-import { publicCleanupAccess, reconcile, recordReference, runPrepared } from "./lifecycle";
+import { TestResources } from "../live/fixtures/resources";
+import { cleanupLedger } from "../live/fixtures/reconcile";
+import { lifecycle, execution, files } from "../live/sandbox.test";
 
 const directories: string[] = [];
 
@@ -150,69 +152,89 @@ async function fixture(
   };
 }
 
-test("E2B prepared profile qualifies documented home-directory file workflow with one native TTL sandbox", async () => {
+function resources(native: Awaited<ReturnType<typeof fixture>>, cleanupMs = 1000) {
+  return new TestResources(native.factory, native.ledger, config.templateId, "blocked", {
+    compute: 1,
+    snapshots: 0,
+    volumes: 0,
+    exerciseMs: 5000,
+    cleanupMs,
+  });
+}
+
+test("E2B public baseline tests home-directory files and owned cleanup with native TTL", async () => {
   const native = await fixture();
-  expect(config).toEqual({ templateId: "base", timeoutSeconds: 300 });
-
-  const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
-    network: "blocked",
-    fileRoot: "/home/user",
-    // Allow offline filesystem cleanup to finish on loaded CI runners.
-    cleanupWaitMs: 1000,
-  });
-
-  expect(steps.every((step) => step.status === "passed")).toBe(true);
-  expect(native.counters).toEqual({ create: 1, kill: 1, close: 1, build: 0 });
-  expect(native.filePaths.length).toBe(3);
-  expect(native.filePaths.every((path) => path.startsWith("/home/user/"))).toBe(true);
-  expect((await native.ledger.read()).cleanup).toBe("confirmed");
-  expect((await native.ledger.read()).connection).toEqual(config);
-});
-
-test("E2B lost create is observed and cleaned without another create or borrowed template delete", async () => {
-  const native = await fixture({ loseCreate: true });
-
-  const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
-    network: "blocked",
-    // Allow offline filesystem cleanup to finish on loaded CI runners.
-    cleanupWaitMs: 1000,
-  });
-
-  expect(steps.find((step) => step.scenario === "create-prepared")?.status).toBe("failed");
-  expect(steps.find((step) => step.scenario === "confirm-cleanup")?.status).toBe("passed");
-  expect(native.counters).toEqual({ create: 1, kill: 1, close: 1, build: 0 });
-});
-
-test("E2B pending destroy checkpoints its token and reconciles after restart without replay", async () => {
-  const native = await fixture({ pendingDestroy: true });
-  await runPrepared(native.factory, native.ledger, config.templateId, {
-    network: "blocked",
-    cleanupWaitMs: 30,
-    selectedScenarios: new Set(["inspect"]),
-  });
-  const state = await native.ledger.read();
-  expect(state.cleanup).toBe("unresolved");
-  expect(state.destroyReference?.token).toEqual({
-    stage: "accepted",
-    sandboxId: "sandbox_fixture",
-  });
-  expect(state.destroyReference?.tokenVersion).toBe(2);
-  native.stop();
-  const client = await native.factory((reference) => recordReference(native.ledger, reference));
+  const t = resources(native);
 
   try {
-    expect(
-      (await reconcile(publicCleanupAccess(client, native.ledger), native.ledger, 100))[1]?.status,
-    ).toBe("passed");
+    await t.open();
+    const box = await t.create("sandbox/source");
+    await lifecycle(t, box);
+    await execution(t, box);
+    await files(t, box, "/home/user");
   } finally {
-    await client.close();
+    await t.close();
   }
 
+  expect(config).toEqual({ templateId: "base", timeoutSeconds: 300 });
+  expect(native.counters).toEqual({ create: 1, kill: 1, close: 1, build: 0 });
+  expect(native.filePaths.length).toBe(3);
+  expect(native.filePaths.every((p) => p.startsWith("/home/user/"))).toBe(true);
+  expect((await native.ledger.read()).cleanup).toBe("confirmed");
+});
+
+test("E2B lost create is observed and owned compute removed without retry", async () => {
+  const native = await fixture({ loseCreate: true });
+  const t = resources(native);
+
+  try {
+    await t.open();
+    await expect(t.create("sandbox/source")).rejects.toThrow();
+  } finally {
+    await t.close();
+  }
+
+  expect(native.counters).toEqual({ create: 1, kill: 1, close: 1, build: 0 });
+  expect((await native.ledger.read()).cleanup).toBe("confirmed");
+});
+
+test("E2B pending deletion checkpoints and reconciles with a fresh client without replay", async () => {
+  const native = await fixture({ pendingDestroy: true });
+  const t = resources(native, 30);
+  await t.open();
+  await t.create("sandbox/source");
+  await expect(t.close()).rejects.toThrow();
+  const state = await native.ledger.read();
+  const deletion = state.stateMutations!.find((e) => !e.creation)!;
+  expect(deletion.reference).toMatchObject({
+    token: { stage: "accepted", sandboxId: "sandbox_fixture" },
+    tokenVersion: 2,
+  });
+  expect(state.cleanup).toBe("unresolved");
+  native.stop();
+  await cleanupLedger(native.factory, native.ledger, 100);
   expect(native.counters).toEqual({ create: 1, kill: 1, close: 2, build: 0 });
   expect((await native.ledger.read()).cleanup).toBe("confirmed");
 });
 
-test("E2B profile refuses a longer native lifetime before connection", () => {
+for (const mode of ["failOverwrite", "failNoClobber"] as const)
+  test(`E2B ${mode} fails observable file assertions and still cleans owned compute`, async () => {
+    const native = await fixture({ [mode]: true });
+    const t = resources(native);
+
+    try {
+      await t.open();
+      const box = await t.create("sandbox/source");
+      await expect(files(t, box, "/home/user")).rejects.toThrow();
+    } finally {
+      await t.close();
+    }
+
+    expect(native.writes()).toBe(mode === "failOverwrite" ? 2 : 3);
+    expect((await native.ledger.read()).cleanup).toBe("confirmed");
+  });
+
+test("E2B profile refuses excessive native lifetime", () => {
   expect(() => e2bConfiguration.parse({ ...config, timeoutSeconds: 3600 })).toThrow();
 });
 
@@ -229,93 +251,4 @@ test("operator preflight refuses a permissive ledger directory before credential
   );
   await chmod(directory, 0o700);
   await requirePrivateDirectory(directory);
-});
-
-test("manual run rejects missing authorization and CI before operator credentials", () => {
-  for (const extra of [{}, { CI: "1", SANDBAR_QUAL_LIVE_AUTHORIZED: "yes" }]) {
-    const result = Bun.spawnSync({
-      cmd: [
-        process.execPath,
-        "packages/sdk-qualification/provider-qualification/manual.ts",
-        "live-prepared",
-      ],
-      env: {
-        SANDBAR_QUAL_PROVIDER: "e2b",
-        SANDBAR_CREDENTIALS_FILE: "/dev/null/never-read",
-        ...extra,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const error = new TextDecoder().decode(result.stderr);
-    expect(result.exitCode).not.toBe(0);
-    expect(error).toMatch(/SANDBAR_QUAL_LIVE_AUTHORIZED|off-runner checkpoint/);
-    expect(error).not.toContain("Unable to read Sandbar credential file");
-  }
-});
-
-test("failed overwrite blocks no-clobber without another write and still confirms teardown", async () => {
-  const native = await fixture({ failOverwrite: true });
-
-  const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
-    network: "blocked",
-    // Allow offline filesystem cleanup to finish on loaded CI runners.
-    cleanupWaitMs: 1000,
-  });
-
-  expect(steps.find((step) => step.scenario === "file-binary")?.status).toBe("passed");
-  expect(steps.find((step) => step.scenario === "file-overwrite")?.status).toBe("failed");
-  expect(steps.find((step) => step.scenario === "file-no-clobber")).toEqual({
-    scenario: "file-no-clobber",
-    status: "blocked",
-    issue: "dependency-failed",
-  });
-  expect(native.writes()).toBe(2);
-  expect((await native.ledger.read()).cleanup).toBe("confirmed");
-});
-
-test("uncertain no-clobber preserves original write failure and observes unchanged bytes without replay", async () => {
-  const native = await fixture({ failNoClobber: true });
-
-  const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
-    network: "blocked",
-    // Allow offline filesystem cleanup to finish on loaded CI runners.
-    cleanupWaitMs: 1000,
-  });
-
-  const failed = steps.find((step) => step.scenario === "file-no-clobber");
-  expect(failed?.status).toBe("failed");
-  expect(failed?.diagnostic?.stage).toBe("write");
-  expect(failed?.diagnostic?.error.code).toBe("OUTCOME_UNKNOWN");
-  expect(failed?.diagnostic?.writeBytes).toEqual([0, 255, 1, 128]);
-  expect(failed?.diagnostic?.expectedBytes).toEqual([2, 254, 0]);
-  expect(failed?.diagnostic?.actualBytes).toEqual([2, 254, 0]);
-  expect(failed?.diagnostic?.actualLength).toBe(3);
-  expect(native.writes()).toBe(3);
-  expect((await native.ledger.read()).cleanup).toBe("confirmed");
-});
-
-test("failed no-clobber diagnostic read is captured separately while retaining write failure", async () => {
-  const native = await fixture({ failNoClobber: true, failReadAfterNoClobber: true });
-
-  const steps = await runPrepared(native.factory, native.ledger, config.templateId, {
-    network: "blocked",
-    // Allow offline filesystem cleanup to finish on loaded CI runners.
-    cleanupWaitMs: 1000,
-  });
-
-  const failed = steps.find((step) => step.scenario === "file-no-clobber");
-  expect(failed?.diagnostic?.stage).toBe("write");
-  expect(failed?.diagnostic?.error.code).toBe("OUTCOME_UNKNOWN");
-  expect(failed?.diagnostic?.readbackError).toBeDefined();
-  expect(failed?.diagnostic?.actualBytes).toBeUndefined();
-  expect(
-    (await native.ledger.read()).diagnostics?.some(
-      (entry) => entry.scenario === "file-no-clobber" && entry.stage === "read",
-    ),
-  ).toBe(true);
-  expect(steps.find((step) => step.scenario === "close")?.status).toBe("passed");
-  expect(native.writes()).toBe(3);
-  expect((await native.ledger.read()).cleanup).toBe("confirmed");
 });

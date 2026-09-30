@@ -82,11 +82,11 @@ export const builtinSupport: SupportMetadata[] = [
       },
       snapshots: {
         support: "conditional",
-        note: "Eligible containers only: stop/cold filesystem capture/restart, fresh restored execution; no RAM. Historical 5db0558 roundtrip passed; merged guards/recovery changed later, without a current-head live rerun. Fresh-process reopen is newly maintained and unrun live.",
+        note: "Eligible containers only: stop/cold filesystem capture/restart, fresh restored execution; no RAM. Roundtrip passed at 9a6c1c1 in us with daytona-default, including later guards/recovery, two-way filesystem isolation, fresh-process reference reopen and confirmed owned cleanup.",
       },
       volumes: {
         support: "supported",
-        note: "Independent native create/inspect/delete is implemented. The historical mounted workflow included create/inspect/delete; the new separate CRUD scenario has not run live.",
+        note: "Independent native create/inspect/delete passed at 9a6c1c1 in us with daytona-default, without compute allocation for the CRUD probe; owned deletion was confirmed.",
       },
       persistence: {
         support: "conditional",
@@ -253,7 +253,7 @@ export function renderSupportMatrix(
     "",
     ...markdownTable(["Feature", ...profiles.map((profile) => profile.name)], rows),
     "",
-    "The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. Later production changes are described below; no paid rerun or current-head certification was performed for this refactor.",
+    "The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. The scoped Daytona snapshot/fresh-process and independent volume CRUD acceptance at 9a6c1c1 has confirmed cleanup. Other operation/configuration claims retain their own recorded revisions and limitations below.",
     "",
   ];
 
@@ -274,7 +274,7 @@ export function renderSupportMatrix(
   lines.push(
     "## Other integrations",
     "",
-    "Modal is an external experimental adapter with offline native-boundary and packed consumer coverage, without live acceptance. Custom adapters supply a profile to the same maintained runner; installed code does not register itself in a service. Fake is a deterministic fixture without isolation guarantees.",
+    "Modal is an external experimental adapter with offline native-boundary and packed consumer coverage, without live acceptance. Custom adapters supply a profile to the same ordinary Bun SDK suites; installed code does not register itself in a service. Fake is a deterministic fixture without isolation guarantees.",
     "",
     "## Runtimes",
     "",
@@ -282,7 +282,7 @@ export function renderSupportMatrix(
     "",
     "## Updating support",
     "",
-    "Reviewed summaries live in results/<provider>.json. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.",
+    "Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The Bun migration itself has not been live-run. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.",
     "",
   );
 

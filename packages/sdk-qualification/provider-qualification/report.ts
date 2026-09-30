@@ -44,6 +44,13 @@ const evidence = z
 
 export const recordSchema = z.strictObject({
   schemaVersion: z.literal(1),
+  runner: z
+    .strictObject({
+      name: z.literal("bun:test"),
+      format: z.literal("junit"),
+      testName: z.string().min(1).max(160),
+    })
+    .optional(),
   provider: z.string().regex(/^[a-z][a-z0-9.-]{0,79}$/),
   scenario: z.enum(scenarios),
   mode: z.enum(["live", "fixture", "packed"]),
@@ -123,7 +130,8 @@ export const reportSchema = z
     for (const [index, record] of report.records.entries()) {
       if (
         ["snapshot-roundtrip", "volume-persistence", "volume-crud"].includes(record.scenario) &&
-        record.status === "passed"
+        record.status === "passed" &&
+        !record.runner
       ) {
         try {
           if (!record.stateEvidence)
@@ -167,7 +175,14 @@ export const reportSchema = z
         }
       }
 
-      if (record.status === "passed" && record.scenario.startsWith("network-")) {
+      if (record.runner && record.status === "passed" && record.runCleanup !== "confirmed")
+        ctx.addIssue({
+          code: "custom",
+          path: ["records", index, "runCleanup"],
+          message: "Bun passes require confirmed test-owned cleanup",
+        });
+
+      if (record.status === "passed" && record.scenario.startsWith("network-") && !record.runner) {
         try {
           const samples = record.networkEvidence?.samples;
 
@@ -248,28 +263,7 @@ export type QualificationReport = z.infer<typeof reportSchema>;
 
 export type Scenario = QualificationRecord["scenario"];
 
-export function unselectedRecord<T extends QualificationRecord>(record: T, scenario: Scenario) {
-  return {
-    ...record,
-    configuration: {
-      ...record.configuration,
-      stateProbe: undefined,
-      preserve: undefined,
-      restoreExecution: undefined,
-      sourceAfter: undefined,
-      volumeOwnership: undefined,
-      freshProcess: undefined,
-    },
-    scenario,
-    status: "not-run" as const,
-    issue: "not-selected" as const,
-    diagnostic: undefined,
-    networkEvidence: undefined,
-    stateEvidence: undefined,
-  };
-}
-
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the JSON artifact boundary; reportSchema parses it immediately.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- JSON artifact boundary parsed immediately by reportSchema.
 export function parseReport(value: unknown): QualificationReport {
   return reportSchema.parse(value);
 }

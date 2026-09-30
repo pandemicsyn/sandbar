@@ -9,16 +9,16 @@ Adapter support and live validation are separate facts. **Supported** means impl
 
 | Feature                       | Daytona                                                              | E2B                                                                               |
 | ----------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Sandbox lifecycle             | [Supported · passed at 3be54464](#daytona-lifecycle)                 | [Supported · passed at 3be54464](#e2b-lifecycle)                                  |
+| Sandbox lifecycle             | [Supported · not-run](#daytona-lifecycle)                            | [Supported · passed at 3be54464](#e2b-lifecycle)                                  |
 | Execution and captured output | [Supported · passed at 3be54464](#daytona-execution)                 | [Supported · passed at 3be54464](#e2b-execution)                                  |
 | Binary files and overwrite    | [Conditional · passed at 3be54464](#daytona-files)                   | [Conditional · passed at 3be54464](#e2b-files)                                    |
 | OCI image builds              | [Conditional · not-run](#daytona-oci)                                | [Conditional · not-run](#e2b-oci)                                                 |
 | Measured network controls     | [Conditional · not-run](#daytona-network)                            | [Supported · not-run](#e2b-network)                                               |
-| Snapshot roundtrip            | [Conditional · passed at 5db0558 (historical)](#daytona-snapshots)   | [Conditional · passed at 5db0558 (historical)](#e2b-snapshots)                    |
-| Volume CRUD                   | [Supported · not-run](#daytona-volumes)                              | [Conditional · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
+| Snapshot roundtrip            | [Conditional · passed at 9a6c1c19](#daytona-snapshots)               | [Conditional · passed at 5db0558 (historical)](#e2b-snapshots)                    |
+| Volume CRUD                   | [Supported · passed at 9a6c1c19](#daytona-volumes)                   | [Conditional · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
 | Mounted persistence           | [Conditional · passed at 5db0558 (historical)](#daytona-persistence) | [Unsupported · not-run](#e2b-persistence)                                         |
 
-The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. Later production changes are described below; no paid rerun or current-head certification was performed for this refactor.
+The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. The scoped Daytona snapshot/fresh-process and independent volume CRUD acceptance at 9a6c1c1 has confirmed cleanup. Other operation/configuration claims retain their own recorded revisions and limitations below.
 
 ## Daytona caveats
 
@@ -56,13 +56,13 @@ daytona-default permits essential services and is not strict blocked egress. Tie
 
 ### Snapshot roundtrip
 
-Eligible containers only: stop/cold filesystem capture/restart, fresh restored execution; no RAM. Historical 5db0558 roundtrip passed; merged guards/recovery changed later, without a current-head live rerun. Fresh-process reopen is newly maintained and unrun live.
+Eligible containers only: stop/cold filesystem capture/restart, fresh restored execution; no RAM. Roundtrip passed at 9a6c1c1 in us with daytona-default, including later guards/recovery, two-way filesystem isolation, fresh-process reference reopen and confirmed owned cleanup.
 
 <a id="daytona-volumes"></a>
 
 ### Volume CRUD
 
-Independent native create/inspect/delete is implemented. The historical mounted workflow included create/inspect/delete; the new separate CRUD scenario has not run live.
+Independent native create/inspect/delete passed at 9a6c1c1 in us with daytona-default, without compute allocation for the CRUD probe; owned deletion was confirmed.
 
 <a id="daytona-persistence"></a>
 
@@ -122,7 +122,7 @@ Native mounts select reusable names without immutable volume-ID binding; the ada
 
 ## Other integrations
 
-Modal is an external experimental adapter with offline native-boundary and packed consumer coverage, without live acceptance. Custom adapters supply a profile to the same maintained runner; installed code does not register itself in a service. Fake is a deterministic fixture without isolation guarantees.
+Modal is an external experimental adapter with offline native-boundary and packed consumer coverage, without live acceptance. Custom adapters supply a profile to the same ordinary Bun SDK suites; installed code does not register itself in a service. Fake is a deterministic fixture without isolation guarantees.
 
 ## Runtimes
 
@@ -130,4 +130,4 @@ The SDK targets server-side Node.js and Bun. Packed consumer checks exercise emi
 
 ## Updating support
 
-Reviewed summaries live in results/<provider>.json. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.
+Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The Bun migration itself has not been live-run. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.
