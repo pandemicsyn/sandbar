@@ -23,6 +23,9 @@ const VolumeCreateToken = z.strictObject({
   state: z.enum(["uncertain", "accepted", "rejected"]),
   name: z.string().min(1).max(128),
   volume: ResourceReference.optional(),
+  rejectionStatus: z
+    .union([z.literal(400), z.literal(401), z.literal(403), z.literal(422)])
+    .optional(),
 });
 
 const NativeVolume = z.object({
@@ -81,9 +84,20 @@ const Token = z.strictObject({
   capture: CaptureFacts,
   consistency: z.enum(["crash-consistent", "caller-quiesced", "unknown"]),
   snapshot: z.json().optional(),
+  rejectedBeforeDispatch: z.literal(true).optional(),
   captureFailure: z.string().max(512).optional(),
   restartFailure: z.string().max(512).optional(),
 });
+
+function captureRejectedBeforeDispatch(token: z.infer<typeof Token>): boolean {
+  return (
+    token.rejectedBeforeDispatch === true &&
+    token.captureState === "not-submitted" &&
+    !token.snapshotId &&
+    !token.snapshot &&
+    token.stopState === (token.initialState === "running" ? "not-submitted" : "completed")
+  );
+}
 
 class TerminalCaptureError extends Error {
   constructor(readonly snapshot: SnapshotInfo) {
@@ -1317,6 +1331,13 @@ export function daytonaState(input: {
 
         await ctx.checkpoint(token);
 
+        if (ctx.signal.aborted) {
+          token.rejectedBeforeDispatch = true;
+          await ctx.checkpoint(token);
+
+          return ctx.reject("UNAVAILABLE", "Capture cancelled before native dispatch");
+        }
+
         return runCaptureStages(token, ctx, true);
       },
       async observe(attempt, ctx) {
@@ -1329,6 +1350,9 @@ export function daytonaState(input: {
           !matchesCaptureIntent(parsed.data, attempt.capture)
         )
           return ctx.unknown("Capture stage correlation missing");
+
+        if (captureRejectedBeforeDispatch(parsed.data))
+          return ctx.unknown("Capture cancelled before dispatch; continue to confirm no effect");
         const before = JSON.stringify(parsed.data);
         const { token, captureObserved } = await reconcileCapture(parsed.data, ctx);
 
@@ -1346,6 +1370,9 @@ export function daytonaState(input: {
           !matchesCaptureIntent(parsed.data, attempt.capture)
         )
           return ctx.unknown("Capture stage correlation missing");
+
+        if (captureRejectedBeforeDispatch(parsed.data))
+          return ctx.reject("UNAVAILABLE", "Capture cancelled before native dispatch");
 
         if (ctx.signal.aborted) return ctx.unknown("Continuation cancelled before dispatch");
 
@@ -1409,13 +1436,20 @@ export function daytonaState(input: {
           return ctx.reject("UNAVAILABLE", "Volume create cancelled before dispatch");
         }
 
-        const result = volumeInfo(
-          await json(
-            await request("POST", "/volumes", { name: value.name }, context),
-            NativeVolume,
-          ),
-          "verified-created",
-        );
+        const response = await request("POST", "/volumes", { name: value.name }, context);
+
+        if ([400, 401, 403, 422].includes(response.status)) {
+          void response.body?.cancel().catch(() => undefined);
+          await ctx.checkpoint({
+            state: "rejected",
+            name: value.name,
+            rejectionStatus: response.status,
+          });
+
+          return ctx.reject("UNAVAILABLE", `Native volume creation rejected (${response.status})`);
+        }
+
+        const result = volumeInfo(await json(response, NativeVolume), "verified-created");
 
         result.reference.history = history.issue({
           version: 1,
@@ -1455,7 +1489,12 @@ export function daytonaState(input: {
         const parsed = VolumeCreateToken.safeParse(attempt.token);
 
         if (parsed.success && parsed.data.state === "rejected" && !parsed.data.volume)
-          return ctx.reject("UNAVAILABLE", "Volume create cancelled before dispatch");
+          return ctx.reject(
+            "UNAVAILABLE",
+            parsed.data.rejectionStatus
+              ? `Native volume creation rejected (${parsed.data.rejectionStatus})`
+              : "Volume create cancelled before dispatch",
+          );
 
         return ctx.unknown("Volume creation cannot be replayed");
       },

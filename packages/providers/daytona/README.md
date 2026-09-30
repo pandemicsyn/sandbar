@@ -88,3 +88,6 @@ Daytona create accepts the immutable snapshot ID but reports the snapshot name o
 
 
 Volume deletion can leave a native tombstone with state `deleted`, HTTP 200, and a changed name. After a durably checkpointed deletion dispatch barrier, recovery confirms absence or that terminal state only for the saved immutable ID and organization; it does not reuse the tombstone name or replay DELETE. This confirms the requested absent state, not which actor deleted it or whether billing ended. Legacy tokens lacking dispatch evidence, failed reads and foreign/replacement identities remain unknown. Inspection of a scoped deleted volume returns `NOT_FOUND`.
+
+
+Cancellation during the initial capture checkpoint persists a no-dispatch rejection; fresh explicit continuation confirms no effect without another native read or mutation. Volume creation checkpoints definitive HTTP 400/401/403/422 rejection before reporting no effect. Timeout, rate-limit, server and transport failures remain uncertain, with no replay or adoption by name.

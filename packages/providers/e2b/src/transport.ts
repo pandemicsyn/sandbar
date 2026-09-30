@@ -393,11 +393,9 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       async volumes() {
         const values = await readNative(
           await controlGet("/volumes"),
-          z
-            .array(
-              z.object({ volumeID: z.string().min(1).max(128), name: z.string().min(1).max(128) }),
-            )
-            .max(100),
+          z.array(
+            z.object({ volumeID: z.string().min(1).max(128), name: z.string().min(1).max(128) }),
+          ),
         );
 
         return values.map((value) => ({ volumeId: value.volumeID, name: value.name }));

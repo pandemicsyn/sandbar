@@ -249,6 +249,7 @@ function fixture() {
 
   return {
     connect,
+    transport,
     boxes,
     snapshots,
     volumes,
@@ -1535,4 +1536,29 @@ test("E2B volume rejection does not wait for body cancellation", async () => {
   await expect(transport.state!.createVolume("denied")).rejects.toBeInstanceOf(
     E2BVolumeCreateRejected,
   );
+});
+
+test("E2B oversized native volume inventory reports capacity instead of a schema error", async () => {
+  const values = Array.from({ length: 101 }, (_, i) => ({
+    volumeID: `volume-${i}`,
+    name: `name-${i}`,
+  }));
+
+  // SAFETY: The deterministic fixture implements the transport fetch shape.
+  const fetcher = Object.assign(async () => Response.json(values), {
+    preconnect() {},
+  }) as typeof fetch;
+
+  const native = createSdkTransport("fixture-key", fetcher);
+  const f = fixture();
+  f.transport.state!.volumes = native.state!.volumes;
+  const client = await f.connect();
+
+  try {
+    await expect(client.volumes.list({ limit: 100 })).rejects.toMatchObject({
+      code: "CAPACITY",
+    });
+  } finally {
+    await client.close();
+  }
 });

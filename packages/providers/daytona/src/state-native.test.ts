@@ -41,6 +41,7 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
   const modes = {
     mounted: false,
     stopLost: false,
+    volumeCreateStatus: 0,
     stopRejectedStatus: 0,
     stopRejectedButStopped: false,
     captureLost: false,
@@ -217,6 +218,9 @@ function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } =
 
       if (url.pathname === "/volumes" && method === "POST") {
         volumeCreates++;
+
+        if (modes.volumeCreateStatus)
+          return new Response(null, { status: modes.volumeCreateStatus });
 
         const volume = {
           id: `volume-${volumeCreates}`,
@@ -1811,3 +1815,87 @@ test("Daytona capture recovery accepts bounded legacy names", async () => {
     await client.close();
   }
 });
+
+test("Daytona initial capture checkpoint cancellation persists no-dispatch rejection", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  let saved: AdapterRecoveryReference | undefined;
+
+  const client = await f.connect((ref) => {
+    if (ref.kind !== "snapshot_capture" || !ref.token) return;
+    saved = structuredClone(ref);
+    controller.abort();
+  });
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+
+    try {
+      await source.snapshot(undefined, { signal: controller.signal });
+    } catch (error) {
+      expect(
+        error instanceof WaitAbortedError ||
+          (error instanceof SandbarError && error.effect === "none"),
+      ).toBe(true);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(saved?.token).toMatchObject({
+      rejectedBeforeDispatch: true,
+      captureState: "not-submitted",
+      stopState: "not-submitted",
+    });
+    expect(f.calls).toMatchObject({ stop: 0, capture: 0, start: 0 });
+    const before = { ...f.calls, reads: f.modes.sourceReads };
+    const reopened = await f.connect(undefined, "rotated-key");
+
+    try {
+      const operation = await reopened.recover(saved!);
+      await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      await operation.continue();
+      await expect(operation.wait()).rejects.toMatchObject({ effect: "none", code: "UNAVAILABLE" });
+      expect({ ...f.calls, reads: f.modes.sourceReads }).toEqual(before);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+for (const status of [400, 401, 403, 422, 408, 429, 500]) {
+  test(`Daytona volume HTTP ${status} preserves rejection or uncertainty without replay`, async () => {
+    const f = fixture();
+    f.modes.volumeCreateStatus = status;
+    let saved: AdapterRecoveryReference | undefined;
+
+    const client = await f.connect((ref) => {
+      if (ref.kind === "volume_create") saved = structuredClone(ref);
+    });
+
+    const rejected = [400, 401, 403, 422].includes(status);
+
+    try {
+      const creation = client.volumes.create({ name: "native-status" });
+
+      if (rejected) await expect(creation).rejects.toMatchObject({ effect: "none" });
+      else await expect(creation).rejects.toBeInstanceOf(OutcomeUnknownError);
+      expect(saved?.token).toMatchObject({ state: rejected ? "rejected" : "uncertain" });
+      const reopened = await f.connect(undefined, "rotated-key");
+
+      try {
+        const operation = await reopened.recover(saved!);
+        await operation.continue();
+
+        if (rejected) await expect(operation.wait()).rejects.toMatchObject({ effect: "none" });
+        else await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+        expect(f.volumeCreates()).toBe(1);
+        expect(f.volumes.size).toBe(0);
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+}
