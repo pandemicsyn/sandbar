@@ -1,79 +1,116 @@
-# SDK recovery outcomes and adapter support
+# SDK results, errors and persisted resource identities
 
-SDK and public-adapter implementation contract · September 29, 2026
+Accepted direction · September 30, 2026 · PR #33 must be revised; not implemented on main
 
-This bounded SDK/public-adapter unit makes partially completed operations understandable without decoding provider tokens and reduces repeated recovery sequencing work for adapter authors. It preserves existing successful sandbox, snapshot, restore and volume call shapes, native defaults and explicit continuation methods.
+Sandbar makes provider operations convenient and their outcomes understandable. Applications own persistence and recovery policy. Ordinary function calls return useful results or clear errors, with the identities needed to reopen known resources from another process. This direction supersedes the earlier requirements here for normalized recovery-facts envelopes, expanded persistence callbacks, shared durable checkpoint helpers and generic continuation advice.
 
-## Boundary with the completed portability slice
+The snapshot/volume foundation merged in PR #25. Preserve its native identity and scope validation, configured capture defaults, deletion safeguards, and protection against replaying uncertain mutations. Existing runtime recovery facilities are compatibility concerns, not a requirement to expand every SDK operation into a durable workflow.
 
-The [state portability completion criteria](provider-state-portability.md#9-current-pr-completion-and-follow-up-boundary) landed in merged PR #25: stale observation/continuation ordering, retained-volume custody before destruction, valid isolation assertions, and accurate release/evidence claims. This unit builds on their fixes.
+## 1. Ordinary snapshot results
 
-Keep the [credential-independent reference and continuation contract](provider-state-portability.md#application-owned-persistence-and-credential-independent-references): application-owned JSON persistence, current provider authorization, read-only observation, and explicit continuation of proven unsubmitted stages. No SDK database, provider-key HMAC, implicit replay, or service dependency. Applications still serialize continuation across processes.
+Keep `const captured = await sandbox.snapshot()` as the primary API. Its result contains the snapshot handle, actual capture preservation and the source state observed when the call finishes. The proposed public surface is:
 
-## 1. Stable typed partial outcomes
+```ts
+type SnapshotResult = {
+  snapshot: SnapshotHandle;
+  capture: {
+    preserve: "filesystem" | "filesystem+memory";
+    // Keep existing meaningful capture guarantees where callers need them.
+  };
+  source: {
+    state: SandboxState;
+    // Include an observation timestamp when reporting historical state.
+  };
+};
 
-A caller must be able to answer “did capture finish, where is the retained snapshot, what happened to the source, and can this operation continue?” using public types. The normalized outcome removes the need to parse provider-specific recovery tokens. Keep those tokens opaque to application code.
+interface SnapshotHandle {
+  readonly provider: string;
+  readonly id: string;
+  readonly reference: SnapshotReference;
+  // Existing inspect(), restore() and delete() signatures remain applicable.
+}
+```
 
-Direct `AdapterOperation.outcome` and optional `SandbarError.outcome` expose `RecoveryOutcome`: the direct operation `reference` plus `RecoveryFacts`. `OutcomeUnknownError` and `WaitAbortedError` attach these facts for direct recovery references; service errors and failures before recovery evidence exists may omit them. `recoveryOutcome(reference)` provides the same normalization for a saved direct reference. Provider tokens remain opaque. Compiled examples prove consistent access across these surfaces.
+This is an intended surface, not a claim that new fields already ship. Use the current public enum/signature conventions and retain useful existing capture fields; no unrelated snapshot-options redesign is required. The handle is bound to its provider connection. `provider` must be directly discoverable on the snapshot and present in its serialized reference, including when the snapshot appears in a partial error. The same identity principle applies to volume handles.
 
-`RecoveryFacts` version `1` uses these fields:
+Daytona reports its filesystem capture and source lifecycle; E2B reports the configured native filesystem-plus-memory capture. Provider differences remain explicit in those actual results. No successful result needs operation history, persistence phases or continuation eligibility.
 
-- `retainedResources: ResourceReference[]` for known surviving artifacts.
-- `completed[]` entries with a logical `step`, optional `capture` guarantees and optional `restoreExecution` facts.
-- Optional `source: { state, observedAt, provenance }`, where the time is ISO and provenance is `provider-read` or `acknowledgement`.
-- `steps[]` entries with `step`, `status: "pending" | "uncertain" | "failed" | "completed"` and an optional reason.
-- `continuation: { supported, status, reason, action? }`, separating support (`true | false | "unknown"`) from eligibility (`"eligible" | "unavailable" | "unknown"`).
+## 2. Minimal serializable resource references
 
-The provider facts schema validates a maximum of 16 KiB serialized UTF-8 JSON, 32 retained resources, 16 completed entries and 16 steps. These facts remain unchanged by completion. The 16 KiB base reference limit excludes facts and the optional versioned completion descriptor. That descriptor stores at most 129 additional resource references (a primary snapshot plus the native maximum of 128 retained resources), with provider/scope inherited from the envelope; identities already held in facts or mounts receive only newly learned fields. Generation, ownership, history and receipt are preserved. Native destroy IDs and image-build artifact descriptions remain available without inventing resource kinds. Strict count/string/history limits bound this data; the complete reference has a 6 MiB defensive byte limit large enough for every permitted compact completion field. The public outcome derives current completion and continuation from this descriptor and combines all known resource identities, rather than appending another history entry to saved facts. No reference or completed step is silently removed to fit a metadata budget. References and outcomes are sealed copies, and missing facts in older references remain unknown.
+A resource reference contains only information necessary to identify, locate and safely reopen the exact resource:
 
-A required write failure throws `ReferencePersistenceError` with the reference, phase and provider outcome. A failed initial marker prevents dispatch and reports `not-dispatched`. A failed final completion write carries the confirmed result, reports `completed`/`applied`, and never becomes `OUTCOME_UNKNOWN`. Retrying the same handle retries persistence without mutation replay; confirmed completion blocks continuation. Checkpoint failures retain whatever partial work was already confirmed. `RecoveryOutcome.nextAction` distinguishes explicit eligible continuation, observation of uncertain work, required manual recovery, completed work, and unknown advice. Provider uncertainty retains `OUTCOME_UNKNOWN` and all confirmed facts.
+- Format version and resource kind.
+- Provider identity.
+- Stable native identity, including immutable generation/build identity for reusable locators.
+- Native scope/routing information required for verification and reopening with current credentials.
+- Any additional native identity or selector genuinely required for supported restore or deletion, with its purpose documented.
 
-The public model must express:
+An ID alone must not silently resolve to a newer artifact after a mutable name/tag changes. E2B's immutable captured-build selector and separate containing-resource deletion identity remain necessary where its native mapping requires them. Preserve this correctness without growing the reference into a workflow journal. Current reference fields required for safe identity/deletion checks must be assessed before removal; compatibility work must not weaken authorization or incidental-cleanup safeguards.
 
-- The operation recovery reference and every known retained resource reference, even when the overall operation did not complete.
-- Confirmed completed work and its guarantees, such as captured preservation and restored execution semantics. Unknown effects must remain distinct from confirmed completion or definitive failure.
-- Last observed source lifecycle state, with observation freshness/provenance explicit. Historical state must not be presented as a guarantee that the source is still running now.
-- The failed, pending, or uncertain logical step, independently of other completed steps. Capture and source-restart failures must remain separately representable.
-- Whether explicit continuation is supported and currently eligible, unavailable, or unknown, with an actionable reason. Eligibility is advisory: continuation revalidates native state and dispatch authority before effects.
+References contain no credentials, callbacks, client instances, previous observations, operation stages, accumulated histories or dispatch instructions as part of the new ordinary resource contract. A reference is a locator, not an authorization token. Reopening verifies current credentials and matching native scope. A mismatched provider is rejected before native calls. A handle's display `id` does not replace the complete reference where native identity requires more than one field.
 
-For example, successful capture followed by failed restart exposes the snapshot reference and confirmed capture facts alongside the restart failure. A cancelled wait during an uncertain capture exposes the operation reference and any known resources without inventing a completed snapshot. Compute destruction after observed mounts still exposes retained volumes independently of compute termination.
+```ts
+// First process: persistence is an ordinary application operation.
+const captured = await sandbox.snapshot();
+console.log(captured.snapshot.provider, captured.snapshot.id);
+await database.save(captured.snapshot.reference);
 
-The normalized facts must be bounded, serializable, and retained through the existing persistence lifecycle. They must survive JSON roundtrips, a fresh SDK connection, credential rotation, and source deletion where the resource itself survives. Do not depend on an in-memory result cache or require a provider-specific JSON parser. Persisted formats need explicit version handling; an older reference missing facts reports unknown instead of fabricating them.
+// Later: configure the provider identified by the saved reference.
+const snapshot = await freshClient.snapshots.get(savedReference);
+const restored = await snapshot.restore();
+```
 
-The [compiled public example](../apps/docs/examples/recovery-outcomes.ts) shows convenience error handling and explicit submission/recovery, reopens retained snapshots without inspecting tokens, and distinguishes currently eligible continuation from uncertain work that must only be observed. The [recovery guide](../apps/docs/src/content/docs/docs/guides/recovery.md) explains the application contract.
+These sketches describe the proposed workflow. The implementation must add compiled examples against public packages. Reopening a retained snapshot must work after source deletion where the provider supports that lifetime, without the original client or credential. Applications may save result metadata separately when they need it; historical observations must not be presented as fresh provider state.
 
-`Sandbar.connect(daytona(config), { onReference })` and the equivalent E2B bound-adapter form accept the awaited application persistence hook alongside observability. Empty `config`/`credentials` boilerplate is unnecessary. `DirectConnectOptions` names these connection options. Successful calls retain their existing shapes and defaults.
+There is no 16 KiB recovery-facts budget for the ordinary snapshot result or its resource identity. Validate individual fields according to real native constraints and validate reference versions/input. A generated summary size limit must not turn confirmed completion into `OUTCOME_UNKNOWN`, and no resource identity may be silently trimmed. Avoid duplicating data instead of adding larger completion envelopes to fit bookkeeping.
 
-Direct `recover(reference)` returns a `RecoveredOperation` union, narrowed by `operation.kind`: snapshot capture produces `SnapshotResult`, volume creation a volume handle, create/restore a sandbox handle, and the other kinds their existing safe results. There are no unchecked caller-supplied result generics. Exported `DirectClient` and `DirectSandboxHandle` make direct snapshots and volumes discoverable without adding them to the service `SandbarClient` contract.
+## 3. Clear errors preserve what is known
 
-## 2. Small shared recovery helpers and conformance
+Use existing error conventions where practical. Errors distinguish definitive rejection, confirmed partial completion and provider uncertainty. Known resource identities and meaningful confirmed results remain directly accessible through typed fields; callers do not parse native tokens or reconstruct a result from several facts arrays. Final names should fit current public types, with one authoritative representation of each result.
 
-The shared runtime owns ordering of operation state installation and persistence. An older observation must not replace a newer dispatch checkpoint; this correctness fix landed in PR #25. The follow-up adds reusable support around the repeated provider sequence:
+For capture followed by a definitive source-restart failure, the intended information is:
 
-1. Prepare a bounded stage checkpoint containing known resource and correlation facts.
-2. Await its durable dispatch barrier.
-3. Recheck cancellation before dispatch.
-4. Dispatch once and retain the acknowledgement/new native identities.
-5. Persist new facts and reconcile unresolved effects through reads.
+```ts
+// Illustrative error data, not a required new error class.
+{
+  code: "SOURCE_RESTART_FAILED",
+  outcome: {
+    status: "partial",
+    snapshot: snapshotReference, // includes provider
+    capture: { status: "completed", preserve: "filesystem" },
+    restart: { status: "failed" }
+  }
+}
+```
 
-The shared `checkpointBeforeDispatch(ctx, token)` helper awaits `ctx.checkpoint(token)` and returns whether cancellation still permits dispatch. Providers return pending when it returns false. A pure `Mutation.recovery.facts(token)` mapper derives normalized public evidence, validated by the runtime and persisted through the existing SDK checkpoint path. Extract helpers only for repetition demonstrated by the Daytona/E2B implementations. Providers still define native stages, identity evidence, safe transitions, and terminal-state meaning. Helpers must not infer provider guarantees, auto-retry an uncertain mutation, or become a general workflow engine. Keep the distinction between explicit caller-selected resource deletion and correlated incidental cleanup.
+The snapshot is usable even though the composite call failed. A failed/uncertain restart must be distinguished; neither implies another capture should be submitted. Preserve every known retained resource needed for access or cleanup, including volumes that survive compute destruction. Confirmed completion remains confirmed even if optional descriptive metadata cannot be assembled.
 
-Add shared conformance scenarios for failure before/after checkpoint persistence, lost acknowledgements, cancellation while checkpointing, stale observations racing continuation, delayed capture, retained resources after partial failure, and recovery with a fresh connection. Include adversarial fixtures that would duplicate effects if ordering regressed. Reuse the SDK's actual persistence path rather than testing a separate model of it.
+A timeout or lost provider response after dispatch reports an unconfirmed effect, such as the existing `OUTCOME_UNKNOWN`, with any IDs, native operation handles and partial results already received. Do not retry creation automatically or invent success from missing evidence. Stopping a local wait does not cancel native compute.
 
-A helper without a persistence hook must not claim crash durability. Document application responsibilities for durable writes and cross-process serialization; do not silently add a store or lock service.
+Where supported, ordinary resource `list`, `get` and `inspect` methods let applications investigate. Native operation handles, idempotency keys or reliable correlation can be exposed when actually supported. Listing resources alone does not prove which one belongs to a failed request, and absence from a listing is not necessarily proof of no effect. Do not add a discovery API or provider emulation to this PR just to make uncertainty universally resolvable; document current supported discovery and its limitations.
+
+## 4. Applications own persistence and recovery policy
+
+The normal workflow is call, receive a result, save its reference, and reopen later. If the application's save fails after capture, that is an application storage failure; the caller already has the successful result. Sandbar does not need to intercept that save or convert it into an SDK persistence error.
+
+There is a crash window between native creation and application persistence. Document it honestly. Native idempotency or discovery may help where available; a callback alone does not guarantee recovery or exactly-once execution. Applications choose whether to reconcile, retry, alert an operator, or use a durable orchestration system.
+
+Defer new/expanded `onReference` hooks, dispatch barriers backed by application storage, persistence-phase error types, generic completion-facts descriptors and generic continuation/next-action machinery. These are not acceptance criteria for this PR or for a new provider adapter. They require a demonstrated advanced use case and native support before further design.
+
+Preserve already-shipped APIs/formats as necessary, and keep existing recovery read-only and no-replay guarantees. Do not remove legacy checkpoints, stage guards or formats blindly during the scope reduction. Compatibility-only callback paths must still preserve confirmed results if their writes fail. State clearly what is retained for compatibility; the main public examples must teach ordinary calls and resource-reference persistence.
 
 ## Acceptance and delivery
 
-- Deliver typed outcomes, public usage examples, and adapter conformance as one bounded follow-up. Demonstrate both Daytona cold-capture/source-restart outcomes and E2B native memory capture, while preserving their differences.
-- Application examples compile against packed public packages and never inspect provider tokens. Resource references reopen using fresh valid credentials in the same native scope.
-- Confirmed partial facts survive failed waits and recovery. Unknown or failed effects cannot be promoted to success by normalization. Public fields cannot mutate internal dispatch authority.
-- Existing recovery formats have explicit compatibility behavior, and errors remain useful when no partial evidence exists. Preserve current happy-path ergonomics and no-replay guarantees.
-- Use deterministic tests for fault boundaries, package/typing checks for public API changes, and update the public recovery/provider docs. No new live feature guarantee is implied by this refactor; any needed paid validation requires separate authorization.
-- Preserve existing service regression coverage without implementing new service outcomes or orchestration. Do not bundle volume capability expansion, new providers, or other SDK feature work into this unit.
+- Revise PR #33 around these results, errors and identities. Remove unmerged generic persistence/continuation additions and tests/docs that exist only to qualify that expanded contract. Keep independently useful correctness fixes and typed native pending-operation results where justified.
+- Make provider identity discoverable on snapshot/volume handles and their saved references. Preserve immutable artifact identity, scope verification and existing deletion safeguards.
+- Prove successful snapshot capture, JSON persistence and reopening through a fresh connection; preserve supported source-independent lifetime and current-credential behavior.
+- Prove partial capture/restart errors expose the retained snapshot directly, unknown responses remain unknown, and no mutation is automatically replayed. Metadata/serialization failures must not conceal known completion or discard an identity.
+- Add focused deterministic tests, compiled public usage examples and accurate provider docs. Native listing/reconciliation limitations are documented rather than filled by a general recovery framework. No new paid/live calls are authorized by this spec.
+- Review the revised scope and diff independently, then run relevant package/API, docs and required CI checks. The user owns final review and merge. Preserve service regressions without expanding service functionality.
 
 ## Later: volume guarantees and mounted restore
 
-Schedule these with a concrete provider implementation after the recovery unit, rather than making them prerequisites for PR #25:
+Schedule these with a concrete provider implementation after this DX unit, rather than making them prerequisites for PR #25:
 
 - Separate backing technology from observable visibility, rename, locking, concurrent-writer behavior, and durability boundaries. Unknown is valid, but shared schemas must allow verified stronger guarantees. Do not equate object-backed storage with one filesystem contract or reduce durability to an unexplained boolean.
 - Add capacity/placement requirements only when a provider/use case demonstrates the need. Keep real provider defaults in typed adapter configuration; do not introduce a generic provider-options bag.
