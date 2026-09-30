@@ -168,3 +168,54 @@ test("paired network results aggregate across their deliberately different reque
     render([records[0]!, { ...records[1]!, status: "failed", timestamp: "2026-09-29T01:00:00Z" }]),
   ).toContain("Conditional · failed");
 });
+
+for (const [workflow, feature, operations] of [
+  [
+    "sandbox-lifecycle",
+    "lifecycle",
+    ["connect", "create-prepared", "inspect", "inventory", "destroy", "confirm-cleanup", "close"],
+  ],
+  ["execution", "execution", ["exec-argv", "exec-shell", "exec-nonzero"]],
+  ["files", "files", ["file-binary", "file-overwrite", "file-no-clobber"]],
+  ["network-controls", "network", ["network-internet", "network-blocked"]],
+] as const) {
+  test(`${workflow} result supersedes legacy feature evidence without relabeling individual operations`, () => {
+    const legacy: QualificationRecord[] = operations.map((scenario) => ({
+      ...record("passed"),
+      scenario,
+      runner: { name: "bun:test", format: "junit", testName: scenario },
+    }));
+
+    const failed: QualificationRecord = {
+      ...record("failed"),
+      scenario: workflow,
+      timestamp: "2026-09-30T00:00:00Z",
+      runner: { name: "bun:test", format: "junit", testName: workflow },
+    };
+
+    const report = parseReport({ schemaVersion: 1, records: [...legacy, failed] });
+    expect(renderSupportMatrix([report])).toContain(`· failed](#daytona-${feature})`);
+    expect(
+      report.records
+        .filter((item) => item.scenario !== workflow)
+        .every((item) => item.status === "passed"),
+    ).toBe(true);
+    const details = renderLiveMatrix([report]);
+
+    for (const operation of operations) expect(details).toContain(operation);
+    expect(details).toContain(`${workflow}`);
+    expect(
+      render([
+        ...legacy,
+        failed,
+        { ...failed, status: "passed", timestamp: "2026-09-30T01:00:00Z" },
+      ]),
+    ).toContain(`· passed at aaaaaaaa](#daytona-${feature})`);
+    expect(render([{ ...failed, status: "passed", mode: "fixture" }])).toContain(
+      `· not-run](#daytona-${feature})`,
+    );
+    expect(() =>
+      parseReport({ schemaVersion: 1, records: [{ ...failed, runner: undefined }] }),
+    ).toThrow("Grouped workflow outcomes require a Bun testcase");
+  });
+}

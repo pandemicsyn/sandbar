@@ -71,7 +71,7 @@ Built-in configuration/factories remain in `daytona-profile.ts` and `e2b-profile
 
 ## Generate reviewed support evidence
 
-Bun's standard JUnit is the only test-result source. Private context files add build/configuration provenance and actual cleanup/close outcome. The small offline importer maps named cases to the existing feature evidence IDs; it does not execute tests, inspect providers or publish docs:
+Bun's standard JUnit is the only test-result source. Private context files add build/configuration provenance and actual cleanup/close outcome. The small offline importer records each named case once, using workflow IDs for grouped checks and preserving individual IDs for single-scenario cases; it does not execute tests, inspect providers or publish docs:
 
 ```sh
 python3 packages/sdk-qualification/live/import-junit.py \
@@ -89,7 +89,7 @@ bun packages/sdk-qualification/provider-qualification/render.ts
 bun packages/sdk-qualification/provider-qualification/render.ts --check
 ```
 
-Use `--profile`, `--results` and `--output-dir` for an external provider's offline docs. Historical records keep their original provenance and validation. The reviewed Daytona run at `1505ee0` used the ordinary Bun suites: execution, files, snapshot roundtrip, volume CRUD and mounted persistence passed; lifecycle failed because managed inventory omitted the running owned sandbox. All six compute instances, one snapshot and one volume have confirmed cleanup, and clients closed successfully. The lifecycle group maps conservatively to failed feature records even though teardown succeeded. Earlier `9a6c1c1` evidence retains its former-executor provenance. E2B cleanup-only reconciliation still returned `OUTCOME_UNKNOWN`; its original volume receipt remains unresolved, and no new E2B allocations were made. Empty inventory or a different rejected request does not resolve that receipt. This completed run grants no additional paid budget.
+Use `--profile`, `--results` and `--output-dir` for an external provider's offline docs. Historical records keep their original provenance and validation. The reviewed Daytona run at `1505ee0` used the ordinary Bun suites: execution, files, snapshot roundtrip, volume CRUD and mounted persistence passed; lifecycle failed because managed inventory omitted the running owned sandbox. All six compute instances, one snapshot and one volume have confirmed cleanup, and clients closed successfully. The lifecycle workflow failed; the grouped JUnit case cannot assign failures to individual operations. Teardown remains independently confirmed. Earlier `9a6c1c1` evidence retains its former-executor provenance. E2B cleanup-only reconciliation still returned `OUTCOME_UNKNOWN`; its original volume receipt remains unresolved, and no new E2B allocations were made. Empty inventory or a different rejected request does not resolve that receipt. This completed run grants no additional paid budget.
 
 Daytona native sandbox listing is [eventually consistent](https://www.daytona.io/docs/openapi.json). A one-sandbox diagnostic at `5ea4923` reproduced two empty list reads after a successful running detail read, then matching list/detail labels about 1.3 seconds after creation. Its compute cleanup was confirmed. The lifecycle assertion now waits up to 30 seconds using read-only inventory scans, without another allocation; permanent absence still fails and tears down. The original `1505ee0` failure remains recorded.
 

@@ -9,6 +9,8 @@ For the concise overview, see [Tested provider support](/docs/providers/support/
 
 These results cover only the stated image, requested network policy and region classes. A blocked-requested policy is a create setting, not a measured egress-isolation result. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.
 
+Grouped Bun cases report one workflow outcome. They do not assign failures to individual operations; separately observed operation results retain their original dates and provenance.
+
 Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot and volume workflows have separate explicit observations and retained-storage teardown. Prepared-image creation does not qualify either feature. New workflows remain not-run until reviewed revision-specific evidence is published.
 
 ## Daytona
@@ -22,21 +24,11 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 - Harness commit: `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
 
-| Scenario               | Latest live result | Date       |
-| ---------------------- | ------------------ | ---------- |
-| close                  | passed             | 2026-09-30 |
-| confirm-cleanup        | passed             | 2026-09-30 |
-| connect                | passed             | 2026-09-30 |
-| create-prepared        | passed             | 2026-09-30 |
-| destroy                | passed             | 2026-09-30 |
-| exec-argv              | passed             | 2026-09-30 |
-| exec-nonzero           | passed             | 2026-09-30 |
-| exec-shell             | passed             | 2026-09-30 |
-| file-binary (/tmp)     | passed             | 2026-09-30 |
-| file-no-clobber (/tmp) | passed             | 2026-09-30 |
-| file-overwrite (/tmp)  | passed             | 2026-09-30 |
-| inspect                | passed             | 2026-09-30 |
-| inventory              | passed             | 2026-09-30 |
+| Scenario          | Latest live result | Date       |
+| ----------------- | ------------------ | ---------- |
+| execution         | passed             | 2026-09-30 |
+| files (/tmp)      | passed             | 2026-09-30 |
+| sandbox-lifecycle | passed             | 2026-09-30 |
 
 ### daytona-default-requested · us · /tmp
 
@@ -86,6 +78,21 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 - Harness commit: `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
 
+| Scenario        | Latest live result | Date       |
+| --------------- | ------------------ | ---------- |
+| close           | passed             | 2026-09-30 |
+| confirm-cleanup | passed             | 2026-09-30 |
+| connect         | passed             | 2026-09-30 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `9a6c1c19605ad85e533d1e4ff70876c86c1562fe`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
 | Scenario    | Latest live result | Date       |
 | ----------- | ------------------ | ---------- |
 | volume-crud | passed             | 2026-09-30 |
@@ -102,6 +109,16 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 | Scenario                                                          | Latest live result | Date       |
 | ----------------------------------------------------------------- | ------------------ | ---------- |
 | build-oci                                                         | not-run            | 2026-09-28 |
+| create-prepared                                                   | passed             | 2026-09-28 |
+| destroy                                                           | passed             | 2026-09-28 |
+| exec-argv                                                         | passed             | 2026-09-28 |
+| exec-nonzero                                                      | passed             | 2026-09-28 |
+| exec-shell                                                        | passed             | 2026-09-28 |
+| file-binary (/tmp)                                                | passed             | 2026-09-28 |
+| file-no-clobber (/tmp)                                            | passed             | 2026-09-28 |
+| file-overwrite (/tmp)                                             | passed             | 2026-09-28 |
+| inspect                                                           | passed             | 2026-09-28 |
+| inventory                                                         | passed             | 2026-09-28 |
 | network-blocked (daytona-default-requested / probe not recorded)  | not-run            | 2026-09-28 |
 | network-internet (daytona-default-requested / probe not recorded) | not-run            | 2026-09-28 |
 | snapshot-roundtrip                                                | unsupported        | 2026-09-28 |
@@ -137,7 +154,7 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 ## E2B
 
-### blocked-requested · native-default · /home/user
+### paired-internet-blocked-requested · native-default · /home/user
 
 - Image / authority: prepared; borrowed-template / api-key.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
@@ -146,22 +163,9 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 - Harness commit: `431cdaadaad739597fbbb1bb54bd24d68c038428`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
 
-| Scenario                                                                 | Latest live result | Date       |
-| ------------------------------------------------------------------------ | ------------------ | ---------- |
-| network-blocked (blocked-requested / cloudflare-tcp443-hostname-ipv4-v1) | failed             | 2026-09-30 |
-
-### internet-requested · native-default · /home/user
-
-- Image / authority: prepared; borrowed-template / api-key.
-- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
-- SDK: 0.0.0, commit `431cdaadaad739597fbbb1bb54bd24d68c038428`.
-- Fresh-process reopen: not recorded.
-- Harness commit: `431cdaadaad739597fbbb1bb54bd24d68c038428`.
-- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
-
-| Scenario                                                                   | Latest live result | Date       |
-| -------------------------------------------------------------------------- | ------------------ | ---------- |
-| network-internet (internet-requested / cloudflare-tcp443-hostname-ipv4-v1) | failed             | 2026-09-30 |
+| Scenario                                                                                  | Latest live result | Date       |
+| ----------------------------------------------------------------------------------------- | ------------------ | ---------- |
+| network-controls (paired-internet-blocked-requested / cloudflare-tcp443-hostname-ipv4-v1) | failed             | 2026-09-30 |
 
 ### blocked-requested · native-default · /home/user
 
@@ -185,21 +189,11 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 - Harness commit: `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
 
-| Scenario                     | Latest live result | Date       |
-| ---------------------------- | ------------------ | ---------- |
-| close                        | passed             | 2026-09-30 |
-| confirm-cleanup              | passed             | 2026-09-30 |
-| connect                      | passed             | 2026-09-30 |
-| create-prepared              | passed             | 2026-09-30 |
-| destroy                      | passed             | 2026-09-30 |
-| exec-argv                    | passed             | 2026-09-30 |
-| exec-nonzero                 | passed             | 2026-09-30 |
-| exec-shell                   | passed             | 2026-09-30 |
-| file-binary (/home/user)     | passed             | 2026-09-30 |
-| file-no-clobber (/home/user) | passed             | 2026-09-30 |
-| file-overwrite (/home/user)  | passed             | 2026-09-30 |
-| inspect                      | passed             | 2026-09-30 |
-| inventory                    | passed             | 2026-09-30 |
+| Scenario           | Latest live result | Date       |
+| ------------------ | ------------------ | ---------- |
+| execution          | passed             | 2026-09-30 |
+| files (/home/user) | passed             | 2026-09-30 |
+| sandbox-lifecycle  | passed             | 2026-09-30 |
 
 ### blocked-requested · provider-default · /home/user
 

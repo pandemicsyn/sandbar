@@ -31,7 +31,7 @@ Preserve the shared admission lock and provider-scoped check. Unresolved creator
 
 ## Review support evidence
 
-Use standard Bun JUnit as the test-result source and the small offline `live/import-junit.py` mapping for existing feature IDs. Private context supplies build/configuration provenance and cleanup/close outcomes, not parallel pass/fail statuses. Hook failures, skipped cases, missing context and incomplete cleanup must never become green evidence. Keep raw JUnit, native logs, credentials, account/resource IDs and recovery references private.
+Use standard Bun JUnit as the test-result source and the small offline `live/import-junit.py` mapping for workflow/feature evidence. Grouped cases report one workflow result without assigning that status to individual operations. Private context supplies build/configuration provenance and cleanup/close outcomes, not parallel pass/fail statuses. Hook failures, skipped cases, missing context and incomplete cleanup must never become green evidence. Keep raw JUnit, native logs, credentials, account/resource IDs and recovery references private.
 
 Review sanitized records before intentionally appending selected evidence to `provider-qualification/results/<provider>.json`. Keep actual passed/failed/blocked/not-run distinct from supported/unsupported/conditional declarations. Fixture/packed tests cannot create live-qualified rows. Historical evidence retains original commits, configurations and missing provenance; never fabricate observations or relabel it as a current-head/Bun run. An unchanged tested path may retain its recorded evidence across merge without an unnecessary paid rerun.
 

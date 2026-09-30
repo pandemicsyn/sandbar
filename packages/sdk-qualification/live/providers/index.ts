@@ -35,7 +35,7 @@ const declared =
 export const featureSupported = (feature: keyof SupportMetadata["features"]) =>
   declared?.features[feature].support !== "unsupported";
 
-const root = fileURLToPath(new URL("../../../../", import.meta.url));
+const root = resolve(fileURLToPath(new URL("../../../../", import.meta.url)));
 
 const required = (name: string) => {
   const value = process.env[name];

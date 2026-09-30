@@ -9,6 +9,10 @@ import {
 } from "./network-probe";
 
 export const scenarios = [
+  "sandbox-lifecycle",
+  "execution",
+  "files",
+  "network-controls",
   "connect",
   "create-prepared",
   "inspect",
@@ -128,6 +132,16 @@ export const reportSchema = z
   })
   .superRefine((report, ctx) => {
     for (const [index, record] of report.records.entries()) {
+      if (
+        ["sandbox-lifecycle", "execution", "files", "network-controls"].includes(record.scenario) &&
+        !record.runner
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["records", index, "runner"],
+          message: "Grouped workflow outcomes require a Bun testcase",
+        });
+
       if (
         ["snapshot-roundtrip", "volume-persistence", "volume-crud"].includes(record.scenario) &&
         record.status === "passed" &&
@@ -280,7 +294,9 @@ function key(record: QualificationRecord): string {
     record.scenario.startsWith("network-")
       ? (record.configuration.networkProbe ?? record.networkEvidence?.probe ?? "not-recorded")
       : "—",
-    record.scenario.startsWith("file-") ? (record.configuration.fileRoot ?? "not-recorded") : "—",
+    record.scenario === "files" || record.scenario.startsWith("file-")
+      ? (record.configuration.fileRoot ?? "not-recorded")
+      : "—",
     record.configuration.stateProbe ?? "—",
     record.configuration.restoreExecution ?? "—",
     record.configuration.sourceAfter ?? "—",
@@ -347,6 +363,8 @@ export function renderLiveMatrix(
     "",
     "These results cover only the stated image, requested network policy and region classes. A blocked-requested policy is a create setting, not a measured egress-isolation result. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.",
     "",
+    "Grouped Bun cases report one workflow outcome. They do not assign failures to individual operations; separately observed operation results retain their original dates and provenance.",
+    "",
     "Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot and volume workflows have separate explicit observations and retained-storage teardown. Prepared-image creation does not qualify either feature. New workflows remain not-run until reviewed revision-specific evidence is published.",
     "",
   ];
@@ -403,7 +421,7 @@ export function renderLiveMatrix(
       ...markdownTable(
         ["Scenario", "Latest live result", "Date"],
         group.map((item) => [
-          item.scenario.startsWith("file-")
+          item.scenario === "files" || item.scenario.startsWith("file-")
             ? `${item.scenario} (${item.configuration.fileRoot ?? "file root not recorded"})`
             : item.scenario.startsWith("network-")
               ? `${item.scenario} (${item.configuration.network} / ${item.configuration.networkProbe ?? item.networkEvidence?.probe ?? "probe not recorded"})`

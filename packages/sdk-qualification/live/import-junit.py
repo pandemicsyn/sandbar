@@ -7,14 +7,9 @@ import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-GROUPS = {
-    "sandbox-lifecycle": ["connect", "create-prepared", "inspect", "inventory", "destroy", "confirm-cleanup", "close"],
-    "execution": ["exec-argv", "exec-shell", "exec-nonzero"],
-    "files": ["file-binary", "file-overwrite", "file-no-clobber"],
-    "snapshot-roundtrip": ["snapshot-roundtrip"],
-    "volume-crud": ["volume-crud"],
-    "volume-persistence": ["volume-persistence"],
-    "network-controls": ["network-internet", "network-blocked"],
+CASES = {
+    "sandbox-lifecycle", "execution", "files", "snapshot-roundtrip",
+    "volume-crud", "volume-persistence", "network-controls",
 }
 FIELDS = ("provider", "sdkCommit", "harnessCommit", "sdkVersion", "nativeVersion", "runtime", "platform", "timestamp", "configuration")
 
@@ -29,7 +24,7 @@ def convert(xml, contexts, evidence_ref, exit_code):
         if context["dirty"]:
             raise ValueError("Dirty debug runs are not clean-revision docs evidence")
         for name in context["names"]:
-            if name in names or name not in GROUPS:
+            if name in names or name not in CASES:
                 raise ValueError("Ambiguous or unknown test context")
             names[name] = context
     # Bun reports beforeAll/afterAll failures at suite level as well as case level.
@@ -50,21 +45,21 @@ def convert(xml, contexts, evidence_ref, exit_code):
         failed = case.find("failure") is not None or case.find("error") is not None or hook_failed
         clean = context["cleanup"] == "confirmed" and context["closeSucceeded"]
         status = "not-run" if skipped else "failed" if failed or not clean else "passed"
-        for scenario in GROUPS[name]:
-            record = {field: context[field] for field in FIELDS}
-            record["configuration"] = dict(context["configuration"])
-            if name == "network-controls":
-                record["configuration"].update(network="internet-requested" if scenario == "network-internet" else "blocked-requested", networkProbe="cloudflare-tcp443-hostname-ipv4-v1")
-            if name.startswith("volume-"):
-                record["configuration"].update(stateProbe="volume-crud-v1" if name == "volume-crud" else "volume-persistence-v1",volumeOwnership="created")
-            record.update(schemaVersion=1, mode="live", scenario=scenario, status=status,
-                          runCleanup="confirmed" if clean else "not-required" if context["cleanup"] == "not-required" else "incomplete",
-                          runner={"name": "bun:test", "format": "junit", "testName": name}, evidenceRef=evidence_ref)
-            if skipped:
-                record["issue"] = "not-selected"
-            elif not clean:
-                record["issue"] = "cleanup-unconfirmed"
-            records.append(record)
+        # A testcase establishes its workflow outcome, not each operation inside it.
+        record = {field: context[field] for field in FIELDS}
+        record["configuration"] = dict(context["configuration"])
+        if name == "network-controls":
+            record["configuration"].update(network="paired-internet-blocked-requested", networkProbe="cloudflare-tcp443-hostname-ipv4-v1")
+        if name.startswith("volume-"):
+            record["configuration"].update(stateProbe="volume-crud-v1" if name == "volume-crud" else "volume-persistence-v1",volumeOwnership="created")
+        record.update(schemaVersion=1, mode="live", scenario=name, status=status,
+                      runCleanup="confirmed" if clean else "not-required" if context["cleanup"] == "not-required" else "incomplete",
+                      runner={"name": "bun:test", "format": "junit", "testName": name}, evidenceRef=evidence_ref)
+        if skipped:
+            record["issue"] = "not-selected"
+        elif not clean:
+            record["issue"] = "cleanup-unconfirmed"
+        records.append(record)
     if not records:
         raise ValueError("No executed/contextualized live test records")
     if len({record["provider"] for record in records}) != 1:

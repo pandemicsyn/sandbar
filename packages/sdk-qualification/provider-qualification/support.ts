@@ -10,6 +10,7 @@ import {
 export const features = {
   lifecycle: {
     label: "Sandbox lifecycle",
+    workflow: "sandbox-lifecycle",
     scenarios: [
       "connect",
       "create-prepared",
@@ -22,21 +23,24 @@ export const features = {
   },
   execution: {
     label: "Execution and captured output",
+    workflow: "execution",
     scenarios: ["exec-argv", "exec-shell", "exec-nonzero"],
   },
   files: {
     label: "Binary files and overwrite",
+    workflow: "files",
     scenarios: ["file-binary", "file-overwrite", "file-no-clobber"],
   },
   oci: { label: "OCI image builds", scenarios: ["build-oci"] },
   network: {
     label: "Measured network controls",
+    workflow: "network-controls",
     scenarios: ["network-internet", "network-blocked"],
   },
   snapshots: { label: "Snapshot roundtrip", scenarios: ["snapshot-roundtrip"] },
   volumes: { label: "Volume CRUD", scenarios: ["volume-crud"] },
   persistence: { label: "Mounted persistence", scenarios: ["volume-persistence"] },
-} satisfies Record<string, { label: string; scenarios: Scenario[] }>;
+} satisfies Record<string, { label: string; scenarios: Scenario[]; workflow?: Scenario }>;
 
 // SAFETY: features is a fixed nonempty literal; its own keys form this enum.
 const featureKeys = Object.keys(features) as [keyof typeof features, ...(keyof typeof features)[]];
@@ -138,6 +142,7 @@ function validation(
   reports: readonly QualificationReport[],
   provider: string,
   ids: readonly Scenario[],
+  workflow?: Scenario,
 ) {
   const candidates = reports
     .flatMap((report) => parseReport(report).records)
@@ -145,7 +150,7 @@ function validation(
       (record) =>
         record.provider === provider &&
         record.mode === "live" &&
-        ids.includes(record.scenario) &&
+        (ids.includes(record.scenario) || record.scenario === workflow) &&
         record.status !== "unsupported" &&
         !(record.status === "not-run" && record.issue === "not-selected"),
     );
@@ -177,7 +182,10 @@ function validation(
       configurationKey(item.configuration) === configurationKey(newest.configuration),
   );
 
-  const selected = ids.map(
+  // A grouped case reports only its workflow outcome; legacy records retain their own operations.
+  const selectedIds = newest.scenario === workflow ? [workflow] : ids;
+
+  const selected = selectedIds.map(
     (id) =>
       sameRun
         .filter((item) => item.scenario === id)
@@ -214,7 +222,7 @@ export function renderSupportMatrix(
   // SAFETY: Object.entries reads only the fixed feature keys and their declared scenario lists.
   const entries = Object.entries(features) as [
     keyof typeof features,
-    { label: string; scenarios: readonly Scenario[] },
+    { label: string; scenarios: readonly Scenario[]; workflow?: Scenario },
   ][];
 
   const rows = entries.map(([id, feature]) => {
@@ -222,7 +230,7 @@ export function renderSupportMatrix(
       const declared = profile.features[id];
 
       if (!declared) throw new Error(`Missing feature declaration: ${profile.id}/${id}`);
-      const state = validation(reports, profile.id, feature.scenarios);
+      const state = validation(reports, profile.id, feature.scenarios, feature.workflow);
 
       const history = historical.filter(
         (item) => item.provider === profile.id && feature.scenarios.includes(item.scenario),
