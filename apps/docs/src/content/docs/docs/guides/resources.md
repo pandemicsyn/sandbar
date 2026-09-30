@@ -73,10 +73,10 @@ A nonzero exit is a completed command. `NoExitCodeError` means execution complet
 
 `box.submitExec(input)` and `sandbar.sandboxes.submitCreate(input)` return an operation handle with `reference`, `observe()`, and `wait()`. Use them when your application needs to save a reference or manage waiting explicitly. Ordinary `exec()` and `create()` submit and wait for you.
 
-## Serializable resource identity
+## Keep resource references
 
-The exported `ResourceReference` schema describes sandbox, image, snapshot, volume, volume-version, mount, and session identity. Version 1 records provider, verified scope, native ID, ownership evidence, and native generation when locators can be reused. Service references additionally bind URL, project, and connection. It contains no credentials and grants no authorization.
+Snapshots and volumes have a serializable `reference`. Store that JSON in your application's database or object storage, then reopen it with `sandbar.snapshots.get(reference)` or `sandbar.volumes.get(reference)` on a connection with the same verified scope. References contain no credentials and do not grant authorization; reopening still checks native identity and access.
 
-`validateResourceReference` parses and detaches a reference; `assertResourceScope` checks its provider and complete binding; `assertResourceIdentity` additionally compares kind, locator, and generation. A missing or changed generation cannot match an expected known generation. Adapters supply generation and correlated ownership evidence; the SDK does not infer either from a name. Direct connections now expose snapshot and volume opening, inspection and mutation methods; see [Snapshots and volumes](/docs/guides/snapshots-and-volumes/). Validation alone does not establish that a native artifact still exists or is unexpired.
+See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) for capture, restore, mounted storage, and separate artifact cleanup. Volumes survive sandbox destruction. Writable mounts currently require `destroy({ storage: "allow-unconfirmed" })`; this allows compute cleanup without promising that shutdown flushed storage.
 
-Resource references identify things. Operation recovery references identify submissions and retain the existing observation-only recovery contract.
+Resource references identify artifacts; operation references identify submissions. Save uncertain operation references and follow [Errors and recovery](/docs/guides/recovery/) before issuing another mutation.

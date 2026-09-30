@@ -3,7 +3,7 @@ title: Sandbar SDK
 description: Create sandboxes, run code, and move files with one TypeScript SDK for Daytona and E2B.
 ---
 
-Sandbar is a server-side TypeScript SDK for creating sandboxes, running commands, and moving files across providers. **Daytona and E2B are built in.** Other providers can integrate through the public adapter API.
+Sandbar is a server-side TypeScript SDK for creating sandboxes, running commands, moving files, capturing snapshots, and managing retained volumes across providers. **Daytona and E2B are built in.** Other providers can integrate through the public adapter API.
 
 Start with [Getting started](/docs/direct-quickstart/) to run your first command and clean up the sandbox. This site documents the current source build; packages are not yet published.
 
@@ -19,6 +19,7 @@ Copy a prompt to give your coding agent the right imports, examples, and constra
 | Task                                 | Guide                                                        |
 | ------------------------------------ | ------------------------------------------------------------ |
 | Create a sandbox and run commands    | [Sandboxes and execution](/docs/guides/resources/)           |
+| Capture/restore state, mount storage | [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) |
 | Read and write files, capture output | [Files and output](/docs/guides/files-and-output/)           |
 | Choose an image or build one         | [Images and networking](/docs/guides/images-and-networking/) |
 | Handle a timeout or lost response    | [Errors and recovery](/docs/guides/recovery/)                |

@@ -1,62 +1,37 @@
 # TypeScript resource SDK
 
-`sandbar-sdk` uses an installed adapter in the caller's server-side Node.js or Bun process. The implemented built-in Daytona adapter is available from `sandbar-sdk/daytona`. The experimental Modal integration is installed separately as `sandbar-modal` and uses the same public adapter contract as custom integrations. `sandbar-service/client` uses the Sandbar service over HTTP. The fake provider is a deterministic test fixture. Live provider qualification remains separate from the packaged API shape.
+`sandbar-sdk` runs in your server-side Node.js or Bun process, with built-in Daytona and E2B entrypoints. Packages are not yet published. Keep provider credentials on the server.
 
 ```ts
-import { Sandbar } from "sandbar-sdk";
+import { Image, Sandbar } from "sandbar-sdk";
 import { daytona } from "sandbar-sdk/daytona";
 
-const sandbar = await Sandbar.connect(daytona({ apiKey: process.env.DAYTONA_API_KEY!, target: "us" }));
-await sandbar.close();
-```
-
-```ts
-import { Sandbar, Image } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
-
-const sandbar = await Sandbar.connect(daytona({ apiKey: process.env.DAYTONA_API_KEY!, target: "us" }));
+const sandbar = await Sandbar.connect(daytona({
+  apiKey: process.env.DAYTONA_API_KEY!,
+  target: "us",
+  networkPolicy: "daytona-default",
+}));
 try {
-  const box = await sandbar.sandboxes.create({ environment: Image.prepared("your-snapshot-id") });
-  const result = await box.exec(["printf", "hello"]);
-  console.log(result.stdoutText(4096));
-  await box.destroy();
+  const box = await sandbar.sandboxes.create({
+    environment: Image.prepared("daytona-small"),
+    networkPolicy: "daytona-default",
+  });
+  try {
+    console.log((await box.exec(["printf", "hello"])).stdoutText());
+  } finally {
+    await box.destroy();
+  }
 } finally {
   await sandbar.close();
 }
 ```
 
-Direct construction imports no service, database, Hono or Drizzle code. Provider credentials remain in the caller's process and are inappropriate for browser code. The repository's deterministic fake provider is an internal test fixture and is not published with the SDK.
+`close()` releases the connection; it never destroys compute. Argument arrays pass literal arguments without a shell. Output is binary, with bounded text helpers; file transfers are buffered to 1 MiB. See [Getting started](https://sandbarsdk.dev/docs/direct-quickstart/), [execution](https://sandbarsdk.dev/docs/guides/resources/) and [files](https://sandbarsdk.dev/docs/guides/files-and-output/).
 
-```ts
-import { Sandbar, Image } from "sandbar-service/client";
+Direct connections expose snapshot capture/restore/delete and retained volume management. `box.snapshot()` accepts the native default: Daytona stops/captures/restarts with fresh processes; E2B pauses/resumes and retains RAM/process state. Restore requires a supported explicit network policy. Daytona supports writable create-time mounts; E2B private-beta volume CRUD is mapped but live create validation is blocked by account HTTP 403, and mounts are unsupported separately. External-mount capture, mounted restore, read-only mounts and volume versions are unsupported. Writable mounted compute requires `destroy({ storage: "allow-unconfirmed" })`, which does not guarantee flush or durability. Volumes need separate deletion. Use the [snapshots and volumes guide](https://sandbarsdk.dev/docs/guides/snapshots-and-volumes/) for examples and limits.
 
-const sandbar = Sandbar.connect({ url: "https://sandbar.example/", token: process.env.SANDBAR_TOKEN!, projectId: "my_project" });
-const box = await sandbar.sandboxes.create({ environment: Image.prepared("your-image-id") });
-await box.destroy();
-await sandbar.close();
-```
+Persist resource and operation references as versioned JSON in your application's storage. Reopen with current credentials for the same verified scope; E2B key rotation needs verified `teamId`. Recovery observes without replay; explicit continuation can advance only a proven never-submitted next stage. Currently `onReference` requires the explicit adapter connection form, and partial recovery can require opaque provider tokens. Typed outcomes and bound-connection persistence are [active follow-up work](../../specs/sdk-recovery-dx.md). Follow [Errors and recovery](https://sandbarsdk.dev/docs/guides/recovery/).
 
-`exec` and `submitExec` accept a `readonly string[]` shorthand, such as `box.exec(["git", "status"])`. Each element is a literal argument; arrays never invoke a shell. The shorthand uses the same validation and defaults as `{ command: { kind: "argv", argv } }`, including rejection of empty arrays. Use the object form for `cwd`, `env`, deadlines, output limits, or an explicit `{ kind: "shell", script }` command. Arguments are copied before dispatch.
+Use [provider support](https://sandbarsdk.dev/docs/providers/support/) for evidence and [the TypeScript reference](https://sandbarsdk.dev/docs/reference/typescript/) for API details. Historical snapshot workflows and Daytona mounted persistence passed on premerge `5db0558`; those runs do not certify later merged fixes.
 
-`exec` returns exact `Uint8Array` stdout/stderr. A nonzero exit throws `NonzeroExitError` with the captured result; a completed execution with no exit code throws `NoExitCodeError`. Transport errors and unknown effects use separate errors. `stdoutText(maxBytes)` and `stderrText(maxBytes)` are bounded UTF-8 display helpers. File reads and writes are currently buffered to 1 MiB.
-
-`submitCreate` and `box.submitExec` return operation handles with `reference`, `observe()`, and `wait({ signal })`. Ordinary `create` and `exec` call `wait` themselves. A direct operation has `durability: "process"`; a remote operation has `durability: "service"`. An abort signal stops waiting, not provider compute. If it fires after an ordinary mutation was submitted, `WaitAbortedError` carries the recovery reference and original abort reason. `close()` releases client-owned state and never destroys a sandbox; call `box.destroy()` explicitly.
-
-References are versioned, serializable, and contain no credentials, command, environment, or file bytes. A direct reference records verified native scope, submission identity, and any required locator. The caller must separately configure a provider with the same scope to import it through `recover(reference)`. A remote reference is bound to the service URL and project. Recovery only observes; it never submits the mutation again. If native submission discovery is unavailable, an unknown effect remains unknown. Applications requiring a durable submission marker can use the optional `client.operations.prepare(...).submit(..., { beforeSubmit, onCheckpoint })` lifecycle, where `onCheckpoint` durably saves each versioned token before the provider proceeds, then persist pending-token updates and use observation-only recovery. Advanced mutations that call `ctx.checkpoint()` stop if this callback is missing or fails. This SDK does not create a local database or background service.
-
-`await client.capabilities()` and `await box.capabilities()` return dated, detached observations that retain command, image, network, and file facts. State support has four outcomes: `supported`, `unsupported`, `unavailable`, and `unknown`. `await client.sandboxes.checkCreate(input)` and `await box.checkSnapshot(request)` are read-only checks in direct and service mode. They never build images, reserve compute, stop a sandbox, or submit a capture. A supported check resolves a single profile with exact preservation, bounded interruption, source state, consistency, mount handling, and retention evidence; it is not a reservation. Snapshot restore and volume operations report provider-specific support independently.
-
-Creation can require snapshot guarantees with `requirements: { snapshot: { requirements: { preserve: "filesystem" } } }`. `box.snapshot()` accepts the configured native default; optional requirements reject unsupported guarantees before effects. Daytona container capture stops/captures/restarts and preserves the filesystem with fresh restore execution. E2B capture preserves filesystem and memory. Unsupported combinations fail before allocation with `UNSUPPORTED` and `effect: "none"`; unavailable or unknown evidence fails with `UNAVAILABLE`. The mutation revalidates its plan before submission.
-
-Snapshot handles expose inspect and separately supported restore/delete operations. Volume handles expose native management and create-time mount descriptors. Daytona supports restore and verified mounts. E2B restores the saved native build UUID with `templateId:buildUUID` and cleans up its dedicated containing template after identity, scope and dependency checks; E2B mounts remain unsupported because the pinned API exposes reusable names without mounted native IDs. Writable mounted compute needs explicit `storage: "allow-unconfirmed"` cleanup when shutdown durability cannot be established; destroy never deletes independently retained storage. The service does not expose these state mutations. Provider capabilities and live qualification remain separate evidence.
-
-`ResourceReference` is the version-1 schema for resource identity, separate from an operation recovery reference. It supports sandbox, image, snapshot, volume, volume-version, mount, and session kinds, with verified provider scope, native locator, optional native generation, and ownership evidence (`borrowed`, `verified-created`, or `unknown`). Service bindings include URL, project, and connection. `validateResourceReference`, `assertResourceScope`, and `assertResourceIdentity` validate serialized data and known identity. An adapter must supply generation evidence when a locator can be reused; the SDK never invents a generation or treats a reference as authority. These descriptors do not open, inspect, or delete artifacts, and cannot certify expiry or native ownership by themselves.
-
-Requirement reads finish before the durable submission marker; the approved preparation is then dispatched without another capability read. For already-stopped sources, an unchanged lifecycle request accepts a stopped outcome. Resource-reference service URLs are HTTP(S) endpoints and reject userinfo, queries, and fragments before serialization.
-
-Tracing uses your application’s OpenTelemetry provider. Set `tracing: false` to disable Sandbar spans and propagation, or inject `tracing: { tracerProvider }`. Sandbar never configures exporters or shuts down your provider. See the [tracing and safe diagnostics guide](https://sandbarsdk.dev/docs/observability/) for pinned Node/Bun recipes and local-only vendor evidence; metrics and structured logs are a later release.
-
-
-Persist resource and operation references as versioned JSON in your own application storage. Their historical observations do not depend on the original API key or a mandatory signature. Reopen with current credentials for the same verified native scope; E2B credential rotation requires verified `teamId` configuration. `onReference` is awaited before stage dispatches and when evidence changes. Observation stays read-only; explicit `operation.continue()` may advance a proven never-submitted next stage. Serialize continuation across processes through your own lease or compare-and-swap. E2B cleanup deletes the containing template, not an individual build, and rejects known shared expansion; the provider offers no transactional read/delete generation condition.
-
-Empty restore resource and mount maps are equivalent to omitting those overrides. Snapshot and volume deletion persist a rejected stage when cancellation is known to precede native dispatch. The SDK allows up to one second after caller cancellation to join deletion finalization and surface a proven rejection with `effect: "none"`; client close remains immediate, and a stalled finalization still reports uncertainty. Other mutation waits retain their existing cancellation behavior.
+Direct construction imports no service or database. `sandbar-service/client` is the separate HTTP client and has no snapshot/volume endpoints. Experimental Modal uses the separately installed `sandbar-modal` adapter; the fake provider is an internal deterministic fixture. Tracing uses your application's OpenTelemetry provider without configuring exporters; see [tracing and diagnostics](https://sandbarsdk.dev/docs/observability/).

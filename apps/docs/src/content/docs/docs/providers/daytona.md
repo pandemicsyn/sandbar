@@ -58,24 +58,30 @@ Commands support argv and POSIX shell. Binary output capture requires `/bin/sh`,
 
 The live baseline uses the prepared `daytona-small` workflow in `us`; it does not qualify arbitrary snapshots. Explicit OCI builds are implemented but need separate live evidence and cleanup for retained snapshots. See [Images and networking](/docs/guides/images-and-networking/).
 
-## Runtime snapshots
+## Capture and restore
 
-`box.snapshot()` stops a running container, captures its private filesystem, and starts the source again. An already-stopped source stays stopped. Stopping ends the former processes; restart and restore use fresh process execution. Memory and external volumes are not captured. This orchestration has fixture coverage and is **not yet live-qualified**.
+Insert this capture/restore fragment inside the sandbox’s inner `try` block above, before cleanup. It uses the same connection policy. Follow the [complete example](/docs/guides/snapshots-and-volumes/#capture-and-restore) to persist the reference and clean up restored compute and the retained snapshot:
 
-Configure `snapshots: { restartAfterCapture: false }` on `daytona(...)` to leave a running source stopped. The default is `true`, restarting only a previously running source. Optional snapshot requirements validate the configured behavior without selecting another mode. Consistency defaults to unknown; `consistency: "caller-quiesced"` attests that the application quiesced writers.
+```ts
+const captured = await box.snapshot();
+const restored = await captured.snapshot.restore({
+  networkPolicy: "daytona-default",
+  requireIndependentLifecycle: true,
+});
+```
 
-A definitive capture failure permits one bounded restart attempt. A successful capture followed by a failed restart retains the snapshot metadata in the operation recovery token. Uncertain stop/capture/start outcomes are observed without repeating lifecycle calls. If a delayed capture later completes or definitively fails, explicit `operation.continue()` can finish a configured restart proven never submitted. The SDK awaits reference persistence before each stage dispatch. Serialize continuations through an application lease or compare-and-swap across processes; a lost response after a dispatch marker cannot be replayed. Saved history reopens with current valid credentials for the same verified organization scope. Native capture is experimental; VM filesystem/memory capture is not mapped. See [Daytona snapshot requirements](https://www.daytona.io/docs/en/snapshots/#create-snapshot-from-sandbox).
+Capture stops a running source, saves its private filesystem and restarts it. Stopping ends the former processes; restart and restore execute fresh processes. RAM and external volumes are not captured. An already-stopped source stays stopped. Set `snapshots: { restartAfterCapture: false }` on `daytona(...)` to leave a running source stopped. Requirements validate that configured default; they do not choose another mode. VM hot/cold capture is not mapped.
 
-## Cleanup and recovery
+Persist the snapshot reference, destroy restored/source compute and delete the snapshot separately. A capture can succeed while source restart fails; preserve the operation reference for [recovery](/docs/guides/recovery/). Snapshot deletion checks warm-pool dependencies because native deletion can cascade; unreadable or nonempty dependencies block it. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) for cleanup-safe examples, consistency and saved references.
 
-Deletion can be asynchronous. `destroy()` waits for confirmed termination; if the response becomes uncertain, save its reference and observe instead of issuing another delete. `close()` does not stop compute. Borrowed snapshots remain untouched, and built snapshots need separate owned-artifact cleanup.
+## Retained storage
 
-See [Tested provider support](/docs/providers/support/) for measured coverage and [Errors and recovery](/docs/guides/recovery/) for handling lost responses.
+Writable object-backed volumes attach at create, with optional subpaths. `volume.at(path)` is only a descriptor. Close finite writers before `destroy({ storage: "allow-unconfirmed" })`; this permits compute cleanup without a flush/durability guarantee. Volumes survive destruction and need explicit deletion after dependent compute is gone.
 
-## Snapshots and retained volumes
+Mounted `writeFile` supports `overwrite: true` using private staging outside the mount. Mounted atomic no-clobber is unsupported. Read-only enforcement, volume versions and verified shutdown durability are unavailable. Capture with external mounts and mounted restore are unsupported.
 
-Application-retained capture history supports independent restore after source deletion; borrowed image selectors do not become owned snapshot artifacts. Snapshot deletion rechecks organization warm pools, blocking when dependencies are present or unreadable because native deletion cascades to warm pools and unclaimed compute. Writable object-backed volumes attach at create with optional subpaths. Native readiness is checked; read-only, volume versions and verified shutdown durability are unavailable. These workflows have fixture coverage and are not yet live-qualified. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/).
+## Cleanup and evidence
 
-Native mapping evidence: [Daytona snapshots](https://www.daytona.io/docs/snapshots/) and [volumes](https://www.daytona.io/docs/en/volumes/), checked against REST 0.218.0 DTOs.
+`destroy()` waits for confirmed termination; `close()` releases the connection only. Preserve uncertain cleanup references and observe rather than repeating delete. Borrowed prepared images are never automatic cleanup targets; OCI builds retain artifacts needing separate accounting.
 
-Mounted volumes are object-backed rather than POSIX filesystems. `writeFile(..., { overwrite: true })` stages bytes privately on the sandbox filesystem before writing and verifying the mounted destination. Atomic no-clobber `writeFile` on mounted paths is unsupported and rejects before effects; ordinary root-filesystem no-clobber writes remain supported. The private staging location must remain outside mounted storage. A completed file write does not certify a shutdown durability barrier.
+Both providers' snapshot workflows and Daytona mounted persistence passed live on premerge `5db0558`, including write isolation, saved references and exact cleanup. Later fixes merged with PR #25 at `a9d59b0`; the earlier runs do not certify that final head. Consult [Tested provider support](/docs/providers/support/) and [Live test evidence](/docs/providers/live-qualification/) for the current qualification mapping.

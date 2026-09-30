@@ -1,6 +1,6 @@
 # Implementation sequence
 
-Updated September 29, 2026. SDK completeness and qualified provider integrations come first. The optional service is a distant milestone.
+Updated September 29, 2026. [The roadmap](../ROADMAP.md) sets the authoritative order: SDK usability comes before additional adapters. This plan records completion and links follow-ups. The optional service is a distant milestone.
 
 ## Delivery rule
 
@@ -8,56 +8,42 @@ New features ship through the direct SDK and public adapter API. New HTTP routes
 
 Preserve existing service behavior and keep existing regression checks passing. Make narrow compatibility fixes when shared contracts change; do not expand the service to mirror each new SDK feature. Document SDK-only support explicitly. This decision does not delete the service or remove existing tests, and does not weaken SDK scope validation, recovery references, unknown-effect handling, or no-replay guarantees.
 
-## Current: complete the snapshot and volume PR
+## Completed: snapshots and retained volumes
 
-[PR #25](https://github.com/pandemicsyn/sandbar/pull/25) implements snapshot capture/inspect/restore/delete, retained volumes, and supported create-time mounts under the [state portability spec](../specs/provider-state-portability.md). It is in review, not merged behavior.
+[PR #25](https://github.com/pandemicsyn/sandbar/pull/25) merged at `a9d59b0`. Direct SDK connections now implement snapshot capture/inspect/restore/delete, retained volume management and supported create-time mounts under the [state portability contract](../specs/provider-state-portability.md). The merged slice includes scope/identity validation, checkpoint persistence, retained custody, explicit continuation and observation without replay. No review gate from that PR remains open here.
 
-Finish the [current PR acceptance fixes](../specs/provider-state-portability.md#9-current-pr-completion-and-follow-up-boundary): prevent stale observation from overwriting continuation checkpoints; persist retained-volume custody before compute destruction; prove two-way filesystem write isolation; and correct release/evidence claims. Check the latest revision rather than assuming every reviewed finding is still open. Add focused regressions and final independent review/required gates. Missing live evidence stays explicitly unverified; paid runs need separate authorization.
+Both providers' snapshot round trips passed live on premerge `5db0558`, including two-way filesystem write isolation and serialized references reopened after source deletion. Daytona mounted persistence and exact cleanup also passed. Main contains later fixes; these historical runs do not certify the final merged head. E2B volume creation returned HTTP 403 and did not pass live validation. An earlier uncertain E2B volume attempt still requires private custody reconciliation; empty inventory did not establish no effect. The [support matrix](../apps/docs/src/content/docs/docs/providers/support.md) and [qualification plan](provider-acceptance.md) own evidence mapping and remaining qualification.
 
-### Completion status and remaining gates
+External-mount capture, mounted restore, read-only mounts, volume versions and verified shutdown durability remain unsupported. Writable mounted compute cleanup explicitly accepts unconfirmed durability; retained storage requires separate deletion. Preserve the state portability spec for remaining lifecycle/storage work.
 
-The implementation and focused regressions now address stale observation checkpoints, retained-volume custody, native artifact identity, immutable recovery references, two-way filesystem isolation checks, explicit deletion safeguards, and checkpoint persistence. Daytona destruction now preserves known pre-dispatch rejection and recovers confirmed absence after an uncertain DELETE without replay; capture/deletion distinguish definitive native rejection from ambiguous failures. Compact artifact checkpoints and bounded capture names cover valid large inputs. Both providers reject oversized compute-cleanup custody before destruction without truncating retained identities. Keep this work in the current PR until current-head independent review and required GitHub checks pass; do not treat an earlier green revision as completion.
+## Active follow-ups
 
-Renewed live authorization validated both providers' snapshot round trips at `5db0558`, including two-way write isolation and serialized references reopened through a fresh connection after source deletion. Daytona volume persistence and exact cleanup also passed. E2B volume creation returned HTTP 403 in a focused follow-up; the adapter now durably records definitive native rejection and recovers it without replay. The earlier E2B volume attempt lacks a captured native status and remains uncertain despite complete inventory finding no matching volume. Do not claim E2B volume acceptance or erase that unresolved custody record. These are unmerged diagnostic results, not published support-matrix certification. Daytona's private diagnostic capture wait is ten minutes.
+CI cleanup is in progress separately: reduce repeated builds and stabilize existing fixtures while preserving meaningful validation. It is not completion of provider qualification or a new SDK feature.
 
-After the current PR passes its gates, update the completion status and retain the contracts in `specs/`. Do not archive the state portability spec while its lifecycle and richer storage work remain planned; completed implementation-plan entries can move into historical context without marking those follow-ups complete.
+Follow [the provider acceptance plan](provider-acceptance.md) to consolidate branch/release testing into one maintained runner and generate a small evidence-backed support matrix. This cleanup precedes onboarding more adapters.
 
-A bounded consolidation review covers the failure classes already found: size and native identifier bounds, kind/scope binding, cancellation, uncertain dispatch, stale observation, retained custody, destructive target checks, and observation without replay. The confirmed size-limit defects have focused regressions. Feature scope is frozen; optional improvements belong in the follow-up. Oversized cleanup custody must fail clearly before native destruction, without truncating retained identities.
+Recovery DX is a separate active SDK effort under [the focused spec](../specs/sdk-recovery-dx.md): typed partial outcomes and typed recovery, durable `onReference` on the bound-adapter connection form, and small shared checkpoint/dispatch helpers with recovery conformance tests. Preserve application-owned persistence, native evidence, explicit continuation and no replay. No workflow engine or service persistence is included. These APIs remain pending until that implementation lands.
 
-Do not expand this PR into richer volume metadata, mounted restore, or a new public partial-outcome API. Existing correctness and resource-custody guarantees are required now.
+After recovery DX lands, update the snapshots/volumes failure section and SDK README to use the bound-connection persistence hook and typed partial outcomes instead of opaque-token guidance. Update their persistence/uncertain-operation examples against the landed signatures; the normal snapshot/volume examples currently use implemented APIs only. The recovery peer owns `recovery.md`, `adapter-recovery.md` and `specs/sdk-recovery-dx.md`.
 
-## After PR #25: simplify provider acceptance
+## Next usability milestones
 
-Follow [the provider acceptance plan](provider-acceptance.md): retain meaningful live SDK workflows, consolidate branch and release testing into one maintained runner, and generate a small support matrix with explicit provider limitations and validation status. Schedule this cleanup before onboarding more adapters; it does not block or expand PR #25.
+Follow [the roadmap](../ROADMAP.md#next-make-everyday-sandbox-and-storage-lifecycles-usable):
 
-## Next SDK feature: recovery outcomes and adapter support
+- Cleanup configuration is approved in direction but not implemented. Allow connection-level writable-volume cleanup policy with per-call precedence, keeping `require-durable` as the unconfigured default. It adds no flush guarantee or automatic volume deletion; exact public signatures still need specification.
+- Specify reconnect/lifetime first, then native suspend/resume as separate bounded slices. Reconnect must not implicitly allocate or resume compute. Preserve provider-specific state/execution and uncertain-outcome semantics.
 
-Implement [the focused follow-up spec](../specs/sdk-recovery-dx.md):
-
-1. Stable typed partial outcomes on errors, operation handles, and recovered operations, including retained resources, completed work, observed source state, unresolved steps, and continuation eligibility. Application code must not decode provider tokens.
-2. Small shared checkpoint/dispatch helpers and reusable recovery conformance tests. Keep native evidence and transitions in adapters; preserve application-owned persistence and explicit continuation without replay.
-
-This remains the next SDK feature unit, separate from the acceptance cleanup and not a prerequisite for fixing the current PR’s correctness findings. No general workflow engine or service persistence is included.
-
-## Later state extensions with concrete provider requirements
-
-- Evolve volume metadata to separate backing from filesystem semantics and durability boundaries. Add capacity/placement only when needed by an actual provider/use case.
-- Implement capability-driven share/replace/omit mounted restore with enforcement before restored execution, alongside an adapter that can prove it.
-- Complete suspend/resume and lifetime controls, followed by optional volume versions and native forks where justified by the [state contract](../specs/provider-state-portability.md).
-
-Keep these scoped separately from the recovery follow-up. Current limitations remain explicit until implementations and appropriate qualification exist.
+Then scope interactive process handles/output and storage composition against concrete application needs. Richer volume visibility, durability, locking and rename guarantees and mounted restore require native enforcement before execution. Capacity/placement, dynamic attachment, volume versions and native forks remain optional extensions. See the [state contract](../specs/provider-state-portability.md) and [interactive draft](../specs/interactive-execution-and-access.md); neither authorizes a broad implementation by itself.
 
 ## Implemented: SDK tracing and diagnostics
 
 The direct tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes from the [observability spec](../specs/sdk-observability.md) merged in PR #24. Bounded metrics and structured diagnostic events remain later work after tracing is stable. Service propagation, persisted trace context, and runner tracing remain deferred with the service.
 
-## Broaden the SDK and provider coverage
+## Gate before additional providers
 
-- Develop [interactive execution and access](../specs/interactive-execution-and-access.md): processes, streams, terminals, endpoints, and tunnels.
-- Close remaining SDK gaps in images, resource configuration, files, and networking as focused contracts with demonstrated use cases.
-- Establish several usable, qualified provider integrations. Vercel and Tensorlake specs will be written when scheduled; provider distribution and ordering remain in [package conventions](../specs/package-conventions.md).
+New adapter implementation waits for the [SDK usability milestone](../ROADMAP.md#gate-before-new-adapters): coherent everyday compute/storage/lifecycle APIs, typed recovery, persisted identities, useful process output and reliable examples/qualification. Research remains reference material, not implementation authorization. Reassess remaining material DX gaps with the user before scheduling another adapter; universal native parity is not required.
 
-Provider integrations can proceed alongside SDK features where contracts are ready. Do not wait for universal native feature parity or claim support without evidence.
+Vercel and Tensorlake specs will be written when scheduled. Distribution rules remain in [package conventions](../specs/package-conventions.md). SDK gaps in images, resource configuration, files and networking should remain focused contracts with demonstrated use cases.
 
 ## Distant milestone: optional service
 

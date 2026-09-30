@@ -1,24 +1,12 @@
 # E2B built-in adapter
 
-Install `sandbar-sdk` and import the built-in subpath:
+Use `e2b` from `sandbar-sdk/e2b` with your API key and the public `base` template. Start with the [E2B guide](https://sandbarsdk.dev/docs/providers/e2b/) for a cleanup-safe example, `/home/user` file workflows and verified `teamId` scope for credential rotation. Packages are not yet published.
 
-```ts
-import { Sandbar, Image } from "sandbar-sdk";
-import { e2b } from "sandbar-sdk/e2b";
+[Snapshot capture](https://sandbarsdk.dev/docs/guides/snapshots-and-volumes/) uses the native default: filesystem, RAM and process state, with pause/resume and dropped connections. Restore needs an explicit supported network policy and resumes captured processes. Filesystem-only capture, external-mount capture and mounted restore are unsupported. Snapshot round trips passed live on premerge `5db0558`; the result does not certify later merged fixes.
 
-const client = await Sandbar.connect(e2b({ apiKey: process.env.E2B_API_KEY! }));
+Native volumes exist in private beta. Sandbar maps CRUD, but live create validation is blocked by account HTTP 403. Create-time mounts are unsupported separately because native names cannot enforce mounted immutable IDs. Read-only mounts, subpaths, volume versions and verified shutdown durability are unavailable. Existing mounted compute cleanup accepts `storage: "allow-unconfirmed"`, which does not guarantee durability and does not delete retained volumes. See the [support matrix](https://sandbarsdk.dev/docs/providers/support/) for current evidence.
 
-const box = await client.sandboxes.create({
-  environment: Image.prepared("base"),
-  networkPolicy: "blocked",
-});
-
-await box.writeFile("/home/user/data.bin", Uint8Array.from([0, 255, 129]), { overwrite: false });
-const data = await box.readFile("/home/user/data.bin");
-const result = await box.exec({ command: { kind: "argv", argv: ["wc", "-c", "/home/user/data.bin"] } });
-await box.destroy();
-await client.close();
-```
+## Native boundary details
 
 To build an OCI image as a separate, recoverable operation, use the common image API and pass its scoped prepared result to create:
 
