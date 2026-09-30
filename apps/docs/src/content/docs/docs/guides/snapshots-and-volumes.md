@@ -3,7 +3,7 @@ title: Snapshots and volumes
 description: Capture independent sandbox state and attach retained storage through direct SDK connections.
 ---
 
-Direct SDK connections expose scoped snapshot and volume handles. The service client has no state resource endpoints. Capture profiles describe exact preservation, interruption, source state, connection loss, consistency and mounts; always check the actual source first. Current implementations have deterministic fixture coverage; snapshot and volume workflows are **not yet live-qualified**.
+Direct SDK connections expose scoped snapshot and volume handles. The service client has no state resource endpoints. Capture profiles describe exact preservation, interruption, source state, connection loss, consistency and mounts; always check the actual source first. Current implementations have deterministic fixture coverage. The [support table](/docs/providers/support/) records scoped provider-specific live acceptance and remaining untested behavior.
 
 ## Capture and restore
 
@@ -81,6 +81,6 @@ Capture, restore, volume create and artifact delete each have a `submit…` form
 
 Recovery keeps the accepted capture preservation and source lifecycle expectations, and never repeats a capture, create or delete. E2B capture recovery stays unknown if the original native build generation was not observed; a later tag lookup cannot establish the captured generation. A lost native creation acknowledgement can retain billable storage without a safely owned artifact identity. A failed or lost delete acknowledgement stays unknown even if later inventory is empty. Preserve private custody and reconcile; compute TTL does not expire retained storage.
 
-The manual [qualification workflow](https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/provider-qualification/README.md) separates filesystem/RAM assertions, volume remount bytes and independent storage teardown. Prepared-image creation alone qualifies neither feature.
+The [provider integration workflow](https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/provider-qualification/README.md) separates filesystem/RAM assertions, volume remount bytes and independent storage teardown. Prepared-image creation alone qualifies neither feature.
 
 Create preflight validates the aggregate recovery-reference size, including mounted resource history and paths, before provider reads. Individually valid mounts can still exceed the 16,384-byte recovery limit as a set and reject with `INVALID_ARGUMENT` before effects. Daytona retained-volume summary strings omit their display prefix when needed to preserve a native ID within the result limit; `mountDurability` retains the full scoped resource reference.

@@ -70,6 +70,7 @@ export function e2bState(input: {
 }) {
   const { scope, transport } = input;
   const state = transport.state;
+  let volumeCreateEligibility: "unknown" | "supported" | "unavailable" = "unknown";
   const history = resourceHistory();
 
   const ref = (
@@ -1017,6 +1018,8 @@ export function e2bState(input: {
           created = await need().createVolume(value.name, ctx.signal);
         } catch (error) {
           if (!(error instanceof E2BVolumeCreateRejected)) throw error;
+
+          if (error.status === 401 || error.status === 403) volumeCreateEligibility = "unavailable";
           await ctx.checkpoint({
             state: "rejected",
             name: value.name,
@@ -1042,6 +1045,8 @@ export function e2bState(input: {
 
         if (info.name !== value.name)
           return ctx.unknown("Acknowledged volume name differs from the requested name");
+
+        volumeCreateEligibility = "supported";
 
         return info;
       },
@@ -1123,10 +1128,19 @@ export function e2bState(input: {
 
         return {
           restore,
-          volumes: {
-            status: "supported",
-            value: { create: true, inspect: true, list: true, delete: true },
-          },
+          volumes:
+            volumeCreateEligibility === "supported"
+              ? {
+                  status: "supported",
+                  value: { create: true, inspect: true, list: true, delete: true },
+                }
+              : {
+                  status: volumeCreateEligibility,
+                  reason:
+                    volumeCreateEligibility === "unavailable"
+                      ? "Volume CRUD is implemented; native create rejected this connection's account"
+                      : "Volume CRUD is implemented; successful inventory does not establish account create eligibility",
+                },
           mounts: {
             status: "unsupported",
             reason: "E2B mounts select reusable names and expose no mounted volume ID",

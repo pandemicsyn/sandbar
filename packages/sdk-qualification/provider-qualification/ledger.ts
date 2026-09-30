@@ -10,7 +10,7 @@ import { networkEvidenceSchema, networkProbeId } from "./network-probe";
 const ledgerSchema = z.strictObject({
   version: z.literal(1),
   runId: z.uuid(),
-  provider: z.enum(["daytona", "e2b"]),
+  provider: z.string().regex(/^[a-z][a-z0-9.-]{0,79}$/),
   createdAt: z.iso.datetime(),
   image: z.strictObject({
     kind: z.enum(["borrowed-prepared", "owned-built"]),
@@ -18,6 +18,13 @@ const ledgerSchema = z.strictObject({
   }),
   connection: z
     .union([
+      z.strictObject({
+        profile: z.string().regex(/^[a-z][a-z0-9.-]{0,79}$/),
+        routing: z.record(
+          z.string().max(80),
+          z.union([z.string().max(512), z.number().finite(), z.boolean()]),
+        ),
+      }),
       z.strictObject({
         target: z
           .string()
@@ -61,8 +68,8 @@ const ledgerSchema = z.strictObject({
   stateRole: z.string().max(80).optional(),
   stateBorrowedVolume: z.unknown().optional(),
   stateSelection: z
-    .array(z.enum(["snapshot-roundtrip", "volume-persistence"]))
-    .max(2)
+    .array(z.enum(["snapshot-roundtrip", "volume-persistence", "volume-crud"]))
+    .max(3)
     .optional(),
   stateMutations: z
     .array(
@@ -93,15 +100,6 @@ export type RunLedger = z.infer<typeof ledgerSchema> & {
   operationReferences?: AdapterRecoveryReference[];
 };
 
-export function reportedCleanup(states: readonly Pick<RunLedger, "cleanup">[]) {
-  if (states.some((state) => state.cleanup !== "confirmed" && state.cleanup !== "not-required"))
-    return "incomplete" as const;
-
-  return states.some((state) => state.cleanup === "confirmed")
-    ? ("confirmed" as const)
-    : ("not-required" as const);
-}
-
 export async function requirePrivateDirectory(directory: string): Promise<void> {
   const info = await lstat(directory);
 
@@ -128,6 +126,20 @@ const custodyIdentity = z.object({
   scope: ResourceScope,
   sandboxId: z.string().optional(),
   resource: ResourceReference.optional(),
+});
+
+// Only the currently supported public recovery identity can exclude another provider's
+// custody. Legacy checkpoint normalization remains separate and does not grant admission.
+const admissionIdentity = custodyIdentity.extend({
+  version: z.literal(2),
+  provider: ledgerSchema.shape.provider,
+  kind: z.enum(["create", "image_build", "snapshot_capture", "snapshot_restore", "volume_create"]),
+  operationId: z.string().min(1).max(128),
+  submissionId: z.string().min(1).max(128),
+  invocationKey: z.string().min(1).max(128),
+  sandboxId: z.string().min(1).max(512).optional(),
+  tokenVersion: z.number().int().positive().optional(),
+  token: z.json().optional(),
 });
 
 function operationIdentity(entry: StateCustody) {
@@ -289,8 +301,15 @@ export class LedgerStore {
     }
   }
 
-  /** Called under directory admission before any new run is initialized. */
-  async requirePreviousCleanup(): Promise<void> {
+  /** Called under shared admission; E2B volume-only custody does not consume a zero-volume compute budget. */
+  async requirePreviousCleanup(
+    provider: RunLedger["provider"],
+    budget?: { volumes: number },
+  ): Promise<void> {
+    ledgerSchema.shape.provider.parse(provider);
+
+    if (budget) z.number().int().nonnegative().parse(budget.volumes);
+
     for (const filename of await readdir(dirname(this.path))) {
       if (!filename.endsWith(".json")) continue;
       const runId = filename.slice(0, -5);
@@ -305,10 +324,66 @@ export class LedgerStore {
           )) &&
         previous.cleanup !== "confirmed" &&
         previous.cleanup !== "not-required"
-      )
-        throw new Error(
-          "An earlier run has unresolved resources; reconcile its private ledger before creating another sandbox",
-        );
+      ) {
+        // Separate providers have independent resource budgets. Do not separate accounts or
+        // regions: saved routing alone does not authenticate a different spending scope.
+        const creations = [
+          ...(previous.createReference
+            ? [{ reference: previous.createReference, resource: undefined }]
+            : []),
+          ...(previous.stateMutations ?? [])
+            .filter((entry) => entry.creation && entry.cleanup === "pending")
+            .map((entry) => ({
+              reference: entry.reference,
+              resource: entry.resource,
+              sandboxId: entry.sandboxId,
+            })),
+        ];
+
+        const identified = creations.every((entry) => {
+          const identity = admissionIdentity.safeParse(entry.reference);
+
+          const resource =
+            entry.resource === undefined ? undefined : ResourceReference.safeParse(entry.resource);
+
+          return (
+            identity.success &&
+            identity.data.provider === previous.provider &&
+            (!identity.data.resource || identity.data.resource.provider === previous.provider) &&
+            (resource === undefined ||
+              (resource.success && resource.data.provider === previous.provider))
+          );
+        });
+
+        const isolatedE2BVolumes =
+          identified &&
+          provider === "e2b" &&
+          previous.provider === provider &&
+          budget?.volumes === 0 &&
+          !previous.createReference &&
+          !previous.createIntent &&
+          !previous.sandboxId &&
+          previous.image.kind === "borrowed-prepared" &&
+          creations.every((entry) => {
+            const identity = admissionIdentity.parse(entry.reference);
+
+            const resource =
+              entry.resource === undefined ? undefined : ResourceReference.parse(entry.resource);
+
+            return (
+              identity.kind === "volume_create" &&
+              !identity.sandboxId &&
+              !("sandboxId" in entry && entry.sandboxId) &&
+              (!identity.resource || identity.resource.kind === "volume") &&
+              (!resource || resource.kind === "volume")
+            );
+          });
+
+        if (!identified || (previous.provider === provider && !isolatedE2BVolumes))
+          throw new Error(
+            "An earlier run has unresolved resources for this provider or unverified identity; reconcile its private ledger before creating another sandbox",
+          );
+      }
     }
   }
 
@@ -406,4 +481,21 @@ export class LedgerStore {
 
     return this.queue;
   }
+}
+
+/** Compatibility for persisted baseline receipts; new Bun fixtures use stateMutations. */
+export async function recordLegacyReference(
+  ledger: LedgerStore,
+  reference: AdapterRecoveryReference,
+) {
+  await ledger.update((value) =>
+    reference.kind === "create"
+      ? { ...value, createReference: reference }
+      : reference.kind === "destroy"
+        ? { ...value, destroyReference: reference }
+        : {
+            ...value,
+            operationReferences: operationCheckpoints(value.operationReferences, reference),
+          },
+  );
 }
