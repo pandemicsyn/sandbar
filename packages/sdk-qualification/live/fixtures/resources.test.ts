@@ -395,3 +395,26 @@ test("snapshot profile metadata remains available when reopening later fails", a
     sourceAfter: "unchanged",
   });
 });
+
+test("zero-volume fixtures reject volume creators before native dispatch", async () => {
+  const f = await fixture();
+
+  const t = new TestResources(f.connect, f.ledger, "base", "blocked", {
+    compute: 1,
+    snapshots: 0,
+    volumes: 0,
+    exerciseMs: 5000,
+    cleanupMs: 1000,
+  });
+
+  await t.open();
+
+  try {
+    await expect(t.volume()).rejects.toThrow("Volume budget exhausted");
+  } finally {
+    await t.close();
+  }
+
+  expect(f.calls.volumeCreate).toBe(0);
+  expect((await f.ledger.read()).cleanup).toBe("not-required");
+});

@@ -4,22 +4,35 @@ import { TestResources } from "./fixtures/resources";
 import { liveEnabled, setupLive, finishLive } from "./providers";
 import { boundedRead } from "../provider-qualification/bounds";
 
-export async function lifecycle(t: TestResources, box: AdapterSandbox) {
+export async function lifecycle(t: TestResources, box: AdapterSandbox, inventoryWaitMs = 30000) {
   expect((await box.inspect({ signal: t.signal })).state).toBe("running");
-  let cursor: string | undefined;
+  const timeout = AbortSignal.timeout(inventoryWaitMs);
+  const signal = AbortSignal.any([t.signal, timeout]);
 
-  for (let page = 0; page < 10; page++) {
-    const inventory = await boundedRead(
-      t.client.operations.inventory({ limit: 100, cursor }),
-      t.signal,
-    );
+  try {
+    // Native list indexes may lag direct detail reads. Repeat reads, never creation.
+    while (!signal.aborted) {
+      let cursor: string | undefined;
 
-    if (inventory.items.some((item) => item.id === box.id && item.state === "running")) return;
-    cursor = inventory.nextCursor;
+      for (let page = 0; page < 10; page++) {
+        const inventory = await boundedRead(
+          t.client.operations.inventory({ limit: 100, cursor }),
+          signal,
+        );
 
-    if (!cursor) break;
+        if (inventory.items.some((item) => item.id === box.id && item.state === "running")) return;
+        cursor = inventory.nextCursor;
+
+        if (!cursor) break;
+      }
+
+      await boundedRead(new Promise((resolve) => setTimeout(resolve, 500)), signal);
+    }
+  } catch (error) {
+    if (!timeout.aborted || t.signal.aborted) throw error;
   }
 
+  t.signal.throwIfAborted();
   throw Error("Owned sandbox absent from bounded inventory");
 }
 

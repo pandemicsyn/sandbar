@@ -66,7 +66,7 @@ export class TestResources {
           if (this.cleaning) throw Error("Setup was cancelled before admission");
 
           if (this.initial) {
-            await this.ledger.requirePreviousCleanup(this.initial.provider);
+            await this.ledger.requirePreviousCleanup(this.initial.provider, this.bounds);
             await this.ledger.initialize(
               this.initial.provider,
               { kind: "borrowed-prepared", class: "prepared" },
@@ -77,7 +77,7 @@ export class TestResources {
           const previous = await this.ledger.read();
 
           if (this.cleaning) throw Error("Setup was cancelled before connection");
-          await this.ledger.requirePreviousCleanup(previous.provider);
+          await this.ledger.requirePreviousCleanup(previous.provider, this.bounds);
 
           if (previous.stateMutations?.length)
             throw new Error("Existing custody must be reconciled first");

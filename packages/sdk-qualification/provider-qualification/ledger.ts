@@ -301,9 +301,14 @@ export class LedgerStore {
     }
   }
 
-  /** Called under shared directory admission; unresolved custody consumes its provider budget. */
-  async requirePreviousCleanup(provider: RunLedger["provider"]): Promise<void> {
+  /** Called under shared admission; E2B volume-only custody does not consume a zero-volume compute budget. */
+  async requirePreviousCleanup(
+    provider: RunLedger["provider"],
+    budget?: { volumes: number },
+  ): Promise<void> {
     ledgerSchema.shape.provider.parse(provider);
+
+    if (budget) z.number().int().nonnegative().parse(budget.volumes);
 
     for (const filename of await readdir(dirname(this.path))) {
       if (!filename.endsWith(".json")) continue;
@@ -328,7 +333,11 @@ export class LedgerStore {
             : []),
           ...(previous.stateMutations ?? [])
             .filter((entry) => entry.creation && entry.cleanup === "pending")
-            .map((entry) => ({ reference: entry.reference, resource: entry.resource })),
+            .map((entry) => ({
+              reference: entry.reference,
+              resource: entry.resource,
+              sandboxId: entry.sandboxId,
+            })),
         ];
 
         const identified = creations.every((entry) => {
@@ -346,7 +355,31 @@ export class LedgerStore {
           );
         });
 
-        if (previous.provider === provider || !identified)
+        const isolatedE2BVolumes =
+          identified &&
+          provider === "e2b" &&
+          previous.provider === provider &&
+          budget?.volumes === 0 &&
+          !previous.createReference &&
+          !previous.createIntent &&
+          !previous.sandboxId &&
+          previous.image.kind === "borrowed-prepared" &&
+          creations.every((entry) => {
+            const identity = admissionIdentity.parse(entry.reference);
+
+            const resource =
+              entry.resource === undefined ? undefined : ResourceReference.parse(entry.resource);
+
+            return (
+              identity.kind === "volume_create" &&
+              !identity.sandboxId &&
+              !("sandboxId" in entry && entry.sandboxId) &&
+              (!identity.resource || identity.resource.kind === "volume") &&
+              (!resource || resource.kind === "volume")
+            );
+          });
+
+        if (!identified || (previous.provider === provider && !isolatedE2BVolumes))
           throw new Error(
             "An earlier run has unresolved resources for this provider or unverified identity; reconcile its private ledger before creating another sandbox",
           );

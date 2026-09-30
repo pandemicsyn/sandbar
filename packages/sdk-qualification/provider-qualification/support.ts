@@ -123,8 +123,8 @@ export const builtinSupport: SupportMetadata[] = [
         note: "Compatible envd/templates only: filesystem + RAM, native pause/resume, pinned-build restore; mounts excluded. Historical 5db0558 roundtrip passed; later identity/rejection/cancellation guards are fixture-tested, without a current-head live rerun. Fresh-process reopen is unrun live.",
       },
       volumes: {
-        support: "conditional",
-        note: "CRUD is implemented independently of mounts. Successful inventory does not prove create eligibility: discovery is unknown until this connection has successful create evidence, unavailable after native auth denial. This account's focused create returned 403; no working live CRUD workflow. The earlier uncertain creator remains unresolved.",
+        support: "unsupported",
+        note: "Volume workflows are not supported for E2B qualification; volume CRUD and persistence tests skip before provider setup. Experimental native CRUD is not eligible for live acceptance. The original uncertain volume creator remains preserved and unresolved; identified volume-only custody does not block separately bounded tests that allocate no volumes.",
       },
       persistence: {
         support: "unsupported",
@@ -235,7 +235,7 @@ export function renderSupportMatrix(
           ? `${latest.cleanup === "incomplete" ? "blocked" : latest.status} at ${latest.sourceRevision} (historical${latest.cleanup === "incomplete" ? "; cleanup incomplete" : ""})`
           : state;
 
-      return `[${declared.support[0]!.toUpperCase() + declared.support.slice(1)} · ${declared.support === "unsupported" ? "not-run" : result}](#${profile.id}-${id})`;
+      return `[${declared.support[0]!.toUpperCase() + declared.support.slice(1)} · ${result}](#${profile.id}-${id})`;
     });
 
     return [feature.label, ...cells];
@@ -282,7 +282,7 @@ export function renderSupportMatrix(
     "",
     "## Updating support",
     "",
-    "Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The bounded Daytona Bun run at 1505ee0 is recorded, including its lifecycle failure. E2B allocation remains blocked by the preserved unresolved volume receipt. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.",
+    "Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The bounded Daytona Bun run at 1505ee0 is recorded, including its lifecycle failure. E2B volume tests skip; identified volume-only custody does not block bounded zero-volume suites. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.",
     "",
   );
 

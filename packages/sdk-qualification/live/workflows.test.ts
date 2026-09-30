@@ -176,3 +176,33 @@ test("selected persistence waits for a creating volume without requiring the CRU
   expect(f.calls.create).toBe(2);
   expect((await f.ledger.read()).cleanup).toBe("confirmed");
 });
+
+test("lifecycle waits for list-index visibility without allocating again", async () => {
+  const f = await fixture({ inventoryMisses: 2 });
+  const t = await open(f);
+
+  try {
+    await lifecycle(t, await t.create("sandbox/source"));
+  } finally {
+    await t.close();
+  }
+
+  expect(f.calls).toMatchObject({ create: 1, inventory: 3, destroy: 1 });
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+});
+
+test("lifecycle still fails when inventory never includes the owned sandbox and cleans it", async () => {
+  const f = await fixture({ inventoryMisses: 1000 });
+  const t = await open(f);
+
+  try {
+    await expect(lifecycle(t, await t.create("sandbox/source"), 30)).rejects.toThrow(
+      "Owned sandbox absent",
+    );
+  } finally {
+    await t.close();
+  }
+
+  expect(f.calls).toMatchObject({ create: 1, destroy: 1 });
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+});

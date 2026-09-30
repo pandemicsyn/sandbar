@@ -15,7 +15,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | OCI image builds              | [Conditional · not-run](#daytona-oci)                    | [Conditional · not-run](#e2b-oci)                                                 |
 | Measured network controls     | [Conditional · not-run](#daytona-network)                | [Supported · not-run](#e2b-network)                                               |
 | Snapshot roundtrip            | [Conditional · passed at 1505ee0d](#daytona-snapshots)   | [Conditional · passed at 5db0558 (historical)](#e2b-snapshots)                    |
-| Volume CRUD                   | [Supported · passed at 1505ee0d](#daytona-volumes)       | [Conditional · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
+| Volume CRUD                   | [Supported · passed at 1505ee0d](#daytona-volumes)       | [Unsupported · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
 | Mounted persistence           | [Conditional · passed at 1505ee0d](#daytona-persistence) | [Unsupported · not-run](#e2b-persistence)                                         |
 
 The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. The Daytona Bun tests at 1505ee0 passed execution, files, snapshot roundtrip, volume CRUD and mounted persistence with confirmed cleanup. The lifecycle case failed its managed inventory assertion; its teardown was also confirmed. Other operation/configuration claims retain their own recorded revisions and limitations below.
@@ -112,7 +112,7 @@ Compatible envd/templates only: filesystem + RAM, native pause/resume, pinned-bu
 
 ### Volume CRUD
 
-CRUD is implemented independently of mounts. Successful inventory does not prove create eligibility: discovery is unknown until this connection has successful create evidence, unavailable after native auth denial. This account's focused create returned 403; no working live CRUD workflow. The earlier uncertain creator remains unresolved.
+Volume workflows are not supported for E2B qualification; volume CRUD and persistence tests skip before provider setup. Experimental native CRUD is not eligible for live acceptance. The original uncertain volume creator remains preserved and unresolved; identified volume-only custody does not block separately bounded tests that allocate no volumes.
 
 <a id="e2b-persistence"></a>
 
@@ -130,4 +130,4 @@ The SDK targets server-side Node.js and Bun. Packed consumer checks exercise emi
 
 ## Updating support
 
-Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The bounded Daytona Bun run at 1505ee0 is recorded, including its lifecycle failure. E2B allocation remains blocked by the preserved unresolved volume receipt. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.
+Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The bounded Daytona Bun run at 1505ee0 is recorded, including its lifecycle failure. E2B volume tests skip; identified volume-only custody does not block bounded zero-volume suites. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.

@@ -129,7 +129,7 @@ test("historical unknown custody and later no-effect denial remain distinct evid
 
   expect(report.historicalEvidence).toHaveLength(2);
   expect(renderSupportMatrix([report])).toContain(
-    "Conditional · blocked at working-tree-before-dfc34b6",
+    "Unsupported · blocked at working-tree-before-dfc34b6",
   );
 });
 

@@ -39,6 +39,7 @@ export async function fixture(
     volumeFailure?: "rejected" | "uncertain";
     readyAfterInspect?: number;
     readOnly?: "enforced" | "leaky";
+    inventoryMisses?: number;
     failCreate?: boolean;
     failDelete?: boolean;
     createDelayMs?: number;
@@ -72,6 +73,7 @@ export async function fixture(
   let index = 0;
 
   const calls = {
+    inventory: 0,
     capture: 0,
     restore: 0,
     volumeDelete: 0,
@@ -173,6 +175,10 @@ export async function fixture(
           return { computeStopped: true, retainedResources: [] };
         },
         async inventory() {
+          calls.inventory++;
+
+          if (calls.inventory <= (options.inventoryMisses ?? 0)) return { items: [] };
+
           return { items: [...boxes].map(([id]) => ({ id, state: "running" as const })) };
         },
         async inspect(box) {

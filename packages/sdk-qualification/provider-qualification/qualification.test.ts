@@ -432,3 +432,55 @@ test("unknown legacy ledger provider fails closed even for a different selected 
   await expect(next.requirePreviousCleanup("e2b")).rejects.toThrow();
   expect(await readFile(previous.path, "utf8")).toBe(JSON.stringify(stored));
 });
+
+test("E2B zero-volume admission preserves isolated volume custody and blocks overlapping or unknown creators", async () => {
+  const previous = await ledger();
+  const next = new LedgerStore(join(previous.path, ".."), crypto.randomUUID());
+
+  const pending = {
+    role: "volume/create",
+    reference: { ...reference, provider: "e2b", kind: "volume_create" },
+    creation: true,
+    cleanup: "pending" as const,
+  };
+
+  await previous.update((value) => ({
+    ...value,
+    provider: "e2b",
+    cleanup: "unresolved",
+    stateMutations: [pending],
+  }));
+  const before = await readFile(previous.path, "utf8");
+  await next.withAdmissionLock(async () => {
+    await next.requirePreviousCleanup("e2b", { volumes: 0 });
+    await expect(next.requirePreviousCleanup("e2b", { volumes: 1 })).rejects.toThrow("unresolved");
+    await expect(next.requirePreviousCleanup("e2b")).rejects.toThrow("unresolved");
+  });
+  expect(await readFile(previous.path, "utf8")).toBe(before);
+
+  for (const extra of [
+    { ...pending, reference: { ...reference, provider: "e2b", kind: "create" } },
+    {
+      ...pending,
+      reference: { ...reference, provider: "e2b", kind: "snapshot_capture", sandboxId: "source" },
+    },
+    { ...pending, reference: {} },
+    { ...pending, reference: { ...pending.reference, provider: "daytona" } },
+    { ...pending, sandboxId: "possibly-attached" },
+    { ...pending, reference: { ...pending.reference, sandboxId: "possibly-attached" } },
+    {
+      ...pending,
+      resource: {
+        version: 1,
+        kind: "snapshot",
+        provider: "e2b",
+        scope: reference.scope,
+        nativeId: "fixture",
+        ownership: "verified-created",
+      },
+    },
+  ]) {
+    await previous.update((value) => ({ ...value, stateMutations: [pending, extra] }));
+    await expect(next.requirePreviousCleanup("e2b", { volumes: 0 })).rejects.toThrow("unresolved");
+  }
+});
