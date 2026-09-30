@@ -118,7 +118,7 @@ export type PreparedOperation = {
 export type RuntimeResult =
   | { kind: "completed"; value: OperationResult }
   | { kind: "pending"; token: Json; pollAfterMs: number; version: number }
-  | { kind: "unknown"; reason: string }
+  | { kind: "unknown"; reason: string; outcome?: import("./state").OperationOutcome }
   | { kind: "rejected"; code: string; message: string };
 
 const Id = z.string().min(1).max(512);
@@ -762,7 +762,7 @@ function normalizeSpecial(
     // SAFETY: outcomeKind read the private outcome brand and selected Unknown.
     const unknownValue = value as Unknown;
 
-    return { kind: "unknown", reason: unknownValue.reason };
+    return { kind: "unknown", reason: unknownValue.reason, outcome: unknownValue.outcome };
   }
 
   // SAFETY: Pending and Unknown were handled above; the branded outcome is Rejected.

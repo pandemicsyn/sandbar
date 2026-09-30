@@ -68,11 +68,13 @@ function fixture(
     nativeCaptureError: false,
     restartLost: false,
     restartRejected: false,
+    restartUnavailable: false,
     failedDelete: false,
     failedDeleteStatus: 500,
     snapshotReadStatuses,
     volumeAbsenceReadStatuses,
     snapshotReadAttempts: 0,
+    snapshotReadStatus: 0,
     pendingReadBodyCancel: false,
     poolsDenied: false,
     poolsDisabled: false,
@@ -112,6 +114,8 @@ function fixture(
         modes.sourceReads++;
         modes.onSourceRead.callback?.();
 
+        if (modes.sourceReadStatus === -1) throw new Error("Source read network unavailable");
+
         if (modes.sourceReadStatus) return new Response(null, { status: modes.sourceReadStatus });
 
         return Response.json({
@@ -146,6 +150,8 @@ function fixture(
         await Promise.resolve();
 
         if (modes.restartRejected) return new Response(null, { status: 422 });
+
+        if (modes.restartUnavailable) return new Response(null, { status: 503 });
         state = "started";
 
         if (modes.restartLost) throw new Error("Lost start acknowledgement");
@@ -206,7 +212,7 @@ function fixture(
         }
 
         modes.snapshotReadAttempts++;
-        const readStatus = modes.snapshotReadStatuses.shift();
+        const readStatus = modes.snapshotReadStatus || modes.snapshotReadStatuses.shift();
 
         if (readStatus)
           return new Response(
@@ -466,38 +472,59 @@ for (const restartAfterCapture of [true, false]) {
   });
 }
 
-test("Daytona retained capture remains inspectable and owned when source restart fails", async () => {
-  const f = fixture();
-  f.modes.restartRejected = true;
-  const client = await f.connect();
+test.each(["failed", "uncertain"] as const)(
+  "Daytona retained capture is a direct partial result when restart is %s",
+  async (restart) => {
+    const f = fixture();
+    f.modes.restartRejected = restart === "failed";
+    f.modes.restartUnavailable = restart === "uncertain";
+    const client = await f.connect();
+    let savedSnapshot;
+    let savedOperation;
 
-  try {
-    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-    const operation = await source.submitSnapshot();
-    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const operation = await source.submitSnapshot();
+      const error = await operation.wait().catch((error) => error);
+      expect(error).toBeInstanceOf(SandbarError);
 
-    const token = z
-      .object({
-        captureState: z.literal("completed"),
-        snapshot: SnapshotInfo.extend({ reference: ResourceReference.omit({ scope: true }) }),
-        restartFailure: z.string(),
-      })
-      .parse(operation.reference.token);
+      if (!(error instanceof SandbarError)) throw error;
+      expect(error.code).toBe(restart === "failed" ? "SOURCE_RESTART_FAILED" : "OUTCOME_UNKNOWN");
+      expect(error.outcome).toMatchObject({
+        kind: "snapshot_capture",
+        status: "partial",
+        snapshot: { kind: "snapshot", nativeId: "snapshot-one", ownership: "verified-created" },
+        capture: { preserve: "filesystem", interruption: "stop", restoreExecution: "fresh" },
+        source: { state: "stopped", connections: "dropped", observedAt: expect.any(String) },
+        restart: { status: restart },
+      });
 
-    expect(token.snapshot.reference.ownership).toBe("verified-created");
-    expect(token.snapshot.restoreExecution).toBe("fresh");
-    await expect((await client.recover(operation.reference)).wait()).rejects.toBeInstanceOf(
-      OutcomeUnknownError,
-    );
-    expect(f.calls.capture).toBe(1);
-    expect(f.calls.start).toBe(1);
-    await (
-      await client.snapshots.get({ ...token.snapshot.reference, scope: client.scope })
-    ).delete();
-  } finally {
-    await client.close();
-  }
-});
+      if (error.outcome?.kind !== "snapshot_capture" || !error.outcome.snapshot) throw error;
+      savedSnapshot = JSON.parse(JSON.stringify(error.outcome.snapshot));
+      savedOperation = JSON.parse(JSON.stringify(operation.reference));
+      expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+    } finally {
+      await client.close();
+    }
+
+    f.modes.sourceReadStatus = 404;
+    const reopened = await f.connect(undefined, "rotated-key-same-org");
+
+    try {
+      const snapshot = await reopened.snapshots.get(savedSnapshot);
+      expect(await snapshot.inspect()).toMatchObject({ state: "ready", mountHandling: "none" });
+      const recovered = await reopened.recover(savedOperation);
+      await expect(recovered.wait()).rejects.toMatchObject({
+        code: restart === "failed" ? "SOURCE_RESTART_FAILED" : "OUTCOME_UNKNOWN",
+        outcome: { snapshot: savedSnapshot, capture: { preserve: "filesystem" } },
+      });
+      await snapshot.delete();
+      expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1, delete: 1 });
+    } finally {
+      await reopened.close();
+    }
+  },
+);
 
 test("Daytona reports capture and restart failures independently", async () => {
   const f = fixture();
@@ -600,6 +627,17 @@ test("Daytona caller cancellation during restart retains acknowledged artifact a
     expect(error).toBeInstanceOf(WaitAbortedError);
 
     if (!(error instanceof WaitAbortedError)) throw new Error("Expected wait abort");
+    expect(error.outcome).toMatchObject({
+      kind: "snapshot_capture",
+      status: "partial",
+      snapshot: {
+        kind: "snapshot",
+        nativeId: "snapshot-one",
+        provider: "daytona",
+        scope: client.scope,
+      },
+      capture: { preserve: "filesystem", interruption: "stop", restoreExecution: "fresh" },
+    });
 
     const token = z
       .object({
@@ -626,6 +664,100 @@ test("Daytona caller cancellation during restart retains acknowledged artifact a
     await client.close();
   }
 });
+
+test("Daytona cancellation during an uncertain restart retains confirmed capture directly", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  f.modes.onStart.callback = () => controller.abort();
+  f.modes.restartUnavailable = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+
+    const error = await source
+      .snapshot(undefined, { signal: controller.signal })
+      .catch((error: Error) => error);
+
+    expect(error).toBeInstanceOf(WaitAbortedError);
+
+    if (!(error instanceof WaitAbortedError) || error.outcome?.kind !== "snapshot_capture")
+      throw new Error("Expected direct partial capture on cancellation");
+    expect(error.outcome).toMatchObject({
+      status: "partial",
+      snapshot: {
+        kind: "snapshot",
+        nativeId: "snapshot-one",
+        provider: "daytona",
+        scope: client.scope,
+      },
+      capture: { preserve: "filesystem", interruption: "stop", restoreExecution: "fresh" },
+      restart: { status: "uncertain" },
+    });
+    expect((await (await client.snapshots.get(error.outcome.snapshot!)).inspect()).state).toBe(
+      "ready",
+    );
+    expect(await (await client.recover(error.reference)).observe()).toBeNull();
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+  } finally {
+    await client.close();
+  }
+});
+
+test.each(["submission", "fresh recovery"] as const)(
+  "Daytona observed running source completes a rejected restart during %s without replay",
+  async (phase) => {
+    const f = fixture();
+    f.modes.restartRejected = true;
+
+    if (phase === "submission") f.modes.onStart.callback = () => f.setState("started");
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const operation = await source.submitSnapshot();
+
+      if (phase === "submission") {
+        const result = await operation.wait();
+        expect(result.source.state).toBe("running");
+        expect(result.snapshot.id).toBe("snapshot-one");
+        expect(operation.reference.token).toMatchObject({
+          restartState: "completed",
+          stage: "complete",
+        });
+      } else {
+        await expect(operation.wait()).rejects.toMatchObject({
+          code: "SOURCE_RESTART_FAILED",
+          effect: "partial",
+        });
+        const saved = JSON.parse(JSON.stringify(operation.reference));
+        expect(saved.token.restartState).toBe("failed");
+        await client.close();
+        f.setState("started");
+        const fresh = await f.connect();
+
+        try {
+          const recovered = await fresh.recover(saved);
+          const result = await recovered.wait();
+          expect(result).toMatchObject({
+            snapshot: { id: "snapshot-one" },
+            source: { state: "running" },
+          });
+          expect(recovered.reference.token).toMatchObject({
+            restartState: "completed",
+            stage: "complete",
+          });
+        } finally {
+          await fresh.close();
+        }
+      }
+
+      expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+    } finally {
+      await client.close();
+    }
+  },
+);
 
 test("Daytona lost start acknowledgement is confirmed read-only without another start", async () => {
   const f = fixture();
@@ -712,7 +844,7 @@ test("Daytona recovery never adopts or authorizes deletion of a replacement capt
   try {
     const source = await client.sandboxes.create({ environment: Image.prepared("base") });
     const operation = await source.submitSnapshot();
-    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    await expect(operation.wait()).rejects.toMatchObject({ code: "SOURCE_RESTART_FAILED" });
     const saved = structuredClone(operation.reference);
     expect(saved.token).toMatchObject({
       snapshotId: "snapshot-one",
@@ -721,7 +853,12 @@ test("Daytona recovery never adopts or authorizes deletion of a replacement capt
     f.replaceSnapshot();
     f.setState("started");
     const recovered = await client.recover(saved);
-    await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+
+    if (recovered.kind !== "snapshot_capture") throw new Error("Expected capture recovery");
+    const result = await recovered.wait();
+    expect(result.source.state).toBe("running");
+    expect(result.snapshot.reference.nativeId).toBe("snapshot-one");
+    await expect(result.snapshot.delete()).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(recovered.reference.token).toMatchObject({
       snapshot: { reference: { nativeId: "snapshot-one" } },
     });
@@ -959,7 +1096,11 @@ for (const stage of ["stop", "capture", "restart"] as const) {
   test(`Daytona persistence failure before ${stage} dispatch prevents that native effect`, async () => {
     const f = fixture();
 
+    let saved: AdapterRecoveryReference | undefined;
+
     const client = await f.connect((reference) => {
+      saved = structuredClone(reference);
+
       const parsed = z
         .object({
           token: z.object({
@@ -976,14 +1117,15 @@ for (const stage of ["stop", "capture", "restart"] as const) {
 
     try {
       const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-      const operation = await source.submitSnapshot();
-      await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      await expect(source.submitSnapshot()).rejects.toMatchObject({
+        code: "REFERENCE_SAVE_FAILED",
+      });
       expect(f.calls).toMatchObject({
         stop: stage === "stop" ? 0 : 1,
         capture: stage === "restart" ? 1 : 0,
         start: 0,
       });
-      expect(operation.reference.token).toMatchObject({ [`${stage}State`]: "uncertain" });
+      expect(saved?.token).toMatchObject({ [`${stage}State`]: "uncertain" });
     } finally {
       await client.close();
     }
@@ -1574,7 +1716,12 @@ test.each(["conflict", "missing", "unreadable"] as const)(
         );
       else {
         f.modes.sourceReadStatus = mode === "missing" ? 404 : 500;
-        await expect(recovered.continue()).rejects.toBeInstanceOf(OutcomeUnknownError);
+
+        if (mode === "missing")
+          await expect((await recovered.continue()).wait()).rejects.toBeInstanceOf(
+            OutcomeUnknownError,
+          );
+        else await expect(recovered.continue()).rejects.toBeInstanceOf(OutcomeUnknownError);
       }
 
       expect(f.calls).toMatchObject({ stop: 1, capture: 0, start: 0 });
@@ -1634,7 +1781,7 @@ test("Daytona failed stop checkpoint preserves uncertainty without replay", asyn
 
   try {
     const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-    await expect(source.snapshot()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    await expect(source.snapshot()).rejects.toMatchObject({ code: "REFERENCE_SAVE_FAILED" });
     expect(saved?.token).toMatchObject({ stopState: "uncertain", captureState: "not-submitted" });
     const reopened = await f.connect(undefined, "rotated-key");
 
@@ -1971,3 +2118,233 @@ for (const kind of ["snapshot_capture", "volume_create"] as const) {
     }
   });
 }
+
+test("Daytona delayed acknowledged capture remains recoverable after source deletion without replay", async () => {
+  const f = fixture();
+  f.modes.slowReads = 1;
+  const originalNow = Date.now;
+  let offset = 0;
+  Date.now = () => originalNow() + offset;
+  f.modes.onSnapshotRead.callback = () => {
+    offset = 61000;
+  };
+
+  const client = await f.connect();
+  let saved;
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    saved = JSON.parse(JSON.stringify(operation.reference));
+  } finally {
+    Date.now = originalNow;
+    f.modes.onSnapshotRead.callback = undefined;
+    await client.close();
+  }
+
+  f.modes.sourceReadStatus = 404;
+  const reopened = await f.connect(undefined, "current-key");
+
+  try {
+    const operation = await reopened.recover(saved);
+    const error = await operation.wait().catch((error) => error);
+    expect(error).toBeInstanceOf(OutcomeUnknownError);
+
+    if (!(error instanceof SandbarError) || error.outcome?.kind !== "snapshot_capture") throw error;
+    expect(error.outcome).toMatchObject({
+      status: "partial",
+      snapshot: { nativeId: "snapshot-one" },
+      capture: { preserve: "filesystem" },
+      restart: { status: "not-submitted" },
+      source: { state: "stopped", observedAt: expect.any(String) },
+    });
+    const snapshot = await reopened.snapshots.get(error.outcome.snapshot!);
+    expect((await snapshot.inspect()).state).toBe("ready");
+    await expect((await operation.continue()).wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 0 });
+  } finally {
+    await reopened.close();
+  }
+});
+
+test("Daytona a failed restart checkpoint retains confirmed capture without dispatching start", async () => {
+  const f = fixture();
+
+  const client = await f.connect((reference) => {
+    if (
+      reference.kind === "snapshot_capture" &&
+      z.object({ stage: z.literal("restart") }).safeParse(reference.token).success
+    )
+      throw new Error("Durable write unavailable");
+  });
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const error = await source.snapshot().catch((error: Error) => error);
+    expect(error).toBeInstanceOf(SandbarError);
+    expect(error).toMatchObject({
+      code: "REFERENCE_SAVE_FAILED",
+      outcome: {
+        kind: "snapshot_capture",
+        status: "partial",
+        snapshot: { nativeId: "snapshot-one" },
+        capture: { preserve: "filesystem" },
+        restart: { status: "uncertain" },
+      },
+    });
+
+    if (!(error instanceof SandbarError) || error.reference?.mode !== "direct")
+      throw new Error("Expected latest checkpoint reference");
+    expect(error.reference.token).toMatchObject({
+      stage: "restart",
+      captureState: "completed",
+      snapshotId: "snapshot-one",
+    });
+    await client.close();
+    const reopened = await f.connect();
+
+    try {
+      const recovered = await reopened.recover(JSON.parse(JSON.stringify(error.reference)));
+      expect(recovered.reference).toEqual(JSON.parse(JSON.stringify(error.reference)));
+      expect(recovered.kind).toBe("snapshot_capture");
+    } finally {
+      await reopened.close();
+    }
+
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 0 });
+  } finally {
+    await client.close();
+  }
+});
+
+test.each(["http", "network"] as const)(
+  "Daytona source read outage after capture preserves the direct partial result: %s",
+  async (outage) => {
+    const f = fixture();
+    let saved: AdapterRecoveryReference | undefined;
+
+    const client = await f.connect((reference) => {
+      if (reference.kind !== "snapshot_capture") return;
+      saved = structuredClone(reference);
+
+      if (z.object({ captureState: z.literal("completed") }).safeParse(reference.token).success) {
+        f.modes.sourceReadStatus = outage === "http" ? 500 : -1;
+      }
+    });
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const error = await source.snapshot().catch((error) => error);
+      expect(error).toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: {
+          kind: "snapshot_capture",
+          status: "partial",
+          snapshot: { nativeId: "snapshot-one" },
+          capture: { preserve: "filesystem" },
+          restart: { status: "not-submitted" },
+        },
+      });
+
+      if (!(error instanceof SandbarError) || error.outcome?.kind !== "snapshot_capture")
+        throw error;
+      const reopened = await f.connect(undefined, "rotated-key");
+
+      try {
+        await expect((await reopened.recover(saved!)).wait()).rejects.toMatchObject({
+          code: "OUTCOME_UNKNOWN",
+          outcome: {
+            status: "partial",
+            snapshot: { nativeId: "snapshot-one" },
+            source: { state: "stopped", observedAt: expect.any(String) },
+          },
+        });
+        const snapshot = await reopened.snapshots.get(error.outcome.snapshot!);
+        expect((await snapshot.inspect()).state).toBe("ready");
+      } finally {
+        await reopened.close();
+      }
+
+      expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 0 });
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each([
+  ["accepted", "metadata"],
+  ["completed", "metadata"],
+  ["accepted", "source"],
+] as const)(
+  "Daytona read outage preserves acknowledged capture identity: %s / %s",
+  async (stage, outage) => {
+    const f = fixture();
+    f.modes.slowReads = stage === "accepted" ? 100 : 0;
+    const originalNow = Date.now;
+    let offset = 0;
+    Date.now = () => originalNow() + offset;
+
+    if (stage === "accepted")
+      f.modes.onSnapshotRead.callback = () => {
+        offset = 61000;
+      };
+
+    const client = await f.connect();
+    let saved;
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const operation = await source.submitSnapshot();
+
+      if (stage === "completed") await operation.wait();
+      saved = JSON.parse(JSON.stringify(operation.reference));
+    } finally {
+      Date.now = originalNow;
+      f.modes.onSnapshotRead.callback = undefined;
+      await client.close();
+    }
+
+    if (outage === "source") f.modes.sourceReadStatus = 500;
+    else f.modes.snapshotReadStatus = 500;
+    const reopened = await f.connect(undefined, "current-key");
+
+    try {
+      const operation = await reopened.recover(saved);
+
+      if (stage === "completed") {
+        expect(await operation.wait()).toMatchObject({
+          snapshot: { reference: { nativeId: "snapshot-one" } },
+          capture: { preserve: "filesystem" },
+          source: { state: "running", observedAt: expect.any(String) },
+        });
+      } else {
+        const error = await operation.wait().catch((error) => error);
+        expect(error).toBeInstanceOf(OutcomeUnknownError);
+
+        if (!(error instanceof SandbarError) || error.outcome?.kind !== "snapshot_capture")
+          throw error;
+        expect(error.outcome).toMatchObject({
+          kind: "snapshot_capture",
+          status: "unknown",
+          snapshot: { nativeId: "snapshot-one", kind: "snapshot" },
+        });
+        expect(error.outcome.capture).toBeUndefined();
+
+        await operation.continue();
+        await expect(operation.wait()).rejects.toMatchObject({
+          code: "OUTCOME_UNKNOWN",
+          outcome: {
+            kind: "snapshot_capture",
+            status: "unknown",
+            snapshot: { nativeId: "snapshot-one", kind: "snapshot" },
+          },
+        });
+      }
+
+      expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: stage === "completed" ? 1 : 0 });
+    } finally {
+      await reopened.close();
+    }
+  },
+);

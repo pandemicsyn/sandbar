@@ -1572,7 +1572,7 @@ test.each(["prepare", "submit"] as const)(
   },
 );
 
-async function interruptedMountedDestroy(mode: "tombstone" | "absent") {
+async function interruptedMountedDestroy(mode: "tombstone" | "absent" | "checkpoint") {
   let deleted = false;
   let deletes = 0;
   let saved: AdapterRecoveryReference | undefined;
@@ -1631,18 +1631,45 @@ async function interruptedMountedDestroy(mode: "tombstone" | "absent") {
       credentials: { apiKey: "fixture" },
       onReference(reference) {
         saved = structuredClone(reference);
+
+        if (
+          mode === "checkpoint" &&
+          z.object({ stage: z.literal("uncertain") }).safeParse(reference.token).success
+        )
+          throw new Error("Durable volume custody write failed");
       },
     });
 
   const client = await connect();
 
   try {
-    await expect(
-      new AdapterSandbox(client, "mounted-box").destroy({
-        storage: "allow-unconfirmed",
-        signal: abort.signal,
-      }),
-    ).rejects.toMatchObject({ code: "WAIT_ABORTED" });
+    const destruction = new AdapterSandbox(client, "mounted-box").destroy({
+      storage: "allow-unconfirmed",
+      signal: abort.signal,
+    });
+
+    if (mode === "checkpoint") {
+      await expect(destruction).rejects.toMatchObject({
+        code: "REFERENCE_SAVE_FAILED",
+        outcome: {
+          kind: "destroy",
+          status: "unknown",
+          retainedVolumes: [
+            {
+              kind: "volume",
+              nativeId: "retained-volume",
+              provider: "daytona",
+              scope: client.scope,
+            },
+          ],
+        },
+      });
+      expect(deletes).toBe(0);
+
+      return;
+    }
+
+    await expect(destruction).rejects.toMatchObject({ code: "WAIT_ABORTED" });
     expect(deletes).toBe(1);
     expect(saved).toBeDefined();
     const reopened = await connect();
@@ -1659,7 +1686,14 @@ async function interruptedMountedDestroy(mode: "tombstone" | "absent") {
         delete token.stage;
         legacy.token = z.json().parse(token);
         const old = await reopened.recover(legacy);
-        await expect(old.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+        await expect(old.wait()).rejects.toMatchObject({
+          code: "OUTCOME_UNKNOWN",
+          outcome: {
+            kind: "destroy",
+            status: "unknown",
+            retainedVolumes: [{ kind: "volume", nativeId: "retained-volume", provider: "daytona" }],
+          },
+        });
       }
 
       const recovered = await (await reopened.recover(persisted)).wait();
@@ -1677,7 +1711,7 @@ async function interruptedMountedDestroy(mode: "tombstone" | "absent") {
   }
 }
 
-test.each(["tombstone", "absent"] as const)(
+test.each(["tombstone", "absent", "checkpoint"] as const)(
   "Daytona interrupted mounted destroy retains custody before DELETE: %s",
   interruptedMountedDestroy,
 );

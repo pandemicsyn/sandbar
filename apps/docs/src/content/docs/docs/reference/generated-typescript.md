@@ -44,10 +44,12 @@ Import from `sandbar-sdk`.
 | `NonzeroExitError`          | re-export |
 | `ObservabilityOptions`      | type      |
 | `OperationHandle`           | type      |
+| `OperationOutcome`          | type      |
 | `OutcomeUnknownError`       | re-export |
 | `outputText`                | re-export |
 | `PreparedAdapterAttempt`    | re-export |
 | `PreparedImage`             | type      |
+| `RecoveredOperation`        | type      |
 | `RecoveryReference`         | type      |
 | `ResourceKind`              | re-export |
 | `ResourceReference`         | re-export |
@@ -143,6 +145,7 @@ Import from `sandbar-adapter`.
 | `observeOperation`             | re-export |
 | `OperationInput`               | type      |
 | `OperationKind`                | type      |
+| `OperationOutcome`             | re-export |
 | `operationParts`               | function  |
 | `OperationParts`               | type      |
 | `outcomeKind`                  | function  |

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ProcessFixture } from "./processes.ts";
+import { checkRecoveryTypes } from "./recovery-types.mjs";
 import { z } from "zod";
 
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -874,6 +875,7 @@ try {
   await checkTypes(custom, "custom");
   await checkTypes(service, "service");
   await checkTypes(direct, "direct");
+  await checkRecoveryTypes(direct, root, run);
   await checkTypes(daytona, "daytona");
   await checkTypes(modal, "modal");
   await checkTypes(e2b, "e2b");

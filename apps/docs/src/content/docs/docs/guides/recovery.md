@@ -1,52 +1,42 @@
 ---
-title: Errors and recovery
-description: Observe submitted operations without replaying possibly applied mutations.
+title: Results, errors and saved resources
+description: Save resource identities and choose application recovery policy.
 ---
 
-Mutations can complete even if a response is lost. `submitCreate()` and `box.submitExec()` return an `OperationHandle` with a serializable `reference`, `observe()` and `wait({ signal, pollMs })`. Normal `create()` and `exec()` submit and wait in one call.
-
-For an E2B connection using the `base` template:
+Ordinary calls return useful results. Applications own persistence and decide what to do after failure.
 
 ```ts
-const pending = await sandbar.sandboxes.submitCreate({
-  environment: Image.prepared("base"),
-});
-await saveReference(pending.reference);
-const box = await pending.wait();
+const captured = await sandbox.snapshot();
+console.log(captured.snapshot.provider, captured.snapshot.id);
+await database.save(captured.snapshot.reference);
+
+// Later, using current credentials and the matching provider/scope:
+const snapshot = await freshClient.snapshots.get(savedReference);
+const restored = await snapshot.restore({ networkPolicy: "blocked" });
 ```
 
-`observe()` returns `null` while pending. A `WaitAbortedError` after submission carries a reference and the original abort reason. Aborting a wait **does not cancel provider compute**. An `OutcomeUnknownError` also carries a reference. Save either reference and call `recover(reference)` from a client configured with the same verified provider scope. Recovery only observes; it never resubmits the mutation.
+Save the complete versioned reference, rather than just its display ID. It includes provider, scope and immutable native selectors. E2B captures select an exact build, while the containing template ID is also needed for deletion. A changed default tag cannot replace the captured build. Volume handles also expose `provider`, `id` and `reference`.
 
-SDK operation handles have `durability: 'process'`. A new caller can import a saved reference only if the provider retains matching native evidence and the caller reconfigures credentials and scope. A crash after submission but before saving the reference may lose the pointer. Never blindly retry an unknown effect.
+Daytona captures filesystem state and may stop and restart the source. E2B captures filesystem and memory, with native pause/resume behavior. The returned `capture` describes actual guarantees; `source` reports the state observed when the call finishes. An `observedAt` timestamp describes a historical observation, not fresh provider state. Snapshot restore mount support remains limited to the provider's supported contract.
 
-`close()` stops client-owned waiting and never destroys a sandbox. Call `destroy()` explicitly and preserve a reference if destruction becomes uncertain. If native discovery is unavailable, an unknown result stays unknown.
+A failure in `database.save` after the SDK returns is an application storage error: the caller still has the successful capture. There is a crash window between native creation and saving its reference. Applications choose storage and recovery policy; Sandbar does not promise exactly-once creation.
 
-An adapter may register a release hook for a transport it owns. `close()` invokes that hook once and stops SDK-owned waiting; it does not prove provider compute was canceled.
+## Partial and unknown outcomes
 
-## Recognize the error
+If capture completes but a source restart definitively fails, `SandbarError.code` is `SOURCE_RESTART_FAILED` and its `effect` is `partial`. Its typed `outcome` contains the snapshot reference (including provider), confirmed capture details and `restart.status: "failed"`. An uncertain restart stays `OUTCOME_UNKNOWN`, preserving the same useful result with `restart.status: "uncertain"`. Neither requires repeating capture.
 
-| Error                 | Meaning                                            | Next action                                              |
-| --------------------- | -------------------------------------------------- | -------------------------------------------------------- |
-| `NonzeroExitError`    | The command completed with a nonzero exit.         | Inspect `error.result`, including stderr and exit code.  |
-| `NoExitCodeError`     | Execution completed without a confirmed exit code. | Inspect captured output; do not assume success.          |
-| `OutcomeUnknownError` | A mutation may have taken effect.                  | Persist `error.reference` and observe it.                |
-| `WaitAbortedError`    | Local waiting stopped after submission.            | Save the reference; compute may still be running.        |
-| `SandbarError`        | A structured SDK error.                            | Inspect `code` and `effect` before choosing a next step. |
+A lost native response throws `OutcomeUnknownError`: an effect may have occurred. Any known IDs, native operation tokens or partial results are retained where available. If no snapshot identity was received, the SDK cannot manufacture one. Existing `snapshots.list`, `volumes.list`, `get` and `inspect` can help investigate where supported, but listing alone cannot associate an artifact with a failed request or prove no effect. Both built-in providers report snapshot inventory coverage as `provider-scope`. Inventory entries may lack provenance needed for restore or deletion; check the returned reference and inspect its supported guarantees.
 
-`recover(savedReference)` returns an operation handle; call `observe()` for one read or `wait()` to continue observing. An `observe()` result of `null` means completion is not yet known, not that the operation failed.
+Known volume references accompany uncertain compute cleanup in `outcome.retainedVolumes`. Compute removal and storage deletion are separate operations. Existing durable-storage checks and explicit deletion safeguards still apply.
 
-## Persist references when it matters
+The [compiled example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/recovery-outcomes.ts) demonstrates application persistence, fresh reopening and partial results.
 
-The sample's `saveReference` is your application's persistence function. Await durable writes before moving on. For a checkpoint before native submission, pass `onReference` through the explicit adapter connection options or use the advanced `operations.prepare(...).submit(..., { beforeSubmit })` lifecycle. See [Asynchronous adapter recovery](/docs/guides/adapter-recovery/).
+## Existing asynchronous operations
 
-`onReference` is awaited for the initial reference, provider stage checkpoints, and pending observation updates. The provider records a dispatch-may-have-occurred marker before every stage effect and checkpoints newly learned acknowledgements and resource identities. If persistence fails before a stage dispatch, that effect is not sent; after an effect, preserve the latest reference carried by the error. Resource and operation references are bounded versioned JSON owned by your application, without a required Sandbar database or provider-key signature.
+The existing `submit*`, `recover`, `observe`, `wait` and explicit `continue` APIs remain available for native pending operations. `recover`, `observe` and `wait` do not replay mutations. An operation reference is useful only where the provider retains matching native identity or correlation; it cannot universally discover a missing ID. `null` observation means completion is not known.
 
-For E2B credential rotation, configure `teamId` so authenticated verification establishes a stable native team scope. E2B's default scope is tied to the authenticated API key; rotating it changes that scope. Daytona's scope includes its organization, target, endpoint, and selected network policy. Reconnect with matching scope to recover prior operations.
+`WaitAbortedError` stops local waiting and carries the operation reference. It does not cancel provider compute. `close()` stops client-owned waiting without destroying sandboxes. `NonzeroExitError` and `NoExitCodeError` preserve command output in `result`.
 
-Direct operations with supported multi-stage recovery expose `continue()`. `recover()`, `observe()`, `inspect()` and `wait()` stay read-only. Explicit continuation may dispatch a configured next stage proven never submitted, such as restarting a stopped Daytona source after a delayed capture completes. It does not replay an uncertain stage. Serialize concurrent continuations across processes with your application's own lease or compare-and-swap; a local handle guard is not a distributed exactly-once guarantee.
+Legacy explicit adapter connection options still support `onReference` for callers already using checkpointed operation references. This compatibility API is not required by ordinary snapshot/reference persistence. Callback failure stops subsequent stage effects; `REFERENCE_SAVE_FAILED` preserves any known partial native result and the latest operation `reference`, including the checkpoint that could not be saved. Save that reference again or pass it to `recover()` before deciding how to continue. Native stage guards and saved operation formats remain supported. See [Asynchronous adapter recovery](/docs/guides/adapter-recovery/) for adapter authoring details.
 
-```ts
-const operation = await client.recover(savedReference);
-await operation.continue(); // Explicit mutation; persist checkpoints through onReference.
-const result = await operation.wait(); // Read-only observation.
-```
+For E2B credential rotation, configure and verify `teamId` to establish a stable team scope. Daytona scope includes organization, target, endpoint and selected network policy. Reopening checks current credentials and matching scope; references grant no authorization.

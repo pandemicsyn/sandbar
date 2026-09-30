@@ -1,5 +1,5 @@
 import { freezeReference } from "./freeze-reference";
-import { certifyRecoveryReference } from "./recovery-diagnostics";
+import { certifyRecoveryReference, certifyOperationReference } from "./recovery-diagnostics";
 import {
   ReferenceSchema,
   CaptureExpectation,
@@ -28,8 +28,8 @@ import {
 } from "sandbar-adapter";
 import { z } from "zod";
 import {
+  AdapterVolume,
   resourceManagers,
-  decodeResourceResult,
   decodeCapture,
   type SnapshotResult,
   type WaitOptions,
@@ -38,10 +38,15 @@ import {
   ResourceReference,
   MountSpec as importMountSpec,
   assertResourceScope,
+  assertResourceIdentity,
+  type ArtifactDeletionResult,
+  type DestroyValue,
   type OperationInput,
 } from "sandbar-adapter";
 import {
   AdapterError,
+  AdapterCheckpointError,
+  OperationOutcome,
   connectAdapter,
   observeOperation,
   prepareOperation,
@@ -146,8 +151,9 @@ function identity() {
 function asUnknown(
   ref: AdapterRecoveryReference,
   reason?: string,
+  outcome?: import("sandbar-adapter").OperationOutcome,
 ): OutcomeUnknownError<AdapterRecoveryReference> {
-  return new OutcomeUnknownError(ref, reason);
+  return new OutcomeUnknownError(ref, reason, outcome);
 }
 
 function unsupported(feature: string): never {
@@ -162,8 +168,12 @@ function fileReadLimit(maxBytes: number): number {
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- AbortSignal.reason may be any JavaScript value and is preserved in WaitAbortedError.
-function abortWaiting(ref: AdapterRecoveryReference, reason: unknown): never {
-  throw new WaitAbortedError(ref, reason);
+function abortWaiting(
+  ref: AdapterRecoveryReference,
+  reason: AbortSignal["reason"],
+  outcome?: import("sandbar-adapter").OperationOutcome,
+): never {
+  throw new WaitAbortedError(ref, reason, outcome);
 }
 
 async function waitForSubmission<T>(
@@ -214,9 +224,23 @@ async function readWhileOpen<T>(client: AdapterDirectClient, work: Promise<T>): 
 
 export type AdapterCapabilities = DirectCapabilities;
 
-export class AdapterOperation<T> {
+export type RecoveredOperation =
+  | AdapterOperation<AdapterSandbox, "create" | "snapshot_restore">
+  | AdapterOperation<SnapshotResult, "snapshot_capture">
+  | AdapterOperation<AdapterVolume, "volume_create">
+  | AdapterOperation<ArtifactDeletionResult, "snapshot_delete" | "volume_delete">
+  | AdapterOperation<ImageBuildResult, "image_build">
+  | AdapterOperation<ExecOutput, "exec">
+  | AdapterOperation<DestroyValue, "destroy">
+  | AdapterOperation<void, "file_write">;
+
+export class AdapterOperation<T, K extends OperationKind = OperationKind> {
   readonly durability = "process" as const;
   private first: RuntimeResult | undefined;
+  #reference: AdapterRecoveryReference;
+  get reference(): AdapterRecoveryReference {
+    return this.#reference;
+  }
   private continuing = false;
   private revision = 0;
   private persistence: Promise<void> = Promise.resolve();
@@ -226,14 +250,18 @@ export class AdapterOperation<T> {
   private nextPollAt = 0;
   constructor(
     private readonly client: AdapterDirectClient,
-    public reference: AdapterRecoveryReference,
+    reference: AdapterRecoveryReference,
     private readonly decode: (value: RuntimeResult, ref: AdapterRecoveryReference) => T,
     first?: RuntimeResult,
+    // SAFETY: default K is OperationKind; internal narrowed constructors pass a validated kind.
+    readonly kind: K = reference.kind as K,
   ) {
+    this.#reference = reference;
+    certifyOperationReference(this, () => this.#reference);
     this.first = first;
 
     if (first?.kind === "pending")
-      this.reference = sealedReference({
+      this.#reference = sealedReference({
         ...reference,
         token: first.token,
         tokenVersion: first.version,
@@ -282,7 +310,7 @@ export class AdapterOperation<T> {
       await this.persistence;
 
       if (this.persistedReference !== this.reference) await this.persistReference();
-      this.reference = (await this.client.recover(this.reference)).reference;
+      this.#reference = (await this.client.recover(this.reference)).reference;
       this.first = await continueOperation(
         this.client.session,
         this.reference.kind,
@@ -299,13 +327,13 @@ export class AdapterOperation<T> {
         this.reference,
         signal,
         async (token, tokenVersion) => {
-          this.reference = sealedReference({ ...this.reference, token, tokenVersion });
+          this.#reference = sealedReference({ ...this.reference, token, tokenVersion });
           await this.persistReference();
         },
       );
 
       if (this.first.kind === "pending") {
-        this.reference = sealedReference({
+        this.#reference = sealedReference({
           ...this.reference,
           token: this.first.token,
           tokenVersion: this.first.version,
@@ -315,6 +343,15 @@ export class AdapterOperation<T> {
 
       return this;
     } catch (error) {
+      if (error instanceof AdapterCheckpointError && error.outcome)
+        throw new SandbarError(
+          "REFERENCE_SAVE_FAILED",
+          error.message,
+          "possible",
+          this.client.checkedOutcome(this.reference, error.outcome),
+          this.reference,
+        );
+
       if (error instanceof AdapterError && error.code === "UNSUPPORTED")
         throw new UnsupportedFeatureError("operation continuation", [error.message]);
       throw asUnknown(
@@ -345,7 +382,14 @@ export class AdapterOperation<T> {
     if (this.continuing)
       throw new SandbarError("CONFLICT", "Operation continuation is already active");
 
-    if (signal.aborted) abortWaiting(this.reference, signal.reason);
+    if (signal.aborted)
+      abortWaiting(
+        this.reference,
+        signal.reason,
+        this.first?.kind === "unknown"
+          ? this.client.checkedOutcome(this.reference, this.first.outcome)
+          : undefined,
+      );
     const revision = this.revision;
 
     if (this.terminal) {
@@ -363,7 +407,7 @@ export class AdapterOperation<T> {
       this.pendingAt = Date.now();
       this.nextPollAt = this.pendingAt + result.pollAfterMs;
       this.revision++;
-      this.reference = sealedReference({
+      this.#reference = sealedReference({
         ...this.reference,
         token: result.token,
         tokenVersion: result.version,
@@ -417,7 +461,14 @@ export class AdapterOperation<T> {
       result = observed;
     }
 
-    if (signal.aborted) abortWaiting(this.reference, signal.reason);
+    if (signal.aborted)
+      abortWaiting(
+        this.reference,
+        signal.reason,
+        result.kind === "unknown"
+          ? this.client.checkedOutcome(this.reference, result.outcome)
+          : undefined,
+      );
 
     if (revision !== this.revision) return null;
 
@@ -425,7 +476,7 @@ export class AdapterOperation<T> {
       this.pendingAt = Date.now();
       this.nextPollAt = this.pendingAt + result.pollAfterMs;
       this.revision++;
-      this.reference = sealedReference({
+      this.#reference = sealedReference({
         ...this.reference,
         token: result.token,
         tokenVersion: result.version,
@@ -435,7 +486,13 @@ export class AdapterOperation<T> {
       return null;
     }
 
-    if (result.kind === "unknown") throw asUnknown(this.reference, result.reason);
+    if (result.kind === "unknown") {
+      const outcome = this.client.checkedOutcome(this.reference, result.outcome);
+
+      if (outcome?.kind === "snapshot_capture" && outcome.restart?.status === "failed")
+        throw new SandbarError("SOURCE_RESTART_FAILED", result.reason, "partial", outcome);
+      throw asUnknown(this.reference, result.reason, outcome);
+    }
 
     this.pendingAt = null;
     this.nextPollAt = 0;
@@ -485,7 +542,14 @@ export class AdapterOperation<T> {
       throw new SandbarError("INVALID_ARGUMENT", "Invalid polling interval");
 
     while (true) {
-      if (this.client.isClosed()) abortWaiting(this.reference, this.client.signal.reason);
+      if (this.client.isClosed())
+        abortWaiting(
+          this.reference,
+          this.client.signal.reason,
+          this.first?.kind === "unknown"
+            ? this.client.checkedOutcome(this.reference, this.first.outcome)
+            : undefined,
+        );
 
       const confirmedRejection =
         this.first?.kind === "rejected" ||
@@ -495,7 +559,13 @@ export class AdapterOperation<T> {
           this.terminal.error.effect === "none");
 
       if (options.signal?.aborted && !confirmedRejection)
-        abortWaiting(this.reference, options.signal.reason);
+        abortWaiting(
+          this.reference,
+          options.signal.reason,
+          this.first?.kind === "unknown"
+            ? this.client.checkedOutcome(this.reference, this.first.outcome)
+            : undefined,
+        );
 
       if (this.pendingAt !== null) {
         const eligibleAt = Math.max(this.nextPollAt, this.pendingAt + pollMs);
@@ -958,7 +1028,9 @@ export class PreparedAdapterAttempt {
         this.client.signal,
         this.kind === "snapshot_delete" || this.kind === "volume_delete",
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof AdapterCheckpointError && error.outcome) throw error;
+
       if (signal.aborted)
         return {
           kind: "unknown",
@@ -1432,8 +1504,8 @@ export class AdapterDirectClient {
       options,
     );
   }
-  async submit<T>(
-    kind: OperationKind,
+  async submit<T, K extends OperationKind = OperationKind>(
+    kind: K,
     input: OperationInput,
     decode: (result: RuntimeResult, ref: AdapterRecoveryReference) => T,
     options: {
@@ -1445,7 +1517,7 @@ export class AdapterDirectClient {
       file?: { path: string; bytes: number };
       maxOutputBytes?: number;
     } = {},
-  ): Promise<AdapterOperation<T>> {
+  ): Promise<AdapterOperation<T, K>> {
     this.ensureOpen();
     assertSignal(options.signal);
     const prepared = await this.operations.prepare(kind, input, options);
@@ -1517,11 +1589,60 @@ export class AdapterDirectClient {
 
       if (error instanceof BeforeSubmitError) throw error.original;
 
+      if (error instanceof AdapterCheckpointError && error.outcome)
+        throw new SandbarError(
+          "REFERENCE_SAVE_FAILED",
+          error.message,
+          "possible",
+          this.checkedOutcome(reference, error.outcome),
+          reference,
+        );
+
       if (waiting.aborted) abortWaiting(reference, waiting.reason);
       throw asUnknown(reference, "Provider submission outcome is unknown");
     }
 
-    return new AdapterOperation(this, reference, decode, first);
+    return new AdapterOperation(this, reference, decode, first, kind);
+  }
+  checkedOutcome(
+    reference: AdapterRecoveryReference,
+    outcome?: import("sandbar-adapter").OperationOutcome,
+  ): import("sandbar-adapter").OperationOutcome | undefined {
+    if (!outcome) return undefined;
+    const parsed = OperationOutcome.safeParse(outcome);
+
+    if (!parsed.success) throw asUnknown(reference, "Provider partial result failed validation");
+    const checked = parsed.data;
+
+    if (checked.kind !== reference.kind)
+      throw asUnknown(reference, "Provider partial result does not match operation");
+
+    const resources =
+      checked.kind === "snapshot_capture"
+        ? checked.snapshot
+          ? [checked.snapshot]
+          : []
+        : checked.retainedVolumes;
+
+    try {
+      for (const resource of resources)
+        assertResourceScope(resource, { provider: this.provider, scope: this.scope });
+    } catch {
+      throw asUnknown(reference, "Provider partial result scope differs");
+    }
+
+    if (checked.kind === "snapshot_capture" && checked.capture && reference.capture) {
+      const expected = reference.capture.profile;
+
+      if (
+        checked.capture.preserve !== expected.preserve ||
+        checked.capture.interruption !== expected.interruption ||
+        checked.capture.restoreExecution !== expected.restoreExecution
+      )
+        throw asUnknown(reference, "Provider partial capture guarantees differ");
+    }
+
+    return checked;
   }
   async persistReference(reference: AdapterRecoveryReference): Promise<void> {
     try {
@@ -1531,7 +1652,7 @@ export class AdapterDirectClient {
     }
   }
 
-  async recover(reference: AdapterRecoveryReference): Promise<AdapterOperation<unknown>> {
+  async recover(reference: AdapterRecoveryReference): Promise<RecoveredOperation> {
     this.ensureOpen();
     reference = sealedReference(reference);
 
@@ -1577,61 +1698,153 @@ export class AdapterDirectClient {
     )
       throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox is missing");
 
-    return new AdapterOperation(this, reference, (result, ref) => {
+    const completed = (result: RuntimeResult, ref: AdapterRecoveryReference) => {
       if (result.kind !== "completed") throw asUnknown(ref);
-      const value = result.value;
 
-      if (
-        [
-          "snapshot_capture",
-          "snapshot_restore",
-          "snapshot_delete",
-          "volume_create",
-          "volume_delete",
-        ].includes(ref.kind)
-      )
-        return decodeResourceResult(this, result, ref);
+      return result.value;
+    };
 
-      if (ref.kind === "create" && "id" in value) {
-        if (
-          ref.mounts?.length &&
-          (value.state !== "running" || JSON.stringify(value.mounts) !== JSON.stringify(ref.mounts))
-        )
-          throw asUnknown(ref, "Recovered mounts not confirmed ready");
+    switch (reference.kind) {
+      case "snapshot_capture":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
 
-        return new AdapterSandbox(this, value.id);
-      }
+            if (!("snapshot" in value)) throw asUnknown(ref);
 
-      if (ref.kind === "image_build" && "preparedId" in value)
-        return {
-          prepared: {
-            kind: "prepared",
-            value: value.preparedId,
-            provider: this.provider,
-            scope: structuredClone(this.scope),
+            return decodeCapture(this, value, ref);
           },
-          retainedResources: value.retainedResources,
-        };
+          undefined,
+          "snapshot_capture",
+        );
+      case "snapshot_restore":
+      case "create":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
 
-      if (
-        ref.kind === "exec" &&
-        "stdout" in value &&
-        value.stdout instanceof Uint8Array &&
-        value.stderr instanceof Uint8Array
-      )
-        return checkExec(execOutput(value.exitCode, value.stdout, value.stderr, value.truncated));
+            if (!("id" in value) || (ref.kind === "snapshot_restore" && value.state !== "running"))
+              throw asUnknown(ref);
 
-      if (ref.kind === "destroy" && "computeStopped" in value && value.computeStopped) return value;
+            if (
+              ref.mounts?.length &&
+              (value.state !== "running" ||
+                JSON.stringify(value.mounts) !== JSON.stringify(ref.mounts))
+            )
+              throw asUnknown(ref, "Recovered mounts not confirmed ready");
 
-      if (
-        ref.kind === "file_write" &&
-        "bytesWritten" in value &&
-        value.bytesWritten === ref.file?.bytes
-      )
-        return;
-      throw asUnknown(ref, "Recovered completion mismatches the operation");
-    });
+            return new AdapterSandbox(this, value.id);
+          },
+          undefined,
+          reference.kind,
+        );
+      case "snapshot_delete":
+      case "volume_delete":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
+
+            if (!("deleted" in value) || !ref.resource) throw asUnknown(ref);
+            assertResourceIdentity(value.reference, ref.resource);
+
+            return value;
+          },
+          undefined,
+          reference.kind,
+        );
+      case "volume_create":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
+
+            if (!("filesystem" in value)) throw asUnknown(ref);
+
+            return new AdapterVolume(this, value.reference);
+          },
+          undefined,
+          "volume_create",
+        );
+      case "image_build":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
+
+            if (!("preparedId" in value)) throw asUnknown(ref);
+
+            return {
+              prepared: {
+                kind: "prepared" as const,
+                value: value.preparedId,
+                provider: this.provider,
+                scope: structuredClone(this.scope),
+              },
+              retainedResources: value.retainedResources,
+            };
+          },
+          undefined,
+          "image_build",
+        );
+      case "exec":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
+
+            if (
+              !("stdout" in value) ||
+              !(value.stdout instanceof Uint8Array) ||
+              !(value.stderr instanceof Uint8Array)
+            )
+              throw asUnknown(ref);
+
+            return checkExec(
+              execOutput(value.exitCode, value.stdout, value.stderr, value.truncated),
+            );
+          },
+          undefined,
+          "exec",
+        );
+      case "destroy":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
+
+            if (!("computeStopped" in value) || !value.computeStopped) throw asUnknown(ref);
+
+            return value;
+          },
+          undefined,
+          "destroy",
+        );
+      case "file_write":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
+
+            if (!("bytesWritten" in value) || value.bytesWritten !== ref.file?.bytes)
+              throw asUnknown(ref);
+          },
+          undefined,
+          "file_write",
+        );
+    }
   }
+
   close(): Promise<void> {
     if (!this.closePromise) {
       this.closed = true;

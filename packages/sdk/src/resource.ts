@@ -1,3 +1,4 @@
+import type { OperationOutcome } from "sandbar-adapter";
 import { certifyRecoveryReference } from "./recovery-diagnostics";
 import {
   SnapshotRequest,
@@ -165,6 +166,8 @@ export class SandbarError extends Error {
     readonly code: string,
     message: string,
     readonly effect: SafeError["effect"] = "none",
+    readonly outcome?: OperationOutcome,
+    readonly reference?: RecoveryReference | AdapterRecoveryReference,
   ) {
     super(message);
     this.name = "SandbarError";
@@ -186,9 +189,10 @@ export class OutcomeUnknownError<
 > extends SandbarError {
   constructor(
     readonly reference: R,
-    message = "Outcome unknown; observe this reference without resubmitting",
+    message = "Outcome unknown; investigate without blindly resubmitting",
+    outcome?: OperationOutcome,
   ) {
-    super("OUTCOME_UNKNOWN", message, "possible");
+    super("OUTCOME_UNKNOWN", message, "possible", outcome);
     this.name = "OutcomeUnknownError";
   }
 }
@@ -200,11 +204,13 @@ export class WaitAbortedError<
   constructor(
     readonly reference: R,
     reason: AbortSignal["reason"],
+    outcome?: OperationOutcome,
   ) {
     super(
       "WAIT_ABORTED",
       "Waiting stopped after submission; recover with this reference",
       "possible",
+      outcome,
     );
     this.name = "AbortError";
     this.cause = reason;

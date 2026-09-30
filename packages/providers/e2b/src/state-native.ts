@@ -3,6 +3,8 @@ import { resourceHistory } from "./resource-history";
 import {
   AdapterError,
   AdapterCheckpointError,
+  type OperationOutcome,
+  type SnapshotCaptureValue,
   assertResourceScope,
   resolveSnapshot,
   ResourceReference,
@@ -172,6 +174,8 @@ export function e2bState(input: {
     const info = snapshotInfo(reference.nativeId, reference.ownership);
     info.reference.generation = reference.generation;
     info.state = build.status === "ready" ? "ready" : "unknown";
+
+    if (build.status === "building" || build.status === "waiting") info.state = "creating";
     const evidence = history.read(reference);
 
     if (
@@ -410,6 +414,34 @@ export function e2bState(input: {
     };
   }
 
+  function captureOutcome(
+    token: z.infer<typeof CaptureToken>,
+    info?: SnapshotInfo,
+    source?: SnapshotCaptureValue["source"],
+  ): Extract<OperationOutcome, { kind: "snapshot_capture" }> {
+    let snapshot: Extract<OperationOutcome, { kind: "snapshot_capture" }>["snapshot"];
+
+    if (token.snapshot?.kind === "snapshot") snapshot = { ...token.snapshot, kind: "snapshot" };
+    else if (token.snapshotId) {
+      snapshot = { ...ref("snapshot", token.snapshotId), kind: "snapshot" };
+
+      if (token.generation) snapshot.generation = token.generation;
+    }
+
+    const confirmed = info?.state === "ready" && !!snapshot?.generation;
+
+    return {
+      kind: "snapshot_capture",
+      status: confirmed ? "partial" : "unknown",
+      snapshot,
+      capture: confirmed
+        ? { preserve: "filesystem+memory", interruption: "pause", restoreExecution: "resume" }
+        : undefined,
+      source,
+      restart: confirmed && source?.state !== "running" ? { status: "uncertain" } : undefined,
+    };
+  }
+
   const fields: Pick<
     AdapterSession,
     | "snapshotProfiles"
@@ -497,9 +529,16 @@ export function e2bState(input: {
 
         // Save allocation identity before fallible generation reads. A later default lookup
         // cannot repair a missing first-generation observation.
-        await ctx.checkpoint(token);
-        let info: SnapshotInfo;
+        try {
+          await ctx.checkpoint(token);
+        } catch (error) {
+          if (error instanceof AdapterCheckpointError) error.outcome = captureOutcome(token);
+          throw error;
+        }
+
+        let info: SnapshotInfo | undefined;
         let actual: E2BRecord | null;
+        let observedSource: SnapshotCaptureValue["source"] | undefined;
 
         try {
           const native = await need().template(templateId);
@@ -516,7 +555,10 @@ export function e2bState(input: {
             tags[0]?.buildId !== native.builds[0]?.buildId ||
             !z.uuid().safeParse(native.builds[0]?.buildId).success
           )
-            return ctx.pending(token, { pollAfterMs: 500 });
+            return ctx.unknown(
+              "Allocated snapshot build identity is unconfirmed; do not adopt a later default",
+              captureOutcome(token),
+            );
           token.generation = native.builds[0]!.buildId;
           const captured = ref("snapshot", templateId, "verified-created");
           captured.generation = token.generation;
@@ -542,16 +584,44 @@ export function e2bState(input: {
           token.snapshot = structuredClone(info.reference);
           await ctx.checkpoint(token);
           actual = await input.find(box.id);
-        } catch (error) {
-          if (error instanceof AdapterCheckpointError) throw error;
 
-          return ctx.pending(token, { pollAfterMs: 500 });
+          if (actual)
+            observedSource = {
+              state: actual.state === "running" ? "running" : "suspended",
+              connections: info.state === "ready" ? "dropped" : "unknown",
+              observedAt: new Date().toISOString(),
+            };
+        } catch (error) {
+          if (error instanceof AdapterCheckpointError) {
+            error.outcome = captureOutcome(token, info, observedSource);
+            throw error;
+          }
+
+          return ctx.unknown(
+            "Captured resource or source observation is unavailable; do not repeat capture",
+            captureOutcome(token, info, observedSource),
+          );
         }
 
-        if (!actual || actual.state !== "running" || info.state !== "ready")
-          return ctx.pending(token, { pollAfterMs: 500 });
+        if (!actual || actual.state !== "running")
+          return ctx.unknown(
+            "Original source or captured build outcome is unconfirmed; inspect the known snapshot without repeating capture",
+            captureOutcome(token, info, observedSource),
+          );
 
-        if (ctx.signal.aborted) return ctx.pending(token, { pollAfterMs: 0 });
+        if (ctx.signal.aborted)
+          return ctx.unknown(
+            "Local wait stopped after capture; do not repeat capture",
+            captureOutcome(token, info, observedSource),
+          );
+
+        if (info?.state === "creating") return ctx.pending(token, { pollAfterMs: 500 });
+
+        if (info?.state !== "ready")
+          return ctx.unknown(
+            "Captured build readiness is unconfirmed",
+            captureOutcome(token, info, observedSource),
+          );
 
         return {
           snapshot: info,
@@ -560,7 +630,11 @@ export function e2bState(input: {
             interruption: "pause",
             restoreExecution: "resume",
           },
-          source: { state: "running", connections: "dropped" },
+          source: {
+            state: "running",
+            connections: "dropped",
+            observedAt: observedSource?.observedAt,
+          },
           retainedResources: [info.reference],
         };
       },
@@ -587,7 +661,10 @@ export function e2bState(input: {
           token.data.sourceId !== attempt.sandbox?.id
         )
           return ctx.unknown(
-            "Capture may retain storage; no acknowledged artifact identity; do not replay",
+            "Capture may retain storage; original build identity is unavailable; inspect known allocation without replay",
+            token.success && token.data.sourceId === attempt.sandbox?.id
+              ? captureOutcome(token.data)
+              : undefined,
           );
 
         check(token.data.snapshot);
@@ -605,16 +682,42 @@ export function e2bState(input: {
         )
           return ctx.unknown("Saved snapshot custody differs from capture acknowledgement");
 
-        const box = await input.find(token.data.sourceId);
-
-        if (!box || box.volumeMounts?.length)
-          return ctx.unknown("Source mount provenance unavailable");
         knownSnapshots.set(token.data.snapshotId, { sourceId: token.data.sourceId });
+        let info: SnapshotInfo | undefined;
+        let box: E2BRecord | null;
+        let observedSource: SnapshotCaptureValue["source"] | undefined;
 
-        const info = await snapshotInspect(token.data.snapshot);
+        try {
+          // Captured build readiness is independent of the source's lifetime.
+          info = await snapshotInspect(token.data.snapshot);
+          box = await input.find(token.data.sourceId);
 
-        if (box.state !== "running" || info.state !== "ready")
-          return ctx.unknown("Original source or captured build outcome is unconfirmed");
+          if (box)
+            observedSource = {
+              state: box.state === "running" ? "running" : "suspended",
+              connections: info.state === "ready" ? "dropped" : "unknown",
+              observedAt: new Date().toISOString(),
+            };
+        } catch {
+          return ctx.unknown(
+            "Captured resource or source observation is unavailable; do not repeat capture",
+            captureOutcome(token.data, info, observedSource),
+          );
+        }
+
+        if (!box || box.volumeMounts?.length || box.state !== "running")
+          return ctx.unknown(
+            "Original source or captured build outcome is unconfirmed; inspect the retained snapshot without repeating capture",
+            captureOutcome(token.data, info, observedSource),
+          );
+
+        if (info.state === "creating") return ctx.pending(token.data, { pollAfterMs: 500 });
+
+        if (info.state !== "ready")
+          return ctx.unknown(
+            "Captured build readiness is unconfirmed",
+            captureOutcome(token.data, info, observedSource),
+          );
 
         return {
           snapshot: info,
@@ -623,7 +726,11 @@ export function e2bState(input: {
             interruption: "pause",
             restoreExecution: "resume",
           },
-          source: { state: "running", connections: "dropped" },
+          source: {
+            state: "running",
+            connections: "dropped",
+            observedAt: observedSource?.observedAt,
+          },
           retainedResources: [info.reference],
         };
       },
@@ -640,7 +747,54 @@ export function e2bState(input: {
         )
           return ctx.reject("UNAVAILABLE", "Capture cancelled before dispatch");
 
-        return ctx.unknown("Snapshot capture cannot be replayed");
+        if (token.success && token.data.state === "rejected")
+          return ctx.unknown("Rejected checkpoint contains contradictory acknowledgement evidence");
+
+        if (!token.success || token.data.sourceId !== attempt.sandbox?.id)
+          return ctx.unknown("Snapshot capture cannot be replayed; acknowledgement differs");
+
+        if (!token.data.generation || !token.data.snapshot)
+          return ctx.unknown("Snapshot capture cannot be replayed", captureOutcome(token.data));
+
+        check(token.data.snapshot);
+        history.owned(token.data.snapshot);
+        const evidence = history.read(token.data.snapshot);
+
+        if (
+          token.data.snapshot.kind !== "snapshot" ||
+          token.data.snapshot.nativeId !== token.data.snapshotId ||
+          token.data.snapshot.generation !== token.data.generation ||
+          evidence?.sourceId !== token.data.sourceId ||
+          evidence.consistency !== token.data.consistency ||
+          evidence.preserve !== "filesystem+memory" ||
+          evidence.mounts !== "none"
+        )
+          return ctx.unknown("Saved snapshot custody differs from capture acknowledgement");
+
+        let info: SnapshotInfo | undefined;
+        let observedSource: SnapshotCaptureValue["source"] | undefined;
+
+        try {
+          info = await snapshotInspect(token.data.snapshot);
+          const box = await input.find(token.data.sourceId);
+
+          if (box)
+            observedSource = {
+              state: box.state === "running" ? "running" : "suspended",
+              connections: info.state === "ready" ? "dropped" : "unknown",
+              observedAt: new Date().toISOString(),
+            };
+        } catch {
+          return ctx.unknown(
+            "Captured resource or source observation is unavailable; capture cannot be replayed",
+            captureOutcome(token.data, info, observedSource),
+          );
+        }
+
+        return ctx.unknown(
+          "Snapshot capture cannot be replayed",
+          captureOutcome(token.data, info, observedSource),
+        );
       },
     },
     snapshotInspect,

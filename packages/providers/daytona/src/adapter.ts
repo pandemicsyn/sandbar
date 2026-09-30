@@ -3,6 +3,8 @@ import { daytonaState } from "./state-native";
 import { MountDurability as importMountDurability, type ResourceReference } from "sandbar-adapter";
 import {
   AdapterError,
+  AdapterCheckpointError,
+  type OperationOutcome,
   defineAdapter,
   type AttemptContext,
   type ObserveContext,
@@ -33,6 +35,20 @@ const ImageToken = Token.extend({
     .regex(/^[A-Za-z0-9._:-]{1,128}$/)
     .optional(),
 });
+
+function destroyOutcome(token: z.infer<typeof DestroyToken>): OperationOutcome {
+  return {
+    kind: "destroy",
+    status: "unknown",
+    retainedVolumes:
+      token.mountDurability?.map((mount) => {
+        if (mount.volume.kind !== "volume")
+          throw new AdapterError("INTERNAL", "Invalid retained volume identity");
+
+        return { ...mount.volume, kind: "volume" as const };
+      }) ?? [],
+  };
+}
 
 const ExecToken = z.strictObject({
   submissionId: z.string().min(1).max(128),
@@ -661,12 +677,18 @@ export function createDaytonaAdapter(
               return ctx.reject("CAPACITY", error.message);
             }
 
-            await ctx.checkpoint(token);
+            await ctx.checkpoint(token).catch((error) => {
+              if (error instanceof AdapterCheckpointError) error.outcome = destroyOutcome(token);
+              throw error;
+            });
 
             if (ctx.signal.aborted) {
               token.stage = "rejected";
               token.rejectionCode = "UNAVAILABLE";
-              await ctx.checkpoint(token);
+              await ctx.checkpoint(token).catch((error) => {
+                if (error instanceof AdapterCheckpointError) error.outcome = destroyOutcome(token);
+                throw error;
+              });
 
               return ctx.reject("UNAVAILABLE", "Daytona deletion cancelled before dispatch");
             }
@@ -681,7 +703,10 @@ export function createDaytonaAdapter(
             if (result.status === "rejected") {
               token.stage = "rejected";
               token.rejectionCode = errorCodes[result.error.code];
-              await ctx.checkpoint(token);
+              await ctx.checkpoint(token).catch((error) => {
+                if (error instanceof AdapterCheckpointError) error.outcome = destroyOutcome(token);
+                throw error;
+              });
 
               return failure(result, ctx);
             }
@@ -689,7 +714,10 @@ export function createDaytonaAdapter(
             if (result.deletionAccepted || result.status === "completed") {
               token.deletionAccepted = true;
               token.stage = "accepted";
-              await ctx.checkpoint(token);
+              await ctx.checkpoint(token).catch((error) => {
+                if (error instanceof AdapterCheckpointError) error.outcome = destroyOutcome(token);
+                throw error;
+              });
             }
 
             const value = destroyValue(result);
@@ -730,7 +758,11 @@ export function createDaytonaAdapter(
                 : false,
             );
 
-            if (!result) return null;
+            if (!result)
+              return ctx.unknown(
+                "Daytona deletion is unconfirmed",
+                token?.success ? destroyOutcome(token.data) : undefined,
+              );
 
             if (result.status === "pending") {
               const recovery: z.infer<typeof DestroyToken> = {
@@ -767,6 +799,7 @@ export function createDaytonaAdapter(
               completed ??
               ctx.unknown(
                 result.status === "unknown" ? result.reason : "Daytona deletion is unconfirmed",
+                token?.success ? destroyOutcome(token.data) : undefined,
               )
             );
           },
@@ -785,7 +818,10 @@ export function createDaytonaAdapter(
                 "Daytona deletion was rejected before dispatch",
               );
 
-            return ctx.unknown("Daytona destroy cannot be replayed");
+            return ctx.unknown(
+              "Daytona destroy cannot be replayed",
+              token.success ? destroyOutcome(token.data) : undefined,
+            );
           },
         },
         async inspect(box) {

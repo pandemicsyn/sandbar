@@ -17,6 +17,7 @@ import {
   type ReadContext,
   type CreateInput,
   type SnapshotProfile,
+  type OperationOutcome,
 } from "sandbar-adapter";
 
 const CompactReference = ResourceReference.omit({ scope: true });
@@ -87,6 +88,8 @@ const Token = z.strictObject({
   snapshotId: z.string().min(1).max(512).optional(),
   captureState: z.enum(["not-submitted", "uncertain", "accepted", "completed", "failed"]),
   sourceState: z.enum(["running", "stopped", "unknown"]),
+  sourceObservedState: z.enum(["running", "stopped", "unknown"]).optional(),
+  sourceObservedAt: z.iso.datetime().optional(),
   capture: CaptureFacts,
   consistency: z.enum(["crash-consistent", "caller-quiesced", "unknown"]),
   snapshot: z.json().optional(),
@@ -810,6 +813,77 @@ export function daytonaState(input: {
     );
   }
 
+  function observeSource(token: z.infer<typeof Token>, state: string) {
+    let normalized: z.infer<typeof Token>["sourceState"] = "unknown";
+
+    if (state === "started") normalized = "running";
+    else if (state === "stopped") normalized = "stopped";
+    token.sourceState = normalized;
+
+    if (
+      token.restartRequired &&
+      normalized === "running" &&
+      ["uncertain", "accepted", "failed"].includes(token.restartState) &&
+      ["completed", "failed"].includes(token.captureState)
+    ) {
+      token.restartState = "completed";
+      token.stage = "complete";
+    }
+
+    // Preserve the time of the last state change, avoiding a checkpoint on every poll.
+    if (token.sourceObservedState !== normalized || !token.sourceObservedAt) {
+      token.sourceObservedState = normalized;
+      token.sourceObservedAt = new Date().toISOString();
+    }
+  }
+
+  function captureOutcome(
+    token: z.infer<typeof Token>,
+  ): Extract<OperationOutcome, { kind: "snapshot_capture" }> {
+    const saved = savedSnapshot(token);
+
+    const known =
+      saved.success &&
+      token.snapshotId === saved.data.reference.nativeId &&
+      saved.data.reference.kind === "snapshot" &&
+      !!history.read(saved.data.reference);
+
+    const completed =
+      known &&
+      ["accepted", "completed"].includes(token.captureState) &&
+      saved.data.state === "ready";
+
+    const outcome: Extract<OperationOutcome, { kind: "snapshot_capture" }> = {
+      kind: "snapshot_capture",
+      status: completed ? "partial" : "unknown",
+    };
+
+    if (known) outcome.snapshot = { ...saved.data.reference, kind: "snapshot" };
+
+    if (completed) outcome.capture = token.capture;
+
+    if (token.sourceObservedAt && token.sourceObservedState)
+      outcome.source = {
+        state: token.sourceObservedState,
+        connections: token.stopState === "completed" ? "dropped" : "unknown",
+        observedAt: token.sourceObservedAt,
+      };
+
+    if (token.restartRequired && token.restartState !== "completed") {
+      let status: "failed" | "not-submitted" | "uncertain" = "uncertain";
+
+      if (completed && token.restartState === "failed") status = "failed";
+      else if (token.restartState === "not-submitted") status = "not-submitted";
+      outcome.restart = { status };
+    }
+
+    return outcome;
+  }
+
+  function captureCheckpointError(error: AdapterCheckpointError, token: z.infer<typeof Token>) {
+    error.outcome = captureOutcome(token);
+  }
+
   async function captureResult(
     token: z.infer<typeof Token>,
     ctx: ObserveContext | AttemptContext,
@@ -833,12 +907,30 @@ export function daytonaState(input: {
     }
 
     if (token.captureState !== "completed")
-      return ctx.unknown(token.captureFailure ?? "Capture outcome remains uncertain");
+      return ctx.unknown(
+        token.captureFailure ?? "Capture outcome remains uncertain",
+        captureOutcome(token),
+      );
 
     if (!saved.success || !token.snapshotId || saved.data.reference.nativeId !== token.snapshotId)
       return ctx.unknown("Captured artifact identity missing");
     check(saved.data.reference);
-    const source = await box(token.sourceId, { signal: ctx.signal, deadline: Date.now() + 5000 });
+    let source: z.infer<typeof NativeBox>;
+
+    try {
+      source = await box(token.sourceId, { signal: ctx.signal, deadline: Date.now() + 5000 });
+      observeSource(token, source.state);
+    } catch (error) {
+      const outcome = captureOutcome(token);
+
+      if (outcome.status !== "partial") throw error;
+
+      return ctx.unknown(
+        "Capture completed; source state could not be confirmed. Use the retained snapshot or inspect the source directly",
+        outcome,
+      );
+    }
+
     const expected = token.restartRequired ? "started" : "stopped";
 
     if (
@@ -846,22 +938,44 @@ export function daytonaState(input: {
       (token.restartRequired && token.restartState !== "completed")
     ) {
       if (token.restartState === "not-submitted")
-        return ctx.unknown("Capture completed; source restart requires explicit continuation");
+        return ctx.unknown(
+          "Capture completed; source restart requires explicit continuation",
+          captureOutcome(token),
+        );
 
       if (token.restartState === "failed")
-        return ctx.unknown("Source restart definitively failed; no replay");
+        return ctx.unknown(
+          "Capture completed; source restart failed. Use the retained snapshot or inspect and restart the source directly",
+          captureOutcome(token),
+        );
+
+      if (token.restartFailure && source.state !== "started")
+        return ctx.unknown(
+          "Capture completed; source restart is unconfirmed. Inspect the source before taking further action",
+          captureOutcome(token),
+        );
 
       return pending();
     }
 
-    const info = await observedCapture(
-      token.name,
-      token.sourceId,
-      true,
-      { signal: ctx.signal, deadline: Date.now() + 5000 },
-      token.consistency,
-      token.snapshotId,
-    );
+    // Native capture and source completion are already confirmed; descriptive rereads
+    // cannot revoke that result or replace its exact acknowledged identity.
+    let info: SnapshotInfo | null = saved.data;
+
+    if (info.state !== "ready" || !history.read(info.reference)) {
+      try {
+        info = await observedCapture(
+          token.name,
+          token.sourceId,
+          true,
+          { signal: ctx.signal, deadline: Date.now() + 5000 },
+          token.consistency,
+          token.snapshotId,
+        );
+      } catch {
+        return ctx.unknown("Captured snapshot inspection is unavailable", captureOutcome(token));
+      }
+    }
 
     if (!info || info.state !== "ready") return pending();
 
@@ -871,6 +985,7 @@ export function daytonaState(input: {
       source: {
         state: expected === "started" ? ("running" as const) : ("stopped" as const),
         connections: "dropped" as const,
+        observedAt: new Date().toISOString(),
       },
       retainedResources: [info.reference],
     };
@@ -878,21 +993,23 @@ export function daytonaState(input: {
 
   async function reconcileCapture(token: z.infer<typeof Token>, ctx: ReadContext) {
     let captureObserved = false;
-    const source = await box(token.sourceId, ctx);
-    token.sourceState =
-      source.state === "started" ? "running" : source.state === "stopped" ? "stopped" : "unknown";
+    let captureReadFailed = false;
+    let source: z.infer<typeof NativeBox> | undefined;
 
-    if (["uncertain", "accepted"].includes(token.stopState) && source.state === "stopped")
-      token.stopState = "completed";
-
-    if (
-      ["uncertain", "accepted"].includes(token.restartState) &&
-      source.state === "started" &&
-      ["completed", "failed"].includes(token.captureState)
-    ) {
-      token.restartState = "completed";
-      token.stage = "complete";
+    try {
+      source = await box(token.sourceId, ctx);
+      observeSource(token, source.state);
+    } catch (error) {
+      if (
+        captureOutcome(token).status !== "partial" &&
+        (!(error instanceof AdapterError) || error.code !== "NOT_FOUND")
+      )
+        throw error;
+      token.sourceState = "unknown";
     }
+
+    if (["uncertain", "accepted"].includes(token.stopState) && source?.state === "stopped")
+      token.stopState = "completed";
 
     if (["uncertain", "accepted"].includes(token.captureState)) {
       const saved = savedSnapshot(token);
@@ -903,7 +1020,7 @@ export function daytonaState(input: {
         saved.data.reference.nativeId !== token.snapshotId ||
         !history.read(saved.data.reference)
       )
-        return { token, captureObserved };
+        return { token, captureObserved, captureReadFailed };
 
       try {
         const info = await observedCapture(
@@ -922,15 +1039,19 @@ export function daytonaState(input: {
           token.captureState = info.state === "ready" ? "completed" : "accepted";
         }
       } catch (error) {
-        if (!(error instanceof TerminalCaptureError)) throw error;
-        token.captureState = "failed";
-        token.captureFailure = error.message;
-        token.snapshotId = error.snapshot.reference.nativeId;
-        token.snapshot = compactSnapshot(error.snapshot);
+        if (error instanceof TerminalCaptureError) {
+          token.captureState = "failed";
+          token.captureFailure = error.message;
+          token.snapshotId = error.snapshot.reference.nativeId;
+          token.snapshot = compactSnapshot(error.snapshot);
+        } else {
+          // Keep the acknowledged identity without inventing readiness from a failed read.
+          captureReadFailed = true;
+        }
       }
     }
 
-    return { token, captureObserved };
+    return { token, captureObserved, captureReadFailed };
   }
 
   async function runCaptureStages(
@@ -938,299 +1059,334 @@ export function daytonaState(input: {
     ctx: AttemptContext,
     finalizeAfterAbort: boolean,
   ) {
-    const context = { signal: ctx.signal, deadline: Date.now() + 60000 };
-    const source = await box(token.sourceId, context);
-    const name = token.name;
-    const pending = () => ctx.pending(token, { pollAfterMs: 500 });
+    try {
+      const context = { signal: ctx.signal, deadline: Date.now() + 60000 };
+      let source: z.infer<typeof NativeBox>;
 
-    // Bounded restoration may outlive caller cancellation only after capture is definitively safe.
-    const restart = async () => {
-      if (!token.restartRequired) {
-        token.restartState = "completed";
+      try {
+        source = await box(token.sourceId, context);
+        observeSource(token, source.state);
+      } catch (error) {
+        if (!(error instanceof AdapterError) || error.code !== "NOT_FOUND") throw error;
 
-        return;
+        return ctx.unknown("Source is unavailable; capture cannot continue", captureOutcome(token));
       }
 
-      if (token.restartState !== "not-submitted") return;
+      const name = token.name;
+      const pending = () => ctx.pending(token, { pollAfterMs: 500 });
 
-      if (ctx.signal.aborted && !finalizeAfterAbort) return;
+      // Bounded restoration may outlive caller cancellation only after capture is definitively safe.
+      const restart = async () => {
+        if (!token.restartRequired) {
+          token.restartState = "completed";
 
-      const observedSource = await box(source.id, {
-        signal: AbortSignal.timeout(5000),
-        deadline: Date.now() + 5000,
-      });
+          return;
+        }
 
-      if (observedSource.state !== "stopped") return;
-      token.restartState = "uncertain";
-      token.stage = "restart";
-      token.sourceState = "unknown";
-      await ctx.checkpoint(token);
+        if (token.restartState !== "not-submitted") return;
 
-      if (ctx.signal.aborted && !finalizeAfterAbort) {
-        token.restartState = "not-submitted";
-        token.sourceState = "stopped";
+        if (ctx.signal.aborted && !finalizeAfterAbort) return;
+
+        const observedSource = await box(source.id, {
+          signal: AbortSignal.timeout(5000),
+          deadline: Date.now() + 5000,
+        });
+
+        observeSource(token, observedSource.state);
+
+        if (observedSource.state !== "stopped") return;
+        token.restartState = "uncertain";
+        token.stage = "restart";
+        token.sourceState = "unknown";
         await ctx.checkpoint(token);
 
-        return;
+        if (ctx.signal.aborted && !finalizeAfterAbort) {
+          token.restartState = "not-submitted";
+          token.sourceState = "stopped";
+          await ctx.checkpoint(token);
+
+          return;
+        }
+
+        const finalization = { signal: AbortSignal.timeout(15000), deadline: Date.now() + 15000 };
+
+        try {
+          const response = await request(
+            "POST",
+            `/sandbox/${encodeURIComponent(source.id)}/start`,
+            undefined,
+            finalization,
+          );
+
+          if (!response.ok) {
+            if ([400, 401, 403, 404, 409, 422].includes(response.status))
+              token.restartState = "failed";
+            await ctx.checkpoint(token);
+            token.restartFailure = "Source start response was not successful; no replay";
+            const observed = await box(source.id, finalization);
+            observeSource(token, observed.state);
+
+            if (observed.state === "started") await ctx.checkpoint(token);
+
+            return;
+          }
+
+          token.restartState = "accepted";
+          await ctx.checkpoint(token);
+
+          if (!(await settledSource(source.id, "started", finalization))) {
+            token.restartFailure = "Source start is not confirmed; no replay";
+
+            return;
+          }
+
+          observeSource(token, "started");
+          token.restartState = "completed";
+          token.stage = "complete";
+          await ctx.checkpoint(token);
+        } catch (error) {
+          if (error instanceof AdapterCheckpointError) throw error;
+          token.restartFailure = "Source start outcome is uncertain; no replay";
+
+          try {
+            const observed = await box(source.id, finalization);
+            observeSource(token, observed.state);
+          } catch {
+            /* State stays unknown when read cannot confirm it. */
+          }
+
+          if (token.restartState === "completed") await ctx.checkpoint(token);
+        }
+      };
+
+      if (token.stopState === "failed") {
+        if (
+          token.captureState === "not-submitted" &&
+          !token.snapshotId &&
+          !token.snapshot &&
+          source.state === "started"
+        )
+          return ctx.reject("UNAVAILABLE", "Source stop definitively rejected before capture");
+
+        return ctx.unknown("Source stop rejected but unchanged running state is unconfirmed");
       }
 
-      const finalization = { signal: AbortSignal.timeout(15000), deadline: Date.now() + 15000 };
+      if (token.stopState === "not-submitted") {
+        if (profileFor(source).status !== "supported")
+          return ctx.unknown("Source capture eligibility changed before stop");
+
+        if (source.state !== "started") return pending();
+
+        if (ctx.signal.aborted) return ctx.unknown("Capture cancelled before stop; no dispatch");
+
+        try {
+          token.sourceState = "unknown";
+          token.stopState = "uncertain";
+          await ctx.checkpoint(token);
+
+          if (ctx.signal.aborted) {
+            token.stopState = "not-submitted";
+            token.sourceState = "running";
+            await ctx.checkpoint(token);
+
+            return pending();
+          }
+
+          const stopped = await request(
+            "POST",
+            `/sandbox/${encodeURIComponent(source.id)}/stop`,
+            undefined,
+            context,
+          );
+
+          if ([400, 401, 403, 422].includes(stopped.status)) {
+            token.stopState = "failed";
+            await ctx.checkpoint(token);
+            const unchanged = await box(source.id, context);
+            observeSource(token, unchanged.state);
+            await ctx.checkpoint(token);
+
+            if (unchanged.state === "started")
+              return ctx.reject("UNAVAILABLE", "Source stop definitively rejected before capture");
+
+            return ctx.unknown("Source stop rejected but unchanged running state is unconfirmed");
+          }
+
+          if (stopped.ok) {
+            token.stopState = "accepted";
+            await ctx.checkpoint(token);
+          }
+
+          if (!stopped.ok || !(await settledSource(source.id, "stopped", context)))
+            return pending();
+          observeSource(token, "stopped");
+          token.stopState = "completed";
+          await ctx.checkpoint(token);
+        } catch (error) {
+          if (error instanceof AdapterCheckpointError) throw error;
+
+          return pending();
+        }
+      }
+
+      if (token.stopState !== "completed") return pending();
+
+      if (token.captureState === "completed" || token.captureState === "failed") {
+        await restart();
+        await ctx.checkpoint(token);
+
+        if (ctx.signal.aborted && !finalizeAfterAbort)
+          return ctx.unknown("Local wait stopped after capture", captureOutcome(token));
+
+        return captureResult(token, ctx);
+      }
+
+      if (token.captureState !== "not-submitted") return pending();
+      token.stage = "capture";
+
+      if (ctx.signal.aborted) {
+        token.captureFailure = "Capture cancelled before dispatch";
+        token.captureState = "failed";
+        await ctx.checkpoint(token);
+        await restart();
+
+        return pending();
+      }
+
+      const captureSource = await box(token.sourceId, context);
+
+      if (captureSource.state !== "stopped" || profileFor(captureSource).status !== "supported")
+        return ctx.unknown("Source capture eligibility changed before capture dispatch");
+      token.captureState = "uncertain";
+      await ctx.checkpoint(token);
+
+      if (ctx.signal.aborted) {
+        token.captureState = "failed";
+        token.captureFailure = "Capture cancelled before dispatch";
+        await ctx.checkpoint(token);
+        await restart();
+
+        return pending();
+      }
 
       try {
         const response = await request(
           "POST",
-          `/sandbox/${encodeURIComponent(source.id)}/start`,
-          undefined,
-          finalization,
+          `/sandbox/${encodeURIComponent(source.id)}/snapshot`,
+          { name, includeMemory: false },
+          context,
         );
 
         if (!response.ok) {
-          if ([400, 401, 403, 404, 409, 422].includes(response.status))
-            token.restartState = "failed";
-          await ctx.checkpoint(token);
-          token.restartFailure = "Source start response was not successful; no replay";
-          const observed = await box(source.id, finalization);
-          token.sourceState =
-            observed.state === "started"
-              ? "running"
-              : observed.state === "stopped"
-                ? "stopped"
-                : "unknown";
-
-          return;
-        }
-
-        token.restartState = "accepted";
-        await ctx.checkpoint(token);
-
-        if (!(await settledSource(source.id, "started", finalization))) {
-          token.restartFailure = "Source start is not confirmed; no replay";
-
-          return;
-        }
-
-        token.sourceState = "running";
-        token.restartState = "completed";
-        token.stage = "complete";
-        await ctx.checkpoint(token);
-      } catch (error) {
-        if (error instanceof AdapterCheckpointError) throw error;
-        token.restartFailure = "Source start outcome is uncertain; no replay";
-
-        try {
-          const observed = await box(source.id, finalization);
-          token.sourceState =
-            observed.state === "started"
-              ? "running"
-              : observed.state === "stopped"
-                ? "stopped"
-                : "unknown";
-        } catch {
-          /* State stays unknown when read cannot confirm it. */
-        }
-      }
-    };
-
-    if (token.stopState === "failed") {
-      if (
-        token.captureState === "not-submitted" &&
-        !token.snapshotId &&
-        !token.snapshot &&
-        source.state === "started"
-      )
-        return ctx.reject("UNAVAILABLE", "Source stop definitively rejected before capture");
-
-      return ctx.unknown("Source stop rejected but unchanged running state is unconfirmed");
-    }
-
-    if (token.stopState === "not-submitted") {
-      if (profileFor(source).status !== "supported")
-        return ctx.unknown("Source capture eligibility changed before stop");
-
-      if (source.state !== "started") return pending();
-
-      if (ctx.signal.aborted) return ctx.unknown("Capture cancelled before stop; no dispatch");
-
-      try {
-        token.sourceState = "unknown";
-        token.stopState = "uncertain";
-        await ctx.checkpoint(token);
-
-        if (ctx.signal.aborted) {
-          token.stopState = "not-submitted";
-          token.sourceState = "running";
-          await ctx.checkpoint(token);
+          if ([400, 401, 403, 404, 409, 422].includes(response.status)) {
+            token.captureState = "failed";
+            token.captureFailure = "Native capture definitively rejected";
+            await ctx.checkpoint(token);
+            await restart();
+          }
 
           return pending();
         }
 
-        const stopped = await request(
-          "POST",
-          `/sandbox/${encodeURIComponent(source.id)}/stop`,
-          undefined,
-          context,
-        );
-
-        if ([400, 401, 403, 422].includes(stopped.status)) {
-          token.stopState = "failed";
-          await ctx.checkpoint(token);
-          const unchanged = await box(source.id, context);
-          token.sourceState = unchanged.state === "started" ? "running" : "unknown";
-          await ctx.checkpoint(token);
-
-          if (unchanged.state === "started")
-            return ctx.reject("UNAVAILABLE", "Source stop definitively rejected before capture");
-
-          return ctx.unknown("Source stop rejected but unchanged running state is unconfirmed");
-        }
-
-        if (stopped.ok) {
-          token.stopState = "accepted";
-          await ctx.checkpoint(token);
-        }
-
-        if (!stopped.ok || !(await settledSource(source.id, "stopped", context))) return pending();
-        token.sourceState = "stopped";
-        token.stopState = "completed";
+        token.captureState = "accepted";
         await ctx.checkpoint(token);
-      } catch (error) {
-        if (error instanceof AdapterCheckpointError) throw error;
-
-        return pending();
-      }
-    }
-
-    if (token.stopState !== "completed") return pending();
-
-    if (token.captureState === "completed" || token.captureState === "failed") {
-      await restart();
-      await ctx.checkpoint(token);
-
-      if (ctx.signal.aborted && !finalizeAfterAbort) return pending();
-
-      return captureResult(token, ctx);
-    }
-
-    if (token.captureState !== "not-submitted") return pending();
-    token.stage = "capture";
-
-    if (ctx.signal.aborted) {
-      token.captureFailure = "Capture cancelled before dispatch";
-      token.captureState = "failed";
-      await ctx.checkpoint(token);
-      await restart();
-
-      return pending();
-    }
-
-    const captureSource = await box(token.sourceId, context);
-
-    if (captureSource.state !== "stopped" || profileFor(captureSource).status !== "supported")
-      return ctx.unknown("Source capture eligibility changed before capture dispatch");
-    token.captureState = "uncertain";
-    await ctx.checkpoint(token);
-
-    if (ctx.signal.aborted) {
-      token.captureState = "failed";
-      token.captureFailure = "Capture cancelled before dispatch";
-      await ctx.checkpoint(token);
-      await restart();
-
-      return pending();
-    }
-
-    try {
-      const response = await request(
-        "POST",
-        `/sandbox/${encodeURIComponent(source.id)}/snapshot`,
-        { name, includeMemory: false },
-        context,
-      );
-
-      if (!response.ok) {
-        if ([400, 401, 403, 404, 409, 422].includes(response.status)) {
-          token.captureState = "failed";
-          token.captureFailure = "Native capture definitively rejected";
-          await ctx.checkpoint(token);
-          await restart();
-        }
-
-        return pending();
-      }
-
-      token.captureState = "accepted";
-      await ctx.checkpoint(token);
-      let info = await observedCapture(name, source.id, true, context, token.consistency);
-
-      if (info) {
-        token.snapshotId = info.reference.nativeId;
-        token.snapshot = compactSnapshot(info);
-        await ctx.checkpoint(token);
-      }
-
-      while (
-        (!info || info.state !== "ready") &&
-        !ctx.signal.aborted &&
-        Date.now() < context.deadline
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        info = await observedCapture(
-          name,
-          source.id,
-          true,
-          context,
-          token.consistency,
-          token.snapshotId,
-        );
+        let info = await observedCapture(name, source.id, true, context, token.consistency);
 
         if (info) {
           token.snapshotId = info.reference.nativeId;
           token.snapshot = compactSnapshot(info);
           await ctx.checkpoint(token);
         }
-      }
 
-      if (!info || info.state !== "ready") return pending();
-      token.captureState = "completed";
-      token.snapshot = compactSnapshot(info);
-      await ctx.checkpoint(token);
-      await restart();
+        while (
+          (!info || info.state !== "ready") &&
+          !ctx.signal.aborted &&
+          Date.now() < context.deadline
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          info = await observedCapture(
+            name,
+            source.id,
+            true,
+            context,
+            token.consistency,
+            token.snapshotId,
+          );
 
-      if (!token.restartRequired) token.stage = "complete";
+          if (info) {
+            token.snapshotId = info.reference.nativeId;
+            token.snapshot = compactSnapshot(info);
+            await ctx.checkpoint(token);
+          }
+        }
 
-      if (token.stage !== "complete") return pending();
-
-      const final = await box(source.id, {
-        signal: AbortSignal.timeout(5000),
-        deadline: Date.now() + 5000,
-      });
-
-      const expected = token.restartRequired ? "started" : "stopped";
-
-      if (final.state !== expected || ctx.signal.aborted) return pending();
-
-      return {
-        snapshot: info,
-        capture: token.capture,
-        source: {
-          state: expected === "started" ? ("running" as const) : ("stopped" as const),
-          connections: "dropped" as const,
-        },
-        retainedResources: [info.reference],
-      };
-    } catch (error) {
-      if (error instanceof AdapterCheckpointError) throw error;
-
-      if (error instanceof TerminalCaptureError) {
-        token.captureState = "failed";
-        token.captureFailure = error.message;
-        token.snapshotId = error.snapshot.reference.nativeId;
-        token.snapshot = compactSnapshot(error.snapshot);
+        if (!info || info.state !== "ready") return pending();
+        token.captureState = "completed";
+        token.snapshot = compactSnapshot(info);
         await ctx.checkpoint(token);
         await restart();
+
+        if (!token.restartRequired) token.stage = "complete";
+
+        if (token.stage !== "complete") return captureResult(token, ctx);
+
+        const final = await box(source.id, {
+          signal: AbortSignal.timeout(5000),
+          deadline: Date.now() + 5000,
+        });
+
+        const expected = token.restartRequired ? "started" : "stopped";
+
+        observeSource(token, final.state);
+
+        if (ctx.signal.aborted)
+          return ctx.unknown("Local wait stopped after capture", captureOutcome(token));
+
+        if (final.state !== expected) return pending();
+
+        return {
+          snapshot: info,
+          capture: token.capture,
+          source: {
+            state: expected === "started" ? ("running" as const) : ("stopped" as const),
+            connections: "dropped" as const,
+            observedAt: new Date().toISOString(),
+          },
+          retainedResources: [info.reference],
+        };
+      } catch (error) {
+        if (error instanceof AdapterCheckpointError) throw error;
+
+        if (error instanceof TerminalCaptureError) {
+          token.captureState = "failed";
+          token.captureFailure = error.message;
+          token.snapshotId = error.snapshot.reference.nativeId;
+          token.snapshot = compactSnapshot(error.snapshot);
+          await ctx.checkpoint(token);
+          await restart();
+        }
+
+        const outcome = captureOutcome(token);
+
+        if (outcome.status === "partial")
+          return ctx.unknown(
+            "Capture completed; later source state could not be confirmed",
+            outcome,
+          );
+
+        return pending();
+      }
+    } catch (error) {
+      if (error instanceof AdapterCheckpointError) {
+        captureCheckpointError(error, token);
+        throw error;
       }
 
-      return pending();
+      const outcome = captureOutcome(token);
+
+      if (outcome.status === "partial")
+        return ctx.unknown("Capture completed; later source state could not be confirmed", outcome);
+      throw error;
     }
   }
 
@@ -1349,6 +1505,8 @@ export function daytonaState(input: {
           sourceId: source.id,
           initialState: initial,
           sourceState: initial,
+          sourceObservedState: initial,
+          sourceObservedAt: new Date().toISOString(),
           restartRequired: initial === "running" && input.restartAfterCapture !== false,
           stopState: initial === "running" ? "not-submitted" : "completed",
           restartState:
@@ -1389,12 +1547,34 @@ export function daytonaState(input: {
 
         if (captureRejectedBeforeDispatch(parsed.data))
           return ctx.unknown("Capture cancelled before dispatch; continue to confirm no effect");
-        const before = JSON.stringify(parsed.data);
-        const { token, captureObserved } = await reconcileCapture(parsed.data, ctx);
 
-        if (JSON.stringify(token) !== before) return ctx.pending(token, { pollAfterMs: 500 });
+        try {
+          const before = JSON.stringify(parsed.data);
 
-        return captureResult(token, ctx, captureObserved);
+          const { token, captureObserved, captureReadFailed } = await reconcileCapture(
+            parsed.data,
+            ctx,
+          );
+
+          if (captureReadFailed)
+            return ctx.unknown(
+              "Acknowledged snapshot inspection is unavailable",
+              captureOutcome(token),
+            );
+
+          if (JSON.stringify(token) !== before) return ctx.pending(token, { pollAfterMs: 500 });
+
+          return await captureResult(token, ctx, captureObserved);
+        } catch (error) {
+          const outcome = captureOutcome(parsed.data);
+
+          if (!outcome.snapshot) throw error;
+
+          return ctx.unknown(
+            "Snapshot capture observation is unavailable; inspect the retained snapshot before taking further action",
+            outcome,
+          );
+        }
       },
       async continue(attempt, ctx) {
         const parsed = Token.safeParse(attempt.token);
@@ -1412,14 +1592,38 @@ export function daytonaState(input: {
 
         if (ctx.signal.aborted) return ctx.unknown("Continuation cancelled before dispatch");
 
-        const { token, captureObserved } = await reconcileCapture(parsed.data, {
-          signal: ctx.signal,
-          deadline: Date.now() + 30000,
-        });
+        let reconciled: Awaited<ReturnType<typeof reconcileCapture>>;
+
+        try {
+          reconciled = await reconcileCapture(parsed.data, {
+            signal: ctx.signal,
+            deadline: Date.now() + 30000,
+          });
+        } catch (error) {
+          const outcome = captureOutcome(parsed.data);
+
+          if (!outcome.snapshot) throw error;
+
+          return ctx.unknown(
+            "Capture continuation observation is unavailable; no stage dispatched",
+            outcome,
+          );
+        }
+
+        const { token, captureObserved } = reconciled;
 
         if (token.captureState === "accepted" && !captureObserved)
-          return ctx.unknown("Acknowledged capture identity is no longer positively observed");
-        await ctx.checkpoint(token);
+          return ctx.unknown(
+            "Acknowledged capture identity is no longer positively observed",
+            captureOutcome(token),
+          );
+
+        try {
+          await ctx.checkpoint(token);
+        } catch (error) {
+          if (error instanceof AdapterCheckpointError) captureCheckpointError(error, token);
+          throw error;
+        }
 
         return runCaptureStages(token, ctx, false);
       },
