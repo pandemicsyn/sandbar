@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { ResourceReference } from "sandbar-adapter";
+import {
+  AdapterCheckpointError,
+  ResourceReference,
+  connectAdapter,
+  prepareOperation,
+  submitOperation,
+  type Json,
+} from "sandbar-adapter";
 import {
   Sandbar,
   SandbarError,
@@ -1836,6 +1843,80 @@ test("E2B nonreplayed destroy uncertainty exposes exact legacy retained volume r
       await (await client.volumes.get(JSON.parse(JSON.stringify(volume.reference)))).inspect(),
     ).toMatchObject({ reference: { nativeId: volume.id } });
   } finally {
+    await client.close();
+  }
+});
+
+test("E2B failed cancellation checkpoint preserves destroy outcome without dispatching kill", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  const checkpoints: Json[] = [];
+  const client = await f.connect();
+
+  const connection = await connectAdapter(
+    createE2BAdapter(() => f.transport),
+    {
+      config: {},
+      credentials: { apiKey: "fixture-key" },
+    },
+  );
+
+  try {
+    const volume = await client.volumes.create({ name: "cancelled-destroy" });
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const name = (await volume.inspect()).name!;
+    f.boxes.get(source.id)!.volumeMounts = [{ path: "/data", name }];
+
+    const prepared = await prepareOperation(
+      connection.session,
+      "destroy",
+      {
+        id: source.id,
+        storage: "allow-unconfirmed",
+      },
+      controller.signal,
+    );
+
+    const error = await submitOperation(
+      prepared,
+      {
+        operationId: "operation",
+        submissionId: "submission",
+        invocationKey: "key",
+      },
+      controller.signal,
+      undefined,
+      async (token) => {
+        checkpoints.push(structuredClone(token));
+
+        const stage = z
+          .object({ stage: z.enum(["uncertain", "accepted", "rejected"]) })
+          .parse(token).stage;
+
+        if (stage === "uncertain") controller.abort();
+        else if (stage === "rejected")
+          throw new Error("Cancellation checkpoint storage unavailable");
+      },
+    ).catch((error: Error) => error);
+
+    expect(error).toBeInstanceOf(AdapterCheckpointError);
+    expect(error).toMatchObject({
+      outcome: { kind: "destroy", status: "unknown", retainedVolumes: [] },
+    });
+    expect(checkpoints).toEqual([
+      { stage: "uncertain", sandboxId: source.id, retainedVolumeNames: [name] },
+      {
+        stage: "rejected",
+        sandboxId: source.id,
+        rejectionCode: "UNAVAILABLE",
+        retainedVolumeNames: [name],
+      },
+    ]);
+    expect(f.calls.kill).toBe(0);
+    expect(f.boxes.has(source.id)).toBe(true);
+    expect(f.volumes.has(volume.id)).toBe(true);
+  } finally {
+    await connection.close();
     await client.close();
   }
 });

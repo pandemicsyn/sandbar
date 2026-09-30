@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
 import { AdapterCheckpointError, defineAdapter, type SnapshotProfile } from "sandbar-adapter";
-import { Image, Sandbar, SandbarError, OutcomeUnknownError } from "./index";
+import { Image, Sandbar, SandbarError, OutcomeUnknownError, WaitAbortedError } from "./index";
 
 const scope = { authority: { kind: "account", id: "one" }, partition: {} };
 
@@ -291,6 +291,41 @@ for (const mode of ["mismatched", "malformed", "foreign", "guarantees"] as const
       await expect(operation.observe()).rejects.toMatchObject({
         code: "OUTCOME_UNKNOWN",
         effect: "possible",
+      });
+      expect(f.effects()).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+for (const cancellation of ["client closure", "caller cancellation"] as const) {
+  test(`${cancellation} preserves the submitted partial snapshot when waiting stops`, async () => {
+    const f = fixture("uncertain");
+    const client = await f.connect();
+    const controller = new AbortController();
+
+    try {
+      const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const operation = await box.submitSnapshot();
+
+      if (cancellation === "client closure") await client.close();
+      else controller.abort();
+
+      const error = await operation
+        .wait({ signal: controller.signal })
+        .catch((error: Error) => error);
+
+      expect(error).toBeInstanceOf(WaitAbortedError);
+
+      if (!(error instanceof WaitAbortedError)) throw new Error("Expected wait cancellation");
+      expect(error.reference).toEqual(operation.reference);
+      expect(error.outcome).toMatchObject({
+        kind: "snapshot_capture",
+        status: "partial",
+        snapshot: reference,
+        capture,
+        restart: { status: "uncertain" },
       });
       expect(f.effects()).toBe(1);
     } finally {

@@ -583,7 +583,13 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             if (ctx.signal.aborted) {
               token.stage = "rejected";
               token.rejectionCode = "UNAVAILABLE";
-              await ctx.checkpoint(token);
+
+              try {
+                await ctx.checkpoint(token);
+              } catch (error) {
+                if (error instanceof AdapterCheckpointError) error.outcome = destroyOutcome(token);
+                throw error;
+              }
 
               return ctx.reject("UNAVAILABLE", "E2B termination cancelled before dispatch");
             }

@@ -541,7 +541,14 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
       throw new SandbarError("INVALID_ARGUMENT", "Invalid polling interval");
 
     while (true) {
-      if (this.client.isClosed()) abortWaiting(this.reference, this.client.signal.reason);
+      if (this.client.isClosed())
+        abortWaiting(
+          this.reference,
+          this.client.signal.reason,
+          this.first?.kind === "unknown"
+            ? this.client.checkedOutcome(this.reference, this.first.outcome)
+            : undefined,
+        );
 
       const confirmedRejection =
         this.first?.kind === "rejected" ||
