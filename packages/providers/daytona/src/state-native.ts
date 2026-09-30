@@ -820,6 +820,16 @@ export function daytonaState(input: {
     else if (state === "stopped") normalized = "stopped";
     token.sourceState = normalized;
 
+    if (
+      token.restartRequired &&
+      normalized === "running" &&
+      ["uncertain", "accepted", "failed"].includes(token.restartState) &&
+      ["completed", "failed"].includes(token.captureState)
+    ) {
+      token.restartState = "completed";
+      token.stage = "complete";
+    }
+
     // Preserve the time of the last state change, avoiding a checkpoint on every poll.
     if (token.sourceObservedState !== normalized || !token.sourceObservedAt) {
       token.sourceObservedState = normalized;
@@ -1001,15 +1011,6 @@ export function daytonaState(input: {
     if (["uncertain", "accepted"].includes(token.stopState) && source?.state === "stopped")
       token.stopState = "completed";
 
-    if (
-      ["uncertain", "accepted"].includes(token.restartState) &&
-      source?.state === "started" &&
-      ["completed", "failed"].includes(token.captureState)
-    ) {
-      token.restartState = "completed";
-      token.stage = "complete";
-    }
-
     if (["uncertain", "accepted"].includes(token.captureState)) {
       const saved = savedSnapshot(token);
 
@@ -1125,6 +1126,8 @@ export function daytonaState(input: {
             const observed = await box(source.id, finalization);
             observeSource(token, observed.state);
 
+            if (observed.state === "started") await ctx.checkpoint(token);
+
             return;
           }
 
@@ -1151,6 +1154,8 @@ export function daytonaState(input: {
           } catch {
             /* State stays unknown when read cannot confirm it. */
           }
+
+          if (token.restartState === "completed") await ctx.checkpoint(token);
         }
       };
 

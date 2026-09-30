@@ -44,6 +44,7 @@ const partial: OperationOutcome = {
 
 test("partial operation outcomes validate concrete native results and JSON roundtrip", () => {
   expect(OperationOutcome.parse(JSON.parse(JSON.stringify(partial)))).toEqual(partial);
+  expect(OperationOutcome.safeParse({ ...partial, status: "unknown" }).success).toBe(false);
   expect(OperationOutcome.safeParse({ ...partial, snapshot: undefined }).success).toBe(false);
   expect(OperationOutcome.safeParse({ ...partial, capture: undefined }).success).toBe(false);
   expect(

@@ -71,6 +71,7 @@ function fixture(
     | "checkpoint"
     | "mismatched"
     | "malformed"
+    | "contradictory"
     | "foreign"
     | "guarantees",
 ) {
@@ -117,6 +118,15 @@ function fixture(
                 kind: "destroy",
                 status: "unknown",
                 retainedVolumes: [],
+              });
+
+            if (mode === "contradictory")
+              return ctx.unknown("Unconfirmed capture", {
+                kind: "snapshot_capture",
+                status: "unknown",
+                snapshot: reference,
+                capture,
+                restart: { status: "failed" },
               });
 
             if (mode === "malformed") {
@@ -299,7 +309,7 @@ for (const mode of ["failed", "uncertain", "unknown", "checkpoint"] as const) {
   });
 }
 
-for (const mode of ["mismatched", "malformed", "foreign", "guarantees"] as const) {
+for (const mode of ["mismatched", "malformed", "contradictory", "foreign", "guarantees"] as const) {
   test(`${mode} provider outcome preserves a possible effect and the recovery reference`, async () => {
     const f = fixture(mode);
     const client = await f.connect();

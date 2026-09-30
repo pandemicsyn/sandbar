@@ -704,6 +704,61 @@ test("Daytona cancellation during an uncertain restart retains confirmed capture
   }
 });
 
+test.each(["submission", "fresh recovery"] as const)(
+  "Daytona observed running source completes a rejected restart during %s without replay",
+  async (phase) => {
+    const f = fixture();
+    f.modes.restartRejected = true;
+
+    if (phase === "submission") f.modes.onStart.callback = () => f.setState("started");
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const operation = await source.submitSnapshot();
+
+      if (phase === "submission") {
+        const result = await operation.wait();
+        expect(result.source.state).toBe("running");
+        expect(result.snapshot.id).toBe("snapshot-one");
+        expect(operation.reference.token).toMatchObject({
+          restartState: "completed",
+          stage: "complete",
+        });
+      } else {
+        await expect(operation.wait()).rejects.toMatchObject({
+          code: "SOURCE_RESTART_FAILED",
+          effect: "partial",
+        });
+        const saved = JSON.parse(JSON.stringify(operation.reference));
+        expect(saved.token.restartState).toBe("failed");
+        await client.close();
+        f.setState("started");
+        const fresh = await f.connect();
+
+        try {
+          const recovered = await fresh.recover(saved);
+          const result = await recovered.wait();
+          expect(result).toMatchObject({
+            snapshot: { id: "snapshot-one" },
+            source: { state: "running" },
+          });
+          expect(recovered.reference.token).toMatchObject({
+            restartState: "completed",
+            stage: "complete",
+          });
+        } finally {
+          await fresh.close();
+        }
+      }
+
+      expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+    } finally {
+      await client.close();
+    }
+  },
+);
+
 test("Daytona lost start acknowledgement is confirmed read-only without another start", async () => {
   const f = fixture();
   f.modes.restartLost = true;
@@ -798,7 +853,12 @@ test("Daytona recovery never adopts or authorizes deletion of a replacement capt
     f.replaceSnapshot();
     f.setState("started");
     const recovered = await client.recover(saved);
-    await expect(recovered.wait()).rejects.toMatchObject({ code: "SOURCE_RESTART_FAILED" });
+
+    if (recovered.kind !== "snapshot_capture") throw new Error("Expected capture recovery");
+    const result = await recovered.wait();
+    expect(result.source.state).toBe("running");
+    expect(result.snapshot.reference.nativeId).toBe("snapshot-one");
+    await expect(result.snapshot.delete()).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(recovered.reference.token).toMatchObject({
       snapshot: { reference: { nativeId: "snapshot-one" } },
     });

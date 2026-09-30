@@ -340,6 +340,10 @@ export const OperationOutcome = z.discriminatedUnion("kind", [
         (outcome.status !== "partial" && outcome.restart?.status !== "failed") ||
         (!!outcome.snapshot && !!outcome.capture),
       "Confirmed partial capture requires a snapshot identity and capture result",
+    )
+    .refine(
+      (outcome) => outcome.restart?.status !== "failed" || outcome.status === "partial",
+      "A definitive restart failure requires a partial capture outcome",
     ),
   z.strictObject({
     kind: z.literal("destroy"),
