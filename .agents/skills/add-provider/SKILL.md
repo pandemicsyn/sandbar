@@ -111,6 +111,9 @@ The existing service catalog derives forms from the definition's schemas. Connec
 
 ## Qualify and document
 
+Supply a small maintained acceptance profile (`packages/sdk-qualification/provider-qualification/profile.ts`): public connection factory, pinned dependencies, nonsecret persisted routing, credential requirements, finite native/exercise/cleanup bounds, declared feature support and concise caveats. Reuse the common prepared/state scenarios; add genuinely new SDK workflows to that runner rather than creating a provider-specific script or patching SDK methods. Read the harness README and [qualification skill](../qualify-provider/SKILL.md). Branch and merged sources use the same command/report with clean exact-source/build provenance. Keep volume CRUD independent from mounted persistence, account eligibility separate from implementation support, and expensive fault matrices offline. Generate support/evidence pages from reviewed metadata and sanitized results; never invent current-head live evidence or request a paid rerun merely because a reviewed unchanged path merged.
+
+
 Run `adapterSuite` from `sandbar-adapter/testing` against a deterministic native-boundary fixture. Follow `packages/adapter/src/testing.ts` for the fixture interface and `packages/providers/*/src/adapter.test.ts` for implementations. Supply genuinely different verified scopes, effect/release counters, lost-response and delayed-response faults, and evidence that native mutation retries are disabled. Report scenarios actually exercised; the suite is not live certification.
 
 Add focused tests for supported operations: unsupported inputs before mutation, scope mismatch, loss after one native effect, observation without replay, binary/command fidelity, declared bounds and cleanup. If pending tokens are supported, reopen a connection and recover the saved reference. Include direct/service parity for integration paths in scope; avoid unrelated service hardening.

@@ -39,6 +39,8 @@ async function fixture(
     checkpointFailure?: boolean;
     memory?: boolean;
     restoreUnsupported?: boolean;
+    mountsUnsupported?: boolean;
+    volumeFailure?: "rejected" | "uncertain";
     readOnly?: "enforced" | "leaky";
   } = {},
 ) {
@@ -67,7 +69,7 @@ async function fixture(
   const snapshots = new Map<string, { info: SnapshotInfo; files: Map<string, Uint8Array> }>();
   const volumes = new Map<string, { info: VolumeInfo; files: Map<string, Uint8Array> }>();
   let index = 0;
-  const calls = { capture: 0, restore: 0, volumeDelete: 0, create: 0, peak: 0 };
+  const calls = { capture: 0, restore: 0, volumeDelete: 0, volumeCreate: 0, create: 0, peak: 0 };
 
   const ref = (kind: "snapshot" | "volume", nativeId: string): ResourceReference => ({
     version: 1,
@@ -298,12 +300,25 @@ async function fixture(
         volumeCreate: {
           recovery: {
             version: 1,
-            token: z.object({
-              state: z.literal("accepted"),
-              volume: ResourceReference.omit({ scope: true }),
-            }),
+            token: z.union([
+              z.object({
+                state: z.literal("accepted"),
+                volume: ResourceReference.omit({ scope: true }),
+              }),
+              z.object({ state: z.enum(["uncertain", "rejected"]) }),
+            ]),
           },
           async submit(input, ctx) {
+            calls.volumeCreate++;
+
+            if (options.volumeFailure) {
+              await ctx.checkpoint({ state: options.volumeFailure });
+
+              return options.volumeFailure === "rejected"
+                ? ctx.reject("UNAVAILABLE", "Native volume creation rejected (403)")
+                : ctx.unknown("Original acknowledgement/status unavailable");
+            }
+
             const info = volume(input.name);
             volumes.set(input.name, { info, files: new Map() });
 
@@ -345,17 +360,19 @@ async function fixture(
               status: "supported",
               value: { create: true, inspect: true, list: false, delete: true },
             },
-            mounts: {
-              status: "supported",
-              value: {
-                timing: "create",
-                access: options.readOnly ? ["read-write", "read-only"] : ["read-write"],
-                subpaths: false,
-                versions: false,
-                durability: "unknown",
-                compatibility: ["container"],
-              },
-            },
+            mounts: options.mountsUnsupported
+              ? { status: "unsupported", reason: "Immutable mounts unavailable" }
+              : {
+                  status: "supported",
+                  value: {
+                    timing: "create",
+                    access: options.readOnly ? ["read-write", "read-only"] : ["read-write"],
+                    subpaths: false,
+                    versions: false,
+                    durability: "unknown",
+                    compatibility: ["container"],
+                  },
+                },
           };
         },
         async checkMounts() {
@@ -841,5 +858,109 @@ for (const compactCustody of ["snapshot", "failed-snapshot", "volume"] as const)
     expect(f.snapshots.size).toBe(0);
     expect(f.volumes.size).toBe(0);
     expect(f.boxes.size).toBe(0);
+  });
+}
+
+test("volume CRUD allocates no compute and cleans its independently owned artifact", async () => {
+  const f = await fixture({ mountsUnsupported: true });
+
+  const steps = await runState(f.connect, f.ledger, "base", {
+    provider: "external.fixture",
+    network: "blocked",
+    selected: new Set(["volume-crud"]),
+    signal: AbortSignal.timeout(5000),
+    cleanupWaitMs: 1000,
+  });
+
+  expect(steps.find((step) => step.scenario === "volume-crud")).toMatchObject({
+    status: "passed",
+    stateEvidence: { probe: "volume-crud-v1" },
+  });
+  expect(f.calls.create).toBe(0);
+  expect(f.calls.volumeDelete).toBe(1);
+  expect(f.volumes.size).toBe(0);
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+});
+
+test("CRUD and mounted persistence share one volume within the existing resource budget", async () => {
+  const f = await fixture();
+
+  const steps = await runState(f.connect, f.ledger, "base", {
+    provider: "daytona",
+    network: "blocked",
+    selected: new Set(["volume-crud", "volume-persistence"]),
+    signal: AbortSignal.timeout(5000),
+    cleanupWaitMs: 1000,
+  });
+
+  expect(
+    steps
+      .filter((step) => ["volume-crud", "volume-persistence"].includes(step.scenario))
+      .map((step) => step.status),
+  ).toEqual(["passed", "passed"]);
+  expect(f.calls.volumeDelete).toBe(1);
+  expect(f.calls.create).toBe(2);
+});
+
+test("fresh-process reopen failure fails the workflow while preserving owned cleanup", async () => {
+  const f = await fixture();
+  let attempts = 0;
+
+  const steps = await runState(f.connect, f.ledger, "base", {
+    provider: "daytona",
+    network: "blocked",
+    selected: new Set(["snapshot-roundtrip"]),
+    signal: AbortSignal.timeout(5000),
+    cleanupWaitMs: 1000,
+    reopenInFreshProcess: async () => {
+      attempts++;
+      throw new Error("Independent process lost reference history");
+    },
+  });
+
+  expect(attempts).toBe(1);
+  expect(steps.find((step) => step.scenario === "snapshot-roundtrip")?.status).toBe("failed");
+  expect(f.boxes.size).toBe(0);
+  expect(f.snapshots.size).toBe(0);
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+});
+
+for (const volumeFailure of ["rejected", "uncertain"] as const) {
+  test(`volume creator ${volumeFailure} keeps definitive no-effect separate from uncertain custody`, async () => {
+    const f = await fixture({ volumeFailure, mountsUnsupported: true });
+
+    const steps = await runState(f.connect, f.ledger, "base", {
+      provider: "daytona",
+      network: "blocked",
+      selected: new Set(["volume-crud"]),
+      signal: AbortSignal.timeout(5000),
+      cleanupWaitMs: 1000,
+    });
+
+    const state = await f.ledger.read();
+    expect(steps.find((step) => step.scenario === "volume-crud")?.status).toBe(
+      volumeFailure === "rejected" ? "blocked" : "failed",
+    );
+    expect(state.cleanup).toBe(volumeFailure === "rejected" ? "not-required" : "unresolved");
+    expect(state.stateMutations?.find((entry) => entry.creation)?.cleanup).toBe(
+      volumeFailure === "rejected" ? "not-required" : "pending",
+    );
+    expect(f.calls.volumeCreate).toBe(1);
+    expect(f.calls.volumeDelete).toBe(0);
+
+    if (volumeFailure === "rejected") await f.ledger.requirePreviousCleanup();
+    else await expect(f.ledger.requirePreviousCleanup()).rejects.toThrow("unresolved");
+    const client = await f.connect(async (reference) => f.ledger.saveStateReference(reference));
+
+    try {
+      await reconcileState(client, f.ledger, 1000);
+    } finally {
+      await client.close();
+    }
+
+    expect(f.calls.volumeCreate).toBe(1);
+    expect((await f.ledger.read()).cleanup).toBe(
+      volumeFailure === "rejected" ? "not-required" : "unresolved",
+    );
   });
 }

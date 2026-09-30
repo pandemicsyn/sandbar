@@ -109,7 +109,7 @@ except OSError as e:
  print("PROCESS_ABSENT")
 finally: s.close()'`;
 
-type StateScenario = "snapshot-roundtrip" | "volume-persistence";
+export type StateScenario = "snapshot-roundtrip" | "volume-persistence" | "volume-crud";
 
 const bytes = new Uint8Array([0, 255, 10, 83, 97, 110, 100, 98, 97, 114]);
 
@@ -158,12 +158,14 @@ export async function runState(
   imageId: string,
   options: {
     network: string;
-    provider: "daytona" | "e2b";
+    provider: string;
     selected: ReadonlySet<StateScenario>;
     signal: AbortSignal;
     cleanupWaitMs?: number;
     redactions?: readonly string[];
     borrowedVolume?: ResourceReference;
+    snapshotPath?: string;
+    reopenInFreshProcess?: (reference: ResourceReference) => Promise<void>;
     sourcePreflight?: (source: AdapterSandbox) => Promise<void>;
   },
 ): Promise<Step[]> {
@@ -213,7 +215,7 @@ export async function runState(
     };
 
     // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Public generic operation results are narrowed to SDK handles or parsed snapshot results before retaining custody.
-    const save = async (reference: AdapterRecoveryReference, result?: unknown) =>
+    const save = async (reference: AdapterRecoveryReference, result?: unknown, noEffect = false) =>
       ledger.update((value) => ({
         ...value,
         stateMutations: (value.stateMutations ?? []).map((entry) => {
@@ -235,6 +237,11 @@ export async function runState(
           const partial = partialResource(reference);
 
           if (partial) return { ...entry, reference, resource: partial };
+
+          // The initial submitted operation's public terminal rejection proves no effect.
+          // Never discard retained partial custody or infer rejection from inventory absence.
+          if (noEffect && entry.creation && !entry.resource && !entry.sandboxId)
+            return { ...entry, reference, cleanup: "not-required" };
 
           const failure = z
             .object({ captureState: z.literal("failed") })
@@ -260,6 +267,8 @@ export async function runState(
               ? error.reference
               : operation.reference
             : operation.reference,
+          undefined,
+          error instanceof SandbarError && error.effect === "none",
         );
         throw error;
       }
@@ -293,7 +302,10 @@ export async function runState(
     };
 
     const snapshotPath =
-      options.provider === "e2b" ? "/home/user/sandbar-captured.bin" : "/tmp/sandbar-captured.bin";
+      options.snapshotPath ??
+      (options.provider === "e2b"
+        ? "/home/user/sandbar-captured.bin"
+        : "/tmp/sandbar-captured.bin");
 
     const volumePath = `/mnt/sandbar-state/sandbar_${ledger.runId.replaceAll("-", "")}.bin`;
     const volumeBytes = new TextEncoder().encode(`Sandbar persistence ${ledger.runId}`);
@@ -517,6 +529,7 @@ export async function runState(
             JSON.parse(JSON.stringify(result.snapshot.reference)),
           );
 
+          await options.reopenInFreshProcess?.(savedSnapshot);
           await client.close();
           client = await factory(journal, onDiagnostic);
           const reopenedSnapshot = await client.snapshots.get(savedSnapshot);
@@ -554,6 +567,7 @@ export async function runState(
             metadataInspected: true,
             serializedReferenceReopened: true,
             freshConnectionAfterSourceDeletion: true,
+            freshProcessReopened: Boolean(options.reopenInFreshProcess),
             restoredWriteIndependent: true,
             sourceWriteIndependent: expected === "running",
             secondRestoreOriginalBytes: true,
@@ -574,6 +588,70 @@ export async function runState(
         } catch (error) {
           steps.push({
             scenario: "snapshot-roundtrip",
+            status: stateStatus(error),
+            issue: stateIssue(error),
+            diagnostic: await capture.failure(error),
+          });
+        }
+      }
+
+      let crudVolume: AdapterVolume | undefined;
+
+      if (options.selected.has("volume-crud")) {
+        const capture = new FailureCapture(ledger, "volume-crud", "create", options.redactions);
+
+        try {
+          if (options.borrowedVolume)
+            throw new SandbarError("UNSUPPORTED", "CRUD requires an owned new volume");
+          const caps = await client.capabilities();
+
+          if (
+            caps.volumes.status === "supported" &&
+            (!caps.volumes.value.create ||
+              !caps.volumes.value.inspect ||
+              !caps.volumes.value.delete)
+          )
+            throw new SandbarError(
+              "UNSUPPORTED",
+              "Owned volume CRUD requires create, inspect and delete",
+            );
+
+          if (caps.volumes.status === "unsupported" || caps.volumes.status === "unavailable")
+            throw new SandbarError(
+              caps.volumes.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
+              caps.volumes.reason,
+            );
+
+          if (steps.some((step) => step.status === "failed" || step.status === "blocked"))
+            throw new SandbarError(
+              "UNAVAILABLE",
+              "Previous state workflow failed; no additional allocation",
+            );
+          role = "volume/create";
+          crudVolume = await wait(
+            await client.volumes.submitCreate(
+              { name: `sandbar-${ledger.runId.replaceAll("-", "")}` },
+              { signal: options.signal },
+            ),
+          );
+          let info = await boundedRead(crudVolume.inspect(), options.signal);
+
+          for (let index = 0; info.state === "creating" && index < 40; index++) {
+            await boundedRead(new Promise((resolve) => setTimeout(resolve, 500)), options.signal);
+            info = await boundedRead(crudVolume.inspect(), options.signal);
+          }
+
+          if (info.state !== "ready" || info.reference.nativeId !== crudVolume.reference.nativeId)
+            throw new Error("Owned volume identity/readiness unconfirmed");
+          observed["volume-crud"] = {
+            probe: "volume-crud-v1",
+            metadataInspected: true,
+            ownedArtifactDeleted: true,
+          };
+          steps.push({ scenario: "volume-crud", status: "passed" });
+        } catch (error) {
+          steps.push({
+            scenario: "volume-crud",
             status: stateStatus(error),
             issue: stateIssue(error),
             diagnostic: await capture.failure(error),
@@ -608,7 +686,8 @@ export async function runState(
               );
             let volume: AdapterVolume;
 
-            if (options.borrowedVolume) {
+            if (crudVolume) volume = crudVolume;
+            else if (options.borrowedVolume) {
               const borrowed = ResourceReference.parse({
                 ...options.borrowedVolume,
                 ownership: "borrowed",
@@ -771,7 +850,11 @@ except OSError as e:
     const state = await ledger.read();
 
     for (const step of steps)
-      if (step.scenario === "snapshot-roundtrip" || step.scenario === "volume-persistence") {
+      if (
+        step.scenario === "snapshot-roundtrip" ||
+        step.scenario === "volume-persistence" ||
+        step.scenario === "volume-crud"
+      ) {
         if (
           step.status === "passed" &&
           (state.cleanup !== "confirmed" ||
@@ -1047,7 +1130,9 @@ export async function reconcileState(
     cleanup:
       failed || remaining
         ? "unresolved"
-        : (value.stateMutations ?? []).some((entry) => entry.creation)
+        : (value.stateMutations ?? []).some(
+              (entry) => entry.creation && entry.cleanup !== "not-required",
+            )
           ? "confirmed"
           : "not-required",
   }));

@@ -1,18 +1,16 @@
-import { runState, reconcileState } from "./state-profile";
-import { ResourceReference } from "sandbar-sdk";
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildAndLoad } from "./build";
+import { loadProviderProfile, profileRouting, providerId } from "./profile";
 import { qualificationRevisions, reconciliationRevisions } from "./revisions";
 import { loadCredentials } from "./credentials";
-import { daytonaConfiguration, daytonaConnection } from "./daytona-profile";
-import { e2bConfiguration, e2bConnection, e2bEnvdVersion } from "./e2b-profile";
-import { LedgerStore, requirePrivateDirectory, reportedCleanup } from "./ledger";
-import { reconcileConnection, runPrepared, type Step } from "./lifecycle";
-import { runNetworkPair, type NetworkRun } from "./network-profile";
+
+import type { Step } from "./lifecycle";
+import type { NetworkRun } from "./network-profile";
 import { networkProbeId } from "./network-probe";
 import {
   parseReport,
@@ -81,7 +79,20 @@ if (
     "Usage: bun manual.ts live-prepared | live-network | live-state | reconcile <run UUID>",
   );
 
-const provider = z.enum(["e2b", "daytona"]).parse(required("SANDBAR_QUAL_PROVIDER"));
+const provider = providerId.parse(required("SANDBAR_QUAL_PROVIDER"));
+
+const profilePath = process.env.SANDBAR_QUAL_PROFILE
+  ? resolve(root, process.env.SANDBAR_QUAL_PROFILE)
+  : undefined;
+
+if (profilePath) {
+  if (!within(profilePath, root))
+    throw new Error("Live profiles must be committed inside the selected source checkout");
+  execFileSync("git", ["ls-files", "--error-unmatch", profilePath], { cwd: root, stdio: "pipe" });
+}
+
+if (!profilePath && !["e2b", "daytona"].includes(provider))
+  throw new Error("Select a matching committed provider profile");
 
 if (action === "live-network" && provider !== "e2b")
   throw new Error("The paired network profile requires E2B internet-mode support");
@@ -96,6 +107,43 @@ if (action !== "reconcile") {
   if (execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim())
     throw new Error("Live qualification requires a clean exact SDK commit");
 }
+
+// Sequential provider builds finish before any SDK-dependent module is loaded.
+if (action !== "reconcile")
+  qualificationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "HEAD");
+
+const modules = await buildAndLoad(root, () =>
+  Promise.all([
+    import("./ledger"),
+    import("sandbar-sdk"),
+    import("./reopen"),
+    import("./state-profile"),
+    import("./daytona-profile"),
+    import("./e2b-profile"),
+    import("./lifecycle"),
+    import("./network-profile"),
+  ]),
+);
+
+const { LedgerStore, requirePrivateDirectory, reportedCleanup } = modules[0];
+
+const { ResourceReference } = modules[1];
+
+const { reopenInFreshProcess } = modules[2];
+
+const { runState, reconcileState } = modules[3];
+
+const { daytonaConfiguration, daytonaConnection } = modules[4];
+
+const { e2bConfiguration, e2bConnection, e2bEnvdVersion } = modules[5];
+
+const { reconcileConnection, runPrepared } = modules[6];
+
+const { runNetworkPair } = modules[7];
+
+const external = profilePath ? await loadProviderProfile(profilePath) : undefined;
+
+if (external && external.id !== provider) throw new Error("Profile provider identity differs");
 
 const suppliedDirectory = required("SANDBAR_QUAL_LEDGER_DIR");
 
@@ -127,7 +175,7 @@ if (saved && (saved.provider !== provider || saved.image.kind !== "borrowed-prep
   throw new Error("Ledger provider/ownership does not match the selected prepared profile");
 
 const e2bConfig =
-  provider === "e2b"
+  !external && provider === "e2b"
     ? e2bConfiguration.parse(
         saved?.connection ?? {
           teamId: process.env.SANDBAR_E2B_TEAM_ID,
@@ -138,7 +186,7 @@ const e2bConfig =
     : undefined;
 
 const daytonaConfig =
-  provider === "daytona"
+  !external && provider === "daytona"
     ? daytonaConfiguration.parse(
         saved?.connection ?? {
           target: required("SANDBAR_DAYTONA_TARGET"),
@@ -149,9 +197,27 @@ const daytonaConfig =
       )
     : undefined;
 
-const config = e2bConfig ?? daytonaConfig!;
+const externalRouting = external
+  ? profileRouting(
+      external,
+      process.env,
+      saved?.connection && "profile" in saved.connection ? saved.connection.routing : undefined,
+    )
+  : undefined;
 
-const imageId = e2bConfig?.templateId ?? daytonaConfig!.snapshotId;
+if (saved?.connection && "profile" in saved.connection && saved.connection.profile !== external?.id)
+  throw new Error("Saved profile identity differs");
+
+const externalConfiguration =
+  external && externalRouting ? external.configuration(externalRouting) : undefined;
+
+const config = externalRouting
+  ? { profile: external!.id, routing: externalRouting }
+  : (e2bConfig ?? daytonaConfig!);
+
+const imageId = externalRouting
+  ? z.string().min(1).max(128).parse(externalRouting.imageId)
+  : (e2bConfig?.templateId ?? daytonaConfig!.snapshotId);
 
 if (action === "live-network" && imageId !== "base")
   throw new Error("The bounded network profile requires the public base template");
@@ -185,20 +251,23 @@ const fileRoot = z
   .parse(
     action === "reconcile"
       ? (saved?.fileRoot ?? "/tmp")
-      : (process.env.SANDBAR_QUAL_FILE_ROOT ?? (provider === "e2b" ? "/home/user" : "/tmp")),
+      : (process.env.SANDBAR_QUAL_FILE_ROOT ??
+          externalConfiguration?.fileRoot ??
+          (provider === "e2b" ? "/home/user" : "/tmp")),
   );
 
 const selected = action === "live-prepared" ? selectedScenarios() : undefined;
 
 const stateSelected = new Set(
   z
-    .array(z.enum(["snapshot-roundtrip", "volume-persistence"]))
+    .array(z.enum(["snapshot-roundtrip", "volume-persistence", "volume-crud"]))
     .min(1)
-    .max(2)
+    .max(3)
     .parse(
       action === "live-state"
         ? (process.env.SANDBAR_QUAL_SCENARIOS?.split(",") ?? [
             "snapshot-roundtrip",
+            "volume-crud",
             "volume-persistence",
           ])
         : (saved?.stateSelection ?? ["snapshot-roundtrip", "volume-persistence"]),
@@ -217,9 +286,9 @@ const requestedEvidenceRef =
 
 const revisions =
   action !== "reconcile"
-    ? qualificationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "origin/main")
+    ? qualificationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "HEAD")
     : requestedEvidenceRef
-      ? reconciliationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "origin/main")
+      ? reconciliationRevisions(root, process.env.SANDBAR_QUAL_SDK_REF ?? "HEAD")
       : undefined;
 
 const evidenceRef = revisions ? requestedEvidenceRef : undefined;
@@ -243,7 +312,9 @@ const metadata = {
   mode: "live" as const,
   ...(revisions ?? { sdkCommit: commit, harnessCommit: commit }),
   sdkVersion: sdk.version,
-  nativeVersion: provider === "e2b" ? `e2b ${sdk.dependencies.e2b}` : "Daytona REST 0.218",
+  nativeVersion:
+    external?.nativeVersion ??
+    (provider === "e2b" ? `e2b ${sdk.dependencies.e2b}` : "Daytona REST 0.218"),
   runtime: `Bun ${process.versions.bun ?? "unknown"}`,
   platform: `${process.platform}-${process.arch}`,
   configuration: {
@@ -262,6 +333,7 @@ const metadata = {
     network: `${daytonaConfig?.networkPolicy ?? "blocked"}-requested`,
     networkProbe: paired ? (saved?.networkProbe ?? networkProbeId) : undefined,
     regionClass: daytonaConfig?.target ?? "provider-default",
+    ...externalConfiguration,
   },
   evidenceRef,
 };
@@ -281,24 +353,37 @@ if (evidenceRef)
   });
 
 // All routing/run gates precede secret loading, connection and native mutation.
-await loadCredentials();
+if (!external) await loadCredentials();
 
-const apiKey = required(provider === "e2b" ? "E2B_API_KEY" : "SANDBAR_DAYTONA_API_KEY");
+const credentials = external
+  ? Object.fromEntries(external.credentialVariables.map((name) => [name, required(name)]))
+  : undefined;
+
+const apiKey = external
+  ? ""
+  : required(provider === "e2b" ? "E2B_API_KEY" : "SANDBAR_DAYTONA_API_KEY");
 
 const redactions = [
   apiKey,
+  ...Object.values(credentials ?? {}),
   process.env.SANDBAR_DAYTONA_API_KEY ?? "",
   process.env.E2B_API_KEY ?? "",
   daytonaConfig?.snapshotId ?? "",
 ];
 
-const factory = e2bConfig
-  ? e2bConnection(e2bConfig, apiKey)
-  : daytonaConnection(daytonaConfig!, apiKey);
+const factory =
+  external && externalRouting && credentials
+    ? external.connection(externalRouting, credentials)
+    : e2bConfig
+      ? e2bConnection(e2bConfig, apiKey)
+      : daytonaConnection(daytonaConfig!, apiKey);
 
 const controller = new AbortController();
 
-const timer = setTimeout(() => controller.abort("qualification exercise time limit"), 240_000);
+const timer = setTimeout(
+  () => controller.abort("qualification exercise time limit"),
+  external?.bounds.exerciseMs ?? 240_000,
+);
 
 const interrupt = () => controller.abort("operator interruption");
 
@@ -314,7 +399,11 @@ const exercise = async () => {
       ...value,
       fileRoot,
       companionRunId: companion?.runId,
-      networkPolicy: companion ? "internet" : (daytonaConfig?.networkPolicy ?? "blocked"),
+      networkPolicy: companion
+        ? "internet"
+        : externalRouting
+          ? z.enum(["internet", "blocked", "daytona-default"]).parse(externalRouting.networkPolicy)
+          : (daytonaConfig?.networkPolicy ?? "blocked"),
       networkProbe: companion ? networkProbeId : undefined,
     }));
 
@@ -334,13 +423,21 @@ const exercise = async () => {
 
   if (action === "live-state")
     steps = await runState(factory, ledger, imageId, {
-      network: daytonaConfig?.networkPolicy ?? "blocked",
+      network: externalRouting
+        ? z.enum(["internet", "blocked", "daytona-default"]).parse(externalRouting.networkPolicy)
+        : (daytonaConfig?.networkPolicy ?? "blocked"),
       provider,
       selected: stateSelected,
       signal: controller.signal,
-      cleanupWaitMs: 60000,
+      cleanupWaitMs: external?.bounds.cleanupMs ?? 60000,
       redactions,
       borrowedVolume,
+      snapshotPath: `${fileRoot}/sandbar-captured.bin`,
+      reopenInFreshProcess: (reference) =>
+        reopenInFreshProcess(
+          { provider, connection: config, reference, profilePath },
+          controller.signal,
+        ),
     });
   else if (action === "reconcile" && saved?.stateMode === "live-state") {
     const connected = await factory((reference) => ledger.saveStateReference(reference));
@@ -357,17 +454,19 @@ const exercise = async () => {
   } else if (action === "live-network") {
     networkRuns = await runNetworkPair(factory, ledger, companion!, imageId, {
       signal: controller.signal,
-      cleanupWaitMs: 60_000,
+      cleanupWaitMs: external?.bounds.cleanupMs ?? 60_000,
       redactions,
       envdVersion: provider === "e2b" ? e2bEnvdVersion(apiKey) : undefined,
     });
     steps = networkRuns.flatMap((run) => run.steps);
   } else if (action === "live-prepared")
     steps = await runPrepared(factory, ledger, imageId, {
-      network: daytonaConfig?.networkPolicy ?? "blocked",
+      network: externalRouting
+        ? z.enum(["internet", "blocked", "daytona-default"]).parse(externalRouting.networkPolicy)
+        : (daytonaConfig?.networkPolicy ?? "blocked"),
       fileRoot,
       signal: controller.signal,
-      cleanupWaitMs: 60_000,
+      cleanupWaitMs: external?.bounds.cleanupMs ?? 60_000,
       selectedScenarios: selected,
       redactions,
       envdVersion: provider === "e2b" ? e2bEnvdVersion(apiKey) : undefined,
@@ -420,20 +519,38 @@ const exercise = async () => {
             ? "snapshot-roundtrip-v3"
             : step.scenario === "volume-persistence"
               ? "volume-persistence-v1"
-              : undefined,
+              : step.scenario === "volume-crud"
+                ? "volume-crud-v1"
+                : undefined,
+        freshProcess: step.scenario === "snapshot-roundtrip" ? true : undefined,
         preserve:
           step.scenario === "snapshot-roundtrip"
-            ? provider === "daytona"
-              ? "filesystem"
-              : "filesystem+memory"
+            ? step.stateEvidence?.probe === "snapshot-roundtrip-v3"
+              ? step.stateEvidence.preserve
+              : external
+                ? externalConfiguration?.preserve
+                : provider === "daytona"
+                  ? "filesystem"
+                  : "filesystem+memory"
             : undefined,
         restoreExecution:
           step.scenario === "snapshot-roundtrip"
-            ? provider === "daytona"
-              ? "fresh"
-              : "resume"
+            ? step.stateEvidence?.probe === "snapshot-roundtrip-v3"
+              ? step.stateEvidence.restoreExecution
+              : external
+                ? externalConfiguration?.restoreExecution
+                : provider === "daytona"
+                  ? "fresh"
+                  : "resume"
             : undefined,
-        sourceAfter: step.scenario === "snapshot-roundtrip" ? "running" : undefined,
+        sourceAfter:
+          step.scenario === "snapshot-roundtrip"
+            ? step.stateEvidence?.probe === "snapshot-roundtrip-v3"
+              ? step.stateEvidence.sourceState
+              : external
+                ? externalConfiguration?.sourceAfter
+                : "running"
+            : undefined,
         volumeOwnership:
           step.scenario === "volume-persistence"
             ? state.stateBorrowedVolume

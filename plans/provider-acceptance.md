@@ -71,3 +71,13 @@ Report cleanup separately and treat unresolved resources as an unsuccessful over
 Done means an implementer can configure a new adapter, run its supported main features, and produce the docs table without a bespoke runner or manually editing support cells. Existing failures and missing live evidence remain visible. Any paid validation of this refactor needs separate authorization; this plan does not grant it.
 
 No service work, new provider implementation, general workflow engine, or expansion of the snapshot contract is included. The [recovery DX follow-up](../specs/sdk-recovery-dx.md) remains a separate feature effort.
+
+
+## Implementation progress
+
+- Extended the maintained state runner with independent owned `volume-crud`; CRUD and mounted persistence reuse one artifact when selected together. Existing two-way snapshot, RAM/fresh-execution, remount, read-only and independent cleanup assertions remain. Snapshot reference reopening now includes a bounded read-only OS process in addition to a fresh connection.
+- Added the small external profile contract and offline public-adapter loading/reopen fixtures. The manual command supports branch or merged sources with exact clean source/dependency attribution and ordered provider-before-SDK builds; failed builds cannot load stale bundles. Existing admission, custody, TTL, teardown and no-replay mechanisms remain.
+- Generate both support pages from maintained feature/caveat metadata and reviewed summaries. Preserve the `5db0558` snapshot/Daytona mounted acceptance as historical, later merged guard changes as offline-tested, E2B native 403 as account blockage and its older uncertain creator as unresolved. No current-head live acceptance was fabricated or paid rerun performed.
+- Updated harness/adapter-authoring/qualification guidance to the common profile/runner/report path. Introductory provider guides, recovery API work and CI infrastructure remain owned by peer tasks.
+
+Final handoff records offline checks, independent review clearance and the actual CI branch dependency. New fresh-process/CRUD scenarios and changed production paths still require separately authorized live acceptance before current-revision claims advance.

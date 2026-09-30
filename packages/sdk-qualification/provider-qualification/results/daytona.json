@@ -936,5 +936,27 @@
       "evidenceRef": "https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/provider-qualification/results/daytona.json",
       "issue": "unsupported-capability"
     }
+  ],
+  "historicalEvidence": [
+    {
+      "sourceRevision": "5db0558",
+      "status": "passed",
+      "cleanup": "confirmed",
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/25",
+      "provider": "daytona",
+      "scenario": "snapshot-roundtrip",
+      "configuration": "Eligible container; filesystem capture; fresh execution; source restarted and running; two-way write isolation; serialized reference reopened through a fresh connection after source deletion.",
+      "attribution": "Reviewed premerge acceptance at 5db0558 used provider builds before the SDK build and runtime imports, with exact owned compute/artifact cleanup. PR #25 merged as a9d59b0 with later identity, custody, rejection, cancellation and recovery guards. The ordinary successful workflow was exercised at 5db0558; later fault branches have deterministic coverage. No exact source equivalence or current-head live pass is claimed. This run reopened in a fresh SDK connection, not another OS process. Dates, exact image/region and runtime not retained in this reviewed summary are not reconstructed."
+    },
+    {
+      "sourceRevision": "5db0558",
+      "status": "passed",
+      "cleanup": "confirmed",
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/25",
+      "provider": "daytona",
+      "scenario": "volume-persistence",
+      "configuration": "Owned create/inspect; finite producer write/readback; compute deletion with retained volume; consumer remount/readback; exact owned volume deletion. Writable mounts only.",
+      "attribution": "Reviewed premerge acceptance at 5db0558 passed the mounted workflow, including volume CRUD assertions. Later merged retained-custody and rejection/recovery changes are fixture-tested, not live rerun. This is not a run of the new separate volume-crud scenario."
+    }
   ]
 }

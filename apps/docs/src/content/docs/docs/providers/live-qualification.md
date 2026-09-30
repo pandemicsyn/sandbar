@@ -9,7 +9,7 @@ For the concise overview, see [Tested provider support](/docs/providers/support/
 
 These results cover only the stated image, requested network policy and region classes. A blocked-requested policy is a create setting, not a measured egress-isolation result. Fixture and packed tests do not establish live provider behavior. A later failure supersedes an earlier pass for the same configuration.
 
-Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot and volume workflows have separate explicit observations and retained-storage teardown. Prepared-image creation does not qualify either feature. New workflows remain not-run until approved merged-source evidence is published.
+Only explicit network scenario evidence measures egress: the paired probe covers TCP by hostname and direct IPv4 with live positive controls. It does not certify UDP, IPv6, ingress or universal isolation. Snapshot and volume workflows have separate explicit observations and retained-storage teardown. Prepared-image creation does not qualify either feature. New workflows remain not-run until reviewed revision-specific evidence is published.
 
 ## Daytona
 
@@ -18,6 +18,7 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
 - SDK: 0.0.0, commit `3be544646df54a2e1f85a3772d2961eaf69a7cc6`.
+- Fresh-process reopen: not recorded.
 - Harness commit: `3be544646df54a2e1f85a3772d2961eaf69a7cc6`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/provider-qualification/results/daytona.json).
 
@@ -46,6 +47,7 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
 - SDK: 0.0.0, commit `bd31aa221d960377907a2669b1df690362acf4ac`.
+- Fresh-process reopen: not recorded.
 - Harness commit: `a27e6071c2caf96696e8de02b0c8d2b56dc1f1a7`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/19).
 
@@ -76,6 +78,7 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 - Image / authority: prepared; public-base / api-key.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
 - SDK: 0.0.0, commit `3be544646df54a2e1f85a3772d2961eaf69a7cc6`.
+- Fresh-process reopen: not recorded.
 - Harness commit: `3be544646df54a2e1f85a3772d2961eaf69a7cc6`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/provider-qualification/results/e2b.json).
 
@@ -104,6 +107,7 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 - Image / authority: prepared; public-base / api-key.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
 - SDK: 0.0.0, commit `626b47b396c6a57267cd9942c1e40b9e5ba305a0`.
+- Fresh-process reopen: not recorded.
 - Harness commit: `925270bde2794005909cf6e95fd27188c316ec96`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/19).
 
@@ -112,5 +116,59 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 | file-binary (file root not recorded)     | passed             | 2026-09-28 |
 | file-no-clobber (file root not recorded) | blocked            | 2026-09-28 |
 | file-overwrite (file root not recorded)  | failed             | 2026-09-28 |
+
+## Historical state acceptance
+
+These reviewed summaries retain their original source/configuration attribution. Missing dates and runtime fields were not reconstructed. They are not current-head runs. Fresh connection is distinct from a fresh OS process.
+
+### daytona · snapshot-roundtrip · 5db0558
+
+Result: **passed**; cleanup: **confirmed**.
+
+Configuration: Eligible container; filesystem capture; fresh execution; source restarted and running; two-way write isolation; serialized reference reopened through a fresh connection after source deletion.
+
+Reviewed premerge acceptance at 5db0558 used provider builds before the SDK build and runtime imports, with exact owned compute/artifact cleanup. PR #25 merged as a9d59b0 with later identity, custody, rejection, cancellation and recovery guards. The ordinary successful workflow was exercised at 5db0558; later fault branches have deterministic coverage. No exact source equivalence or current-head live pass is claimed. This run reopened in a fresh SDK connection, not another OS process. Dates, exact image/region and runtime not retained in this reviewed summary are not reconstructed.
+
+Evidence: [reviewed PR record](https://github.com/pandemicsyn/sandbar/pull/25).
+
+### daytona · volume-persistence · 5db0558
+
+Result: **passed**; cleanup: **confirmed**.
+
+Configuration: Owned create/inspect; finite producer write/readback; compute deletion with retained volume; consumer remount/readback; exact owned volume deletion. Writable mounts only.
+
+Reviewed premerge acceptance at 5db0558 passed the mounted workflow, including volume CRUD assertions. Later merged retained-custody and rejection/recovery changes are fixture-tested, not live rerun. This is not a run of the new separate volume-crud scenario.
+
+Evidence: [reviewed PR record](https://github.com/pandemicsyn/sandbar/pull/25).
+
+### e2b · snapshot-roundtrip · 5db0558
+
+Result: **passed**; cleanup: **confirmed**.
+
+Configuration: Compatible prepared template; filesystem and RAM; pinned-build restore; running source; two-way write isolation; RAM-only socket nonce/counter; home file workspace; fresh connection after source deletion.
+
+Reviewed premerge acceptance at 5db0558 used provider builds before the SDK build and runtime imports, with exact owned compute/artifact cleanup. PR #25 merged as a9d59b0 with later identity, custody, rejection, cancellation and recovery guards. The ordinary successful workflow was exercised at 5db0558; later fault branches have deterministic coverage. No exact source equivalence or current-head live pass is claimed. This run reopened in a fresh SDK connection, not another OS process. Dates, exact image/region and runtime not retained in this reviewed summary are not reconstructed.
+
+Evidence: [reviewed PR record](https://github.com/pandemicsyn/sandbar/pull/25).
+
+### e2b · volume-crud · 5db0558
+
+Result: **failed**; cleanup: **incomplete**.
+
+Configuration: Original owned-volume create attempt: acknowledgement and native HTTP status unavailable; complete scoped inventory found no match.
+
+Outcome remains uncertain in the private custody ledger. Inventory absence does not prove no effect, authorize replay or erase the unresolved creator. No live volume workflow passed.
+
+Evidence: [reviewed PR record](https://github.com/pandemicsyn/sandbar/pull/25).
+
+### e2b · volume-crud · working-tree-before-dfc34b6
+
+Result: **blocked**; cleanup: **not-required**.
+
+Configuration: Separately authorized focused public-SDK create returned native HTTP 403; durable rejected token; fresh-connection recovery/continue confirmed effect none without replay.
+
+This later focused attempt established account create denial, not a working volume CRUD workflow and not retrospective rejection of the earlier uncertain attempt. The exact working-tree source is not relabeled as a clean commit. The definitive-rejection implementation subsequently merged in PR #25; no paid rerun was performed here.
+
+Evidence: [reviewed PR record](https://github.com/pandemicsyn/sandbar/pull/25).
 
 A missing row means no validated live result is recorded. Unsupported and blocked operations are not passes.

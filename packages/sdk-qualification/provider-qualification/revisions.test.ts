@@ -12,7 +12,7 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
 });
 
-test("only unchanged merged SDK sources qualify from a clean harness branch", async () => {
+test("branch and merged revisions share exact source verification", async () => {
   const root = await mkdtemp(join(tmpdir(), "sandbar-revisions-"));
   directories.push(root);
   const git = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -28,21 +28,20 @@ test("only unchanged merged SDK sources qualify from a clean harness branch", as
   await writeFile(join(root, "harness.ts"), "// qualification harness\n");
   git(["add", "."]);
   git(["commit", "--quiet", "-m", "reviewed harness"]);
-  expect(qualificationRevisions(root)).toEqual({
+  expect(qualificationRevisions(root, "origin/main")).toEqual({
     sdkCommit,
     harnessCommit: git(["rev-parse", "HEAD"]),
   });
-  expect(reconciliationRevisions(root)).toEqual({
+  expect(reconciliationRevisions(root, "origin/main")).toEqual({
     sdkCommit,
     harnessCommit: git(["rev-parse", "HEAD"]),
   });
-  expect(reconciliationRevisions(root, "HEAD")).toBeUndefined();
-  expect(() => qualificationRevisions(root, "HEAD")).toThrow("merged origin/main");
+  expect(qualificationRevisions(root).sdkCommit).toBe(git(["rev-parse", "HEAD"]));
   await writeFile(join(root, "packages/sdk/source.ts"), "export const version = 2;\n");
   expect(reconciliationRevisions(root)).toBeUndefined();
   expect(() => qualificationRevisions(root)).toThrow("clean checkout");
   git(["add", "."]);
   git(["commit", "--quiet", "-m", "unmerged SDK behavior"]);
-  expect(reconciliationRevisions(root)).toBeUndefined();
-  expect(() => qualificationRevisions(root)).toThrow("merged origin/main");
+  expect(qualificationRevisions(root).sdkCommit).toBe(git(["rev-parse", "HEAD"]));
+  expect(() => qualificationRevisions(root, "origin/main")).toThrow("selected source commit");
 });

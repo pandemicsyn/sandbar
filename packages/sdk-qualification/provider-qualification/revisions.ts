@@ -12,8 +12,8 @@ const sdkPaths = [
   "scripts/rewrite-declarations.mjs",
 ];
 
-/** A reviewed harness branch may qualify unchanged SDK sources already merged on origin/main. */
-export function qualificationRevisions(root: string, mergedRef = "origin/main") {
+/** Branch and merged runs identify the exact clean sources they exercise. */
+export function qualificationRevisions(root: string, sourceRef = "HEAD") {
   const git = (args: string[]) =>
     execFileSync("git", args, {
       cwd: root,
@@ -23,15 +23,14 @@ export function qualificationRevisions(root: string, mergedRef = "origin/main") 
 
   if (git(["status", "--porcelain"]))
     throw new Error("Live qualification requires a clean checkout");
-  const sdkCommit = git(["rev-parse", `${mergedRef}^{commit}`]);
+  const sdkCommit = git(["rev-parse", `${sourceRef}^{commit}`]);
   const harnessCommit = git(["rev-parse", "HEAD"]);
 
   try {
-    git(["merge-base", "--is-ancestor", sdkCommit, "origin/main"]);
     git(["diff", "--quiet", sdkCommit, harnessCommit, "--", ...sdkPaths]);
   } catch {
     throw new Error(
-      "Live qualification requires SDK sources and dependency pins identical to a merged origin/main commit",
+      "Live qualification requires SDK sources and dependency pins identical to the selected source commit",
     );
   }
 
@@ -39,9 +38,9 @@ export function qualificationRevisions(root: string, mergedRef = "origin/main") 
 }
 
 /** Unverified evidence never blocks owned cleanup; only suppress its public certification report. */
-export function reconciliationRevisions(root: string, mergedRef = "origin/main") {
+export function reconciliationRevisions(root: string, sourceRef = "HEAD") {
   try {
-    return qualificationRevisions(root, mergedRef);
+    return qualificationRevisions(root, sourceRef);
   } catch {
     return undefined;
   }

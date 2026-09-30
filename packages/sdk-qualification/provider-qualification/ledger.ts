@@ -10,7 +10,7 @@ import { networkEvidenceSchema, networkProbeId } from "./network-probe";
 const ledgerSchema = z.strictObject({
   version: z.literal(1),
   runId: z.uuid(),
-  provider: z.enum(["daytona", "e2b"]),
+  provider: z.string().regex(/^[a-z][a-z0-9.-]{0,79}$/),
   createdAt: z.iso.datetime(),
   image: z.strictObject({
     kind: z.enum(["borrowed-prepared", "owned-built"]),
@@ -18,6 +18,13 @@ const ledgerSchema = z.strictObject({
   }),
   connection: z
     .union([
+      z.strictObject({
+        profile: z.string().regex(/^[a-z][a-z0-9.-]{0,79}$/),
+        routing: z.record(
+          z.string().max(80),
+          z.union([z.string().max(512), z.number().finite(), z.boolean()]),
+        ),
+      }),
       z.strictObject({
         target: z
           .string()
@@ -61,8 +68,8 @@ const ledgerSchema = z.strictObject({
   stateRole: z.string().max(80).optional(),
   stateBorrowedVolume: z.unknown().optional(),
   stateSelection: z
-    .array(z.enum(["snapshot-roundtrip", "volume-persistence"]))
-    .max(2)
+    .array(z.enum(["snapshot-roundtrip", "volume-persistence", "volume-crud"]))
+    .max(3)
     .optional(),
   stateMutations: z
     .array(

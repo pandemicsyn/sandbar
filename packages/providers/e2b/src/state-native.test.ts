@@ -1433,6 +1433,9 @@ for (const status of [400, 401, 403] as const) {
         effect: "none",
       });
       expect(saved?.token).toMatchObject({ state: "rejected", rejectionStatus: status });
+      expect((await client.capabilities()).volumes.status).toBe(
+        status === 400 ? "unknown" : "unavailable",
+      );
       const reopened = await f.connect("fixture-key");
 
       try {
@@ -1558,6 +1561,25 @@ test("E2B oversized native volume inventory reports capacity instead of a schema
     await expect(client.volumes.list({ limit: 100 })).rejects.toMatchObject({
       code: "CAPACITY",
     });
+  } finally {
+    await client.close();
+  }
+});
+
+test("successful volume inventory does not prove account create eligibility or allocate", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    expect((await client.capabilities()).volumes).toMatchObject({ status: "unknown" });
+    expect(f.calls.volumeCreate).toBe(0);
+    const volume = await client.volumes.create({ name: "eligibility" });
+    expect((await client.capabilities()).volumes).toMatchObject({
+      status: "supported",
+      value: { create: true },
+    });
+    expect(f.calls.volumeCreate).toBe(1);
+    await volume.delete();
   } finally {
     await client.close();
   }
