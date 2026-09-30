@@ -600,10 +600,11 @@ export function e2bState(input: {
         }
 
         const accepted = await need().deleteSnapshot(value.nativeId, ctx.signal);
-        await ctx.checkpoint({ accepted, stage: accepted ? "accepted" : "rejected" });
+        // The pinned SDK returns false for native 404, not a rejected dispatch.
+        await ctx.checkpoint({ accepted, stage: accepted ? "accepted" : "uncertain" });
 
         return ctx.pending(
-          { accepted, stage: accepted ? "accepted" : "rejected" },
+          { accepted, stage: accepted ? "accepted" : "uncertain" },
           { pollAfterMs: 0 },
         );
       },
@@ -929,7 +930,8 @@ export function e2bState(input: {
 
       try {
         accepted = await need().deleteVolume(reference.nativeId, ctx.signal);
-        stage = accepted ? "accepted" : "rejected";
+        // A false native result means not found; confirm absence read-only.
+        stage = accepted ? "accepted" : "uncertain";
         await ctx.checkpoint({ accepted, stage });
       } catch (error) {
         if (error instanceof AdapterCheckpointError) throw error;

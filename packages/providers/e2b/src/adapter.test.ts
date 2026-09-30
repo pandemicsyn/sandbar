@@ -18,6 +18,7 @@ import { Image, Sandbar } from "sandbar-sdk";
 import {
   connectAdapter,
   observeOperation,
+  continueOperation,
   prepareOperation,
   submitOperation,
   type Json,
@@ -1130,6 +1131,7 @@ test("uncertain writes and destroy reconcile after reconnect without replay", as
 
     expect(checkpoint).toEqual({
       stage: "uncertain",
+      sandboxId: "sandbox_1",
       retainedTemplateId: "built_template",
       retainedVolumeNames: ["kept-volume"],
     });
@@ -1322,7 +1324,8 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
         },
       );
 
-      if (barrier === "abort-before") expect((await submitted).kind).toBe("unknown");
+      if (barrier === "abort-before")
+        expect(await submitted).toMatchObject({ kind: "rejected", code: "UNAVAILABLE" });
       else await expect(submitted).rejects.toThrow("reference persistence failed");
       expect(kills).toBe(barrier === "reject-after" ? 1 : 0);
       expect(saved).toMatchObject({
@@ -1347,7 +1350,20 @@ for (const barrier of ["reject-before", "abort-before", "reject-after"] as const
             retainedResources: ["e2b-template:built_template", "e2b-volume-name:retained-name"],
           },
         });
-      else expect(observed?.kind).toBe("pending");
+      else if (barrier === "abort-before") {
+        expect(saved).toMatchObject({ stage: "rejected", sandboxId: "box" });
+        expect(observed?.kind).toBe("unknown");
+        expect(
+          await continueOperation(
+            connection.session,
+            "destroy",
+            { ...identity, token: saved, version },
+            identity,
+            new AbortController().signal,
+            async () => {},
+          ),
+        ).toMatchObject({ kind: "rejected", code: "UNAVAILABLE" });
+      } else expect(observed?.kind).toBe("pending");
       expect(kills).toBe(barrier === "reject-after" ? 1 : 0);
     } finally {
       await connection.close();

@@ -1615,3 +1615,17 @@ test("Daytona failed stop checkpoint preserves uncertainty without replay", asyn
     await client.close();
   }
 });
+
+test("Daytona oversized native volume inventory reports SDK capacity", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    await client.volumes.create({ name: "first" });
+    await client.volumes.create({ name: "second" });
+    await expect(client.volumes.list({ limit: 1 })).rejects.toMatchObject({ code: "CAPACITY" });
+    expect((await client.volumes.list({ limit: 2 })).items).toHaveLength(2);
+  } finally {
+    await client.close();
+  }
+});

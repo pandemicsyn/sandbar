@@ -1330,8 +1330,11 @@ export function daytonaState(input: {
 
       const values = await json(
         await request("GET", "/volumes", undefined, ctx),
-        z.array(NativeVolume).max(page.limit),
+        z.array(NativeVolume),
       );
+
+      if (values.length > page.limit)
+        throw new AdapterError("CAPACITY", "Native volume inventory exceeds requested bound");
 
       return { items: values.map((v) => volumeInfo(v)), coverage: "provider-scope" };
     },

@@ -37,6 +37,8 @@ function fixture() {
   const modes = {
     loseCapture: false,
     loseDelete: false,
+    deleteNotFound: false,
+    keepDeletedResource: false,
     loseKill: false,
     omitMounts: false,
     betaDenied: false,
@@ -174,7 +176,10 @@ function fixture() {
       },
       async deleteSnapshot(id) {
         calls.snapshotDelete++;
-        snapshots.delete(`${id}:default`);
+
+        if (!modes.keepDeletedResource) snapshots.delete(`${id}:default`);
+
+        if (modes.deleteNotFound) return false;
 
         if (modes.loseDelete) throw new Error("Acknowledgement lost after deletion");
 
@@ -204,7 +209,9 @@ function fixture() {
       async deleteVolume(id) {
         calls.volumeDelete++;
 
-        return volumes.delete(id);
+        const deleted = modes.keepDeletedResource ? false : volumes.delete(id);
+
+        return modes.deleteNotFound ? false : deleted;
       },
     },
   };
@@ -1218,4 +1225,45 @@ for (const kind of ["snapshot", "volume"] as const) {
       }
     });
   }
+}
+
+for (const kind of ["snapshot", "volume"] as const) {
+  test.each([false, true])(
+    `E2B ${kind} false delete result verifies absence without replay: present %s`,
+    async (present) => {
+      const f = fixture();
+      const client = await f.connect("fixture-key", undefined, "team-fixture");
+
+      try {
+        const artifact =
+          kind === "snapshot"
+            ? (
+                await (
+                  await client.sandboxes.create({ environment: Image.prepared("base") })
+                ).snapshot()
+              ).snapshot
+            : await client.volumes.create({ name: "false-delete" });
+
+        f.modes.deleteNotFound = true;
+        f.modes.keepDeletedResource = present;
+        const operation = await artifact.submitDelete();
+        expect(operation.reference.token).toMatchObject({ accepted: false, stage: "uncertain" });
+        const reopened = await f.connect("rotated-key", undefined, "team-fixture");
+
+        try {
+          const recovered = await reopened.recover(operation.reference);
+
+          if (present) {
+            expect(await recovered.observe()).toBeNull();
+            await expect(recovered.continue()).rejects.toMatchObject({ code: "UNSUPPORTED" });
+          } else expect(await recovered.wait()).toMatchObject({ deleted: true });
+          expect(kind === "snapshot" ? f.calls.snapshotDelete : f.calls.volumeDelete).toBe(1);
+        } finally {
+          await reopened.close();
+        }
+      } finally {
+        await client.close();
+      }
+    },
+  );
 }

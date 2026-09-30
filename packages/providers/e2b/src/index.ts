@@ -52,7 +52,8 @@ const WriteToken = z.strictObject({
 type WriteTokenData = z.infer<typeof WriteToken>;
 
 const DestroyToken = z.strictObject({
-  stage: z.enum(["uncertain", "accepted"]),
+  stage: z.enum(["uncertain", "accepted", "rejected"]),
+  sandboxId: z.string().min(1).max(512).optional(),
   retainedTemplateId: z.string().max(128).optional(),
   retainedVolumeNames: z.array(z.string().min(1).max(128)).max(32).optional(),
   mountDurability: z.array(importMountDurability).max(32).optional(),
@@ -510,10 +511,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             if (record.volumeMounts?.length && box.storage !== "allow-unconfirmed")
               return ctx.reject("UNSUPPORTED", "Writable cleanup durability is unverified");
 
-            if (ctx.signal.aborted)
-              return ctx.unknown("E2B termination was not submitted after cancellation");
-
-            const token: z.infer<typeof DestroyToken> = { stage: "uncertain" };
+            const token: z.infer<typeof DestroyToken> = { stage: "uncertain", sandboxId: box.id };
 
             if (record.volumeMounts?.length) {
               // Native mount observations expose reusable names, never immutable volume IDs.
@@ -524,8 +522,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
             await ctx.checkpoint(token);
 
-            if (ctx.signal.aborted)
-              return ctx.unknown("E2B termination was not submitted after cancellation");
+            if (ctx.signal.aborted) {
+              token.stage = "rejected";
+              await ctx.checkpoint(token);
+
+              return ctx.reject("UNAVAILABLE", "E2B termination cancelled before dispatch");
+            }
 
             try {
               await transport.kill(box.id, ctx.signal);
@@ -545,6 +547,14 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             const token = DestroyToken.safeParse(attempt.token);
 
             if (!token.success) return ctx.unknown("E2B destroy lacks retained-resource evidence");
+
+            if (token.data.sandboxId && token.data.sandboxId !== attempt.sandbox.id)
+              return ctx.unknown("E2B destroy checkpoint identity differs");
+
+            if (token.data.stage === "rejected")
+              return ctx.unknown(
+                "Termination cancelled before dispatch; continue to confirm no effect",
+              );
             await verifyAuthority();
             const record = await transport.get(attempt.sandbox.id);
 
@@ -555,6 +565,18 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             }
 
             return destroyValue(token.data);
+          },
+          async continue(attempt, ctx) {
+            const token = DestroyToken.safeParse(attempt.token);
+
+            if (
+              token.success &&
+              token.data.stage === "rejected" &&
+              token.data.sandboxId === attempt.sandbox?.id
+            )
+              return ctx.reject("UNAVAILABLE", "E2B termination cancelled before dispatch");
+
+            return ctx.unknown("E2B termination cannot be replayed");
           },
         },
         async inspect(box) {
