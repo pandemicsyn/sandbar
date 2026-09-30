@@ -20,18 +20,21 @@ interface FixtureStartHook {
 function fixture(
   options: { stopped?: boolean; restartAfterCapture?: boolean; largeScope?: boolean } = {},
 ) {
-  const scope: Scope = {
+  let scope: Scope = {
     authority: { kind: "organization", id: "org-one" },
-    partition: {
-      target: "us",
-      ...(options.largeScope
-        ? {
-            apiUrl: "https://fixture.invalid/" + "a".repeat(2000),
-            toolboxOrigin: "https://toolbox.invalid/" + "b".repeat(2000),
-          }
-        : {}),
-    },
+    partition: { target: "us" },
   };
+
+  if (options.largeScope) {
+    scope = {
+      ...scope,
+      partition: {
+        target: "us",
+        apiUrl: "https://fixture.invalid/" + "a".repeat(2000),
+        toolboxOrigin: "https://toolbox.invalid/" + "b".repeat(2000),
+      },
+    };
+  }
 
   let state = options.stopped ? "stopped" : "started";
 
