@@ -35,4 +35,4 @@ try {
 
 Set `E2B_API_KEY` to use this example. Packages are not published yet; see [Getting started](https://sandbarsdk.dev/docs/direct-quickstart/) for setup and provider examples.
 
-[Provider support](https://sandbarsdk.dev/docs/providers/support/) · [API reference](https://sandbarsdk.dev/docs/reference/typescript/) · [License](LICENSE)
+[Provider support](https://sandbarsdk.dev/docs/providers/support/) · [API reference](https://sandbarsdk.dev/docs/reference/typescript/) · [Roadmap](ROADMAP.md) · [License](LICENSE)
