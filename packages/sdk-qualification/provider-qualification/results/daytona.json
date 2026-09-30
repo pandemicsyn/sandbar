@@ -935,6 +935,172 @@
       },
       "evidenceRef": "https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/provider-qualification/results/daytona.json",
       "issue": "unsupported-capability"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "daytona",
+      "scenario": "connect",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "9a6c1c19605ad85e533d1e4ff70876c86c1562fe",
+      "harnessCommit": "9a6c1c19605ad85e533d1e4ff70876c86c1562fe",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "envd": {
+        "status": "not-collected"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T03:37:35.586Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "daytona",
+      "scenario": "snapshot-roundtrip",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "9a6c1c19605ad85e533d1e4ff70876c86c1562fe",
+      "harnessCommit": "9a6c1c19605ad85e533d1e4ff70876c86c1562fe",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "envd": {
+        "status": "not-collected"
+      },
+      "stateEvidence": {
+        "probe": "snapshot-roundtrip-v3",
+        "preserve": "filesystem",
+        "captureMode": "native-default",
+        "restoreExecution": "fresh",
+        "sourceProcesses": "ended",
+        "freshExecution": "verified-missing-guest-process",
+        "sourceState": "running",
+        "capturedBytes": true,
+        "newIdentity": true,
+        "metadataInspected": true,
+        "serializedReferenceReopened": true,
+        "freshConnectionAfterSourceDeletion": true,
+        "freshProcessReopened": true,
+        "restoredWriteIndependent": true,
+        "sourceWriteIndependent": true,
+        "secondRestoreOriginalBytes": true,
+        "memory": "not-applicable",
+        "ownedArtifactDeleted": true
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T03:37:35.586Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "restoreExecution": "fresh",
+        "sourceAfter": "running",
+        "stateProbe": "snapshot-roundtrip-v3",
+        "preserve": "filesystem",
+        "freshProcess": true,
+        "regionClass": "us"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "daytona",
+      "scenario": "volume-crud",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "9a6c1c19605ad85e533d1e4ff70876c86c1562fe",
+      "harnessCommit": "9a6c1c19605ad85e533d1e4ff70876c86c1562fe",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "envd": {
+        "status": "not-collected"
+      },
+      "stateEvidence": {
+        "probe": "volume-crud-v1",
+        "metadataInspected": true,
+        "ownedArtifactDeleted": true
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T03:37:35.586Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "stateProbe": "volume-crud-v1",
+        "regionClass": "us"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "daytona",
+      "scenario": "confirm-cleanup",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "9a6c1c19605ad85e533d1e4ff70876c86c1562fe",
+      "harnessCommit": "9a6c1c19605ad85e533d1e4ff70876c86c1562fe",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "envd": {
+        "status": "not-collected"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T03:37:35.586Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "schemaVersion": 1,
+      "provider": "daytona",
+      "scenario": "close",
+      "mode": "live",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "sdkCommit": "9a6c1c19605ad85e533d1e4ff70876c86c1562fe",
+      "harnessCommit": "9a6c1c19605ad85e533d1e4ff70876c86c1562fe",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "envd": {
+        "status": "not-collected"
+      },
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T03:37:35.586Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
     }
   ],
   "historicalEvidence": [
