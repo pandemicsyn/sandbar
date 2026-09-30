@@ -34,6 +34,7 @@ export const RecoveryFacts = z
     continuation: z.strictObject({
       supported: z.union([z.boolean(), z.literal("unknown")]).default("unknown"),
       status: z.enum(["eligible", "unavailable", "unknown"]),
+      action: z.enum(["continue", "observe", "manual", "none", "unknown"]).optional(),
       reason: z.string().min(1).max(1024),
     }),
   })

@@ -173,6 +173,34 @@ export class SandbarError extends Error {
   }
 }
 
+/** A required reference write failed; this does not change the provider outcome. */
+export class ReferencePersistenceError<T = unknown> extends SandbarError {
+  readonly cause: unknown;
+  constructor(
+    readonly reference: AdapterRecoveryReference,
+    readonly phase: "before-dispatch" | "checkpoint" | "observation" | "completion",
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Persistence callbacks may reject with any application value; retain it as the cause only.
+    cause: unknown,
+    readonly providerOutcome: "not-dispatched" | "unconfirmed" | "completed" = "unconfirmed",
+    readonly result?: T,
+  ) {
+    let effect: SafeError["effect"] = "possible";
+
+    if (providerOutcome === "completed") effect = "applied";
+    else if (providerOutcome === "not-dispatched") effect = "none";
+    super(
+      "REFERENCE_PERSISTENCE_FAILED",
+      providerOutcome === "completed"
+        ? "Provider operation completed; save this reference again without repeating the mutation"
+        : "Required operation reference persistence failed; save this reference before further dispatch",
+      effect,
+      recoveryOutcome(reference),
+    );
+    this.name = "ReferencePersistenceError";
+    this.cause = cause;
+  }
+}
+
 export class UnsupportedFeatureError extends SandbarError {
   constructor(
     readonly feature: string,

@@ -30,6 +30,7 @@ export {
   SandbarError,
   UnsupportedFeatureError,
   OutcomeUnknownError,
+  ReferencePersistenceError,
   WaitAbortedError,
   NonzeroExitError,
   NoExitCodeError,

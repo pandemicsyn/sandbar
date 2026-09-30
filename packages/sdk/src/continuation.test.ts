@@ -96,7 +96,7 @@ test("continuation awaits durable dispatch checkpoint and guards one handle agai
     expect(await operation.wait()).toMatchObject({ computeStopped: true });
     expect(operation.reference.submissionId).toBe(identity);
     expect(f.effects()).toBe(1);
-    await (await operation.continue()).wait();
+    await expect(operation.continue()).rejects.toMatchObject({ code: "CONFLICT" });
     expect(f.effects()).toBe(1);
   } finally {
     release();
@@ -122,7 +122,7 @@ for (const failure of ["uncertain", "completed"] as const) {
       const box = await client.sandboxes.create({ environment: Image.prepared("base") });
       const operation = await box.submitDestroy();
       await expect(operation.continue()).rejects.toMatchObject({
-        code: "OUTCOME_UNKNOWN",
+        code: "REFERENCE_PERSISTENCE_FAILED",
         reference: { token: { stage: failure } },
       });
       expect(f.effects()).toBe(failure === "completed" ? 1 : 0);
@@ -164,7 +164,7 @@ for (const persistenceFailure of [false, true]) {
 
         if (persistenceFailure)
           await expect(box.submitDestroy()).rejects.toMatchObject({
-            code: "OUTCOME_UNKNOWN",
+            code: "REFERENCE_PERSISTENCE_FAILED",
             reference: { token: { stage: "completed" } },
           });
         else await box.submitDestroy();

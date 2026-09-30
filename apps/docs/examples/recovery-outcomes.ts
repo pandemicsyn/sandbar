@@ -1,5 +1,6 @@
 import {
   OutcomeUnknownError,
+  ReferencePersistenceError,
   Sandbar,
   SandbarError,
   WaitAbortedError,
@@ -56,6 +57,13 @@ export async function captureWithRecovery(
 
     return { capture: result.capture, snapshot: result.snapshot.reference };
   } catch (error) {
+    if (error instanceof ReferencePersistenceError) {
+      await save(JSON.stringify(error.reference));
+
+      // The required save failed; repeat persistence, never a confirmed capture.
+      return { outcome: error.outcome, confirmedResult: error.result };
+    }
+
     if (
       (error instanceof OutcomeUnknownError ||
         error instanceof WaitAbortedError ||
@@ -94,7 +102,7 @@ export async function recoverCapture(
   const outcome = operation.outcome;
   const snapshots = await inspectRetainedSnapshots(freshClient, outcome);
 
-  if (outcome.continuation.status !== "eligible") {
+  if (outcome.nextAction !== "continue") {
     // Pending/uncertain work stays observable; unknown is never completed capture.
     return { outcome, snapshots };
   }

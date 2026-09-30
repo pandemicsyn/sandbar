@@ -10,6 +10,7 @@ import {
   Sandbar,
   Image,
   OutcomeUnknownError,
+  ReferencePersistenceError,
   recoveryOutcome,
   type AdapterRecoveryReference,
 } from "./index";
@@ -157,7 +158,9 @@ test("bound connection awaits initial persistence and dispatch checkpoints", asy
     expect(f.effects()).toBe(1);
     expect(operation.outcome.completed).toContainEqual({ step: "compute-stop" });
     expect(operation.outcome.continuation.status).toBe("unavailable");
-    expect(saved?.facts).toEqual(operation.outcome.reference.facts);
+    expect(saved?.completion).toEqual(
+      JSON.parse(JSON.stringify(operation.outcome.reference.completion)),
+    );
   } finally {
     held.release();
     await client.close();
@@ -186,9 +189,10 @@ for (const failure of ["before", "after"] as const) {
         (error: Error) => error,
       );
 
-      expect(error).toBeInstanceOf(OutcomeUnknownError);
+      expect(error).toBeInstanceOf(ReferencePersistenceError);
 
-      if (!(error instanceof OutcomeUnknownError)) throw new Error("Expected recoverable error");
+      if (!(error instanceof ReferencePersistenceError))
+        throw new Error("Expected persistence error");
       expect(error.outcome?.retainedResources).toEqual([f.retained]);
       expect(error.outcome?.reference).toEqual(operation.reference);
       expect(f.effects()).toBe(failure === "before" ? 0 : 1);
@@ -355,6 +359,113 @@ test("acknowledged facts with a nine KiB scope persist and recover through the S
     } finally {
       await fresh.close();
     }
+  } finally {
+    await client.close();
+  }
+});
+
+test("partial failure distinguishes eligible continuation from manual action", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const operation = await (
+      await client.sandboxes.create({ environment: Image.prepared("base") })
+    ).submitDestroy();
+
+    const base = operation.reference;
+
+    const facts: RecoveryFacts = {
+      version: 1,
+      retainedResources: [f.retained],
+      completed: [{ step: "capture" }],
+      steps: [
+        { step: "capture", status: "completed" },
+        {
+          step: "restart",
+          status: "failed",
+          reason:
+            "Restart definitively rejected; restart source manually or restore the retained snapshot",
+        },
+      ],
+      continuation: { supported: true, status: "unavailable", reason: "Manual recovery required" },
+    };
+
+    const error = new OutcomeUnknownError({ ...base, facts });
+    expect(error.outcome?.nextAction).toBe("manual");
+    expect(error.outcome?.continuation.supported).toBe(true);
+    expect(error.outcome?.retainedResources).toEqual([f.retained]);
+    expect(error.outcome?.completed).toEqual([{ step: "capture" }]);
+
+    const eligible = recoveryOutcome({
+      ...base,
+      facts: {
+        ...facts,
+        continuation: { supported: true, status: "eligible", reason: "Restart proven unsubmitted" },
+      },
+    });
+
+    expect(eligible.nextAction).toBe("continue");
+
+    const uncertain = recoveryOutcome({
+      ...base,
+      facts: {
+        ...facts,
+        steps: [{ step: "restart", status: "uncertain" }],
+        continuation: { supported: true, status: "unknown", reason: "Restart response lost" },
+      },
+    });
+
+    expect(uncertain.nextAction).toBe("observe");
+
+    for (const status of ["pending", "uncertain"] as const) {
+      const unavailable = recoveryOutcome({
+        ...base,
+        facts: {
+          ...facts,
+          steps: [{ step: "restart", status }],
+          continuation: { supported: true, status: "unavailable", reason: "Observe only" },
+        },
+      });
+
+      expect(unavailable.nextAction).toBe("observe");
+      expect(
+        recoveryOutcome({
+          ...unavailable.reference,
+          facts: {
+            ...facts,
+            steps: [{ step: "restart", status }],
+            continuation: { ...unavailable.continuation, action: "manual" },
+          },
+        }).nextAction,
+      ).toBe("manual");
+    }
+
+    const rich = { ...f.retained, history: { revision: "confirmed" }, receipt: "saved" };
+
+    const mounted = recoveryOutcome({
+      ...base,
+      facts: { ...facts, retainedResources: [rich] },
+      mounts: [
+        { volume: { ...f.retained, ownership: "unknown" }, path: "/data", access: "read-write" },
+      ],
+    });
+
+    expect(mounted.retainedResources).toEqual([rich]);
+
+    const explicitNullHistory = recoveryOutcome({
+      ...base,
+      facts: { ...facts, retainedResources: [rich] },
+      completion: {
+        version: 1,
+        resources: [{ kind: rich.kind, nativeId: rich.nativeId, history: null }],
+      },
+    });
+
+    expect(explicitNullHistory.retainedResources[0]?.history).toBeNull();
+    expect(explicitNullHistory.reference.facts?.retainedResources[0]?.history).toEqual(
+      rich.history,
+    );
   } finally {
     await client.close();
   }

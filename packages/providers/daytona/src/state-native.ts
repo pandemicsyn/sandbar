@@ -901,29 +901,41 @@ export function daytonaState(input: {
             supported: true,
             status: "unavailable",
             reason:
-              "The source is unavailable; use the retained snapshot directly instead of continuing source stages",
+              token.captureState === "completed" && retained.length
+                ? "The source is unavailable. Reopen the retained snapshot and restore a new sandbox; this operation cannot continue source stages."
+                : "The source is unavailable. Resolve its status manually and inspect any retained resource; this operation cannot continue source stages.",
           }
-        : mayContinue
+        : token.captureState === "completed" && retained.length && token.restartState === "failed"
           ? {
               supported: true,
-              status: "eligible",
+              status: "unavailable",
               reason:
-                "An unsubmitted capture or source restart remains; continuation revalidates source state and authorization",
+                "Capture completed and the snapshot is retained, but source restart definitively failed. Inspect and restart the source manually through Daytona, or restore the retained snapshot into a new sandbox; this operation cannot retry the failed restart.",
             }
-          : uncertain
+          : mayContinue
             ? {
                 supported: true,
-                status: "unknown",
+                status: "eligible",
                 reason:
-                  "Observe dispatched stages before choosing continuation; uncertain mutations cannot be replayed",
+                  "An unsubmitted capture or source restart remains; continuation revalidates source state and authorization",
               }
-            : {
-                supported: true,
-                status: "unavailable",
-                reason:
-                  "No safe unsubmitted capture or restart is currently established; observe or handle retained resources directly",
-              },
+            : uncertain
+              ? {
+                  supported: true,
+                  status: "unknown",
+                  reason:
+                    "Observe dispatched stages before choosing continuation; uncertain mutations cannot be replayed",
+                }
+              : {
+                  supported: true,
+                  status: "unavailable",
+                  reason:
+                    "No safe unsubmitted capture or restart is currently established; observe or handle retained resources directly",
+                },
     };
+
+    if (token.sourceUnavailable || token.restartState === "failed")
+      facts.continuation.action = "manual";
 
     if (token.sourceObservedState && token.sourceObservedAt && token.sourceProvenance)
       facts.source = {

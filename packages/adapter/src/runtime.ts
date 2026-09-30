@@ -765,24 +765,6 @@ function recoveryFacts(
   return structuredClone(parsed.data);
 }
 
-function completedFacts(facts: RecoveryFacts | undefined): RecoveryFacts | undefined {
-  if (!facts) return undefined;
-
-  const parsed = RecoveryFacts.safeParse({
-    ...facts,
-    continuation: {
-      supported: facts.continuation.supported,
-      status: "unavailable",
-      reason: "Operation completed",
-    },
-  });
-
-  if (!parsed.success)
-    throw new AdapterError("INVALID_ARGUMENT", "Invalid completed recovery facts");
-
-  return parsed.data;
-}
-
 function normalizeSpecial(
   value: SpecialOutcome,
   operation: Mutation<unknown, unknown, unknown>,
@@ -858,7 +840,7 @@ export async function submitOperation(
   return {
     kind: "completed",
     value: await validateValue(prepared.kind, value, maxOutputBytes, signal),
-    facts: completedFacts(facts),
+    facts,
   };
 }
 
@@ -915,7 +897,7 @@ export async function observeOperation(
   return {
     kind: "completed",
     value: await validateValue(kind, value, maxOutputBytes, signal),
-    facts: completedFacts(facts),
+    facts,
   };
 }
 
@@ -961,6 +943,6 @@ export async function continueOperation(
   return {
     kind: "completed",
     value: await validateValue(kind, value, MAX_OUTPUT, signal),
-    facts: completedFacts(facts),
+    facts,
   };
 }

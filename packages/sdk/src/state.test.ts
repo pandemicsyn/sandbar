@@ -854,7 +854,7 @@ test("create mount preflight enforces aggregate recovery capacity before provide
 
     await many.wait();
     expect(many.outcome.retainedResources).toHaveLength(33);
-    expect(many.reference.facts?.retainedResources).toHaveLength(1);
+    expect(many.reference.completion?.resources).toHaveLength(1);
     expect(many.outcome.continuation.status).toBe("unavailable");
   } finally {
     await client.close();

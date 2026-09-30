@@ -220,7 +220,7 @@ test("completion and explicit continuation retain evidence and make further cont
     expect(result?.facts?.continuation).toEqual({
       supported: true,
       status: "unavailable",
-      reason: "Operation completed",
+      reason: facts("restart").continuation.reason,
     });
   }
 });
@@ -326,3 +326,90 @@ test("facts preserve acknowledged references with a scope larger than eight KiB"
   expect(new TextEncoder().encode(JSON.stringify(mapped)).length).toBeGreaterThan(8192);
   expect(new TextEncoder().encode(JSON.stringify(mapped)).length).toBeLessThan(16384);
 });
+
+for (const path of ["submit", "observe", "continue"] as const) {
+  test(`exact-budget facts preserve native completion through ${path}`, async () => {
+    const exact: RecoveryFacts = {
+      version: 1,
+      retainedResources: [],
+      completed: [],
+      steps: Array.from({ length: 16 }, (_, i) => ({
+        step: `step-${i}`,
+        status: "completed",
+        reason: "x".repeat(900),
+      })),
+      continuation: { supported: true, status: "unavailable", reason: "x" },
+    };
+
+    let remaining = 16384 - new TextEncoder().encode(JSON.stringify(exact)).length;
+
+    for (const step of exact.steps) {
+      const added = Math.min(1024 - step.reason!.length, remaining);
+      step.reason += "x".repeat(added);
+      remaining -= added;
+    }
+
+    expect(remaining).toBe(0);
+    expect(new TextEncoder().encode(JSON.stringify(exact)).length).toBe(16384);
+    RecoveryFacts.parse(exact);
+    let effects = 0;
+
+    const operation: Mutation<unknown, unknown, unknown> = {
+      recovery: { version: 1, token: tokenSchema, facts: () => exact },
+      async submit(_input, ctx) {
+        await ctx.checkpoint({ stage: "capture" });
+        effects++;
+
+        return { id: "box", state: "running" };
+      },
+      async observe() {
+        return { id: "box", state: "running" };
+      },
+      async continue(_attempt, ctx) {
+        await ctx.checkpoint({ stage: "capture" });
+        effects++;
+
+        return { id: "box", state: "running" };
+      },
+    };
+
+    const attempt = { ...identity, token: { stage: "capture" }, version: 1 };
+    let checkpoints = 0;
+
+    const checkpoint = async (_token: Json, _version: number, evidence?: RecoveryFacts) => {
+      checkpoints++;
+      expect(evidence).toEqual(exact);
+    };
+
+    let result: Awaited<ReturnType<typeof submitOperation>> | null;
+
+    if (path === "submit")
+      result = await submitOperation(prepared(operation), identity, signal, undefined, checkpoint);
+    else if (path === "observe")
+      result = await observeOperation(session(operation), "create", attempt, signal);
+    else
+      result = await continueOperation(
+        session(operation),
+        "create",
+        attempt,
+        identity,
+        signal,
+        checkpoint,
+      );
+
+    if (!result) throw new Error("Expected correlated native completion");
+
+    expect(result.kind).toBe("completed");
+    expect(result).toMatchObject({ value: { id: "box", state: "running" } });
+    expect(result.facts?.continuation).toMatchObject({
+      status: "unavailable",
+      reason: "x",
+    });
+    expect(result.facts).toEqual(exact);
+    expect(RecoveryFacts.safeParse(result.facts).success).toBe(true);
+    expect(effects).toBe(path === "observe" ? 0 : 1);
+    expect(checkpoints).toBe(path === "observe" ? 0 : 1);
+    expect(exact.steps).toHaveLength(16);
+    expect(new TextEncoder().encode(JSON.stringify(exact)).length).toBe(16384);
+  });
+}

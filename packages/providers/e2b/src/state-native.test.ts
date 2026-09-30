@@ -6,6 +6,7 @@ import {
   SandbarError,
   Image,
   OutcomeUnknownError,
+  ReferencePersistenceError,
   WaitAbortedError,
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
@@ -1210,7 +1211,7 @@ for (const rejectCheckpoint of [false, true]) {
       try {
         if (rejectCheckpoint)
           await expect(client.volumes.create({ name: "durable-volume" })).rejects.toBeInstanceOf(
-            OutcomeUnknownError,
+            ReferencePersistenceError,
           );
         else await client.volumes.create({ name: "durable-volume" });
         expect(saved).toBeDefined();
@@ -1317,7 +1318,7 @@ for (const kind of ["snapshot", "volume"] as const) {
         } catch (error) {
           if (barrier === "abort-before")
             expect(error).toMatchObject({ code: "UNAVAILABLE", effect: "none" });
-          else expect(error).toBeInstanceOf(OutcomeUnknownError);
+          else expect(error).toBeInstanceOf(ReferencePersistenceError);
         }
 
         expect(saved).toBeDefined();

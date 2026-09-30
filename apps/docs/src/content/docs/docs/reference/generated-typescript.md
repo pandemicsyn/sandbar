@@ -56,6 +56,7 @@ Import from `sandbar-sdk`.
 | `recoveryOutcome`           | re-export |
 | `RecoveryOutcome`           | type      |
 | `RecoveryReference`         | type      |
+| `ReferencePersistenceError` | re-export |
 | `ResourceKind`              | re-export |
 | `ResourceReference`         | re-export |
 | `RestoreCapabilities`       | type      |

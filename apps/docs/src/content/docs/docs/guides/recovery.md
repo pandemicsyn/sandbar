@@ -29,9 +29,12 @@ Direct operation handles expose `operation.outcome`. Structured `SandbarError` i
 | ------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `version`           | Normalized facts format, currently `1`.                                                                              |
 | `retainedResources` | Known snapshot and volume references, even after another step fails.                                                 |
+| `retainedNativeIds` | Native retained IDs from a confirmed destroy result.                                                                 |
+| `retainedArtifacts` | Retained artifact descriptions from a confirmed image build.                                                         |
 | `completed`         | Confirmed steps, including capture preservation, interruption and restore execution facts when known.                |
 | `source`            | Last known source state, its ISO observation time and `provider-read` or `acknowledgement` provenance.               |
 | `steps`             | Logical steps with `pending`, `uncertain`, `failed` or `completed` status and an optional reason.                    |
+| `nextAction`        | `continue`, `observe`, `manual`, `none` or `unknown`; advice never authorizes dispatch.                              |
 | `continuation`      | Whether supported (`true`, `false` or `"unknown"`), with `eligible`, `unavailable` or `unknown` status and a reason. |
 
 A completed Daytona cold filesystem capture can leave a retained snapshot even if restarting the source fails. E2B's native memory capture has different preservation and execution facts. Read `completed[].capture` to learn what was confirmed, instead of inferring guarantees from the provider name. An uncertain request does not become a successful snapshot merely because the wait stopped. Source state is historical evidence; its timestamp does not guarantee the source is still running now.
@@ -56,17 +59,18 @@ try {
 }
 ```
 
-Reopening a retained resource still requires current authorization in the matching native scope. Where a snapshot or volume survives its source, its own resource reference supports reopening it after source deletion. Facts are bounded, versioned JSON and persist in the operation reference. Older references without facts expose unknown completion and continuation evidence; they do not fabricate success. The reference and outcome copies are sealed against caller mutation, and none of these public facts grant dispatch authority.
+Reopening a retained resource still requires current authorization in the matching native scope. Where a snapshot or volume survives its source, its own resource reference supports reopening it after source deletion. Facts are bounded, versioned JSON and persist in the operation reference. Provider facts remain unchanged after completion. A compact `reference.completion` stores essential completion state and every additional resource identity, inheriting provider and scope from the reference. Resources already present in provider facts or mounts receive only newly learned evidence. Reopening evidence such as generation and history is preserved; no resource identity is silently trimmed to fit the facts budget. Older references without facts expose unknown completion and continuation evidence; they do not fabricate success. The reference and outcome copies are sealed against caller mutation, and none of these public facts grant dispatch authority.
 
 ## Recognize the error
 
-| Error                 | Meaning                                            | Next action                                                                   |
-| --------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `NonzeroExitError`    | The command completed with a nonzero exit.         | Inspect `error.result`, including stderr and exit code.                       |
-| `NoExitCodeError`     | Execution completed without a confirmed exit code. | Inspect captured output; do not assume success.                               |
-| `OutcomeUnknownError` | A mutation may have taken effect.                  | Persist `error.reference`, inspect `error.outcome` when present, and observe. |
-| `WaitAbortedError`    | Local waiting stopped after submission.            | Save the reference and partial outcome; compute may still be running.         |
-| `SandbarError`        | A structured SDK error.                            | Inspect `code`, `effect` and any `outcome` before choosing a next step.       |
+| Error                       | Meaning                                            | Next action                                                                                              |
+| --------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `NonzeroExitError`          | The command completed with a nonzero exit.         | Inspect `error.result`, including stderr and exit code.                                                  |
+| `NoExitCodeError`           | Execution completed without a confirmed exit code. | Inspect captured output; do not assume success.                                                          |
+| `ReferencePersistenceError` | A required reference write failed.                 | Inspect `phase`, `providerOutcome`, `result` and `reference`; retry the write, not a confirmed mutation. |
+| `OutcomeUnknownError`       | A mutation may have taken effect.                  | Persist `error.reference`, inspect `error.outcome` when present, and observe.                            |
+| `WaitAbortedError`          | Local waiting stopped after submission.            | Save the reference and partial outcome; compute may still be running.                                    |
+| `SandbarError`              | A structured SDK error.                            | Inspect `code`, `effect` and any `outcome` before choosing a next step.                                  |
 
 For a direct connection, `recover(savedReference)` returns a `RecoveredOperation` union. Narrow by `operation.kind` to obtain the corresponding result type: snapshot capture returns a `SnapshotResult`, volume creation returns a volume handle, and sandbox creation or snapshot restore returns a sandbox handle. Caller-supplied type assertions are unnecessary.
 
@@ -94,13 +98,13 @@ const client = await Sandbar.connect(daytona({ apiKey, target: "us" }), {
 
 The E2B form is the same: `Sandbar.connect(e2b({ apiKey, teamId }), { onReference })`. No empty `config` or `credentials` objects are needed. The advanced `operations.prepare(...).submit(..., { beforeSubmit })` lifecycle also supports an application submission ledger. See [Asynchronous adapter recovery](/docs/guides/adapter-recovery/).
 
-`onReference` is awaited for the initial reference, provider stage checkpoints, and pending observation updates. The provider records a dispatch-may-have-occurred marker before each stage effect and checkpoints newly learned acknowledgements and resource identities. If persistence fails before a stage dispatch, that effect is not sent; after an effect, preserve the latest reference carried by the error. Application-owned references do not require a Sandbar database or provider-key signature.
+`onReference` is awaited for the initial reference, provider stage checkpoints, observation updates, and confirmed completion. A failed write throws `ReferencePersistenceError`, separate from provider uncertainty. Its `phase` identifies `before-dispatch`, `checkpoint`, `observation` or `completion`. When `providerOutcome` is `completed`, `effect` is `applied`; completion-phase errors also include the confirmed operation `result`. Later writes of an already completed reference preserve that completion status. Save `error.reference` again without resubmitting the mutation. Retrying the same operation's `wait()` retries the required final write and returns the confirmed result without replay. A failed initial marker has `providerOutcome: "not-dispatched"` and `effect: "none"`. Checkpoint failures preserve confirmed partial facts without claiming that earlier effects did not happen. The provider records a dispatch-may-have-occurred marker before each stage effect and checkpoints newly learned acknowledgements and resource identities. If persistence fails before a stage dispatch, that effect is not sent; after an effect, preserve the latest reference carried by the error. Application-owned references do not require a Sandbar database or provider-key signature.
 
 For E2B credential rotation, configure `teamId` so authenticated verification establishes a stable native team scope. E2B's default scope is tied to the authenticated API key; rotating it changes that scope. Daytona's scope includes its organization, target, endpoint, and selected network policy. Reconnect with matching scope to recover prior operations.
 
 ## Continue only explicitly
 
-Direct operations with supported multi-stage recovery expose `continue()`. `recover()`, `observe()`, `inspect()` and `wait()` remain read-only. Explicit continuation may dispatch a configured next stage proven never submitted, such as restarting a stopped Daytona source after delayed capture completes. It never replays an uncertain stage.
+Direct operations with supported multi-stage recovery expose `continue()`. `recover()`, `observe()`, `inspect()` and `wait()` remain read-only. Explicit continuation may dispatch a configured next stage proven never submitted, such as restarting a stopped Daytona source after delayed capture completes. It never replays an uncertain stage. Check `outcome.nextAction` and `continuation`: a definitive source-restart failure requires manual native restart or restoring the retained snapshot, rather than observation alone. A confirmed completed operation reports `nextAction: "none"` and rejects continuation.
 
 ```ts
 const operation = await client.recover(savedReference);

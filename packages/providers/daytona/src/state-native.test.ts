@@ -8,6 +8,7 @@ import {
   SandbarError,
   Image,
   OutcomeUnknownError,
+  ReferencePersistenceError,
   WaitAbortedError,
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
@@ -537,7 +538,13 @@ test("Daytona normalized partial capture facts survive JSON recovery, rotated cr
     );
     expect(outcome.source).toMatchObject({ state: "stopped", provenance: "provider-read" });
     expect(Number.isFinite(Date.parse(outcome.source.observedAt))).toBe(true);
-    expect(outcome.continuation).toMatchObject({ supported: true, status: "unavailable" });
+    expect(outcome.continuation).toMatchObject({
+      supported: true,
+      status: "unavailable",
+      reason:
+        "Capture completed and the snapshot is retained, but source restart definitively failed. Inspect and restart the source manually through Daytona, or restore the retained snapshot into a new sandbox; this operation cannot retry the failed restart.",
+    });
+    expect(outcome.nextAction).toBe("manual");
     saved = JSON.parse(JSON.stringify(outcome.reference));
   } finally {
     await client.close();
@@ -558,7 +565,13 @@ test("Daytona normalized partial capture facts survive JSON recovery, rotated cr
     expect(recovered.outcome.completed).toMatchObject([
       { step: "capture", capture: { preserve: "filesystem", restoreExecution: "fresh" } },
     ]);
-    expect(recovered.outcome.continuation.status).toBe("unavailable");
+    expect(recovered.outcome.continuation).toMatchObject({
+      supported: true,
+      status: "unavailable",
+      reason:
+        "The source is unavailable. Reopen the retained snapshot and restore a new sandbox; this operation cannot continue source stages.",
+    });
+    expect(recovered.outcome.nextAction).toBe("manual");
     expect(await (await reopened.snapshots.get(retained)).inspect()).toMatchObject({
       state: "ready",
     });
@@ -1022,7 +1035,7 @@ test("Daytona delayed capture stays read-only until continuation restarts exactl
     try {
       const recovered = await reopened.recover(saved);
       await (await recovered.continue()).wait();
-      await (await recovered.continue()).wait();
+      await expect(recovered.continue()).rejects.toMatchObject({ code: "CONFLICT" });
       expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
       expect(f.state()).toBe("started");
       expect(recovered.reference.submissionId).toBe(saved.submissionId);
@@ -1056,14 +1069,25 @@ for (const stage of ["stop", "capture", "restart"] as const) {
 
     try {
       const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-      const operation = await source.submitSnapshot();
-      await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+      let failure: unknown;
+
+      try {
+        await source.submitSnapshot();
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(ReferencePersistenceError);
+
+      if (!(failure instanceof ReferencePersistenceError))
+        throw new Error("Expected checkpoint persistence failure");
+      expect(failure).toMatchObject({ phase: "checkpoint", providerOutcome: "unconfirmed" });
       expect(f.calls).toMatchObject({
         stop: stage === "stop" ? 0 : 1,
         capture: stage === "restart" ? 1 : 0,
         start: 0,
       });
-      expect(operation.reference.token).toMatchObject({ [`${stage}State`]: "uncertain" });
+      expect(failure.reference.token).toMatchObject({ [`${stage}State`]: "uncertain" });
     } finally {
       await client.close();
     }
@@ -1195,7 +1219,7 @@ for (const rejectCheckpoint of [false, true]) {
       try {
         if (rejectCheckpoint)
           await expect(client.volumes.create({ name: "durable-volume" })).rejects.toBeInstanceOf(
-            OutcomeUnknownError,
+            ReferencePersistenceError,
           );
         else await client.volumes.create({ name: "durable-volume" });
         expect(saved).toBeDefined();
@@ -1304,7 +1328,7 @@ for (const kind of ["snapshot", "volume"] as const) {
         } catch (error) {
           if (barrier === "abort-before" || barrier === "abort-read")
             expect(error).toMatchObject({ code: "UNAVAILABLE", effect: "none" });
-          else expect(error).toBeInstanceOf(OutcomeUnknownError);
+          else expect(error).toBeInstanceOf(ReferencePersistenceError);
         }
 
         expect(saved).toBeDefined();
@@ -1714,7 +1738,7 @@ test("Daytona failed stop checkpoint preserves uncertainty without replay", asyn
 
   try {
     const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-    await expect(source.snapshot()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    await expect(source.snapshot()).rejects.toBeInstanceOf(ReferencePersistenceError);
     expect(saved?.token).toMatchObject({ stopState: "uncertain", captureState: "not-submitted" });
     const reopened = await f.connect(undefined, "rotated-key");
 

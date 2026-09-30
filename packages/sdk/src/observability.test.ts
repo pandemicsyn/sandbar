@@ -653,7 +653,12 @@ test("an AbortError from a pre-submission callback with a live caller signal is 
           signal: controller.signal,
         },
       ),
-    ).rejects.toBe(original);
+    ).rejects.toMatchObject({
+      code: "REFERENCE_PERSISTENCE_FAILED",
+      phase: "before-dispatch",
+      providerOutcome: "not-dispatched",
+      cause: original,
+    });
     expect(controller.signal.aborted).toBe(false);
     expect(fixture.counts.create).toBe(0);
     const span = safeSpans(exporter).find((span) => span.name === "sandbar.sandbox.create")!;
@@ -1055,7 +1060,12 @@ test("enabled clients keep advanced submission effects separate in pre-submissio
 
   await expect(
     first.sandboxes.create({ environment: Image.prepared("CANARY_IMAGE") }),
-  ).rejects.toBe(original);
+  ).rejects.toMatchObject({
+    code: "REFERENCE_PERSISTENCE_FAILED",
+    phase: "before-dispatch",
+    providerOutcome: "not-dispatched",
+    cause: original,
+  });
   await first.close();
   await other.close();
   const create = safeSpans(exporter).find((span) => span.name === "sandbar.sandbox.create")!;
