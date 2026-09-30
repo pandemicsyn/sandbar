@@ -167,10 +167,8 @@ try {
   run("git", ["update-ref", "refs/remotes/origin/main", run("git", ["rev-parse", "HEAD"])]);
   run("git", ["tag", "v0.1.1"]);
   rmSync(stableArtifacts, { recursive: true, force: true });
-  // Instrumentation scope versions are compiled from the manifest; qualify rebuilt versioned code.
-  run("bun", ["run", "build:packages"]);
+  // Tagging and repacking leave the already-qualified stable source/manifests unchanged.
   run("bun", ["scripts/release.mjs", "dry-run"], temporary, { RELEASE_ARTIFACTS: stableArtifacts });
-  run("bun", ["run", "build:packages"]);
 
   const qualified = JSON.parse(
     readFileSync(join(stableArtifacts, "release-metadata.json"), "utf8"),

@@ -1240,9 +1240,18 @@ describe("independent fake provider", () => {
     directory = await mkdtemp(join(tmpdir(), "sandbar-fake-"));
     const engine = new FakeProviderEngine(join(directory, "provider.json"), true);
     await engine.load();
+    // Seed the persisted boundary, then exercise real rejection/eviction and reload.
+    const seeded = engine.snapshot();
+    seeded.invocations = Array.from({ length: 511 }, (_, index) => ({
+      submissionId: `missing_${index}`,
+      projectId: "project_1",
+      action: "exec" as const,
+    }));
+    await writeFile(engine.statePath, JSON.stringify({ ...seeded, scenarios: [] }));
+    await engine.load();
     const missing = { scope, kind: "sandbox" as const, nativeId: "missing" };
 
-    for (let index = 0; index < 520; index++) {
+    for (let index = 511; index < 520; index++) {
       const result = await engine.exec({
         sandbox: missing,
         identity: identity(`missing_${index}`),
@@ -1252,12 +1261,16 @@ describe("independent fake provider", () => {
       });
 
       expect(result.result.status).toBe("rejected");
+
+      expect(engine.snapshot().invocations).toHaveLength(512);
     }
 
     expect(engine.snapshot().invocations).toHaveLength(512);
     const reloaded = new FakeProviderEngine(join(directory, "provider.json"), true);
     await reloaded.load();
     expect(reloaded.snapshot().invocations).toHaveLength(512);
+    expect(reloaded.snapshot().invocations[0]?.submissionId).toBe("missing_8");
+    expect(reloaded.snapshot().invocations.at(-1)?.submissionId).toBe("missing_519");
   });
 
   test("a submission ID cannot apply an effect for another project in the same native scope", async () => {
