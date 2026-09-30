@@ -10,7 +10,7 @@ Sandbar is a TypeScript SDK for working with sandbox providers, with an optional
 - `packages/service`, `packages/service-runtime`, `packages/store` — optional service and persistence.
 - `apps/server`, `apps/web`, `apps/docs` — HTTP server, management UI and public documentation.
 - [specs/README.md](specs/README.md) — contracts and proposals; [package conventions](specs/package-conventions.md) — public names and boundaries. Archives are historical context.
-- [.agents/skills](.agents/skills) — task guidance, including [adding built-in or external providers](.agents/skills/add-provider/SKILL.md).
+- [.agents/skills](.agents/skills) — task guidance, including [provider research briefs](.agents/skills/provider-research/SKILL.md) and [adding built-in or external providers](.agents/skills/add-provider/SKILL.md).
 
 ## Make changes
 

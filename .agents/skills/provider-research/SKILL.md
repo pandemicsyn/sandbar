@@ -1,0 +1,65 @@
+---
+name: provider-research
+description: Research a sandbox provider and draft or update a GitHub issue that maps native APIs and guarantees to a Sandbar adapter implementation brief. Use before implementing a provider or investigating gaps in an existing adapter.
+---
+
+# Research a Sandbar provider
+
+Produce a source-backed implementation brief using the repository's [provider research issue template](../../../.github/ISSUE_TEMPLATE/provider-research.md). That template is the canonical research checklist; do not maintain a second provider dossier in specs. Research can conclude that a useful partial adapter is feasible while snapshots or other native features are unavailable.
+
+## Start with a provider link
+
+Before provider research, look for a provider homepage or official documentation URL supplied in the request, earlier conversation, or the existing issue the user asked you to use. If none is available, ask: “Can you share a link to the provider's website or sandbox documentation?” Wait for that link before researching the provider; do not guess which product the user means from its name alone. Do not ask again when a usable link is already supplied.
+
+Open the supplied page to identify the exact sandbox product, then follow its official documentation, API reference and SDK repository links. A homepage is enough to get started; the user does not need to find every technical reference. If the link is inaccessible or leaves the product ambiguous, explain the specific problem and ask for an accessible link or clarification before drawing provider-specific conclusions. Record the starting URL in the issue's provider/docs fields.
+
+## Standardize the issue
+
+Read the [issue conventions](../../../.github/provider-research-conventions.md) before drafting. Use `[provider-candidate]: <Official product name>`, the stable provider key, every required summary row, and exact labels from the [label manifest](../../../.github/provider-research-labels.json). Classify every capability, not just snapshots: lifecycle, exec, files, volumes, egress, ingress, suspension, recovery, TypeScript SDK and observability all need explicit statuses. Distinguish native support, evidence provenance, Sandbar mapping, research completeness and implementation readiness.
+
+Apply `provider-candidate` and exactly one `target:builtin`, `target:external`, or `target:unknown` label. Keep capability statuses, research completeness and implementation readiness in the body. Follow the conventions' distribution criteria: ordinary, usable TypeScript dependencies can suit built-in; unusual dependencies, other runtimes, private transports or no usable official TypeScript SDK favor external. Document the evidence and honor existing accepted distribution decisions; Modal is the external example. Use unknown until the dependency/runtime evidence supports a choice. Verify the title and target rationale match the labels; replace stale targets, remove superseded research/capability labels, and preserve unrelated labels. Unsupported needs evidence; unknown is the correct value for unresearched or inconclusive behavior. State consequential unsupported subfeatures even when a broader capability is supported. Do not mark a partial snapshot capture-only path as full snapshot support.
+
+## Establish the target
+
+Identify the provider's exact sandbox product, requested scope, repository and any supplied issue. Read an existing issue and its relevant discussion before updating it; preserve user decisions and unrelated content. Search that repository for prior provider research before proposing a duplicate.
+
+Read the current public adapter exports in `packages/adapter/src/index.ts`, the [capability guide](../../../apps/docs/src/content/docs/docs/guides/adapter-capabilities.md), and [package conventions](../../../specs/package-conventions.md). For snapshots/volumes, read the relevant sections of [state portability](../../../specs/provider-state-portability.md) and check the actual implemented types. Consult [recovery DX](../../../specs/sdk-recovery-dx.md) when a mapping needs its planned capabilities. Record the Sandbar revision: proposals, current exports and native provider support are separate facts.
+
+## Gather evidence
+
+Browse current official documentation, API references, changelogs and the exact native SDK source/version. Prefer pinned source permalinks for identity, retry, idempotency and deletion behavior. Record access dates and version/tier/region restrictions. An SDK method name alone is not evidence of its semantics; inspect request construction and underlying endpoints where necessary.
+
+Fill the template with concise implementation facts and sources near the claims. Mark undocumented behavior unknown, explicitly absent behavior unsupported, and conditional support with its prerequisites. Label inferences and contradictions; explain which source supports the proposed mapping and what still needs confirmation. Keep research status separate from Sandbar implementation and qualification status. Public documentation or source inspection is not a live pass.
+
+For supported operations, specify exact methods/endpoints, identifiers, readiness/completion evidence, error/retry behavior and an implementable call sequence. Focus especially on:
+
+- Authenticated scope verification and provider SDK retries: identify a real native read and a transport that can avoid hidden mutation replay.
+- The complete snapshot capture/inspect/restore/delete path, immutable identity vs mutable aliases, filesystem/memory/mount scope, source lifecycle, and cleanup granularity. `box.snapshot()` should use the simplest native default; configuration exposes only actual choices. Do not invent a filesystem-only option for a memory-inclusive native snapshot or emulate missing snapshots with archives.
+- Storage behavior and network enforcement as observable guarantees, not conclusions inferred from a product label or a requested policy flag.
+- Recovery across a crash or fresh invocation: application-persistable, credential-independent references; distinguish never dispatched, uncertain dispatch and confirmed effects. Observation remains read-only. Unreconcilable operations stay explicit limitations.
+
+For broad requests, prioritize the first useful adapter slice and mark remaining rows unknown/out of scope with a reason. Do not turn every optional feature into a prerequisite. If the native feature cannot fit today's contract, name the narrow contract gap rather than inventing a generic provider-options escape hatch.
+
+## Make the issue actionable
+
+Use the template's decision table to distinguish evidence, recommendations, accepted decisions and unresolved questions. For each open question, name the affected operation/release and the resolution needed. Research can be complete while implementation remains conditional or blocked; do not require every uncertainty to be solved or let documented uncertainty become an implicit implementation decision.
+
+Describe the minimum useful adapter through an end-to-end user workflow. If the proposed slice omits something essential to that workflow, such as execution or cleanup, flag the reduced scope as a product decision rather than silently declaring it ready. Optional absent capabilities need not block a useful adapter.
+
+Supply concrete recipes for operations in the proposed slice: public inputs, native calls/request fields, readiness and completion evidence, stable identity/scope, failure boundaries and recovery/cleanup. Include a real image selector and the preflight path for create when applicable. Turn missing prerequisites into named investigation tasks; label illustrative responses and uncompiled code honestly.
+
+Check the proposal against current Sandbar contracts and accepted defaults, including adapter orchestration beyond the native endpoint. Record conflicts, proposed resolutions and their readiness consequences. A warning about an unresolved identity, deletion or guarantee gap does not establish a valid mapping. Do not silently weaken a contract to make a capability fit.
+
+Explain distribution using the dependencies and runtime of the proposed implementation. Separate existing packaging policy from a technical recommendation, and distinguish the selected transport's costs from those of a rejected SDK/REST alternative. Do not treat historical policy as proof of a technical constraint.
+
+Finish with proposed defaults and configuration signatures, an ordered implementation checklist, open design decisions and acceptance evidence. Label uncompiled API sketches; use real current exports for examples claimed to work. A useful handoff identifies the native calls and failure boundaries an implementer must test, not merely a list of documentation links.
+
+Use [add-provider](../add-provider/SKILL.md) for implementation constraints and [qualify-provider](../qualify-provider/SKILL.md) for the acceptance plan when new guarantees are proposed. Plan deterministic fixtures, packed consumer examples and relevant live harness extensions separately. Research does not authorize live provider calls, billable resources or certification; propose a finite budget and cleanup plan when live evidence would resolve a blocker. Never include secrets or private recovery/custody data in a public issue.
+
+Before handing off, reconcile the title/target label and rationale, capability summary, useful scope, recipes, contract decisions, readiness and acceptance criteria. Move every unresolved prerequisite for the proposed slice into the decision table, not just the narrative. Check that every in-scope capability has native evidence or an explicit unknown, a proposed mapping, and a validation gap. Check that snapshot support means a usable restore and cleanup path, and that network claims state their exceptions. Unresolved required guarantees block only the affected implementation scope.
+
+## Save and hand off
+
+When the user asks to file or update a GitHub issue, use the selected repository's GitHub tools or `gh` to publish the brief. For `gh`, write the rendered Markdown body to a file and use `--body-file`; remove the template's YAML frontmatter and instructional HTML comments. Update an existing research issue when appropriate and preserve its unrelated decisions. Use the convention labels when filing/updating; `gh --body-file` does not apply template labels automatically, so pass them explicitly. If a convention label is missing, create only that label using the manifest metadata. Do not create ad hoc labels, milestones or extra issues. Read back the saved title, body and labels to verify the handoff.
+
+If the request is research-only or publishing is not authorized, deliver the same completed issue body as a draft. If GitHub access fails, retain that draft and report the limitation. Return the issue URL (or draft location), implementation readiness and consequential unknowns. Recheck time-sensitive or conflicting evidence when implementation starts; the issue is a guide, not authority to override current contracts or authorize extra work.

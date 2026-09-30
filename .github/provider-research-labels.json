@@ -1,0 +1,22 @@
+[
+  {
+    "name": "provider-candidate",
+    "color": "5319E7",
+    "description": "Sandbox provider candidate research and adapter implementation brief"
+  },
+  {
+    "name": "target:builtin",
+    "color": "0E8A16",
+    "description": "Candidate for an adapter bundled with sandbar-sdk; rationale in issue"
+  },
+  {
+    "name": "target:external",
+    "color": "1D76DB",
+    "description": "Candidate for a separately installed adapter with isolated dependencies"
+  },
+  {
+    "name": "target:unknown",
+    "color": "D4C5F9",
+    "description": "Adapter distribution target needs more dependency or runtime evidence"
+  }
+]
