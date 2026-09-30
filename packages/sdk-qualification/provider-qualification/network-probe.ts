@@ -30,17 +30,21 @@ export type NetworkSample = z.infer<typeof networkSampleSchema>;
 export type NetworkEvidence = z.infer<typeof networkEvidenceSchema>;
 
 // Fixed public destinations, no credentials or payload. TCP only: no claim about UDP, IPv6 or ingress.
-export const networkScript = `import socket, errno, json
+export const networkScript = `import socket, errno, json, subprocess, sys
 attempts = []
 for target, host in [("hostname", "one.one.one.one"), ("ipv4", "1.1.1.1")]:
     result = {"target": target, "connected": False}
     try:
-        address = socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)[0][4]
+        if target == "hostname":
+            lookup = subprocess.run([sys.executable, "-c", "import socket,json,sys;print(json.dumps(socket.getaddrinfo(sys.argv[1],443,socket.AF_INET,socket.SOCK_STREAM)[0][4]))", host], capture_output=True, text=True, check=True, timeout=3)
+            address = tuple(json.loads(lookup.stdout))
+        else:
+            address = (host, 443)
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
             connection.settimeout(3)
             connection.connect(address)
             result["connected"] = True
-    except socket.gaierror:
+    except (socket.gaierror, subprocess.TimeoutExpired, subprocess.CalledProcessError):
         result["error"] = "dns"
     except TimeoutError:
         result["error"] = "timeout"

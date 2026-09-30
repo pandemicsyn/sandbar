@@ -66,7 +66,7 @@ test("report rejects missing controls and an isolation pass with outbound connec
 });
 
 test("guest Python probe runs offline with bounded sockets and emits both target outcomes", () => {
-  const driver = `import socket, sys
+  const driver = `import socket, sys, subprocess, json
 class Connection:
     def __enter__(self): return self
     def __exit__(self, *args): pass
@@ -75,6 +75,10 @@ class Connection:
         if address[0] == "1.1.1.1": raise TimeoutError()
 socket.getaddrinfo = lambda host, port, family, kind: [(family, kind, 0, "", (host, port))]
 socket.socket = lambda *args: Connection()
+def lookup(args, **kwargs):
+    assert kwargs["timeout"] == 3
+    return subprocess.CompletedProcess(args, 0, json.dumps((args[-1], 443)), "")
+subprocess.run = lookup
 exec(sys.argv[1])
 `;
 
@@ -211,4 +215,32 @@ test("same intended probe failure supersedes an older pass even without captured
   expect(rendered).toContain("specs/latest-failure.md");
   expect(rendered).not.toContain("specs/older-pass.md");
   expect(rendered).toContain("blocked-requested / cloudflare-tcp443-hostname-ipv4-v1");
+});
+
+test("guest DNS lookup has a process deadline and leaves no blocked resolver child", () => {
+  const driver = `import subprocess, sys, socket
+run = subprocess.run
+def lookup(args, **kwargs):
+    assert kwargs["timeout"] == 3
+    return run([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
+subprocess.run = lookup
+class Connection:
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def settimeout(self, timeout): assert timeout == 3
+    def connect(self, address): raise TimeoutError()
+socket.socket = lambda *args: Connection()
+exec(sys.argv[1])
+`;
+
+  const started = Date.now();
+  const result = Bun.spawnSync({ cmd: ["python3", "-c", driver, networkScript], timeout: 4500 });
+  expect(result.exitCode).toBe(0);
+  expect(Date.now() - started).toBeLessThan(4500);
+  expect(JSON.parse(new TextDecoder().decode(result.stdout))).toEqual({
+    attempts: [
+      { target: "hostname", connected: false, error: "dns" },
+      { target: "ipv4", connected: false, error: "timeout" },
+    ],
+  });
 });

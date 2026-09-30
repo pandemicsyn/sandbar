@@ -31,12 +31,18 @@ export async function networkControls(t: TestResources) {
   const denied = await sample(blocked);
   // Observe the after positive control even when a denied connection unexpectedly succeeds.
   expect((await sample(control)).every((attempt) => attempt.connected)).toBe(true);
-  expect(
-    denied.every(
-      (attempt) =>
-        !attempt.connected && ["timeout", "unreachable", "denied"].includes(attempt.error ?? ""),
-    ),
-  ).toBe(true);
+  expect(denied).toEqual([
+    {
+      target: "hostname",
+      connected: false,
+      error: expect.stringMatching(/^(timeout|unreachable|denied)$/),
+    },
+    {
+      target: "ipv4",
+      connected: false,
+      error: expect.stringMatching(/^(timeout|unreachable|denied)$/),
+    },
+  ]);
 }
 
 const enabled = liveEnabled && process.env.SANDBAR_QUAL_PROVIDER === "e2b";
