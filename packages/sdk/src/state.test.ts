@@ -6,7 +6,15 @@ import {
   ResourceReference,
   type SnapshotProfile,
 } from "sandbar-adapter";
-import { Sandbar, Image, UnsupportedFeatureError, OutcomeUnknownError } from "./index";
+import {
+  Sandbar,
+  SandbarError,
+  AdapterSnapshot,
+  AdapterVolume,
+  Image,
+  UnsupportedFeatureError,
+  OutcomeUnknownError,
+} from "./index";
 
 const profile: SnapshotProfile = {
   id: "memory",
@@ -1017,6 +1025,98 @@ for (const mode of ["rejects", "hung"] as const) {
         effect: mode === "rejects" ? "none" : "possible",
       });
       expect(deletes).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+for (const kind of ["snapshot", "volume"] as const) {
+  test(`SDK ${kind} reference validation returns no-effect SDK errors before provider I/O`, async () => {
+    let reads = 0;
+    let mutations = 0;
+    const scope = { authority: { kind: "account", id: "one" }, partition: {} };
+
+    const adapter = defineAdapter({
+      name: "fixture.resource-errors",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect() {
+        return {
+          scope,
+          supports: { images: ["prepared"], network: ["blocked"] },
+          async snapshotInspect() {
+            reads++;
+            throw new Error("Must not inspect");
+          },
+          async volumeInspect() {
+            reads++;
+            throw new Error("Must not inspect");
+          },
+          async snapshotDelete() {
+            mutations++;
+            throw new Error("Must not delete");
+          },
+          async volumeDelete() {
+            mutations++;
+            throw new Error("Must not delete");
+          },
+        };
+      },
+    });
+
+    const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+    const valid = ResourceReference.parse({
+      version: 1,
+      kind,
+      provider: adapter.name,
+      scope,
+      nativeId: "artifact",
+      ownership: "unknown",
+    });
+
+    // An untyped JavaScript caller can supply null despite the TypeScript contract.
+    const malformed: ResourceReference = JSON.parse("null");
+
+    const cases = [
+      { ref: malformed, code: "INVALID_ARGUMENT" },
+      {
+        ref: { ...valid, kind: kind === "snapshot" ? ("volume" as const) : ("snapshot" as const) },
+        code: "INVALID_ARGUMENT",
+      },
+      { ref: { ...valid, provider: "foreign" }, code: "CONFLICT" },
+      {
+        ref: { ...valid, scope: { ...scope, authority: { kind: "account", id: "other" } } },
+        code: "CONFLICT",
+      },
+    ];
+
+    try {
+      for (const { ref, code } of cases) {
+        const manager = kind === "snapshot" ? client.snapshots : client.volumes;
+
+        const actions = [
+          async () => {
+            await manager.get(ref);
+          },
+          async () => {
+            await manager.delete(ref);
+          },
+          async () => {
+            if (kind === "snapshot") new AdapterSnapshot(client, ref);
+            else new AdapterVolume(client, ref);
+          },
+        ];
+
+        for (const action of actions) {
+          await expect(action()).rejects.toBeInstanceOf(SandbarError);
+          await expect(action()).rejects.toMatchObject({ code, effect: "none" });
+        }
+      }
+
+      expect(reads).toBe(0);
+      expect(mutations).toBe(0);
     } finally {
       await client.close();
     }

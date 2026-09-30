@@ -2,6 +2,7 @@ import { freezeReference } from "./freeze-reference";
 import { z } from "zod";
 import {
   ResourceReference,
+  AdapterError,
   assertResourceScope,
   assertResourceIdentity,
   MountSpec,
@@ -63,10 +64,19 @@ export function checkedResource(
   kind: "snapshot" | "volume",
 ): ResourceReference {
   client.ensureOpen();
-  const checked = ResourceReference.parse(ref);
+  const parsed = ResourceReference.safeParse(ref);
+
+  if (!parsed.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid resource reference");
+  const checked = parsed.data;
 
   if (checked.kind !== kind) throw new SandbarError("INVALID_ARGUMENT", "Wrong resource kind");
-  assertResourceScope(checked, { provider: client.provider, scope: client.scope });
+
+  try {
+    assertResourceScope(checked, { provider: client.provider, scope: client.scope });
+  } catch (error) {
+    if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+    throw error;
+  }
 
   return structuredClone(checked);
 }
