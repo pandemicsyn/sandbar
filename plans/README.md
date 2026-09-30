@@ -1,6 +1,6 @@
 # Plans
 
-[Current implementation sequence](implementation-plan.md) records selected work and deferrals. The snapshot/volume PR is in review. After it lands, [simplify provider acceptance and generated support docs](provider-acceptance.md) before onboarding more adapters. Typed recovery outcomes and adapter support remain the next SDK feature effort. Richer storage capabilities follow concrete provider requirements. Direct SDK tracing/diagnostics are merged; interactive execution and broader provider coverage remain later work. Service expansion is a distant milestone after SDK maturity and broader provider qualification.
+[The roadmap](../ROADMAP.md) sets the authoritative order of work; [the implementation sequence](implementation-plan.md) records completion and focused follow-ups. Snapshot/volume APIs merged in [PR #25](https://github.com/pandemicsyn/sandbar/pull/25) at `a9d59b0`. CI cleanup, [provider acceptance](provider-acceptance.md) and [typed recovery outcomes/adapter support](../specs/sdk-recovery-dx.md) are separate active follow-ups. Cleanup ergonomics and sandbox lifecycle come next, then interactive execution and storage composition. Additional adapters wait for the SDK usability milestone; the optional service is a distant milestone. SDK tracing/diagnostics are already merged.
 
 Engineering contracts and proposals live in [specs](../specs/README.md), public documentation in [apps/docs](../apps/docs/README.md), and qualification guidance [with its harness](../packages/sdk-qualification/README.md).
 

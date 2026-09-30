@@ -2,26 +2,15 @@
 
 `@sandbar/provider-daytona` is the private built-in implementation behind `sandbar-sdk/daytona`. It uses Daytona's v0.218 REST and toolbox APIs through a `fetch` transport with single-attempt mutations. Snapshot/volume state GETs retry HTTP 502/503/504 at most twice with 250/500 ms backoff, bounded by the original signal and deadline; exhausted reads report `UNAVAILABLE`. This follows Daytona’s [gateway troubleshooting guidance](https://www.daytona.io/docs/en/troubleshooting/) and does not replay mutations. The September 28, 2026 merged-source baseline at `3be54464` passed all 13 scenarios with cleanup confirmed, using the borrowed `daytona-small` snapshot in `us` with explicit `daytona-default`. See the [tested support matrix](https://sandbarsdk.dev/docs/providers/support/) for the configuration and remaining untested behavior. The published `@daytona/sdk@0.218.0` was inspected but is not in this package's runtime graph: its connection retry adapter may replay `DELETE` after a midflight failure, while Sandbar cannot treat an uncertain deletion as effect-free.
 
-## Direct TypeScript
+## Usage
 
-```ts
-import { Sandbar, Image } from 'sandbar-sdk';
-import { daytona } from 'sandbar-sdk/daytona';
+Use the built-in `sandbar-sdk/daytona` entrypoint; this implementation package is private. Start with the [Daytona guide](https://sandbarsdk.dev/docs/providers/daytona/) and its explicit `daytona-default` connection/create policy. The default `blocked` requires separately verified native eligibility and never falls back automatically.
 
-const sandbar = await Sandbar.connect(daytona({
-  apiKey: process.env.DAYTONA_API_KEY!,
-  target: 'us',
-  ttlMinutes: 15,
-}));
-const sandbox = await sandbar.sandboxes.create({ environment: Image.prepared('existing-active-snapshot-id'), networkPolicy: 'blocked' });
-try {
-  const result = await sandbox.exec({ command: { kind: 'shell', script: 'printf ready' } });
-  console.log(result.stdoutText());
-} finally {
-  await sandbox.destroy();
-  await sandbar.close();
-}
-```
+For [snapshots and volumes](https://sandbarsdk.dev/docs/guides/snapshots-and-volumes/), capture stops/captures/restarts a running container with fresh processes. Restore on a `daytona-default` connection must explicitly use that policy. Writable volumes attach at create and survive compute destruction; cleanup requires `storage: "allow-unconfirmed"`, without a flush/durability guarantee, then separate volume deletion. External-mount capture, mounted restore, read-only mounts and volume versions are unsupported.
+
+Snapshot round trips and mounted persistence passed live on premerge `5db0558`; later fixes merged at `a9d59b0`. This is historical evidence, not final-head certification. The [support matrix](https://sandbarsdk.dev/docs/providers/support/) owns the current qualification mapping.
+
+## Native boundary details
 
 For a resumable OCI build, use `const built = await sandbar.images.build({ source: Image.oci('alpine:3.21') })`, then pass `Image.prepared(built.prepared)` to a new create operation. Building does not create a sandbox. OCI creation convenience remains available: a ready build proceeds to sandbox creation; otherwise one ID readiness read leaves creation unknown with the snapshot requiring manual accounting. Create submission never sleeps or polls the build, so unrelated runner work can continue. Explicit builds return pending work for read-only observation; preflight failures before any build POST reject as effect-free UNAVAILABLE. The prepared result is bound to the verified organization, region and endpoint. `retainedResources` reports the snapshot with unknown ownership and manual cleanup; this metadata does not authorize deletion. A lost build response can be observed by its stable name without another build. Temporary name-index or native-ID unavailability remains pending within the original ten-minute discovery deadline, recorded immediately before POST in the recovery token. Missing or expired deadline evidence stays unknown; observation never starts another build. A valid native snapshot ID returned by the verified organization is preserved even when build-response name or source metadata is omitted; ID polling must verify the source before completion. Once known, the native snapshot ID is preserved in the recovery token and used for subsequent reads while the name index catches up. ID reads may omit the optional name; source, native ID and organization must still match, and active snapshots must satisfy region and class checks. Correlated `building`, `pending` or `pulling` snapshots continue read-only polling; an unreadable, failed or unsuitable snapshot remains unknown. Without a returned recovery token after a process crash, read-only observation reports any scoped snapshot candidate as possibly retained with unverified source and unknown ownership; it cannot certify build completion. Snapshot expiry is not configured by this adapter.
 

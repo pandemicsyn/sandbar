@@ -57,12 +57,30 @@ Prepared templates and explicit OCI builds are implemented. Builds can retain a 
 
 Destroy each sandbox explicitly, then close the client. Native timeout is a fallback, not a cleanup confirmation. The [support matrix](/docs/providers/support/) distinguishes live baseline coverage from image-build and network tests.
 
-## Runtime snapshots and volumes
+## Capture and restore
 
-`box.snapshot()` uses E2B's reusable native capture with no snapshot configuration. It includes private filesystem, memory and process state. E2B briefly pauses the running source and resumes it; active connections are dropped. Restore resumes captured process state in new compute. Sandbar saves the raw native template ID and captured build UUID separately and submits `templateId:buildUUID`, with the requested network policy in the original create request before resumed memory executes. External volume capture is unsupported. These workflows have fixture coverage and are **not yet live-qualified**.
+Insert this capture/restore fragment inside the sandbox’s inner `try` block above, before cleanup. It uses the same connection policy. Follow the [complete example](/docs/guides/snapshots-and-volumes/#capture-and-restore) to persist the reference and clean up restored compute and the retained snapshot:
 
-There is no memory-exclusion option for this native capture. Optional requirements for filesystem-only preservation reject before effects. Capture requires a running source with envd `v0.5.0` or newer; the adapter verifies eligibility. Filesystem-only suspension of the same logical sandbox is a separate native operation. See [E2B snapshots](https://docs.e2b.dev/sandbox/snapshots).
+```ts
+const captured = await box.snapshot();
+const restored = await captured.snapshot.restore({
+  networkPolicy: "blocked",
+  requireIndependentLifecycle: true,
+});
+```
 
-Lost capture acknowledgements remain uncertain and are never resubmitted. Recovery cannot establish original build generation from a later tag lookup. Save operation references. Unnamed capture allocates a dedicated containing template. Inspection checks the saved build and its current addressability without substituting `default`. Cleanup deletes the raw containing template after identity, alias, current builds, names, visibility and dependency checks; it rejects known expansion into shared storage. Native deletion has no transactional generation condition, so external changes between the read and delete remain a provider limitation. Automatic cleanup requires correlated creation history. Save resource references in your application storage; for recovery with rotated credentials use an authenticated, verified `teamId` scope. The default API-key scope changes with the key.
+Capture uses E2B's native default: private filesystem, RAM and process state. It briefly pauses and resumes a running source, dropping connections. Restore resumes captured processes in independent compute with the explicit network policy applied before execution. There is no filesystem-only capture option; requirements demanding it reject before effects. Capture requires a running source with envd `v0.5.0` or newer. External mounts are unsupported.
 
-Private-beta volume create, inspect, list and owned deletion are mapped; names allow letters, numbers and hyphens. Sandbar create-time mounts are unsupported because E2B selects reusable names and does not expose the mounted native volume ID. Account access is checked before effects. Read-only enforcement, subpaths and volume versions are unsupported. Shutdown durability remains unknown; writable mounted compute requires explicit `storage: "allow-unconfirmed"` cleanup. Retained mounted storage is reported by unresolved name, without assigning a native volume ID from inventory. Volumes retain independent custody and require separate owned deletion. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) and [E2B volume management](https://docs.e2b.dev/volumes/manage).
+Sandbar saves the raw native template ID and captured build UUID, then restores `templateId:buildUUID`. A later `default` tag cannot substitute another build. Deletion targets the dedicated containing template after identity, generation and dependency checks; known shared expansion blocks it. E2B has no transactional generation condition for deletion, so concurrent external changes remain a native limitation.
+
+Persist resource and operation references in your application storage. Use verified `teamId` scope when credentials may rotate. Lost capture acknowledgements remain uncertain; a later tag lookup cannot establish the original build generation. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) for cleanup-safe examples and [Errors and recovery](/docs/guides/recovery/) for uncertain outcomes.
+
+## Private-beta volumes
+
+E2B has native volumes in private beta. Sandbar maps create, inspect, list and deletion; the recorded account's create returned HTTP 403, so live CRUD validation is blocked. Inventory access alone does not prove create eligibility.
+
+Sandbar create-time mounts are unsupported separately: E2B submits and observes reusable names without the mounted immutable volume ID. Read-only enforcement, subpaths and volume versions are unsupported; shutdown durability is unknown. Existing mounted compute can be explicitly cleaned up with `storage: "allow-unconfirmed"`, even when volume inventory is unavailable. Unresolved retained names are not verified IDs or deletion authority. Volumes survive compute destruction and need separate deletion.
+
+## Evidence
+
+E2B's snapshot round trip, two-way filesystem isolation and reopening saved references after source deletion passed live on premerge `5db0558`. Main includes later fixes; that historical run does not certify the final merged head. E2B volume CRUD did not pass. Consult [Tested provider support](/docs/providers/support/) and [Live test evidence](/docs/providers/live-qualification/) for the current qualification mapping.
