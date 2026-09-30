@@ -81,3 +81,6 @@ No service work, new provider implementation, general workflow engine, or expans
 - Updated harness/adapter-authoring/qualification guidance to the common profile/runner/report path. Introductory provider guides, recovery API work and CI infrastructure remain owned by peer tasks.
 
 Final handoff records offline checks, independent review clearance and the actual CI branch dependency. New fresh-process/CRUD scenarios and changed production paths still require separately authorized live acceptance before current-revision claims advance.
+
+
+Final offline validation after incorporating main `04238d4` (merged CI cleanup PR #29): sequential package build; `check:built`; `test:built` (741 passed, 9 opt-in live skips, 0 failures); `package:smoke:built` (Node/Bun built-ins and external adapter); `docs:check:built`; qualification typecheck; lint/format and generated-page drift all passed. Built docs retain the linked runtime section and provider caveat anchors. Two independent reviews cleared harness/capability and evidence/docs/workflow scopes after fixes. No paid/live calls, deployment, publication or merge were performed by this task.
