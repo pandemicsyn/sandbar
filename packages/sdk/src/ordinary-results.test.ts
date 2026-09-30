@@ -1,7 +1,14 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
 import { AdapterCheckpointError, defineAdapter, type SnapshotProfile } from "sandbar-adapter";
-import { Image, Sandbar, SandbarError, OutcomeUnknownError, WaitAbortedError } from "./index";
+import {
+  Image,
+  Sandbar,
+  SandbarError,
+  OutcomeUnknownError,
+  WaitAbortedError,
+  diagnosticContext,
+} from "./index";
 
 const scope = { authority: { kind: "account", id: "one" }, partition: {} };
 
@@ -247,6 +254,16 @@ for (const mode of ["failed", "uncertain", "unknown", "checkpoint"] as const) {
       };
 
       expect(failure?.code).toBe(codes[mode]);
+      expect(failure?.effect).toBe(mode === "failed" ? "partial" : "possible");
+      expect(diagnosticContext(failure).effect).toBe(mode === "failed" ? "partial" : "possible");
+
+      if (mode === "checkpoint")
+        expect(failure?.reference).toMatchObject({
+          mode: "direct",
+          kind: "snapshot_capture",
+          token: { acknowledged: true },
+          tokenVersion: 1,
+        });
 
       if (mode === "unknown") expect(failure?.outcome).toBeUndefined();
       else {
@@ -261,6 +278,15 @@ for (const mode of ["failed", "uncertain", "unknown", "checkpoint"] as const) {
 
         try {
           expect((await fresh.snapshots.get(saved.snapshot)).id).toBe(reference.nativeId);
+
+          if (mode === "checkpoint") {
+            const latest = failure?.reference;
+
+            if (!latest || latest.mode !== "direct")
+              throw new Error("Expected latest recovery reference");
+            const reopened = await fresh.recover(JSON.parse(JSON.stringify(latest)));
+            expect(reopened.reference).toEqual(JSON.parse(JSON.stringify(latest)));
+          }
         } finally {
           await fresh.close();
         }

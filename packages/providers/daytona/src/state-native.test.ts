@@ -2120,7 +2120,9 @@ test("Daytona a failed restart checkpoint retains confirmed capture without disp
 
   try {
     const source = await client.sandboxes.create({ environment: Image.prepared("base") });
-    await expect(source.snapshot()).rejects.toMatchObject({
+    const error = await source.snapshot().catch((error: Error) => error);
+    expect(error).toBeInstanceOf(SandbarError);
+    expect(error).toMatchObject({
       code: "REFERENCE_SAVE_FAILED",
       outcome: {
         kind: "snapshot_capture",
@@ -2130,6 +2132,25 @@ test("Daytona a failed restart checkpoint retains confirmed capture without disp
         restart: { status: "uncertain" },
       },
     });
+
+    if (!(error instanceof SandbarError) || error.reference?.mode !== "direct")
+      throw new Error("Expected latest checkpoint reference");
+    expect(error.reference.token).toMatchObject({
+      stage: "restart",
+      captureState: "completed",
+      snapshotId: "snapshot-one",
+    });
+    await client.close();
+    const reopened = await f.connect();
+
+    try {
+      const recovered = await reopened.recover(JSON.parse(JSON.stringify(error.reference)));
+      expect(recovered.reference).toEqual(JSON.parse(JSON.stringify(error.reference)));
+      expect(recovered.kind).toBe("snapshot_capture");
+    } finally {
+      await reopened.close();
+    }
+
     expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 0 });
   } finally {
     await client.close();

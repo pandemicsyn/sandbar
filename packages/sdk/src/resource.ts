@@ -167,6 +167,7 @@ export class SandbarError extends Error {
     message: string,
     readonly effect: SafeError["effect"] = "none",
     readonly outcome?: OperationOutcome,
+    readonly reference?: RecoveryReference | AdapterRecoveryReference,
   ) {
     super(message);
     this.name = "SandbarError";

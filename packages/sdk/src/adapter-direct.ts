@@ -349,6 +349,7 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
           error.message,
           "possible",
           this.client.checkedOutcome(this.reference, error.outcome),
+          this.reference,
         );
 
       if (error instanceof AdapterError && error.code === "UNSUPPORTED")
@@ -489,7 +490,7 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
       const outcome = this.client.checkedOutcome(this.reference, result.outcome);
 
       if (outcome?.kind === "snapshot_capture" && outcome.restart?.status === "failed")
-        throw new SandbarError("SOURCE_RESTART_FAILED", result.reason, "applied", outcome);
+        throw new SandbarError("SOURCE_RESTART_FAILED", result.reason, "partial", outcome);
       throw asUnknown(this.reference, result.reason, outcome);
     }
 
@@ -1594,6 +1595,7 @@ export class AdapterDirectClient {
           error.message,
           "possible",
           this.checkedOutcome(reference, error.outcome),
+          reference,
         );
 
       if (waiting.aborted) abortWaiting(reference, waiting.reason);
