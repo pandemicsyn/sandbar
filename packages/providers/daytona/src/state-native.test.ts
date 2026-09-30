@@ -627,6 +627,17 @@ test("Daytona caller cancellation during restart retains acknowledged artifact a
     expect(error).toBeInstanceOf(WaitAbortedError);
 
     if (!(error instanceof WaitAbortedError)) throw new Error("Expected wait abort");
+    expect(error.outcome).toMatchObject({
+      kind: "snapshot_capture",
+      status: "partial",
+      snapshot: {
+        kind: "snapshot",
+        nativeId: "snapshot-one",
+        provider: "daytona",
+        scope: client.scope,
+      },
+      capture: { preserve: "filesystem", interruption: "stop", restoreExecution: "fresh" },
+    });
 
     const token = z
       .object({
@@ -648,6 +659,45 @@ test("Daytona caller cancellation during restart retains acknowledged artifact a
     await (
       await client.snapshots.get({ ...token.snapshot.reference, scope: client.scope })
     ).delete();
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona cancellation during an uncertain restart retains confirmed capture directly", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  f.modes.onStart.callback = () => controller.abort();
+  f.modes.restartUnavailable = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+
+    const error = await source
+      .snapshot(undefined, { signal: controller.signal })
+      .catch((error: Error) => error);
+
+    expect(error).toBeInstanceOf(WaitAbortedError);
+
+    if (!(error instanceof WaitAbortedError) || error.outcome?.kind !== "snapshot_capture")
+      throw new Error("Expected direct partial capture on cancellation");
+    expect(error.outcome).toMatchObject({
+      status: "partial",
+      snapshot: {
+        kind: "snapshot",
+        nativeId: "snapshot-one",
+        provider: "daytona",
+        scope: client.scope,
+      },
+      capture: { preserve: "filesystem", interruption: "stop", restoreExecution: "fresh" },
+      restart: { status: "uncertain" },
+    });
+    expect((await (await client.snapshots.get(error.outcome.snapshot!)).inspect()).state).toBe(
+      "ready",
+    );
+    expect(await (await client.recover(error.reference)).observe()).toBeNull();
     expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
   } finally {
     await client.close();

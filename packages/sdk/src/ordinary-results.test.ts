@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
 import { AdapterCheckpointError, defineAdapter, type SnapshotProfile } from "sandbar-adapter";
-import { Image, Sandbar, SandbarError } from "./index";
+import { Image, Sandbar, SandbarError, OutcomeUnknownError } from "./index";
 
 const scope = { authority: { kind: "account", id: "one" }, partition: {} };
 
@@ -55,7 +55,18 @@ const snapshot = {
   nativeDependencies: [],
 };
 
-function fixture(mode: "success" | "failed" | "uncertain" | "unknown" | "checkpoint") {
+function fixture(
+  mode:
+    | "success"
+    | "failed"
+    | "uncertain"
+    | "unknown"
+    | "checkpoint"
+    | "mismatched"
+    | "malformed"
+    | "foreign"
+    | "guarantees",
+) {
   let effects = 0;
   let reads = 0;
 
@@ -93,6 +104,31 @@ function fixture(mode: "success" | "failed" | "uncertain" | "unknown" | "checkpo
             effects++;
 
             if (mode === "unknown") return ctx.unknown("Response lost without an ID");
+
+            if (mode === "mismatched")
+              return ctx.unknown("Unconfirmed effect", {
+                kind: "destroy",
+                status: "unknown",
+                retainedVolumes: [],
+              });
+
+            if (mode === "malformed") {
+              const unknown = ctx.unknown("Unconfirmed effect");
+              Object.assign(unknown, {
+                outcome: { kind: "destroy", status: "unknown", retainedVolumes: "invalid" },
+              });
+
+              return unknown;
+            }
+
+            if (mode === "foreign" || mode === "guarantees")
+              return ctx.unknown("Unconfirmed effect", {
+                kind: "snapshot_capture",
+                status: "partial",
+                snapshot: mode === "foreign" ? { ...reference, provider: "foreign" } : reference,
+                capture:
+                  mode === "guarantees" ? { ...capture, preserve: "filesystem+memory" } : capture,
+              });
 
             const outcome = {
               kind: "snapshot_capture" as const,
@@ -230,6 +266,32 @@ for (const mode of ["failed", "uncertain", "unknown", "checkpoint"] as const) {
         }
       }
 
+      expect(f.effects()).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+for (const mode of ["mismatched", "malformed", "foreign", "guarantees"] as const) {
+  test(`${mode} provider outcome preserves a possible effect and the recovery reference`, async () => {
+    const f = fixture(mode);
+    const client = await f.connect();
+
+    try {
+      const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const operation = await box.submitSnapshot();
+      const error = await operation.wait().catch((error: Error) => error);
+      expect(error).toBeInstanceOf(OutcomeUnknownError);
+
+      if (!(error instanceof OutcomeUnknownError)) throw new Error("Expected unknown effect");
+      expect(error.effect).toBe("possible");
+      expect(error.reference).toEqual(operation.reference);
+      expect(error.outcome).toBeUndefined();
+      await expect(operation.observe()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        effect: "possible",
+      });
       expect(f.effects()).toBe(1);
     } finally {
       await client.close();

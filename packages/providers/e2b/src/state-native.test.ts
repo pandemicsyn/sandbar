@@ -44,6 +44,8 @@ function fixture() {
   const modes = {
     loseCapture: false,
     pendingSnapshot: false,
+    // SAFETY: The fixture supplies only declared native build phases.
+    buildStatus: undefined as "building" | "waiting" | "error" | undefined,
     loseDelete: false,
     deleteNotFound: false,
     keepDeletedResource: false,
@@ -151,7 +153,10 @@ function fixture() {
           names: extraTag ? ["shared"] : [],
           public: false,
           builds: [
-            { buildId: generation, status: modes.pendingSnapshot ? "building" : "ready" },
+            {
+              buildId: generation,
+              status: modes.buildStatus ?? (modes.pendingSnapshot ? "building" : "ready"),
+            },
             ...(retainedGeneration
               ? [{ buildId: retainedGeneration, status: "ready" as const }]
               : []),
@@ -835,6 +840,55 @@ test("E2B partial capture records an actually observed suspended source independ
   }
 });
 
+test.each(["building", "waiting"] as const)(
+  "E2B snapshot waits for its exact known build to become ready without replay: %s",
+  async (status) => {
+    const f = fixture();
+    f.modes.buildStatus = status;
+    f.postCaptureRead(() => {
+      f.modes.buildStatus = undefined;
+    });
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const result = await source.snapshot();
+      expect(result.snapshot.reference).toMatchObject({
+        nativeId: "snap_one",
+        generation: "11111111-1111-4111-8111-111111111111",
+      });
+      expect(result.capture.preserve).toBe("filesystem+memory");
+      expect(result.source.state).toBe("running");
+      expect(f.calls.capture).toBe(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test("E2B a known errored build stays unknown rather than pending or successful", async () => {
+  const f = fixture();
+  f.modes.buildStatus = "error";
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    await expect(source.snapshot()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      effect: "possible",
+      outcome: {
+        kind: "snapshot_capture",
+        status: "unknown",
+        capture: undefined,
+        snapshot: { nativeId: "snap_one", generation: "11111111-1111-4111-8111-111111111111" },
+      },
+    });
+    expect(f.calls.capture).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
 test("E2B delayed capture readiness becomes public confirmed capture after source loss without replay", async () => {
   const f = fixture();
   f.modes.pendingSnapshot = true;
@@ -844,14 +898,7 @@ test("E2B delayed capture readiness becomes public confirmed capture after sourc
   try {
     const source = await client.sandboxes.create({ environment: Image.prepared("base") });
     const operation = await source.submitSnapshot();
-    await expect(operation.wait()).rejects.toMatchObject({
-      code: "OUTCOME_UNKNOWN",
-      outcome: {
-        kind: "snapshot_capture",
-        status: "unknown",
-        snapshot: { nativeId: "snap_one", generation: "11111111-1111-4111-8111-111111111111" },
-      },
-    });
+    expect(await operation.observe()).toBeNull();
     saved = JSON.parse(JSON.stringify(operation.reference));
     f.boxes.delete(source.id);
   } finally {

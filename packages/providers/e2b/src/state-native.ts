@@ -173,6 +173,8 @@ export function e2bState(input: {
     const info = snapshotInfo(reference.nativeId, reference.ownership);
     info.reference.generation = reference.generation;
     info.state = build.status === "ready" ? "ready" : "unknown";
+
+    if (build.status === "building" || build.status === "waiting") info.state = "creating";
     const evidence = history.read(reference);
 
     if (
@@ -600,7 +602,7 @@ export function e2bState(input: {
           );
         }
 
-        if (!actual || actual.state !== "running" || info?.state !== "ready")
+        if (!actual || actual.state !== "running")
           return ctx.unknown(
             "Original source or captured build outcome is unconfirmed; inspect the known snapshot without repeating capture",
             captureOutcome(token, info, observedSource),
@@ -609,6 +611,14 @@ export function e2bState(input: {
         if (ctx.signal.aborted)
           return ctx.unknown(
             "Local wait stopped after capture; do not repeat capture",
+            captureOutcome(token, info, observedSource),
+          );
+
+        if (info?.state === "creating") return ctx.pending(token, { pollAfterMs: 500 });
+
+        if (info?.state !== "ready")
+          return ctx.unknown(
+            "Captured build readiness is unconfirmed",
             captureOutcome(token, info, observedSource),
           );
 
@@ -694,9 +704,17 @@ export function e2bState(input: {
           );
         }
 
-        if (!box || box.volumeMounts?.length || box.state !== "running" || info.state !== "ready")
+        if (!box || box.volumeMounts?.length || box.state !== "running")
           return ctx.unknown(
             "Original source or captured build outcome is unconfirmed; inspect the retained snapshot without repeating capture",
+            captureOutcome(token.data, info, observedSource),
+          );
+
+        if (info.state === "creating") return ctx.pending(token.data, { pollAfterMs: 500 });
+
+        if (info.state !== "ready")
+          return ctx.unknown(
+            "Captured build readiness is unconfirmed",
             captureOutcome(token.data, info, observedSource),
           );
 

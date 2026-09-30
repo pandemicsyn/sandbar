@@ -1600,10 +1600,13 @@ export class AdapterDirectClient {
     outcome?: import("sandbar-adapter").OperationOutcome,
   ): import("sandbar-adapter").OperationOutcome | undefined {
     if (!outcome) return undefined;
-    const checked = OperationOutcome.parse(outcome);
+    const parsed = OperationOutcome.safeParse(outcome);
+
+    if (!parsed.success) throw asUnknown(reference, "Provider partial result failed validation");
+    const checked = parsed.data;
 
     if (checked.kind !== reference.kind)
-      throw new SandbarError("INVALID_ARGUMENT", "Partial result does not match operation");
+      throw asUnknown(reference, "Provider partial result does not match operation");
 
     const resources =
       checked.kind === "snapshot_capture"
@@ -1612,8 +1615,12 @@ export class AdapterDirectClient {
           : []
         : checked.retainedVolumes;
 
-    for (const resource of resources)
-      assertResourceScope(resource, { provider: this.provider, scope: this.scope });
+    try {
+      for (const resource of resources)
+        assertResourceScope(resource, { provider: this.provider, scope: this.scope });
+    } catch {
+      throw asUnknown(reference, "Provider partial result scope differs");
+    }
 
     if (checked.kind === "snapshot_capture" && checked.capture && reference.capture) {
       const expected = reference.capture.profile;
@@ -1623,7 +1630,7 @@ export class AdapterDirectClient {
         checked.capture.interruption !== expected.interruption ||
         checked.capture.restoreExecution !== expected.restoreExecution
       )
-        throw new SandbarError("INVALID_ARGUMENT", "Partial capture guarantees differ");
+        throw asUnknown(reference, "Provider partial capture guarantees differ");
     }
 
     return checked;

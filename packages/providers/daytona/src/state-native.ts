@@ -1230,7 +1230,8 @@ export function daytonaState(input: {
         await restart();
         await ctx.checkpoint(token);
 
-        if (ctx.signal.aborted && !finalizeAfterAbort) return pending();
+        if (ctx.signal.aborted && !finalizeAfterAbort)
+          return ctx.unknown("Local wait stopped after capture", captureOutcome(token));
 
         return captureResult(token, ctx);
       }
@@ -1333,7 +1334,10 @@ export function daytonaState(input: {
 
         observeSource(token, final.state);
 
-        if (final.state !== expected || ctx.signal.aborted) return pending();
+        if (ctx.signal.aborted)
+          return ctx.unknown("Local wait stopped after capture", captureOutcome(token));
+
+        if (final.state !== expected) return pending();
 
         return {
           snapshot: info,
