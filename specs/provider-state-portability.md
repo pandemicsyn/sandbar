@@ -280,6 +280,10 @@ Automatic replication is not evidence for an immediate flush receipt. Leave unsu
 
 Sandbox destruction never deletes volumes. Extend the destroy result to include confirmed compute termination, retained resources, and per-mount durability outcomes. With writable mounts, the proposed default is `storage: "require-durable"`; use provider durability evidence or a supported barrier, and reject before compute deletion if it cannot be established. A barrier must cover the departing session through shutdown, using a verified drain/freeze/close protocol; flushing while writers continue is insufficient. A failed cleanup after a submitted flush can have storage effects and must not be called effect-free. Explicit `storage: "allow-unconfirmed"` still permits compute cleanup and reports the risk to unsaved data. Volume-free destroy retains today's behavior. This default is a deliberate API decision to review.
 
+### Accepted cleanup configuration follow-up
+
+Applications may choose the writable-volume cleanup policy upfront for a client connection and override it per destroy call. Resolve the explicit call option first, then the configured policy, then the existing `require-durable` default. The public configuration signature remains to be specified; this decision does not change current implementation behavior. `allow-unconfirmed` permits compute cleanup without claiming a durability barrier, and never deletes retained volumes. Keep actual per-mount durability and retained-resource reporting. This is the next bounded cleanup-ergonomics task in [the roadmap](../ROADMAP.md), separate from richer volume guarantees and mounted restore.
+
 ## 4. Suspension, resumption, and expiry
 
 ```ts
