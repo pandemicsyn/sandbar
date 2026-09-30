@@ -19,10 +19,16 @@ import {
   type SnapshotProfile,
 } from "sandbar-adapter";
 
+const CompactReference = ResourceReference.omit({ scope: true });
+
+const SavedSnapshot = SnapshotInfoSchema.extend({
+  reference: z.union([ResourceReference, CompactReference]),
+});
+
 const VolumeCreateToken = z.strictObject({
   state: z.enum(["uncertain", "accepted", "rejected"]),
   name: z.string().min(1).max(128),
-  volume: ResourceReference.optional(),
+  volume: z.union([ResourceReference, CompactReference]).optional(),
   rejectionStatus: z
     .union([z.literal(400), z.literal(401), z.literal(403), z.literal(422)])
     .optional(),
@@ -283,6 +289,36 @@ export function daytonaState(input: {
       throw new AdapterError("CONFLICT", "Sandbox scope differs");
 
     return value;
+  }
+
+  function compactReference(ref: ResourceReference): z.infer<typeof CompactReference> {
+    const { scope: _scope, ...compact } = ref;
+
+    return compact;
+  }
+
+  function scopedReference(
+    ref: ResourceReference | z.infer<typeof CompactReference>,
+  ): ResourceReference {
+    const restored = ResourceReference.parse("scope" in ref ? ref : { ...ref, scope });
+    check(restored);
+
+    return restored;
+  }
+
+  function savedSnapshot(token: z.infer<typeof Token>) {
+    const saved = SavedSnapshot.safeParse(token.snapshot);
+
+    if (!saved.success) return SnapshotInfoSchema.safeParse(token.snapshot);
+
+    return SnapshotInfoSchema.safeParse({
+      ...saved.data,
+      reference: scopedReference(saved.data.reference),
+    });
+  }
+
+  function compactSnapshot(info: SnapshotInfo) {
+    return JSON.parse(JSON.stringify({ ...info, reference: compactReference(info.reference) }));
   }
 
   function volumeInfo(
@@ -781,7 +817,7 @@ export function daytonaState(input: {
   ) {
     const pending = () => ctx.pending(token, { pollAfterMs: 500 });
 
-    const saved = SnapshotInfoSchema.safeParse(token.snapshot);
+    const saved = savedSnapshot(token);
 
     if (
       token.captureState === "accepted" &&
@@ -859,7 +895,7 @@ export function daytonaState(input: {
     }
 
     if (["uncertain", "accepted"].includes(token.captureState)) {
-      const saved = SnapshotInfoSchema.safeParse(token.snapshot);
+      const saved = savedSnapshot(token);
 
       if (
         !token.snapshotId ||
@@ -882,7 +918,7 @@ export function daytonaState(input: {
         if (info) {
           captureObserved = true;
           token.snapshotId = info.reference.nativeId;
-          token.snapshot = JSON.parse(JSON.stringify(info));
+          token.snapshot = compactSnapshot(info);
           token.captureState = info.state === "ready" ? "completed" : "accepted";
         }
       } catch (error) {
@@ -890,7 +926,7 @@ export function daytonaState(input: {
         token.captureState = "failed";
         token.captureFailure = error.message;
         token.snapshotId = error.snapshot.reference.nativeId;
-        token.snapshot = JSON.parse(JSON.stringify(error.snapshot));
+        token.snapshot = compactSnapshot(error.snapshot);
       }
     }
 
@@ -1128,7 +1164,7 @@ export function daytonaState(input: {
 
       if (info) {
         token.snapshotId = info.reference.nativeId;
-        token.snapshot = JSON.parse(JSON.stringify(info));
+        token.snapshot = compactSnapshot(info);
         await ctx.checkpoint(token);
       }
 
@@ -1149,14 +1185,14 @@ export function daytonaState(input: {
 
         if (info) {
           token.snapshotId = info.reference.nativeId;
-          token.snapshot = JSON.parse(JSON.stringify(info));
+          token.snapshot = compactSnapshot(info);
           await ctx.checkpoint(token);
         }
       }
 
       if (!info || info.state !== "ready") return pending();
       token.captureState = "completed";
-      token.snapshot = JSON.parse(JSON.stringify(info));
+      token.snapshot = compactSnapshot(info);
       await ctx.checkpoint(token);
       await restart();
 
@@ -1189,7 +1225,7 @@ export function daytonaState(input: {
         token.captureState = "failed";
         token.captureFailure = error.message;
         token.snapshotId = error.snapshot.reference.nativeId;
-        token.snapshot = JSON.parse(JSON.stringify(error.snapshot));
+        token.snapshot = compactSnapshot(error.snapshot);
         await ctx.checkpoint(token);
         await restart();
       }
@@ -1458,7 +1494,11 @@ export function daytonaState(input: {
           name: result.name,
         });
 
-        await ctx.checkpoint({ state: "accepted", name: value.name, volume: result.reference });
+        await ctx.checkpoint({
+          state: "accepted",
+          name: value.name,
+          volume: compactReference(result.reference),
+        });
 
         if (result.name !== value.name)
           return ctx.unknown("Acknowledged volume name differs from the requested name");
@@ -1476,7 +1516,8 @@ export function daytonaState(input: {
             "Volume create acknowledgement unavailable; no adoption by name or replay",
           );
 
-        const { volume, name } = parsed.data;
+        const { volume: saved, name } = parsed.data;
+        const volume = scopedReference(saved);
         check(volume);
         const evidence = history.read(volume);
 

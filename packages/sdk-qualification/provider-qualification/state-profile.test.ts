@@ -32,6 +32,7 @@ async function fixture(
     stoppedSource?: boolean;
     loseCapture?: boolean;
     partialCapture?: boolean;
+    compactCustody?: "snapshot" | "failed-snapshot" | "volume";
     pendingNativeCapture?: boolean;
     partialReferenceCapture?: boolean;
     borrowed?: boolean;
@@ -71,7 +72,10 @@ async function fixture(
   const ref = (kind: "snapshot" | "volume", nativeId: string): ResourceReference => ({
     version: 1,
     kind,
-    provider: options.pendingNativeCapture ? "daytona" : "fixture.state.lifecycle",
+    provider:
+      options.pendingNativeCapture || options.compactCustody
+        ? "daytona"
+        : "fixture.state.lifecycle",
     scope,
     nativeId,
     ownership: "verified-created",
@@ -117,7 +121,10 @@ async function fixture(
   };
 
   const adapter = defineAdapter({
-    name: options.pendingNativeCapture ? "daytona" : "fixture.state.lifecycle",
+    name:
+      options.pendingNativeCapture || options.compactCustody
+        ? "daytona"
+        : "fixture.state.lifecycle",
     config: z.strictObject({}),
     credentials: z.strictObject({}),
     async connect() {
@@ -174,6 +181,14 @@ async function fixture(
                 snapshot: SnapshotInfo,
                 restartFailure: z.string(),
               }),
+              z.strictObject({
+                captureState: z.enum(["completed", "failed"]),
+                snapshotId: z.string(),
+                sourceId: z.string(),
+                snapshot: SnapshotInfo.extend({
+                  reference: ResourceReference.omit({ scope: true }),
+                }),
+              }),
               z.strictObject({ snapshot: ResourceReference }),
             ]),
           },
@@ -208,6 +223,24 @@ async function fixture(
               info,
               files: new Map([...box.files].map(([path, bytes]) => [path, bytes.slice()])),
             });
+
+            if (
+              options.compactCustody === "snapshot" ||
+              options.compactCustody === "failed-snapshot"
+            ) {
+              const { scope: _scope, ...reference } = info.reference;
+
+              return ctx.pending(
+                {
+                  captureState:
+                    options.compactCustody === "failed-snapshot" ? "failed" : "completed",
+                  snapshotId: reference.nativeId,
+                  sourceId: input.sandbox.id,
+                  snapshot: JSON.parse(JSON.stringify({ ...info, reference })),
+                },
+                { pollAfterMs: 0 },
+              );
+            }
 
             if (options.partialReferenceCapture) {
               info.reference.generation = "fixture-build";
@@ -262,11 +295,29 @@ async function fixture(
 
           return { deleted: true, reference };
         },
-        async volumeCreate(input) {
-          const info = volume(input.name);
-          volumes.set(input.name, { info, files: new Map() });
+        volumeCreate: {
+          recovery: {
+            version: 1,
+            token: z.object({
+              state: z.literal("accepted"),
+              volume: ResourceReference.omit({ scope: true }),
+            }),
+          },
+          async submit(input, ctx) {
+            const info = volume(input.name);
+            volumes.set(input.name, { info, files: new Map() });
 
-          return info;
+            if (options.compactCustody === "volume") {
+              const { scope: _scope, ...reference } = info.reference;
+
+              return ctx.pending({ state: "accepted", volume: reference }, { pollAfterMs: 0 });
+            }
+
+            return info;
+          },
+          async observe(_attempt, ctx) {
+            return ctx.unknown("Final result unavailable");
+          },
         },
         async volumeInspect(reference) {
           return volumes.get(reference.nativeId)!.info;
@@ -760,3 +811,35 @@ test("acknowledged in-progress Daytona capture retains custody without automatic
   expect(f.boxes.size).toBe(1);
   expect(f.snapshots.size).toBe(1);
 });
+
+for (const compactCustody of ["snapshot", "failed-snapshot", "volume"] as const) {
+  test(`compact Daytona ${compactCustody} custody is retained and cleaned after a lost result`, async () => {
+    const f = await fixture({ compactCustody });
+    await runState(f.connect, f.ledger, "base", {
+      provider: "daytona",
+      network: "blocked",
+      selected: new Set([
+        compactCustody === "volume" ? "volume-persistence" : "snapshot-roundtrip",
+      ]),
+      signal: AbortSignal.timeout(5000),
+      cleanupWaitMs: 1000,
+    });
+    const state = await f.ledger.read();
+
+    const creation = state.stateMutations?.find(
+      (entry) =>
+        entry.role === (compactCustody === "volume" ? "volume/create" : "snapshot/capture"),
+    );
+
+    expect(creation?.resource).toMatchObject({
+      provider: "daytona",
+      kind: compactCustody === "volume" ? "volume" : "snapshot",
+      ownership: "verified-created",
+      scope: { authority: { kind: "fixture", id: "account" } },
+    });
+    expect(state.cleanup).toBe("confirmed");
+    expect(f.snapshots.size).toBe(0);
+    expect(f.volumes.size).toBe(0);
+    expect(f.boxes.size).toBe(0);
+  });
+}

@@ -122,6 +122,7 @@ export interface Claimed {
   attemptId: string;
   generation: number;
   observeOnly: boolean;
+  leaseMs: number;
 }
 
 function id(prefix: string): string {
@@ -939,6 +940,7 @@ export class ControlStore {
         attemptId,
         generation,
         observeOnly,
+        leaseMs,
       };
     });
   }
@@ -1014,8 +1016,10 @@ export class ControlStore {
       )
         throw new StoreError("CONFLICT", "Operation checkpoint lease is unavailable");
 
+      const time = now();
+
       await tx.run(
-        sql`UPDATE operations SET adapter_token_ciphertext=${ciphertext},updated_at=${now()} WHERE id=${op.id}`,
+        sql`UPDATE operations SET adapter_token_ciphertext=${ciphertext},lease_expires_at=${time + claim.leaseMs},updated_at=${time} WHERE id=${op.id}`,
       );
     });
   }

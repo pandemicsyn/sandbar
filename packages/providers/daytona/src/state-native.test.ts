@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter, SnapshotInfo, ResourceReference } from "sandbar-adapter";
+import { defineAdapter, SnapshotInfo, ResourceReference, type Scope } from "sandbar-adapter";
 import {
   Sandbar,
+  AdapterSnapshot,
+  AdapterVolume,
   SandbarError,
   Image,
   OutcomeUnknownError,
@@ -15,8 +17,22 @@ interface FixtureStartHook {
   callback?: () => void;
 }
 
-function fixture(options: { stopped?: boolean; restartAfterCapture?: boolean } = {}) {
-  const scope = { authority: { kind: "organization", id: "org-one" }, partition: { target: "us" } };
+function fixture(
+  options: { stopped?: boolean; restartAfterCapture?: boolean; largeScope?: boolean } = {},
+) {
+  const scope: Scope = {
+    authority: { kind: "organization", id: "org-one" },
+    partition: {
+      target: "us",
+      ...(options.largeScope
+        ? {
+            apiUrl: "https://fixture.invalid/" + "a".repeat(2000),
+            toolboxOrigin: "https://toolbox.invalid/" + "b".repeat(2000),
+          }
+        : {}),
+    },
+  };
+
   let state = options.stopped ? "stopped" : "started";
 
   let snapshot: {
@@ -460,7 +476,7 @@ test("Daytona retained capture remains inspectable and owned when source restart
     const token = z
       .object({
         captureState: z.literal("completed"),
-        snapshot: SnapshotInfo,
+        snapshot: SnapshotInfo.extend({ reference: ResourceReference.omit({ scope: true }) }),
         restartFailure: z.string(),
       })
       .parse(operation.reference.token);
@@ -472,7 +488,9 @@ test("Daytona retained capture remains inspectable and owned when source restart
     );
     expect(f.calls.capture).toBe(1);
     expect(f.calls.start).toBe(1);
-    await (await client.snapshots.get(token.snapshot.reference)).delete();
+    await (
+      await client.snapshots.get({ ...token.snapshot.reference, scope: client.scope })
+    ).delete();
   } finally {
     await client.close();
   }
@@ -583,7 +601,7 @@ test("Daytona caller cancellation during restart retains acknowledged artifact a
     const token = z
       .object({
         captureState: z.literal("completed"),
-        snapshot: SnapshotInfo,
+        snapshot: SnapshotInfo.extend({ reference: ResourceReference.omit({ scope: true }) }),
         sourceState: z.literal("running"),
       })
       .parse(error.reference.token);
@@ -597,7 +615,9 @@ test("Daytona caller cancellation during restart retains acknowledged artifact a
     ).toBe(true);
     const recovered = await (await client.recover(error.reference)).wait();
     expect(recovered).toMatchObject({ source: { state: "running" } });
-    await (await client.snapshots.get(token.snapshot.reference)).delete();
+    await (
+      await client.snapshots.get({ ...token.snapshot.reference, scope: client.scope })
+    ).delete();
     expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
   } finally {
     await client.close();
@@ -1891,6 +1911,55 @@ for (const status of [400, 401, 403, 422, 408, 429, 500]) {
         else await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
         expect(f.volumeCreates()).toBe(1);
         expect(f.volumes.size).toBe(0);
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+for (const kind of ["snapshot_capture", "volume_create"] as const) {
+  test(`Daytona ${kind} large scope custody fits checkpoints and recovers`, async () => {
+    const f = fixture({ largeScope: true });
+    let saved: AdapterRecoveryReference | undefined;
+
+    const client = await f.connect((ref) => {
+      if (ref.kind !== kind || !ref.token) return;
+      expect(new TextEncoder().encode(JSON.stringify(ref.token)).length).toBeLessThanOrEqual(4096);
+      saved = structuredClone(ref);
+    });
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+
+      const resource =
+        kind === "snapshot_capture"
+          ? (await source.snapshot()).snapshot
+          : await client.volumes.create({ name: "large-scope" });
+
+      expect(saved).toBeDefined();
+      const reopened = await f.connect(undefined, "rotated-key");
+
+      try {
+        const result = await (await reopened.recover(saved!)).wait();
+
+        const recovered =
+          kind === "snapshot_capture"
+            ? z.object({ snapshot: z.instanceof(AdapterSnapshot) }).parse(result).snapshot
+            : z.instanceof(AdapterVolume).parse(result);
+
+        expect(recovered.reference).toEqual(resource.reference);
+        expect(f.calls.capture).toBe(kind === "snapshot_capture" ? 1 : 0);
+        expect(f.volumeCreates()).toBe(kind === "volume_create" ? 1 : 0);
+
+        const handle =
+          kind === "snapshot_capture"
+            ? await reopened.snapshots.get(recovered.reference)
+            : await reopened.volumes.get(recovered.reference);
+
+        await handle.delete();
       } finally {
         await reopened.close();
       }

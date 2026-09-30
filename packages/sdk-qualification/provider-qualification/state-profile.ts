@@ -19,10 +19,15 @@ import { boundedRead } from "./bounds";
 import { type ConnectionFactory, type Step } from "./lifecycle";
 import { snapshotProbe, volumeProbe, type StateEvidence } from "./state-evidence";
 
+const SavedResource = z.union([
+  ResourceReference,
+  ResourceReference.omit({ scope: true }).extend({ provider: z.literal("daytona") }),
+]);
+
 function partialResource(reference: AdapterRecoveryReference) {
   if (reference.kind === "volume_create") {
     const parsed = z
-      .object({ state: z.literal("accepted"), volume: ResourceReference })
+      .object({ state: z.literal("accepted"), volume: SavedResource })
       .safeParse(reference.token);
 
     if (
@@ -31,12 +36,19 @@ function partialResource(reference: AdapterRecoveryReference) {
       parsed.data.volume.ownership !== "verified-created"
     )
       return undefined;
-    assertResourceScope(parsed.data.volume, {
+
+    const volume = ResourceReference.parse(
+      "scope" in parsed.data.volume
+        ? parsed.data.volume
+        : { ...parsed.data.volume, scope: reference.scope },
+    );
+
+    assertResourceScope(volume, {
       provider: reference.provider,
       scope: reference.scope,
     });
 
-    return parsed.data.volume;
+    return volume;
   }
 
   if (reference.kind !== "snapshot_capture") return undefined;
@@ -45,7 +57,8 @@ function partialResource(reference: AdapterRecoveryReference) {
     .union([
       z.object({
         captureState: z.enum(["accepted", "completed", "failed"]),
-        snapshot: SnapshotInfo,
+        snapshot: SnapshotInfo.extend({ reference: SavedResource }),
+        snapshotId: z.string().optional(),
       }),
       z.object({ snapshot: ResourceReference }),
     ])
@@ -53,8 +66,18 @@ function partialResource(reference: AdapterRecoveryReference) {
 
   if (!token.success) return undefined;
 
-  const resource =
+  const saved =
     "reference" in token.data.snapshot ? token.data.snapshot.reference : token.data.snapshot;
+
+  if (
+    !("scope" in saved) &&
+    (!("snapshotId" in token.data) || token.data.snapshotId !== saved.nativeId)
+  )
+    return undefined;
+
+  const resource = ResourceReference.parse(
+    "scope" in saved ? saved : { ...saved, scope: reference.scope },
+  );
 
   if (resource.kind !== "snapshot" || resource.ownership !== "verified-created") return undefined;
   assertResourceScope(resource, {

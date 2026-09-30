@@ -193,9 +193,15 @@ for (const dialect of dialects)
           code: "CONFLICT",
         });
         expect(await store.beginSubmission(claim)).toBe(true);
+        // Expired but not yet reclaimed: the fenced checkpoint must renew atomically.
+        await store.backend.run(
+          sql`UPDATE operations SET lease_expires_at=0 WHERE id=${accepted.operation.id}`,
+        );
+        const checkpointTime = Date.now();
         await store.checkpointAdapterToken(claim, "first-encrypted-token");
         const saved = await store.getOperation(project.id, accepted.operation.id);
         expect(saved?.adapter_token_ciphertext).toBe("first-encrypted-token");
+        expect(Number(saved?.lease_expires_at)).toBeGreaterThanOrEqual(checkpointTime + 1000);
         expect(saved?.lease_owner).toBe("first");
         expect(Number(saved?.lease_generation)).toBe(claim.generation);
         expect(saved?.status).toBe("running");
