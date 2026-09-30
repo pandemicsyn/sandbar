@@ -861,6 +861,537 @@
       },
       "evidenceRef": "https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/provider-qualification/results/e2b.json",
       "issue": "unsupported-capability"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "connect",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "create-prepared",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "inspect",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "inventory",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "destroy",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "confirm-cleanup",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "close",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "sandbox-lifecycle"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "exec-argv",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "execution"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "exec-shell",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "execution"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "exec-nonzero",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "execution"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "file-binary",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "files"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "file-overwrite",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "files"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:50:47.890Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "file-no-clobber",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "files"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:51:46.298Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default",
+        "stateProbe": "snapshot-roundtrip-v3",
+        "freshProcess": true,
+        "preserve": "filesystem+memory",
+        "restoreExecution": "resume",
+        "sourceAfter": "running"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "snapshot-roundtrip",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "snapshot-roundtrip"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:52:39.963Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "internet-requested",
+        "regionClass": "native-default",
+        "networkProbe": "cloudflare-tcp443-hostname-ipv4-v1"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "network-internet",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "network-controls"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "harnessCommit": "8449def77172cf4f8d745fa1065b9b22ec41b69c",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T13:52:39.963Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default",
+        "networkProbe": "cloudflare-tcp443-hostname-ipv4-v1"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "network-blocked",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "network-controls"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "431cdaadaad739597fbbb1bb54bd24d68c038428",
+      "harnessCommit": "431cdaadaad739597fbbb1bb54bd24d68c038428",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T14:02:52.822Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "internet-requested",
+        "regionClass": "native-default",
+        "networkProbe": "cloudflare-tcp443-hostname-ipv4-v1"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "network-internet",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "network-controls"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "431cdaadaad739597fbbb1bb54bd24d68c038428",
+      "harnessCommit": "431cdaadaad739597fbbb1bb54bd24d68c038428",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-09-30T14:02:52.822Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default",
+        "networkProbe": "cloudflare-tcp443-hostname-ipv4-v1"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "network-blocked",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "network-controls"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/32"
     }
   ],
   "historicalEvidence": [

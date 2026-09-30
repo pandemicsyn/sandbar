@@ -17,6 +17,31 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
+| Scenario               | Latest live result | Date       |
+| ---------------------- | ------------------ | ---------- |
+| close                  | passed             | 2026-09-30 |
+| confirm-cleanup        | passed             | 2026-09-30 |
+| connect                | passed             | 2026-09-30 |
+| create-prepared        | passed             | 2026-09-30 |
+| destroy                | passed             | 2026-09-30 |
+| exec-argv              | passed             | 2026-09-30 |
+| exec-nonzero           | passed             | 2026-09-30 |
+| exec-shell             | passed             | 2026-09-30 |
+| file-binary (/tmp)     | passed             | 2026-09-30 |
+| file-no-clobber (/tmp) | passed             | 2026-09-30 |
+| file-overwrite (/tmp)  | passed             | 2026-09-30 |
+| inspect                | passed             | 2026-09-30 |
+| inventory              | passed             | 2026-09-30 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
 - SDK: 0.0.0, commit `1505ee0db85276224d0b3d846c50acc681f4ae06`.
 - Fresh-process reopen: not recorded.
 - Harness commit: `1505ee0db85276224d0b3d846c50acc681f4ae06`.
@@ -51,31 +76,6 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 | Scenario           | Latest live result | Date       |
 | ------------------ | ------------------ | ---------- |
 | snapshot-roundtrip | passed             | 2026-09-30 |
-
-### daytona-default-requested · us · /tmp
-
-- Image / authority: prepared; borrowed-snapshot / verified-organization.
-- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
-- SDK: 0.0.0, commit `1505ee0db85276224d0b3d846c50acc681f4ae06`.
-- Fresh-process reopen: not recorded.
-- Harness commit: `1505ee0db85276224d0b3d846c50acc681f4ae06`.
-- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
-
-| Scenario               | Latest live result | Date       |
-| ---------------------- | ------------------ | ---------- |
-| close                  | failed             | 2026-09-30 |
-| confirm-cleanup        | failed             | 2026-09-30 |
-| connect                | failed             | 2026-09-30 |
-| create-prepared        | failed             | 2026-09-30 |
-| destroy                | failed             | 2026-09-30 |
-| exec-argv              | passed             | 2026-09-30 |
-| exec-nonzero           | passed             | 2026-09-30 |
-| exec-shell             | passed             | 2026-09-30 |
-| file-binary (/tmp)     | passed             | 2026-09-30 |
-| file-no-clobber (/tmp) | passed             | 2026-09-30 |
-| file-overwrite (/tmp)  | passed             | 2026-09-30 |
-| inspect                | failed             | 2026-09-30 |
-| inventory              | failed             | 2026-09-30 |
 
 ### daytona-default-requested · us · /tmp
 
@@ -136,6 +136,70 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 | snapshot-roundtrip                                        | unsupported        | 2026-09-28 |
 
 ## E2B
+
+### blocked-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `431cdaadaad739597fbbb1bb54bd24d68c038428`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `431cdaadaad739597fbbb1bb54bd24d68c038428`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
+| Scenario                                                                 | Latest live result | Date       |
+| ------------------------------------------------------------------------ | ------------------ | ---------- |
+| network-blocked (blocked-requested / cloudflare-tcp443-hostname-ipv4-v1) | failed             | 2026-09-30 |
+
+### internet-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `431cdaadaad739597fbbb1bb54bd24d68c038428`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `431cdaadaad739597fbbb1bb54bd24d68c038428`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
+| Scenario                                                                   | Latest live result | Date       |
+| -------------------------------------------------------------------------- | ------------------ | ---------- |
+| network-internet (internet-requested / cloudflare-tcp443-hostname-ipv4-v1) | failed             | 2026-09-30 |
+
+### blocked-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
+- Fresh-process reopen: required.
+- Harness commit: `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
+| Scenario           | Latest live result | Date       |
+| ------------------ | ------------------ | ---------- |
+| snapshot-roundtrip | passed             | 2026-09-30 |
+
+### blocked-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
+
+| Scenario                     | Latest live result | Date       |
+| ---------------------------- | ------------------ | ---------- |
+| close                        | passed             | 2026-09-30 |
+| confirm-cleanup              | passed             | 2026-09-30 |
+| connect                      | passed             | 2026-09-30 |
+| create-prepared              | passed             | 2026-09-30 |
+| destroy                      | passed             | 2026-09-30 |
+| exec-argv                    | passed             | 2026-09-30 |
+| exec-nonzero                 | passed             | 2026-09-30 |
+| exec-shell                   | passed             | 2026-09-30 |
+| file-binary (/home/user)     | passed             | 2026-09-30 |
+| file-no-clobber (/home/user) | passed             | 2026-09-30 |
+| file-overwrite (/home/user)  | passed             | 2026-09-30 |
+| inspect                      | passed             | 2026-09-30 |
+| inventory                    | passed             | 2026-09-30 |
 
 ### blocked-requested · provider-default · /home/user
 

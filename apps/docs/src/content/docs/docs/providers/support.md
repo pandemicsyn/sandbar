@@ -9,16 +9,16 @@ Adapter support and live validation are separate facts. **Supported** means impl
 
 | Feature                       | Daytona                                                  | E2B                                                                               |
 | ----------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Sandbox lifecycle             | [Supported · failed](#daytona-lifecycle)                 | [Supported · passed at 3be54464](#e2b-lifecycle)                                  |
-| Execution and captured output | [Supported · passed at 1505ee0d](#daytona-execution)     | [Supported · passed at 3be54464](#e2b-execution)                                  |
-| Binary files and overwrite    | [Conditional · passed at 1505ee0d](#daytona-files)       | [Conditional · passed at 3be54464](#e2b-files)                                    |
+| Sandbox lifecycle             | [Supported · passed at 8449def7](#daytona-lifecycle)     | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
+| Execution and captured output | [Supported · passed at 8449def7](#daytona-execution)     | [Supported · passed at 8449def7](#e2b-execution)                                  |
+| Binary files and overwrite    | [Conditional · passed at 8449def7](#daytona-files)       | [Conditional · passed at 8449def7](#e2b-files)                                    |
 | OCI image builds              | [Conditional · not-run](#daytona-oci)                    | [Conditional · not-run](#e2b-oci)                                                 |
-| Measured network controls     | [Conditional · not-run](#daytona-network)                | [Supported · not-run](#e2b-network)                                               |
-| Snapshot roundtrip            | [Conditional · passed at 1505ee0d](#daytona-snapshots)   | [Conditional · passed at 5db0558 (historical)](#e2b-snapshots)                    |
+| Measured network controls     | [Conditional · not-run](#daytona-network)                | [Supported · failed](#e2b-network)                                                |
+| Snapshot roundtrip            | [Conditional · passed at 1505ee0d](#daytona-snapshots)   | [Conditional · passed at 8449def7](#e2b-snapshots)                                |
 | Volume CRUD                   | [Supported · passed at 1505ee0d](#daytona-volumes)       | [Unsupported · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
 | Mounted persistence           | [Conditional · passed at 1505ee0d](#daytona-persistence) | [Unsupported · not-run](#e2b-persistence)                                         |
 
-The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. The Daytona Bun tests at 1505ee0 passed execution, files, snapshot roundtrip, volume CRUD and mounted persistence with confirmed cleanup. The lifecycle case failed its managed inventory assertion; its teardown was also confirmed. Other operation/configuration claims retain their own recorded revisions and limitations below.
+The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. Daytona baseline passed at 8449def after allowing bounded inventory convergence; the original 1505ee0 failure remains recorded. Snapshot roundtrip, volume CRUD and mounted persistence retain their 1505ee0 passes. E2B baseline and RAM snapshot roundtrip passed at 8449def; its measured network probe failed at 431cdaa. All newly owned compute and retained artifacts have confirmed cleanup, while the original E2B volume uncertainty remains unresolved. Other operation/configuration claims retain their own recorded revisions and limitations below.
 
 ## Daytona caveats
 
@@ -26,7 +26,7 @@ The [live evidence detail](/docs/providers/live-qualification/) retains exact av
 
 ### Sandbox lifecycle
 
-The Bun lifecycle test at 1505ee0 in us with daytona-default failed because managed inventory omitted the running owned sandbox. Teardown and client close were confirmed. The earlier 3be54464 baseline passed; other images/regions are unverified.
+The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified.
 
 <a id="daytona-execution"></a>
 
@@ -76,7 +76,7 @@ Writable create-time mounts/subpaths; read-only unsupported. The Bun producer wr
 
 ### Sandbox lifecycle
 
-Prepared base baseline passed at 3be54464 with API-key authority in the default region, requested blocked internet and five-minute native lifetime.
+The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed.
 
 <a id="e2b-execution"></a>
 
@@ -100,13 +100,13 @@ Implemented; retained templates require separate ownership/cleanup and budget ap
 
 ### Measured network controls
 
-Maps internet/blocked to native allowInternetAccess. The maintained paired IPv4 TCP probe has not run live; merely requesting blocked does not measure enforcement.
+Maps internet/blocked to native allowInternetAccess, forwarding false for blocked. The paired Bun probe failed at 431cdaa: both internet positive controls passed, but the blocked sandbox connected to 1.1.1.1:443 and hostname resolution failed. The prior 8449def probe had no recoverable blocked-command result; bounded DNS now exposes concrete outcomes. Both runs have confirmed compute cleanup. No passing outbound isolation claim.
 
 <a id="e2b-snapshots"></a>
 
 ### Snapshot roundtrip
 
-Compatible envd/templates only: filesystem + RAM, native pause/resume, pinned-build restore; mounts excluded. Historical 5db0558 roundtrip passed; later identity/rejection/cancellation guards are fixture-tested, without a current-head live rerun. Fresh-process reopen is unrun live.
+Compatible envd/templates only: filesystem + RAM, native pause/resume, pinned-build restore; mounts excluded. The Bun roundtrip passed at 8449def with borrowed base in the native default region, including RAM continuity, two-way filesystem isolation, separate-process reference reopening, source deletion, second restore and confirmed owned compute/snapshot cleanup.
 
 <a id="e2b-volumes"></a>
 
