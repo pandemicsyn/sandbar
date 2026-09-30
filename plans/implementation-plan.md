@@ -16,14 +16,18 @@ Finish the [current PR acceptance fixes](../specs/provider-state-portability.md#
 
 Do not expand this PR into richer volume metadata, mounted restore, or a new public partial-outcome API. Existing correctness and resource-custody guarantees are required now.
 
-## Next: SDK recovery outcomes and adapter support
+## After PR #25: simplify provider acceptance
+
+Follow [the provider acceptance plan](provider-acceptance.md): retain meaningful live SDK workflows, consolidate branch and release testing into one maintained runner, and generate a small support matrix with explicit provider limitations and validation status. Schedule this cleanup before onboarding more adapters; it does not block or expand PR #25.
+
+## Next SDK feature: recovery outcomes and adapter support
 
 Implement [the focused follow-up spec](../specs/sdk-recovery-dx.md):
 
 1. Stable typed partial outcomes on errors, operation handles, and recovered operations, including retained resources, completed work, observed source state, unresolved steps, and continuation eligibility. Application code must not decode provider tokens.
 2. Small shared checkpoint/dispatch helpers and reusable recovery conformance tests. Keep native evidence and transitions in adapters; preserve application-owned persistence and explicit continuation without replay.
 
-This is the next bounded unit after the current PR, not a prerequisite for fixing its correctness findings. No general workflow engine or service persistence is included.
+This remains the next SDK feature unit, separate from the acceptance cleanup and not a prerequisite for fixing the current PR’s correctness findings. No general workflow engine or service persistence is included.
 
 ## Later state extensions with concrete provider requirements
 
