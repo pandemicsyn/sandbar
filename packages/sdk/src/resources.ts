@@ -89,6 +89,13 @@ export class AdapterSnapshot {
   ) {
     this.reference = freezeReference(checkedResource(client, reference, "snapshot"));
   }
+  get provider(): string {
+    return this.reference.provider;
+  }
+  /** Native containing-resource ID; persist the full reference for immutable build selection. */
+  get id(): string {
+    return this.reference.nativeId;
+  }
   async inspect(options: WaitOptions = {}): Promise<SnapshotInfo> {
     const ref = checkedResource(this.client, this.reference, "snapshot");
 
@@ -167,6 +174,12 @@ export class AdapterVolume {
     reference: ResourceReference,
   ) {
     this.reference = freezeReference(checkedResource(client, reference, "volume"));
+  }
+  get provider(): string {
+    return this.reference.provider;
+  }
+  get id(): string {
+    return this.reference.nativeId;
   }
   async inspect(options: WaitOptions = {}): Promise<VolumeInfo> {
     const ref = checkedResource(this.client, this.reference, "volume");

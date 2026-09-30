@@ -5,6 +5,8 @@ import {
   MountDurability as importMountDurability,
   AdapterError,
   AdapterCheckpointError,
+  ResourceReference,
+  type OperationOutcome,
   defineAdapter,
   type ExecValue,
 } from "sandbar-adapter";
@@ -102,6 +104,19 @@ function destroyValue(token: z.infer<typeof DestroyToken>): import("sandbar-adap
   if (token.mountDurability?.length) value.mountDurability = token.mountDurability;
 
   return value;
+}
+
+function destroyOutcome(
+  token: z.infer<typeof DestroyToken>,
+): Extract<OperationOutcome, { kind: "destroy" }> {
+  return {
+    kind: "destroy",
+    status: "unknown",
+    retainedVolumes:
+      token.mountDurability?.map((mount) =>
+        ResourceReference.extend({ kind: z.literal("volume") }).parse(mount.volume),
+      ) ?? [],
+  };
 }
 
 const nativeId = /^[A-Za-z0-9_-]{1,128}$/;
@@ -517,50 +532,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           },
         },
         destroy: {
-          recovery: {
-            version: 2,
-            token: DestroyToken,
-            facts(saved) {
-              const token = DestroyToken.parse(saved);
-
-              return {
-                version: 1,
-                retainedResources: [
-                  ...(token.mountDurability?.map((mount) => mount.volume) ?? []),
-                  ...(token.retainedTemplateId
-                    ? [
-                        {
-                          version: 1 as const,
-                          kind: "image" as const,
-                          provider: "e2b",
-                          scope: boundScope,
-                          nativeId: token.retainedTemplateId,
-                          ownership: "unknown" as const,
-                        },
-                      ]
-                    : []),
-                ],
-                completed: [],
-                steps: [
-                  {
-                    step: "destroy",
-                    status:
-                      token.stage === "rejected"
-                        ? "failed"
-                        : token.stage === "accepted"
-                          ? "pending"
-                          : "uncertain",
-                  },
-                ],
-                continuation: {
-                  supported: true,
-                  status: "unavailable",
-                  reason:
-                    "Termination cannot be replayed; observe compute while retaining independent storage",
-                },
-              };
-            },
-          },
+          recovery: { version: 2, token: DestroyToken },
           async prepare(box) {
             const record = await find(box.id);
 
@@ -601,7 +573,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               return ctx.reject("CAPACITY", error.message);
             }
 
-            await ctx.checkpoint(token);
+            try {
+              await ctx.checkpoint(token);
+            } catch (error) {
+              if (error instanceof AdapterCheckpointError) error.outcome = destroyOutcome(token);
+              throw error;
+            }
 
             if (ctx.signal.aborted) {
               token.stage = "rejected";
@@ -618,7 +595,10 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
               if ((await transport.get(box.id)) === null) return destroyValue(token);
             } catch (error) {
-              if (error instanceof AdapterCheckpointError) throw error;
+              if (error instanceof AdapterCheckpointError) {
+                error.outcome = destroyOutcome(token);
+                throw error;
+              }
               // An absent sandbox may still be confirmed by read-only observation.
             }
 
@@ -637,11 +617,24 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               return ctx.unknown(
                 "Termination cancelled before dispatch; continue to confirm no effect",
               );
-            await verifyAuthority();
-            const record = await transport.get(attempt.sandbox.id);
+            let record: E2BRecord | null;
+
+            try {
+              await verifyAuthority();
+              record = await transport.get(attempt.sandbox.id);
+            } catch {
+              return ctx.unknown(
+                "E2B compute observation is unavailable; termination cannot be replayed",
+                destroyOutcome(token.data),
+              );
+            }
 
             if (record) {
-              if (!owned(record)) return ctx.unknown("E2B destroy scope no longer matches");
+              if (!owned(record))
+                return ctx.unknown(
+                  "E2B destroy scope no longer matches",
+                  destroyOutcome(token.data),
+                );
 
               return ctx.pending(token.data, { pollAfterMs: 1000 });
             }
@@ -661,7 +654,10 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 "E2B termination rejected before dispatch",
               );
 
-            return ctx.unknown("E2B termination cannot be replayed");
+            return ctx.unknown(
+              "E2B termination cannot be replayed",
+              token.success ? destroyOutcome(token.data) : undefined,
+            );
           },
         },
         async inspect(box) {

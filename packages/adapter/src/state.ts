@@ -312,11 +312,43 @@ export const SnapshotCaptureValue = z.strictObject({
     interruption: SnapshotProfile.shape.interruption,
     restoreExecution: SnapshotProfile.shape.restoreExecution,
   }),
-  source: z.strictObject({ state: SandboxState, connections: SnapshotProfile.shape.connections }),
+  source: z.strictObject({
+    state: SandboxState,
+    connections: SnapshotProfile.shape.connections,
+    observedAt: z.iso.datetime().optional(),
+  }),
   retainedResources: z.array(ResourceReference).max(128),
 });
 
 export type SnapshotCaptureValue = z.infer<typeof SnapshotCaptureValue>;
+
+/** Known native results accompanying an incomplete operation; never dispatch authority. */
+export const OperationOutcome = z.discriminatedUnion("kind", [
+  z
+    .strictObject({
+      kind: z.literal("snapshot_capture"),
+      status: z.enum(["partial", "unknown"]),
+      snapshot: ResourceReference.extend({ kind: z.literal("snapshot") }).optional(),
+      capture: SnapshotCaptureValue.shape.capture.optional(),
+      source: SnapshotCaptureValue.shape.source.optional(),
+      restart: z
+        .strictObject({ status: z.enum(["failed", "uncertain", "not-submitted"]) })
+        .optional(),
+    })
+    .refine(
+      (outcome) =>
+        (outcome.status !== "partial" && outcome.restart?.status !== "failed") ||
+        (!!outcome.snapshot && !!outcome.capture),
+      "Confirmed partial capture requires a snapshot identity and capture result",
+    ),
+  z.strictObject({
+    kind: z.literal("destroy"),
+    status: z.literal("unknown"),
+    retainedVolumes: z.array(ResourceReference.extend({ kind: z.literal("volume") })),
+  }),
+]);
+
+export type OperationOutcome = z.infer<typeof OperationOutcome>;
 
 export const SnapshotRestoreInput = z.strictObject({
   snapshot: ResourceReference.refine((ref) => ref.kind === "snapshot"),

@@ -25,7 +25,9 @@ create: {
 }
 ```
 
-Persist the initial reference before native submission. The SDK awaits `onReference` for pending token updates; persist the updated `operation.reference` before a process can restart. Reopen the same verified scope and call `recover(savedReference)`; recovery never calls `submit`. The [runnable restart test](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/async-adapter.test.ts) exercises this flow.
+This existing advanced operation API is optional. Ordinary snapshot calls return a resource reference for application persistence; they do not require an operation journal.
+
+For callers using the legacy checkpoint callback, persist the initial operation reference before native submission. The SDK awaits `onReference` for pending token updates; persist the updated `operation.reference` before a process can restart. Reopen the same verified scope and call `recover(savedReference)`; recovery never calls `submit`. The [runnable restart test](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/async-adapter.test.ts) exercises this flow.
 
 `wait()` respects each pending result's `pollAfterMs` as the earliest automatic next read. Its `pollMs` option can slow polling further but cannot shorten the adapter's delay. A manual `observe()` remains an explicit read; if it returns pending, a later `wait()` still respects the new delay.
 
@@ -37,31 +39,4 @@ For multi-stage mutations, call `await ctx.checkpoint(token)` before each native
 
 A mutation object can implement `continue(attempt, ctx)` through the existing runtime. The direct SDK's explicit `operation.continue()` invokes it with the original operation identities and checkpoint hook. `observe` must remain read-only. Advance only a proven never-submitted next stage after reconciling earlier effects; never replay an uncertain dispatch. Applications must serialize continuation across processes with their own lease or compare-and-swap unless native idempotency provides that guarantee. No SDK database or workflow engine is required.
 
-## Publish normalized recovery facts
-
-An adapter can add a pure `recovery.facts(token)` mapper alongside its versioned token schema. Return `RecoveryFacts` from `sandbar-adapter`; the runtime validates the mapper's output and persists it in the same reference as the opaque token. Applications read `operation.outcome` or `error.outcome` through the SDK instead of depending on your private token layout.
-
-`RecoveryFacts` version `1` contains `retainedResources`, `completed`, an optional timestamped `source`, `steps` and `continuation`. Each capture fact reports its confirmed preservation, interruption and restore execution semantics. A completed capture and a failed restart are separate facts. A source observation records `observedAt` as an ISO timestamp and `provenance` as `provider-read` or `acknowledgement`; do not replace the time with the time the application reads the outcome.
-
-Keep the mapper read-only and deterministic. It cannot perform provider reads or grant dispatch authority. Continuation reports `supported: true | false | "unknown"` separately from `status: "eligible" | "unavailable" | "unknown"`, with a reason. Adapters can set optional `continuation.action` to give explicit `observe` or `manual` advice when status alone cannot express the next step. The SDK reports actionable advice as `outcome.nextAction`; `continue` still requires supported, eligible continuation. Eligibility reflects current evidence and must be revalidated by `continue` before dispatch. Unknown effects stay uncertain even when other steps completed.
-
-Facts are limited to 16 KiB of serialized UTF-8 JSON, 32 retained resources, 16 completed entries and 16 step entries. Step names are at most 128 characters; reasons are at most 1,024 characters. Facts have their own version inside the recovery reference. The base envelope retains its 16 KiB budget. Provider facts stay intact after completion; a compact, versioned completion descriptor preserves up to 129 result resources without repeating provider/scope. Identities already saved in facts or mounts receive only newly learned evidence. Strict field limits bound the descriptor, and the full reference is capped at 6 MiB to accommodate every permitted result. Public outcomes combine all known identities from facts, mounts and completion without silently trimming recovery evidence. References without normalized facts remain recoverable when their token format is supported; the SDK exposes unknown facts until new evidence is available. Unsupported fact versions fail validation instead of silently acquiring new semantics.
-
-For direct connections, the SDK exposes sealed reference and outcome copies. Treat these fields as an application-facing evidence view. Use the validated native token and current credential/scope checks for identity and dispatch decisions, including after source deletion where a retained resource can still be inspected independently.
-
-## Share the dispatch barrier
-
-`checkpointBeforeDispatch(ctx, token)` implements the repeated ordering used by the Daytona and E2B adapters: await the checkpoint hook, then recheck cancellation before a native effect. It returns `false` when cancellation arrived while persistence was pending; return a pending attempt instead of dispatching.
-
-```ts
-import { checkpointBeforeDispatch } from "sandbar-adapter";
-
-// token already records that this stage may dispatch; keep it provider-specific.
-if (!(await checkpointBeforeDispatch(ctx, token))) return ctx.pending(token);
-const acknowledgement = await native.start(request);
-await ctx.checkpoint(withAcknowledgement(token, acknowledgement));
-```
-
-Construct the stage marker before entering the barrier. After dispatch, checkpoint newly known identities and acknowledgements before any later effect. Do not catch `AdapterCheckpointError` as a transport failure or continue through it. A successful helper call without a configured persistence hook supplies local ordering only; it does not establish crash durability. Applications remain responsible for durable writes and cross-process continuation serialization.
-
-Providers still own native stage meaning, correlated discovery and proven never-submitted transitions. The helper does not retry mutations, add a store or infer filesystem/memory guarantees. Test the actual SDK checkpoint path under failed writes, cancellation during persistence, lost acknowledgements, stale observations racing continuation, delayed capture and fresh-connection recovery. Assert both the surviving public facts and native dispatch counts so uncertain effects cannot be replayed.
+Adapters may attach typed operation-specific data through `ctx.unknown(reason, outcome)`: a known snapshot reference, confirmed capture and source observation, or known retained volume references. Report failed versus uncertain source restart accurately; do not certify capture from an allocated ID alone. This data is returned directly on existing SDK errors and does not change the saved operation-reference format. If a compatibility checkpoint fails after an acknowledgement, attach known data to `AdapterCheckpointError.outcome` and stop before later effects. Never reinterpret callback failure as provider validation failure.

@@ -47,7 +47,7 @@ test("plain create/destroy, unsupported local calls, and close once", async () =
     onReference(ref) {
       saved.push(ref);
 
-      if (ref.kind === "create" && !ref.completion) expect(creates).toBe(0);
+      if (ref.kind === "create") expect(creates).toBe(0);
     },
   });
 
@@ -57,7 +57,7 @@ test("plain create/destroy, unsupported local calls, and close once", async () =
   await expect(box.exec({ command: { kind: "argv", argv: ["true"] } })).rejects.toMatchObject({
     code: "UNSUPPORTED",
   });
-  expect(saved).toHaveLength(2);
+  expect(saved).toHaveLength(1);
   await box.destroy();
   expect(creates).toBe(1);
   expect(destroys).toBe(1);
@@ -544,15 +544,9 @@ test("reference callback failure prevents provider submission", async () => {
     },
   });
 
-  await expect(
-    client.sandboxes.create({ environment: Image.prepared("image") }),
-  ).rejects.toMatchObject({
-    code: "REFERENCE_PERSISTENCE_FAILED",
-    phase: "before-dispatch",
-    providerOutcome: "not-dispatched",
-    effect: "none",
-    cause: { message: "storage unavailable" },
-  });
+  await expect(client.sandboxes.create({ environment: Image.prepared("image") })).rejects.toThrow(
+    "storage unavailable",
+  );
   expect(submits).toBe(0);
   await client.close();
 });
@@ -1911,9 +1905,7 @@ test("reference persistence recovers after one failed observation save before co
   try {
     const box = await client.sandboxes.create({ environment: Image.prepared("base") });
     const operation = await box.submitDestroy();
-    await expect(operation.observe()).rejects.toMatchObject({
-      code: "REFERENCE_PERSISTENCE_FAILED",
-    });
+    await expect(operation.observe()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
     expect(effects).toBe(0);
     await operation.observe();
     expect(saved).toEqual({ stage: "validated" });

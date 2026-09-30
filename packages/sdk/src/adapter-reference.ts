@@ -1,43 +1,9 @@
 import { z } from "zod";
-import {
-  ResourceReference,
-  MountSpec,
-  SnapshotProfile,
-  SandboxState,
-  SnapshotCaptureValue,
-  RecoveryFacts,
-} from "sandbar-adapter";
+import { ResourceReference, MountSpec, SnapshotProfile, SandboxState } from "sandbar-adapter";
 
 export const CaptureExpectation = z.strictObject({
   profile: SnapshotProfile,
   sourceState: SandboxState,
-});
-
-/** Essential completion state; provider and scope come from the envelope. */
-export const CompletionSchema = z.strictObject({
-  version: z.literal(1),
-  resources: z
-    .array(
-      ResourceReference.omit({ provider: true, scope: true, service: true }).partial({
-        version: true,
-        ownership: true,
-      }),
-    )
-    .max(129),
-  capture: SnapshotCaptureValue.shape.capture.optional(),
-  sourceState: SandboxState.optional(),
-  retainedNativeIds: z.array(z.string().min(1).max(512)).max(128).optional(),
-  retainedArtifacts: z
-    .array(
-      z.strictObject({
-        kind: z.string().min(1).max(128),
-        id: z.string().min(1).max(512),
-        ownership: z.enum(["verified", "unknown"]),
-        cleanup: z.enum(["manual", "provider_expiry", "none_known"]),
-      }),
-    )
-    .max(128)
-    .optional(),
 });
 
 export const ReferenceSchema = z.strictObject({
@@ -74,8 +40,6 @@ export const ReferenceSchema = z.strictObject({
     })
     .optional(),
   maxOutputBytes: z.number().int().nonnegative().max(1_048_576).optional(),
-  facts: RecoveryFacts.optional(),
-  completion: CompletionSchema.optional(),
   tokenVersion: z.number().int().positive().optional(),
   token: z.json().optional(),
 });

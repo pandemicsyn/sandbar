@@ -6,7 +6,6 @@ import {
   SandbarError,
   Image,
   OutcomeUnknownError,
-  ReferencePersistenceError,
   WaitAbortedError,
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
@@ -297,7 +296,10 @@ test("E2B captures, restores the saved UUID after source deletion, and rejects a
   });
 
   const result = await source.snapshot();
-  const saved = structuredClone(result.snapshot.reference);
+  expect(result.snapshot.provider).toBe("e2b");
+  expect(result.snapshot.id).toBe("snap_one");
+  expect(result.source.observedAt).toBeTruthy();
+  const saved = JSON.parse(JSON.stringify(result.snapshot.reference));
   expect(saved.nativeId).toBe("snap_one");
   expect(saved.generation).toBe("11111111-1111-4111-8111-111111111111");
   await source.destroy();
@@ -308,12 +310,7 @@ test("E2B captures, restores the saved UUID after source deletion, and rejects a
     const snapshot = await reopened.snapshots.get(saved);
     expect((await snapshot.inspect()).mountHandling).toBe("none");
     expect((await reopened.capabilities()).snapshots.restore.status).toBe("supported");
-    const restore = await snapshot.submitRestore({ networkPolicy: "blocked" });
-    const restored = await restore.wait();
-    expect(restore.outcome.completed).toContainEqual({
-      step: "restore",
-      restoreExecution: "resume",
-    });
+    const restored = await snapshot.restore({ networkPolicy: "blocked" });
     expect(f.boxes.get(restored.id)?.metadata.sandbar_snapshot).toBe(
       `snap_one:${saved.generation}`,
     );
@@ -752,25 +749,18 @@ for (const mode of ["expires-during-read", "expires-after-cancel"] as const) {
       const recovery = structuredClone(failure.reference);
       const outcome = failure.outcome;
 
-      if (!outcome) throw new Error("Expected normalized partial outcome");
-
-      const saved = outcome.retainedResources.find((resource) => resource.kind === "snapshot");
-
-      if (!saved) throw new Error("Expected public retained snapshot reference");
-      expect(outcome.completed).toEqual([
-        {
-          step: "capture",
-          capture: {
-            preserve: "filesystem+memory",
-            interruption: "pause",
-            restoreExecution: "resume",
-          },
-        },
-      ]);
-      expect(outcome.continuation).toMatchObject({
-        supported: true,
-        status: "unavailable",
+      if (outcome?.kind !== "snapshot_capture" || !outcome.snapshot)
+        throw new Error("Expected directly accessible retained snapshot");
+      const saved = outcome.snapshot;
+      expect(outcome.status).toBe("partial");
+      expect(outcome.capture).toEqual({
+        preserve: "filesystem+memory",
+        interruption: "pause",
+        restoreExecution: "resume",
       });
+      expect(outcome.restart).toEqual(
+        mode === "expires-after-cancel" ? undefined : { status: "uncertain" },
+      );
       expect(saved).toMatchObject({
         nativeId: "snap_one",
         generation: "11111111-1111-4111-8111-111111111111",
@@ -781,9 +771,25 @@ for (const mode of ["expires-during-read", "expires-after-cancel"] as const) {
       await client.close();
       client = await f.connect();
       const recovered = await client.recover(JSON.parse(JSON.stringify(recovery)));
-      await expect(recovered.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
-      expect(recovered.outcome.completed).toEqual(outcome.completed);
-      expect(recovered.outcome.retainedResources).toContainEqual(saved);
+      await expect(recovered.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: {
+          kind: "snapshot_capture",
+          status: "partial",
+          snapshot: saved,
+          capture: outcome.capture,
+        },
+      });
+      await recovered.continue();
+      await expect(recovered.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: {
+          kind: "snapshot_capture",
+          status: "partial",
+          snapshot: saved,
+          capture: outcome.capture,
+        },
+      });
       const snapshot = await client.snapshots.get(saved);
       expect(await snapshot.inspect()).toMatchObject({
         consistency: "caller-quiesced",
@@ -810,22 +816,19 @@ test("E2B partial capture records an actually observed suspended source independ
       if (box) box.state = "paused";
     });
     const operation = await source.submitSnapshot();
-    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-    expect(operation.outcome.completed).toEqual([
-      {
-        step: "capture",
-        capture: {
-          preserve: "filesystem+memory",
-          interruption: "pause",
-          restoreExecution: "resume",
-        },
-      },
-    ]);
-    expect(operation.outcome.source).toMatchObject({
-      state: "suspended",
-      provenance: "provider-read",
+    const failure = await operation.wait().catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(OutcomeUnknownError);
+
+    if (!(failure instanceof OutcomeUnknownError) || failure.outcome?.kind !== "snapshot_capture")
+      throw new Error("Expected direct partial capture");
+    expect(failure.outcome).toMatchObject({
+      status: "partial",
+      snapshot: { provider: "e2b", nativeId: "snap_one" },
+      capture: { preserve: "filesystem+memory", interruption: "pause", restoreExecution: "resume" },
+      source: { state: "suspended", connections: "dropped" },
+      restart: { status: "uncertain" },
     });
-    expect(operation.outcome.steps).toContainEqual({ step: "source_resume", status: "uncertain" });
+    expect(failure.outcome.source?.observedAt).toBeTruthy();
     expect(f.calls.capture).toBe(1);
   } finally {
     await client.close();
@@ -841,9 +844,14 @@ test("E2B delayed capture readiness becomes public confirmed capture after sourc
   try {
     const source = await client.sandboxes.create({ environment: Image.prepared("base") });
     const operation = await source.submitSnapshot();
-    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-    expect(operation.outcome.completed).toEqual([]);
-    expect(operation.outcome.retainedResources).toHaveLength(1);
+    await expect(operation.wait()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      outcome: {
+        kind: "snapshot_capture",
+        status: "unknown",
+        snapshot: { nativeId: "snap_one", generation: "11111111-1111-4111-8111-111111111111" },
+      },
+    });
     saved = JSON.parse(JSON.stringify(operation.reference));
     f.boxes.delete(source.id);
   } finally {
@@ -855,23 +863,21 @@ test("E2B delayed capture readiness becomes public confirmed capture after sourc
 
   try {
     const recovered = await reopened.recover(saved!);
-    await expect(recovered.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
-    expect(recovered.outcome.completed).toEqual([
-      {
-        step: "capture",
-        capture: {
-          preserve: "filesystem+memory",
-          interruption: "pause",
-          restoreExecution: "resume",
-        },
-      },
-    ]);
+    const failure = await recovered.wait().catch((error: Error) => error);
 
-    const snapshotReference = recovered.outcome.retainedResources.find(
-      (resource) => resource.kind === "snapshot",
-    );
-
-    if (!snapshotReference) throw new Error("Expected retained snapshot reference");
+    if (
+      !(failure instanceof OutcomeUnknownError) ||
+      failure.outcome?.kind !== "snapshot_capture" ||
+      !failure.outcome.snapshot
+    )
+      throw new Error("Expected retained completed capture after source loss");
+    expect(failure.outcome.status).toBe("partial");
+    expect(failure.outcome.capture).toEqual({
+      preserve: "filesystem+memory",
+      interruption: "pause",
+      restoreExecution: "resume",
+    });
+    const snapshotReference = failure.outcome.snapshot;
     expect(await (await reopened.snapshots.get(snapshotReference)).inspect()).toMatchObject({
       state: "ready",
     });
@@ -1211,7 +1217,7 @@ for (const rejectCheckpoint of [false, true]) {
       try {
         if (rejectCheckpoint)
           await expect(client.volumes.create({ name: "durable-volume" })).rejects.toBeInstanceOf(
-            ReferencePersistenceError,
+            OutcomeUnknownError,
           );
         else await client.volumes.create({ name: "durable-volume" });
         expect(saved).toBeDefined();
@@ -1318,7 +1324,7 @@ for (const kind of ["snapshot", "volume"] as const) {
         } catch (error) {
           if (barrier === "abort-before")
             expect(error).toMatchObject({ code: "UNAVAILABLE", effect: "none" });
-          else expect(error).toBeInstanceOf(ReferencePersistenceError);
+          else expect(error).toBeInstanceOf(OutcomeUnknownError);
         }
 
         expect(saved).toBeDefined();
@@ -1669,6 +1675,119 @@ test("E2B oversized native volume inventory reports capacity instead of a schema
     await expect(client.volumes.list({ limit: 100 })).rejects.toMatchObject({
       code: "CAPACITY",
     });
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B known allocation without an observed generation remains unknown and cannot restore a changed default", async () => {
+  const f = fixture();
+  f.modes.tagsDenied = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const failure = await source.snapshot().catch((error: Error) => error);
+
+    if (!(failure instanceof OutcomeUnknownError) || failure.outcome?.kind !== "snapshot_capture")
+      throw new Error("Expected known unconfirmed allocation");
+    expect(failure.outcome).toMatchObject({
+      status: "unknown",
+      snapshot: { provider: "e2b", nativeId: "snap_one" },
+    });
+    expect(failure.outcome.capture).toBeUndefined();
+    expect(failure.outcome.snapshot?.generation).toBeUndefined();
+    f.modes.tagsDenied = false;
+    f.replaceBuild();
+    await expect((await client.recover(failure.reference)).wait()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      outcome: { status: "unknown" },
+    });
+
+    if (!failure.outcome.snapshot) throw new Error("Expected allocated identity");
+    await expect(client.snapshots.get(failure.outcome.snapshot)).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+    });
+    expect(f.calls.capture).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B failed compatibility checkpoint after ready capture preserves the direct partial result", async () => {
+  const f = fixture();
+
+  const client = await f.connect("fixture-key", (reference) => {
+    if (reference.kind !== "snapshot_capture") return;
+    const token = z.object({ snapshot: ResourceReference }).safeParse(reference.token);
+
+    if (token.success) throw new Error("Application save failed after capture");
+  });
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    await expect(source.snapshot()).rejects.toMatchObject({
+      code: "REFERENCE_SAVE_FAILED",
+      outcome: {
+        kind: "snapshot_capture",
+        status: "partial",
+        snapshot: {
+          provider: "e2b",
+          nativeId: "snap_one",
+          generation: "11111111-1111-4111-8111-111111111111",
+        },
+        capture: {
+          preserve: "filesystem+memory",
+          interruption: "pause",
+          restoreExecution: "resume",
+        },
+      },
+    });
+    expect(f.calls.capture).toBe(1);
+    expect(f.calls.create).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B nonreplayed destroy uncertainty exposes exact legacy retained volume references", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const volume = await client.volumes.create({ name: "retained-reference" });
+    expect(volume.provider).toBe("e2b");
+    expect(volume.id).toBe(volume.reference.nativeId);
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const destroyed = await source.submitDestroy();
+    await destroyed.wait();
+
+    const reference = {
+      ...destroyed.reference,
+      token: {
+        stage: "uncertain",
+        sandboxId: source.id,
+        mountDurability: [{ volume: volume.reference, path: "/data", status: "unconfirmed" }],
+      },
+    };
+
+    f.getBarrier(async () => {
+      throw new Error("Native compute read failed");
+    });
+    const recovered = await client.recover(reference);
+    await expect(recovered.wait()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      outcome: { kind: "destroy", status: "unknown", retainedVolumes: [volume.reference] },
+    });
+    await recovered.continue();
+    await expect(recovered.wait()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      outcome: { kind: "destroy", status: "unknown", retainedVolumes: [volume.reference] },
+    });
+    expect(f.calls.kill).toBe(1);
+    expect(
+      await (await client.volumes.get(JSON.parse(JSON.stringify(volume.reference)))).inspect(),
+    ).toMatchObject({ reference: { nativeId: volume.id } });
   } finally {
     await client.close();
   }

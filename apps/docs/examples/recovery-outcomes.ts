@@ -1,123 +1,54 @@
 import {
-  OutcomeUnknownError,
-  ReferencePersistenceError,
   Sandbar,
   SandbarError,
-  WaitAbortedError,
-  type AdapterRecoveryReference,
-  type DirectClient,
-  type DirectSandboxHandle,
-  type RecoveryOutcome,
+  type AdapterDirectClient,
+  type AdapterSandbox,
+  type ResourceReference,
 } from "sandbar-sdk";
 import { daytona } from "sandbar-sdk/daytona";
 import { e2b } from "sandbar-sdk/e2b";
 
-/** The application implements an awaited durable write; JSON has no provider credentials. */
 export type SaveReference = (json: string) => Promise<void>;
 
-export function connectDaytona(
-  config: Parameters<typeof daytona>[0],
-  save: SaveReference,
-): Promise<DirectClient> {
-  return Sandbar.connect(daytona(config), {
-    async onReference(reference) {
-      await save(JSON.stringify(reference));
-    },
-  });
+export function connectDaytona(config: Parameters<typeof daytona>[0]) {
+  return Sandbar.connect(daytona(config));
 }
 
-/** Configure a verified teamId when references must survive E2B API-key rotation. */
-export function connectE2B(
-  config: Parameters<typeof e2b>[0],
-  save: SaveReference,
-): Promise<DirectClient> {
-  return Sandbar.connect(e2b(config), {
-    async onReference(reference) {
-      await save(JSON.stringify(reference));
-    },
-  });
+/** A verified teamId gives E2B references a stable scope across credential rotation. */
+export function connectE2B(config: Parameters<typeof e2b>[0]) {
+  return Sandbar.connect(e2b(config));
 }
 
-export async function inspectRetainedSnapshots(client: DirectClient, outcome: RecoveryOutcome) {
-  const references = outcome.retainedResources.filter((reference) => reference.kind === "snapshot");
+/** Saving happens in application code after a successful provider operation. */
+export async function captureAndSave(box: AdapterSandbox, save: SaveReference) {
+  const captured = await box.snapshot();
+  console.log(captured.snapshot.provider, captured.snapshot.id);
+  await save(JSON.stringify(captured.snapshot.reference));
 
-  return Promise.all(
-    references.map(async (reference) => (await client.snapshots.get(reference)).inspect()),
-  );
+  return captured;
 }
 
-/** A completed capture can survive a later source-restart failure. */
-export async function captureWithRecovery(
-  client: DirectClient,
-  box: DirectSandboxHandle,
-  save: SaveReference,
-) {
+/** Configure matching provider/scope using current credentials before reopening. */
+export async function reopenSnapshot(freshClient: AdapterDirectClient, saved: ResourceReference) {
+  const snapshot = await freshClient.snapshots.get(saved);
+
+  return snapshot.restore({ networkPolicy: "blocked" });
+}
+
+/** A failed composite call may still contain a usable, confirmed capture. */
+export async function captureWithPartialResult(box: AdapterSandbox) {
   try {
-    const result = await box.snapshot();
-
-    return { capture: result.capture, snapshot: result.snapshot.reference };
+    return await box.snapshot();
   } catch (error) {
-    if (error instanceof ReferencePersistenceError) {
-      await save(JSON.stringify(error.reference));
+    if (error instanceof SandbarError && error.outcome?.kind === "snapshot_capture") {
+      const partial = error.outcome;
 
-      // The required save failed; repeat persistence, never a confirmed capture.
-      return { outcome: error.outcome, confirmedResult: error.result };
+      if (partial.status === "partial" && partial.snapshot && partial.capture) {
+        return { snapshot: partial.snapshot, capture: partial.capture, restart: partial.restart };
+      }
     }
 
-    if (
-      (error instanceof OutcomeUnknownError ||
-        error instanceof WaitAbortedError ||
-        error instanceof SandbarError) &&
-      error.outcome
-    ) {
-      const outcome = error.outcome;
-      await save(JSON.stringify(outcome.reference));
-      const snapshots = await inspectRetainedSnapshots(client, outcome);
-
-      return { outcome, snapshots };
-    }
-
+    // Unknown response without an ID requires application policy; never blindly retry.
     throw error;
   }
-}
-
-/** Call under the application's cross-process lease or compare-and-swap. */
-export async function recoverCapture(
-  freshClient: DirectClient,
-  savedReference: AdapterRecoveryReference,
-) {
-  const operation = await freshClient.recover(savedReference);
-
-  if (operation.kind !== "snapshot_capture") throw new Error("Expected a snapshot capture");
-
-  // Recovery and observation use current credentials and perform no mutation replay.
-  const observed = await operation.observe().catch((error) => {
-    if (error instanceof SandbarError && error.outcome) return null;
-
-    throw error;
-  });
-
-  if (observed) return { snapshot: observed.snapshot.reference, capture: observed.capture };
-
-  const outcome = operation.outcome;
-  const snapshots = await inspectRetainedSnapshots(freshClient, outcome);
-
-  if (outcome.nextAction !== "continue") {
-    // Pending/uncertain work stays observable; unknown is never completed capture.
-    return { outcome, snapshots };
-  }
-
-  // The provider rechecks native state and dispatch authority before the next stage.
-  await operation.continue();
-  const result = await operation.wait();
-
-  return { snapshot: result.snapshot.reference, capture: result.capture };
-}
-
-/** Explicit submission exposes partial evidence before any convenience wait ends. */
-export async function submitCapture(box: DirectSandboxHandle, save: SaveReference) {
-  const operation = await box.submitSnapshot();
-  await save(JSON.stringify(operation.reference));
-
-  return { operation, outcome: operation.outcome };
 }

@@ -12,9 +12,6 @@ export type {
   AdapterRecoveryReference,
   AdapterConnectOptions,
   AdapterCapabilities,
-  DirectConnectOptions,
-  DirectClient,
-  DirectSandboxHandle,
   RecoveredOperation,
   AdvancedOperationResult,
   AdvancedOperationKind,
@@ -30,7 +27,6 @@ export {
   SandbarError,
   UnsupportedFeatureError,
   OutcomeUnknownError,
-  ReferencePersistenceError,
   WaitAbortedError,
   NonzeroExitError,
   NoExitCodeError,
@@ -63,6 +59,7 @@ export type {
   Support,
   Capabilities,
   DirectCapabilities,
+  OperationOutcome,
   SnapshotPlan,
   SnapshotProfile,
   SandboxState,
@@ -87,9 +84,3 @@ export type { MountCapabilities, VolumeCapabilities, RestoreCapabilities } from 
 export { diagnosticContext } from "./observability";
 
 export type { ObservabilityOptions, DiagnosticContext } from "./observability";
-
-export { recoveryOutcome } from "./recovery-outcome";
-
-export type { RecoveryOutcome } from "./recovery-outcome";
-
-export { RecoveryFacts } from "sandbar-adapter";

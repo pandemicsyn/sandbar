@@ -3,6 +3,8 @@ import { daytonaState } from "./state-native";
 import { MountDurability as importMountDurability, type ResourceReference } from "sandbar-adapter";
 import {
   AdapterError,
+  AdapterCheckpointError,
+  type OperationOutcome,
   defineAdapter,
   type AttemptContext,
   type ObserveContext,
@@ -25,11 +27,6 @@ const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
 const Token = z.strictObject({ submissionId: z.string().min(1).max(128) });
 
-const RestoreToken = Token.extend({
-  sandboxId: z.string().min(1).max(512).optional(),
-  restoreCompleted: z.literal(true).optional(),
-});
-
 const ImageToken = Token.extend({
   image: z.string().min(1).max(512),
   discoveryDeadline: z.number().int().nonnegative().optional(),
@@ -38,6 +35,20 @@ const ImageToken = Token.extend({
     .regex(/^[A-Za-z0-9._:-]{1,128}$/)
     .optional(),
 });
+
+function destroyOutcome(token: z.infer<typeof DestroyToken>): OperationOutcome {
+  return {
+    kind: "destroy",
+    status: "unknown",
+    retainedVolumes:
+      token.mountDurability?.map((mount) => {
+        if (mount.volume.kind !== "volume")
+          throw new AdapterError("INTERNAL", "Invalid retained volume identity");
+
+        return { ...mount.volume, kind: "volume" as const };
+      }) ?? [],
+  };
+}
 
 const ExecToken = z.strictObject({
   submissionId: z.string().min(1).max(128),
@@ -279,46 +290,7 @@ export function createDaytonaAdapter(
       };
 
       const createMutation = {
-        recovery: {
-          version: 1,
-          token: RestoreToken,
-          facts(saved: import("sandbar-adapter").Json) {
-            const token = RestoreToken.parse(saved);
-
-            return {
-              version: 1 as const,
-              retainedResources: token.sandboxId
-                ? [
-                    {
-                      version: 1 as const,
-                      kind: "sandbox" as const,
-                      provider: "daytona",
-                      scope: {
-                        authority: { kind: "organization", id: scope.accountId! },
-                        partition,
-                      },
-                      nativeId: token.sandboxId,
-                      ownership: "verified-created" as const,
-                    },
-                  ]
-                : [],
-              completed: token.restoreCompleted
-                ? [{ step: "restore", restoreExecution: "fresh" as const }]
-                : [],
-              steps: [
-                {
-                  step: "restore",
-                  status: token.restoreCompleted ? ("completed" as const) : ("uncertain" as const),
-                },
-              ],
-              continuation: {
-                supported: false,
-                status: "unavailable" as const,
-                reason: "Snapshot restore cannot be replayed; observe the correlated sandbox",
-              },
-            };
-          },
-        },
+        recovery: { version: 1, token: Token },
         async prepare(
           input: import("sandbar-adapter").SnapshotRestoreInput,
           ctx: import("sandbar-adapter").ReadContext,
@@ -364,7 +336,7 @@ export function createDaytonaAdapter(
           if (ctx.signal.aborted)
             return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
 
-          const restored = createResult(
+          return createResult(
             await driver.create({
               scope,
               identity: identity(ctx),
@@ -376,15 +348,6 @@ export function createDaytonaAdapter(
             }),
             ctx,
           );
-
-          if ("id" in restored && restored.state === "running")
-            await ctx.checkpoint({
-              submissionId: ctx.submissionId,
-              sandboxId: restored.id,
-              restoreCompleted: true,
-            });
-
-          return restored;
         },
         async observe(attempt: import("sandbar-adapter").RecoveryAttempt, ctx: ObserveContext) {
           if (!attempt.resource || attempt.resource.kind !== "snapshot")
@@ -397,25 +360,7 @@ export function createDaytonaAdapter(
             expectedSnapshotId: attempt.resource.nativeId,
           });
 
-          const restored = value ? observedCreate(value, ctx, attempt.submissionId) : null;
-          const token = RestoreToken.safeParse(attempt.token);
-
-          if (
-            restored &&
-            "id" in restored &&
-            restored.state === "running" &&
-            (!token.success || !token.data.restoreCompleted || token.data.sandboxId !== restored.id)
-          )
-            return ctx.pending(
-              {
-                submissionId: attempt.submissionId,
-                sandboxId: restored.id,
-                restoreCompleted: true,
-              },
-              { pollAfterMs: 0 },
-            );
-
-          return restored;
+          return value ? observedCreate(value, ctx, attempt.submissionId) : null;
         },
       };
 
@@ -645,36 +590,7 @@ export function createDaytonaAdapter(
           },
         },
         destroy: {
-          recovery: {
-            version: 1,
-            token: DestroyToken,
-            facts(saved) {
-              const token = DestroyToken.parse(saved);
-
-              return {
-                version: 1,
-                retainedResources: token.mountDurability?.map((mount) => mount.volume) ?? [],
-                completed: [],
-                steps: [
-                  {
-                    step: "destroy",
-                    status:
-                      token.stage === "rejected"
-                        ? "failed"
-                        : token.stage === "accepted" || token.deletionAccepted
-                          ? "pending"
-                          : "uncertain",
-                  },
-                ],
-                continuation: {
-                  supported: true,
-                  status: "unavailable",
-                  reason:
-                    "Compute deletion cannot be replayed; observe compute while retaining independent storage",
-                },
-              };
-            },
-          },
+          recovery: { version: 1, token: DestroyToken },
           async prepare(box, ctx) {
             let nativeBox;
 
@@ -761,12 +677,18 @@ export function createDaytonaAdapter(
               return ctx.reject("CAPACITY", error.message);
             }
 
-            await ctx.checkpoint(token);
+            await ctx.checkpoint(token).catch((error) => {
+              if (error instanceof AdapterCheckpointError) error.outcome = destroyOutcome(token);
+              throw error;
+            });
 
             if (ctx.signal.aborted) {
               token.stage = "rejected";
               token.rejectionCode = "UNAVAILABLE";
-              await ctx.checkpoint(token);
+              await ctx.checkpoint(token).catch((error) => {
+                if (error instanceof AdapterCheckpointError) error.outcome = destroyOutcome(token);
+                throw error;
+              });
 
               return ctx.reject("UNAVAILABLE", "Daytona deletion cancelled before dispatch");
             }
@@ -781,7 +703,10 @@ export function createDaytonaAdapter(
             if (result.status === "rejected") {
               token.stage = "rejected";
               token.rejectionCode = errorCodes[result.error.code];
-              await ctx.checkpoint(token);
+              await ctx.checkpoint(token).catch((error) => {
+                if (error instanceof AdapterCheckpointError) error.outcome = destroyOutcome(token);
+                throw error;
+              });
 
               return failure(result, ctx);
             }
@@ -789,7 +714,10 @@ export function createDaytonaAdapter(
             if (result.deletionAccepted || result.status === "completed") {
               token.deletionAccepted = true;
               token.stage = "accepted";
-              await ctx.checkpoint(token);
+              await ctx.checkpoint(token).catch((error) => {
+                if (error instanceof AdapterCheckpointError) error.outcome = destroyOutcome(token);
+                throw error;
+              });
             }
 
             const value = destroyValue(result);
@@ -830,7 +758,11 @@ export function createDaytonaAdapter(
                 : false,
             );
 
-            if (!result) return null;
+            if (!result)
+              return ctx.unknown(
+                "Daytona deletion is unconfirmed",
+                token?.success ? destroyOutcome(token.data) : undefined,
+              );
 
             if (result.status === "pending") {
               const recovery: z.infer<typeof DestroyToken> = {
@@ -867,6 +799,7 @@ export function createDaytonaAdapter(
               completed ??
               ctx.unknown(
                 result.status === "unknown" ? result.reason : "Daytona deletion is unconfirmed",
+                token?.success ? destroyOutcome(token.data) : undefined,
               )
             );
           },
@@ -885,7 +818,10 @@ export function createDaytonaAdapter(
                 "Daytona deletion was rejected before dispatch",
               );
 
-            return ctx.unknown("Daytona destroy cannot be replayed");
+            return ctx.unknown(
+              "Daytona destroy cannot be replayed",
+              token.success ? destroyOutcome(token.data) : undefined,
+            );
           },
         },
         async inspect(box) {

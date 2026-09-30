@@ -1,6 +1,9 @@
 import { AdapterError } from "./errors";
+import { OperationOutcome } from "./state";
 
 export { AdapterError } from "./errors";
+
+export { OperationOutcome } from "./state";
 
 import type { SnapshotRequest, SnapshotProfile, Support, ResourceReference } from "./state";
 import { z } from "zod";
@@ -30,8 +33,6 @@ export type RetainedArtifact = {
 export type ImageBuildValue = { preparedId: string; retainedResources: RetainedArtifact[] };
 
 export * from "./resources";
-
-export { RecoveryFacts } from "./recovery";
 
 export type CreateInput = {
   image: Image;
@@ -97,7 +98,11 @@ export type Pending = {
   readonly pollAfterMs?: number;
 };
 
-export type Unknown = { readonly [outcomeBrand]: "unknown"; readonly reason: string };
+export type Unknown = {
+  readonly [outcomeBrand]: "unknown";
+  readonly reason: string;
+  readonly outcome?: OperationOutcome;
+};
 
 export type Rejected = {
   readonly [outcomeBrand]: "rejected";
@@ -134,6 +139,7 @@ const OutcomeTextSchema = z.string().max(1024);
 
 /** Persistence failed; adapters must stop before dispatching another stage. */
 export class AdapterCheckpointError extends Error {
+  outcome?: OperationOutcome;
   constructor() {
     super("Operation reference persistence failed");
     this.name = "AdapterCheckpointError";
@@ -148,22 +154,12 @@ export type AttemptContext<T extends Json = Json> = {
   checkpoint(token: T): Promise<void>;
   pending(token: T, options?: { pollAfterMs?: number }): Pending;
   reject(code: AdapterErrorCode, message: string): Rejected;
-  unknown(reason: string): Unknown;
+  unknown(reason: string, outcome?: OperationOutcome): Unknown;
 };
-
-/** Await the persistence barrier, then recheck cancellation before a native stage. */
-export async function checkpointBeforeDispatch<T extends Json>(
-  ctx: Pick<AttemptContext<T>, "checkpoint" | "signal">,
-  token: T,
-): Promise<boolean> {
-  await ctx.checkpoint(token);
-
-  return !ctx.signal.aborted;
-}
 
 export type ObserveContext<T extends Json = Json> = ReadContext & {
   pending(token: T, options?: { pollAfterMs?: number }): Pending;
-  unknown(reason: string): Unknown;
+  unknown(reason: string, outcome?: OperationOutcome): Unknown;
 };
 
 export type RecoveryAttempt<
@@ -190,12 +186,7 @@ export type Mutation<
       ? (input: P, ctx: AttemptContext<T>) => Promise<V | Pending | Unknown | Rejected>
       : never)
   | {
-      recovery?: {
-        version: number;
-        token: z.ZodType<T>;
-        /** Derive public evidence from an opaque token; facts never authorize dispatch. */
-        facts?: (token: T) => import("./recovery").RecoveryFacts;
-      };
+      recovery?: { version: number; token: z.ZodType<T> };
       continue?: (
         attempt: RecoveryAttempt<T, S>,
         ctx: AttemptContext<T>,
@@ -459,13 +450,23 @@ export function createAttemptContext(
 
       return { [outcomeBrand]: "rejected", code: checkedCode.data, message: checkedMessage.data };
     },
-    unknown: (reason) => {
+    unknown: (reason, outcome) => {
       const checkedReason = OutcomeTextSchema.safeParse(reason);
 
       if (!checkedReason.success)
         throw new AdapterError("INVALID_ARGUMENT", "Invalid unknown outcome");
 
-      return { [outcomeBrand]: "unknown", reason: checkedReason.data };
+      const checkedOutcome =
+        outcome === undefined ? undefined : OperationOutcome.safeParse(outcome);
+
+      if (checkedOutcome && !checkedOutcome.success)
+        throw new AdapterError("INVALID_ARGUMENT", "Invalid operation outcome");
+
+      return {
+        [outcomeBrand]: "unknown",
+        reason: checkedReason.data,
+        outcome: checkedOutcome?.data,
+      };
     },
   };
 }
@@ -493,11 +494,7 @@ export type OperationParts<I, V, P, T extends Json, S extends RecoveryResource |
     attempt: RecoveryAttempt<T, S>,
     ctx: AttemptContext<T>,
   ) => Promise<V | Pending | Unknown | Rejected>;
-  recovery?: {
-    version: number;
-    token: z.ZodType<T>;
-    facts?: (token: T) => import("./recovery").RecoveryFacts;
-  };
+  recovery?: { version: number; token: z.ZodType<T> };
 };
 
 export function operationParts<I, V, P, T extends Json, S extends RecoveryResource | undefined>(

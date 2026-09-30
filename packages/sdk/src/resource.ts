@@ -1,4 +1,4 @@
-import { recoveryOutcome, type RecoveryOutcome } from "./recovery-outcome";
+import type { OperationOutcome } from "sandbar-adapter";
 import { certifyRecoveryReference } from "./recovery-diagnostics";
 import {
   SnapshotRequest,
@@ -166,38 +166,10 @@ export class SandbarError extends Error {
     readonly code: string,
     message: string,
     readonly effect: SafeError["effect"] = "none",
-    readonly outcome?: RecoveryOutcome,
+    readonly outcome?: OperationOutcome,
   ) {
     super(message);
     this.name = "SandbarError";
-  }
-}
-
-/** A required reference write failed; this does not change the provider outcome. */
-export class ReferencePersistenceError<T = unknown> extends SandbarError {
-  readonly cause: unknown;
-  constructor(
-    readonly reference: AdapterRecoveryReference,
-    readonly phase: "before-dispatch" | "checkpoint" | "observation" | "completion",
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Persistence callbacks may reject with any application value; retain it as the cause only.
-    cause: unknown,
-    readonly providerOutcome: "not-dispatched" | "unconfirmed" | "completed" = "unconfirmed",
-    readonly result?: T,
-  ) {
-    let effect: SafeError["effect"] = "possible";
-
-    if (providerOutcome === "completed") effect = "applied";
-    else if (providerOutcome === "not-dispatched") effect = "none";
-    super(
-      "REFERENCE_PERSISTENCE_FAILED",
-      providerOutcome === "completed"
-        ? "Provider operation completed; save this reference again without repeating the mutation"
-        : "Required operation reference persistence failed; save this reference before further dispatch",
-      effect,
-      recoveryOutcome(reference),
-    );
-    this.name = "ReferencePersistenceError";
-    this.cause = cause;
   }
 }
 
@@ -205,14 +177,8 @@ export class UnsupportedFeatureError extends SandbarError {
   constructor(
     readonly feature: string,
     readonly unmetRequirements: readonly string[],
-    outcome?: RecoveryOutcome,
   ) {
-    super(
-      "UNSUPPORTED",
-      `${feature} is unsupported: ${unmetRequirements.join("; ")}`,
-      "none",
-      outcome,
-    );
+    super("UNSUPPORTED", `${feature} is unsupported: ${unmetRequirements.join("; ")}`, "none");
     this.name = "UnsupportedFeatureError";
   }
 }
@@ -222,9 +188,10 @@ export class OutcomeUnknownError<
 > extends SandbarError {
   constructor(
     readonly reference: R,
-    message = "Outcome unknown; observe this reference without resubmitting",
+    message = "Outcome unknown; investigate without blindly resubmitting",
+    outcome?: OperationOutcome,
   ) {
-    super("OUTCOME_UNKNOWN", message, "possible", recoveryOutcome(reference));
+    super("OUTCOME_UNKNOWN", message, "possible", outcome);
     this.name = "OutcomeUnknownError";
   }
 }
@@ -236,12 +203,13 @@ export class WaitAbortedError<
   constructor(
     readonly reference: R,
     reason: AbortSignal["reason"],
+    outcome?: OperationOutcome,
   ) {
     super(
       "WAIT_ABORTED",
       "Waiting stopped after submission; recover with this reference",
       "possible",
-      recoveryOutcome(reference),
+      outcome,
     );
     this.name = "AbortError";
     this.cause = reason;

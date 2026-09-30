@@ -33,9 +33,6 @@ Import from `sandbar-sdk`.
 | `diagnosticContext`         | re-export |
 | `DiagnosticContext`         | type      |
 | `DirectCapabilities`        | type      |
-| `DirectClient`              | type      |
-| `DirectConnectOptions`      | type      |
-| `DirectSandboxHandle`       | type      |
 | `ExecInput`                 | type      |
 | `ExecOutput`                | type      |
 | `Image`                     | re-export |
@@ -47,16 +44,13 @@ Import from `sandbar-sdk`.
 | `NonzeroExitError`          | re-export |
 | `ObservabilityOptions`      | type      |
 | `OperationHandle`           | type      |
+| `OperationOutcome`          | type      |
 | `OutcomeUnknownError`       | re-export |
 | `outputText`                | re-export |
 | `PreparedAdapterAttempt`    | re-export |
 | `PreparedImage`             | type      |
 | `RecoveredOperation`        | type      |
-| `RecoveryFacts`             | re-export |
-| `recoveryOutcome`           | re-export |
-| `RecoveryOutcome`           | type      |
 | `RecoveryReference`         | type      |
-| `ReferencePersistenceError` | re-export |
 | `ResourceKind`              | re-export |
 | `ResourceReference`         | re-export |
 | `RestoreCapabilities`       | type      |
@@ -123,7 +117,6 @@ Import from `sandbar-adapter`.
 | `AdapterErrorCode`             | type      |
 | `AdapterSession`               | type      |
 | `AttemptContext`               | type      |
-| `checkpointBeforeDispatch`     | function  |
 | `Command`                      | type      |
 | `connectAdapter`               | function  |
 | `continueOperation`            | re-export |
@@ -152,6 +145,7 @@ Import from `sandbar-adapter`.
 | `observeOperation`             | re-export |
 | `OperationInput`               | type      |
 | `OperationKind`                | type      |
+| `OperationOutcome`             | re-export |
 | `operationParts`               | function  |
 | `OperationParts`               | type      |
 | `outcomeKind`                  | function  |
@@ -161,7 +155,6 @@ Import from `sandbar-adapter`.
 | `prepareOperation`             | re-export |
 | `ReadContext`                  | type      |
 | `RecoveryAttempt`              | type      |
-| `RecoveryFacts`                | re-export |
 | `RecoveryResource`             | type      |
 | `Rejected`                     | type      |
 | `RetainedArtifact`             | type      |

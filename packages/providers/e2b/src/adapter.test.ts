@@ -568,7 +568,7 @@ test("OCI create builds a correlated E2B template inside submit and reports it a
       signal,
     );
 
-    expect(destroyed).toMatchObject({
+    expect(destroyed).toEqual({
       kind: "completed",
       value: { computeStopped: true, retainedResources: ["e2b-template:built_template"] },
     });
@@ -1149,7 +1149,7 @@ test("uncertain writes and destroy reconcile after reconnect without replay", as
       signal,
     );
 
-    expect(observed).toMatchObject({
+    expect(observed).toEqual({
       kind: "completed",
       value: {
         computeStopped: true,

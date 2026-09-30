@@ -834,28 +834,9 @@ test("create mount preflight enforces aggregate recovery capacity before provide
     expect(references).toBe(0);
     const accepted = { environment: Image.prepared("base"), mounts: [mount("a")] };
     expect((await client.sandboxes.checkCreate(accepted)).status).toBe("supported");
-    const operation = await client.sandboxes.submitCreate(accepted);
-    const box = await operation.wait();
-    expect(operation.outcome.retainedResources).toContainEqual(accepted.mounts[0]!.volume);
+    const box = await client.sandboxes.create(accepted);
     expect(creates).toBe(1);
     await box.destroy({ storage: "allow-unconfirmed" });
-
-    const manyMounts = Array.from({ length: 32 }, (_, index) => ({
-      ...mount(String(index)),
-      path: `/volume-${index}`,
-      subpath: undefined,
-      volume: { ...mount(String(index)).volume, receipt: undefined },
-    }));
-
-    const many = await client.sandboxes.submitCreate({
-      environment: Image.prepared("base"),
-      mounts: manyMounts,
-    });
-
-    await many.wait();
-    expect(many.outcome.retainedResources).toHaveLength(33);
-    expect(many.reference.completion?.resources).toHaveLength(1);
-    expect(many.outcome.continuation.status).toBe("unavailable");
   } finally {
     await client.close();
   }
