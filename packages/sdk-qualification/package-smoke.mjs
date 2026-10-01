@@ -157,6 +157,31 @@ async function flow() {
   await box.destroy();
   await client.close();
 }
+function lifecycleHooks(
+  suspendSubmit: NonNullable<import("sandbar-adapter").AdapterSession["suspend"]>["submit"],
+  resumeSubmit: NonNullable<import("sandbar-adapter").AdapterSession["resume"]>["submit"],
+) {
+  type Session = import("sandbar-adapter").AdapterSession;
+  // @ts-expect-error Suspend must resolve an intent in prepare; callable hooks cannot do so.
+  const callableSuspend: Session["suspend"] = suspendSubmit;
+  // @ts-expect-error Resume must resolve an intent in prepare; callable hooks cannot do so.
+  const callableResume: Session["resume"] = resumeSubmit;
+  // @ts-expect-error Suspend requires prepare even when submit accepts a resolved input.
+  const unresolvedSuspend: Session["suspend"] = { submit: suspendSubmit };
+  // @ts-expect-error Resume requires prepare even when submit accepts a resolved input.
+  const unresolvedResume: Session["resume"] = { submit: resumeSubmit };
+  const suspend: Session["suspend"] = {
+    async prepare(input) { return { ...input, intent: { action: "suspend", preserve: "filesystem" } }; },
+    submit: suspendSubmit,
+  };
+  const resume: Session["resume"] = {
+    async prepare(input) { return { ...input, intent: { action: "resume", forSeconds: 60 } }; },
+    submit: resumeSubmit,
+  };
+  void callableSuspend; void callableResume; void unresolvedSuspend; void unresolvedResume;
+  return { suspend, resume };
+}
+void lifecycleHooks;
 // @ts-expect-error config must include region
 void Sandbar.connect({ adapter: acme, config: {}, credentials: { token: "fixture" } });
 void flow;

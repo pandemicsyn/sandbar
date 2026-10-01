@@ -235,6 +235,17 @@ export type Mutation<
       ) => Promise<V | Pending | Unknown | null>;
     };
 
+/** Lifecycle preparation resolves setup defaults before the SDK saves the dispatch intent. */
+type LifecycleMutation<V> = Extract<
+  Mutation<import("./lifecycle").LifecycleInput, V, import("./lifecycle").ResolvedLifecycleInput>,
+  { submit: unknown }
+> & {
+  prepare: (
+    input: import("./lifecycle").LifecycleInput,
+    ctx: ReadContext,
+  ) => Promise<import("./lifecycle").ResolvedLifecycleInput>;
+};
+
 export type Guarantees<C extends Command["kind"] = Command["kind"]> = {
   images: readonly ("prepared" | "oci")[];
   network: readonly string[];
@@ -256,16 +267,8 @@ export type AdapterSession<
     target: { sandbox?: Sandbox; create?: CreateInput },
     ctx: ReadContext,
   ) => Promise<Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>>;
-  suspend?: Mutation<
-    import("./lifecycle").LifecycleInput,
-    import("./lifecycle").SuspendResult,
-    import("./lifecycle").ResolvedLifecycleInput
-  >;
-  resume?: Mutation<
-    import("./lifecycle").LifecycleInput,
-    import("./lifecycle").ResumeResult,
-    import("./lifecycle").ResolvedLifecycleInput
-  >;
+  suspend?: LifecycleMutation<import("./lifecycle").SuspendResult>;
+  resume?: LifecycleMutation<import("./lifecycle").ResumeResult>;
   suspensionCapabilities?: (
     target: { sandbox?: Sandbox },
     ctx: ReadContext,
