@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import { Sandbox } from "e2b";
 import { createSdkTransport } from "./transport";
 import { createE2BAdapter } from "./index";
 import { Sandbar } from "sandbar-sdk";
@@ -10,7 +11,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function fixture() {
+function fixture(start?: (request: Request) => Promise<Response>) {
   const calls: { method: string; url: URL; headers: Headers }[] = [];
 
   const detail = {
@@ -55,30 +56,14 @@ function fixture() {
         return Response.json([{ path: "/tmp/value", name: "value", type: "file" }]);
 
       if (url.pathname.endsWith("/Start")) {
-        type ProcessFrame = {
-          event?: {
-            start?: { pid: number };
-            data?: { stdout: string };
-            end?: { exitCode: number };
-          };
-        };
-
-        const frame = (value: ProcessFrame, flags = 0) => {
-          const bytes = new TextEncoder().encode(JSON.stringify(value));
-          const framed = new Uint8Array(bytes.length + 5);
-          framed[0] = flags;
-          new DataView(framed.buffer).setUint32(1, bytes.length);
-          framed.set(bytes, 5);
-
-          return framed;
-        };
+        if (start) return start(request);
 
         return new Response(
           Buffer.concat([
-            frame({ event: { start: { pid: 1 } } }),
-            frame({ event: { data: { stdout: btoa("fixture-output") } } }),
-            frame({ event: { end: { exitCode: 0 } } }),
-            frame({}, 2),
+            processFrame({ event: { start: { pid: 1 } } }),
+            processFrame({ event: { data: { stdout: btoa("fixture-output") } } }),
+            processFrame({ event: { end: { exitCode: 0 } } }),
+            processFrame({}, 2),
           ]),
           { headers: { "Content-Type": "application/connect+json" } },
         );
@@ -379,3 +364,186 @@ test("pinned E2B file read forwards abort to download and cancels a stalled nati
     f.calls.filter((c) => c.url.origin === "https://api.e2b.app").every((c) => c.method === "GET"),
   ).toBe(true);
 });
+
+type NativeProcessFrame = {
+  event?: { start?: { pid: number }; data?: { stdout: string }; end?: { exitCode: number } };
+  error?: { code: string; message: string };
+};
+
+function processFrame(value: NativeProcessFrame, flags = 0): Uint8Array {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  const framed = new Uint8Array(bytes.length + 5);
+  framed[0] = flags;
+  new DataView(framed.buffer).setUint32(1, bytes.length);
+  framed.set(bytes, 5);
+
+  return framed;
+}
+
+test("pinned E2B maps bounded exec to RPC options without a process runtime field", async () => {
+  const f = fixture(async (request) => {
+    expect(request.headers.get("connect-timeout-ms")).toBe("1234");
+    expect(await request.json()).toEqual({
+      process: { cmd: "/bin/bash", args: ["-l", "-c", "sleep 10"] },
+    });
+
+    return new Response(
+      Buffer.concat([
+        processFrame({ event: { start: { pid: 1 } } }),
+        processFrame({ error: { code: "deadline_exceeded", message: "RPC observation ended" } }, 2),
+      ]),
+      { headers: { "Content-Type": "application/connect+json" } },
+    );
+  });
+
+  await expect(f.transport.run("sandbox_one", "sleep 10", { timeoutMs: 1234 })).rejects.toThrow();
+  expect(f.calls.filter((call) => call.url.pathname.endsWith("/Start"))).toHaveLength(1);
+  expect(f.calls.some((call) => /Kill|SendSignal|kill|connect/.test(call.url.pathname))).toBe(
+    false,
+  );
+  expect(
+    f.calls
+      .filter((call) => call.url.origin === "https://api.e2b.app")
+      .every((call) => call.method === "GET"),
+  ).toBe(true);
+});
+
+test.each(["handshake", "complete", "rpc"] as const)(
+  "pinned E2B handshake clears at PID while RPC timer bounds observation: %s",
+  async (mode) => {
+    const acknowledged = mode !== "handshake";
+    const timeoutMs = mode === "rpc" ? 25 : 1000;
+    const requestTimeoutMs = mode === "rpc" ? 1000 : 25;
+    const nativeSetTimeout = globalThis.setTimeout;
+    const nativeClearTimeout = globalThis.clearTimeout;
+
+    const timers: {
+      milliseconds: number;
+      handle: ReturnType<typeof setTimeout>;
+      fire: () => void;
+      cleared: boolean;
+    }[] = [];
+
+    let handshakeCleared!: () => void;
+
+    const cleared = new Promise<void>((resolve) => {
+      handshakeCleared = resolve;
+    });
+
+    let entered!: () => void;
+
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+
+    let finish!: () => void;
+    let requestSignal: AbortSignal | undefined;
+
+    const schedule = spyOn(globalThis, "setTimeout").mockImplementation(
+      // SAFETY: The fixture exercises callback scheduling only, not Node’s __promisify__ property.
+      ((callback: (...args: unknown[]) => void, milliseconds?: number, ...args: unknown[]) => {
+        if (milliseconds !== 25 && milliseconds !== 1000)
+          return nativeSetTimeout(callback, milliseconds, ...args);
+        // Keep genuine native handles for the pinned client's clearTimeout/unref calls,
+        // but fire the two deadline callbacks explicitly instead of racing the clock.
+        const handle = nativeSetTimeout(() => {}, 60_000);
+        timers.push({ milliseconds, handle, fire: () => callback(...args), cleared: false });
+
+        return handle;
+      }) as typeof setTimeout,
+    );
+
+    const cancel = spyOn(globalThis, "clearTimeout").mockImplementation((handle) => {
+      const timer = timers.find((candidate) => candidate.handle === handle);
+
+      if (timer) {
+        timer.cleared = true;
+
+        if (timer.milliseconds === requestTimeoutMs) handshakeCleared();
+      }
+
+      // SAFETY: Node/Bun overloads describe the same runtime clearTimeout accepted handles.
+      nativeClearTimeout(handle as ReturnType<typeof setTimeout>);
+    });
+
+    try {
+      const f = fixture(async (request) => {
+        requestSignal = request.signal;
+        expect(request.headers.get("connect-timeout-ms")).toBe(String(timeoutMs));
+
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              request.signal.addEventListener(
+                "abort",
+                () => controller.error(request.signal.reason),
+                { once: true },
+              );
+
+              if (acknowledged) controller.enqueue(processFrame({ event: { start: { pid: 1 } } }));
+              finish = () => {
+                controller.enqueue(processFrame({ event: { end: { exitCode: 0 } } }));
+                controller.enqueue(processFrame({}, 2));
+                controller.close();
+              };
+
+              entered();
+            },
+          }),
+          { headers: { "Content-Type": "application/connect+json" } },
+        );
+      });
+
+      // Exercise the actual pinned Commands/CommandHandle implementation with distinct timers.
+      const sandbox = new Sandbox({
+        sandboxId: "sandbox_one",
+        envdVersion: "0.5.0",
+        envdAccessToken: "guest-only-token",
+        sandboxDomain: "e2b.app",
+        sandboxUrl: "https://sandbox.e2b.app",
+        apiKey: "control-only-key",
+      });
+
+      const run = sandbox.commands.run("sleep 10", { timeoutMs, requestTimeoutMs });
+
+      // Install rejection handling before invoking an expiry callback.
+      const outcome = run.then(
+        (result) => ({ result, error: undefined }),
+        (error: Error) => ({ result: undefined, error }),
+      );
+
+      await started;
+      expect(timers).toHaveLength(2);
+      const handshake = timers.find((timer) => timer.milliseconds === requestTimeoutMs)!;
+      const rpc = timers.find((timer) => timer.milliseconds === timeoutMs)!;
+
+      if (mode === "handshake") handshake.fire();
+      else {
+        // Resolve only when the pinned client consumes PID and clears its handshake timer.
+        await cleared;
+        expect(handshake.cleared).toBe(true);
+        expect(rpc.cleared).toBe(false);
+        expect(requestSignal?.aborted).toBe(false);
+
+        if (mode === "complete") finish();
+        else rpc.fire();
+      }
+
+      const completed = await outcome;
+
+      if (mode === "complete") expect(completed.result?.exitCode).toBe(0);
+      else
+        expect(completed.error?.message).toContain(
+          mode === "handshake" ? "handshake timed out" : "deadline_exceeded",
+        );
+      expect(requestSignal?.aborted).toBe(true); // CommandHandle/start cleanup is local.
+      expect(f.calls.filter((call) => call.url.pathname.endsWith("/Start"))).toHaveLength(1);
+      expect(f.calls.some((call) => /Kill|SendSignal|kill/.test(call.url.pathname))).toBe(false);
+    } finally {
+      schedule.mockRestore();
+      cancel.mockRestore();
+
+      for (const timer of timers) nativeClearTimeout(timer.handle);
+    }
+  },
+);

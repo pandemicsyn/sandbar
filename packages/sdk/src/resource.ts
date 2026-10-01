@@ -69,6 +69,7 @@ export type ExecInput = {
   command: ExecCommand;
   cwd?: string;
   env?: Record<string, string>;
+  /** Provider-specific execution/observation limit (default 300), not a total wait budget. Use the call signal to bound local waiting. */
   deadlineSeconds?: number;
   maxOutputBytes?: number;
 };

@@ -303,163 +303,204 @@ test("GNU ln -T creates only an absent exact target and survives stage cleanup",
   }
 });
 
-test("E2B exec and file operations preserve binary content and no-clobber intent", async () => {
-  const binary = Uint8Array.from([0, 255, 129, 10]);
-  const files = new Map<string, Uint8Array>();
-  const scripts: string[] = [];
-  let linkAnswer = "CREATED";
+test.each(["complete", "lost-start", "output-failure"] as const)(
+  "E2B binary exec/file receipts without replay: %s",
+  async (mode) => {
+    const binary = Uint8Array.from([0, 255, 129, 10]);
+    const files = new Map<string, Uint8Array>();
+    const scripts: string[] = [];
+    let linkAnswer = "CREATED";
+    let outputAvailable = mode !== "output-failure";
+    let kills = 0;
 
-  const record: E2BRecord = {
-    id: "sandbox_1",
-    templateId: "template_1",
-    metadata: {
-      sandbar_scope: "team_one:template_1",
-      sandbar_template: "template_1",
-      sandbar_submission: "sub_seed",
-      sandbar_operation: "op_seed",
-    },
-    state: "running",
-  };
+    const record: E2BRecord = {
+      id: "sandbox_1",
+      templateId: "template_1",
+      metadata: {
+        sandbar_scope: "team_one:template_1",
+        sandbar_template: "template_1",
+        sandbar_submission: "sub_seed",
+        sandbar_operation: "op_seed",
+      },
+      state: "running",
+    };
 
-  const adapter = createE2BAdapter((): E2BTransport => ({
-    async verifyAuth() {},
-    async verifyTeam() {},
-    async verifyTemplate(_team, id) {
-      return id;
-    },
-    async buildImage() {
-      return { templateId: "template_1", buildId: "build_1" };
-    },
-    async findBuild() {
-      return null;
-    },
-    async create() {
-      return record.id;
-    },
-    async get(id) {
-      return id === record.id ? record : null;
-    },
-    async list() {
-      return { items: [record] };
-    },
-    async kill() {
-      return true;
-    },
-    async run(_id, script) {
-      scripts.push(script);
+    const adapter = createE2BAdapter((): E2BTransport => ({
+      async verifyAuth() {},
+      async verifyTeam() {},
+      async verifyTemplate(_team, id) {
+        return id;
+      },
+      async buildImage() {
+        return { templateId: "template_1", buildId: "build_1" };
+      },
+      async findBuild() {
+        return null;
+      },
+      async create() {
+        return record.id;
+      },
+      async get(id) {
+        return id === record.id ? record : null;
+      },
+      async list() {
+        return { items: [record] };
+      },
+      async kill() {
+        kills++;
 
-      if (script.includes(".status")) {
-        files.set("/tmp/.sandbar-sub_exec.stdout", binary);
-        files.set("/tmp/.sandbar-sub_exec.stderr", Uint8Array.from([0, 254]));
-        files.set("/tmp/.sandbar-sub_exec.status", new TextEncoder().encode("7"));
+        return true;
+      },
+      async run(_id, script) {
+        scripts.push(script);
+
+        if (script.includes(".status")) {
+          files.set("/tmp/.sandbar-sub_exec.stdout", binary);
+          files.set("/tmp/.sandbar-sub_exec.stderr", Uint8Array.from([0, 254]));
+          files.set(
+            "/tmp/.sandbar-sub_exec.status",
+            new TextEncoder().encode(mode === "complete" ? "7" : "0"),
+          );
+
+          if (mode === "lost-start") throw new Error("RPC acknowledgement lost");
+        }
+
+        return script.includes("ln -T --") ? linkAnswer : "";
+      },
+      async read(_id, path, maxBytes) {
+        if (!outputAvailable && /\.(stdout|stderr)$/.test(path))
+          throw new Error("output read unavailable after successful status");
+        const bytes = files.get(path);
+
+        if (!bytes) throw new Error("missing file");
+
+        return { bytes: bytes.slice(0, maxBytes), truncated: bytes.length > maxBytes };
+      },
+      async write(_id, path, bytes) {
+        files.set(path, bytes);
+      },
+      async remove(_id, path) {
+        files.delete(path);
+      },
+      close() {},
+    }));
+
+    const connection = await connectAdapter(adapter, {
+      config: { teamId: "team_one", templateId: "template_1" },
+      credentials: { apiKey: "secret" },
+    });
+
+    const signal = new AbortController().signal;
+
+    try {
+      const exec = await prepareOperation(
+        connection.session,
+        "exec",
+        {
+          sandbox: { id: record.id },
+          command: { kind: "argv", argv: ["printf", "a'b", "$(touch /tmp/never)"] },
+          cwd: "/tmp",
+          env: { LANG: "C" },
+          deadlineSeconds: 20,
+          maxOutputBytes: 8,
+        },
+        signal,
+      );
+
+      let result = await submitOperation(
+        exec,
+        {
+          operationId: "op_exec",
+          submissionId: "sub_exec",
+          invocationKey: "inv_exec",
+        },
+        signal,
+      );
+
+      if (mode !== "complete") {
+        expect(result.kind).toBe("pending");
+
+        if (result.kind !== "pending") throw new Error("Expected existing exec receipt");
+
+        const identity = {
+          operationId: "op_exec",
+          submissionId: "sub_exec",
+          invocationKey: "inv_exec",
+          sandbox: { id: record.id },
+          token: result.token,
+          version: result.version,
+        };
+
+        if (mode === "output-failure")
+          await expect(
+            observeOperation(connection.session, "exec", identity, signal),
+          ).rejects.toThrow("output read unavailable");
+        outputAvailable = true;
+        const observed = await observeOperation(connection.session, "exec", identity, signal);
+
+        if (!observed) throw new Error("Expected existing exec receipt observation");
+        result = observed;
       }
 
-      return script.includes("ln -T --") ? linkAnswer : "";
-    },
-    async read(_id, path, maxBytes) {
-      const bytes = files.get(path);
+      expect(result.kind).toBe("completed");
+      expect(scripts).toHaveLength(1);
+      expect(kills).toBe(0);
 
-      if (!bytes) throw new Error("missing file");
+      if (result.kind === "completed" && "stdout" in result.value) {
+        expect(result.value.stdout).toEqual(binary);
+        expect(result.value.stderr).toEqual(Uint8Array.from([0, 254]));
+        expect(result.value.exitCode).toBe(mode === "complete" ? 7 : 0);
+      }
 
-      return { bytes: bytes.slice(0, maxBytes), truncated: bytes.length > maxBytes };
-    },
-    async write(_id, path, bytes) {
-      files.set(path, bytes);
-    },
-    async remove(_id, path) {
-      files.delete(path);
-    },
-    close() {},
-  }));
+      expect(scripts[0]).toContain("'$(touch /tmp/never)'");
 
-  const connection = await connectAdapter(adapter, {
-    config: { teamId: "team_one", templateId: "template_1" },
-    credentials: { apiKey: "secret" },
-  });
+      const write = await prepareOperation(
+        connection.session,
+        "file_write",
+        {
+          sandbox: { id: record.id },
+          path: "/tmp/file.bin",
+          bytes: binary,
+          overwrite: false,
+        },
+        signal,
+      );
 
-  const signal = new AbortController().signal;
+      const written = await submitOperation(
+        write,
+        {
+          operationId: "op_write",
+          submissionId: "sub_write",
+          invocationKey: "inv_write",
+        },
+        signal,
+      );
 
-  try {
-    const exec = await prepareOperation(
-      connection.session,
-      "exec",
-      {
-        sandbox: { id: record.id },
-        command: { kind: "argv", argv: ["printf", "a'b", "$(touch /tmp/never)"] },
-        cwd: "/tmp",
-        env: { LANG: "C" },
-        deadlineSeconds: 20,
-        maxOutputBytes: 8,
-      },
-      signal,
-    );
+      expect(written).toEqual({ kind: "completed", value: { bytesWritten: 4 } });
+      expect(scripts[1]).toContain("ln -T --");
+      expect(files.has("/tmp/.sandbar-write-sub_write")).toBe(false);
 
-    const result = await submitOperation(
-      exec,
-      {
-        operationId: "op_exec",
-        submissionId: "sub_exec",
-        invocationKey: "inv_exec",
-      },
-      signal,
-    );
+      files.set("/tmp/file.bin", Uint8Array.of(42));
+      linkAnswer = "EXISTS";
 
-    expect(result.kind).toBe("completed");
+      const conflict = await submitOperation(
+        write,
+        {
+          operationId: "op_conflict",
+          submissionId: "sub_conflict",
+          invocationKey: "inv_conflict",
+        },
+        signal,
+      );
 
-    if (result.kind === "completed" && "stdout" in result.value) {
-      expect(result.value.stdout).toEqual(binary);
-      expect(result.value.stderr).toEqual(Uint8Array.from([0, 254]));
-      expect(result.value.exitCode).toBe(7);
+      expect(conflict.kind).toBe("rejected");
+      expect(files.get("/tmp/file.bin")).toEqual(Uint8Array.of(42));
+      expect(files.has("/tmp/.sandbar-write-sub_conflict")).toBe(false);
+    } finally {
+      await connection.close();
     }
-
-    expect(scripts[0]).toContain("'$(touch /tmp/never)'");
-
-    const write = await prepareOperation(
-      connection.session,
-      "file_write",
-      {
-        sandbox: { id: record.id },
-        path: "/tmp/file.bin",
-        bytes: binary,
-        overwrite: false,
-      },
-      signal,
-    );
-
-    const written = await submitOperation(
-      write,
-      {
-        operationId: "op_write",
-        submissionId: "sub_write",
-        invocationKey: "inv_write",
-      },
-      signal,
-    );
-
-    expect(written).toEqual({ kind: "completed", value: { bytesWritten: 4 } });
-    expect(scripts[1]).toContain("ln -T --");
-    expect(files.has("/tmp/.sandbar-write-sub_write")).toBe(false);
-
-    files.set("/tmp/file.bin", Uint8Array.of(42));
-    linkAnswer = "EXISTS";
-
-    const conflict = await submitOperation(
-      write,
-      {
-        operationId: "op_conflict",
-        submissionId: "sub_conflict",
-        invocationKey: "inv_conflict",
-      },
-      signal,
-    );
-
-    expect(conflict.kind).toBe("rejected");
-    expect(files.get("/tmp/file.bin")).toEqual(Uint8Array.of(42));
-    expect(files.has("/tmp/.sandbar-write-sub_conflict")).toBe(false);
-  } finally {
-    await connection.close();
-  }
-});
+  },
+);
 
 test("OCI create builds a correlated E2B template inside submit and reports it after destroy", async () => {
   let buildName = "";
@@ -878,103 +919,141 @@ test("SDK abort settles a stalled E2B build and late outcomes never create a san
   }
 });
 
-test("SDK abort settles a stalled E2B exec after one native dispatch", async () => {
-  let record: E2BRecord | null = null;
-  let runs = 0;
-  let reads = 0;
-  let finish!: () => void;
+test.each(["stalled", "output-failure"] as const)(
+  "SDK E2B local wait/output loss preserves one native dispatch: %s",
+  async (mode) => {
+    let record: E2BRecord | null = null;
+    let runs = 0;
+    let reads = 0;
+    let kills = 0;
+    let outputAvailable = false;
+    const statusPaths: string[] = [];
+    let finish!: () => void;
 
-  const stalled = new Promise<string>((resolve) => {
-    finish = () => resolve("");
-  });
-
-  const adapter = createE2BAdapter((): E2BTransport => ({
-    async verifyAuth() {},
-    async verifyTeam() {},
-    async verifyTemplate(_team, id) {
-      return id;
-    },
-    async buildImage() {
-      throw new Error("not used");
-    },
-    async findBuild() {
-      return null;
-    },
-    async create(input) {
-      record = {
-        id: "sandbox_1",
-        templateId: input.templateId,
-        metadata: input.metadata,
-        state: "running",
-      };
-
-      return record.id;
-    },
-    async get(id) {
-      return record?.id === id ? record : null;
-    },
-    async list() {
-      return { items: record ? [record] : [] };
-    },
-    async kill() {
-      record = null;
-
-      return true;
-    },
-    async run() {
-      runs++;
-
-      return stalled;
-    },
-    async read() {
-      reads++;
-
-      return { bytes: new Uint8Array(), truncated: false };
-    },
-    async write() {},
-    async remove() {},
-    close() {},
-  }));
-
-  const client = await Sandbar.connect({
-    adapter,
-    config: { teamId: "team_one", templateId: "template_1" },
-    credentials: { apiKey: "secret" },
-  });
-
-  try {
-    const box = await client.sandboxes.create({
-      environment: Image.prepared("template_1"),
-      networkPolicy: "blocked",
+    const stalled = new Promise<string>((resolve) => {
+      finish = () => resolve("");
     });
 
-    const controller = new AbortController();
+    const adapter = createE2BAdapter((): E2BTransport => ({
+      async verifyAuth() {},
+      async verifyTeam() {},
+      async verifyTemplate(_team, id) {
+        return id;
+      },
+      async buildImage() {
+        throw new Error("not used");
+      },
+      async findBuild() {
+        return null;
+      },
+      async create(input) {
+        record = {
+          id: "sandbox_1",
+          templateId: input.templateId,
+          metadata: input.metadata,
+          state: "running",
+        };
 
-    const pending = box.exec(
-      { command: { kind: "argv", argv: ["printf", "test"] } },
-      { signal: controller.signal },
-    );
+        return record.id;
+      },
+      async get(id) {
+        return record?.id === id ? record : null;
+      },
+      async list() {
+        return { items: record ? [record] : [] };
+      },
+      async kill() {
+        kills++;
+        record = null;
 
-    while (!runs) await Bun.sleep(1);
+        return true;
+      },
+      async run() {
+        runs++;
 
-    controller.abort("stop");
-    await expect(
-      Promise.race([
-        pending,
-        Bun.sleep(500).then(() => {
-          throw new Error("E2B exec did not stop waiting after abort");
-        }),
-      ]),
-    ).rejects.toThrow();
+        return mode === "stalled" ? stalled : "";
+      },
+      async read(_id, path) {
+        reads++;
 
-    finish();
-    await Bun.sleep(1);
-    expect(runs).toBe(1);
-    expect(reads).toBe(0);
-  } finally {
-    await client.close();
-  }
-});
+        if (path.endsWith(".status")) {
+          statusPaths.push(path);
+
+          return { bytes: new TextEncoder().encode("0"), truncated: false };
+        }
+
+        if (!outputAvailable) throw new Error("successful command output unavailable");
+
+        return {
+          bytes: path.endsWith(".stdout") ? Uint8Array.of(97) : new Uint8Array(),
+          truncated: false,
+        };
+      },
+      async write() {},
+      async remove() {},
+      close() {},
+    }));
+
+    const client = await Sandbar.connect({
+      adapter,
+      config: { teamId: "team_one", templateId: "template_1" },
+      credentials: { apiKey: "secret" },
+    });
+
+    try {
+      const box = await client.sandboxes.create({
+        environment: Image.prepared("template_1"),
+        networkPolicy: "blocked",
+      });
+
+      if (mode === "output-failure") {
+        const operation = await box.submitExec(["true"]);
+        expect(await operation.observe()).toBeNull();
+        await expect((await client.recover(operation.reference)).observe()).rejects.toMatchObject({
+          code: "OUTCOME_UNKNOWN",
+          effect: "possible",
+        });
+        outputAvailable = true;
+        expect(await (await client.recover(operation.reference)).observe()).toMatchObject({
+          exitCode: 0,
+          stdout: Uint8Array.of(97),
+        });
+        expect(new Set(statusPaths).size).toBe(1);
+        expect(runs).toBe(1);
+        expect(kills).toBe(0);
+
+        return;
+      }
+
+      const controller = new AbortController();
+
+      const pending = box.exec(
+        { command: { kind: "argv", argv: ["printf", "test"] } },
+        { signal: controller.signal },
+      );
+
+      while (!runs) await Bun.sleep(1);
+
+      controller.abort("stop");
+      await expect(
+        Promise.race([
+          pending,
+          Bun.sleep(500).then(() => {
+            throw new Error("E2B exec did not stop waiting after abort");
+          }),
+        ]),
+      ).rejects.toThrow();
+
+      finish();
+      await Bun.sleep(1);
+      expect(runs).toBe(1);
+      expect(reads).toBe(0);
+      expect(kills).toBe(0);
+    } finally {
+      await client.close();
+    }
+  },
+);
 
 test("uncertain writes and destroy reconcile after reconnect without replay", async () => {
   const files = new Map<string, Uint8Array>();
