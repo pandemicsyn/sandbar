@@ -43,13 +43,32 @@ const result = await box.exec({
   command: { kind: "argv", argv: ["cat", path] },
   maxOutputBytes: 65_536,
 });
-console.log(result.stdoutText(4096));
+const preview = result.stdoutPreview({ maxBytes: 4096 });
+console.log(preview.text);
+if (preview.shortened) console.log("Display shortened; captured bytes remain available");
 if (result.truncated) console.warn("Command output was truncated");
 ```
 
-`stdout` and `stderr` are `Uint8Array` values. Keep those bytes for binary processing; `stdoutText(maxBytes)` and `stderrText(maxBytes)` decode bounded UTF-8 for display. The helpers default to 16 KiB. This display bound is separate from capture: `stdoutText(4096)` can add an ellipsis while `result.truncated` is false and all captured bytes remain in `stdout`. Increasing the display bound cannot recover bytes lost at the capture limit.
+`stdout` and `stderr` are `Uint8Array` values. Keep those bytes for binary processing. `stdoutText(maxBytes?)`, `stderrText(maxBytes?)` and exported `outputText(bytes, maxBytes?)` decode bounded UTF-8 for display, defaulting to **16,384 input bytes**. Numeric display limits are safe integers from **0 to 1,048,576**, including zero. Invalid limits throw a local `RangeError`.
 
-The execution output limit defaults to 1 MiB combined across both streams. `truncated` means output may be incomplete, including when a stream reaches the cap before its end can be confirmed. Streaming file APIs are not implemented.
+`stdoutPreview({ maxBytes? })` and `stderrPreview({ maxBytes? })` return `OutputPreview`: `{ text, shortened }`. They use the same defaults, byte limits and text as the bounded helpers. `shortened` concerns only that stream's display: exact-bound or empty input is not shortened; nonempty input with a zero bound returns `{ text: "…", shortened: true }`. A literal ellipsis in command output does not establish display loss.
+
+For full decoding of captured output, use `{ full: true }`:
+
+```ts
+const result = await box.exec(["cat", "/home/user/report.json"]);
+if (result.truncated) throw new Error("Captured report may be incomplete");
+const report = JSON.parse(result.stdoutText({ full: true }));
+console.error(result.stderrText({ full: true }));
+```
+
+Full decoding also works with `outputText(bytes, { full: true })`, decodes every supplied byte, and adds no suffix. It allocates a string proportional to input size. Full options must contain only `full: true`; preview options allow only optional `maxBytes`. Invalid option objects throw `RangeError` without changing the execution result. Omitted or undefined options preserve defaults.
+
+The execution capture limit defaults to **1 MiB combined across both streams**, retaining stdout first and stderr with the remainder. `result.truncated` means output may be incomplete, including when a stream reaches the cap before its end can be confirmed. Capture loss and display shortening are independent: complete capture can have a shortened preview; truncated capture can have an unshortened preview. Full decoding and larger display bounds cannot recover discarded capture.
+
+All helpers use standard UTF-8 replacement decoding and consume an initial UTF-8 BOM. Limits count input bytes, so clipping inside a multibyte sequence produces U+FFFD; malformed bytes and incomplete captured suffixes are also replaced. The replacement and display suffix can make the rendered string exceed the input byte bound. For strict parsing, use `new TextDecoder("utf-8", { fatal: true }).decode(result.stdout)`. A capture guard does not establish valid UTF-8 or JSON, and parsing can still fail. Never parse a bounded display string.
+
+The same helpers are available on recovered execution results and on `NonzeroExitError.result` and `NoExitCodeError.result`. Code manually constructing `ExecOutput` must now implement the two preview methods and full overloads; adapter authors still return `ExecValue` byte arrays. Streaming file APIs are not implemented.
 
 ## Recover an uncertain write
 

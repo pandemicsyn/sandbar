@@ -73,13 +73,19 @@ export type ExecInput = {
   maxOutputBytes?: number;
 };
 
+export type OutputPreview = { text: string; shortened: boolean };
+
 export type ExecOutput = {
   exitCode: number | null;
   stdout: Uint8Array;
   stderr: Uint8Array;
   truncated: boolean;
   stdoutText(maxBytes?: number): string;
+  stdoutText(options: { full: true }): string;
   stderrText(maxBytes?: number): string;
+  stderrText(options: { full: true }): string;
+  stdoutPreview(options?: { maxBytes?: number }): OutputPreview;
+  stderrPreview(options?: { maxBytes?: number }): OutputPreview;
 };
 
 export type RecoveryReference = AdapterRecoveryReference;
@@ -196,12 +202,54 @@ export function newInvocationKey(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-export function outputText(bytes: Uint8Array, maxBytes = 16_384): string {
+function displayLimit(maxBytes = 16_384): number {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > 1_048_576)
     throw new RangeError("maxBytes must be between 0 and 1048576");
-  const slice = bytes.subarray(0, maxBytes);
 
-  return new TextDecoder().decode(slice) + (bytes.length > slice.length ? "…" : "");
+  return maxBytes;
+}
+
+type OutputOptions = { full: true } | { maxBytes?: number };
+
+function optionObject(value: OutputOptions, key: string): boolean {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JavaScript callers can supply malformed options to this public API.
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+
+  return (
+    Object.prototype.toString.call(value) === "[object Object]" &&
+    Reflect.ownKeys(value).every((field) => field === key) &&
+    (!(key in value) || Object.hasOwn(value, key))
+  );
+}
+
+function decodeOutput(bytes: Uint8Array, options?: number | { full: true }): string {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Preserve the numeric overload while validating JavaScript option objects.
+  if (options === undefined || typeof options === "number") {
+    const maxBytes = displayLimit(options);
+
+    return (
+      new TextDecoder().decode(bytes.subarray(0, maxBytes)) + (bytes.length > maxBytes ? "…" : "")
+    );
+  }
+
+  if (!optionObject(options, "full") || !Object.hasOwn(options, "full") || options.full !== true)
+    throw new RangeError("Text options must contain only full: true");
+
+  return new TextDecoder().decode(bytes);
+}
+
+export function outputText(bytes: Uint8Array, maxBytes?: number): string;
+export function outputText(bytes: Uint8Array, options: { full: true }): string;
+export function outputText(bytes: Uint8Array, options?: number | { full: true }): string {
+  return decodeOutput(bytes, options);
+}
+
+function previewOutput(bytes: Uint8Array, options?: { maxBytes?: number }): OutputPreview {
+  if (options !== undefined && !optionObject(options, "maxBytes"))
+    throw new RangeError("Preview options allow only maxBytes");
+  const maxBytes = displayLimit(options?.maxBytes);
+
+  return { text: decodeOutput(bytes, maxBytes), shortened: bytes.length > maxBytes };
 }
 
 export function validateFilePath(path: string): string {
@@ -222,8 +270,10 @@ export function execOutput(
     stdout,
     stderr,
     truncated,
-    stdoutText: (max) => outputText(stdout, max),
-    stderrText: (max) => outputText(stderr, max),
+    stdoutText: (options) => decodeOutput(stdout, options),
+    stderrText: (options) => decodeOutput(stderr, options),
+    stdoutPreview: (options) => previewOutput(stdout, options),
+    stderrPreview: (options) => previewOutput(stderr, options),
   };
 }
 

@@ -48,6 +48,7 @@ export type {
   CreateInput,
   ExecInput,
   ExecOutput,
+  OutputPreview,
   DirectSandbarClient,
   DirectSandboxHandle,
   SandboxHandle,

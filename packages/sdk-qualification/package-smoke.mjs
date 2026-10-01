@@ -219,7 +219,7 @@ void flow;
 `;
   else if (mode === "direct")
     source = `
-import { Sandbar, Image, type SandbarClient, type SandboxHandle, type DirectSandbarClient, type DirectSandboxHandle } from "sandbar-sdk";
+import { Sandbar, Image, type SandbarClient, type SandboxHandle, type DirectSandbarClient, type DirectSandboxHandle, type OutputPreview, type ExecOutput, outputText } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 async function flow() {
   const client: DirectSandbarClient = await Sandbar.connect({ adapter: createFakeAdapter({ url: "http://127.0.0.1:1234", token: "example-token-123456" }), config: {}, credentials: {} });
@@ -233,6 +233,19 @@ async function flow() {
   const operation = await box.submitExec(argv);
   await operation.wait();
   const text: string = result.stdoutText();
+  const oldNumeric: (maxBytes?: number) => string = result.stdoutText;
+  const oldStderr: (maxBytes?: number) => string = result.stderrText;
+  const oldOutputText: (bytes: Uint8Array, maxBytes?: number) => string = outputText;
+  const preview: OutputPreview = result.stdoutPreview({ maxBytes: 4096 });
+  const full: string = result.stdoutText({ full: true });
+  const stderr: string = result.stderrText({ full: true });
+  const standalone: string = outputText(result.stdout, { full: true });
+  function acceptsOutput(output: ExecOutput) { return output.stdoutText(100); }
+  void oldNumeric; void oldStderr; void oldOutputText; void preview; void full; void stderr; void standalone; void acceptsOutput;
+  // @ts-expect-error full mode cannot mix in a display bound
+  result.stdoutText({ full: true, maxBytes: 1 });
+  // @ts-expect-error preview options cannot select full mode
+  result.stderrPreview({ full: true });
   const volume=await client.volumes.create({name:"consumer-state"});
   const mounted=await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});
   const captured=await box.snapshot();
@@ -272,7 +285,7 @@ void flow;
 
 const directSource = `
 import { OutcomeUnknownError as RootUnknown } from "sandbar-sdk";
-import { Sandbar, Image } from "sandbar-sdk";
+import { Sandbar, Image, outputText } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 if (RootUnknown.name !== "OutcomeUnknownError") throw new Error("SDK error export unavailable");
 const client = await Sandbar.connect({ adapter: createFakeAdapter({ url: process.env.FAKE_URL, token: process.env.FAKE_TOKEN }), config: {}, credentials: {} });
@@ -281,6 +294,14 @@ try {
   const command = { kind: "argv", argv: ["fixture", "packed"] };
   const result = await box.exec(command.argv);
   if (result.exitCode !== 0 || result.stdout.length !== 4 || result.stdout[0] !== 255 || result.stdout[1] !== 0) throw new Error("Binary execution output changed");
+  if (result.stdoutText(1) !== "�…" || result.stderrText(0) !== "") throw new Error("Numeric text helpers changed");
+  if (outputText(result.stdout, { full: true }) !== result.stdoutText({ full: true })) throw new Error("Full helpers disagree");
+  const report = await box.exec(["fixture", "json"]);
+  const preview = report.stdoutPreview({ maxBytes: 4096 });
+  if (!preview.shortened || preview.text !== report.stdoutText(4096)) throw new Error("Preview metadata changed");
+  if (report.truncated) throw new Error("Captured report may be incomplete");
+  const parsed = JSON.parse(report.stdoutText({ full: true }));
+  if (parsed.payload.length !== 20_000 || report.stderrPreview().shortened || report.stderrText({ full: true }) !== "diagnostic") throw new Error("Full JSON or independent stderr failed");
   const bytes = Uint8Array.from([0, 255, 129]);
   await box.writeFile("/data/packed", bytes);
   const loaded = await box.readFile("/data/packed");
@@ -778,6 +799,19 @@ try {
         command: { kind: "argv", argv: ["fixture", "packed"] },
         exitCode: 0,
         stdoutBase64: Buffer.from([255, 0, 128, 97]).toString("base64"),
+      },
+    });
+    await fixture.fakeControl("/_test/seed", {
+      submissionId: "*",
+      action: "exec",
+      behavior: "normal",
+      command: {
+        command: { kind: "argv", argv: ["fixture", "json"] },
+        exitCode: 0,
+        stdoutBase64: Buffer.from(JSON.stringify({ payload: "x".repeat(20_000) })).toString(
+          "base64",
+        ),
+        stderrBase64: Buffer.from("diagnostic").toString("base64"),
       },
     });
     console.log(
