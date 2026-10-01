@@ -214,11 +214,11 @@ type OutputOptions = { full: true } | { maxBytes?: number };
 function optionObject(value: OutputOptions, key: string): boolean {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JavaScript callers can supply malformed options to this public API.
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
 
   return (
-    (prototype === Object.prototype || prototype === null) &&
-    Reflect.ownKeys(value).every((field) => field === key)
+    Object.prototype.toString.call(value) === "[object Object]" &&
+    Reflect.ownKeys(value).every((field) => field === key) &&
+    (!(key in value) || Object.hasOwn(value, key))
   );
 }
 

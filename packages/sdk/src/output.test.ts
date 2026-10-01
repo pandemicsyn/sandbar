@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
+import { runInNewContext } from "node:vm";
 import { defineAdapter } from "sandbar-adapter";
 import { Image, Sandbar, outputText, NonzeroExitError, NoExitCodeError } from "./index";
 import { execOutput } from "./resource";
@@ -126,6 +127,26 @@ test("invalid numeric limits and JavaScript option objects throw only local Rang
   expect(result.stdoutText()).toBe("ok");
   expect(result.exitCode).toBe(0);
   expect(result.truncated).toBe(false);
+});
+
+test("valid options from another realm decode and preview both streams", () => {
+  const full: { full: true } = runInNewContext("({ full: true })");
+  const preview: { maxBytes: number } = runInNewContext("({ maxBytes: 4096 })");
+  const empty: { maxBytes?: number } = runInNewContext("({})");
+  const result = execOutput(0, encode("a".repeat(5000)), encode("b".repeat(5000)), false);
+
+  expect(Object.getPrototypeOf(full)).not.toBe(Object.prototype);
+  expect(outputText(result.stdout, full)).toBe("a".repeat(5000));
+  expect(result.stdoutText(full)).toBe("a".repeat(5000));
+  expect(result.stderrText(full)).toBe("b".repeat(5000));
+  expect(result.stdoutPreview(preview)).toEqual({ text: "a".repeat(4096) + "…", shortened: true });
+  expect(result.stderrPreview(preview)).toEqual({ text: "b".repeat(4096) + "…", shortened: true });
+  expect(result.stdoutPreview(empty)).toEqual({ text: "a".repeat(5000), shortened: false });
+
+  const mixed = runInNewContext("({ full: true, maxBytes: 1 })");
+  const invalidPreview = runInNewContext("({ maxBytes: -1 })");
+  expect(() => outputText(result.stdout, mixed)).toThrow(RangeError);
+  expect(() => result.stderrPreview(invalidPreview)).toThrow(RangeError);
 });
 
 test.each([0, 7, null])(
