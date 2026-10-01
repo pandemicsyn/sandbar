@@ -408,14 +408,16 @@ test("pinned E2B maps bounded exec to RPC options without a process runtime fiel
   ).toBe(true);
 });
 
-test.each([false, true])(
-  "pinned E2B handshake timer clears only after PID: %s",
-  async (acknowledged) => {
+test.each(["handshake", "complete", "rpc"] as const)(
+  "pinned E2B handshake clears at PID while RPC timer bounds observation: %s",
+  async (mode) => {
+    const acknowledged = mode !== "handshake";
+    const timeoutMs = mode === "rpc" ? 25 : 1000;
     let requestSignal: AbortSignal | undefined;
 
     const f = fixture(async (request) => {
       requestSignal = request.signal;
-      expect(request.headers.get("connect-timeout-ms")).toBe("1000");
+      expect(request.headers.get("connect-timeout-ms")).toBe(String(timeoutMs));
 
       return new Response(
         new ReadableStream<Uint8Array>({
@@ -450,10 +452,14 @@ test.each([false, true])(
       apiKey: "control-only-key",
     });
 
-    const run = sandbox.commands.run("sleep 10", { timeoutMs: 1000, requestTimeoutMs: 25 });
+    const run = sandbox.commands.run("sleep 10", {
+      timeoutMs,
+      requestTimeoutMs: mode === "rpc" ? 1000 : 25,
+    });
 
-    if (acknowledged) expect((await run).exitCode).toBe(0);
-    else await expect(run).rejects.toThrow("handshake timed out");
+    if (mode === "complete") expect((await run).exitCode).toBe(0);
+    else if (mode === "handshake") await expect(run).rejects.toThrow("handshake timed out");
+    else await expect(run).rejects.toThrow("deadline_exceeded");
     expect(requestSignal?.aborted).toBe(true); // CommandHandle/start cleanup is local.
     expect(f.calls.filter((call) => call.url.pathname.endsWith("/Start"))).toHaveLength(1);
     expect(f.calls.some((call) => /Kill|SendSignal|kill/.test(call.url.pathname))).toBe(false);
