@@ -1,129 +1,182 @@
-# Interactive execution and access
+# First streaming execution slice
 
-Initial design draft · September 28, 2026 · Not implemented; follows state portability
+Proposed implementation brief · September 30, 2026 · Not implemented
 
-Extend the current bounded `exec`, `readFile` and `writeFile` API with interactive processes and scoped network access. This draft starts the contracts; it does not select native transports, promise provider parity, or authorize implementation before [state portability](provider-state-portability.md).
+Research baseline: freshly fetched `origin/main` at `d186cea` (PRs #32 and #33 merged). This replaces the broad interactive-execution draft with one delivery decision. Preserve [ordinary results and minimal identities](sdk-recovery-dx.md); its older PR-status sentence is historical. No new persistence callbacks, completion-facts envelopes, continuation framework or service parity is required.
 
-This draft targets the direct SDK. Service transports, remote-client parity, durable service metadata, and management workflows wait for the [distant service milestone](../plans/implementation-plan.md#distant-milestone-optional-service); they do not gate these features. Preserve existing service behavior when shared contracts change.
+Deliver one command start, timely separate stdout/stderr **text**, and confirmed exit through a local handle. Keep bounded `exec()` for binary capture and short commands. First provider: E2B. A text-only first slice is deliberate: neither pinned high-level SDK supplies binary-faithful streaming callbacks. Do not label UTF-8 re-encoded native text as original bytes.
 
-## Scope and resource model
+## Evidence and provider support
 
-| Resource | Meaning | Proposed surface |
-| --- | --- | --- |
-| Process | One command execution, potentially with streaming output and stdin | `box.processes.start`, `client.processes.get` |
-| Terminal | A PTY session with terminal behavior and combined output | `box.terminals.open` |
-| Endpoint | Access to a sandbox port with an explicit audience and lifetime | `box.endpoints.create` |
-| Tunnel | An authenticated connection forwarding bytes to a sandbox port | `box.tunnels.open` |
+These are researched native candidates, **not shipped Sandbar support or live qualification**. No paid calls were made. The baseline adapters still expose only bounded exec. E2B is pinned to `e2b@2.51.0` in `packages/providers/e2b/package.json` and `bun.lock`. Daytona uses single-attempt REST/toolbox calls; its reference SDK is `@daytona/sdk@0.218.0`, not a runtime dependency.
 
-Existing `box.exec()` stays the simple bounded, wait-for-completion API. Streaming is an explicit choice. A process handle is distinct from the operation that starts it: the start operation establishes identity once; later attachment and observation must never run the command again.
+| Behavior | E2B 2.51.0 | Daytona 0.218 reference | First delivery |
+| --- | --- | --- | --- |
+| Start once, live text | `commands.run(cmd, { background: true, onStdout, onStderr, stdin: false })` returns `CommandHandle` | Create dedicated session, `executeSessionCommand(..., { runAsync: true })`, follow command logs | E2B only; one start RPC, no retry |
+| Exit | `handle.wait()`, including `CommandExitError` result | GET session command exposes optional `exitCode`; poll | E2B normal/nonzero exits become ordinary results |
+| Local detach | `handle.disconnect()` stops callbacks and leaves command running | Close log WebSocket; keep session/command | E2B `detach()`; never kill sandbox |
+| Remote termination | `handle.kill()` / `commands.kill(pid)` send SIGKILL by PID | Session DELETE exists; no verified per-command signal contract | Unsupported in slice 1; do not advertise portable `signal()` |
+| Runtime deadline | `timeoutMs` is passed to streaming RPC, not a process-runtime field | Async session request has no native runtime-deadline field; SDK timeout limits HTTP request | Reject requested runtime deadlines before start |
+| Reattachment | `commands.connect(pid)` and `list()` exist; no immutable process generation in public selector | Session ID + command ID permit status/log reads; no proven retained cursor or restart-generation contract | No reopening, cursors or reconnect in slice 1 |
+| Binary streams | Native protocol carries bytes; public handle decodes UTF-8 | Log demux decodes UTF-8 and scans sentinel prefixes | Deferred; preserve binary bounded exec |
+| Stdin | `sendStdin` / `closeStdin`; acknowledgements do not prove consumption | Session command input endpoint accepts text | Closed stdin only; no input delivery contract |
 
-## Processes and output
+Primary sources, inspected September 30, 2026:
 
-Illustrative signatures; they are not current exports:
+- [E2B streaming examples](https://docs.e2b.dev/commands/streaming) and [background execution](https://docs.e2b.dev/commands/background) establish the callback/background workflow. The authoritative pin is the installed npm package's `dist/index.js` and `dist/index.d.ts`: `Commands.start/connect/kill`, `CommandHandle.iterateEvents/handleEvents/disconnect`. [Published pinned tarball](https://registry.npmjs.org/e2b/-/e2b-2.51.0.tgz). The code awaits callbacks, accumulates `_stdout`/`_stderr`, sets RPC `timeoutMs`, and selects termination/connection by PID. Reconnection documentation alone does not establish safe identity after PID reuse.
+- [Daytona process documentation](https://www.daytona.io/docs/en/process-code-execution/), [TypeScript reference](https://www.daytona.io/docs/en/typescript-sdk/process/), and [toolbox schema](https://www.daytona.io/docs/toolbox-openapi.json). Current documentation may evolve: the retrieved toolbox schema identifies itself as `v0.0.0-dev`, not an immutable 0.218 schema. Its session request has `command`, `runAsync`, `async`, `suppressInputEcho`, but no runtime deadline. The [published 0.218.0 tarball](https://registry.npmjs.org/@daytona/sdk/-/sdk-0.218.0.tgz) corroborates the session paths and HTTP-only timeout in `esm/Process.js`; `esm/utils/Stream.js` uses text demux with `01 01 01` / `02 02 02` markers. Binary transparency cannot be inferred from that framing. Tarball SHA-256: `403c89ad9c9e292c27b12a953229d050dd09f6635b25e089e60767318cdbf803`.
+
+Daytona integration is deferred rather than blocked on a new universal process abstraction. A later native-boundary investigation must establish initial-log completeness, bounded WebSocket framing, session cleanup and any termination guarantee before enabling it. Modal and third-party adapters return `UNSUPPORTED` without starting anything.
+
+## Proposed public contract
+
+Names below are proposed exports, not examples of currently shipping APIs. Add only to the direct SDK handle; keep existing service clients unchanged.
 
 ```ts
-interface StartProcessInput {
-  command: ExecCommand;
+// Reuse the existing command, cwd and env validation, not ExecInput wholesale.
+type StartProcessInput = {
+  command: ExecInput["command"];
   cwd?: string;
   env?: Record<string, string>;
-  stdin?: "closed" | "pipe"; // default: closed
-  deadlineSeconds?: number;
-}
-
+  maxOutputBytes?: number; // cumulative UTF-8 text budget; default 1 MiB
+  deadlineSeconds?: number; // required native runtime bound if supplied
+};
+type ProcessOutput = { stream: "stdout" | "stderr"; text: string };
+type ProcessExit = {
+  exitCode: number; // confirmed native exit, including nonzero
+  outputComplete: boolean; // all native text delivered to the output consumer
+};
 interface ProcessHandle {
-  readonly reference: ResourceReference<"process">;
-  inspect(): Promise<ProcessInfo>;
-  output(options?: { cursor?: string; signal?: AbortSignal }): AsyncIterable<ProcessEvent>;
-  writeStdin(bytes: Uint8Array, options?: WaitOptions): Promise<InputReceipt>;
-  closeStdin(options?: WaitOptions): Promise<InputReceipt>;
-  wait(options?: WaitOptions): Promise<ProcessExit>;
-  signal(name: "interrupt" | "terminate" | "kill", options?: WaitOptions): Promise<SignalReceipt>;
+  readonly provider: string;
+  output(options?: { signal?: AbortSignal }): AsyncIterable<ProcessOutput>;
+  wait(options?: { signal?: AbortSignal }): Promise<ProcessExit>;
+  detach(): Promise<void>; // local, idempotent, prompt
 }
-
-type ProcessEvent =
-  | { kind: "stdout" | "stderr"; bytes: Uint8Array; cursor?: string }
-  | { kind: "gap"; reason: "expired" | "overflow" | "disconnected"; cursor?: string }
-  | { kind: "exit"; result: ProcessExit; cursor?: string };
-
-const process = await box.processes.start({
-  command: { kind: "argv", argv: ["node", "server.js"] },
-});
-for await (const event of process.output()) {
-  // Bytes remain bytes. Decode for display only when requested.
-}
+// On a direct sandbox:
+// sandbox.processes.start(input, { signal? }): Promise<ProcessHandle>
 ```
 
-`ResourceReference`, capability checks and wait behavior follow the state-portability conventions. Process references additionally bind the execution generation so a recycled PID or resumed sandbox cannot accidentally refer to another process. A PID alone is insufficient identity. `start` also has `submitStart`, returning the existing operation handle; unknown start results remain unknown and cannot be retried implicitly.
+A successful start returns a handle as soon as the native start event supplies its local handle, not when the command exits. Attach the output receiver before dispatch so early output cannot fall between start and subscription. A single consumer can call `output()` once; a second call rejects `INVALID_ARGUMENT` without changing the first consumer. `wait()` can be called repeatedly/concurrently and returns the same confirmed exitCode, with outputComplete sampled at settlement; each caller's abort only ends that caller's wait. It does not detach the output receiver or abort the native command stream.
 
-Contracts:
+The handle is local observation state, has no serialized `reference`, no public PID identity and no `get()`/`inspect()`/`submitStart()` API. Its provider connection owns native credentials. Do not invent a serializable generation token to make unsafe native PID selectors look safe. No public termination method is added until it can target the same execution reliably; explicit termination remains unsupported, and sandbox `destroy()` is a separate deliberate lifecycle action.
 
-- Preserve stdout/stderr bytes and within-stream ordering. Do not promise precise cross-stream ordering unless native evidence supplies it. Cursors are opaque scoped positions, not fabricated global offsets.
-- Output subscription, retained capture, and process completion are separate. Losing a subscription does not kill the process. Confirmed exit does not establish that all output was delivered; output loss remains visible even after a successful `wait()`.
-- Providers declare whether output is live-only, retained/replayable, reconnectable, or not available. Supplying a cursor on a live-only transport rejects. Reattachment never reexecutes a command; providers without stable process discovery do not advertise it.
-- Bound buffering and define slow-consumer behavior before implementation. If the transport can backpressure, propagate it. Otherwise report a gap or terminate the subscription with an explicit error; never silently discard bytes or buffer without limit. Do not kill workload compute merely because a subscriber is slow.
-- Stdin is an effectful byte delivery operation. An acknowledgment states only what the provider confirmed, not application consumption. Lost acknowledgment remains unknown; do not resend input automatically. Exactly-once input is not a portable default. Closing stdin and signaling also require honest effect/acknowledgment semantics.
-- A signal receipt distinguishes requested from confirmed; confirmed delivery does not prove termination. Use observed process exit to confirm termination. Never replace unsupported process signaling with whole-sandbox destruction.
-- Aborting output/waiting or closing the client detaches local resources. Remote termination is explicit. A required process deadline must be natively enforceable or rejected; a client-side timer is not sufficient.
+Pre-aborted start rejects `WAIT_ABORTED` before dispatch. Abort or transport loss after dispatch can mean the command started: reject `OUTCOME_UNKNOWN`, with provider and sandbox ID only where known; no automatic retry and no claim that these fields can reopen the command. If the native handle arrives after local start abandonment, disconnect it immediately. Do not orphan a local socket, kill the command, or wait indefinitely for a non-cooperative provider. No new generic error family is needed; proposed process failures use current error conventions with a typed optional confirmed `ProcessExit` where available.
 
-`ProcessInfo` should expose observed lifecycle, scope/generation and supported attachment behavior. `ProcessExit` should distinguish normal exit, signal termination and incomplete native evidence, separately from output availability. Exact retention budgets and wire streaming framing remain open design choices. Do not assume the current `StreamFrame` schema establishes an implemented streaming transport.
+`wait()` reports normal and nonzero exits without throwing merely for an exit code. This intentional observation API differs from bounded `exec()`, which keeps `NonzeroExitError`/`NoExitCodeError`. Transport loss without exit evidence rejects `UNAVAILABLE`; never synthesize exit 0, a signal, a runtime-timeout cause, or a missing exit code. Output failure rejects the iterator; it does not erase an exit already confirmed.
 
-## Terminals
+## Small adapter addition
+
+Add an optional `processes` member on the public adapter session. Do not route it through the durable `Mutation`/checkpoint runtime or internal provider SPI. Use current `Command`, `Sandbox` and error conventions from `sandbar-adapter`.
 
 ```ts
-const terminal = await box.terminals.open({
-  command: { kind: "argv", argv: ["/bin/sh"] },
-  size: { columns: 100, rows: 30 },
-});
-await terminal.write(inputBytes);
-await terminal.resize({ columns: 120, rows: 40 });
-await terminal.close();
+type NativeProcessExit = { exitCode: number };
+// Native wait rejection may preserve exit evidence without claiming full output.
+type ProcessObservationFailure = AdapterError & {
+  confirmedExit?: NativeProcessExit;
+};
+type ProcessStartContext = {
+  readonly signal: AbortSignal; // setup/abandonment only
+  readonly deadline: number; // local setup deadline, not remote runtime
+  onOutput(chunk: { stream: "stdout" | "stderr"; text: string }): void;
+};
+interface NativeProcess {
+  wait(): Promise<NativeProcessExit>;
+  detach(): Promise<void>;
+}
+// Optional session member:
+// processes?: {
+//   start(input: {
+//     sandbox: Sandbox; command: Command; cwd?: string;
+//     env?: Record<string, string>; maxOutputBytes: number;
+//   }, ctx: ProcessStartContext): Promise<NativeProcess>;
+// }
 ```
 
-A PTY has one combined output stream and can transform bytes according to terminal settings. It must not be presented as binary-faithful separate stdout/stderr capture. Resize and terminal-mode capabilities are explicit. Shell availability is image-specific; do not silently replace the requested command.
+Presence advertises only this fixed text/closed-stdin/local-handle contract. Reject `deadlineSeconds` in SDK validation for this slice; do not add inactive capability dimensions for signals, cursors or stdin. Resolve unsupported methods/options before mutation. Setup uses a 30-second local deadline and client-close signal. E2B disables the native streaming RPC timeout (`timeoutMs: 0`), sets `requestTimeoutMs: 30_000`, `stdin: false`, and uses the existing `retries: 0` connection configuration. Setup abort must not remain wired to an established stream: separate its controller from the stream lifetime, retain late-handle disposal, and clear setup timers after the native start event. Streaming must use the [non-resuming E2B guest-attachment path](sandbox-lifecycle.md#reopening-and-identity): a bounded authenticated detail/token GET, verified scope and trusted routing, then local construction of the pinned SDK client and direct envd access. Require running state, `autoResume === false` and the detail token before guest access; missing/true auto-resume or missing token makes access unavailable. Do not call `Sandbox.connect` or POST connect: a running preflight cannot prevent a pause before attachment from implicitly resuming compute. Local construction alone does not disable server auto-resume; reject changed lifecycle policy rather than mutating it back. External policy changes after verification remain the documented native race.
 
-Define `close()` as closing the native terminal session, reporting confirmed/unknown outcome and any process consequences. Local subscription cancellation only detaches. Reconnection and concurrent attachment are optional capabilities. Terminal input and resize mutations share the uncertain-delivery rules above; replaying keystrokes after a connection loss is unsafe.
+E2B transport maps native nonzero-exit errors to the ordinary exit result. On other native wait failures, read the public `handle.exitCode`: if it is a valid confirmed integer, throw `ProcessObservationFailure` carrying `confirmedExit`; otherwise omit that field. The SDK fails the output iterator, caches the confirmed exit and returns it with incomplete output from pending/subsequent waits. Validate this optional field and never recover exit by parsing an exception message. E2B sets its result before decoder-flush callbacks, so a flush failure can coexist with confirmed exit. Native callback delivery starts before `run()` resolves: enforce the output budget in callbacks and latch a disconnect request until the returned handle is available. Attach rejection handlers to native wait immediately to avoid unhandled rejections. Lifecycle interruption or client closure ends local observation; it never reconnects to a restored/resumed generation.
 
-## Endpoints and tunnels
+## Buffering, completeness and cancellation
+
+Defaults are intentionally fixed: cumulative output budget **1 MiB combined**, configurable integer **1–1,048,576 bytes**, measured as UTF-8 encoding length of native text; pending-consumer queue **64 KiB combined**, with at most **256 chunks**, and per emitted chunk at most **16 KiB UTF-8** (split only on code-point boundaries). Reject invalid limits before dispatch. Tiny chunks consume the chunk limit even when byte usage is low. No capture copy is kept by Sandbar beyond the pending queue and a terminal result/error.
+
+E2B's public handle also retains decoded text internally. A drained Sandbar queue does not bound that accumulation: the cumulative budget is mandatory, even for fast consumers. On the first callback crossing either cumulative or queue limit, stop admission, latch `OUTPUT_CAPACITY`, disconnect locally immediately (or on late handle arrival), and reject output/wait promptly unless exit is already known. Do not kill compute. If overflow precedes start resolution, `start()` rejects `OUTPUT_CAPACITY` with effect possible and minimal provider/sandbox context, and disconnects the late handle without exposing a partial public handle. For an established handle, deliver the already admitted prefix, then throw; no silent dropping and no resumable gap/cursor format. An error means the remainder is unavailable through this handle.
+
+Sandbar-owned buffers obey these bounds. Native decoding/transport can allocate an incoming message before a callback checks the limit, and already in-flight decoding/final flush can append text after disconnect; these numbers are not an RSS or provider log-storage guarantee. Fixtures must cover one oversized incoming message and show no additional Sandbar admission or native callbacks after disconnect; permit in-flight native decode/flush allocation. Do not change private E2B fields or import its internal RPC protocol to claim a stronger cap. A hard bound on provider-client allocations requires a separate raw transport or upstream bounded-capture support, outside slice 1.
+
+Do not promise workload backpressure: callbacks are awaited by E2B, but server/socket buffering is not a verified end-to-end bound. Sandbar callbacks synchronously enqueue within the budgets; slow consumers fail locally. There is no unbounded pending promise chain. Provider-side retained logs may continue growing after detach; sandbox lifetime still applies.
+
+On normal native stream end plus confirmed exit, output drains and ends. `outputComplete` becomes true only after all admitted chunks were yielded and the native stream finished without loss; a wait that settles earlier conservatively returns false. Results returned earlier stay historical and are not mutated; a later `wait()` may return true once drain completes. If delivery has not already completed, closing the iterator (`break` or abort), `detach()` or client close ends the subscription, discards queued text and leaves completeness false. Aborting output throws `WAIT_ABORTED` and performs local detach. Explicit `detach()` closes the iterator normally, settles unconfirmed waits with `UNAVAILABLE`, and preserves a cached confirmed exit; completeness stays true if delivery had already finished, otherwise false. Detachment cannot undo completed delivery. It never waits for remote exit. A provider that already supplied confirmed exit keeps it when later local output delivery fails.
+
+| User intent | Operation | Guarantee |
+| --- | --- | --- |
+| Stop this local wait after 5 seconds | `wait({ signal: AbortSignal.timeout(5000) })` | Only that waiter stops; command/output continue |
+| Stop watching output | Abort `output()` or call `detach()` | Release local observation; command may keep running |
+| End command after a runtime limit | `start({ deadlineSeconds: ... })` | Unsupported here; reject before dispatch |
+| Terminate command remotely | Future verified process termination API | Unsupported here; no whole-sandbox fallback |
+| End sandbox lifetime | Existing provider TTL or explicit `sandbox.destroy()` | Separate lifecycle operation affecting compute |
+
+Current bounded `exec()` defaults to `deadlineSeconds: 300` and combined 1 MiB capture. Daytona maps the deadline to `/process/execute` server timeout (current official docs describe termination); E2B maps it to `commands.run` RPC/request timeout, with redirected output/status files. E2B source does not prove remote termination at that deadline. Keep the signature/default for compatibility, explicitly document its current provider limitation, and schedule a focused timeout-contract audit rather than claiming a portable runtime bound or silently substituting sandbox destruction. A timed-out wait or unknown exec outcome must not trigger resubmission.
+
+## Full decoding and bounded display
+
+Current `stdout`/`stderr` contain captured bytes. `truncated` describes capture loss, not display shortening. `stdoutText()`/`stderrText()` use a default 16,384-byte preview plus `…`; an explicit numeric bound is validated through 1 MiB. A large intact capture therefore can display an ellipsis with `truncated === false`.
+
+Keep those existing defaults and numeric overloads. In a separate small compatibility PR, add `stdoutText({ full: true })` / `stderrText({ full: true })` to decode all captured bytes without a display suffix, and explicit `stdoutPreview({ maxBytes?: number })` / `stderrPreview(...)` returning `{ text, shortened }`. Preview default stays 16 KiB; retain existing decoder/replacement behavior when a byte boundary splits UTF-8. Document old names as preview aliases without removing or changing them. Full decode cannot recover discarded capture; callers still check `truncated`. These additive names avoid an unannounced memory/display change and let UI code inspect `shortened` without parsing `…`. No change to streaming `text` fidelity is implied.
+
+For today's API, full decode is already possible:
 
 ```ts
-const endpoint = await box.endpoints.create({
-  port: 3000,
-  access: "authenticated",
-  expiresInSeconds: 900,
-});
-const grant = await endpoint.grant({ expiresInSeconds: 60 });
-await grant.revoke();
-await endpoint.delete();
-
-const tunnel = await box.tunnels.open({ port: 5432 });
-const listener = await tunnel.listen({ hostname: "127.0.0.1", port: 0 });
-await listener.close();
-await tunnel.close();
+const result = await sandbox.exec(["printf", "hello"]);
+const full = new TextDecoder().decode(result.stdout); // all captured stdout
+const preview = result.stdoutText(); // bounded display
+console.log({ full, preview, captureLost: result.truncated });
 ```
 
-Endpoints default to authenticated access. Public access requires an explicit request; missing authentication support cannot silently produce a public URL. A grant must be limited to the requested resource/port and lifetime. Credentials or signed access URLs are sensitive values returned separately from serializable metadata; they do not belong in recovery references or generic logs. If a provider cannot enforce requested expiration or revocation, reject those requirements rather than implying them.
+## Usage and delivery
 
-Expose transport limitations such as HTTP-only access, WebSocket support, or raw TCP independently. An HTTP preview URL is not a TCP tunnel. Endpoint deletion must report which access is confirmed disabled; it cannot claim revocation of untracked native URLs. Port readiness is separate from endpoint provisioning. An existing endpoint does not prove a server is listening.
+Proposed first-slice usage (compile against packed public packages in the coding PR):
 
-Tunnel listeners live in the SDK caller's Node.js/Bun process and bind loopback by default. A non-loopback bind is explicit. Access must bind to the verified provider scope, sandbox generation, port and session lifetime; metadata permission alone does not grant byte access. A future service relay requires its own authorization design and must never expose account-wide provider credentials.
+```ts
+const process = await sandbox.processes.start({
+  command: { kind: "argv", argv: ["node", "job.js"] },
+});
+try {
+  for await (const chunk of process.output()) {
+    const destination = chunk.stream === "stdout" ? console.log : console.error;
+    destination(chunk.text);
+  }
+  const exit = await process.wait();
+  console.log(exit.exitCode, exit.outputComplete);
+} finally {
+  await process.detach(); // release observation even on a display exception
+}
+```
 
-Closing a listener releases its local socket. Closing a tunnel also releases its native session where applicable, reporting uncertain remote closure. Neither destroys compute or stops the server process. A library must not advertise revocation guarantees stronger than the native transport can establish.
+This is for finite text commands whose output fits the budget. Long-running/high-volume/binary processes remain outside this first slice. A command that buffers its own stdout may not emit timely chunks; Sandbar delivers native callbacks promptly, without waiting for exit or creating a hidden shell supervisor. `argv` uses the adapter's existing quoting rules; shell requests use its declared shell. Explicitly close stdin; preserve cwd/env validation and reject NUL input before start.
 
-## Provider differences and lifecycle integration
+Delivery fits up to three small coding PRs, independently reviewable:
 
-Reuse request-specific capability evaluation from state portability, with independent checks for process start/discovery, live output/replay, stdin, each signal, PTY, endpoint access, revocation and tunnel protocols. Account, image and sandbox state can affect support. Structural optional methods alone cannot establish guarantees.
+1. **Ready to delegate after the non-resuming E2B guest-attachment prerequisite:** reuse the lifecycle spec's read-only attachment work before enabling streaming; the broader sandbox-reopen API is not a dependency. Then deliver the fixed adapter/direct-SDK local handle contract plus E2B text streaming, bounded admission, wait/detach, unsupported runtime deadline and deterministic native-boundary fixtures. No Daytona implementation or new durable identity contract. Add public compiled/packed Node and Bun examples, docs and ordinary results. This spec PR authorizes planning only; implementation requires its own task.
+2. Read cancellation consistency: direct `inspect({ signal })` exists, but shared `SandboxHandle.inspect()` omits options; `readFile(path)` has no caller signal and only client-close cancellation. Its adapter context has a deadline but the SDK read does not race a local timeout consistently. Add `readFile(path, { signal? })`, align shared inspect typing and apply the 30-second local read deadline/caller/client signals to buffered and streaming reads. Abort cleanup cancels only local readers. Audit native signal cooperation separately; no write/lifecycle semantics change. This is useful independently and does not gate streaming.
+3. Full-decode/preview helpers and focused bounded-exec timeout documentation/audit above. Native runtime enforcement or a raw binary transport needs fresh evidence and its own scoped proposal; do not make them hidden additions to this PR.
 
-Unsupported requests fail before mutation with `UNSUPPORTED`. Failed eligibility reads remain unknown/unavailable. No implicit shell-based process supervisor, hidden proxy deployment, network widening, or automatic provider switch. Any later emulation requires a separately specified contract and explicit selection.
+The smallest slice chooses text-only E2B with finite output and local-only handles. The actual product choice for review is whether that limitation is useful enough to ship first; if binary streaming or remote kill is mandatory, this brief does not pretend the larger work is ready. Queue limits and no-reconnect behavior are selected defaults, not unspecified implementation choices.
 
-Snapshot/suspend/restore can interrupt processes, subscriptions and access sessions. Bind attachments to execution generations and expose interruption rather than silently reconnecting to a different workload. A memory restore may contain a process, but does not automatically restore its former authenticated stream or endpoint grants. Reauthorize and verify identity before attachment. Reads and reattachment must not auto-resume a sandbox; use the explicit lifecycle API.
+## Acceptance for the coding slice
 
-The direct SDK uses the public adapter contracts. An open local socket is not restart-durable. Expose retained replay only where actual stored output/native evidence supports it. Persisting a start reference does not make the running process immortal. Service integration is deferred.
+Use deterministic native-boundary fixtures; paid live qualification remains separately authorized. Cover:
 
-## Work needed before implementation
+- Exactly one native command start; no retries after lost acknowledgement, callback failure, local abort or missing exit. Unsupported deadline/provider/invalid cwd/env and pre-abort issue zero start calls.
+- Output before the start promise resolves is delivered. A stdout chunk arrives while exit is held pending; stderr arrives independently. Per-stream order is preserved, with no cross-stream ordering claim.
+- UTF-8 split boundaries and invalid bytes match the native text decoder, explicitly demonstrating that binary fidelity is not promised. Existing bounded exec binary capture tests remain intact.
+- Start rejects after its 30-second setup deadline; a late native handle disconnects once without remote kill. Established streams are unaffected by clearing setup timers or a later abort of the start-only signal.
+- Overflow before start resolution rejects start with effect possible and disposes the late handle. Fast-consumer cumulative overflow, slow-consumer queue-byte overflow, tiny-chunk count overflow and one oversized callback settle promptly. Sandbar admission and native callbacks stop after detach; the remote command is not terminated. Non-cooperative native cleanup cannot hold iterator/wait/client close forever.
+- Exit 0/nonzero are ordinary confirmed results. Lost transport/no exit rejects; confirmed exit survives subsequent output failure with incomplete output, including a native end event followed by decoder-flush callback failure and native wait rejection. Drain, iterator break, cached result, repeated wait and concurrent waiters match the completeness rules.
+- Wait abort affects only its waiter; output abort/iterator return/detach/client close release local stream and report incomplete output. No hidden destroy, signal, PID reattachment, file spool or supervisor is invoked.
+- Native E2B connection uses retries 0, stdin false, disabled RPC timeout and separate setup cancellation; paused sandbox is rejected without automatic resume. Exercise the actual pinned client against fake HTTP with a pause between running preflight and attachment: no POST connect, resume, timeout extension or command replay. Auto-resume true/missing and missing detail token fail before guest I/O. Snapshot/suspend/destroy interruption cannot attach to a different execution.
+- Compile the concise workflow against exported types and execute it using packed public SDK/adapter consumers on Node and Bun. Verify service regressions without implementing process parity.
 
-1. Verify pinned native process/PTY/access APIs and retry behavior for the adapters in scope. Publish a per-operation matrix; this draft makes no provider support claims.
-2. Set output buffer/capture limits, cursor retention and slow-consumer behavior; define the direct SDK subscription and authorization/reconnect rules. Service wire transport is out of scope.
-3. Finalize process exit/input/signal receipts and generation-bound references. Decide which mutations can be observed after a lost acknowledgment and which must remain unknown.
-4. Specify endpoint-grant expiry/revocation and tunnel closure guarantees, including what survives client restart.
+Run focused SDK/adapter/E2B tests first, then sequential shared builds and required CI gates (`check:built`, lint, format, offline/service tests, packed consumers, observability and docs/examples). This design-only PR changes no public exports; compiled proposed process examples and live acceptance are requirements for the coding PR, not evidence collected here.
 
-Acceptance fixtures must cover one start after lost response, binary output and stream gaps, bounded slow consumers, stdin uncertainty without replay, EOF, unsupported/acknowledged signals, PTY resize/closure, expired cursors, PID/generation reuse, unauthorized attachments, scoped grants, failed revocation, and snapshot/suspend interruption. Test direct SDK behavior and native-boundary attempt counts; maintain existing service regression checks without adding new feature parity. Provider specs, UI work, broad filesystem expansion and observability are outside this draft.
+PTYs, terminals, stdin, arbitrary signals, process inventory/reopening, retained replay/cursors, endpoints/tunnels, broad filesystem APIs, sandbox reopen, cleanup configuration, generic workflows and service/UI parity are explicit scope cuts. Global ROADMAP/index reconciliation belongs to the separate docs task; this PR edits only this execution spec.

@@ -11,6 +11,7 @@ export {
 export type {
   AdapterRecoveryReference,
   AdapterConnectOptions,
+  DirectConnectOptions,
   AdapterCapabilities,
   RecoveredOperation,
   AdvancedOperationResult,
@@ -39,6 +40,8 @@ export type {
   CreateInput,
   ExecInput,
   ExecOutput,
+  DirectSandbarClient,
+  DirectSandboxHandle,
   SandboxHandle,
   OperationHandle,
   RecoveryReference,

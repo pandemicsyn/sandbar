@@ -7,7 +7,7 @@ import {
   type AdapterSession,
   type Sandbox,
 } from "sandbar-adapter";
-import { Sandbar, Image, SandbarError } from "./index";
+import { Sandbar, Image, SandbarError, type DirectConnectOptions } from "./index";
 
 function fixture(reopening: boolean) {
   const scope = { authority: { kind: "fixture", id: "account" }, partition: {} };
@@ -140,7 +140,8 @@ function fixture(reopening: boolean) {
   });
 
   return {
-    connect: () => Sandbar.connect({ adapter, config: {}, credentials: {} }),
+    connect: (options: DirectConnectOptions = {}) =>
+      Sandbar.connect({ adapter, config: {}, credentials: {}, ...options }),
     reference,
     dispatched,
     hold() {
@@ -192,7 +193,7 @@ test("reopen rejects mismatched scope before native IO and normalizes caller can
 
 test("reopened handles retain verified reference in every sandbox dispatch and execution observation", async () => {
   const f = fixture(true);
-  const client = await f.connect();
+  const client = await f.connect({ cleanup: { storage: "allow-unconfirmed" } });
 
   try {
     const box = await client.sandboxes.get(f.reference);
@@ -204,6 +205,7 @@ test("reopened handles retain verified reference in every sandbox dispatch and e
     await box.readFile("/fixture");
     await box.writeFile("/fixture", new Uint8Array([1]));
     await box.destroy();
+    await box.destroy({ storage: "require-durable" });
     expect(new Set(f.dispatched.map((call) => call.operation))).toEqual(
       new Set([
         "inspect",
@@ -219,7 +221,13 @@ test("reopened handles retain verified reference in every sandbox dispatch and e
     );
 
     for (const call of f.dispatched)
-      expect(call.sandbox).toEqual({ id: "native", reference: f.reference });
+      expect(call.sandbox).toMatchObject({ id: "native", reference: f.reference });
+    expect(
+      f.dispatched.filter((call) => call.operation === "destroy").map((call) => call.sandbox),
+    ).toEqual([
+      { id: "native", reference: f.reference, storage: "allow-unconfirmed" },
+      { id: "native", reference: f.reference, storage: "require-durable" },
+    ]);
   } finally {
     await client.close();
   }

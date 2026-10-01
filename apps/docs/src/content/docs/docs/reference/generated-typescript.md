@@ -34,6 +34,9 @@ Import from `sandbar-sdk`.
 | `diagnosticContext`         | re-export |
 | `DiagnosticContext`         | type      |
 | `DirectCapabilities`        | type      |
+| `DirectConnectOptions`      | type      |
+| `DirectSandbarClient`       | type      |
+| `DirectSandboxHandle`       | type      |
 | `ExecInput`                 | type      |
 | `ExecOutput`                | type      |
 | `Fact`                      | type      |

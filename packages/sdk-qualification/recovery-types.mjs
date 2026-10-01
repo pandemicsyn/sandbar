@@ -14,7 +14,16 @@ export async function checkRecoveryTypes(directory, root, run) {
   await writeFile(
     join(directory, "recovery-types.ts"),
     `
-import { type AdapterDirectClient, type AdapterRecoveryReference, type SnapshotResult, type AdapterVolume, type ExecOutput } from "sandbar-sdk";
+import { Sandbar, type DirectConnectOptions, type AdapterDirectClient, type AdapterRecoveryReference, type SnapshotResult, type AdapterVolume, type ExecOutput } from "sandbar-sdk";
+import { daytona } from "sandbar-sdk/daytona";
+function cleanupConnection() {
+  const options: DirectConnectOptions = { cleanup: { storage: "allow-unconfirmed" } };
+  const connection = Sandbar.connect(daytona({ apiKey: "example", target: "us" }), options);
+  // @ts-expect-error Cleanup accepts only the supported storage policies.
+  Sandbar.connect(daytona({ apiKey: "example", target: "us" }), { cleanup: { storage: "flush" } });
+  return connection;
+}
+void cleanupConnection;
 async function narrow(client: AdapterDirectClient, reference: AdapterRecoveryReference) {
   const operation = await client.recover(reference);
   if (operation.kind === "snapshot_capture") {

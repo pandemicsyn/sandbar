@@ -56,10 +56,15 @@ Requirement reads finish before the durable submission marker; the approved prep
 
 Tracing uses your application’s OpenTelemetry provider. Set `tracing: false` to disable Sandbar spans and propagation, or inject `tracing: { tracerProvider }`. Sandbar never configures exporters or shuts down your provider. See the [tracing and safe diagnostics guide](https://sandbarsdk.dev/docs/observability/) for pinned Node/Bun recipes and local-only vendor evidence; metrics and structured logs are a later release.
 
-
 Persist resource and operation references as versioned JSON in your own application storage. Their historical observations do not depend on the original API key or a mandatory signature. Reopen with current credentials for the same verified native scope; E2B credential rotation requires verified `teamId` configuration. `onReference` is awaited before stage dispatches and when evidence changes. Observation stays read-only; explicit `operation.continue()` may advance a proven never-submitted next stage. Serialize continuation across processes through your own lease or compare-and-swap. E2B cleanup deletes the containing template, not an individual build, and rejects known shared expansion; the provider offers no transactional read/delete generation condition.
 
 Empty restore resource and mount maps are equivalent to omitting those overrides. Snapshot and volume deletion persist a rejected stage when cancellation is known to precede native dispatch. The SDK allows up to one second after caller cancellation to join deletion finalization and surface a proven rejection with `effect: "none"`; client close remains immediate, and a stalled finalization still reports uncertainty. Other mutation waits retain their existing cancellation behavior.
+
+For explicit direct connection annotations, import `DirectSandbarClient` and `DirectSandboxHandle` from `sandbar-sdk`. They include `client.snapshots`, `client.volumes` and `sandbox.snapshot()`. The existing `SandbarClient` and `SandboxHandle` types remain the compatible common subset shared with the service; annotating a direct connection with those types hides its resource APIs.
+
+Malformed snapshot requests, restore requests, inventory inputs, volume creation inputs and mount descriptors reject with `SandbarError` (`INVALID_ARGUMENT`, effect `none`) before provider mutation. Restore preflight uses `UnsupportedFeatureError.unmetRequirements` to report network policy, sizing, independent lifecycle and mount limitations together. Native response validation remains separate from caller input errors.
+
+`RestoreRequest.mounts` remains in the schema for compatibility. Nonempty share, replace and omit choices are currently unsupported, as are snapshots with mounts or unknown mount provenance. Omit `mounts` (or pass an empty object) and restore only snapshots with confirmed `mountHandling: "none"` and no recorded mounts. Independent lifecycle is required by default; `requireIndependentLifecycle: false` opts out of that requirement only.
 
 
 ## Reopen Sandbar-created compute

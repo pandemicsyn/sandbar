@@ -26,7 +26,7 @@ import {
   resolveSnapshot,
   checkCreate,
   type Support,
-  type SnapshotRequest,
+  SnapshotRequest,
   type SnapshotPlan,
   type CreatePlan,
   type DirectCapabilities,
@@ -83,6 +83,7 @@ import {
   validateCreate,
   validateExec,
   validateFilePath,
+  validateResourceInput,
   waitDelay,
   type CreateInput,
   type ExecInput,
@@ -647,6 +648,7 @@ export class AdapterSandbox {
   ): Promise<AdapterOperation<SnapshotResult>> {
     this.client.ensureOpen();
     assertSignal(options.signal);
+    request = validateResourceInput(SnapshotRequest, request, "Invalid snapshot request");
 
     const signal = AbortSignal.any([
       this.client.signal,
@@ -698,6 +700,7 @@ export class AdapterSandbox {
     signal: AbortSignal,
   ): Promise<Support<SnapshotPlan>> {
     assertSignal(signal);
+    request = validateResourceInput(SnapshotRequest, request, "Invalid snapshot request");
 
     const caps = await internalMethod(this.client.capabilities)(
       { sandbox: sandboxInput(this.id, this.reference) },
@@ -927,7 +930,10 @@ export class AdapterSandbox {
   ): Promise<AdapterOperation<import("sandbar-adapter").DestroyValue>> {
     const op = await this.client.submit<import("sandbar-adapter").DestroyValue>(
       "destroy",
-      { ...sandboxInput(this.id, this.reference), storage: options.storage },
+      {
+        ...sandboxInput(this.id, this.reference),
+        storage: options.storage === undefined ? this.client.cleanupStorage : options.storage,
+      },
       (result, ref) => {
         if (
           result.kind !== "completed" ||
@@ -1153,6 +1159,7 @@ export class AdapterDirectClient {
     private readonly connection: AdapterConnection<RuntimeSession>,
     private readonly onReference?: (reference: AdapterRecoveryReference) => void | Promise<void>,
     observability: ObservabilityOptions = {},
+    readonly cleanupStorage: "require-durable" | "allow-unconfirmed" = "require-durable",
   ) {
     this.telemetry = new Telemetry(observability, "direct", provider);
     const managers = resourceManagers(this);
@@ -1967,11 +1974,16 @@ export class AdapterDirectClient {
   }
 }
 
+/** Default storage requirement for new compute cleanup submissions. */
+export type DirectConnectOptions = ObservabilityOptions & {
+  cleanup?: { storage?: "require-durable" | "allow-unconfirmed" };
+};
+
 export type AdapterConnectOptions<
   C extends z.ZodType,
   K extends z.ZodType,
   S extends RuntimeSession,
-> = ObservabilityOptions & {
+> = DirectConnectOptions & {
   adapter: Pick<AdapterDefinition<C, K, S>, "name" | "config" | "credentials"> & {
     connect: (input: never) => Promise<S>;
     policy?: { schema: z.ZodType; default: Json };
@@ -1985,7 +1997,7 @@ export type AdapterConnectOptions<
 
 export function connectDirect(
   adapter: BoundAdapter,
-  options?: ObservabilityOptions,
+  options?: DirectConnectOptions,
 ): Promise<AdapterDirectClient>;
 export function connectDirect<C extends z.ZodType, K extends z.ZodType, S extends RuntimeSession>(
   options: AdapterConnectOptions<C, K, S>,
@@ -1997,8 +2009,17 @@ export async function connectDirect<
   S extends RuntimeSession,
 >(
   options: AdapterConnectOptions<C, K, S> | BoundAdapter,
-  observability: ObservabilityOptions = {},
+  observability: DirectConnectOptions = {},
 ): Promise<AdapterDirectClient> {
+  const cleanup = z
+    .strictObject({ storage: z.enum(["require-durable", "allow-unconfirmed"]).optional() })
+    .optional()
+    .safeParse(("bound" in options ? observability : options).cleanup);
+
+  if (!cleanup.success)
+    throw new SandbarError("INVALID_ARGUMENT", "Invalid cleanup configuration", "none");
+  const storage = cleanup.data?.storage ?? "require-durable";
+
   const telemetry = new Telemetry(
     "bound" in options ? observability : options,
     "direct",
@@ -2009,7 +2030,7 @@ export async function connectDirect<
     if ("bound" in options) {
       const connection = await connectAdapter(options, { config: {}, credentials: {} });
 
-      return new AdapterDirectClient(options.name, connection, undefined, observability);
+      return new AdapterDirectClient(options.name, connection, undefined, observability, storage);
     }
 
     const connection = await connectAdapter(options.adapter, {
@@ -2018,6 +2039,12 @@ export async function connectDirect<
       onDiagnostic: options.onDiagnostic,
     });
 
-    return new AdapterDirectClient(options.adapter.name, connection, options.onReference, options);
+    return new AdapterDirectClient(
+      options.adapter.name,
+      connection,
+      options.onReference,
+      options,
+      storage,
+    );
   });
 }
