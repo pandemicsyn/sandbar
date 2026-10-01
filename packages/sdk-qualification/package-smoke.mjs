@@ -12,13 +12,11 @@ const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const packages = [
   ["sandbar-adapter", "packages/adapter"],
   ["@sandbar/provider-spi", "packages/provider-spi"],
-  ["@sandbar/core", "packages/core"],
   ["@sandbar/provider-fake", "packages/providers/fake"],
   ["@sandbar/provider-daytona", "packages/providers/daytona"],
   ["sandbar-modal", "packages/providers/modal"],
   ["@sandbar/provider-e2b", "packages/providers/e2b"],
   ["sandbar-sdk", "packages/sdk"],
-  ["sandbar-service", "packages/service"],
 ];
 
 const forbidden = new Set([
@@ -125,19 +123,6 @@ async function flow(provider: TracerProvider) {
   const safe = diagnosticContext(new Error("private"));
   await client.close();
   return safe.recoveryAvailable;
-}
-void flow;
-`;
-  else if (mode === "service")
-    source = `
-import { createService, type ServiceHandle } from "sandbar-service";
-import { asyncAcme } from "@acme/sandbar-adapter";
-async function flow(): Promise<ServiceHandle> {
-  return createService({
-    storage: { url: "/tmp/control.sqlite", keyFile: "/tmp/key" },
-    auth: { setupTokenFile: "/tmp/setup" },
-    adapters: [asyncAcme],
-  });
 }
 void flow;
 `;
@@ -258,25 +243,7 @@ async function flow() {
 }
 void flow;
 `;
-  else
-    source = `
-import { Sandbar, Image } from "sandbar-service/client";
-async function flow() {
-  const client = Sandbar.connect({ url: "https://sandbar.example", token: "example-token-123456", projectId: "project_1" });
-  const image = await client.images.build({ source: Image.oci("fixture/image:1"), connectionId: "conn_1" });
-  const builtBox = await client.sandboxes.create({ environment: Image.prepared(image.prepared) });
-  await builtBox.destroy();
-  const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
-  const argv = ["fixture"] as const;
-  const result = await box.exec(argv);
-  const operation = await box.submitExec(argv);
-  await operation.wait();
-  const text: string = result.stdoutText();
-  await client.close();
-  return text;
-}
-void flow;
-`;
+  else throw new Error(`Unknown typecheck mode: ${mode}`);
 
   await writeFile(join(directory, "types.ts"), source);
   await writeFile(
@@ -314,19 +281,6 @@ try {
   if (loaded.length !== bytes.length || loaded.some((value, index) => value !== bytes[index])) throw new Error("Binary file changed");
   await box.destroy();
   process.stdout.write("packed direct flow passed\\n");
-} finally { await client.close(); }
-`;
-
-const remoteSource = `
-import { OutcomeUnknownError as RootUnknown } from "sandbar-sdk";
-import { Sandbar, Image, OutcomeUnknownError as RemoteUnknown } from "sandbar-service/client";
-if (RootUnknown !== RemoteUnknown) throw new Error("Service client and SDK disagree on error identity");
-const client = Sandbar.connect({ url: process.env.REMOTE_URL, token: process.env.REMOTE_TOKEN, projectId: process.env.REMOTE_PROJECT });
-try {
-  const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
-  if ((await box.inspect()).state !== "running") throw Error("Packed remote inspection failed");
-  await box.destroy();
-  process.stdout.write("packed service client HTTP flow passed\\n");
 } finally { await client.close(); }
 `;
 
@@ -590,43 +544,7 @@ export const acme = defineAdapter({
     };
   },
 });
-// Keep recovery pending until the consumer has closed and reopened the service.
-// The long poll hint prevents automatic observation from racing the restart barrier.
-export const recovery = { ready: false };
-export const asyncAcme = defineAdapter({
-  name: "example.async-acme",
-  config: z.strictObject({ region: z.string().min(1) }),
-  credentials: z.strictObject({ token: z.string().min(1) }),
-  async connect({ config, credentials }) {
-    if (credentials.token !== "fixture") throw Error("Wrong fixture token");
-    return {
-      scope: { authority: { kind: "account", id: "fixture-account" }, partition: { region: config.region } },
-      supports: { images: ["prepared"], network: ["blocked"] },
-      imageBuild: {
-        recovery: { version: 1, token: z.strictObject({ buildId: z.string() }) },
-        async submit(_input, ctx) { metrics.builds++; return ctx.pending({ buildId: "build-1" }, { pollAfterMs: 60000 }); },
-        async observe(attempt, ctx) {
-          const token = z.strictObject({ buildId: z.string() }).parse(attempt.token);
-          if (token.buildId !== "build-1") throw Error("Wrong image recovery token");
-          if (!recovery.ready) return ctx.pending(token, { pollAfterMs: 60000 });
-          return { preparedId: "image-1", retainedResources: [{ kind: "template", id: "image-1", ownership: "unknown", cleanup: "manual" }] };
-        },
-      },
-      create: {
-        recovery: { version: 1, token: z.strictObject({ jobId: z.string() }) },
-        async submit(_input, ctx) { metrics.creates++; return ctx.pending({ jobId: "job-1" }, { pollAfterMs: 60000 }); },
-        async observe(attempt, ctx) {
-          const token = z.strictObject({ jobId: z.string() }).parse(attempt.token);
-          if (token.jobId !== "job-1") throw Error("Wrong recovery token");
-          if (!recovery.ready) return ctx.pending(token, { pollAfterMs: 60000 });
-          metrics.observes++;
-          return { id: "box-1", state: "running" };
-        },
-      },
-      async destroy() { metrics.destroys++; return { computeStopped: true, retainedResources: [] }; },
-    };
-  },
-});
+
 `;
 
 const customSource = `
@@ -654,101 +572,6 @@ try {
 } finally { await client.close(); }
 if (metrics.creates !== 1 || metrics.destroys !== 1 || metrics.closes !== 1) throw Error("Mutation or release count mismatch");
 process.stdout.write("packed external adapter flow passed\\n");
-`;
-
-const serviceSource = `
-import { createService } from "sandbar-service";
-import { Sandbar, Image } from "sandbar-service/client";
-import { asyncAcme, metrics, recovery } from "@acme/sandbar-adapter";
-import { writeFile, chmod, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-const directory = await mkdtemp(join(tmpdir(), "sandbar-packed-service-"));
-const keyFile = join(directory, "key"), setupTokenFile = join(directory, "setup"), url = join(directory, "control.sqlite");
-await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32))); await chmod(keyFile, 0o600);
-await writeFile(setupTokenFile, "long-packed-service-setup-token"); await chmod(setupTokenFile, 0o600);
-const options = { storage: { url, keyFile }, auth: { setupTokenFile }, adapters: [asyncAcme] };
-let service = await createService(options);
-let origin = "";
-let bearer = "";
-const start = async () => { const binding = await service.listen({ port: 0 }); origin = \`http://127.0.0.1:\${binding.port}\`; };
-const request = async (path, method = "GET", body, key) => {
-  const headers = {};
-  if (bearer) headers.Authorization = \`Bearer \${bearer}\`;
-  if (body) headers["Content-Type"] = "application/json";
-  if (key) headers["Idempotency-Key"] = key;
-  const response = await fetch(origin + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
-  return { status: response.status, body: await response.json() };
-};
-const until = async (stage, operationId, expectedPhase) => {
-  const deadline = Date.now() + 10000;
-  let last;
-  while (Date.now() < deadline) {
-    const response = await request(\`/v1/projects/\${projectId}/operations/\${operationId}\`);
-    const op = response.body;
-    last = { httpStatus: response.status, status: op.status, phase: op.phase, creates: metrics.creates, builds: metrics.builds, observes: metrics.observes };
-    if (response.status !== 200 || ["failed", "cancelled"].includes(op.status))
-      throw Error(stage + ": unexpected operation state " + JSON.stringify(last));
-    if (op.phase === expectedPhase) return;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  throw Error(stage + ": timed out " + JSON.stringify(last));
-};
-let projectId;
-try {
-  await start();
-  const page = await fetch(origin + "/", { headers: { Accept: "text/html" } });
-  const html = await page.text();
-  const assetPath = html.match(/<script[^>]+src="([^"]+)"/)?.[1];
-  if (page.status !== 200 || !assetPath?.startsWith("/assets/"))
-    throw Error("Packed service did not serve the management UI HTML");
-  const asset = await fetch(origin + assetPath);
-  if (asset.status !== 200 || !(await asset.text()))
-    throw Error("Packed service did not serve the management UI asset");
-  const setup = await request("/v1/setup", "POST", { setupToken: "long-packed-service-setup-token" });
-  bearer = setup.body.token;
-  if (setup.status !== 200 && setup.status !== 201) throw Error("Setup failed: " + JSON.stringify(setup));
-  const project = await request("/v1/projects", "POST", { name: "Packed" });
-  projectId = project.body.id;
-  const conn = await request(\`/v1/projects/\${projectId}/provider-connections\`, "POST", {
-    provider: "example.async-acme", name: "Acme", configuration: { region: "us" }, credentials: { token: "fixture" },
-  });
-  if (conn.status !== 201) throw Error("Connection failed: " + JSON.stringify(conn));
-  const verified = await request(\`/v1/projects/\${projectId}/provider-connections/\${conn.body.id}/verify\`, "POST");
-  if (verified.status !== 200) throw Error("Verification failed");
-  const client = Sandbar.connect({ url: origin, token: bearer, projectId, fetch: Object.assign(async (url, init) => {
-    const target = new URL(String(url));
-    return fetch(origin + target.pathname + target.search, init);
-  }, { preconnect() {} }) });
-  if ((await client.capabilities()).snapshots.capture.status !== "unsupported") throw Error("Service advertised capture");
-  const required = { environment: Image.prepared("image-1"), requirements: { snapshot: { requirements: { preserve: "filesystem" } } } };
-  if ((await client.sandboxes.checkCreate(required)).status !== "unsupported") throw Error("Service check accepted capture");
-  try { await client.sandboxes.create(required); throw Error("Service allocated required capture"); } catch (error) { if (error.code !== "UNSUPPORTED" || error.effect !== "none") throw error; }
-  const build = await client.images.submitBuild({ source: Image.oci("fixture/image:1"), connectionId: conn.body.id });
-  await until("image build persisted pending token before restart", build.reference.operationId, "awaiting_observation");
-  const admitted = await request(\`/v1/projects/\${projectId}/sandboxes\`, "POST", {
-    environment: { kind: "prepared", imageId: "image-1" }, network: { policy: "blocked" }, connectionId: conn.body.id,
-  }, Bun.randomUUIDv7());
-  if (admitted.status !== 202) throw Error("Admission failed: " + JSON.stringify(admitted));
-  const operationId = admitted.body.operation.id;
-  await until("create persisted pending token before restart", operationId, "awaiting_observation");
-  if (metrics.builds !== 1 || metrics.creates !== 1) throw Error("Submission count before restart mismatch");
-  await service.close();
-  recovery.ready = true;
-  service = await createService(options);
-  await start();
-  for (const id of [build.reference.operationId, operationId]) {
-    const reconciled = await request(\`/v1/projects/\${projectId}/operations/\${id}/reconcile\`, "POST");
-    if (reconciled.status !== 200 && reconciled.status !== 202) throw Error("Reconcile failed: HTTP " + reconciled.status);
-  }
-  await until("create recovered after restart", operationId, "completed");
-  await until("image build recovered after restart", build.reference.operationId, "completed");
-  if (metrics.creates !== 1 || metrics.observes < 1) throw Error("Packed service replayed an effect or skipped observation");
-  const image = await (await client.recover(JSON.parse(JSON.stringify(build.reference)))).wait();
-  if (metrics.builds !== 1 || image.prepared.value !== "image-1" || image.prepared.connectionId !== conn.body.id || image.prepared.provider !== "example.async-acme" || image.retainedResources[0]?.ownership !== "unknown") throw Error("Packed service image-build recovery or scope mismatch");
-  await client.close();
-  process.stdout.write("packed service HTTP restart flow passed\\n");
-} finally { await service.close(); await rm(directory, { recursive: true, force: true }); }
 `;
 
 const temporary = await mkdtemp(join(tmpdir(), "sandbar-packed-sdk-"));
@@ -815,7 +638,6 @@ try {
   const externalArchive = await pack(externalDir);
 
   const sdkDeps = { "sandbar-sdk": archiveOverrides["sandbar-sdk"] };
-  const remoteDeps = { ...sdkDeps, "sandbar-service": archiveOverrides["sandbar-service"] };
 
   const customDeps = {
     ...sdkDeps,
@@ -839,14 +661,12 @@ try {
 
   const e2bDeps = { ...sdkDeps };
 
-  const remote = join(temporary, "remote-consumer");
   const custom = join(temporary, "custom-consumer");
   const direct = join(temporary, "direct-consumer");
   const daytona = join(temporary, "daytona-consumer");
   const modal = join(temporary, "modal-consumer");
   const e2b = join(temporary, "e2b-consumer");
   const builtins = join(temporary, "builtins-consumer");
-  const service = join(temporary, "service-consumer");
   const observability = join(temporary, "observability-consumer");
   await consumer(
     observability,
@@ -864,36 +684,19 @@ try {
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], observability)}`);
-  await consumer(remote, remoteDeps, archiveOverrides, remoteSource);
   await consumer(custom, customDeps, archiveOverrides, customSource);
   await consumer(direct, directDeps, archiveOverrides, directSource);
   await consumer(daytona, daytonaDeps, archiveOverrides, daytonaSource);
   await consumer(modal, modalDeps, archiveOverrides, modalSource);
   await consumer(e2b, e2bDeps, archiveOverrides, e2bSource);
   await consumer(builtins, sdkDeps, archiveOverrides, builtinsSource);
-  await consumer(
-    service,
-    { ...customDeps, "sandbar-service": archiveOverrides["sandbar-service"] },
-    archiveOverrides,
-    serviceSource,
-  );
-
-  if (
-    (await readdir(join(remote, "node_modules", "@sandbar")).catch(() => [])).includes(
-      "provider-fake",
-    )
-  )
-    throw new Error("Remote-only consumer installed the fake provider");
   await checkTypes(custom, "custom");
-  await checkTypes(service, "service");
   await checkTypes(direct, "direct");
   await checkRecoveryTypes(direct, root, run);
   await checkTypes(daytona, "daytona");
   await checkTypes(modal, "modal");
   await checkTypes(e2b, "e2b");
   await checkTypes(builtins, "builtins");
-  await checkTypes(remote, "remote");
-  const serviceGraph = inspectGraph(remote, ["sandbar-service"]);
   inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
   inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);
@@ -910,57 +713,10 @@ try {
   if (publicSdkGraph.some((name) => ["modal", "sandbar-modal", "@grpc/grpc-js"].includes(name)))
     throw new Error(`SDK package retained Modal dependencies: ${publicSdkGraph}`);
 
-  if (serviceGraph.some((name) => name.startsWith("@sandbar/")))
-    throw new Error(`Service package leaked a private workspace dependency: ${serviceGraph}`);
-
-  if (serviceGraph.some((name) => ["modal", "sandbar-modal", "@grpc/grpc-js"].includes(name)))
-    throw new Error(`Service package retained Modal dependencies: ${serviceGraph}`);
-  console.log(`bun: ${run("bun", ["consumer.mjs"], service)}`);
   console.log(
-    `Runtimes: Node ${run("node", ["--version"], remote)}, Bun ${run("bun", ["--version"], remote)}`,
+    `Runtimes: Node ${run("node", ["--version"], direct)}, Bun ${run("bun", ["--version"], direct)}`,
   );
-
   await fixture.startFake();
-  await fixture.startService();
-
-  const post = async (path, token, body) => {
-    const headers = new Headers({ "Content-Type": "application/json" });
-
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-
-    const response = await fetch(`${fixture.serviceUrl}${path}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) throw new Error(`Packed remote setup ${path}: HTTP ${response.status}`);
-
-    return response.json();
-  };
-
-  const setup = await post("/v1/setup", undefined, { setupToken: fixture.setupToken });
-  const project = await post("/v1/projects", setup.token, { name: "Packed remote" });
-
-  const connection = await post(`/v1/projects/${project.id}/provider-connections`, setup.token, {
-    provider: "fake",
-    name: "Fake",
-  });
-
-  await post(
-    `/v1/projects/${project.id}/provider-connections/${connection.id}/verify`,
-    setup.token,
-    {},
-  );
-
-  for (const runtime of ["node", "bun"])
-    console.log(
-      `${runtime}: ${run(runtime, ["consumer.mjs"], remote, {
-        REMOTE_URL: fixture.serviceUrl,
-        REMOTE_TOKEN: setup.token,
-        REMOTE_PROJECT: project.id,
-      })}`,
-    );
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], custom)}`);

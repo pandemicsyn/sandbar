@@ -37,23 +37,6 @@ export const ResourceReference = z.strictObject({
     .optional(),
   /** Legacy receipt data; new historical observations use history. */
   receipt: z.string().min(1).max(4096).optional(),
-  service: z
-    .strictObject({
-      url: z.url().refine((value) => {
-        const url = new URL(value);
-
-        return (
-          !url.username &&
-          !url.password &&
-          !url.search &&
-          !url.hash &&
-          (url.protocol === "https:" || url.protocol === "http:")
-        );
-      }, "Service URL must be an HTTP(S) endpoint without credentials, query, or fragment"),
-      projectId: z.string().min(1).max(128),
-      connectionId: z.string().min(1).max(128),
-    })
-    .optional(),
 });
 
 export type ResourceReference<K extends ResourceKind = ResourceKind> = Omit<
@@ -77,7 +60,6 @@ export function assertResourceScope(
   binding: {
     provider: string;
     scope: z.infer<typeof ResourceScope>;
-    service?: ResourceReference["service"];
   },
 ): void {
   const ref = validateResourceReference(reference);
@@ -90,20 +72,7 @@ export function assertResourceScope(
       Object.entries(value.partition).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
     ]);
 
-  if (
-    ref.provider !== binding.provider ||
-    canonical(ref.scope) !== canonical(scope) ||
-    JSON.stringify(
-      ref.service && [ref.service.url, ref.service.projectId, ref.service.connectionId],
-    ) !==
-      JSON.stringify(
-        binding.service && [
-          binding.service.url,
-          binding.service.projectId,
-          binding.service.connectionId,
-        ],
-      )
-  )
+  if (ref.provider !== binding.provider || canonical(ref.scope) !== canonical(scope))
     throw new AdapterError("CONFLICT", "Resource belongs to a different verified binding");
 }
 

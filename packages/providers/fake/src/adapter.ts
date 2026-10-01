@@ -70,7 +70,7 @@ function bytes(base64?: string) {
   return Uint8Array.from(Buffer.from(base64 ?? "", "base64"));
 }
 
-/** A deterministic loopback adapter for SDK and service qualification. */
+/** A deterministic loopback adapter for SDK qualification. */
 export function createFakeAdapter(options: { url: string; token: string; fetch?: typeof fetch }) {
   return defineAdapter({
     name: "fake",

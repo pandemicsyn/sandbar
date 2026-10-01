@@ -11,8 +11,6 @@
     "specs/**",
     "plans/**",
     "README.md",
-    "packages/contracts/openapi.json",
-    "apps/docs/internal/reference/http.md",
     ".agent/**",
     ".agents/**",
     ".claude/**",

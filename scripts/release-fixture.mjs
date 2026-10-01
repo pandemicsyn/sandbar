@@ -60,10 +60,6 @@ try {
     copyTree(join(root, name), join(temporary, name));
   }
 
-  // Packed consumer smoke starts the server, and service builds bundle the web UI.
-  copyTree(join(root, "apps/server"), join(temporary, "apps/server"));
-  copyTree(join(root, "apps/web"), join(temporary, "apps/web"));
-
   for (const app of readdirSync(join(root, "apps"))) {
     const manifest = join(root, "apps", app, "package.json");
 
@@ -72,6 +68,9 @@ try {
       cpSync(manifest, join(temporary, "apps", app, "package.json"));
     }
   }
+
+  // Packed recovery qualification compiles the public documentation example.
+  copyTree(join(root, "apps/docs/examples"), join(temporary, "apps/docs/examples"));
 
   for (const file of readdirSync(join(temporary, ".changeset"))) {
     if (file.endsWith(".md") && file !== "README.md") rmSync(join(temporary, ".changeset", file));

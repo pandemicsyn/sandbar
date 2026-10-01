@@ -341,13 +341,13 @@ test("sandbox references reopen fresh scoped connections without creation and di
       { ...saved, version: 2 },
       { ...saved, kind: "snapshot" },
       { ...saved, credentials: "secret" },
+      { ...saved, service: { url: "https://service.invalid", projectId: "p", connectionId: "c" } },
     ])
       await expect(fresh.sandboxes.get(forged)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 
     for (const forged of [
       { ...saved, provider: "daytona" },
       { ...saved, scope: { ...saved.scope, authority: { kind: "team", id: "foreign" } } },
-      { ...saved, service: { url: "https://service.invalid", projectId: "p", connectionId: "c" } },
     ])
       await expect(fresh.sandboxes.get(forged)).rejects.toMatchObject({ code: "CONFLICT" });
     f.records.delete(box.id);

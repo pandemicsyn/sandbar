@@ -1,14 +1,13 @@
 # Working in Sandbar
 
-Sandbar is a TypeScript SDK for working with sandbox providers, with an optional service and management UI.
+Sandbar is a TypeScript SDK for working with sandbox providers.
 
 ## Find your way
 
 - `packages/sdk` — public SDK and built-in provider entrypoints.
 - `packages/adapter` — public adapter authoring API and conformance helpers.
 - `packages/providers/*` — provider implementations and native-boundary fixtures.
-- `packages/service`, `packages/service-runtime`, `packages/store` — optional service and persistence.
-- `apps/server`, `apps/web`, `apps/docs` — HTTP server, management UI and public documentation.
+- `apps/docs` — public documentation.
 - [specs/README.md](specs/README.md) — contracts and proposals; [package conventions](specs/package-conventions.md) — public names and boundaries. Archives are historical context.
 - [.agents/skills](.agents/skills) — task guidance, including [provider research briefs](.agents/skills/provider-research/SKILL.md) and [adding built-in or external providers](.agents/skills/add-provider/SKILL.md).
 
@@ -16,7 +15,7 @@ Sandbar is a TypeScript SDK for working with sandbox providers, with an optional
 
 Read the relevant package, nearby tests and docs before editing. Use tested examples for available behavior; proposals do not authorize new features.
 
-Keep changes focused. Preserve unrelated edits and coordinate shared files. Keep the SDK independent of the service; follow the linked contracts rather than duplicating architecture rules here.
+Keep changes focused. Preserve unrelated edits and coordinate shared files. Follow the linked contracts rather than duplicating architecture rules here.
 
 ## Validate and hand off
 

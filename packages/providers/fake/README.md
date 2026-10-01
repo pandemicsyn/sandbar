@@ -2,7 +2,7 @@
 
 This provider is a deterministic local HTTP simulation for Sandbar control-plane tests. It is **not a sandbox or isolation boundary**. It never runs host commands, builds images, contacts paid providers, or enforces a guest network policy. Command results come only from explicit test fixtures; file writes use an in-memory virtual filesystem persisted in the fake provider's state file.
 
-The fake runs independently of the Sandbar service and control database. Its JSON state file holds native sandbox IDs, virtual files, effect/invocation ledger, and test scenarios. Keep that file when restarting Sandbar to test uncertain submission recovery. Start a separate fake process with a separate state path to test restarting the provider itself. Both the server bind and driver destination are restricted to loopback. The server requires a transport token and marks every response `X-Sandbar-Fake-Provider: simulation`.
+The fake runs in an independent process. Its JSON state file holds native sandbox IDs, virtual files, effect/invocation ledger, and test scenarios. Keep that file when restarting Sandbar to test uncertain submission recovery. Start a separate fake process with a separate state path to test restarting the provider itself. Both the server bind and driver destination are restricted to loopback. The server requires a transport token and marks every response `X-Sandbar-Fake-Provider: simulation`.
 
 ## Run
 
@@ -70,6 +70,6 @@ To test the unsafe retry case, set `POST /_test/profile` to:
 }
 ```
 
-A direct duplicate submission then creates another native resource or execution. When two effects share a submission ID, `observe` returns no unique result and reconciliation must inspect candidates. Sandbar must retain `unknown` and observe/inspect candidates without automatically resubmitting. Test state exposes the latest 512 received invocations and the bounded effect ledger so E2E assertions can count effects across a Sandbar restart. Ledger entries hold request fingerprints rather than raw command environment or file bytes; conflicting reuse of a submission ID is rejected, including reuse by another project in the same native scope. Test-seeded event arrays preserve duplicates and out-of-order sequence values for inbox/reconciliation tests; the fake does not automatically deliver webhooks.
+A direct duplicate submission then creates another native resource or execution. When two effects share a submission ID, `observe` returns no unique result and reconciliation must inspect candidates. Sandbar must retain `unknown` and observe/inspect candidates without automatically resubmitting. Test state exposes the latest 512 received invocations and the bounded effect ledger so E2E assertions can count effects across a Sandbar restart. Ledger entries hold request fingerprints rather than raw command environment or file bytes; conflicting reuse of a submission ID is rejected, including reuse by another caller in the same native scope. Test-seeded event arrays preserve duplicates and out-of-order sequence values for inbox/reconciliation tests; the fake does not automatically deliver webhooks.
 
-This simulation validates Sandbar's translation, admission, authorization, effect handling, and recovery wiring. It says nothing about Daytona, E2B, Modal, Tensorlake, native isolation, billing, or vendor conformance.
+This simulation validates Sandbar's translation, scope validation, effect handling, and recovery wiring. It says nothing about Daytona, E2B, Modal, Tensorlake, native isolation, billing, or vendor conformance.

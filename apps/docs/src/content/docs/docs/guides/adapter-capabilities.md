@@ -18,7 +18,7 @@ description: Declare only native guarantees that the adapter can actually enforc
 
 ## State portability checks
 
-Direct and service clients expose asynchronous `client.capabilities()` and `box.capabilities()` observations, plus read-only request evaluation:
+SDK clients expose asynchronous `client.capabilities()` and `box.capabilities()` observations, plus read-only request evaluation:
 
 ```ts
 const check = await client.sandboxes.checkCreate({
@@ -32,8 +32,8 @@ if (check.status === "supported") {
 
 `checkSnapshot()` resolves the configured native default. Optional `requirements` validate its preservation, interruption, source lifecycle and consistency without selecting another profile. The profile and artifact metadata report fresh or resumed execution and unknown consistency where evidence is unavailable. The four statuses distinguish implemented support, unsupported combinations, unavailable access/state, and unknown evidence. Unknown state or retention cannot satisfy hard requirements. Supported checks report mount handling, retention evidence, manual cleanup, and explicitly unknown restore restrictions. They never build images, allocate probe resources, stop compute, or dispatch capture.
 
-Requirements are rechecked during create preparation and before submission. Unsupported requests fail before allocation; unknown and unavailable requirements also block allocation. The service checks requirements before admission and the runner checks the persisted requirement again. Service connection checks use the first verified installed connection in creation order; a scoped prepared image selects its bound connection for create checks. No automatic provider switching is performed.
+Requirements are rechecked during create preparation and before submission. Unsupported requests fail before allocation; unknown and unavailable requirements also block allocation. No automatic provider switching is performed.
 
-Daytona and E2B direct connections implement distinct capture/restore and retained volume profiles; read [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) for their limits. Suspension and volume versions remain unsupported. The service capability contract reports state resource operations unsupported because it exposes no corresponding endpoints. The asynchronous direct capability getter is an intentional API change; callers must await it.
+Daytona and E2B direct connections implement distinct capture/restore and retained volume profiles; read [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) for their limits. Suspension and volume versions remain unsupported. The asynchronous direct capability getter is an intentional API change; callers must await it.
 
 Preparation validates requirements before the durable submission marker, then read-only eligibility is checked again before dispatch. Recovery only observes native evidence. For a source already observed as stopped, a profile ending stopped satisfies unchanged lifecycle state.

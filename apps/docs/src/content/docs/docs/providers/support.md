@@ -135,7 +135,7 @@ Native mounts select reusable names without immutable volume-ID binding; the ada
 
 ## Other integrations
 
-Modal is an external experimental adapter with offline native-boundary and packed consumer coverage, without live acceptance. Custom adapters supply a profile to the same ordinary Bun SDK suites; installed code does not register itself in a service. Fake is a deterministic fixture without isolation guarantees.
+Modal is an external experimental adapter with offline native-boundary and packed consumer coverage, without live acceptance. Custom adapters supply a profile to the same ordinary Bun SDK suites. Fake is a deterministic fixture without isolation guarantees.
 
 ## Runtimes
 

@@ -2,7 +2,7 @@
 
 Proposed implementation brief · September 30, 2026 · Not implemented
 
-Research baseline: freshly fetched `origin/main` at `d186cea` (PRs #32 and #33 merged). This replaces the broad interactive-execution draft with one delivery decision. Preserve [ordinary results and minimal identities](sdk-recovery-dx.md); its older PR-status sentence is historical. No new persistence callbacks, completion-facts envelopes, continuation framework or service parity is required.
+Research baseline: freshly fetched `origin/main` at `d186cea` (PRs #32 and #33 merged). This replaces the broad interactive-execution draft with one delivery decision. Preserve [ordinary results and minimal identities](sdk-recovery-dx.md); its older PR-status sentence is historical. No new persistence callbacks, completion-facts envelopes, continuation framework is required.
 
 Deliver one command start, timely separate stdout/stderr **text**, and confirmed exit through a local handle. Keep bounded `exec()` for binary capture and short commands. First provider: E2B. A text-only first slice is deliberate: neither pinned high-level SDK supplies binary-faithful streaming callbacks. Do not label UTF-8 re-encoded native text as original bytes.
 
@@ -30,7 +30,7 @@ Daytona integration is deferred rather than blocked on a new universal process a
 
 ## Proposed public contract
 
-Names below are proposed exports, not examples of currently shipping APIs. Add only to the direct SDK handle; keep existing service clients unchanged.
+Names below are proposed exports, not examples of currently shipping APIs. Add only to the direct SDK handle.
 
 ```ts
 // Reuse the existing command, cwd and env validation, not ExecInput wholesale.
@@ -175,8 +175,8 @@ Use deterministic native-boundary fixtures; paid live qualification remains sepa
 - Exit 0/nonzero are ordinary confirmed results. Lost transport/no exit rejects; confirmed exit survives subsequent output failure with incomplete output, including a native end event followed by decoder-flush callback failure and native wait rejection. Drain, iterator break, cached result, repeated wait and concurrent waiters match the completeness rules.
 - Wait abort affects only its waiter; output abort/iterator return/detach/client close release local stream and report incomplete output. No hidden destroy, signal, PID reattachment, file spool or supervisor is invoked.
 - Native E2B connection uses retries 0, stdin false, disabled RPC timeout and separate setup cancellation; paused sandbox is rejected without automatic resume. Exercise the actual pinned client against fake HTTP with a pause between running preflight and attachment: no POST connect, resume, timeout extension or command replay. Auto-resume true/missing and missing detail token fail before guest I/O. Snapshot/suspend/destroy interruption cannot attach to a different execution.
-- Compile the concise workflow against exported types and execute it using packed public SDK/adapter consumers on Node and Bun. Verify service regressions without implementing process parity.
+- Compile the concise workflow against exported types and execute it using packed public SDK/adapter consumers on Node and Bun.
 
-Run focused SDK/adapter/E2B tests first, then sequential shared builds and required CI gates (`check:built`, lint, format, offline/service tests, packed consumers, observability and docs/examples). This design-only PR changes no public exports; compiled proposed process examples and live acceptance are requirements for the coding PR, not evidence collected here.
+Run focused SDK/adapter/E2B tests first, then sequential shared builds and required CI gates (`check:built`, lint, format, offline tests, packed consumers, observability and docs/examples). This design-only PR changes no public exports; compiled proposed process examples and live acceptance are requirements for the coding PR, not evidence collected here.
 
-PTYs, terminals, stdin, arbitrary signals, process inventory/reopening, retained replay/cursors, endpoints/tunnels, broad filesystem APIs, sandbox reopen, cleanup configuration, generic workflows and service/UI parity are explicit scope cuts. Global ROADMAP/index reconciliation belongs to the separate docs task; this PR edits only this execution spec.
+PTYs, terminals, stdin, arbitrary signals, process inventory/reopening, retained replay/cursors, endpoints/tunnels, broad filesystem APIs, sandbox reopen, cleanup configuration, and generic workflows are explicit scope cuts. Global ROADMAP/index reconciliation belongs to the separate docs task; this PR edits only this execution spec.

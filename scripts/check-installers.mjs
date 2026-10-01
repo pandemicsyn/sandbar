@@ -25,14 +25,12 @@ const selected = new Map(
   }),
 );
 
-for (const name of ["sandbar-adapter", "sandbar-sdk", "sandbar-service"])
+for (const name of ["sandbar-adapter", "sandbar-sdk"])
   if (!selected.has(name)) throw new Error(`Release graph lacks ${name}`);
 
 const sdkName = selected.get("sandbar-sdk").manifest.name;
 
 const adapterName = selected.get("sandbar-adapter").manifest.name;
-
-const serviceName = selected.get("sandbar-service").manifest.name;
 
 const cases = [
   {
@@ -71,29 +69,6 @@ const direct: typeof Sandbar.connect = Sandbar.connect;
 const daytonaFactory: typeof daytona = daytona;
 const image = Image.prepared("fixture");
 void [direct, daytonaFactory, image];
-`,
-  },
-  {
-    name: "service",
-    packageName: serviceName,
-    overrides: [adapterName, sdkName],
-    runtime: `
-import { Sandbar, Image } from ${JSON.stringify(`${serviceName}/client`)};
-if (typeof Sandbar.connect !== "function" || Image.prepared("fixture").kind !== "prepared")
-  throw new Error("Packed service client import failed");
-`,
-    hosting: `
-import { createService } from ${JSON.stringify(serviceName)};
-if (typeof createService !== "function") throw new Error("Packed service host import failed");
-`,
-    types: `
-import { Sandbar, Image } from ${JSON.stringify(`${serviceName}/client`)};
-import { createService, type ServiceHandle } from ${JSON.stringify(serviceName)};
-const remote: typeof Sandbar.connect = Sandbar.connect;
-const host: typeof createService = createService;
-const image = Image.prepared("fixture");
-function typedService(value: ServiceHandle): ServiceHandle { return value; }
-void [remote, host, image, typedService];
 `,
   },
 ];
@@ -141,7 +116,6 @@ try {
       writeFileSync(join(directory, "consumer.mjs"), scenario.runtime);
       writeFileSync(join(directory, "consumer.ts"), scenario.types);
 
-      if (scenario.hosting) writeFileSync(join(directory, "hosting.mjs"), scenario.hosting);
       writeFileSync(
         join(directory, "tsconfig.json"),
         JSON.stringify({
@@ -163,7 +137,6 @@ try {
       run("node", ["consumer.mjs"], directory);
       run("bun", ["consumer.mjs"], directory);
 
-      if (scenario.hosting) run("bun", ["hosting.mjs"], directory);
       console.log(
         `${installer} installed isolated ${scenario.name}; strict types and runtime imports passed`,
       );
