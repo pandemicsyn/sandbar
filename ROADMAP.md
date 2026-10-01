@@ -34,10 +34,10 @@ The [execution brief](specs/interactive-execution-and-access.md#usage-and-delive
 
 Sandbox reopen/inspect is complete as an implementation slice. Lifetime renewal and suspend/resume follow as separate PRs; both now have their merged lifecycle and recovery prerequisites.
 
-1. **Renew lifetime:** implement `renew()` / `renew({ forSeconds })`, with reset/add mechanics and unit rounding handled by the configured adapter. Document native expiry and suspension-clock behavior during setup; application calls do not choose scopes.
+1. **Renew lifetime (implementation PR):** add `renew()` / `renew({ forSeconds })`, with reset/add mechanics and unit rounding handled by the configured adapter. Document native expiry and suspension-clock behavior during setup; application calls do not choose scopes.
 2. **Suspend/resume:** implement no-argument operations using native defaults, with meaningful preservation requirements configured once in the adapter. Filesystem is a minimum guarantee; memory behavior and actual execution evidence remain documented and reported honestly.
 
-This direction is accepted in the [lifecycle spec](specs/sandbox-lifecycle.md#accepted-direction-and-implementation-documentation). Neither mutation API is implemented. Keep these as separate small PRs, with provider choices concentrated in setup rather than capability negotiation throughout application code. Mounted suspension and snapshot emulation remain outside these slices.
+This direction is accepted in the [lifecycle spec](specs/sandbox-lifecycle.md#accepted-direction-and-implementation-documentation). Renewal is implemented in the focused PR and awaits merge/live qualification; suspend/resume remains proposed. Keep these as separate small PRs, with provider choices concentrated in setup rather than capability negotiation throughout application code. Mounted suspension and snapshot emulation remain outside these slices.
 
 Mounted snapshot/restore composition and stronger volume visibility/durability/locking/rename semantics follow concrete provider requirements. Current unsupported combinations remain explicit. Capacity/placement, attach/detach, volume versions and native forks are optional extensions driven by demonstrated need. See [storage follow-ups](specs/sdk-recovery-dx.md#later-volume-guarantees-and-mounted-restore). Expanded persistence hooks, normalized recovery-facts envelopes and generic continuation/workflow machinery remain deferred.
 

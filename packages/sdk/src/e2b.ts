@@ -3,11 +3,30 @@ import { z } from "zod";
 import type { AdapterDefinition, AdapterSession } from "sandbar-adapter";
 import { bindAdapter, type BoundAdapter } from "./bound";
 
-const Configuration = z.strictObject({
-  teamId: z.string().min(1).optional(),
-  templateId: z.string().min(1).default("base"),
-  timeoutSeconds: z.number().int().min(60).max(3600).default(300),
-});
+const Configuration = z
+  .strictObject({
+    teamId: z.string().min(1).optional(),
+    templateId: z.string().min(1).default("base"),
+    timeoutSeconds: z.number().int().min(60).max(3600).optional(),
+    lifecycle: z
+      .strictObject({ lifetimeSeconds: z.number().int().positive().safe().max(3600).optional() })
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.lifecycle?.lifetimeSeconds !== undefined && value.timeoutSeconds !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["lifecycle", "lifetimeSeconds"],
+        message: "Supply one lifetime option",
+      });
+  })
+  .transform((value) => ({
+    ...value,
+    timeoutSeconds:
+      value.lifecycle?.lifetimeSeconds === undefined
+        ? (value.timeoutSeconds ?? 300)
+        : Math.max(60, value.lifecycle.lifetimeSeconds),
+  }));
 
 const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
@@ -60,6 +79,7 @@ export interface E2BTransport {
     templateId: string;
     metadata: Record<string, string>;
     state: "running" | "paused";
+    lifecycle?: { onTimeout?: string; autoResume?: boolean };
     envdVersion?: string;
     volumeMounts?: { name: string; path: string }[];
   } | null>;
@@ -73,11 +93,13 @@ export interface E2BTransport {
       templateId: string;
       metadata: Record<string, string>;
       state: "running" | "paused";
+      lifecycle?: { onTimeout?: string; autoResume?: boolean };
       envdVersion?: string;
       volumeMounts?: { name: string; path: string }[];
     }[];
     nextToken?: string;
   }>;
+  renew?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
     id: string,
@@ -107,6 +129,7 @@ export function e2b(options: {
   teamId?: string;
   templateId?: string;
   timeoutSeconds?: number;
+  lifecycle?: { lifetimeSeconds?: number };
 }): BoundAdapter {
   return bindAdapter(
     createE2BAdapter(),
@@ -114,6 +137,7 @@ export function e2b(options: {
       teamId: options.teamId,
       templateId: options.templateId,
       timeoutSeconds: options.timeoutSeconds,
+      lifecycle: options.lifecycle,
     },
     { apiKey: options.apiKey },
   );

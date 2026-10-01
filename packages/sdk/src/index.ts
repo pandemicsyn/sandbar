@@ -77,6 +77,8 @@ export type {
   SnapshotProfile,
   SandboxState,
   SandboxReference,
+  RenewRequest,
+  RenewResult,
   SandboxInfo,
   Fact,
   Deadline,

@@ -21,6 +21,7 @@ export const features = {
       "close",
     ],
   },
+  renewal: { label: "Configured lifetime renewal", scenarios: ["lifecycle-renew"] },
   reopening: { label: "Scoped sandbox reopening", scenarios: ["lifecycle-reopen"] },
   execution: {
     label: "Execution and captured output",
@@ -65,6 +66,10 @@ export const builtinSupport: SupportMetadata[] = [
     id: "daytona",
     name: "Daytona",
     features: {
+      renewal: {
+        support: "conditional",
+        note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.",
+      },
       reopening: {
         support: "conditional",
         note: "Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Deterministic native/packed coverage; new live workflow not run.",
@@ -107,6 +112,10 @@ export const builtinSupport: SupportMetadata[] = [
     id: "e2b",
     name: "E2B",
     features: {
+      renewal: {
+        support: "conditional",
+        note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.",
+      },
       reopening: {
         support: "conditional",
         note: "Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Deterministic native/packed coverage; new live workflow not run.",

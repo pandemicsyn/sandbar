@@ -36,6 +36,29 @@ export async function lifecycle(t: TestResources, box: AdapterSandbox, inventory
   throw Error("Owned sandbox absent from bounded inventory");
 }
 
+export async function renewal(t: TestResources, box: AdapterSandbox) {
+  t.at("sandbox/renew");
+  const before = Date.now();
+  const result = await box.renew({ forSeconds: 61 }, { signal: t.signal });
+  const after = Date.now();
+  const resolved = t.client.provider === "daytona" ? 120 : 61;
+  expect(result.requested).toEqual({ forSeconds: resolved });
+  expect(result.acknowledged).toBe(true);
+  expect(result.reference).toEqual(box.reference!);
+  expect(result.observation?.expires.status).toBe("known");
+
+  if (result.observation?.expires.status !== "known") throw Error("Renewal deadline unavailable");
+  const deadline = Date.parse(result.observation.expires.at);
+  // Request duration plus a five-second clock tolerance; no exact deletion claim.
+  expect(deadline).toBeGreaterThanOrEqual(before + resolved * 1000 - 5000);
+  expect(deadline).toBeLessThanOrEqual(after + resolved * 1000 + 5000);
+  const max = t.client.provider === "daytona" ? 86400 : 3600;
+  await expect(box.renew({ forSeconds: max + 1 }, { signal: t.signal })).rejects.toMatchObject({
+    code: "INVALID_ARGUMENT",
+    effect: "none",
+  });
+}
+
 export async function execution(t: TestResources, box: AdapterSandbox) {
   const argv = await box.exec(
     {
@@ -110,11 +133,14 @@ describe("Sandbar sandbox", () => {
   let box: AdapterSandbox;
   beforeAll(async () => {
     if (liveEnabled) {
-      fixture = await setupLive(["sandbox-lifecycle", "execution", "files", "lifecycle-reopen"], {
-        compute: 1,
-        snapshots: 0,
-        volumes: 0,
-      });
+      fixture = await setupLive(
+        ["sandbox-lifecycle", "execution", "files", "lifecycle-reopen", "lifecycle-renew"],
+        {
+          compute: 1,
+          snapshots: 0,
+          volumes: 0,
+        },
+      );
       await fixture.resources.setup(async () => {
         await fixture!.resources.open();
         box = await fixture!.resources.create("sandbox/source");
@@ -137,6 +163,11 @@ describe("Sandbar sandbox", () => {
   (liveEnabled ? test : test.skip)(
     "files",
     async () => files(fixture!.resources, box, fixture!.fileRoot),
+    241000,
+  );
+  (liveEnabled ? test : test.skip)(
+    "lifecycle-renew",
+    async () => renewal(fixture!.resources, box),
     241000,
   );
   (liveEnabled ? test : test.skip)(

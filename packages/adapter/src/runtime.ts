@@ -17,6 +17,7 @@ import {
   VolumeCreateInput,
   VolumeInfo,
 } from "./resources";
+import { RenewInput, RenewResult } from "./lifecycle";
 import { z } from "zod";
 import { CreateSandboxInput, ExecRequest, FilePath } from "./portable";
 import {
@@ -50,6 +51,7 @@ export type RuntimeSession = Omit<
   | "exec"
   | "files"
   | "imageBuild"
+  | "renew"
   | "snapshotCapture"
   | "snapshotRestore"
   | "snapshotDelete"
@@ -57,6 +59,7 @@ export type RuntimeSession = Omit<
   | "volumeDelete"
 > & {
   create: unknown;
+  renew?: unknown;
   snapshotCapture?: unknown;
   snapshotRestore?: unknown;
   snapshotDelete?: unknown;
@@ -78,6 +81,7 @@ export type OperationKind =
   | "exec"
   | "file_write"
   | "image_build"
+  | "sandbox_renew"
   | "snapshot_capture"
   | "snapshot_restore"
   | "snapshot_delete"
@@ -86,6 +90,7 @@ export type OperationKind =
 
 export type OperationInput =
   | import("./resources").DestroyInput
+  | import("./lifecycle").RenewInput
   | CreateInput
   | ImageBuildInput
   | ExecInput
@@ -100,6 +105,7 @@ export type SpecialOutcome = Pending | Unknown | Rejected;
 
 export type OperationResult =
   | import("./index").CreateValue
+  | import("./lifecycle").RenewResult
   | DestroyValue
   | ExecValue
   | ImageBuildValue
@@ -336,6 +342,8 @@ async function validateValue(
 
   if (kind === "create" || kind === "snapshot_restore") return CreateValueSchema.parse(value);
 
+  if (kind === "sandbox_renew") return RenewResult.parse(value);
+
   if (kind === "snapshot_capture") return SnapshotCaptureValue.parse(value);
 
   if (kind === "volume_create") return VolumeInfo.parse(value);
@@ -435,6 +443,9 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
   let op: unknown;
 
   switch (kind) {
+    case "sandbox_renew":
+      op = session.renew;
+      break;
     case "snapshot_capture":
       op = session.snapshotCapture;
       break;
@@ -478,6 +489,19 @@ function checkCapability(
   kind: OperationKind,
   input: OperationInput,
 ): OperationInput {
+  if (kind === "sandbox_renew") {
+    const value = RenewInput.parse(input);
+    assertResourceScope(value.sandbox.reference, {
+      provider: value.sandbox.reference.provider,
+      scope: session.scope,
+    });
+
+    if (value.sandbox.id !== value.sandbox.reference.nativeId)
+      throw new AdapterError("CONFLICT", "Renewal sandbox identity differs");
+
+    return value;
+  }
+
   if (kind === "snapshot_capture") return SnapshotCaptureInput.parse(input);
 
   if (kind === "snapshot_restore") {
@@ -817,6 +841,7 @@ export async function observeOperation(
     sandbox?: Sandbox;
     resource?: import("./state").ResourceReference;
     mounts?: import("./state").MountSpec[];
+    renewal?: import("./lifecycle").RenewRequest;
     capture?: import("./state").SnapshotCaptureInput["expectation"];
     token?: Json;
     version?: number;

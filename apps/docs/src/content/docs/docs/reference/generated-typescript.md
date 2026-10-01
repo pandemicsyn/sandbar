@@ -62,6 +62,8 @@ Import from `sandbar-sdk`.
 | `ReadOptions`               | type      |
 | `RecoveredOperation`        | type      |
 | `RecoveryReference`         | type      |
+| `RenewRequest`              | type      |
+| `RenewResult`               | type      |
 | `ResourceKind`              | re-export |
 | `ResourceReference`         | re-export |
 | `RestoreCapabilities`       | type      |
