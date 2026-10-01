@@ -32,6 +32,10 @@ let loseStart = false;
 
 let holdWait = false;
 
+let onHeldWait:
+  | ((call: grpc.ServerUnaryCall<Buffer, Buffer>, callback: grpc.sendUnaryData<Buffer>) => void)
+  | undefined;
+
 let loseStdin = false;
 
 let loseOutput = false;
@@ -81,6 +85,12 @@ server.addService(
       expect(id).toBeInstanceOf(Uint8Array);
       // SAFETY: The fixture asserted the protobuf exec ID field is bytes.
       expect(new TextDecoder().decode(id as Uint8Array)).toBe("submission-1");
+
+      if (holdWait && onHeldWait) {
+        onHeldWait(call, callback);
+
+        return;
+      }
 
       if (holdWait) setTimeout(() => callback(null, waitReply), 100);
       else callback(null, waitReply);
@@ -439,9 +449,35 @@ test("local deadline permits later original-ID recovery; exit alone cannot hide 
       timeoutSeconds: 7,
     });
     holdWait = true;
-    await expect(
-      wire.result("sb-fixture", "submission-1", 4, AbortSignal.timeout(10)),
-    ).rejects.toThrow();
+    const controller = new AbortController();
+
+    let cancelled!: () => void;
+
+    const cancellation = new Promise<void>((resolve) => {
+      cancelled = resolve;
+    });
+
+    const entered = new Promise<void>((resolve) => {
+      onHeldWait = (call, callback) => {
+        call.once("cancelled", () => {
+          callback(Object.assign(new Error("cancelled"), { code: grpc.status.CANCELLED }));
+          cancelled();
+        });
+        resolve();
+      };
+    });
+
+    const rejected = wire.result("sb-fixture", "submission-1", 4, controller.signal).then(
+      () => false,
+      (error: grpc.ServiceError) => error.code === grpc.status.CANCELLED,
+    );
+
+    // Abort only after the fixture has received and held the original-ID wait.
+    await entered;
+    controller.abort(new DOMException("local deadline", "TimeoutError"));
+    expect(await rejected).toBe(true);
+    await cancellation;
+    onHeldWait = undefined;
     holdWait = false;
     waitReply = message(field(1, 0));
     loseOutput = true;
@@ -455,6 +491,7 @@ test("local deadline permits later original-ID recovery; exit alone cannot hide 
     expect(starts).toBe(1);
     expect(parse(seen.at(-1)!).get(6)).toBe(7);
   } finally {
+    onHeldWait = undefined;
     holdWait = false;
     loseOutput = false;
     waitReply = message(field(1, 7));
