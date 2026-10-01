@@ -13,25 +13,28 @@ Malformed caller inputs in these APIs reject with `SandbarError` (`INVALID_ARGUM
 
 ## Capture and restore
 
-Start with an [E2B connection](/docs/providers/e2b/) named `sandbar` and `Image` imported from `sandbar-sdk`. The following uses `base` and explicit `blocked` networking. On Daytona, use the configured prepared image and `daytona-default` on both create and restore when the connection uses that policy.
+Start with an [E2B connection](/docs/providers/e2b/) named `sandbar` and `Image` imported from `sandbar-sdk`. The following uses `base` and requests the native `blocked` setting on create and restore. This is not verified egress isolation: the maintained probe at `431cdaa` still connected to `1.1.1.1:443` despite requested blocking. See the [failed network evidence](/docs/providers/support/); captured processes may retain outbound access after restore. On Daytona, use the configured prepared image and `daytona-default` on both create and restore when the connection uses that policy.
 
 ```ts
 const source = await sandbar.sandboxes.create({
   environment: Image.prepared("base"),
   networkPolicy: "blocked",
 });
-let retainedSnapshot; // Keep custody available if application persistence fails.
-let captureSettled = true; // No capture has been submitted yet.
-try {
-  const check = await source.checkSnapshot();
-  if (check.status !== "supported") throw new Error(check.reason);
-  captureSettled = false;
-  const captured = await source.snapshot();
-  captureSettled = true;
-  retainedSnapshot = captured.snapshot.reference;
-  await saveResource(JSON.stringify(retainedSnapshot));
-  console.log(captured.capture, captured.source);
+const check = await source.checkSnapshot();
+if (check.status !== "supported") {
+  await source.destroy(); // No capture was submitted.
+  throw new Error(check.reason);
+}
+// If capture throws, leave the source intact for reconciliation.
+const captured = await source.snapshot();
+console.log(captured.capture, captured.source);
+```
 
+The caller now owns `captured` before attempting application persistence. Keep this result in the owning scope, as in the tested `captureSnapshot`/`saveSnapshot` [examples](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/recovery-outcomes.ts). A rejected save leaves `captured.snapshot.reference` and the handle available for another save or deliberate artifact cleanup; do not discard the result when handling that storage error.
+
+```ts
+try {
+  await saveResource(JSON.stringify(captured.snapshot.reference));
   const restored = await captured.snapshot.restore({
     networkPolicy: "blocked",
     requireIndependentLifecycle: true,
@@ -42,14 +45,10 @@ try {
     await restored.destroy();
   }
   await captured.snapshot.delete();
-  await removeSavedResource(retainedSnapshot);
-  retainedSnapshot = undefined;
-} catch (error) {
-  console.error("Capture/restore failed; retained snapshot:", retainedSnapshot);
-  throw error;
+  await removeSavedResource(captured.snapshot.reference);
 } finally {
-  // A failed capture may still be stopping, capturing or restarting the source.
-  if (captureSettled) await source.destroy();
+  // Capture returned successfully before this persistence/restore block began.
+  await source.destroy();
 }
 ```
 
@@ -57,7 +56,7 @@ try {
 
 Snapshot deletion is separate from source and restored-compute destruction. If saving, restore, or cleanup fails, retain the snapshot reference for reconciliation; do not delete a potentially dependent artifact.
 
-Close the connection in an outer `finally`, as in [Getting started](/docs/direct-quickstart/). If capture throws, this example conservatively leaves the source intact. Preserve the error’s operation reference and any known partial snapshot identity using [Errors and recovery](/docs/guides/recovery/); resolve the capture/restart outcome before destroying the source. A local cancellation does not establish that the provider stopped working.
+Close the connection in an outer `finally`, as in [Getting started](/docs/direct-quickstart/). If capture throws, execution never reaches the persistence/restore cleanup block, leaving the source intact. Preserve the error’s operation reference and any known partial snapshot identity using [Errors and recovery](/docs/guides/recovery/); resolve the capture/restart outcome before destroying the source. A local cancellation does not establish that the provider stopped working.
 
 Restore requires a supported **explicit network policy**. Before creating a source for a round trip, check `(await sandbar.capabilities()).snapshots.restore`. Capture and restore support are independent; a successful capture check is not a reservation or a promise that restore is supported.
 
