@@ -30,6 +30,7 @@ export const ReferenceSchema = z.strictObject({
   submissionId: z.string().min(1).max(128),
   invocationKey: z.string().min(1).max(128),
   sandboxId: z.string().min(1).max(512).optional(),
+  sandboxReference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
   capture: CaptureExpectation.optional(),
   resource: ResourceReference.optional(),
   mounts: z.array(MountSpec).max(32).optional(),

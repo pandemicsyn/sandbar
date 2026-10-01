@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter, SnapshotInfo, ResourceReference, type Scope } from "sandbar-adapter";
+import {
+  defineAdapter,
+  SnapshotInfo,
+  ResourceReference,
+  type Scope,
+  sandboxReference,
+  unknownSandboxFacts,
+} from "sandbar-adapter";
 import {
   Sandbar,
   AdapterSnapshot,
@@ -18,7 +25,12 @@ interface FixtureStartHook {
 }
 
 function fixture(
-  options: { stopped?: boolean; restartAfterCapture?: boolean; largeScope?: boolean } = {},
+  options: {
+    stopped?: boolean;
+    restartAfterCapture?: boolean;
+    largeScope?: boolean;
+    verified?: boolean;
+  } = {},
 ) {
   let scope: Scope = {
     authority: { kind: "organization", id: "org-one" },
@@ -35,6 +47,13 @@ function fixture(
       },
     };
   }
+
+  const labels = { "sandbar.operation": "create-op", "sandbar.submission": "create-sub" };
+
+  const reference = sandboxReference("daytona", scope, "source", {
+    operation: labels["sandbar.operation"],
+    submission: labels["sandbar.submission"],
+  });
 
   let state = options.stopped ? "stopped" : "started";
 
@@ -120,6 +139,7 @@ function fixture(
 
         return Response.json({
           id: "source",
+          labels,
           organizationId: "org-one",
           target: "us",
           state,
@@ -307,7 +327,20 @@ function fixture(
             scope,
             supports: { images: ["prepared"], network: ["blocked"] },
             async create() {
-              return { id: "source", state: "running" };
+              return {
+                id: "source",
+                state: "running",
+                reference: options.verified ? reference : undefined,
+              };
+            },
+            async reopen() {
+              return {
+                ...unknownSandboxFacts(),
+                reference,
+                state: state === "started" ? ("running" as const) : ("stopped" as const),
+                nativeState: state,
+                observedAt: new Date().toISOString(),
+              };
             },
             async destroy() {
               return { computeStopped: true, retainedResources: [] };
@@ -326,6 +359,7 @@ function fixture(
 
   return {
     connect,
+    labels,
     volumes,
     volumeCreates: () => volumeCreates,
     calls,
@@ -2348,3 +2382,62 @@ test.each([
     }
   },
 );
+
+for (const recovery of [false, true]) {
+  test(`Daytona capture continuation keeps verified identity with fresh recovery=${recovery}`, async () => {
+    const f = fixture({ verified: true });
+    f.modes.stopLost = true;
+    const first = await f.connect();
+    let client = first;
+
+    try {
+      const created = await first.sandboxes.create({ environment: Image.prepared("base") });
+      const box = await first.sandboxes.get(created.reference!);
+      const operation = await box.submitSnapshot();
+      const saved = JSON.parse(JSON.stringify(operation.reference));
+      f.labels["sandbar.operation"] = "different";
+      f.modes.stopLost = false;
+
+      if (recovery) {
+        await first.close();
+        client = await f.connect();
+      }
+
+      const continuing = recovery ? await client.recover(saved) : operation;
+      await expect(continuing.continue()).rejects.toBeInstanceOf(SandbarError);
+      expect(f.calls).toMatchObject({ stop: 1, capture: 0, start: 0 });
+    } finally {
+      await client.close();
+
+      if (client !== first) await first.close();
+    }
+  });
+}
+
+for (const stage of ["stop", "capture", "restart"] as const) {
+  test(`Daytona verified capture checks markers after the ${stage} checkpoint`, async () => {
+    const f = fixture({ verified: true });
+
+    const client = await f.connect((ref) => {
+      const checkpoint = z
+        .object({ [`${stage}State`]: z.literal("uncertain") })
+        .safeParse(ref.token);
+
+      if (ref.kind === "snapshot_capture" && checkpoint.success)
+        f.labels["sandbar.submission"] = "different";
+    });
+
+    try {
+      const created = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const box = await client.sandboxes.get(created.reference!);
+      await box.submitSnapshot();
+      expect(f.calls).toMatchObject({
+        stop: stage === "stop" ? 0 : 1,
+        capture: stage === "restart" ? 1 : 0,
+        start: 0,
+      });
+    } finally {
+      await client.close();
+    }
+  });
+}

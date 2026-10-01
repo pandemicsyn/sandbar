@@ -208,13 +208,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           record.metadata.sandbar_template === record.templateId ||
           (record.metadata.sandbar_template === "base" && !record.metadata.sandbar_build));
 
-      const find = async (id: string, expected?: SandboxReference): Promise<E2BRecord | null> => {
-        if (!nativeId.test(id))
-          throw new AdapterError("INVALID_ARGUMENT", "Invalid E2B sandbox ID");
-        await verifyAuthority();
-        const record = await transport.get(id);
-
-        if (record && expected) {
+      const assertRecordReference = (
+        record: E2BRecord,
+        id: string,
+        expected?: SandboxReference,
+      ) => {
+        if (expected) {
           if (record.id !== id || !owned(record))
             throw new AdapterError("CONFLICT", "E2B sandbox identity or scope differs");
           assertSandboxReference(
@@ -225,6 +224,15 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             expected,
           );
         }
+      };
+
+      const find = async (id: string, expected?: SandboxReference): Promise<E2BRecord | null> => {
+        if (!nativeId.test(id))
+          throw new AdapterError("INVALID_ARGUMENT", "Invalid E2B sandbox ID");
+        await verifyAuthority();
+        const record = await transport.get(id);
+
+        if (record) assertRecordReference(record, id, expected);
 
         return record && owned(record) ? record : null;
       };
@@ -675,6 +683,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               return ctx.reject("UNAVAILABLE", "E2B termination cancelled before dispatch");
             }
 
+            if (box.reference) await find(box.id, box.reference);
+
             try {
               await transport.kill(box.id, ctx.signal);
               token.stage = "accepted";
@@ -709,6 +719,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             try {
               await verifyAuthority();
               record = await transport.get(attempt.sandbox.id);
+
+              if (record)
+                assertRecordReference(record, attempt.sandbox.id, attempt.sandbox.reference);
             } catch {
               return ctx.unknown(
                 "E2B compute observation is unavailable; termination cannot be replayed",
@@ -796,6 +809,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             return input;
           },
           async submit(input, ctx) {
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
             const paths = executionPaths(ctx.submissionId);
 
             if (ctx.signal.aborted)
@@ -869,6 +883,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               return input;
             },
             async submit(input, ctx) {
+              await requireRunning(input.sandbox.id, input.sandbox.reference);
+
               if (!nativeId.test(ctx.submissionId))
                 return ctx.reject("INVALID_ARGUMENT", "Invalid E2B write submission ID");
 

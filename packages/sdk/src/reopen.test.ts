@@ -1,15 +1,22 @@
 import { expect, test, spyOn } from "bun:test";
 import { z } from "zod";
 import {
+  AdapterError,
   defineAdapter,
   sandboxReference,
   unknownSandboxFacts,
   type AdapterSession,
   type Sandbox,
 } from "sandbar-adapter";
-import { Sandbar, Image, SandbarError, type DirectConnectOptions } from "./index";
+import {
+  Sandbar,
+  Image,
+  SandbarError,
+  type DirectConnectOptions,
+  type AdapterRecoveryReference,
+} from "./index";
 
-function fixture(reopening: boolean) {
+function fixture(reopening: boolean, pendingOperations = false) {
   const scope = { authority: { kind: "fixture", id: "account" }, partition: {} };
 
   const reference = sandboxReference("reopen-fixture", scope, "native", {
@@ -19,6 +26,9 @@ function fixture(reopening: boolean) {
 
   let hold = false;
   let inspected = 0;
+  let reopenFailure: AdapterError | undefined;
+  let synchronousFailure = false;
+  const saved: AdapterRecoveryReference[] = [];
   const dispatched: { operation: string; sandbox: Sandbox }[] = [];
 
   const record = (operation: string, sandbox: Sandbox) => {
@@ -66,10 +76,25 @@ function fixture(reopening: boolean) {
             },
           };
         },
-        async snapshotCapture(input, ctx) {
-          record("snapshotCapture", input.sandbox);
+        snapshotCapture: {
+          recovery: { version: 1, token: z.strictObject({}) },
+          async submit(input, ctx) {
+            record("snapshotCapture", input.sandbox);
 
-          return ctx.reject("UNSUPPORTED", "fixture");
+            return pendingOperations
+              ? ctx.pending({}, { pollAfterMs: 1 })
+              : ctx.reject("UNSUPPORTED", "fixture");
+          },
+          async observe(attempt, ctx) {
+            if (attempt.sandbox) record("observeSnapshot", attempt.sandbox);
+
+            return ctx.unknown("fixture pending snapshot");
+          },
+          async continue(attempt, ctx) {
+            if (attempt.sandbox) record("continueSnapshot", attempt.sandbox);
+
+            return ctx.pending({}, { pollAfterMs: 1 });
+          },
         },
         async resourceCapabilities(target) {
           if (target.sandbox) record("capabilities", target.sandbox);
@@ -84,8 +109,10 @@ function fixture(reopening: boolean) {
 
             return ctx.pending({}, { pollAfterMs: 1 });
           },
-          async observe(attempt) {
+          async observe(attempt, ctx) {
             if (attempt.sandbox) record("observeExec", attempt.sandbox);
+
+            if (pendingOperations) return ctx.unknown("fixture pending exec");
 
             return {
               exitCode: 0,
@@ -102,16 +129,46 @@ function fixture(reopening: boolean) {
 
             return new Uint8Array();
           },
-          async write(input) {
-            record("write", input.sandbox);
+          write: {
+            recovery: { version: 1, token: z.strictObject({}) },
+            async submit(input, ctx) {
+              record("write", input.sandbox);
 
-            return { bytesWritten: input.bytes.length };
+              return pendingOperations
+                ? ctx.pending({}, { pollAfterMs: 1 })
+                : { bytesWritten: input.bytes.length };
+            },
+            async observe(attempt, ctx) {
+              if (attempt.sandbox) record("observeWrite", attempt.sandbox);
+
+              return ctx.unknown("fixture pending write");
+            },
+            async continue(attempt, ctx) {
+              if (attempt.sandbox) record("continueWrite", attempt.sandbox);
+
+              return ctx.pending({}, { pollAfterMs: 1 });
+            },
           },
         },
-        async destroy(input) {
-          record("destroy", input);
+        destroy: {
+          recovery: { version: 1, token: z.strictObject({}) },
+          async submit(input, ctx) {
+            record("destroy", input);
 
-          return { computeStopped: true, retainedResources: [] };
+            return pendingOperations
+              ? ctx.pending({}, { pollAfterMs: 1 })
+              : { computeStopped: true, retainedResources: [] };
+          },
+          async observe(attempt, ctx) {
+            if (attempt.sandbox) record("observeDestroy", attempt.sandbox);
+
+            return ctx.unknown("fixture pending destroy");
+          },
+          async continue(attempt, ctx) {
+            if (attempt.sandbox) record("continueDestroy", attempt.sandbox);
+
+            return ctx.pending({}, { pollAfterMs: 1 });
+          },
         },
         async inspect(input) {
           record("inspect", input);
@@ -120,9 +177,11 @@ function fixture(reopening: boolean) {
         },
       };
 
-      if (reopening)
-        session.reopen = async () => {
+      if (reopening) {
+        const reopen = async () => {
           inspected++;
+
+          if (reopenFailure) throw reopenFailure;
 
           if (hold) await new Promise(() => {});
 
@@ -135,15 +194,35 @@ function fixture(reopening: boolean) {
           };
         };
 
+        session.reopen = () => {
+          if (synchronousFailure && reopenFailure) throw reopenFailure;
+
+          return reopen();
+        };
+      }
+
       return session;
     },
   });
 
   return {
     connect: (options: DirectConnectOptions = {}) =>
-      Sandbar.connect({ adapter, config: {}, credentials: {}, ...options }),
+      Sandbar.connect({
+        adapter,
+        config: {},
+        credentials: {},
+        onReference(ref) {
+          saved.push(structuredClone(ref));
+        },
+        ...options,
+      }),
     reference,
     dispatched,
+    saved,
+    failReopen(code: AdapterError["code"], synchronous = false) {
+      synchronousFailure = synchronous;
+      reopenFailure = new AdapterError(code, "native fixture failure");
+    },
     hold() {
       hold = true;
     },
@@ -273,3 +352,71 @@ test("SDK reopen timeout normalizes a non-cooperative hook", async () => {
     await client.close();
   }
 });
+
+test("recovery keeps sandbox identity across serialized operations and rejects forged bindings before IO", async () => {
+  const f = fixture(true, true);
+  const first = await f.connect();
+  const box = await first.sandboxes.get(f.reference);
+  await box.submitExec(["true"]);
+  await box.submitSnapshot();
+  await expect(box.writeFile("/fixture", new Uint8Array([1]))).rejects.toMatchObject({
+    code: "OUTCOME_UNKNOWN",
+  });
+  await box.submitDestroy();
+  const saved = JSON.parse(JSON.stringify(f.saved));
+  await first.close();
+  const fresh = await f.connect();
+
+  try {
+    for (const kind of ["exec", "file_write", "snapshot_capture", "destroy"] as const) {
+      const reference = saved.findLast((ref: AdapterRecoveryReference) => ref.kind === kind);
+      expect(reference.sandboxReference).toEqual(f.reference);
+      const before = f.dispatched.length;
+      const operation = await fresh.recover(reference);
+      await expect(operation.observe()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+
+      if (kind !== "exec") await operation.continue();
+      expect(f.dispatched.length).toBeGreaterThan(before);
+
+      for (const call of f.dispatched.slice(before))
+        expect(call.sandbox).toEqual({ id: "native", reference: f.reference });
+    }
+
+    const reference = saved.findLast((ref: AdapterRecoveryReference) => ref.kind === "exec");
+    const before = f.dispatched.length;
+
+    for (const sandboxReference of [
+      { ...f.reference, nativeId: "other" },
+      { ...f.reference, provider: "other" },
+      { ...f.reference, scope: { ...f.reference.scope, partition: { region: "other" } } },
+    ])
+      await expect(fresh.recover({ ...reference, sandboxReference })).rejects.toBeInstanceOf(
+        SandbarError,
+      );
+    expect(f.dispatched.length).toBe(before);
+    const { sandboxReference: _legacy, ...legacy } = reference;
+    const operation = await fresh.recover(legacy);
+    await expect(operation.observe()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(f.dispatched.at(-1)?.sandbox).toEqual({ id: "native" });
+  } finally {
+    await fresh.close();
+  }
+});
+
+for (const code of ["NOT_FOUND", "FORBIDDEN", "CONFLICT", "UNAVAILABLE"] as const) {
+  test(`reopen native ${code} failures use the public SDK error class`, async () => {
+    const f = fixture(true);
+    const client = await f.connect();
+
+    try {
+      for (const synchronous of [false, true]) {
+        f.failReopen(code, synchronous);
+        const error = await client.sandboxes.get(f.reference).catch((error) => error);
+        expect(error).toBeInstanceOf(SandbarError);
+        expect(error).toMatchObject({ code, effect: "none" });
+      }
+    } finally {
+      await client.close();
+    }
+  });
+}

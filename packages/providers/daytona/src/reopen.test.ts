@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Image, Sandbar } from "sandbar-sdk";
+import { Image, Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
 import { createDaytonaAdapter } from "./adapter";
 
 function fixture() {
@@ -78,11 +78,12 @@ function fixture() {
     native,
     calls,
     creates: () => creates,
-    connect: (key = "first-key") =>
+    connect: (key = "first-key", onReference?: (ref: AdapterRecoveryReference) => void) =>
       Sandbar.connect({
         adapter,
         config: { target: "us", ttlMinutes: 15 },
         credentials: { apiKey: key },
+        onReference,
       }),
     status(value: number) {
       status = value;
@@ -207,6 +208,55 @@ test("Daytona reopened operations reject changed creation markers before dispatc
     ])
       await expect(operation()).rejects.toMatchObject({ code: "CONFLICT" });
     expect(f.calls.slice(before).every((call) => call.startsWith("GET "))).toBe(true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona destroy checks markers after its custody checkpoint", async () => {
+  const f = fixture();
+
+  const client = await f.connect("fixture", (ref) => {
+    if (ref.kind === "destroy" && ref.token !== undefined)
+      f.native.labels["sandbar.operation"] = "changed";
+  });
+
+  try {
+    const created = await client.sandboxes.create({
+      environment: Image.prepared("prepared"),
+      networkPolicy: "blocked",
+    });
+
+    const box = await client.sandboxes.get(created.reference!);
+    const before = f.calls.length;
+    await expect(box.destroy()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(f.calls.slice(before).every((call) => call.startsWith("GET "))).toBe(true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona destroy recovery rejects a mismatched tombstone but accepts true absence", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const created = await client.sandboxes.create({
+      environment: Image.prepared("prepared"),
+      networkPolicy: "blocked",
+    });
+
+    const box = await client.sandboxes.get(created.reference!);
+    const operation = await box.submitDestroy();
+    const reference = operation.reference;
+    expect(reference).toBeDefined();
+    f.native.state = "destroyed";
+    f.native.labels["sandbar.submission"] = "changed";
+    const recovered = await client.recover(reference);
+    await expect(recovered.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    f.status(404);
+    const missing = await client.recover(reference);
+    await expect(missing.wait()).resolves.toMatchObject({ computeStopped: true });
   } finally {
     await client.close();
   }

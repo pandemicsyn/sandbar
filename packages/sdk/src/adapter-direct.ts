@@ -119,7 +119,13 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
   );
 
   const artifactOperation = ["snapshot_delete", "volume_delete"].includes(copy.kind);
-  const boundSandbox = createsResource || artifactOperation ? !copy.sandboxId : !!copy.sandboxId;
+
+  const boundSandbox =
+    (createsResource || artifactOperation ? !copy.sandboxId : !!copy.sandboxId) &&
+    (!copy.sandboxReference ||
+      (copy.sandboxReference.nativeId === copy.sandboxId &&
+        copy.sandboxReference.provider === copy.provider &&
+        canonicalScope(copy.sandboxReference.scope) === canonicalScope(copy.scope)));
 
   const boundResource = ["snapshot_restore", "snapshot_delete"].includes(copy.kind)
     ? copy.resource?.kind === "snapshot"
@@ -265,7 +271,6 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
     first?: RuntimeResult,
     // SAFETY: default K is OperationKind; internal narrowed constructors pass a validated kind.
     readonly kind: K = reference.kind as K,
-    private readonly sandboxReference?: SandboxReference,
   ) {
     this.#reference = reference;
     certifyOperationReference(this, () => this.#reference);
@@ -329,7 +334,7 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
           operationId: this.reference.operationId,
           submissionId: this.reference.submissionId,
           sandbox: this.reference.sandboxId
-            ? sandboxInput(this.reference.sandboxId, this.sandboxReference)
+            ? sandboxInput(this.reference.sandboxId, this.reference.sandboxReference)
             : undefined,
           resource: this.reference.resource,
           mounts: this.reference.mounts,
@@ -441,7 +446,7 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
             operationId: this.reference.operationId,
             submissionId: this.reference.submissionId,
             sandbox: this.reference.sandboxId
-              ? sandboxInput(this.reference.sandboxId, this.sandboxReference)
+              ? sandboxInput(this.reference.sandboxId, this.reference.sandboxReference)
               : undefined,
             resource: this.reference.resource,
             mounts: this.reference.mounts,
@@ -972,6 +977,7 @@ export type AdvancedObservation = {
   operationId: string;
   submissionId: string;
   sandboxId?: string;
+  sandboxReference?: SandboxReference;
   resource?: ResourceReference;
   mounts?: import("sandbar-adapter").MountSpec[];
   token?: Json;
@@ -1278,6 +1284,7 @@ export class AdapterDirectClient {
             operationId: z.string().min(1).max(128),
             submissionId: z.string().min(1).max(128),
             sandboxId: z.string().min(1).max(512).optional(),
+            sandboxReference: ReferenceSchema.shape.sandboxReference,
             resource: ResourceReference.optional(),
             capture: CaptureExpectation.optional(),
             mounts: z.array(importMountSpec).max(32).optional(),
@@ -1292,6 +1299,7 @@ export class AdapterDirectClient {
             "Observation scope differs from the verified connection",
           );
 
+        this.assertRecoverySandbox(checked);
         assertRecoveryResourceKind(checked.kind, checked.resource);
 
         if (checked.resource)
@@ -1333,7 +1341,9 @@ export class AdapterDirectClient {
               {
                 operationId: checked.operationId,
                 submissionId: checked.submissionId,
-                sandbox: checked.sandboxId ? { id: checked.sandboxId } : undefined,
+                sandbox: checked.sandboxId
+                  ? sandboxInput(checked.sandboxId, checked.sandboxReference)
+                  : undefined,
                 resource: checked.resource,
                 capture: checked.capture,
                 mounts: checked.mounts,
@@ -1576,18 +1586,21 @@ export class AdapterDirectClient {
       timeout,
     ]);
 
-    const info = await readWhileOpen(
-      this,
-      raceAbort(
-        this.session.reopen(reference, { signal, deadline: Date.now() + 30000 }),
-        signal,
-      ).catch((error) => {
-        assertSignal(options.signal);
+    let info: SandboxInfo;
 
-        if (timeout.aborted) throw new SandbarError("TIMEOUT", "Sandbox reopen timed out");
-        throw error;
-      }),
-    );
+    try {
+      info = await readWhileOpen(
+        this,
+        raceAbort(this.session.reopen(reference, { signal, deadline: Date.now() + 30000 }), signal),
+      );
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (timeout.aborted) throw new SandbarError("TIMEOUT", "Sandbox reopen timed out");
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
 
     if (!info.reference)
       throw new SandbarError("INVALID_RESPONSE", "Provider did not verify sandbox identity");
@@ -1652,6 +1665,7 @@ export class AdapterDirectClient {
       scope: this.connection.scope,
       ...ids,
       sandboxId: options.sandboxId,
+      sandboxReference: options.sandboxReference,
       resource: options.resource,
       capture: options.capture,
       mounts: options.mounts,
@@ -1721,7 +1735,7 @@ export class AdapterDirectClient {
       throw asUnknown(reference, "Provider submission outcome is unknown");
     }
 
-    return new AdapterOperation(this, reference, decode, first, kind, options.sandboxReference);
+    return new AdapterOperation(this, reference, decode, first, kind);
   }
   checkedOutcome(
     reference: AdapterRecoveryReference,
@@ -1771,6 +1785,26 @@ export class AdapterDirectClient {
     }
   }
 
+  private assertRecoverySandbox(reference: {
+    sandboxId?: string;
+    sandboxReference?: SandboxReference;
+  }): void {
+    if (!reference.sandboxReference) return;
+
+    if (reference.sandboxReference.nativeId !== reference.sandboxId)
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox identity differs");
+
+    try {
+      assertResourceScope(reference.sandboxReference, {
+        provider: this.provider,
+        scope: this.scope,
+      });
+    } catch (error) {
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
+  }
+
   async recover(reference: AdapterRecoveryReference): Promise<RecoveredOperation> {
     this.ensureOpen();
     reference = sealedReference(reference);
@@ -1790,6 +1824,7 @@ export class AdapterDirectClient {
     if (reference.kind === "snapshot_capture" && !reference.capture)
       throw new SandbarError("INVALID_ARGUMENT", "Recovery capture expectations are missing");
 
+    this.assertRecoverySandbox(reference);
     assertRecoveryResourceKind(reference.kind, reference.resource);
 
     if (reference.resource)

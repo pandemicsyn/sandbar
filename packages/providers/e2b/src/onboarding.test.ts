@@ -12,7 +12,7 @@ import { createSdkTransport, type E2BRecord, type E2BTransport } from "./transpo
 
 function fixture() {
   const records = new Map<string, E2BRecord>();
-  const calls = { auth: 0, team: 0, template: 0, create: 0 };
+  const calls = { auth: 0, team: 0, template: 0, create: 0, run: 0, write: 0, kill: 0 };
   let loseResponse = false;
 
   const adapter = createE2BAdapter((): E2BTransport => ({
@@ -67,15 +67,20 @@ function fixture() {
       };
     },
     async kill(id) {
+      calls.kill++;
+
       return records.delete(id);
     },
     async run() {
+      calls.run++;
       throw new Error("Not used");
     },
     async read() {
       throw new Error("Not used");
     },
-    async write() {},
+    async write() {
+      calls.write++;
+    },
     async remove() {},
     close() {},
   }));
@@ -380,3 +385,37 @@ test("sandbox key-scoped references cannot rotate credentials or change template
     }
   }
 });
+
+for (const kind of ["exec", "file_write", "destroy"] as const) {
+  test(`E2B ${kind} rechecks markers after saving the submission reference`, async () => {
+    const f = fixture();
+
+    const client = await Sandbar.connect({
+      adapter: f.adapter,
+      config: { teamId: "team_one" },
+      credentials: { apiKey: "fixture" },
+      onReference(ref) {
+        if (ref.kind === kind && (kind !== "destroy" || ref.token !== undefined))
+          f.records.get(ref.sandboxId!)!.metadata.sandbar_operation = "changed";
+      },
+    });
+
+    try {
+      const created = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const box = await client.sandboxes.get(created.reference!);
+
+      const dispatch = {
+        exec: () => box.exec(["true"]),
+        file_write: () => box.writeFile("/tmp/value", new Uint8Array([1])),
+        destroy: () => box.destroy(),
+      };
+
+      await expect(dispatch[kind]()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+      expect(f.calls.run).toBe(0);
+      expect(f.calls.write).toBe(0);
+      expect(f.calls.kill).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}

@@ -881,6 +881,13 @@ export function createDaytonaAdapter(
               return ctx.reject("UNAVAILABLE", "Daytona deletion cancelled before dispatch");
             }
 
+            if (box.reference)
+              await resourceState.box(
+                box.id,
+                { signal: ctx.signal, deadline: Date.now() + 30000 },
+                box.reference,
+              );
+
             const result = await driver.destroy({
               sandbox: native(box.id),
               identity: identity(ctx),
@@ -935,6 +942,14 @@ export function createDaytonaAdapter(
               return ctx.unknown(
                 "Deletion cancelled before dispatch; continue to confirm no effect",
               );
+
+            if (attempt.sandbox.reference) {
+              try {
+                await resourceState.box(attempt.sandbox.id, ctx, attempt.sandbox.reference);
+              } catch (error) {
+                if (!(error instanceof AdapterError) || error.code !== "NOT_FOUND") throw error;
+              }
+            }
 
             const result = await driver.observeDestroy(
               native(attempt.sandbox.id),
