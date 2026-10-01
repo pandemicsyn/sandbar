@@ -62,7 +62,7 @@ Optional operations fail locally when the adapter does not implement them.
 
 Use the object form for `cwd`, `env`, `deadlineSeconds`, `maxOutputBytes`, or `{ command: { kind: "shell", script } }`. The default deadline is 300 seconds and the default output limit is 1 MiB combined across stdout and stderr.
 
-`ExecOutput` contains `stdout` and `stderr` byte arrays, `exitCode`, `truncated`, and `stdoutText(maxBytes?)` / `stderrText(maxBytes?)` helpers. Text helpers default to 16 KiB. See [Files and output](/docs/guides/files-and-output/).
+`ExecOutput` contains `stdout` and `stderr` byte arrays, `exitCode`, `truncated`, and `stdoutText(maxBytes?)` / `stderrText(maxBytes?)` helpers, which also accept `{ full: true }`. Bounded text defaults to 16 KiB. `stdoutPreview({ maxBytes? })` / `stderrPreview({ maxBytes? })` return exported `OutputPreview` (`{ text, shortened }`); display shortening is independent of capture truncation. Exported `outputText` supports the same numeric and full overloads. See [Files and output](/docs/guides/files-and-output/).
 
 ## Operations and recovery
 

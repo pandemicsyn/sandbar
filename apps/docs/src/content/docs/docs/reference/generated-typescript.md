@@ -51,6 +51,7 @@ Import from `sandbar-sdk`.
 | `OperationHandle`           | type      |
 | `OperationOutcome`          | type      |
 | `OutcomeUnknownError`       | re-export |
+| `OutputPreview`             | type      |
 | `outputText`                | re-export |
 | `PreparedAdapterAttempt`    | re-export |
 | `PreparedImage`             | type      |
