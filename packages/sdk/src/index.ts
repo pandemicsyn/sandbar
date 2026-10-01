@@ -11,6 +11,7 @@ export {
 export type {
   AdapterRecoveryReference,
   AdapterConnectOptions,
+  DirectConnectOptions,
   AdapterCapabilities,
   RecoveredOperation,
   AdvancedOperationResult,

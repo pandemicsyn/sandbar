@@ -49,7 +49,15 @@ Imported and listed resources have unknown ownership. Their mount provenance can
 
 ## Retained volumes and mounts
 
+The default `require-durable` policy blocks compute destruction when writable-volume durability cannot be confirmed. Choose `allow-unconfirmed` only when your application accepts cleanup without a confirmed write barrier. This choice does not establish account eligibility or promise flushed or durable writes. Configure it once on a direct connection, or override it on `destroy` or `submitDestroy`: the call option wins, then `cleanup.storage`, then `require-durable`. Configuration is validated and copied before the provider connects.
+
 ```ts
+const client = await Sandbar.connect(
+  daytona({ apiKey: process.env.DAYTONA_API_KEY!, target: "us" }),
+  {
+    cleanup: { storage: "allow-unconfirmed" },
+  },
+);
 const volume = await client.volumes.create({ name: "workspace-data" });
 const info = await volume.inspect();
 if (info.state !== "ready") throw new Error("Volume is not ready");
@@ -63,8 +71,10 @@ await producer.writeFile("/mnt/workspace/example.bin", new Uint8Array([0, 255]),
   overwrite: true,
 });
 // Close finite writers first. Native shutdown durability is not established.
-const cleanup = await producer.destroy({ storage: "allow-unconfirmed" });
-console.log(cleanup.mountDurability);
+const cleanup = await producer.destroy(); // Uses this connection's cleanup policy.
+console.log(cleanup.mountDurability); // Actual durability can still be unconfirmed.
+// To require confirmed durability for a particular call:
+// await producer.destroy({ storage: "require-durable" });
 const consumer = await client.sandboxes.create({
   environment: Image.prepared("your-native-image-id"),
   networkPolicy: "blocked",
@@ -77,7 +87,7 @@ await volume.delete();
 
 Mounts attach only during create. `volume.at()` validates absolute, normalized paths without changing native state. Overlapping or reserved paths are rejected. Daytona supports writable subpaths; E2B's private beta maps volume artifact management, but mounts are unsupported: native requests and observations use reusable names rather than immutable volume IDs. Neither mapping advertises read-only enforcement or volume versions. Mount readiness is verified for ordinary creation and recovered creation. Account access, class and native readiness can block a check before allocation.
 
-Both mappings expose object-backed storage with unknown shutdown durability, locking and atomic rename guarantees. The default destroy request refuses writable mounts where durability is unverified. `storage: "allow-unconfirmed"` explicitly permits compute cleanup and reports each mount as unconfirmed; it does not turn termination into a durability guarantee. When E2B volume inventory is unavailable during explicit cleanup, compute can still be terminated. The result reports unresolved retained storage as `e2b-volume-name:<name>` strings; these are names, not native IDs or deletion authority. Identity-based mount durability entries are emitted only where native identity was observed. Compute cleanup retains volumes, and `client.close()` releases only the local connection. Delete run-owned storage separately after dependent compute is confirmed gone. Automatic cleanup never deletes borrowed volumes; explicit application deletion can target a caller-selected borrowed volume after native checks.
+Both mappings expose object-backed storage with unknown shutdown durability, locking and atomic rename guarantees. The default destroy request refuses writable mounts where durability is unverified. `storage: "allow-unconfirmed"` explicitly permits compute cleanup and reports each mount as unconfirmed; it does not turn termination into a durability guarantee. When E2B volume inventory is unavailable during explicit cleanup, compute can still be terminated. The result reports unresolved retained storage as `e2b-volume-name:<name>` strings; these are names, not native IDs or deletion authority. Identity-based mount durability entries are emitted only where native identity was observed. A different connection default never changes an existing recovered operation or authorizes mutation replay. Compute cleanup retains volumes, and `client.close()` releases only the local connection. Delete run-owned storage separately after dependent compute is confirmed gone. Automatic cleanup never deletes borrowed volumes; explicit application deletion can target a caller-selected borrowed volume after native checks.
 
 ## Inventory and uncertain operations
 
