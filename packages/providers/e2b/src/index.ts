@@ -298,6 +298,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         if (record.state !== "running")
           throw new AdapterError("UNAVAILABLE", "E2B sandbox is paused");
 
+        if (record.attachmentReady === false)
+          throw new AdapterError("UNAVAILABLE", "E2B read-only guest attachment is unavailable");
+
         return record;
       };
 

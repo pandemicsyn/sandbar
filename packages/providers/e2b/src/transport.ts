@@ -50,6 +50,8 @@ export type E2BRecord = {
   state: string;
   endAt?: string | null;
   envdVersion?: string;
+  /** Native detail proves guest IO can attach without resuming or changing lifetime. */
+  attachmentReady?: boolean;
   volumeMounts?: { name: string; path: string }[];
 };
 
@@ -222,6 +224,12 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         metadata: info.metadata,
         state: info.state,
         envdVersion: info.envdVersion,
+        attachmentReady:
+          info.state === "running" &&
+          info.lifecycle?.autoResume === false &&
+          !!info.envdAccessToken &&
+          !!info.envdVersion &&
+          info.domain === "e2b.app",
         endAt: info.endAt,
         volumeMounts: info.volumeMounts,
       };

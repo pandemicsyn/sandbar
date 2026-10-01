@@ -16,6 +16,8 @@ import {
   type AdapterRecoveryReference,
 } from "./index";
 
+type InspectionFixtureFacts = Record<string, import("sandbar-adapter").Json>;
+
 function fixture(reopening: boolean, pendingOperations = false) {
   const scope = { authority: { kind: "fixture", id: "account" }, partition: {} };
 
@@ -31,6 +33,8 @@ function fixture(reopening: boolean, pendingOperations = false) {
   let inspectSynchronously = false;
   let inspectionHold = false;
   let preflightFailure: AdapterError | undefined;
+  let capabilityFailure: AdapterError | undefined;
+  let inspectionFacts = {};
   let synchronousFailure = false;
   const saved: AdapterRecoveryReference[] = [];
   const dispatched: { operation: string; sandbox: Sandbox }[] = [];
@@ -101,6 +105,8 @@ function fixture(reopening: boolean, pendingOperations = false) {
           },
         },
         async resourceCapabilities(target) {
+          if (capabilityFailure) throw capabilityFailure;
+
           if (target.sandbox) record("capabilities", target.sandbox);
           const unsupported = { status: "unsupported" as const, reason: "fixture" };
 
@@ -200,7 +206,7 @@ function fixture(reopening: boolean, pendingOperations = false) {
 
           if (inspectionHold) return new Promise(() => {});
 
-          return Promise.resolve({ id: "native", state: "running" as const });
+          return Promise.resolve({ id: "native", state: "running" as const, ...inspectionFacts });
         },
       };
 
@@ -246,6 +252,12 @@ function fixture(reopening: boolean, pendingOperations = false) {
     reference,
     dispatched,
     saved,
+    setInspectionFacts(value: InspectionFixtureFacts) {
+      inspectionFacts = value;
+    },
+    failCapabilities(code: AdapterError["code"]) {
+      capabilityFailure = new AdapterError(code, "native capability failure");
+    },
     failInspection(code: AdapterError["code"], synchronous = false) {
       inspectSynchronously = synchronous;
       inspectionFailure = new AdapterError(code, "native inspection failure");
@@ -528,3 +540,49 @@ test("inspection keeps caller cancellation typed and normalizes its owned timeou
     await client.close();
   }
 });
+
+for (const facts of [
+  { expires: { status: "invalid" } },
+  { expires: { status: "known", at: "tomorrow", action: "destroy", scope: "sandbox" } },
+  { idleStop: { status: "known", value: { seconds: -1, action: "stop" } } },
+  { retention: { status: "known", value: { autoDeleteAfterStoppedSeconds: -1 } } },
+  { nativeState: 7 },
+  { execution: { status: "known", value: { nativeId: "" } } },
+  { unexpectedFact: true },
+  { reference: { kind: "sandbox" } },
+]) {
+  test(`inspection rejects malformed native lifecycle facts ${JSON.stringify(facts)}`, async () => {
+    const f = fixture(true);
+    const client = await f.connect();
+
+    try {
+      const box = await client.sandboxes.get(f.reference);
+      f.setInspectionFacts(facts);
+      const error = await box.inspect().catch((error) => error);
+      expect(error).toBeInstanceOf(SandbarError);
+      expect(error.code).toBe("INVALID_RESPONSE");
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+for (const code of ["NOT_FOUND", "FORBIDDEN", "CONFLICT"] as const) {
+  test(`referenced capabilities and snapshot checks normalize ${code}`, async () => {
+    const f = fixture(true);
+    const client = await f.connect();
+
+    try {
+      const box = await client.sandboxes.get(f.reference);
+      f.failCapabilities(code);
+
+      for (const call of [() => box.capabilities(), () => box.checkSnapshot()]) {
+        const error = await call().catch((error) => error);
+        expect(error).toBeInstanceOf(SandbarError);
+        expect(error).toMatchObject({ code, effect: "none" });
+      }
+    } finally {
+      await client.close();
+    }
+  });
+}

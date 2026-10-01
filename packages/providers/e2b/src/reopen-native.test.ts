@@ -126,34 +126,78 @@ test("real pinned E2B client attaches locally and routes exec/files with guest t
   ).toBe(true);
 });
 
-test.each(["auto-resume", "missing-policy", "missing-token", "foreign-domain", "paused"])(
-  "guest attachment rejects unsafe detail before guest IO: %s",
-  async (mode) => {
-    const f = fixture();
+test.each([
+  "auto-resume",
+  "missing-policy",
+  "missing-token",
+  "missing-version",
+  "missing-domain",
+  "foreign-domain",
+  "paused",
+])("guest attachment rejects unsafe detail before guest IO: %s", async (mode) => {
+  const f = fixture();
 
-    if (mode === "auto-resume") f.detail.lifecycle.autoResume = true;
+  if (mode === "auto-resume") f.detail.lifecycle.autoResume = true;
 
-    if (mode === "missing-policy") Reflect.deleteProperty(f.detail, "lifecycle");
+  if (mode === "missing-policy") Reflect.deleteProperty(f.detail, "lifecycle");
 
-    if (mode === "missing-token") Reflect.deleteProperty(f.detail, "envdAccessToken");
+  if (mode === "missing-token") Reflect.deleteProperty(f.detail, "envdAccessToken");
 
-    if (mode === "foreign-domain") f.detail.domain = "untrusted.invalid";
+  if (mode === "missing-version") Reflect.deleteProperty(f.detail, "envdVersion");
 
-    if (mode === "paused") f.detail.state = "paused";
-    expect(await f.transport.get("sandbox_one")).not.toBeNull();
+  if (mode === "missing-domain") Reflect.deleteProperty(f.detail, "domain");
+
+  if (mode === "foreign-domain") f.detail.domain = "untrusted.invalid";
+
+  if (mode === "paused") f.detail.state = "paused";
+  expect(await f.transport.get("sandbox_one")).toMatchObject({ attachmentReady: false });
+  Object.assign(f.detail.metadata, {
+    sandbar_scope: "team_one:base",
+    sandbar_operation: "operation_one",
+    sandbar_submission: "submission_one",
+    sandbar_template: "template_one",
+  });
+  let saved = 0;
+  const transport = { ...f.transport, async verifyAuth() {}, async verifyTeam() {} };
+
+  const client = await Sandbar.connect({
+    adapter: createE2BAdapter(() => transport),
+    config: { teamId: "team_one" },
+    credentials: { apiKey: "fixture-key" },
+    onReference() {
+      saved++;
+    },
+  });
+
+  try {
+    const box = await client.sandboxes.get(
+      sandboxReference("e2b", client.scope, "sandbox_one", {
+        operation: "operation_one",
+        submission: "submission_one",
+      }),
+    );
 
     for (const call of [
-      () => f.transport.run("sandbox_one", "echo x", { timeoutMs: 1000 }),
-      () => f.transport.read("sandbox_one", "/tmp/value", 100),
-      () => f.transport.write("sandbox_one", "/tmp/value", new Uint8Array([1])),
-      () => f.transport.remove("sandbox_one", "/tmp/value"),
+      () => box.exec(["true"]),
+      () => box.writeFile("/tmp/value", new Uint8Array([1])),
     ])
-      await expect(call()).rejects.toThrow();
-    expect(f.calls.every((c) => c.url.origin === "https://api.e2b.app" && c.method === "GET")).toBe(
-      true,
-    );
-  },
-);
+      await expect(call()).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+    expect(saved).toBe(0);
+  } finally {
+    await client.close();
+  }
+
+  for (const call of [
+    () => f.transport.run("sandbox_one", "echo x", { timeoutMs: 1000 }),
+    () => f.transport.read("sandbox_one", "/tmp/value", 100),
+    () => f.transport.write("sandbox_one", "/tmp/value", new Uint8Array([1])),
+    () => f.transport.remove("sandbox_one", "/tmp/value"),
+  ])
+    await expect(call()).rejects.toThrow();
+  expect(f.calls.every((c) => c.url.origin === "https://api.e2b.app" && c.method === "GET")).toBe(
+    true,
+  );
+});
 
 test("pause between read and guest request never connects, extends timeout or replays commands", async () => {
   const f = fixture();

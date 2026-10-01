@@ -96,6 +96,53 @@ export { Image, outputText } from "./resource";
 
 export type { AdapterRecoveryReference } from "./adapter-reference";
 
+const UnknownFact = z.strictObject({ status: z.literal("unknown"), reason: z.string().min(1) });
+
+const SandboxInfoSchema = z.strictObject({
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).nullable(),
+  state: SandboxState,
+  nativeState: z.string().nullable(),
+  observedAt: z.iso.datetime({ offset: true }),
+  expires: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      at: z.iso.datetime({ offset: true }),
+      action: z.enum(["destroy", "suspend"]),
+      scope: z.enum(["running-session", "sandbox"]),
+    }),
+    z.strictObject({ status: z.literal("none") }),
+    UnknownFact,
+  ]),
+  idleStop: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z
+        .strictObject({
+          seconds: z.number().nonnegative().finite(),
+          action: z.enum(["stop", "suspend"]),
+        })
+        .nullable(),
+    }),
+    UnknownFact,
+  ]),
+  retention: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z.strictObject({
+        autoDeleteAfterStoppedSeconds: z.number().nonnegative().finite().nullable(),
+      }),
+    }),
+    UnknownFact,
+  ]),
+  execution: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z.strictObject({ nativeId: z.string().min(1) }),
+    }),
+    UnknownFact,
+  ]),
+});
+
 function canonicalScope(scope: Scope): string {
   return JSON.stringify({
     authority: scope.authority,
@@ -765,25 +812,31 @@ export class AdapterSandbox {
       if (result.id !== this.id)
         throw new SandbarError("INVALID_RESPONSE", "Provider returned another sandbox", "unknown");
 
-      if (result.reference) {
-        if (result.reference.kind !== "sandbox" || result.reference.nativeId !== this.id)
+      const { id: _id, ...facts } = result;
+
+      const parsed = SandboxInfoSchema.safeParse({
+        ...unknownSandboxFacts(),
+        reference: this.reference,
+        nativeState: null,
+        ...facts,
+        observedAt: new Date().toISOString(),
+      });
+
+      if (!parsed.success) throw new SandbarError("INVALID_RESPONSE", "Invalid sandbox inspection");
+      const info = parsed.data;
+
+      if (info.reference) {
+        if (info.reference.nativeId !== this.id)
           throw new SandbarError("INVALID_RESPONSE", "Provider sandbox identity differs");
-        assertResourceScope(result.reference, {
+        assertResourceScope(info.reference, {
           provider: this.client.provider,
           scope: this.client.scope,
         });
 
-        if (this.reference) assertSandboxReference(result.reference, this.reference);
+        if (this.reference) assertSandboxReference(info.reference, this.reference);
       }
 
-      return {
-        ...unknownSandboxFacts(),
-        reference: this.reference,
-        nativeState: null,
-        ...result,
-        observedAt: new Date().toISOString(),
-        state: SandboxState.parse(result.state),
-      };
+      return info;
     } catch (error) {
       assertSignal(options.signal);
 
@@ -1423,19 +1476,25 @@ export class AdapterDirectClient {
     const support = this.session.supports;
     const signal = AbortSignal.any([this.signal, ...(options.signal ? [options.signal] : [])]);
 
-    const state = await readWhileOpen(
-      this,
-      raceAbort(
-        stateCapabilities(this.session, target, {
+    let state: Awaited<ReturnType<typeof stateCapabilities>>;
+
+    try {
+      state = await readWhileOpen(
+        this,
+        raceAbort(
+          stateCapabilities(this.session, target, {
+            signal,
+            deadline: Date.now() + 30000,
+          }),
           signal,
-          deadline: Date.now() + 30000,
-        }),
-        signal,
-      ).catch((error) => {
-        assertSignal(options.signal);
-        throw error;
-      }),
-    );
+        ),
+      );
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
 
     return structuredClone({
       ...state,
