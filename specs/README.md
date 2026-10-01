@@ -9,7 +9,8 @@ New features target the direct SDK and public adapter API. Service expansion is 
 - [Provider state portability](provider-state-portability.md) — snapshot/volume support merged in PR #25. Later lifecycle and richer storage contracts remain proposals until implemented.
 - [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) — ordinary results, direct partial outcomes and provider-identifying snapshot/volume handles merged in PR #33. Expanded persistence callbacks and workflow machinery remain deferred.
 - Provider acceptance merged in PR #32; use the [maintained Bun runner](../packages/sdk-qualification/provider-qualification/README.md) and generated evidence, not proposed qualification behavior.
-- Cleanup configuration, public types/errors and [lifecycle slice 1 reopen/inspect](sandbox-lifecycle.md) are delegated implementation work, not merged. Streaming/cancellation is delegated scoping only. See the [authoritative roadmap](../ROADMAP.md) for task identities and order. Later lifecycle choices and mounted storage composition remain later work.
+- Public direct resource types and caller input errors merged in PR #35.
+- Cleanup configuration and [lifecycle slice 1 reopen/inspect](sandbox-lifecycle.md) are delegated implementation work, not merged. Streaming/cancellation is delegated scoping only. See the [authoritative roadmap](../ROADMAP.md) for task identities and order. Later lifecycle choices and mounted storage composition remain later work.
 
 ## Implemented observability contract
 

@@ -39,6 +39,8 @@ export type {
   CreateInput,
   ExecInput,
   ExecOutput,
+  DirectSandbarClient,
+  DirectSandboxHandle,
   SandboxHandle,
   OperationHandle,
   RecoveryReference,

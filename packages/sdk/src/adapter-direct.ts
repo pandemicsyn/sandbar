@@ -21,7 +21,7 @@ import {
   resolveSnapshot,
   checkCreate,
   type Support,
-  type SnapshotRequest,
+  SnapshotRequest,
   type SnapshotPlan,
   type CreatePlan,
   type DirectCapabilities,
@@ -78,6 +78,7 @@ import {
   validateCreate,
   validateExec,
   validateFilePath,
+  validateResourceInput,
   waitDelay,
   type CreateInput,
   type ExecInput,
@@ -619,6 +620,7 @@ export class AdapterSandbox {
   ): Promise<AdapterOperation<SnapshotResult>> {
     this.client.ensureOpen();
     assertSignal(options.signal);
+    request = validateResourceInput(SnapshotRequest, request, "Invalid snapshot request");
 
     const signal = AbortSignal.any([
       this.client.signal,
@@ -667,6 +669,7 @@ export class AdapterSandbox {
     signal: AbortSignal,
   ): Promise<Support<SnapshotPlan>> {
     assertSignal(signal);
+    request = validateResourceInput(SnapshotRequest, request, "Invalid snapshot request");
 
     const caps = await internalMethod(this.client.capabilities)(
       { sandbox: { id: this.id } },

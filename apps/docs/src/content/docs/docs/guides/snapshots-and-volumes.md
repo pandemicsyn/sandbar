@@ -5,6 +5,12 @@ description: Capture and restore a sandbox, mount retained storage, save referen
 
 Snapshots retain captured sandbox state independently of the source. Volumes retain storage independently of compute. These APIs are available on direct SDK connections; the service client has no snapshot or volume endpoints.
 
+Use `DirectSandbarClient` and `DirectSandboxHandle` from `sandbar-sdk` when annotating direct clients and sandboxes. The compatible `SandbarClient` and `SandboxHandle` types expose the common service subset and hide direct snapshot/volume APIs.
+
+Malformed caller inputs in these APIs reject with `SandbarError` (`INVALID_ARGUMENT`, effect `none`) before mutation. Unsupported restore preflight throws `UnsupportedFeatureError`; its `unmetRequirements` lists each unmet network, sizing, independent lifecycle or mount requirement. Independent lifecycle is required unless explicitly set to `false`.
+
+`RestoreRequest.mounts` retains share, replace and omit choices for schema compatibility, but all nonempty choices currently reject. Restores require confirmed `mountHandling: "none"` and no recorded mounts; unknown provenance also rejects. Leave `mounts` absent or empty. A provider's mount metadata does not enable mounted restore in the SDK.
+
 ## Capture and restore
 
 Start with an [E2B connection](/docs/providers/e2b/) named `sandbar` and `Image` imported from `sandbar-sdk`. The following uses `base` and explicit `blocked` networking. On Daytona, use the configured prepared image and `daytona-default` on both create and restore when the connection uses that policy.

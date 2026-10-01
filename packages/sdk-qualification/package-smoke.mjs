@@ -228,11 +228,11 @@ void flow;
 `;
   else if (mode === "direct")
     source = `
-import { Sandbar, Image, type SandbarClient, type SandboxHandle } from "sandbar-sdk";
+import { Sandbar, Image, type SandbarClient, type SandboxHandle, type DirectSandbarClient, type DirectSandboxHandle } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 async function flow() {
-  const client = await Sandbar.connect({ adapter: createFakeAdapter({ url: "http://127.0.0.1:1234", token: "example-token-123456" }), config: {}, credentials: {} });
-  const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
+  const client: DirectSandbarClient = await Sandbar.connect({ adapter: createFakeAdapter({ url: "http://127.0.0.1:1234", token: "example-token-123456" }), config: {}, credentials: {} });
+  const box: DirectSandboxHandle = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
   const commonClient: SandbarClient = client;
   const commonSandbox: SandboxHandle = box;
   const destroy: SandboxHandle["destroy"] = box.destroy;

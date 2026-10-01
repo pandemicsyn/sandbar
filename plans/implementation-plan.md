@@ -14,7 +14,7 @@ Snapshot/volume support merged in PR #25; provider acceptance merged in PR #32; 
 
 The merged [acceptance tooling](../packages/sdk-qualification/provider-qualification/README.md) uses ordinary Bun suites and an offline generated support table. Preserve actual historical revisions, blocked access and not-run evidence. A fixture pass is not live qualification. PR30's still-relevant documentation is being selectively reconciled against main, rather than cherry-picked wholesale.
 
-Cleanup configuration, public types/errors and lifecycle slice 1 reopen/inspect are in progress, not merged. Streaming/cancellation is spec work only. Upfront cleanup policy is absent at `d186cea`; per-call `storage` remains available. Later timeout mutation and suspend/resume retain product decisions and dependencies in the [lifecycle spec](../specs/sandbox-lifecycle.md).
+Public types/errors merged in PR #35. Cleanup configuration and lifecycle slice 1 reopen/inspect are in progress, not merged. Streaming/cancellation is spec work only. Upfront cleanup policy is absent at `d186cea`; per-call `storage` remains available. Later timeout mutation and suspend/resume retain product decisions and dependencies in the [lifecycle spec](../specs/sandbox-lifecycle.md).
 
 [Recovery direction](../specs/sdk-recovery-dx.md) keeps ordinary calls and application-owned persistence central. Expanded persistence callbacks, normalized recovery-facts envelopes, application-backed dispatch barriers and generic continuation/workflow machinery are deferred. Shipped compatibility paths and no-replay/deletion safeguards remain supported.
 
