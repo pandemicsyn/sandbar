@@ -20,6 +20,7 @@ import {
   OutcomeUnknownError,
   raceAbort,
   validateResourceInput,
+  type ReadOptions,
 } from "./resource";
 import {
   AdapterSandbox,
@@ -60,7 +61,7 @@ async function resourceRead<T>(
   }
 }
 
-export type WaitOptions = { signal?: AbortSignal; pollMs?: number };
+export type WaitOptions = ReadOptions & { pollMs?: number };
 
 export type SnapshotResult = Omit<SnapshotCaptureValue, "snapshot"> & { snapshot: AdapterSnapshot };
 

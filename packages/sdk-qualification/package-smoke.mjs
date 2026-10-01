@@ -128,11 +128,17 @@ void flow;
 `;
   else if (mode === "custom")
     source = `
-import { Sandbar, Image } from "sandbar-sdk";
+import { Sandbar, Image, type ReadOptions, type SandboxHandle } from "sandbar-sdk";
 import { acme } from "@acme/sandbar-adapter";
 async function flow() {
   const client = await Sandbar.connect({ adapter: acme, config: { region: "us" }, credentials: { token: "fixture" } });
   const box = await client.sandboxes.create({ environment: Image.prepared("image-1") });
+  const handle: SandboxHandle = box;
+  const options: ReadOptions = { signal: new AbortController().signal };
+  await handle.inspect(options);
+  await handle.inspect({ ...options, pollMs: 500 });
+  await handle.readFile("/file", options);
+  await handle.readFile("/file");
   await box.destroy();
   await client.close();
 }
@@ -346,7 +352,11 @@ try {
   const result = await box.exec({ command: { kind: "shell", script: "printf test" } });
   if (result.stdout[0] !== 0 || result.stdout[1] !== 255 || result.stderr[0] !== 127) throw new Error("Binary output mismatch");
   await box.writeFile("/file", Uint8Array.from([0,255]), { overwrite: true });
-  const bytes = await box.readFile("/file");
+  const stopped = new AbortController();
+  stopped.abort();
+  try { await box.readFile("/file", { signal: stopped.signal }); throw Error("Pre-aborted read succeeded"); }
+  catch (error) { if (error.code !== "WAIT_ABORTED" || error.effect !== "none") throw error; }
+  const bytes = await box.readFile("/file", { signal: new AbortController().signal });
   if (bytes[0] !== 0 || bytes[1] !== 255) throw new Error("Binary file mismatch");
   await box.destroy();
   if (mutations !== 7) throw new Error("Mutation replay in packed consumer: " + mutations);

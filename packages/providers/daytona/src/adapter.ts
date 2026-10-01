@@ -1133,7 +1133,13 @@ export function createDaytonaAdapter(
                 deadline: Date.now() + 30000,
               });
 
-            return driver.readFile({ sandbox: native(input.sandbox.id), path: input.path });
+            ctx.signal.throwIfAborted();
+
+            return driver.readFile({
+              sandbox: native(input.sandbox.id),
+              path: input.path,
+              signal: ctx.signal,
+            });
           },
           write: {
             recovery: { version: 1, token: WriteToken },

@@ -1,3 +1,4 @@
+import { readFileBytes } from "./file-read";
 import { freezeReference } from "./freeze-reference";
 import { certifyRecoveryReference, certifyOperationReference } from "./recovery-diagnostics";
 import {
@@ -83,6 +84,7 @@ import {
   validateCreate,
   validateExec,
   validateFilePath,
+  type ReadOptions,
   validateResourceInput,
   waitDelay,
   type CreateInput,
@@ -895,63 +897,21 @@ export class AdapterSandbox {
       options,
     );
   }
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, options: ReadOptions = {}): Promise<Uint8Array> {
     this.client.ensureOpen();
 
     if (!this.client.session.files?.read) unsupported("readFile");
     validateFilePath(path);
     const maxBytes = fileReadLimit(this.client.session.files.maxBytes);
 
-    const value = await readWhileOpen(
-      this.client,
-      this.client.session.files.read(
-        { sandbox: sandboxInput(this.id, this.reference), path },
-        { signal: this.client.signal, deadline: Date.now() + 30_000 },
-      ),
+    const read = this.client.session.files.read.bind(this.client.session.files);
+
+    return readFileBytes(
+      (context) => read({ sandbox: sandboxInput(this.id, this.reference), path }, context),
+      maxBytes,
+      this.client.signal,
+      options,
     );
-
-    if (value instanceof Uint8Array) {
-      if (value.length > maxBytes)
-        throw new SandbarError("OUTPUT_CAPACITY", "File exceeds adapter limit", "unknown");
-
-      return Uint8Array.from(value);
-    }
-
-    const reader = value.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-
-    try {
-      while (true) {
-        const part = await readWhileOpen(this.client, reader.read());
-
-        if (part.done) break;
-
-        if (!(part.value instanceof Uint8Array) || total + part.value.length > maxBytes)
-          throw new SandbarError("OUTPUT_CAPACITY", "File exceeds adapter limit", "unknown");
-        chunks.push(Uint8Array.from(part.value));
-        total += part.value.length;
-      }
-    } finally {
-      // A non-cooperative stream must not hold a bounded result or local close.
-      try {
-        void reader.cancel().catch(() => undefined);
-      } catch {
-        // Reader cancellation is best effort after the read has ended.
-      }
-    }
-
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    this.client.ensureOpen();
-
-    return bytes;
   }
   async writeFile(
     path: string,

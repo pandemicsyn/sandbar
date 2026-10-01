@@ -90,6 +90,13 @@ export async function files(t: TestResources, box: AdapterSandbox, root = "/tmp"
   const second = new Uint8Array([2, 254, 0]);
   await box.writeFile(path, first, { overwrite: true, signal: t.signal });
   expect(await t.read(box, path)).toEqual(first);
+  const cancelled = new AbortController();
+  cancelled.abort();
+  await expect(box.readFile(path, { signal: cancelled.signal })).rejects.toMatchObject({
+    code: "WAIT_ABORTED",
+    effect: "none",
+  });
+  expect(await box.readFile(path, { signal: t.signal })).toEqual(first);
   await box.writeFile(path, second, { overwrite: true, signal: t.signal });
   expect(await t.read(box, path)).toEqual(second);
   await expect(

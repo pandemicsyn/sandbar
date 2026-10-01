@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import type { ExecCommand } from "sandbar-adapter/portable";
-import { daytonaProvider, daytonaRegistration, createDaytonaAdapter } from "./index";
+import { daytonaProvider, daytonaRegistration, createDaytonaAdapter, DaytonaDriver } from "./index";
 import { NonzeroExitError, Sandbar } from "sandbar-sdk";
 import { ProviderReadError } from "@sandbar/provider-spi";
 
@@ -2406,3 +2406,71 @@ test.each([
       rmSync(receipt, { recursive: true, force: true });
   }
 });
+
+for (const cancelMode of ["stall", "reject"] as const) {
+  test(`Daytona file abort reaches download and releases reader despite ${cancelMode} cleanup`, async () => {
+    let entered!: () => void;
+
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+
+    let cancelled = 0;
+    let downloadSignal: AbortSignal | null | undefined;
+
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {
+        return new Promise<void>(() => {});
+      },
+      cancel() {
+        cancelled++;
+
+        return cancelMode === "stall"
+          ? new Promise<void>(() => {})
+          : Promise.reject(Error("cleanup failed"));
+      },
+    });
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/sandbox/native-1") return Response.json(native("read-fixture"));
+
+      if (url.pathname.endsWith("/files/download")) {
+        downloadSignal = init?.signal;
+        entered();
+
+        return new Response(stream);
+      }
+
+      throw Error(`Unexpected request ${url.pathname}`);
+    });
+
+    const provider = await daytonaProvider({ apiKey: "fixture", target: "us", fetch: fetchImpl });
+    const controller = new AbortController();
+
+    if (!(provider.driver instanceof DaytonaDriver)) throw Error("Expected Daytona driver");
+
+    const read = provider.driver
+      .readFile({
+        sandbox: { kind: "sandbox", nativeId: "native-1", scope: provider.scope },
+        path: "/file",
+        signal: controller.signal,
+      })
+      .catch((error: Error) => error);
+
+    await started;
+    // Allow the buffered collector to acquire the response reader.
+    await Promise.resolve();
+    controller.abort();
+    expect(await read).toBeInstanceOf(ProviderReadError);
+    expect(downloadSignal?.aborted).toBe(true);
+    expect(cancelled).toBe(1);
+    expect(stream.locked).toBe(false);
+  });
+}
