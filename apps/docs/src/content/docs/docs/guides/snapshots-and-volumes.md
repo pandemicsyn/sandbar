@@ -5,6 +5,12 @@ description: Capture independent sandbox state and attach retained storage throu
 
 Direct SDK connections expose scoped snapshot and volume handles. The service client has no state resource endpoints. Capture profiles describe exact preservation, interruption, source state, connection loss, consistency and mounts; always check the actual source first. Current implementations have deterministic fixture coverage. The [support table](/docs/providers/support/) records scoped provider-specific live acceptance and remaining untested behavior.
 
+Use `DirectSandbarClient` and `DirectSandboxHandle` from `sandbar-sdk` when annotating direct clients and sandboxes. The compatible `SandbarClient` and `SandboxHandle` types expose the common service subset and hide direct snapshot/volume APIs.
+
+Malformed caller inputs in these APIs reject with `SandbarError` (`INVALID_ARGUMENT`, effect `none`) before mutation. Unsupported restore preflight throws `UnsupportedFeatureError`; its `unmetRequirements` lists each unmet network, sizing, independent lifecycle or mount requirement. Independent lifecycle is required unless explicitly set to `false`.
+
+`RestoreRequest.mounts` retains share, replace and omit choices for schema compatibility, but all nonempty choices currently reject. Restores require confirmed `mountHandling: "none"` and no recorded mounts; unknown provenance also rejects. Leave `mounts` absent or empty. A provider's mount metadata does not enable mounted restore in the SDK.
+
 ## Capture and restore
 
 ```ts

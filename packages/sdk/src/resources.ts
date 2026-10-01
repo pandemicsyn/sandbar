@@ -14,7 +14,13 @@ import {
   type ArtifactDeletionResult,
   type SnapshotCaptureValue,
 } from "sandbar-adapter";
-import { SandbarError, OutcomeUnknownError, raceAbort } from "./resource";
+import {
+  SandbarError,
+  UnsupportedFeatureError,
+  OutcomeUnknownError,
+  raceAbort,
+  validateResourceInput,
+} from "./resource";
 import {
   AdapterSandbox,
   type AdapterDirectClient,
@@ -115,30 +121,43 @@ export class AdapterSnapshot {
 
     return info;
   }
+  /** Mount choices remain accepted for compatibility, but nonempty choices and mounted/unknown-provenance snapshots are unsupported. */
   async submitRestore(
     request: RestoreRequest,
     options: WaitOptions = {},
   ): Promise<AdapterOperation<AdapterSandbox>> {
     const ref = checkedResource(this.client, this.reference, "snapshot");
-    const input = RestoreRequest.parse(request);
+    const input = validateResourceInput(RestoreRequest, request, "Invalid restore request");
     const info = await this.inspect(options);
 
     if (info.state !== "ready" || info.preserve === null)
       throw new SandbarError("UNAVAILABLE", "Snapshot provenance or readiness is unknown");
 
-    if (
-      !info.restore.networkPolicies.includes(input.networkPolicy) ||
-      (Object.keys(input.resources ?? {}).length > 0 && !info.restore.resources) ||
-      (input.requireIndependentLifecycle !== false && !info.restore.independentLifecycle)
-    )
-      throw new SandbarError("UNSUPPORTED", "Restore requirements are unsupported");
+    const unmet: string[] = [];
 
-    if (
-      info.mountHandling !== "none" ||
-      info.mounts.length ||
-      Object.keys(input.mounts ?? {}).length
-    )
-      throw new SandbarError("UNSUPPORTED", "Snapshot mount restore is not implemented");
+    if (!info.restore.networkPolicies.includes(input.networkPolicy))
+      unmet.push(`Network policy '${input.networkPolicy}' is unsupported`);
+
+    if (Object.keys(input.resources ?? {}).length > 0 && !info.restore.resources)
+      unmet.push("Resource sizing overrides are unsupported");
+
+    if (input.requireIndependentLifecycle !== false && !info.restore.independentLifecycle)
+      unmet.push("Independent lifecycle is required but unsupported");
+
+    if (Object.keys(input.mounts ?? {}).length)
+      unmet.push(
+        "Snapshot mount restore is not implemented: share, replace and omit choices are unsupported",
+      );
+
+    if (info.mountHandling !== "none")
+      unmet.push(
+        `Snapshot mount restore is not implemented: capture mount provenance is '${info.mountHandling}', but must be 'none'`,
+      );
+
+    if (info.mounts.length)
+      unmet.push("Snapshot mount restore is not implemented: snapshot contains recorded mounts");
+
+    if (unmet.length) throw new UnsupportedFeatureError("snapshot restore", unmet);
 
     return this.client.submit(
       "snapshot_restore",
@@ -156,6 +175,7 @@ export class AdapterSnapshot {
       { ...options, resource: ref },
     );
   }
+  /** Restore requires no recorded mounts, confirmed mountHandling: "none", and absent or empty mount choices. */
   async restore(input: RestoreRequest, options: WaitOptions = {}): Promise<AdapterSandbox> {
     return (await this.submitRestore(input, options)).wait(options);
   }
@@ -204,7 +224,11 @@ export class AdapterVolume {
     path: string,
     options: { access?: "read-write" | "read-only"; subpath?: string } = {},
   ): MountSpec {
-    return MountSpec.parse({ volume: structuredClone(this.reference), path, ...options });
+    return validateResourceInput(
+      MountSpec,
+      { volume: structuredClone(this.reference), path, ...options },
+      "Invalid volume mount",
+    );
   }
   submitDelete(options: WaitOptions = {}): Promise<AdapterOperation<ArtifactDeletionResult>> {
     return deleteResource(this.client, this.reference, "volume", options);
@@ -261,18 +285,22 @@ export function resourceManagers(client: AdapterDirectClient) {
     async list(input: InventoryInput) {
       client.ensureOpen();
 
+      const request = validateResourceInput(
+        InventoryInput,
+        input,
+        "Invalid snapshot inventory request",
+      );
+
       if (!client.session.snapshotList)
         throw new SandbarError("UNSUPPORTED", "Snapshot inventory is unsupported");
 
-      const page = await resourceRead(client, (ctx) =>
-        client.session.snapshotList!(InventoryInput.parse(input), ctx),
-      );
+      const page = await resourceRead(client, (ctx) => client.session.snapshotList!(request, ctx));
 
       client.ensureOpen();
 
       const checked = z
         .strictObject({
-          items: z.array(SnapshotInfo).max(input.limit),
+          items: z.array(SnapshotInfo).max(request.limit),
           nextCursor: z.string().max(4096).optional(),
           coverage: z.enum(["provider-scope", "sandbar-managed"]),
         })
@@ -297,7 +325,7 @@ export function resourceManagers(client: AdapterDirectClient) {
     async submitCreate(input: VolumeCreateInput, options: WaitOptions = {}) {
       return client.submit(
         "volume_create",
-        VolumeCreateInput.parse(input),
+        validateResourceInput(VolumeCreateInput, input, "Invalid volume create request"),
         (result, recovery) => {
           if (result.kind !== "completed" || !("filesystem" in result.value))
             throw new OutcomeUnknownError(recovery);
@@ -313,18 +341,22 @@ export function resourceManagers(client: AdapterDirectClient) {
     async list(input: InventoryInput) {
       client.ensureOpen();
 
+      const request = validateResourceInput(
+        InventoryInput,
+        input,
+        "Invalid volume inventory request",
+      );
+
       if (!client.session.volumeList)
         throw new SandbarError("UNSUPPORTED", "Volume inventory is unsupported");
 
-      const page = await resourceRead(client, (ctx) =>
-        client.session.volumeList!(InventoryInput.parse(input), ctx),
-      );
+      const page = await resourceRead(client, (ctx) => client.session.volumeList!(request, ctx));
 
       client.ensureOpen();
 
       const checked = z
         .strictObject({
-          items: z.array(VolumeInfo).max(input.limit),
+          items: z.array(VolumeInfo).max(request.limit),
           nextCursor: z.string().max(4096).optional(),
           coverage: z.enum(["provider-scope", "sandbar-managed"]),
         })

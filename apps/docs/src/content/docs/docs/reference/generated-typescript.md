@@ -33,6 +33,8 @@ Import from `sandbar-sdk`.
 | `diagnosticContext`         | re-export |
 | `DiagnosticContext`         | type      |
 | `DirectCapabilities`        | type      |
+| `DirectSandbarClient`       | type      |
+| `DirectSandboxHandle`       | type      |
 | `ExecInput`                 | type      |
 | `ExecOutput`                | type      |
 | `Image`                     | re-export |
