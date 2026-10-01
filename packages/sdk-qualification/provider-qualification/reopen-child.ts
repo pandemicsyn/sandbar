@@ -10,6 +10,9 @@ const input = z
     connection: z.unknown(),
     reference: ResourceReference,
     profilePath: z.string().optional(),
+    sandboxProbe: z
+      .object({ path: z.string(), base64: z.string(), expires: z.unknown() })
+      .optional(),
   })
   .parse(JSON.parse(await Bun.stdin.text()));
 
@@ -49,21 +52,50 @@ const factory =
 
 if (!factory) throw new Error("Unknown fresh-process profile");
 
-const client = await factory(async () => {
-  throw new Error("Fresh-process probe must not mutate");
+const client = await factory(async (reference) => {
+  if (!input.sandboxProbe || reference.kind !== "exec")
+    throw new Error("Fresh-process probe forbids control-plane mutations");
 });
 
 try {
-  const snapshot = await client.snapshots.get(input.reference);
-  const info = await snapshot.inspect();
+  if (input.reference.kind === "sandbox" && input.sandboxProbe) {
+    const sandbox = await client.sandboxes.get({ ...input.reference, kind: "sandbox" });
+    const before = await sandbox.inspect();
 
-  if (
-    info.reference.nativeId !== input.reference.nativeId ||
-    info.reference.generation !== input.reference.generation ||
-    info.mountHandling !== "none" ||
-    info.state !== "ready"
-  )
-    throw new Error("Fresh-process snapshot identity/provenance differs");
+    if (
+      input.provider === "e2b" &&
+      (before.expires.status !== "known" || before.expires.scope !== "running-session")
+    )
+      throw new Error("E2B running-session expiry is required for no-extension evidence");
+
+    if (
+      before.state !== "running" ||
+      JSON.stringify(before.expires) !== JSON.stringify(input.sandboxProbe.expires)
+    )
+      throw new Error("Fresh-process sandbox state/deadline differs");
+    const bytes = await sandbox.readFile(input.sandboxProbe.path);
+
+    if (Buffer.from(bytes).toString("base64") !== input.sandboxProbe.base64)
+      throw new Error("Fresh-process sandbox bytes differ");
+    const result = await sandbox.exec(["/bin/sh", "-c", "printf sandbox-reopen"]);
+
+    if (result.stdoutText() !== "sandbox-reopen")
+      throw new Error("Fresh-process sandbox exec differs");
+
+    if (JSON.stringify((await sandbox.inspect()).expires) !== JSON.stringify(before.expires))
+      throw new Error("Guest access changed sandbox expiry");
+  } else {
+    const snapshot = await client.snapshots.get(input.reference);
+    const info = await snapshot.inspect();
+
+    if (
+      info.reference.nativeId !== input.reference.nativeId ||
+      info.reference.generation !== input.reference.generation ||
+      info.mountHandling !== "none" ||
+      info.state !== "ready"
+    )
+      throw new Error("Fresh-process snapshot identity/provenance differs");
+  }
 } finally {
   await client.close();
 }

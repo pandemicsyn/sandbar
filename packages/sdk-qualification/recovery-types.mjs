@@ -8,6 +8,10 @@ export async function checkRecoveryTypes(directory, root, run) {
     await readFile(join(root, "apps/docs/examples/recovery-outcomes.ts"), "utf8"),
   );
   await writeFile(
+    join(directory, "sandbox-reopen.ts"),
+    await readFile(join(root, "apps/docs/examples/sandbox-reopen.ts"), "utf8"),
+  );
+  await writeFile(
     join(directory, "recovery-types.ts"),
     `
 import { Sandbar, type DirectConnectOptions, type AdapterDirectClient, type AdapterRecoveryReference, type SnapshotResult, type AdapterVolume, type ExecOutput } from "sandbar-sdk";
@@ -52,7 +56,7 @@ void narrow;
         skipLibCheck: false,
         types: [],
       },
-      include: ["recovery-outcomes.ts", "recovery-types.ts"],
+      include: ["recovery-outcomes.ts", "recovery-types.ts", "sandbox-reopen.ts"],
     }),
   );
   run(join(root, "node_modules/.bin/tsc"), ["-p", "recovery-tsconfig.json"], directory);

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { AdapterSandbox } from "sandbar-sdk";
 import { TestResources } from "./fixtures/resources";
-import { liveEnabled, setupLive, finishLive } from "./providers";
+import { liveEnabled, setupLive, finishLive, reopenSnapshot } from "./providers";
 import { boundedRead } from "../provider-qualification/bounds";
 
 export async function lifecycle(t: TestResources, box: AdapterSandbox, inventoryWaitMs = 30000) {
@@ -103,7 +103,7 @@ describe("Sandbar sandbox", () => {
   let box: AdapterSandbox;
   beforeAll(async () => {
     if (liveEnabled) {
-      fixture = await setupLive(["sandbox-lifecycle", "execution", "files"], {
+      fixture = await setupLive(["sandbox-lifecycle", "execution", "files", "lifecycle-reopen"], {
         compute: 1,
         snapshots: 0,
         volumes: 0,
@@ -130,6 +130,41 @@ describe("Sandbar sandbox", () => {
   (liveEnabled ? test : test.skip)(
     "files",
     async () => files(fixture!.resources, box, fixture!.fileRoot),
+    241000,
+  );
+  (liveEnabled ? test : test.skip)(
+    "lifecycle-reopen",
+    async () => {
+      const configured = fixture!;
+      const t = configured.resources;
+      {
+        expect(box.reference).not.toBeNull();
+        const reference = JSON.parse(JSON.stringify(box.reference));
+        const path = `${configured.fileRoot}/sandbar-reopen-${t.ledger.runId}`;
+        const bytes = new Uint8Array([0, 255, 31, 128]);
+        await box.writeFile(path, bytes, { overwrite: true, signal: t.signal });
+        const expires = (await box.inspect({ signal: t.signal })).expires;
+
+        if (t.client.provider === "e2b") {
+          expect(expires).toMatchObject({ status: "known", scope: "running-session" });
+        }
+
+        await reopenSnapshot(configured, reference, {
+          path,
+          base64: Buffer.from(bytes).toString("base64"),
+          expires,
+        });
+        await t.reconnect(t.signal);
+        box = await t.client.sandboxes.get(reference, { signal: t.signal });
+        expect(await t.read(box, path)).toEqual(bytes);
+        expect((await box.inspect({ signal: t.signal })).expires).toEqual(expires);
+        t.at("sandbox/reopen-delete");
+        await t.destroy("sandbox/source");
+        await expect(t.client.sandboxes.get(reference, { signal: t.signal })).rejects.toMatchObject(
+          { code: "NOT_FOUND" },
+        );
+      }
+    },
     241000,
   );
 });

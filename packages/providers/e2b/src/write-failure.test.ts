@@ -26,11 +26,20 @@ test("native SDK write failures preserve per-call connection/upload HTTP classif
     async (input: RequestInfo | URL) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
 
-      if (url.pathname.endsWith("/connect")) {
+      if (url.pathname === "/sandboxes/sandbox_private") {
         if (connectStatus !== 200)
           return Response.json({ message: privateMessage }, { status: connectStatus });
 
-        return Response.json({ sandboxID: "sandbox_private", envdVersion: "0.6.10" });
+        return Response.json({
+          sandboxID: "sandbox_private",
+          templateID: "base",
+          metadata: {},
+          state: "running",
+          envdVersion: "0.6.10",
+          envdAccessToken: "guest-token",
+          domain: "e2b.app",
+          lifecycle: { autoResume: false },
+        });
       }
 
       if (url.pathname === "/files") {
@@ -48,7 +57,7 @@ test("native SDK write failures preserve per-call connection/upload HTTP classif
     const transport = createSdkTransport("secret-key");
 
     for (const [stage, status, name] of [
-      ["connect", 401, "AuthenticationError"],
+      ["connect", 401, "UnknownError"],
       ["upload", 500, "SandboxError"],
       ["upload", 507, "NotEnoughSpaceError"],
     ] as const) {
@@ -78,8 +87,17 @@ test("native SDK write failures preserve per-call connection/upload HTTP classif
       async (input: RequestInfo | URL) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
 
-        if (url.pathname.endsWith("/connect"))
-          return Response.json({ sandboxID: "sandbox_private", envdVersion: "0.6.10" });
+        if (url.pathname === "/sandboxes/sandbox_private")
+          return Response.json({
+            sandboxID: "sandbox_private",
+            templateID: "base",
+            metadata: {},
+            state: "running",
+            envdVersion: "0.6.10",
+            envdAccessToken: "guest-token",
+            domain: "e2b.app",
+            lifecycle: { autoResume: false },
+          });
 
         if (url.pathname === "/files")
           return Response.json({ message: privateMessage }, { status: status++ });
@@ -108,7 +126,7 @@ test("native SDK write failures preserve per-call connection/upload HTTP classif
       { preconnect: previous.preconnect },
     );
     await expect(
-      transport.write("sandbox_private", "/tmp/private", submitted),
+      createSdkTransport("secret-key").write("sandbox_private", "/tmp/private", submitted),
     ).rejects.toMatchObject({ failure: { stage: "connect", errorName: "TypeError" } });
   } finally {
     globalThis.fetch = previous;

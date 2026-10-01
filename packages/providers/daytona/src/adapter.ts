@@ -1,3 +1,12 @@
+import {
+  sandboxReference,
+  assertSandboxReference,
+  assertResourceScope,
+  unknownSandboxFacts,
+  nativeDeadline,
+  type SandboxInfo,
+  type SandboxReference,
+} from "sandbar-adapter";
 import { z } from "zod";
 import { daytonaState } from "./state-native";
 import { MountDurability as importMountDurability, type ResourceReference } from "sandbar-adapter";
@@ -116,12 +125,29 @@ function failure(result: Exclude<DriverResult, { status: "completed" }>, ctx: At
   );
 }
 
-function createResult(result: DriverResult, ctx: AttemptContext) {
+async function createResult(
+  result: DriverResult & { nativeSandbox?: { id: string; labels?: Record<string, string> } },
+  ctx: AttemptContext,
+  referenceFor: (
+    id: string,
+    operation: string,
+    submission: string,
+    nativeDetail?: { id: string; labels?: Record<string, string> },
+  ) => Promise<SandboxReference | null>,
+  useNativeDetail = false,
+) {
   if (result.status === "completed") {
     if (result.value.kind !== "sandbox") return ctx.unknown("Daytona returned another result kind");
 
     return {
       id: result.value.observation.ref.nativeId,
+      reference:
+        (await referenceFor(
+          result.value.observation.ref.nativeId,
+          ctx.operationId,
+          ctx.submissionId,
+          useNativeDetail ? result.nativeSandbox : undefined,
+        )) ?? undefined,
       state:
         result.value.observation.state === "running" ? ("running" as const) : ("unknown" as const),
     };
@@ -133,12 +159,30 @@ function createResult(result: DriverResult, ctx: AttemptContext) {
   return failure(result, ctx);
 }
 
-function observedCreate(result: DriverResult, ctx: ObserveContext, submissionId: string) {
+async function observedCreate(
+  result: DriverResult & { nativeSandbox?: { id: string; labels?: Record<string, string> } },
+  ctx: ObserveContext,
+  submissionId: string,
+  operationId: string,
+  referenceFor: (
+    id: string,
+    operation: string,
+    submission: string,
+    nativeDetail?: { id: string; labels?: Record<string, string> },
+  ) => Promise<SandboxReference | null>,
+) {
   if (result.status === "completed") {
     if (result.value.kind !== "sandbox") return ctx.unknown("Daytona returned another result kind");
 
     return {
       id: result.value.observation.ref.nativeId,
+      reference:
+        (await referenceFor(
+          result.value.observation.ref.nativeId,
+          operationId,
+          submissionId,
+          result.nativeSandbox,
+        )) ?? undefined,
       state:
         result.value.observation.state === "running" ? ("running" as const) : ("unknown" as const),
     };
@@ -252,6 +296,11 @@ export function createDaytonaAdapter(
       if (config.networkPolicy === "daytona-default")
         Object.assign(partition, { networkPolicy: config.networkPolicy });
 
+      const resourceBinding = {
+        authority: { kind: "organization", id: scope.accountId! },
+        partition,
+      };
+
       const resourceState = daytonaState({
         scope: { authority: { kind: "organization", id: scope.accountId! }, partition },
         apiUrl: config.apiUrl,
@@ -260,6 +309,121 @@ export function createDaytonaAdapter(
         restartAfterCapture: config.snapshots.restartAfterCapture,
         fetch: fetchImpl ?? fetch,
       });
+
+      const inspection = async (
+        id: string,
+        expected?: SandboxReference,
+        ctx?: import("sandbar-adapter").ReadContext,
+      ): Promise<SandboxInfo> => {
+        let value;
+
+        try {
+          value = await resourceState.box(id, ctx);
+        } catch (error) {
+          if (error instanceof AdapterError) throw error;
+          throw new AdapterError("UNAVAILABLE", "Daytona native detail is unavailable");
+        }
+
+        if (value.networkBlockAll === undefined || value.public === undefined)
+          throw new AdapterError(
+            "UNAVAILABLE",
+            "Daytona native network/visibility policy is unavailable",
+          );
+
+        if (value.networkBlockAll !== (config.networkPolicy === "blocked") || value.public)
+          throw new AdapterError("CONFLICT", "Daytona native network/visibility policy differs");
+        const operation = value.labels?.["sandbar.operation"];
+        const submission = value.labels?.["sandbar.submission"];
+
+        const reference =
+          operation && submission
+            ? sandboxReference("daytona", resourceBinding, value.id, { operation, submission })
+            : null;
+
+        if (expected) {
+          if (!reference)
+            throw new AdapterError("CONFLICT", "Native sandbox creation correlation is missing");
+          assertSandboxReference(reference, expected);
+        }
+
+        const states = new Map<string, import("sandbar-adapter").SandboxState>([
+          ["started", "running"],
+          ["stopped", "stopped"],
+          ["archived", "suspended"],
+          ["starting", "restoring"],
+          ["restoring", "restoring"],
+          ["resuming", "restoring"],
+          ["creating", "creating"],
+          ["destroying", "destroying"],
+          ["destroyed", "destroyed"],
+        ]);
+
+        return {
+          ...unknownSandboxFacts(),
+          reference,
+          state: states.get(value.state) ?? "unknown",
+          nativeState: value.state,
+          observedAt: new Date().toISOString(),
+          expires: nativeDeadline(value.autoDestroyAt, "sandbox"),
+          idleStop:
+            value.autoStopInterval != null &&
+            Number.isSafeInteger(value.autoStopInterval) &&
+            value.autoStopInterval >= 0
+              ? {
+                  status: "known",
+                  value:
+                    value.autoStopInterval === 0
+                      ? null
+                      : { seconds: value.autoStopInterval * 60, action: "stop" },
+                }
+              : unknownSandboxFacts().idleStop,
+          retention:
+            value.autoDeleteInterval != null && Number.isSafeInteger(value.autoDeleteInterval)
+              ? {
+                  status: "known",
+                  value: {
+                    autoDeleteAfterStoppedSeconds:
+                      value.autoDeleteInterval < 0 ? null : value.autoDeleteInterval * 60,
+                  },
+                }
+              : unknownSandboxFacts().retention,
+        };
+      };
+
+      const referenceFor = async (
+        id: string,
+        operation: string,
+        submission: string,
+        nativeDetail?: { id: string; labels?: Record<string, string> },
+      ) => {
+        // The driver has already checked scope and labels on mount/observation detail reads.
+        if (nativeDetail) {
+          if (
+            nativeDetail.id !== id ||
+            nativeDetail.labels?.["sandbar.operation"] !== operation ||
+            nativeDetail.labels?.["sandbar.submission"] !== submission
+          )
+            return null;
+
+          return sandboxReference("daytona", resourceBinding, id, { operation, submission });
+        }
+
+        try {
+          const info = await inspection(id);
+
+          const expected = sandboxReference("daytona", resourceBinding, id, {
+            operation,
+            submission,
+          });
+
+          if (!info.reference) return null;
+          assertSandboxReference(info.reference, expected);
+
+          return info.reference;
+        } catch {
+          return null;
+        } // Confirmed creation remains usable when optional native metadata cannot be read.
+      };
 
       const destroyToken = (
         sandboxId: string,
@@ -347,6 +511,7 @@ export function createDaytonaAdapter(
               signal: ctx.signal,
             }),
             ctx,
+            referenceFor,
           );
         },
         async observe(attempt: import("sandbar-adapter").RecoveryAttempt, ctx: ObserveContext) {
@@ -360,7 +525,9 @@ export function createDaytonaAdapter(
             expectedSnapshotId: attempt.resource.nativeId,
           });
 
-          return value ? observedCreate(value, ctx, attempt.submissionId) : null;
+          return value
+            ? observedCreate(value, ctx, attempt.submissionId, attempt.operationId, referenceFor)
+            : null;
         },
       };
 
@@ -385,7 +552,10 @@ export function createDaytonaAdapter(
 
           return result;
         },
-        async resourceCapabilities() {
+        async resourceCapabilities(target, ctx) {
+          if (target.sandbox?.reference)
+            await inspection(target.sandbox.id, target.sandbox.reference, ctx);
+
           const fields = await resourceState.fields.resourceCapabilities!(
             {},
             { signal: new AbortController().signal, deadline: Date.now() + 30000 },
@@ -536,7 +706,12 @@ export function createDaytonaAdapter(
               signal: ctx.signal,
             });
 
-            const result = createResult(nativeResult, ctx);
+            const result = await createResult(
+              nativeResult,
+              ctx,
+              referenceFor,
+              !!input.mounts?.length,
+            );
 
             if (!("id" in result) || !input.mounts?.length) return result;
 
@@ -566,7 +741,15 @@ export function createDaytonaAdapter(
               operationId: attempt.operationId,
             });
 
-            const value = result ? observedCreate(result, ctx, attempt.submissionId) : null;
+            const value = result
+              ? await observedCreate(
+                  result,
+                  ctx,
+                  attempt.submissionId,
+                  attempt.operationId,
+                  referenceFor,
+                )
+              : null;
 
             if (!value || !("id" in value) || !attempt.mounts?.length) return value;
             const detail = result?.nativeSandbox;
@@ -595,8 +778,9 @@ export function createDaytonaAdapter(
             let nativeBox;
 
             try {
-              nativeBox = await resourceState.box(box.id, ctx);
-            } catch {
+              nativeBox = await resourceState.box(box.id, ctx, box.reference);
+            } catch (error) {
+              if (error instanceof AdapterError) throw error;
               throw new AdapterError("UNAVAILABLE", "Daytona inspection failed before deletion");
             }
 
@@ -623,10 +807,14 @@ export function createDaytonaAdapter(
 
             try {
               mounts = (
-                await resourceState.box(box.id, {
-                  signal: ctx.signal,
-                  deadline: Date.now() + 30000,
-                })
+                await resourceState.box(
+                  box.id,
+                  {
+                    signal: ctx.signal,
+                    deadline: Date.now() + 30000,
+                  },
+                  box.reference,
+                )
               ).volumes;
             } catch (error) {
               const code = error instanceof AdapterError ? error.code : "UNAVAILABLE";
@@ -693,6 +881,13 @@ export function createDaytonaAdapter(
               return ctx.reject("UNAVAILABLE", "Daytona deletion cancelled before dispatch");
             }
 
+            if (box.reference)
+              await resourceState.box(
+                box.id,
+                { signal: ctx.signal, deadline: Date.now() + 30000 },
+                box.reference,
+              );
+
             const result = await driver.destroy({
               sandbox: native(box.id),
               identity: identity(ctx),
@@ -747,6 +942,14 @@ export function createDaytonaAdapter(
               return ctx.unknown(
                 "Deletion cancelled before dispatch; continue to confirm no effect",
               );
+
+            if (attempt.sandbox.reference) {
+              try {
+                await resourceState.box(attempt.sandbox.id, ctx, attempt.sandbox.reference);
+              } catch (error) {
+                if (!(error instanceof AdapterError) || error.code !== "NOT_FOUND") throw error;
+              }
+            }
 
             const result = await driver.observeDestroy(
               native(attempt.sandbox.id),
@@ -824,15 +1027,16 @@ export function createDaytonaAdapter(
             );
           },
         },
-        async inspect(box) {
-          const result = await driver.inspect(native(box.id));
+        async reopen(reference, ctx) {
+          assertResourceScope(reference, {
+            provider: "daytona",
+            scope: { authority: { kind: "organization", id: scope.accountId! }, partition },
+          });
 
-          if (!result) return null;
-
-          return {
-            id: box.id,
-            state: result.nativeState === "stopped" ? ("stopped" as const) : result.state,
-          };
+          return inspection(reference.nativeId, reference, ctx);
+        },
+        async inspect(box, ctx) {
+          return { id: box.id, ...(await inspection(box.id, box.reference, ctx)) };
         },
         async inventory(input) {
           const page = await driver.inventory({ scope, cursor: input.cursor, limit: input.limit });
@@ -844,7 +1048,18 @@ export function createDaytonaAdapter(
         },
         exec: {
           recovery: { version: 1, token: ExecToken },
+          async prepare(input, ctx) {
+            if (input.sandbox.reference)
+              await inspection(input.sandbox.id, input.sandbox.reference, ctx);
+
+            return input;
+          },
           async submit(input, ctx) {
+            if (input.sandbox.reference)
+              await inspection(input.sandbox.id, input.sandbox.reference, {
+                signal: ctx.signal,
+                deadline: Date.now() + 30000,
+              });
             let receiptDeadline: number | undefined;
 
             const result = await driver.exec({
@@ -885,6 +1100,9 @@ export function createDaytonaAdapter(
             )
               return null;
 
+            if (attempt.sandbox.reference)
+              await inspection(attempt.sandbox.id, attempt.sandbox.reference, ctx);
+
             const result = await driver.observeExec({
               sandbox: native(attempt.sandbox.id),
               submissionId: attempt.submissionId,
@@ -908,12 +1126,30 @@ export function createDaytonaAdapter(
         },
         files: {
           maxBytes: caps.maxFileBytes,
-          async read(input) {
+          async read(input, ctx) {
+            if (input.sandbox.reference)
+              await inspection(input.sandbox.id, input.sandbox.reference, {
+                signal: ctx.signal,
+                deadline: Date.now() + 30000,
+              });
+
             return driver.readFile({ sandbox: native(input.sandbox.id), path: input.path });
           },
           write: {
             recovery: { version: 1, token: WriteToken },
+            async prepare(input, ctx) {
+              if (input.sandbox.reference)
+                await inspection(input.sandbox.id, input.sandbox.reference, ctx);
+
+              return input;
+            },
             async submit(input, ctx) {
+              if (input.sandbox.reference)
+                await inspection(input.sandbox.id, input.sandbox.reference, {
+                  signal: ctx.signal,
+                  deadline: Date.now() + 30000,
+                });
+
               const result = await driver.writeFile({
                 sandbox: native(input.sandbox.id),
                 identity: identity(ctx),
@@ -943,6 +1179,9 @@ export function createDaytonaAdapter(
                 (token && (!token.success || token.data.submissionId !== attempt.submissionId))
               )
                 return null;
+
+              if (attempt.sandbox.reference)
+                await inspection(attempt.sandbox.id, attempt.sandbox.reference, ctx);
 
               const result = await driver.observeWrite({
                 sandbox: native(attempt.sandbox.id),

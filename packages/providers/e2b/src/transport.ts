@@ -1,10 +1,24 @@
 import { Sandbox, SandboxNotFoundError, Template, Volume } from "e2b";
+import { AdapterError } from "sandbar-adapter";
 import { z } from "zod";
 import { classifyWriteFailure, E2BWriteFailure } from "./write-failure";
 
 export const E2B_ENDPOINT = "https://api.e2b.app";
 
 export const MAX_BYTES = 1_048_576;
+
+class NativeReadError extends AdapterError {
+  constructor(readonly statusCode: number) {
+    super(
+      statusCode === 404
+        ? "NOT_FOUND"
+        : [401, 403].includes(statusCode)
+          ? "FORBIDDEN"
+          : "UNAVAILABLE",
+      `E2B state read failed (${statusCode})`,
+    );
+  }
+}
 
 /** Positive native rejection; messages and response bodies never enter recovery. */
 export class E2BVolumeCreateRejected extends Error {
@@ -33,8 +47,11 @@ export type E2BRecord = {
   id: string;
   templateId: string;
   metadata: Record<string, string>;
-  state: "running" | "paused";
+  state: string;
+  endAt?: string | null;
   envdVersion?: string;
+  /** Native detail proves guest IO can attach without resuming or changing lifetime. */
+  attachmentReady?: boolean;
   volumeMounts?: { name: string; path: string }[];
 };
 
@@ -153,16 +170,67 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     requestTimeoutMs: 30_000,
   } as const;
 
+  const Detail = z.object({
+    sandboxID: z.string(),
+    templateID: z.string(),
+    metadata: z.record(z.string(), z.string()),
+    state: z.string(),
+    envdVersion: z.string().optional(),
+    envdAccessToken: z.string().min(1).max(8192).optional(),
+    domain: z.string().optional(),
+    lifecycle: z.object({ autoResume: z.boolean().optional() }).optional(),
+    endAt: z.string().nullable().optional(),
+    volumeMounts: z.array(z.object({ name: z.string(), path: z.string() })).optional(),
+  });
+
+  async function attach(
+    id: string,
+    logger?: { error(label: string, status: number): void },
+  ): Promise<Sandbox> {
+    const response = await controlGet(`/sandboxes/${encodeURIComponent(id)}`);
+    const detail = await readNative(response, Detail);
+
+    if (detail.sandboxID !== id) throw new AdapterError("CONFLICT", "E2B identity differs");
+
+    if (
+      detail.state !== "running" ||
+      detail.lifecycle?.autoResume !== false ||
+      !detail.envdAccessToken ||
+      !detail.envdVersion ||
+      detail.domain !== "e2b.app"
+    )
+      throw new AdapterError("UNAVAILABLE", "E2B read-only guest attachment is unavailable");
+
+    return new Sandbox({
+      ...opts,
+      logger,
+      sandboxId: id,
+      envdVersion: detail.envdVersion,
+      envdAccessToken: detail.envdAccessToken,
+      sandboxDomain: detail.domain,
+    });
+  }
+
   async function get(id: string): Promise<E2BRecord | null> {
     try {
-      const info = await Sandbox.getInfo(id, opts);
+      const response = await controlGet(`/sandboxes/${encodeURIComponent(id)}`);
+
+      if (response.status === 404) return null;
+      const info = await readNative(response, Detail);
 
       return {
-        id: info.sandboxId,
-        templateId: info.templateId,
+        id: info.sandboxID,
+        templateId: info.templateID,
         metadata: info.metadata,
         state: info.state,
         envdVersion: info.envdVersion,
+        attachmentReady:
+          info.state === "running" &&
+          info.lifecycle?.autoResume === false &&
+          !!info.envdAccessToken &&
+          !!info.envdVersion &&
+          info.domain === "e2b.app",
+        endAt: info.endAt,
         volumeMounts: info.volumeMounts,
       };
     } catch (error) {
@@ -182,7 +250,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     response: Response,
     schema: S,
   ): Promise<z.output<S>> {
-    if (!response.ok) throw new Error(`E2B state read failed (${response.status})`);
+    if (!response.ok) throw new NativeReadError(response.status);
 
     if (!response.body) throw new Error("E2B returned no native data");
     const body = await collectBounded(response.body, MAX_BYTES);
@@ -405,7 +473,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     async verifyAuth() {
       const response = await controlGet("/v2/templates?limit=1");
 
-      if (!response.ok) throw new Error(`E2B authentication failed (${response.status})`);
+      if (!response.ok) throw new NativeReadError(response.status);
       const templates = await readTemplates(response);
 
       if (templates.length > 1) throw new Error("E2B authentication exceeded its item bound");
@@ -415,7 +483,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         `/teams/${encodeURIComponent(teamId)}/metrics/max?metric=concurrent_sandboxes`,
       );
 
-      if (!response.ok) throw new Error(`E2B team verification failed (${response.status})`);
+      if (!response.ok) throw new NativeReadError(response.status);
       await response.body?.cancel();
     },
     async verifyTemplate(teamId, templateId) {
@@ -479,6 +547,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         ...opts,
         metadata: input.metadata,
         timeoutMs: input.timeoutMs,
+        lifecycle: { onTimeout: "kill", autoResume: false },
         allowInternetAccess: input.allowInternetAccess,
         volumeMounts: input.volumeMounts,
         signal: input.signal,
@@ -501,6 +570,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         metadata: info.metadata,
         state: info.state,
         envdVersion: info.envdVersion,
+        endAt: info.endAt?.toISOString(),
         volumeMounts: info.volumeMounts,
       }));
 
@@ -510,7 +580,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       return Sandbox.kill(id, { ...opts, signal });
     },
     async run(id, script, options) {
-      const sandbox = await Sandbox.connect(id, opts);
+      const sandbox = await attach(id);
 
       const result = await sandbox.commands.run(script, {
         cwd: options.cwd,
@@ -522,7 +592,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       return result.stdout;
     },
     async read(id, path, maxBytes) {
-      const sandbox = await Sandbox.connect(id, opts);
+      const sandbox = await attach(id);
 
       return collectBounded(
         await sandbox.files.read(path, { format: "stream", requestTimeoutMs: 30_000 }),
@@ -543,7 +613,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       };
 
       try {
-        const sandbox = await Sandbox.connect(id, { ...opts, logger });
+        const sandbox = await attach(id, logger);
         stage = "upload";
         httpStatus = undefined;
         await sandbox.files.write(path, new Blob([new Uint8Array(bytes)]), {
@@ -554,7 +624,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       }
     },
     async remove(id, path) {
-      const sandbox = await Sandbox.connect(id, opts);
+      const sandbox = await attach(id);
       await sandbox.files.remove(path, { requestTimeoutMs: 30_000 });
     },
     close() {},

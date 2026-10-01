@@ -21,6 +21,7 @@ export const features = {
       "close",
     ],
   },
+  reopening: { label: "Scoped sandbox reopening", scenarios: ["lifecycle-reopen"] },
   execution: {
     label: "Execution and captured output",
     workflow: "execution",
@@ -64,6 +65,10 @@ export const builtinSupport: SupportMetadata[] = [
     id: "daytona",
     name: "Daytona",
     features: {
+      reopening: {
+        support: "conditional",
+        note: "Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Deterministic native/packed coverage; new live workflow not run.",
+      },
       lifecycle: {
         support: "supported",
         note: "The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified.",
@@ -102,6 +107,10 @@ export const builtinSupport: SupportMetadata[] = [
     id: "e2b",
     name: "E2B",
     features: {
+      reopening: {
+        support: "conditional",
+        note: "Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Deterministic native/packed coverage; new live workflow not run.",
+      },
       lifecycle: {
         support: "supported",
         note: "The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed.",

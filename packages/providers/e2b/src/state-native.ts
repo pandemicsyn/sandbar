@@ -1,3 +1,4 @@
+import { sandboxReference, type SandboxReference, type Sandbox } from "sandbar-adapter";
 import { z } from "zod";
 import { resourceHistory } from "./resource-history";
 import {
@@ -66,7 +67,7 @@ export function e2bState(input: {
   scopeMarker: string;
   timeoutSeconds: number;
   apiKey: string;
-  find: (id: string) => Promise<E2BRecord | null>;
+  find: (id: string, expected?: SandboxReference) => Promise<E2BRecord | null>;
 }) {
   const { scope, transport } = input;
   const state = transport.state;
@@ -365,7 +366,7 @@ export function e2bState(input: {
     return info;
   }
 
-  async function profiles(target: { sandbox?: { id: string } }, _ctx: ReadContext) {
+  async function profiles(target: { sandbox?: Sandbox }, _ctx: ReadContext) {
     if (!state)
       return {
         status: "unsupported" as const,
@@ -377,7 +378,7 @@ export function e2bState(input: {
         status: "unknown" as const,
         reason: "Actual source envd/class/mount evidence is required",
       };
-    const box = await input.find(target.sandbox.id);
+    const box = await input.find(target.sandbox.id, target.sandbox.reference);
 
     if (!box) return { status: "unavailable" as const, reason: "Source is unavailable" };
 
@@ -462,7 +463,7 @@ export function e2bState(input: {
     snapshotCapture: {
       recovery: { version: 1, token: CaptureToken },
       async prepare(value, ctx) {
-        const box = await input.find(value.sandbox.id);
+        const box = await input.find(value.sandbox.id, value.sandbox.reference);
 
         const plan = resolveSnapshot(
           await profiles({ sandbox: value.sandbox }, ctx),
@@ -479,7 +480,7 @@ export function e2bState(input: {
         return value;
       },
       async submit(value, ctx) {
-        const box = await input.find(value.sandbox.id);
+        const box = await input.find(value.sandbox.id, value.sandbox.reference);
 
         const plan = resolveSnapshot(
           await profiles(
@@ -965,7 +966,14 @@ export function e2bState(input: {
         )
           return ctx.unknown("Restored sandbox identity is unverified");
 
-        return { id: current.id, state: current.state === "running" ? "running" : "unknown" };
+        return {
+          id: current.id,
+          reference: sandboxReference("e2b", input.scope, current.id, {
+            operation: current.metadata.sandbar_operation!,
+            submission: current.metadata.sandbar_submission!,
+          }),
+          state: current.state === "running" ? "running" : "unknown",
+        };
       },
       async continue(attempt, ctx) {
         const token = restoreToken.safeParse(attempt.token);
@@ -1097,7 +1105,9 @@ export function e2bState(input: {
         coverage: "provider-scope",
       };
     },
-    async resourceCapabilities() {
+    async resourceCapabilities(target) {
+      if (target.sandbox?.reference) await input.find(target.sandbox.id, target.sandbox.reference);
+
       const restore = state
         ? {
             status: "supported" as const,

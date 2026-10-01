@@ -243,6 +243,7 @@ export async function finishLive(fixture: Awaited<ReturnType<typeof setupLive>>)
 export function reopenSnapshot(
   fixture: Awaited<ReturnType<typeof setupLive>>,
   reference: ResourceReference,
+  sandboxProbe?: { path: string; base64: string; expires: import("sandbar-sdk").Deadline },
 ) {
   return reopenInFreshProcess(
     {
@@ -250,6 +251,7 @@ export function reopenSnapshot(
       connection: fixture.profile.connection,
       reference,
       profilePath,
+      sandboxProbe,
     },
     fixture.resources.signal,
   );

@@ -1,10 +1,20 @@
 import { z } from "zod";
-import { defineAdapter } from "sandbar-adapter";
+import {
+  defineAdapter,
+  sandboxReference,
+  assertSandboxReference,
+  unknownSandboxFacts,
+} from "sandbar-adapter";
 import { Sandbar } from "sandbar-sdk";
 import { defineProviderProfile } from "../profile";
 import { features, supportMetadataSchema } from "../support";
 
 const scope = { authority: { kind: "fixture", id: "external" }, partition: {} };
+
+const savedSandbox = sandboxReference("external.fixture", scope, "fixture", {
+  operation: "fixture-operation",
+  submission: "fixture-submission",
+});
 
 // Independently authored definition: public imports only; no provider implementation or live IO.
 const adapter = defineAdapter({
@@ -12,24 +22,51 @@ const adapter = defineAdapter({
   config: z.strictObject({}),
   credentials: z.strictObject({ token: z.literal("offline") }),
   async connect() {
-    let alive = false;
-
     return {
       scope,
-      supports: { images: ["prepared"], network: ["blocked"] },
+      supports: {
+        images: ["prepared"],
+        network: ["blocked"],
+        exec: { commands: ["argv"], maxOutputBytes: 1_048_576 },
+      },
       async create() {
-        alive = true;
-
         return { id: "fixture", state: "running" };
       },
       async destroy() {
-        alive = false;
-
         return { computeStopped: true, retainedResources: [] };
       },
       async inspect() {
-        return alive ? { id: "fixture", state: "running" } : null;
+        return {
+          ...unknownSandboxFacts(),
+          reference: savedSandbox,
+          id: "fixture",
+          state: "running",
+          nativeState: "fixture-running",
+        };
       },
+      async reopen(reference) {
+        assertSandboxReference(savedSandbox, reference);
+
+        return {
+          ...unknownSandboxFacts(),
+          reference: savedSandbox,
+          state: "running",
+          nativeState: "fixture-running",
+          observedAt: new Date().toISOString(),
+        };
+      },
+      files: {
+        maxBytes: 100,
+        async read() {
+          return new Uint8Array([0, 255, 31, 128]);
+        },
+      },
+      exec: async () => ({
+        exitCode: 0,
+        stdout: new TextEncoder().encode("sandbox-reopen"),
+        stderr: new Uint8Array(),
+        truncated: false,
+      }),
       async snapshotInspect(reference) {
         return {
           reference,

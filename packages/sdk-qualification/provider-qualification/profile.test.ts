@@ -86,3 +86,40 @@ test("serialized snapshot reference reopens and validates scope in a separate OS
     else process.env.SANDBAR_EXTERNAL_FIXTURE_TOKEN = original;
   }
 });
+
+test("serialized sandbox reference reopens and uses public files/exec in a separate OS process", async () => {
+  const profile = await loadProviderProfile(profilePath);
+  const original = process.env.SANDBAR_EXTERNAL_FIXTURE_TOKEN;
+  process.env.SANDBAR_EXTERNAL_FIXTURE_TOKEN = "offline";
+
+  try {
+    await reopenInFreshProcess(
+      {
+        provider: profile.id,
+        profilePath,
+        connection: { profile: profile.id, routing: profileRouting(profile, {}) },
+        reference: {
+          version: 1,
+          kind: "sandbox",
+          provider: profile.id,
+          scope: { authority: { kind: "fixture", id: "external" }, partition: {} },
+          nativeId: "fixture",
+          ownership: "verified-created",
+          receipt: JSON.stringify({
+            operation: "fixture-operation",
+            submission: "fixture-submission",
+          }),
+        },
+        sandboxProbe: {
+          path: "/tmp/work",
+          base64: Buffer.from([0, 255, 31, 128]).toString("base64"),
+          expires: { status: "unknown", reason: "Native expiry is unavailable" },
+        },
+      },
+      AbortSignal.timeout(5000),
+    );
+  } finally {
+    if (original === undefined) delete process.env.SANDBAR_EXTERNAL_FIXTURE_TOKEN;
+    else process.env.SANDBAR_EXTERNAL_FIXTURE_TOKEN = original;
+  }
+});

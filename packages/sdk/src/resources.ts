@@ -170,7 +170,7 @@ export class AdapterSnapshot {
         )
           throw new OutcomeUnknownError(recovery);
 
-        return new AdapterSandbox(this.client, result.value.id);
+        return new AdapterSandbox(this.client, result.value.id, result.value.reference ?? null);
       },
       { ...options, resource: ref },
     );
@@ -420,7 +420,7 @@ export function decodeResourceResult(
   }
 
   if (ref.kind === "snapshot_restore" && "id" in value && value.state === "running")
-    return new AdapterSandbox(client, value.id);
+    return new AdapterSandbox(client, value.id, value.reference ?? null);
 
   if (ref.kind === "volume_create" && "filesystem" in value)
     return new AdapterVolume(client, value.reference);

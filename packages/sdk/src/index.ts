@@ -66,6 +66,10 @@ export type {
   SnapshotPlan,
   SnapshotProfile,
   SandboxState,
+  SandboxReference,
+  SandboxInfo,
+  Fact,
+  Deadline,
   CreatePlan,
 } from "sandbar-adapter";
 

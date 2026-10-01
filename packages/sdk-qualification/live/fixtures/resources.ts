@@ -88,7 +88,10 @@ export class TestResources {
             cleanup: "pending",
           }));
 
-          if (this.cleaning) throw Error("Setup was cancelled before connection");
+          if (this.cleaning) {
+            await this.ledger.update((value) => ({ ...value, cleanup: "not-required" }));
+            throw Error("Setup was cancelled before connection");
+          }
 
           const held = new Promise<void>((release) => {
             this.release = release;

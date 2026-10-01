@@ -232,6 +232,9 @@ async function flow() {
   const captured=await box.snapshot();
   const snapshot=await client.snapshots.get(captured.snapshot.reference);
   const restored=await snapshot.restore({networkPolicy:"blocked"});
+  if(!restored.reference)throw Error("Restored sandbox reference missing");
+  const reopenedBox=await client.sandboxes.get(JSON.parse(JSON.stringify(restored.reference)));
+  if(reopenedBox.id!==restored.id||(await reopenedBox.inspect()).state!=="running")throw Error("Restored sandbox reopen failed");
   await restored.destroy();
   await mounted.destroy({storage:"allow-unconfirmed"});
   await snapshot.delete();await volume.delete();
@@ -284,10 +287,10 @@ try {
 const daytonaSource = `
 import { Sandbar, Image } from "sandbar-sdk";
 import { createDaytonaAdapter } from "@sandbar/provider-daytona";
-let name = "", mutations = 0, snapshotName = "";
+let name = "", mutations = 0, snapshotName = "", labels = {};
 const files = new Map([["/file", Uint8Array.from([0,255])]]);
 const origin = "https://proxy.app.daytona.io/toolbox";
-const native = (state = "started") => ({ labels: {}, id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
+const native = (state = "started") => ({ labels, id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
 const mock = async (input, init = {}) => {
   const url = new URL(String(input));
   const json = value => Response.json(value);
@@ -301,7 +304,7 @@ const mock = async (input, init = {}) => {
   }
   if (url.pathname.startsWith("/api/snapshots/")) return snapshotName && [snapshotName, "built-1"].includes(decodeURIComponent(url.pathname.split("/").at(-1)))
     ? json({ id: "built-1", name: snapshotName, imageName: "alpine:3.21", organizationId: "org-1", state: "active", regionIds: ["us"], sandboxClass: "container" }) : new Response(null, { status: 404 });
-  if (url.pathname === "/api/sandbox" && init.method === "POST") { mutations++; name = JSON.parse(init.body).name; return json(native()); }
+  if (url.pathname === "/api/sandbox" && init.method === "POST") { mutations++; const body = JSON.parse(init.body); name = body.name; labels = body.labels; return json(native()); }
   if (url.pathname === "/api/sandbox/native-1" && init.method === "DELETE") { mutations++; return json(native("destroyed")); }
   if (url.pathname === "/api/sandbox/native-1") return json(native());
   if (url.pathname.endsWith("/process/execute")) {
@@ -334,6 +337,12 @@ try {
   const built = await client.images.build({ source: Image.oci("alpine:3.21") });
   if (built.prepared.value !== "built-1" || built.prepared.provider !== "daytona" || built.retainedResources[0]?.ownership !== "unknown" || mutations !== 1) throw Error("Daytona scoped build mismatch");
   const box = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
+  if (!box.reference) throw Error("Missing packed sandbox reference");
+  const fresh = await Sandbar.connect({ adapter: createDaytonaAdapter(mock), config: { target: "us" }, credentials: { apiKey: "rotated-fixture" } });
+  try {
+    const reopened = await fresh.sandboxes.get(JSON.parse(JSON.stringify(box.reference)));
+    if ((await reopened.inspect()).state !== "running" || reopened.id !== box.id) throw Error("Packed sandbox reopening differs");
+  } finally { await fresh.close(); }
   const result = await box.exec({ command: { kind: "shell", script: "printf test" } });
   if (result.stdout[0] !== 0 || result.stdout[1] !== 255 || result.stderr[0] !== 127) throw new Error("Binary output mismatch");
   await box.writeFile("/file", Uint8Array.from([0,255]), { overwrite: true });
@@ -471,6 +480,9 @@ try {
   if(caps.snapshots.restore.status!=="supported"||caps.mounts.status!=="unsupported")throw Error("Packed state capabilities differ");
   if(saved.nativeId!=="snapshot_packed"||saved.generation!=="11111111-1111-4111-8111-111111111111")throw Error("Captured build identity missing");
   const restored=await snapshot.restore({networkPolicy:"blocked"});
+  if(!restored.reference)throw Error("Restored sandbox reference missing");
+  const reopenedBox=await client.sandboxes.get(JSON.parse(JSON.stringify(restored.reference)));
+  if(reopenedBox.id!==restored.id||(await reopenedBox.inspect()).state!=="running")throw Error("Restored sandbox reopen failed");
   if(record.metadata.sandbar_snapshot!=="snapshot_packed:11111111-1111-4111-8111-111111111111")throw Error("Restore did not pin the captured UUID");
   await restored.destroy();
   await snapshot.delete();

@@ -17,6 +17,11 @@ import {
 } from "./observability";
 import {
   SandboxState,
+  unknownSandboxFacts,
+  validateResourceReference,
+  assertSandboxReference,
+  type SandboxReference,
+  type SandboxInfo,
   stateCapabilities,
   resolveSnapshot,
   checkCreate,
@@ -91,6 +96,53 @@ export { Image, outputText } from "./resource";
 
 export type { AdapterRecoveryReference } from "./adapter-reference";
 
+const UnknownFact = z.strictObject({ status: z.literal("unknown"), reason: z.string().min(1) });
+
+const SandboxInfoSchema = z.strictObject({
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).nullable(),
+  state: SandboxState,
+  nativeState: z.string().nullable(),
+  observedAt: z.iso.datetime({ offset: true }),
+  expires: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      at: z.iso.datetime({ offset: true }),
+      action: z.enum(["destroy", "suspend"]),
+      scope: z.enum(["running-session", "sandbox"]),
+    }),
+    z.strictObject({ status: z.literal("none") }),
+    UnknownFact,
+  ]),
+  idleStop: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z
+        .strictObject({
+          seconds: z.number().nonnegative().finite(),
+          action: z.enum(["stop", "suspend"]),
+        })
+        .nullable(),
+    }),
+    UnknownFact,
+  ]),
+  retention: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z.strictObject({
+        autoDeleteAfterStoppedSeconds: z.number().nonnegative().finite().nullable(),
+      }),
+    }),
+    UnknownFact,
+  ]),
+  execution: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z.strictObject({ nativeId: z.string().min(1) }),
+    }),
+    UnknownFact,
+  ]),
+});
+
 function canonicalScope(scope: Scope): string {
   return JSON.stringify({
     authority: scope.authority,
@@ -114,7 +166,13 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
   );
 
   const artifactOperation = ["snapshot_delete", "volume_delete"].includes(copy.kind);
-  const boundSandbox = createsResource || artifactOperation ? !copy.sandboxId : !!copy.sandboxId;
+
+  const boundSandbox =
+    (createsResource || artifactOperation ? !copy.sandboxId : !!copy.sandboxId) &&
+    (!copy.sandboxReference ||
+      (copy.sandboxReference.nativeId === copy.sandboxId &&
+        copy.sandboxReference.provider === copy.provider &&
+        canonicalScope(copy.sandboxReference.scope) === canonicalScope(copy.scope)));
 
   const boundResource = ["snapshot_restore", "snapshot_delete"].includes(copy.kind)
     ? copy.resource?.kind === "snapshot"
@@ -235,6 +293,10 @@ export type RecoveredOperation =
   | AdapterOperation<DestroyValue, "destroy">
   | AdapterOperation<void, "file_write">;
 
+function sandboxInput(id: string, reference?: SandboxReference | null) {
+  return reference ? { id, reference } : { id };
+}
+
 export class AdapterOperation<T, K extends OperationKind = OperationKind> {
   readonly durability = "process" as const;
   private first: RuntimeResult | undefined;
@@ -318,7 +380,9 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
         {
           operationId: this.reference.operationId,
           submissionId: this.reference.submissionId,
-          sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+          sandbox: this.reference.sandboxId
+            ? sandboxInput(this.reference.sandboxId, this.reference.sandboxReference)
+            : undefined,
           resource: this.reference.resource,
           mounts: this.reference.mounts,
           capture: this.reference.capture,
@@ -428,7 +492,9 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
           {
             operationId: this.reference.operationId,
             submissionId: this.reference.submissionId,
-            sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+            sandbox: this.reference.sandboxId
+              ? sandboxInput(this.reference.sandboxId, this.reference.sandboxReference)
+              : undefined,
             resource: this.reference.resource,
             mounts: this.reference.mounts,
             capture: this.reference.capture,
@@ -601,10 +667,24 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
 }
 
 export class AdapterSandbox {
+  #reference: SandboxReference | null;
+  get reference(): SandboxReference | null {
+    return this.#reference;
+  }
   constructor(
     private readonly client: AdapterDirectClient,
     readonly id: string,
+    reference: SandboxReference | null = null,
   ) {
+    if (reference) {
+      reference = validateResourceReference(reference);
+      assertResourceScope(reference, { provider: client.provider, scope: client.scope });
+
+      if (reference.kind !== "sandbox" || reference.nativeId !== id)
+        throw new SandbarError("INVALID_RESPONSE", "Sandbox identity differs");
+    }
+
+    this.#reference = reference ? freezeReference(reference) : null;
     instrument(this, "capabilities", client.telemetry, "sandbar.capabilities");
     instrument(this, "checkSnapshot", client.telemetry, "sandbar.snapshot.check");
     instrument(this, "inspect", client.telemetry, "sandbar.sandbox.inspect");
@@ -636,7 +716,7 @@ export class AdapterSandbox {
     return this.client.submit(
       "snapshot_capture",
       {
-        sandbox: { id: this.id },
+        sandbox: sandboxInput(this.id, this.reference),
         request,
         expectation: { profile: plan.value.profile, sourceState: plan.value.sourceState },
       },
@@ -648,6 +728,7 @@ export class AdapterSandbox {
       {
         ...options,
         sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
         capture: { profile: plan.value.profile, sourceState: plan.value.sourceState },
       },
     );
@@ -659,7 +740,9 @@ export class AdapterSandbox {
     return (await this.submitSnapshot(request, options)).wait(options);
   }
   capabilities(): Promise<AdapterCapabilities> {
-    return internalMethod(this.client.capabilities)({ sandbox: { id: this.id } });
+    return internalMethod(this.client.capabilities)({
+      sandbox: sandboxInput(this.id, this.reference),
+    });
   }
   async checkSnapshot(request: SnapshotRequest = {}): Promise<Support<SnapshotPlan>> {
     return this.checkSnapshotWithSignal(request, this.client.signal);
@@ -672,7 +755,7 @@ export class AdapterSandbox {
     request = validateResourceInput(SnapshotRequest, request, "Invalid snapshot request");
 
     const caps = await internalMethod(this.client.capabilities)(
-      { sandbox: { id: this.id } },
+      { sandbox: sandboxInput(this.id, this.reference) },
       { signal },
     );
 
@@ -697,38 +780,71 @@ export class AdapterSandbox {
 
     return true;
   }
-  async inspect(
-    options: WaitOptions = {},
-  ): Promise<{ state: import("sandbar-adapter").SandboxState }> {
+  async inspect(options: WaitOptions = {}): Promise<SandboxInfo> {
     this.client.ensureOpen();
 
     if (!this.client.session.inspect) unsupported("inspect");
 
     assertSignal(options.signal);
 
+    const timeout = AbortSignal.timeout(30000);
+
     const signal = AbortSignal.any([
       this.client.signal,
       ...(options.signal ? [options.signal] : []),
-      AbortSignal.timeout(30000),
+      timeout,
     ]);
 
-    const result = await readWhileOpen(
-      this.client,
-      raceAbort(
-        this.client.session.inspect({ id: this.id }, { signal, deadline: Date.now() + 30000 }),
-        signal,
-      ).catch((error) => {
-        assertSignal(options.signal);
-        throw error;
-      }),
-    );
+    try {
+      const result = await readWhileOpen(
+        this.client,
+        raceAbort(
+          this.client.session.inspect(sandboxInput(this.id, this.reference), {
+            signal,
+            deadline: Date.now() + 30000,
+          }),
+          signal,
+        ),
+      );
 
-    if (!result) return { state: "unknown" };
+      if (!result) throw new SandbarError("NOT_FOUND", "Sandbox is missing, expired, or deleted");
 
-    if (result.id !== this.id)
-      throw new SandbarError("INVALID_RESPONSE", "Provider returned another sandbox", "unknown");
+      if (result.id !== this.id)
+        throw new SandbarError("INVALID_RESPONSE", "Provider returned another sandbox", "unknown");
 
-    return { state: SandboxState.parse(result.state) };
+      const { id: _id, ...facts } = result;
+
+      const parsed = SandboxInfoSchema.safeParse({
+        ...unknownSandboxFacts(),
+        reference: this.reference,
+        nativeState: null,
+        ...facts,
+        observedAt: new Date().toISOString(),
+      });
+
+      if (!parsed.success) throw new SandbarError("INVALID_RESPONSE", "Invalid sandbox inspection");
+      const info = parsed.data;
+
+      if (info.reference) {
+        if (info.reference.nativeId !== this.id)
+          throw new SandbarError("INVALID_RESPONSE", "Provider sandbox identity differs");
+        assertResourceScope(info.reference, {
+          provider: this.client.provider,
+          scope: this.client.scope,
+        });
+
+        if (this.reference) assertSandboxReference(info.reference, this.reference);
+      }
+
+      return info;
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (timeout.aborted) throw new SandbarError("TIMEOUT", "Sandbox inspection timed out");
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
   }
   async submitExec(
     input: ExecInput | readonly string[],
@@ -743,7 +859,7 @@ export class AdapterSandbox {
     return this.client.submit(
       "exec",
       {
-        sandbox: { id: this.id },
+        sandbox: sandboxInput(this.id, this.reference),
         command: request.command,
         cwd: request.cwd,
         env: request.env,
@@ -761,7 +877,12 @@ export class AdapterSandbox {
           execOutput(output.exitCode, output.stdout, output.stderr, output.truncated),
         );
       },
-      { ...options, sandboxId: this.id, maxOutputBytes: request.maxOutputBytes },
+      {
+        ...options,
+        sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
+        maxOutputBytes: request.maxOutputBytes,
+      },
     );
   }
   async exec(
@@ -784,7 +905,7 @@ export class AdapterSandbox {
     const value = await readWhileOpen(
       this.client,
       this.client.session.files.read(
-        { sandbox: { id: this.id }, path },
+        { sandbox: sandboxInput(this.id, this.reference), path },
         { signal: this.client.signal, deadline: Date.now() + 30_000 },
       ),
     );
@@ -847,7 +968,7 @@ export class AdapterSandbox {
     const op = await this.client.submit(
       "file_write",
       {
-        sandbox: { id: this.id },
+        sandbox: sandboxInput(this.id, this.reference),
         path,
         bytes: payload,
         overwrite: options.overwrite ?? false,
@@ -860,7 +981,12 @@ export class AdapterSandbox {
         )
           throw asUnknown(ref);
       },
-      { ...options, sandboxId: this.id, file: { path, bytes: payload.length } },
+      {
+        ...options,
+        sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
+        file: { path, bytes: payload.length },
+      },
     );
 
     await waitFor(this.client.telemetry, op, options);
@@ -871,7 +997,7 @@ export class AdapterSandbox {
     const op = await this.client.submit<import("sandbar-adapter").DestroyValue>(
       "destroy",
       {
-        id: this.id,
+        ...sandboxInput(this.id, this.reference),
         storage: options.storage === undefined ? this.client.cleanupStorage : options.storage,
       },
       (result, ref) => {
@@ -884,7 +1010,7 @@ export class AdapterSandbox {
 
         return result.value;
       },
-      { ...options, sandboxId: this.id },
+      { ...options, sandboxId: this.id, sandboxReference: this.reference ?? undefined },
     );
 
     return op;
@@ -912,6 +1038,7 @@ export type AdvancedObservation = {
   operationId: string;
   submissionId: string;
   sandboxId?: string;
+  sandboxReference?: SandboxReference;
   resource?: ResourceReference;
   mounts?: import("sandbar-adapter").MountSpec[];
   token?: Json;
@@ -1074,6 +1201,7 @@ export class AdapterDirectClient {
   };
   readonly signal: AbortSignal;
   readonly sandboxes: {
+    get: (reference: SandboxReference, options?: WaitOptions) => Promise<AdapterSandbox>;
     checkCreate: (input: CreateInput) => Promise<Support<CreatePlan>>;
     create: (input: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
     submitCreate: (
@@ -1176,13 +1304,7 @@ export class AdapterDirectClient {
           if (error instanceof AdapterError && error.code === "UNSUPPORTED")
             throw new UnsupportedFeatureError(kind, [error.message]);
 
-          if (
-            error instanceof AdapterError &&
-            (error.code === "INVALID_ARGUMENT" ||
-              error.code === "TIMEOUT" ||
-              error.code === "UNAVAILABLE")
-          )
-            throw new SandbarError(error.code, error.message);
+          if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
           throw error;
         }
 
@@ -1217,6 +1339,7 @@ export class AdapterDirectClient {
             operationId: z.string().min(1).max(128),
             submissionId: z.string().min(1).max(128),
             sandboxId: z.string().min(1).max(512).optional(),
+            sandboxReference: ReferenceSchema.shape.sandboxReference,
             resource: ResourceReference.optional(),
             capture: CaptureExpectation.optional(),
             mounts: z.array(importMountSpec).max(32).optional(),
@@ -1231,6 +1354,7 @@ export class AdapterDirectClient {
             "Observation scope differs from the verified connection",
           );
 
+        this.assertRecoverySandbox(checked);
         assertRecoveryResourceKind(checked.kind, checked.resource);
 
         if (checked.resource)
@@ -1272,7 +1396,9 @@ export class AdapterDirectClient {
               {
                 operationId: checked.operationId,
                 submissionId: checked.submissionId,
-                sandbox: checked.sandboxId ? { id: checked.sandboxId } : undefined,
+                sandbox: checked.sandboxId
+                  ? sandboxInput(checked.sandboxId, checked.sandboxReference)
+                  : undefined,
                 resource: checked.resource,
                 capture: checked.capture,
                 mounts: checked.mounts,
@@ -1304,6 +1430,7 @@ export class AdapterDirectClient {
       },
     };
     this.sandboxes = {
+      get: (reference, options = {}) => this.reopenSandbox(reference, options),
       checkCreate: (input) => this.checkCreate(input),
       create: async (input, options = {}) =>
         waitFor(this.telemetry, await internalMethod(this.submitCreate)(input, options), options),
@@ -1349,19 +1476,25 @@ export class AdapterDirectClient {
     const support = this.session.supports;
     const signal = AbortSignal.any([this.signal, ...(options.signal ? [options.signal] : [])]);
 
-    const state = await readWhileOpen(
-      this,
-      raceAbort(
-        stateCapabilities(this.session, target, {
+    let state: Awaited<ReturnType<typeof stateCapabilities>>;
+
+    try {
+      state = await readWhileOpen(
+        this,
+        raceAbort(
+          stateCapabilities(this.session, target, {
+            signal,
+            deadline: Date.now() + 30000,
+          }),
           signal,
-          deadline: Date.now() + 30000,
-        }),
-        signal,
-      ).catch((error) => {
-        assertSignal(options.signal);
-        throw error;
-      }),
-    );
+        ),
+      );
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
 
     return structuredClone({
       ...state,
@@ -1481,10 +1614,62 @@ export class AdapterDirectClient {
         )
           throw asUnknown(ref, "Requested native mounts are not confirmed ready");
 
-        return new AdapterSandbox(this, result.value.id);
+        return new AdapterSandbox(this, result.value.id, result.value.reference ?? null);
       },
       { ...options, mounts: request.mounts },
     );
+  }
+  private async reopenSandbox(
+    reference: SandboxReference,
+    options: WaitOptions,
+  ): Promise<AdapterSandbox> {
+    this.ensureOpen();
+
+    try {
+      reference = validateResourceReference(reference);
+
+      if (reference.kind !== "sandbox")
+        throw new SandbarError("INVALID_ARGUMENT", "Expected sandbox reference");
+      assertResourceScope(reference, { provider: this.provider, scope: this.scope });
+    } catch (error) {
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
+
+    if (!this.session.reopen) unsupported("reopen");
+    assertSignal(options.signal);
+
+    const timeout = AbortSignal.timeout(30000);
+
+    const signal = AbortSignal.any([
+      this.signal,
+      ...(options.signal ? [options.signal] : []),
+      timeout,
+    ]);
+
+    let info: SandboxInfo;
+
+    try {
+      info = await readWhileOpen(
+        this,
+        raceAbort(this.session.reopen(reference, { signal, deadline: Date.now() + 30000 }), signal),
+      );
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (timeout.aborted) throw new SandbarError("TIMEOUT", "Sandbox reopen timed out");
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
+
+    if (!info.reference)
+      throw new SandbarError("INVALID_RESPONSE", "Provider did not verify sandbox identity");
+    assertSandboxReference(info.reference, reference);
+
+    if (info.state === "destroyed") throw new SandbarError("NOT_FOUND", "Sandbox is destroyed");
+
+    return new AdapterSandbox(this, reference.nativeId, reference);
   }
   async submitBuild(
     input: ImageBuildInput,
@@ -1518,6 +1703,7 @@ export class AdapterDirectClient {
     options: {
       signal?: AbortSignal;
       sandboxId?: string;
+      sandboxReference?: SandboxReference;
       resource?: ResourceReference;
       capture?: z.infer<typeof CaptureExpectation>;
       mounts?: import("sandbar-adapter").MountSpec[];
@@ -1540,6 +1726,7 @@ export class AdapterDirectClient {
       scope: this.connection.scope,
       ...ids,
       sandboxId: options.sandboxId,
+      sandboxReference: options.sandboxReference,
       resource: options.resource,
       capture: options.capture,
       mounts: options.mounts,
@@ -1659,6 +1846,26 @@ export class AdapterDirectClient {
     }
   }
 
+  private assertRecoverySandbox(reference: {
+    sandboxId?: string;
+    sandboxReference?: SandboxReference;
+  }): void {
+    if (!reference.sandboxReference) return;
+
+    if (reference.sandboxReference.nativeId !== reference.sandboxId)
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox identity differs");
+
+    try {
+      assertResourceScope(reference.sandboxReference, {
+        provider: this.provider,
+        scope: this.scope,
+      });
+    } catch (error) {
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
+  }
+
   async recover(reference: AdapterRecoveryReference): Promise<RecoveredOperation> {
     this.ensureOpen();
     reference = sealedReference(reference);
@@ -1678,6 +1885,7 @@ export class AdapterDirectClient {
     if (reference.kind === "snapshot_capture" && !reference.capture)
       throw new SandbarError("INVALID_ARGUMENT", "Recovery capture expectations are missing");
 
+    this.assertRecoverySandbox(reference);
     assertRecoveryResourceKind(reference.kind, reference.resource);
 
     if (reference.resource)
@@ -1744,7 +1952,7 @@ export class AdapterDirectClient {
             )
               throw asUnknown(ref, "Recovered mounts not confirmed ready");
 
-            return new AdapterSandbox(this, value.id);
+            return new AdapterSandbox(this, value.id, value.reference ?? null);
           },
           undefined,
           reference.kind,

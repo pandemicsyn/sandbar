@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, spyOn } from "bun:test";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -417,4 +417,64 @@ test("zero-volume fixtures reject volume creators before native dispatch", async
 
   expect(f.calls.volumeCreate).toBe(0);
   expect((await f.ledger.read()).cleanup).toBe("not-required");
+});
+
+test("teardown during admission persistence leaves no pending cleanup or connection", async () => {
+  const f = await fixture();
+  let entered!: () => void;
+  let release!: () => void;
+
+  const admission = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  const update = f.ledger.update.bind(f.ledger);
+  let first = true;
+
+  const mock = spyOn(f.ledger, "update").mockImplementation(async (work) => {
+    const result = await update(work);
+
+    if (first) {
+      first = false;
+      entered();
+      await gate;
+    }
+
+    return result;
+  });
+
+  let connections = 0;
+
+  const t = new TestResources(
+    async (...args) => {
+      connections++;
+
+      return f.connect(...args);
+    },
+    f.ledger,
+    "base",
+    "blocked",
+    { compute: 1, snapshots: 0, volumes: 0, exerciseMs: 500, cleanupMs: 500 },
+  );
+
+  const opening = t.open().catch((error) => error);
+
+  try {
+    await admission;
+    const closing = t.close();
+    release();
+    expect(await opening).toBeInstanceOf(Error);
+    await closing;
+    expect(connections).toBe(0);
+    expect((await f.ledger.read()).cleanup).toBe("not-required");
+    expect(f.boxes.size).toBe(0);
+    await expect(f.ledger.withAdmissionLock(async () => {})).resolves.toBeUndefined();
+  } finally {
+    release();
+    mock.mockRestore();
+  }
 });

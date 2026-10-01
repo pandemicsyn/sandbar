@@ -7,6 +7,10 @@ import {
   type AttemptContext,
   type ObserveContext,
   assertResourceScope,
+  assertSandboxReference,
+  sandboxReference,
+  type SandboxReference,
+  type Sandbox,
   resolveSnapshot,
   type AdapterSession,
   type Scope,
@@ -60,6 +64,12 @@ const NativeBox = z.object({
   target: z.string(),
   state: z.string(),
   sandboxClass: z.string().optional(),
+  labels: z.record(z.string(), z.string()).optional(),
+  networkBlockAll: z.boolean().optional(),
+  public: z.boolean().optional(),
+  autoDestroyAt: z.string().nullable().optional(),
+  autoStopInterval: z.number().nullable().optional(),
+  autoDeleteInterval: z.number().nullable().optional(),
   volumes: z
     .array(
       z.object({ volumeId: z.string(), mountPath: z.string(), subpath: z.string().optional() }),
@@ -250,9 +260,11 @@ export function daytonaState(input: {
       throw new AdapterError(
         response.status === 404
           ? "NOT_FOUND"
-          : response.status === 403 || [502, 503, 504].includes(response.status)
-            ? "UNAVAILABLE"
-            : "INTERNAL",
+          : [401, 403].includes(response.status)
+            ? "FORBIDDEN"
+            : response.status >= 500
+              ? "UNAVAILABLE"
+              : "INTERNAL",
         `Daytona state HTTP ${response.status}`,
       );
 
@@ -278,7 +290,7 @@ export function daytonaState(input: {
     return schema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
   }
 
-  async function box(id: string, ctx?: ReadContext) {
+  async function box(id: string, ctx?: ReadContext, expected?: SandboxReference) {
     const value = await json(
       await request("GET", `/sandbox/${encodeURIComponent(id)}`, undefined, ctx),
       NativeBox,
@@ -290,6 +302,18 @@ export function daytonaState(input: {
       value.target !== input.target
     )
       throw new AdapterError("CONFLICT", "Sandbox scope differs");
+
+    if (expected) {
+      const operation = value.labels?.["sandbar.operation"];
+      const submission = value.labels?.["sandbar.submission"];
+
+      if (!operation || !submission)
+        throw new AdapterError("CONFLICT", "Native sandbox creation correlation is missing");
+      assertSandboxReference(
+        sandboxReference("daytona", scope, id, { operation, submission }),
+        expected,
+      );
+    }
 
     return value;
   }
@@ -477,16 +501,13 @@ export function daytonaState(input: {
     return info;
   }
 
-  async function profiles(
-    target: { sandbox?: { id: string }; create?: CreateInput },
-    ctx: ReadContext,
-  ) {
+  async function profiles(target: { sandbox?: Sandbox; create?: CreateInput }, ctx: ReadContext) {
     if (!target.sandbox)
       return {
         status: "unknown" as const,
         reason: "Capture eligibility requires actual container source evidence",
       };
-    const source = await box(target.sandbox.id, ctx);
+    const source = await box(target.sandbox.id, ctx, target.sandbox.reference);
 
     return profileFor(source);
   }
@@ -567,13 +588,18 @@ export function daytonaState(input: {
     return acknowledged ? info : null;
   }
 
-  async function settledSource(id: string, wanted: "started" | "stopped", ctx: ReadContext) {
-    let current = await box(id, ctx);
+  async function settledSource(
+    id: string,
+    wanted: "started" | "stopped",
+    ctx: ReadContext,
+    expected?: SandboxReference,
+  ) {
+    let current = await box(id, ctx, expected);
 
     while (current.state !== wanted) {
       if (ctx.signal.aborted || Date.now() >= ctx.deadline) return null;
       await new Promise((resolve) => setTimeout(resolve, 250));
-      current = await box(id, ctx);
+      current = await box(id, ctx, expected);
     }
 
     return current.state === wanted ? current : null;
@@ -888,6 +914,7 @@ export function daytonaState(input: {
     token: z.infer<typeof Token>,
     ctx: ObserveContext | AttemptContext,
     captureObserved = false,
+    expectedReference?: SandboxReference,
   ) {
     const pending = () => ctx.pending(token, { pollAfterMs: 500 });
 
@@ -918,7 +945,11 @@ export function daytonaState(input: {
     let source: z.infer<typeof NativeBox>;
 
     try {
-      source = await box(token.sourceId, { signal: ctx.signal, deadline: Date.now() + 5000 });
+      source = await box(
+        token.sourceId,
+        { signal: ctx.signal, deadline: Date.now() + 5000 },
+        expectedReference,
+      );
       observeSource(token, source.state);
     } catch (error) {
       const outcome = captureOutcome(token);
@@ -991,13 +1022,17 @@ export function daytonaState(input: {
     };
   }
 
-  async function reconcileCapture(token: z.infer<typeof Token>, ctx: ReadContext) {
+  async function reconcileCapture(
+    token: z.infer<typeof Token>,
+    ctx: ReadContext,
+    expectedReference?: SandboxReference,
+  ) {
     let captureObserved = false;
     let captureReadFailed = false;
     let source: z.infer<typeof NativeBox> | undefined;
 
     try {
-      source = await box(token.sourceId, ctx);
+      source = await box(token.sourceId, ctx, expectedReference);
       observeSource(token, source.state);
     } catch (error) {
       if (
@@ -1058,13 +1093,14 @@ export function daytonaState(input: {
     token: z.infer<typeof Token>,
     ctx: AttemptContext,
     finalizeAfterAbort: boolean,
+    expectedReference?: SandboxReference,
   ) {
     try {
       const context = { signal: ctx.signal, deadline: Date.now() + 60000 };
       let source: z.infer<typeof NativeBox>;
 
       try {
-        source = await box(token.sourceId, context);
+        source = await box(token.sourceId, context, expectedReference);
         observeSource(token, source.state);
       } catch (error) {
         if (!(error instanceof AdapterError) || error.code !== "NOT_FOUND") throw error;
@@ -1087,10 +1123,14 @@ export function daytonaState(input: {
 
         if (ctx.signal.aborted && !finalizeAfterAbort) return;
 
-        const observedSource = await box(source.id, {
-          signal: AbortSignal.timeout(5000),
-          deadline: Date.now() + 5000,
-        });
+        const observedSource = await box(
+          source.id,
+          {
+            signal: AbortSignal.timeout(5000),
+            deadline: Date.now() + 5000,
+          },
+          expectedReference,
+        );
 
         observeSource(token, observedSource.state);
 
@@ -1111,6 +1151,8 @@ export function daytonaState(input: {
         const finalization = { signal: AbortSignal.timeout(15000), deadline: Date.now() + 15000 };
 
         try {
+          if (expectedReference) await box(source.id, finalization, expectedReference);
+
           const response = await request(
             "POST",
             `/sandbox/${encodeURIComponent(source.id)}/start`,
@@ -1123,7 +1165,7 @@ export function daytonaState(input: {
               token.restartState = "failed";
             await ctx.checkpoint(token);
             token.restartFailure = "Source start response was not successful; no replay";
-            const observed = await box(source.id, finalization);
+            const observed = await box(source.id, finalization, expectedReference);
             observeSource(token, observed.state);
 
             if (observed.state === "started") await ctx.checkpoint(token);
@@ -1134,7 +1176,7 @@ export function daytonaState(input: {
           token.restartState = "accepted";
           await ctx.checkpoint(token);
 
-          if (!(await settledSource(source.id, "started", finalization))) {
+          if (!(await settledSource(source.id, "started", finalization, expectedReference))) {
             token.restartFailure = "Source start is not confirmed; no replay";
 
             return;
@@ -1149,7 +1191,7 @@ export function daytonaState(input: {
           token.restartFailure = "Source start outcome is uncertain; no replay";
 
           try {
-            const observed = await box(source.id, finalization);
+            const observed = await box(source.id, finalization, expectedReference);
             observeSource(token, observed.state);
           } catch {
             /* State stays unknown when read cannot confirm it. */
@@ -1192,6 +1234,8 @@ export function daytonaState(input: {
             return pending();
           }
 
+          if (expectedReference) await box(source.id, context, expectedReference);
+
           const stopped = await request(
             "POST",
             `/sandbox/${encodeURIComponent(source.id)}/stop`,
@@ -1202,7 +1246,7 @@ export function daytonaState(input: {
           if ([400, 401, 403, 422].includes(stopped.status)) {
             token.stopState = "failed";
             await ctx.checkpoint(token);
-            const unchanged = await box(source.id, context);
+            const unchanged = await box(source.id, context, expectedReference);
             observeSource(token, unchanged.state);
             await ctx.checkpoint(token);
 
@@ -1217,7 +1261,10 @@ export function daytonaState(input: {
             await ctx.checkpoint(token);
           }
 
-          if (!stopped.ok || !(await settledSource(source.id, "stopped", context)))
+          if (
+            !stopped.ok ||
+            !(await settledSource(source.id, "stopped", context, expectedReference))
+          )
             return pending();
           observeSource(token, "stopped");
           token.stopState = "completed";
@@ -1238,7 +1285,7 @@ export function daytonaState(input: {
         if (ctx.signal.aborted && !finalizeAfterAbort)
           return ctx.unknown("Local wait stopped after capture", captureOutcome(token));
 
-        return captureResult(token, ctx);
+        return captureResult(token, ctx, false, expectedReference);
       }
 
       if (token.captureState !== "not-submitted") return pending();
@@ -1253,7 +1300,7 @@ export function daytonaState(input: {
         return pending();
       }
 
-      const captureSource = await box(token.sourceId, context);
+      const captureSource = await box(token.sourceId, context, expectedReference);
 
       if (captureSource.state !== "stopped" || profileFor(captureSource).status !== "supported")
         return ctx.unknown("Source capture eligibility changed before capture dispatch");
@@ -1270,6 +1317,8 @@ export function daytonaState(input: {
       }
 
       try {
+        if (expectedReference) await box(source.id, context, expectedReference);
+
         const response = await request(
           "POST",
           `/sandbox/${encodeURIComponent(source.id)}/snapshot`,
@@ -1328,12 +1377,16 @@ export function daytonaState(input: {
 
         if (!token.restartRequired) token.stage = "complete";
 
-        if (token.stage !== "complete") return captureResult(token, ctx);
+        if (token.stage !== "complete") return captureResult(token, ctx, false, expectedReference);
 
-        const final = await box(source.id, {
-          signal: AbortSignal.timeout(5000),
-          deadline: Date.now() + 5000,
-        });
+        const final = await box(
+          source.id,
+          {
+            signal: AbortSignal.timeout(5000),
+            deadline: Date.now() + 5000,
+          },
+          expectedReference,
+        );
 
         const expected = token.restartRequired ? "started" : "stopped";
 
@@ -1419,7 +1472,7 @@ export function daytonaState(input: {
       recovery: { version: 1, token: Token },
       async prepare(value, ctx) {
         const support = await profiles({ sandbox: value.sandbox }, ctx);
-        const source = await box(value.sandbox.id, ctx);
+        const source = await box(value.sandbox.id, ctx, value.sandbox.reference);
 
         const plan = resolveSnapshot(
           support,
@@ -1474,7 +1527,7 @@ export function daytonaState(input: {
 
         if (prior.status !== 404)
           return ctx.reject("CONFLICT", "Capture name absence is unverified");
-        const source = await box(value.sandbox.id, context);
+        const source = await box(value.sandbox.id, context, value.sandbox.reference);
 
         const initial =
           source.state === "started"
@@ -1532,7 +1585,7 @@ export function daytonaState(input: {
           return ctx.reject("UNAVAILABLE", "Capture cancelled before native dispatch");
         }
 
-        return runCaptureStages(token, ctx, true);
+        return runCaptureStages(token, ctx, true, value.sandbox.reference);
       },
       async observe(attempt, ctx) {
         const parsed = Token.safeParse(attempt.token);
@@ -1554,6 +1607,7 @@ export function daytonaState(input: {
           const { token, captureObserved, captureReadFailed } = await reconcileCapture(
             parsed.data,
             ctx,
+            attempt.sandbox?.reference,
           );
 
           if (captureReadFailed)
@@ -1564,7 +1618,7 @@ export function daytonaState(input: {
 
           if (JSON.stringify(token) !== before) return ctx.pending(token, { pollAfterMs: 500 });
 
-          return await captureResult(token, ctx, captureObserved);
+          return await captureResult(token, ctx, captureObserved, attempt.sandbox?.reference);
         } catch (error) {
           const outcome = captureOutcome(parsed.data);
 
@@ -1595,10 +1649,14 @@ export function daytonaState(input: {
         let reconciled: Awaited<ReturnType<typeof reconcileCapture>>;
 
         try {
-          reconciled = await reconcileCapture(parsed.data, {
-            signal: ctx.signal,
-            deadline: Date.now() + 30000,
-          });
+          reconciled = await reconcileCapture(
+            parsed.data,
+            {
+              signal: ctx.signal,
+              deadline: Date.now() + 30000,
+            },
+            attempt.sandbox?.reference,
+          );
         } catch (error) {
           const outcome = captureOutcome(parsed.data);
 
@@ -1625,7 +1683,7 @@ export function daytonaState(input: {
           throw error;
         }
 
-        return runCaptureStages(token, ctx, false);
+        return runCaptureStages(token, ctx, false, attempt.sandbox?.reference);
       },
     },
     snapshotDelete: deletion("snapshot"),

@@ -49,3 +49,29 @@ Reusable capture tokens checkpoint the raw native template ID and first acknowle
 Snapshot restore submits `templateId:buildUUID` with the requested network policy in the original create request. Native retained build assignments and the captured generation must still match. Snapshot deletion targets the dedicated containing template after authenticated scope, native identity, generation, containing-template membership and compute-dependency checks. Snapshot and volume deletion persist a dispatch-uncertain checkpoint before DELETE and acknowledgement afterward. A fresh connection can reconcile authenticated exact-ID absence from the last durable uncertain checkpoint without replay; this confirms the requested absent state, not actor attribution or billing completion. Legacy tokens without dispatch evidence and failed inventory reads remain unknown. The native delete API has no generation compare-and-delete condition, so a concurrent external change between validation and deletion remains a provider boundary limitation.
 
 Create-time mounts remain unsupported in this pinned integration. Volume mounts are submitted and observed by reusable name, so the acknowledged volume ID cannot be enforced atomically. Capability discovery and request checks reject mount submission before allocation. Private-beta volume artifact management remains independent. Successful inventory does not establish create eligibility; native create may still reject the account. Volume creation preserves HTTP 400/401/403 as durable no-effect rejection, while transport, rate-limit and server failures remain uncertain and cannot be replayed or adopted by name. Existing mounted compute can be explicitly cleaned up with `storage: "allow-unconfirmed"`; unavailable volume inventory does not prevent compute cleanup, and retained volume names remain reported as unconfirmed identity.
+
+
+## Reopen Sandbar-created compute
+
+Direct SDK sandbox handles expose `reference: SandboxReference | null`. Save that reference in an application-owned trusted store and configure a fresh connection with the same native binding:
+
+```ts
+const reference = sandbox.reference ?? (await sandbox.inspect()).reference;
+if (!reference) throw new Error("Verified sandbox identity is unavailable");
+const saved = JSON.parse(JSON.stringify(reference));
+await client.close();
+const reopened = await freshClient.sandboxes.get(saved);
+const info = await reopened.inspect();
+if (info.state === "running") {
+  const bytes = await reopened.readFile("/tmp/work.txt");
+  const output = await reopened.exec(["/bin/sh", "-c", "printf reopened"]);
+}
+```
+
+References contain native identity, provider/scope and the native creation selectors required for verification; no credentials, observations or workflow journal. Successful create, snapshot restore and recovered results issue references after native verification. Legacy adapters may return null; a failed optional identity read after confirmed Daytona creation also returns a usable handle with null reference rather than hiding completed creation. A later `inspect().reference` can supply verified identity when native metadata becomes readable. Do not save null or synthesize a reference from the display ID.
+
+`get` reads native detail and never creates, resumes or extends lifetime. Stopped/suspended resources remain inactive. `inspect` supplies current `nativeState`, local receipt `observedAt`, hard expiry, idle-stop policy and stopped-retention facts. Unknown facts remain unknown; an elapsed deadline alone does not establish deletion. Missing/expired/deleted resources fail `NOT_FOUND`, native authorization fails `FORBIDDEN`, transport/detail access fails `UNAVAILABLE`, and identity/configuration mismatch fails `CONFLICT`. A destroyed tombstone can be inspected but cannot be reopened.
+
+Applications own persistence, fresh credentials and serialization of competing operations. There is a crash window before the reference is saved. Existing operation recovery remains separate and read-only; reopening compute does not replay a command or recover a mutation. Timeout setters and suspend/resume remain deferred. Deterministic/packed tests cover this slice; its new live reopening workflow has not run.
+
+E2B keeps the original team/endpoint/template partition, including restored-template provenance. Configure `teamId` for same-team credential rotation; API-key-scoped references reject a changed key. Guest exec/files use authenticated detail plus a locally constructed pinned `e2b@2.51.0` client, without `Sandbox.connect`. New create/restore explicitly requests kill-on-timeout and `autoResume: false`. Guest access requires current running state, explicit auto-resume-off, envd version/token and trusted domain; unsupported/missing detail makes guest access unavailable while control-plane inspection remains usable. External actors can change policy between the check and guest IO; no transactional native guard is claimed. Paused state reports suspended, no active-session deadline, and documented indefinite paused retention; stale `endAt` is ignored. Running `endAt` remains an absolute session deadline, or unknown when absent/invalid. Tokens are never saved in references.
