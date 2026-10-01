@@ -9,7 +9,7 @@
     "packages/providers/*"
   ],
   "scripts": {
-    "build:packages": "bun run --cwd packages/adapter build && bun run --cwd packages/provider-spi build && bun run --cwd packages/core build && bun run --cwd packages/providers/fake build && bun run --cwd packages/providers/daytona build && bun run --cwd packages/providers/modal build && bun run --cwd packages/providers/e2b build && bun run --cwd packages/sdk build && bun run --cwd packages/service build",
+    "build:packages": "bun run --cwd packages/adapter build && bun run --cwd packages/provider-spi build && bun run --cwd packages/providers/fake build && bun run --cwd packages/providers/daytona build && bun run --cwd packages/providers/modal build && bun run --cwd packages/providers/e2b build && bun run --cwd packages/sdk build",
     "check": "bun run build:packages && bun run check:built",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
@@ -19,21 +19,18 @@
     "build": "bun run build:packages && bun run build:built",
     "docs:check": "bun run build:packages && bun run docs:check:built",
     "package:smoke": "bun run build:packages && bun run package:smoke:built",
-    "dev": "bun run build:packages && bun --watch apps/server/src/index.ts",
-    "start": "bun apps/server/dist/index.js",
     "changeset": "changeset",
     "version:packages": "changeset version",
     "release:check-manifests": "bun scripts/release.mjs check",
     "release:refresh-lock": "bun scripts/refresh-workspace-lock.mjs",
     "release:fixture": "bun scripts/release-fixture.mjs",
     "observability:check": "bun run --cwd packages/sdk-qualification check && bun packages/sdk-qualification/observability/run.mjs",
-    "check:built": "bun run --filter '@sandbar/*' check && bun run --cwd packages/adapter check && bun run --cwd packages/sdk check && bun run --cwd packages/service check",
+    "check:built": "bun run --filter '@sandbar/*' check && bun run --cwd packages/adapter check && bun run --cwd packages/sdk check",
     "test:built": "bun test",
-    "docs:check:built": "bun run --cwd apps/docs check && bun run --cwd apps/docs reference:check && bun run --cwd apps/docs build && bun run --cwd apps/docs examples:test",
+    "docs:check:built": "bun run --cwd apps/docs check && bun run --cwd apps/docs build && bun run --cwd apps/docs examples:test",
     "package:smoke:built": "bun packages/sdk-qualification/package-smoke.mjs",
-    "build:built": "bun run --cwd apps/server build && bun run --cwd apps/docs build",
-    "test:sdk:built": "bun test packages/adapter packages/provider-spi packages/core packages/providers packages/sdk packages/sdk-qualification tools",
-    "test:service:built": "bun test packages/store packages/service-runtime packages/service apps/server apps/web/tests"
+    "build:built": "bun run --cwd apps/docs build",
+    "test:sdk:built": "bun test packages/adapter packages/provider-spi packages/providers packages/sdk packages/sdk-qualification tools"
   },
   "devDependencies": {
     "@changesets/changelog-github": "1.0.0",
@@ -50,7 +47,6 @@
     "@sentry/node": "11.1.0",
     "@types/bun": "1.4.2",
     "dd-trace": "6.17.0",
-    "drizzle-kit": "1.0.0-beta.22",
     "oxfmt": "0.70.0",
     "oxlint": "1.85.0",
     "typescript": "5.9.3"

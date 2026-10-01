@@ -94,7 +94,7 @@ export interface E2BTransport {
   close(): void;
 }
 
-/** Public E2B definition for service registration or custom connection options. */
+/** Public E2B definition for custom connection options. */
 export function createE2BAdapter(
   transportFactory?: (options: { apiKey: string }) => E2BTransport,
 ): AdapterDefinition<typeof Configuration, typeof Credentials, AdapterSession> {

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,12 +78,9 @@ async function stop(child: ChildProcess | undefined): Promise<void> {
 
 export class ProcessFixture {
   readonly fakeToken = `fake-${crypto.randomUUID()}`;
-  readonly setupToken = `setup-${crypto.randomUUID()}`;
   private directory?: string;
   private fake?: ChildProcess;
-  private service?: ChildProcess;
   fakeUrl?: string;
-  serviceUrl?: string;
 
   async startFake(): Promise<void> {
     if (this.fake) throw new Error("Fake provider is already running");
@@ -111,39 +108,6 @@ export class ProcessFixture {
     }
   }
 
-  async startService(): Promise<void> {
-    if (!this.directory || !this.fakeUrl || this.service)
-      throw new Error("Start fake provider before Sandbar service");
-    const keyFile = join(this.directory, "key");
-    const setupTokenFile = join(this.directory, "setup-token");
-    await writeFile(keyFile, crypto.getRandomValues(new Uint8Array(32)), { mode: 0o600 });
-    await writeFile(setupTokenFile, this.setupToken, { mode: 0o600 });
-    await chmod(keyFile, 0o600);
-    await chmod(setupTokenFile, 0o600);
-    const port = await freePort();
-    this.serviceUrl = `http://127.0.0.1:${port}`;
-    this.service = spawn("bun", ["apps/server/src/index.ts"], {
-      cwd: root,
-      env: {
-        ...process.env,
-        PORT: String(port),
-        SANDBAR_DB_URL: join(this.directory, "control.sqlite"),
-        SANDBAR_KEY_FILE: keyFile,
-        SANDBAR_SETUP_TOKEN_FILE: setupTokenFile,
-        SANDBAR_FAKE_PROVIDER_URL: this.fakeUrl,
-        SANDBAR_FAKE_PROVIDER_TOKEN: this.fakeToken,
-      },
-      stdio: "inherit",
-    });
-
-    try {
-      await waitReady(`${this.serviceUrl}/healthz`, undefined, this.service);
-    } catch (error) {
-      await this.close();
-      throw error;
-    }
-  }
-
   async fakeControl(path: string, body?: FakeControlRequest): Promise<any> {
     if (!this.fakeUrl) throw new Error("Fake provider is not running");
 
@@ -164,16 +128,13 @@ export class ProcessFixture {
 
   async close(): Promise<void> {
     try {
-      await stop(this.service);
       await stop(this.fake);
     } finally {
-      this.service = undefined;
       this.fake = undefined;
 
       if (this.directory) await rm(this.directory, { recursive: true, force: true });
       this.directory = undefined;
       this.fakeUrl = undefined;
-      this.serviceUrl = undefined;
     }
   }
 }

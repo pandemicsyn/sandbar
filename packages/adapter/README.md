@@ -2,7 +2,7 @@
 
 The public authoring API for Sandbar adapters. Install with `npm install sandbar-adapter` and import `defineAdapter` from `sandbar-adapter`. The `sandbar-adapter/testing` subpath contains the conformance suite for adapter authors.
 
-See the [adapter guide](https://sandbarsdk.dev/docs/guides/write-an-adapter/) for supported capabilities, validation, and recovery behavior. This package does not require a Sandbar service.
+See the [adapter guide](https://sandbarsdk.dev/docs/guides/write-an-adapter/) for supported capabilities, validation, and recovery behavior.
 
 State portability foundations add `ResourceReference`, `SnapshotRequest`, `SnapshotProfile`, `Support<T>`, and pure profile resolution. A minimal create/destroy adapter remains valid. Optional `snapshotProfiles(target, context)` supplies read-only evidence for the checked create class or sandbox. It must return unknown when that evidence needs a paid build or probe, and unavailable when access/configuration/current state prevents support. Capture is reported supported only when a `snapshotCapture` handler is also installed. The SDK exposes capture submission, scoped snapshot and volume handles, independently supported artifact inventory/deletion and create-time mounts through optional adapter handlers. Do not advertise native functionality that the adapter has not implemented and qualified.
 

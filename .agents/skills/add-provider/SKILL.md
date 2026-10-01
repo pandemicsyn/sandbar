@@ -1,6 +1,6 @@
 ---
 name: add-provider
-description: Add a sandbox provider to Sandbar as a built-in SDK subpath or a separately distributed adapter package. Covers the public adapter API, native guarantees, packaging, service registration and qualification.
+description: Add a sandbox provider to Sandbar as a built-in SDK subpath or a separately distributed adapter package. Covers the public adapter API, native guarantees, packaging and qualification.
 ---
 
 # Add a Sandbar provider
@@ -82,11 +82,10 @@ Document operations whose uncertain outcomes cannot be reconciled. A new recover
 - Add `packages/sdk/src/<provider>.ts` with the typed, IO-free binding factory. Follow `packages/sdk/src/daytona.ts` and the existing SDK-local `bindAdapter` helper. The result must work with `await Sandbar.connect(provider(options))` through the common connection path.
 - Update `packages/sdk/package.json` exports, build entrypoints and production dependency treatment. Add build ordering and lockfile changes actually needed. A native package left external by the bundler must be an installed production dependency, not merely a workspace/dev dependency.
 - Keep the SDK root free of eager provider imports. Inspect emitted JS and declarations for private `@sandbar/*` leaks. Subpath isolation avoids loading unrelated providers; it does not promise their dependencies are absent from installation.
-- If the task includes built-in service availability, add the definition to the existing registration in `apps/server/src/runtime.ts` and its required workspace/build dependencies. Preserve custom registration and avoid duplicate provider names. No second service execution engine or fixed HTTP provider enum is needed.
 
 ### External adapter package
 
-- Export the adapter definition with ESM JS and corresponding TypeScript declarations. Declare `sandbar-adapter`, schema libraries and native libraries used by the installed artifact; use compatible public versions and avoid private workspace imports. The adapter implementation must not depend on the service or SQL. It normally needs the SDK only for consumer examples/tests.
+- Export the adapter definition with ESM JS and corresponding TypeScript declarations. Declare `sandbar-adapter`, schema libraries and native libraries used by the installed artifact; use compatible public versions and avoid private workspace imports. The adapter implementation must not depend on SQL. It normally needs the SDK only for consumer examples/tests.
 - Do not add an SDK subpath or SDK-root import. Consumers use the existing public form:
 
   ```ts
@@ -103,12 +102,6 @@ Document operations whose uncertain outcomes cannot be reconciled. A new recover
   This connection shape is exercised in [the Acme consumer test](../../../apps/docs/examples/acme.test.ts); replace its names and inputs with the real package schemas.
 - Keep distribution metadata, dependency ranges, exports and packed files complete. If maintained in this monorepo, include the new package in the applicable release/version configuration; private built-in workspaces should not become separately published packages. Do not add a release system to an external repository unless requested.
 
-### Optional service registration
-
-External adapters are trusted installed code, registered explicitly via `createService({ storage, auth, adapters: [definition] })` from `sandbar-service`. Installation alone never registers one. See the [service guide](../../../apps/docs/internal/self-hosting/create-service.md).
-
-The existing service catalog derives forms from the definition's schemas. Connection requests supply JSON configuration and credentials, then verify the connection. Use this path without adding provider-specific auth, SQL, UI forms or a parallel runner. For supported service usage, test the definition through the public SDK consumer boundary, including persisted reconnection and recovery.
-
 ## Qualify and document
 
 Supply a small provider profile (`packages/sdk-qualification/provider-qualification/profile.ts`): public connection factory, pinned dependencies, nonsecret persisted routing, credential requirements, finite native/exercise/cleanup bounds, declared feature support and concise caveats. Reuse the normal `bun:test` suites in `packages/sdk-qualification/live`; add genuinely new SDK workflows as ordinary assertions rather than a provider-specific script or custom runner. Read the operator README and [qualification skill](../qualify-provider/SKILL.md). Bun owns selection, timeout/failure reporting and JUnit; shared helpers own setup, durable test-resource custody and bounded cleanup. Branch and merged sources use the same preload/build and invocation. Keep volume CRUD separate from mounts, account eligibility separate from implementation support, and extensive faults offline. Generate support pages from declared metadata and a thin mapping of reviewed JUnit/provenance/cleanup context. Never invent current-head live evidence or request paid reruns merely for an unchanged merge.
@@ -116,7 +109,7 @@ Supply a small provider profile (`packages/sdk-qualification/provider-qualificat
 
 Run `adapterSuite` from `sandbar-adapter/testing` against a deterministic native-boundary fixture. Follow `packages/adapter/src/testing.ts` for the fixture interface and `packages/providers/*/src/adapter.test.ts` for implementations. Supply genuinely different verified scopes, effect/release counters, lost-response and delayed-response faults, and evidence that native mutation retries are disabled. Report scenarios actually exercised; the suite is not live certification.
 
-Add focused tests for supported operations: unsupported inputs before mutation, scope mismatch, loss after one native effect, observation without replay, binary/command fidelity, declared bounds and cleanup. If pending tokens are supported, reopen a connection and recover the saved reference. Include direct/service parity for integration paths in scope; avoid unrelated service hardening.
+Add focused tests for supported operations: unsupported inputs before mutation, scope mismatch, loss after one native effect, observation without replay, binary/command fidelity, declared bounds and cleanup. If pending tokens are supported, reopen a connection and recover the saved reference.
 
 For distribution, extend or follow `packages/sdk-qualification/package-smoke.mjs`. Pack real artifacts into a clean consumer, install only documented top-level packages, compile strict NodeNext declarations, and run Node/Bun consumers. Include the new built-in subpath or external definition and check dependency isolation. Local archive overrides may resolve transitive packages but must not mask missing dependencies by installing extra roots. Exercise npm, pnpm and Bun installs when qualifying release/install support, and report unrun environments explicitly.
 

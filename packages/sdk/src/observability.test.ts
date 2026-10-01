@@ -20,7 +20,6 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { Sandbar, Image, SandbarError, diagnosticContext, OutcomeUnknownError } from "./index";
 import { Telemetry, parseTraceParent } from "./observability";
-import { sealedReference as sealedRemoteReference } from "./resource";
 import { fixtureAdapter } from "../../sdk-qualification/observability/adapter";
 
 const manager = new AsyncLocalStorageContextManager().enable();
@@ -849,68 +848,6 @@ test("pending handle observation preserves recovery availability", async () => {
   }
 
   await provider.shutdown();
-});
-
-test("remote diagnostics recognize SDK-validated references without executing getters", () => {
-  const reference = {
-    version: 2,
-    mode: "remote",
-    kind: "create",
-    invocationKey: "00000000-0000-7000-8000-000000000000",
-    service: { url: "https://CANARY.example", projectId: "CANARY_PROJECT" },
-  } as const;
-
-  expect(diagnosticContext({ reference }).recoveryAvailable).toBe(false);
-  expect(diagnosticContext({ reference: sealedRemoteReference(reference) }).recoveryAvailable).toBe(
-    true,
-  );
-
-  for (const invalid of [
-    { mode: "remote", invocationKey: "-".repeat(36) },
-    { ...reference, invocationKey: "-".repeat(36) },
-    { ...reference, version: 1 },
-    { ...reference, service: undefined },
-    { ...reference, kind: "destroy" },
-    { ...reference, kind: "file_write", resourceId: "CANARY_RESOURCE" },
-    { ...reference, resourceId: "CANARY_RESOURCE" },
-    { ...reference, kind: "destroy", resourceId: "" },
-    { ...reference, service: { url: "invalid", projectId: "CANARY_PROJECT" } },
-    { ...reference, file: { path: "/file", bytes: 1 } },
-    { ...reference, file: { extra: 1 } },
-    {
-      ...reference,
-      kind: "file_write",
-      resourceId: "CANARY_RESOURCE",
-      file: { path: "/../file", bytes: 1 },
-    },
-  ])
-    expect(diagnosticContext({ reference: invalid }).recoveryAvailable).toBe(false);
-
-  expect(
-    diagnosticContext({
-      reference: sealedRemoteReference({
-        ...reference,
-        kind: "file_write",
-        resourceId: "CANARY_RESOURCE",
-        file: { path: "/file", bytes: 1 },
-      }),
-    }).recoveryAvailable,
-  ).toBe(true);
-
-  let getters = 0;
-
-  const service = {
-    get url() {
-      getters++;
-
-      return "https://CANARY.example";
-    },
-    projectId: "CANARY_PROJECT",
-  };
-
-  expect(diagnosticContext({ reference: { ...reference, service } }).recoveryAvailable).toBe(false);
-  expect(getters).toBe(0);
-  expect(JSON.stringify(diagnosticContext({ reference }))).not.toContain("CANARY");
 });
 
 test("direct diagnostics require the complete recovery shape without traversing getters", async () => {

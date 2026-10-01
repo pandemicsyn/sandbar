@@ -77,17 +77,6 @@ for (const [path, html] of pageText) {
   if (!html.includes("noindex")) throw new Error(`Development page lacks noindex: ${path}`);
 }
 
-for (const path of pageText.keys()) {
-  const relative = path.slice(dist.length);
-
-  if (
-    /^docs\/(?:self-hosting\/|service-quickstart\/|choose-a-mode\/|reference\/http\/)/.test(
-      relative,
-    )
-  )
-    throw new Error(`Unreleased service documentation was published: ${relative}`);
-}
-
 console.log(
   `Checked ${pages.length} static pages, local links and anchors, Pagefind, metadata and 404 output`,
 );

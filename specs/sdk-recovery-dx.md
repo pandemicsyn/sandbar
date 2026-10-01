@@ -106,7 +106,7 @@ Preserve already-shipped APIs/formats as necessary, and keep existing recovery r
 - Prove successful snapshot capture, JSON persistence and reopening through a fresh connection; preserve supported source-independent lifetime and current-credential behavior.
 - Prove partial capture/restart errors expose the retained snapshot directly, unknown responses remain unknown, and no mutation is automatically replayed. Metadata/serialization failures must not conceal known completion or discard an identity.
 - Add focused deterministic tests, compiled public usage examples and accurate provider docs. Native listing/reconciliation limitations are documented rather than filled by a general recovery framework. No new paid/live calls are authorized by this spec.
-- Review the revised scope and diff independently, then run relevant package/API, docs and required CI checks. The user owns final review and merge. Preserve service regressions without expanding service functionality.
+- Review the revised scope and diff independently, then run relevant package/API, docs and required CI checks. The user owns final review and merge.
 
 ## Later: volume guarantees and mounted restore
 

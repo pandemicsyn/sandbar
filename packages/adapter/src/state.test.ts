@@ -46,7 +46,6 @@ test("versioned references roundtrip all resource kinds and preserve native gene
       nativeId: "reused",
       generation: "epoch-2",
       ownership: "borrowed",
-      service: { url: "https://service.test/", projectId: "p1", connectionId: "c1" },
     });
 
     expect(ResourceReference.parse(JSON.parse(JSON.stringify(reference)))).toEqual(reference);
@@ -63,19 +62,14 @@ test("versioned references roundtrip all resource kinds and preserve native gene
         authority: { id: "one", kind: "account" },
         partition: { cluster: "a", region: "us" },
       },
-      service: { connectionId: "c1", projectId: "p1", url: "https://service.test/" },
     });
 
     for (const binding of [
-      { provider: "other", scope, service: reference.service },
+      { provider: "other", scope },
       {
         provider: "fixture",
         scope: { ...scope, authority: { ...scope.authority, id: "other" } },
-        service: reference.service,
       },
-      { provider: "fixture", scope, service: { ...reference.service!, projectId: "p2" } },
-      { provider: "fixture", scope },
-      { provider: "fixture", scope, service: { ...reference.service!, connectionId: "c2" } },
     ])
       expect(() => assertResourceScope(reference, binding)).toThrow("different verified binding");
   }
@@ -176,42 +170,6 @@ test("absent mutation cannot advertise capture and read checks propagate unavail
   for (const status of ["unavailable", "unknown"] as const) {
     session.snapshotProfiles = async () => ({ status, reason: "fixture evidence" });
     expect((await stateCapabilities(session, {}, context)).snapshots.capture.status).toBe(status);
-  }
-});
-
-test("service references reject credentials, query strings, fragments and non-HTTP endpoints", () => {
-  const reference = {
-    version: 1 as const,
-    kind: "snapshot" as const,
-    provider: "fixture",
-    scope,
-    nativeId: "snapshot",
-    ownership: "unknown" as const,
-  };
-
-  for (const url of [
-    "https://user:secret@example.test/",
-    "https://user@example.test/",
-    "https://example.test/?token=secret",
-    "https://example.test/?region=us",
-    "https://example.test/#secret",
-    "ftp://example.test/",
-  ]) {
-    expect(
-      ResourceReference.safeParse({
-        ...reference,
-        service: { url, projectId: "p1", connectionId: "c1" },
-      }).success,
-    ).toBe(false);
-  }
-
-  for (const url of ["https://example.test/api/", "http://127.0.0.1:3000/"]) {
-    expect(
-      ResourceReference.safeParse({
-        ...reference,
-        service: { url, projectId: "p1", connectionId: "c1" },
-      }).success,
-    ).toBe(true);
   }
 });
 

@@ -1,15 +1,5 @@
 import type { OperationOutcome } from "sandbar-adapter";
-import { certifyRecoveryReference } from "./recovery-diagnostics";
-import {
-  SnapshotRequest,
-  MountSpec,
-  type Capabilities,
-  type DirectCapabilities,
-  type DestroyValue,
-  type Support,
-  type SnapshotPlan,
-  type CreatePlan,
-} from "sandbar-adapter";
+import { SnapshotRequest, MountSpec } from "sandbar-adapter";
 import type {
   AdapterDirectClient,
   AdapterSandbox,
@@ -22,8 +12,6 @@ import {
   ExecCommand,
   ExecRequest,
   FilePath,
-  Id,
-  InvocationKey,
   type SafeError,
 } from "sandbar-adapter/portable";
 
@@ -32,7 +20,6 @@ export type PreparedImage = {
   value: string;
   provider: string;
   scope: Scope;
-  connectionId?: string;
 };
 
 export type ImageBuildResult = {
@@ -46,7 +33,7 @@ export type ImageInput =
   | {
       kind: "prepared";
       value: string;
-      binding?: { provider: string; scope: Scope; connectionId?: string };
+      binding?: { provider: string; scope: Scope };
     }
   | OciImage;
 
@@ -61,7 +48,6 @@ export const Image = {
           binding: {
             provider: value.provider,
             scope: structuredClone(value.scope),
-            connectionId: value.connectionId,
           },
         };
   },
@@ -96,20 +82,11 @@ export type ExecOutput = {
   stderrText(maxBytes?: number): string;
 };
 
-export type RecoveryReference = {
-  version: 2;
-  mode: "remote";
-  kind: "create" | "exec" | "destroy" | "file_write" | "image_build";
-  invocationKey: string;
-  operationId?: string;
-  resourceId?: string;
-  file?: { path: string; bytes: number };
-  service: { url: string; projectId: string };
-};
+export type RecoveryReference = AdapterRecoveryReference;
 
 export interface OperationHandle<T> {
-  readonly durability: "process" | "service";
-  readonly reference: RecoveryReference | AdapterRecoveryReference;
+  readonly durability: "process";
+  readonly reference: RecoveryReference;
   observe(): Promise<T | null>;
   wait(options?: { signal?: AbortSignal; pollMs?: number }): Promise<T>;
 }
@@ -131,58 +108,11 @@ export type DirectSandbarClient = Pick<
 /** Public direct sandbox surface, including capture and provider support checks. */
 export type DirectSandboxHandle = Pick<AdapterSandbox, keyof AdapterSandbox>;
 
-/** Compatibility surface shared with the service client. Use DirectSandboxHandle for direct connections. */
-export interface SandboxHandle {
-  readonly id: string;
-  capabilities(): Promise<Capabilities | DirectCapabilities>;
-  checkSnapshot(request?: SnapshotRequest): Promise<Support<SnapshotPlan>>;
-  inspect(): Promise<{ state: string; observedAt?: string }>;
-  exec(
-    input: ExecInput | readonly string[],
-    options?: { signal?: AbortSignal },
-  ): Promise<ExecOutput>;
-  submitExec(
-    input: ExecInput | readonly string[],
-    options?: { signal?: AbortSignal },
-  ): Promise<OperationHandle<ExecOutput>>;
-  readFile(path: string): Promise<Uint8Array>;
-  writeFile(
-    path: string,
-    bytes: Uint8Array,
-    options?: { overwrite?: boolean; signal?: AbortSignal },
-  ): Promise<void>;
-  destroy(options?: {
-    signal?: AbortSignal;
-    storage?: "require-durable" | "allow-unconfirmed";
-  }): Promise<void | DestroyValue>;
-}
+/** Public sandbox handle. */
+export type SandboxHandle = DirectSandboxHandle;
 
-/** Compatibility surface shared with the service client. Use DirectSandbarClient for direct connections. */
-export interface SandbarClient {
-  capabilities(): Promise<Capabilities | DirectCapabilities>;
-  readonly images: {
-    build(
-      input: { source: { kind: "oci"; value: string } },
-      options?: { signal?: AbortSignal },
-    ): Promise<ImageBuildResult>;
-    submitBuild(
-      input: { source: { kind: "oci"; value: string } },
-      options?: { signal?: AbortSignal },
-    ): Promise<OperationHandle<ImageBuildResult>>;
-  };
-  readonly sandboxes: {
-    checkCreate(input: CreateInput): Promise<Support<CreatePlan>>;
-    create(input: CreateInput, options?: { signal?: AbortSignal }): Promise<SandboxHandle>;
-    submitCreate(
-      input: CreateInput,
-      options?: { signal?: AbortSignal },
-    ): Promise<OperationHandle<SandboxHandle>>;
-  };
-  recover(
-    reference: RecoveryReference | AdapterRecoveryReference,
-  ): Promise<OperationHandle<unknown>>;
-  close(): Promise<void>;
-}
+/** Public SDK connection. */
+export type SandbarClient = DirectSandbarClient;
 
 export class SandbarError extends Error {
   constructor(
@@ -190,7 +120,7 @@ export class SandbarError extends Error {
     message: string,
     readonly effect: SafeError["effect"] = "none",
     readonly outcome?: OperationOutcome,
-    readonly reference?: RecoveryReference | AdapterRecoveryReference,
+    readonly reference?: RecoveryReference,
   ) {
     super(message);
     this.name = "SandbarError";
@@ -208,7 +138,7 @@ export class UnsupportedFeatureError extends SandbarError {
 }
 
 export class OutcomeUnknownError<
-  R extends RecoveryReference | AdapterRecoveryReference = RecoveryReference,
+  R extends RecoveryReference = RecoveryReference,
 > extends SandbarError {
   constructor(
     readonly reference: R,
@@ -221,7 +151,7 @@ export class OutcomeUnknownError<
 }
 
 export class WaitAbortedError<
-  R extends RecoveryReference | AdapterRecoveryReference = RecoveryReference,
+  R extends RecoveryReference = RecoveryReference,
 > extends SandbarError {
   readonly cause: unknown;
   constructor(
@@ -315,7 +245,6 @@ export function validateCreate(input: CreateInput): CreateInput {
           binding: z
             .strictObject({
               provider: z.string().min(1).max(128),
-              connectionId: z.string().min(1).max(128).optional(),
               scope: z.strictObject({
                 authority: z.strictObject({
                   kind: z.string().min(1).max(64),
@@ -385,48 +314,6 @@ export function validateExec(
   };
 }
 
-export function validateReference(value: RecoveryReference): RecoveryReference {
-  const schema = z.strictObject({
-    version: z.literal(2),
-    mode: z.literal("remote"),
-    kind: z.enum(["create", "exec", "destroy", "file_write", "image_build"]),
-    invocationKey: InvocationKey,
-    operationId: Id.optional(),
-    resourceId: Id.optional(),
-    file: z
-      .strictObject({
-        path: z.string().startsWith("/").max(4096),
-        bytes: z.number().int().nonnegative().max(1_048_576),
-      })
-      .optional(),
-    service: z.strictObject({ url: z.url(), projectId: Id }),
-  });
-
-  const parsed = schema.safeParse(value);
-
-  if (!parsed.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid recovery reference");
-  const ref = parsed.data;
-
-  if (ref.file) validateFilePath(ref.file.path);
-
-  if (
-    (ref.kind === "file_write") !== !!ref.file ||
-    (ref.kind === "create" || ref.kind === "image_build" ? !!ref.resourceId : !ref.resourceId)
-  )
-    throw new SandbarError("INVALID_ARGUMENT", "Recovery fields do not match operation kind");
-
-  return structuredClone(ref);
-}
-
-export function sealedReference(value: RecoveryReference): RecoveryReference {
-  const ref = validateReference(value);
-
-  if (ref.file) Object.freeze(ref.file);
-  Object.freeze(ref.service);
-
-  return certifyRecoveryReference(Object.freeze(ref));
-}
-
 export function waitDelay(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted)
     return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
@@ -475,45 +362,6 @@ export function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> 
       },
     );
   });
-}
-
-export function rethrowCloseWithReference(
-  error: Error,
-  reference: RecoveryReference,
-  signal?: AbortSignal,
-): never {
-  if (error instanceof SandbarError && error.code === "CLIENT_CLOSED")
-    throw new OutcomeUnknownError(
-      reference,
-      "Client closed after submission; recover with this reference",
-    );
-
-  if (signal?.aborted) throw new WaitAbortedError(reference, signal.reason);
-  throw error;
-}
-
-export async function awaitSubmission<T>(
-  work: Promise<T>,
-  closedSignal: AbortSignal,
-  signal: AbortSignal | undefined,
-  reference: () => RecoveryReference | undefined,
-): Promise<T> {
-  const combined = signal ? AbortSignal.any([signal, closedSignal]) : closedSignal;
-
-  try {
-    return await raceAbort(work, combined);
-  } catch (error) {
-    const known = reference();
-
-    if (known && closedSignal.aborted)
-      throw new OutcomeUnknownError(
-        known,
-        "Client closed after submission; recover with this reference",
-      );
-
-    if (known && signal?.aborted) throw new WaitAbortedError(known, signal.reason);
-    throw error;
-  }
 }
 
 /** Validate caller input only; native response validation must remain separate. */

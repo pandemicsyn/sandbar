@@ -13,10 +13,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./service-support": {
-      "types": "./dist/service-support.d.ts",
-      "import": "./dist/service-support.js"
-    },
     "./daytona": {
       "types": "./dist/daytona.d.ts",
       "import": "./dist/daytona.js"
@@ -28,7 +24,7 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts src/service-support.ts src/daytona.ts src/e2b.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external e2b --external zod --external @opentelemetry/api && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts src/daytona.ts src/e2b.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external e2b --external zod --external @opentelemetry/api && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
   },
   "dependencies": {
     "sandbar-adapter": "workspace:*",

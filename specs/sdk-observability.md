@@ -1,10 +1,10 @@
 # SDK observability and diagnostics
 
-Accepted direction · September 28, 2026 · Direct tracing/diagnostics and recipes implemented in this branch; metrics/events and service tracing deferred
+Accepted direction · September 28, 2026 · Direct tracing/diagnostics and recipes implemented in this branch; metrics/events deferred
 
-Make Sandbar operations understandable inside the application's existing observability tools. This is a fresh SDK design, independent of the removed observability/accounting proposal. It adds no billing, management UI, or Effect requirement. This document specifies future behavior; current exports remain the authority for implemented APIs.
+Make Sandbar operations understandable inside the application's existing observability tools. This is a fresh SDK design, independent of the removed observability/accounting proposal. It adds no billing or Effect requirement. This document specifies future behavior; current exports remain the authority for implemented APIs.
 
-Delivery priority: implement direct SDK tracing/diagnostics and direct SDK vendor recipes now. Service propagation, persisted trace context, worker spans, and new remote-client parity wait for the [distant service milestone](../plans/implementation-plan.md#distant-milestone-optional-service). Preserve existing service behavior and existing regression tests; only narrow compatibility fixes are required for shared API changes. Service feature completion is not a gate for the SDK observability release.
+Delivery priority: SDK tracing/diagnostics and SDK vendor recipes.
 
 ## Developer outcomes
 
@@ -15,7 +15,7 @@ A developer should be able to answer these questions from one application trace 
 3. Did an error prove rejection, confirm remote failure, stop only the local wait, or leave an uncertain effect?
 4. Which existing operation/resource should they inspect, recover, or clean up next?
 
-Setting up the application's supported Sentry, Datadog, or OpenTelemetry configuration should make Sandbar spans appear under its active request/job span. Sandbar must not require a separate service or an account with a particular telemetry vendor. Applications without telemetry keep using the same SDK calls.
+Setting up the application's supported Sentry, Datadog, or OpenTelemetry configuration should make Sandbar spans appear under its active request/job span. Sandbar must not require an account with a particular telemetry vendor. Applications without telemetry keep using the same SDK calls.
 
 Instrumentation describes what Sandbar observed. It must not invent provider internals, remote execution duration, global inventory, or certainty that the provider did not supply.
 
@@ -23,7 +23,7 @@ Instrumentation describes what Sandbar observed. It must not invent provider int
 
 Instrument using the OpenTelemetry trace API. The application owns the tracing SDK/provider, context manager, propagators, sampler, exporters, credentials, queues, and shutdown. Sandbar does not initialize or replace globals, load vendor SDKs, install HTTP auto-instrumentation, or start an exporter. With no tracing provider registered, instrumentation is a no-op and makes no telemetry network calls.
 
-Use a named, versioned instrumentation scope for each owning public package. Package builds must externalize the shared OpenTelemetry API instead of bundling a private copy that can disconnect context. Keep service/SQL and vendor exporter dependencies out of the direct SDK import graph. Custom adapters must not need an OpenTelemetry dependency to implement ordinary operations.
+Use a named, versioned instrumentation scope for each owning public package. Package builds must externalize the shared OpenTelemetry API instead of bundling a private copy that can disconnect context. Keep vendor exporter dependencies out of the direct SDK import graph. Custom adapters must not need an OpenTelemetry dependency to implement ordinary operations.
 
 Proposed connection option, to integrate into the existing connect/client options rather than create a second connection API:
 
@@ -35,7 +35,7 @@ interface ObservabilityOptions {
 }
 ```
 
-Omission uses the application's registered global provider; `false` disables Sandbar-owned spans and Sandbar-owned propagation for that client. It cannot disable third-party HTTP instrumentation. An injected provider changes span creation only; the application still configures a compatible context manager and propagation. Add the option to the direct SDK without changing provider credential/configuration schemas. Service-client and hosting options are deferred.
+Omission uses the application's registered global provider; `false` disables Sandbar-owned spans and Sandbar-owned propagation for that client. It cannot disable third-party HTTP instrumentation. An injected provider changes span creation only; the application still configures a compatible context manager and propagation. Add the option to the direct SDK without changing provider credential/configuration schemas.
 
 Capture the active context at each public call, not at connection creation. Two concurrent application requests using one Sandbar client must remain in separate traces. Starting work inside an active Sandbar span must preserve that context through async provider calls. Do not retain live spans or async context objects in long-lived resource handles.
 
@@ -85,7 +85,7 @@ Set OTel ERROR status when the span's own API contract failed, with a fixed safe
 
 Do not call `Sentry.captureException()` or a vendor equivalent automatically. The application owns issue creation and decides whether a caught operational error should produce an issue. Recipes demonstrate capturing once, inside the request context, with safe Sandbar correlation fields. Correlation must still work when tracing is unsampled: existing operation IDs and structured error facts remain useful even when there is no exported trace.
 
-Provide a small public pure helper such as `diagnosticContext(errorOrOperation)` that returns a bounded allowlisted diagnostic record: safe error code, effect, operation/submission IDs where available, known operation state, and recovery availability. Its exact signature belongs in the first implementation slice. It must not serialize arbitrary error objects, native causes, recovery tokens, resource locators, or service URLs. It performs no IO and does not change the error's identity or existing recovery API. The original error/handle remains the source for a usable recovery reference; the diagnostic record conveys correlation, not authority to recover or retry.
+Provide a small public pure helper such as `diagnosticContext(errorOrOperation)` that returns a bounded allowlisted diagnostic record: safe error code, effect, operation/submission IDs where available, known operation state, and recovery availability. Its exact signature belongs in the first implementation slice. It must not serialize arbitrary error objects, native causes, recovery tokens, resource locators, or raw URLs. It performs no IO and does not change the error's identity or existing recovery API. The original error/handle remains the source for a usable recovery reference; the diagnostic record conveys correlation, not authority to recover or retry.
 
 ## 4. Context and SDK recovery
 
@@ -94,8 +94,6 @@ Inherit the caller's active span for direct calls. For `recover()` and subsequen
 A saved operation reference and any application-owned submission marker remain independent of telemetry. Observation after a possible submission never becomes another submit, even when traces are absent. Sampling, missing context, or exporter failure cannot change operation identity, errors, outcomes, or no-replay decisions.
 
 Default propagation into provider APIs and guest commands is off; neither is the application's trusted tracing boundary. Do not copy arbitrary baggage or request headers into adapter inputs. Third-party HTTP/native SDK instrumentation has its own propagation policy, which examples must address separately. Validate any accepted origin span context as bounded telemetry metadata; it grants no scope or authorization.
-
-Service HTTP propagation, optional persisted admission context, and linked durable-runner episodes require a later service design. They are not necessary to trace direct SDK operations or to qualify Sentry/Datadog recipes.
 
 ## 5. Privacy, bounds, and failure isolation
 
@@ -129,7 +127,7 @@ Sources checked September 28, 2026: [Sentry's OTel integration](https://github.c
 
 After tracing and error correlation are usable, add a small stable metric set: public-call duration in seconds, completed-call count by outcome, provider-phase duration, and local in-flight calls. Emit metrics directly from measured operations rather than deriving them from sampled spans. A per-client count is not a global fleet gauge; terminal observations are not a count of uniquely completed provider mutations.
 
-Default dimensions are finite operation/mode/outcome/error-code classes and a bounded provider label. Map unknown/custom provider labels to `custom` unless the application configures a finite allowlist. Exclude operation/resource/tenant IDs, file paths, raw URLs, commands, exception text, and arbitrary provider errors from metric labels. If service metrics are added later, distinguish them from client measurements so dashboards do not double-count the same remote work.
+Default dimensions are finite operation/mode/outcome/error-code classes and a bounded provider label. Map unknown/custom provider labels to `custom` unless the application configures a finite allowlist. Exclude operation/resource/tenant IDs, file paths, raw URLs, commands, exception text, and arbitrary provider errors from metric labels.
 
 Structured diagnostic events should reuse the same sanitized schema and carry trace/span IDs when available. Decide the logger/OTel-log bridge and bounded delivery behavior in that later slice; do not introduce a mandatory logger, console noise, or a second vendor export pipeline in the tracing release. Telemetry is best effort and is never the authoritative operation journal or a billing ledger.
 
@@ -141,7 +139,7 @@ State-portability foundations are merged. This SDK workstream proceeds alongside
 2. **Sentry and Datadog DevEx.** Deliver the three recipes above, pinned integration fixtures, runtime-specific evidence, exporter shutdown guidance, and debugging guidance for missing or disconnected spans. Mark vendor UI validation separately from local export evidence.
 3. **Metrics and structured events.** Specify and implement bounded measurements, logger integration, and their separate backend/runtime coverage after the tracing contract is stable.
 
-The first usable deliverable is unit 1; the direct SDK Sentry/Datadog integration promise is complete only after unit 2 and its published qualification. No service implementation is required. Service tracing remains a distant milestone, separate from these SDK units. Trace names, attributes, outcomes, diagnostic-helper fields, and privacy guarantees become supported public contracts and need release notes when changed. Changes do not authorize native state operations, accounting, management features, a telemetry database, new provider adapters, or guest instrumentation.
+The first usable deliverable is unit 1; the direct SDK Sentry/Datadog integration promise is complete only after unit 2 and its published qualification. Trace names, attributes, outcomes, diagnostic-helper fields, and privacy guarantees become supported public contracts and need release notes when changed. Changes do not authorize native state operations, accounting, a telemetry database, new provider adapters, or guest instrumentation.
 
 Required deterministic acceptance cases:
 
@@ -153,7 +151,7 @@ Required deterministic acceptance cases:
 - Recovery after direct-client process restart links when possible, correlates by operation identity otherwise, and never resubmits work. Sampling disabled does not remove the operational recovery path.
 - Credentials and canary secrets placed in commands, filenames, outputs, URLs, raw causes, and stack messages do not appear in Sandbar-owned exported records or default recipe captures.
 - Tracer/exporter failures do not alter return values, original errors, native call counts, application-owned submission markers, or cleanup; long waits remain bounded in telemetry memory.
-- Packed Node/Bun consumers share the application's OTel API/context; SDK dependency boundaries remain intact, and existing service-client regression checks continue to pass without requiring instrumentation parity.
+- Packed Node/Bun consumers share the application's OTel API/context; SDK dependency boundaries remain intact.
 - Local Sentry/Datadog qualification verifies span relationships and explicitly captured error correlation without live services. Documentation distinguishes fixture/export checks from real vendor UI evidence.
 
 Run affected package tests, root checks, packed consumer qualification, and docs/example checks. No live provider calls, vendor account changes, paid resources, publication, or deployment are authorized by this spec.

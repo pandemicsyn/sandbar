@@ -1,6 +1,6 @@
 # Releasing Sandbar packages
 
-`sandbar-adapter`, `sandbar-sdk` and `sandbar-service` use one lockstep version (currently pre-1.0) and one `v<version>` Git tag. Changesets write package changelogs, and the release workflow composes its GitHub release notes from those same version sections. Private apps, provider implementation workspaces and server storage packages remain unpublished.
+`sandbar-adapter` and `sandbar-sdk` use one lockstep version (currently pre-1.0) and one `v<version>` Git tag. Changesets write package changelogs, and the release workflow composes its GitHub release notes from those same version sections. Private apps, provider implementation workspaces and internal SDK packages remain unpublished.
 
 ## Contributor flow
 
@@ -16,7 +16,7 @@
 
 ## One-time setup before a real release
 
-- Confirm ownership and availability of every public npm package name. The selected public names are `sandbar-adapter`, `sandbar-sdk` and `sandbar-service`. Confirm npm ownership of each name before publication; registry E404 does not prove ownership. The three selected packages have `private: false`, Apache-2.0 licensing and exact repository metadata. Keep provider implementation, storage and app workspaces private. Update `scripts/release-packages.json` and the fixed group in `.changeset/config.json` together if the distributable graph changes.
+- Confirm ownership and availability of every public npm package name. The selected public names are `sandbar-adapter` and `sandbar-sdk`. Confirm npm ownership of each name before publication; registry E404 does not prove ownership. The two selected packages have `private: false`, Apache-2.0 licensing and exact repository metadata. Keep provider implementation and app workspaces private. Update `scripts/release-packages.json` and the fixed group in `.changeset/config.json` together if the distributable graph changes.
 - Create a protected GitHub `npm` environment with required reviewers and restrict it to approved release tags. Enable Actions to write contents for version preparation; branch protection and the required independent review still apply to the version PR.
 - Configure an npm trusted publisher for **each** public package: GitHub owner `pandemicsyn`, repository `sandbar`, workflow filename `release-npm.yml`, environment `npm`, with direct `npm publish` allowed. GitHub-hosted runners, npm CLI 11.5.1+ and Node 22.14+ are required. OIDC requires `id-token: write`; this workflow supplies it. The npm `trust` command requires an existing package, so each first publication needs an authorized manual bootstrap with package ownership and a suitable scoped/public access setting before OIDC can be configured. No account credentials are stored in this repository.
 - Verify npm organization/scope rights and GitHub environment settings separately. This setup task does not publish packages or create a release.
@@ -27,6 +27,6 @@ Run `bun run release:fixture` after building packages. It uses temporary package
 
 ## Intended installs after publication
 
-Install the SDK alone for direct mode: `npm install sandbar-sdk`, `pnpm add sandbar-sdk`, or `bun add sandbar-sdk`. Its current built-in provider import is `sandbar-sdk/daytona`; E2B is planned and has no package or export yet. The experimental `sandbar-modal` adapter is a separate package outside this 1.0 release workflow.
+Install the SDK alone for direct mode: `npm install sandbar-sdk`, `pnpm add sandbar-sdk`, or `bun add sandbar-sdk`. Its built-in provider imports are `sandbar-sdk/daytona` and `sandbar-sdk/e2b`. The experimental `sandbar-modal` adapter is a separate package outside this 1.0 release workflow.
 
-Adapter authors install `sandbar-adapter` and import `sandbar-adapter/testing` for the conformance suite. The optional self-hosted service installs with `npm install sandbar-service` (or the equivalent pnpm/Bun command), runs on Bun, and provides a separate `sandbar-service/client` import for remote SDK clients. The service depends on the published SDK and adapter API. These are package shapes for a future authorized publication; no npm release is performed by this task.
+Adapter authors install `sandbar-adapter` and import `sandbar-adapter/testing` for the conformance suite. These are package shapes for a future authorized publication; no npm release is performed by this task.

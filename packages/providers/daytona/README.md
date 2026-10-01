@@ -27,20 +27,7 @@ For a resumable OCI build, use `const built = await sandbar.images.build({ sourc
 
 `Sandbar.connect` performs read-only `GET /api-keys/current` and `GET /regions` calls. It requires the target to match exactly one available native region ID, then binds that ID, the verified organization ID and canonical API endpoint to the direct scope. A missing or explicitly foreign target is a configuration error; an unreadable or inconsistent region listing remains a provider verification failure. Before advertising or preparing `blocked` creation, the driver reads `GET /organizations/{verifiedOrganizationId}` and requires a matching ID and `sandboxLimitedNetworkEgress: false`. Missing, restricted, malformed or unreadable responses disable blocked creation; existing-resource cleanup remains available. This check is repeated in `prepare` before submission, so a prior capability result is not treated as lasting permission. The credential stays in the caller. Direct mode has process-lifetime operation state; save recovery references before relying on them after a restart. A missing native create candidate is an unknown effect, not permission to create again. Capture revalidation must match the profile and source state saved in the recovery reference; lifecycle or profile drift rejects before stop/capture/start effects, allowing a new explicit attempt to check the latest native default. Snapshot restore completes only when the native sandbox positively reports the saved snapshot ID, both in the immediate create response and during read-only recovery. Missing or mismatched snapshot identity keeps the outcome unknown; matching operation labels alone cannot confirm restored filesystem provenance. The special `earth` GPU region is not returned by the region listing and is outside this adapter's supported target set.
 
-The official Daytona API and toolbox endpoints are trusted by default. For a private Daytona deployment, pass its exact `{ apiUrl, toolboxOrigin }` pair in `trustedEndpoints` when constructing `createDaytonaAdapter`. The service host can allow exact pairs with `SANDBAR_DAYTONA_TRUSTED_ENDPOINTS`, a JSON array of those objects. A connection request cannot send an API key to an arbitrary URL by supplying endpoint fields.
-
-## Service connection
-
-Configure `SANDBAR_DB_URL`, `SANDBAR_KEY_FILE` and `SANDBAR_SETUP_TOKEN_FILE`; fake transport variables are optional and only for explicit local tests. In the management UI, add a Daytona connection with its API key and target, then verify. The API accepts `POST /v1/projects/:projectId/provider-connections` with:
-
-```json
-{"provider":"daytona","name":"Daytona US","credentials":{"apiKey":"..."},"configuration":{"apiUrl":"https://app.daytona.io/api","toolboxOrigin":"https://proxy.app.daytona.io","target":"us","ttlMinutes":60}}
-```
-
-The service encrypts these fields before persistence. It rechecks native identity when resolving a connection and rejects a changed organization or API endpoint. To rotate credentials, add and verify a new connection; there is no in-place credential-rotation API. Provider leases only release local transport resources and never delete sandboxes. Daytona's raw `fetch` transport has no provider-owned client to close.
-
-A verified connection confirms native identity and target. The connection list does not report operation capabilities because eligibility can change; the service rechecks blocked egress support and snapshot suitability during preparation. Verification alone does not guarantee that every operation or policy is supported.
-An upstream 401 or 403 from the current-key check is returned as a sanitized credential rejection. The provider's response body is not exposed to the caller.
+The official Daytona API and toolbox endpoints are trusted by default. For a private Daytona deployment, pass its exact `{ apiUrl, toolboxOrigin }` pair in `trustedEndpoints` when constructing `createDaytonaAdapter`. A connection request cannot send an API key to an arbitrary URL by supplying endpoint fields.
 
 ## Current capability boundary
 

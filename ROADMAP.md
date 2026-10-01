@@ -37,7 +37,7 @@ The focused [lifecycle spec](specs/sandbox-lifecycle.md) merged in [PR #31](http
 
 The proposed defaults and execution-evidence choices are recorded in [the spec's remaining product decisions](specs/sandbox-lifecycle.md#decisions-to-accept-and-later-documentation-edits); merging the research spec does not mark these APIs implemented or all decisions accepted. Slice 1 does not depend on accepting slice 2/3 choices.
 
-Keep each PR bounded. The spec supplies scope cuts if guest attachment or provider transitions grow too large; do not introduce a generic lifecycle engine. No mounted suspension, snapshot emulation, service parity or new providers. Representative live acceptance requires separate paid-run authorization.
+Keep each PR bounded. The spec supplies scope cuts if guest attachment or provider transitions grow too large; do not introduce a generic lifecycle engine. No mounted suspension, snapshot emulation, new providers. Representative live acceptance requires separate paid-run authorization.
 
 ## Then: interactive execution and useful storage composition
 
@@ -61,6 +61,6 @@ This is a usability milestone, not universal provider feature parity. The baseli
 
 ## Later
 
-Advanced process/access features and storage extensions follow demonstrated needs. Additional observability metrics/events remain deferred beyond the implemented tracing baseline. Service expansion, management features and accounting stay distant; preserve existing service regressions without requiring new SDK features to ship through the service. Rust is not planned.
+Advanced process/access features and storage extensions follow demonstrated needs. Additional observability metrics/events remain deferred beyond the implemented tracing baseline. Accounting remains deferred. Rust is not planned.
 
 Keep this roadmap short. Link focused specs and remove completed task detail instead of accumulating review history or duplicate backlogs. Older sequencing in [the implementation plan](plans/implementation-plan.md) must be reconciled to this roadmap; it does not override this order.

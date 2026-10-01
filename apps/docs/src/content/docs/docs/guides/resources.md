@@ -75,7 +75,7 @@ A nonzero exit is a completed command. `NoExitCodeError` means execution complet
 
 ## Serializable resource identity
 
-The exported `ResourceReference` schema describes sandbox, image, snapshot, volume, volume-version, mount, and session identity. Version 1 records provider, verified scope, native ID, ownership evidence, and native generation when locators can be reused. Service references additionally bind URL, project, and connection. It contains no credentials and grants no authorization.
+The exported `ResourceReference` schema describes sandbox, image, snapshot, volume, volume-version, mount, and session identity. Version 1 records provider, verified scope, native ID, ownership evidence, and native generation when locators can be reused. It contains no credentials and grants no authorization.
 
 `validateResourceReference` parses and detaches a reference; `assertResourceScope` checks its provider and complete binding; `assertResourceIdentity` additionally compares kind, locator, and generation. A missing or changed generation cannot match an expected known generation. Adapters supply generation and correlated ownership evidence; the SDK does not infer either from a name. Direct connections now expose snapshot and volume opening, inspection and mutation methods; see [Snapshots and volumes](/docs/guides/snapshots-and-volumes/). Validation alone does not establish that a native artifact still exists or is unexpired.
 

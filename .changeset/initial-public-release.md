@@ -2,4 +2,4 @@
 "sandbar-sdk": minor
 ---
 
-Prepare the first public SDK, adapter authoring API, and separately installable service packages.
+Prepare the first public SDK and adapter authoring API packages.
