@@ -27,6 +27,10 @@ function fixture(reopening: boolean, pendingOperations = false) {
   let hold = false;
   let inspected = 0;
   let reopenFailure: AdapterError | undefined;
+  let inspectionFailure: AdapterError | undefined;
+  let inspectSynchronously = false;
+  let inspectionHold = false;
+  let preflightFailure: AdapterError | undefined;
   let synchronousFailure = false;
   const saved: AdapterRecoveryReference[] = [];
   const dispatched: { operation: string; sandbox: Sandbox }[] = [];
@@ -104,6 +108,11 @@ function fixture(reopening: boolean, pendingOperations = false) {
         },
         exec: {
           recovery: { version: 1, token: z.strictObject({}) },
+          async prepare(input) {
+            if (preflightFailure) throw preflightFailure;
+
+            return input;
+          },
           async submit(input, ctx) {
             record("exec", input.sandbox);
 
@@ -131,6 +140,11 @@ function fixture(reopening: boolean, pendingOperations = false) {
           },
           write: {
             recovery: { version: 1, token: z.strictObject({}) },
+            async prepare(input) {
+              if (preflightFailure) throw preflightFailure;
+
+              return input;
+            },
             async submit(input, ctx) {
               record("write", input.sandbox);
 
@@ -152,6 +166,11 @@ function fixture(reopening: boolean, pendingOperations = false) {
         },
         destroy: {
           recovery: { version: 1, token: z.strictObject({}) },
+          async prepare(input) {
+            if (preflightFailure) throw preflightFailure;
+
+            return input;
+          },
           async submit(input, ctx) {
             record("destroy", input);
 
@@ -170,10 +189,18 @@ function fixture(reopening: boolean, pendingOperations = false) {
             return ctx.pending({}, { pollAfterMs: 1 });
           },
         },
-        async inspect(input) {
+        inspect(input) {
           record("inspect", input);
 
-          return { id: "native", state: "running" };
+          if (inspectionFailure) {
+            if (inspectSynchronously) throw inspectionFailure;
+
+            return Promise.reject(inspectionFailure);
+          }
+
+          if (inspectionHold) return new Promise(() => {});
+
+          return Promise.resolve({ id: "native", state: "running" as const });
         },
       };
 
@@ -219,6 +246,16 @@ function fixture(reopening: boolean, pendingOperations = false) {
     reference,
     dispatched,
     saved,
+    failInspection(code: AdapterError["code"], synchronous = false) {
+      inspectSynchronously = synchronous;
+      inspectionFailure = new AdapterError(code, "native inspection failure");
+    },
+    holdInspection() {
+      inspectionHold = true;
+    },
+    failPreflight(code: AdapterError["code"]) {
+      preflightFailure = new AdapterError(code, "native preflight failure");
+    },
     failReopen(code: AdapterError["code"], synchronous = false) {
       synchronousFailure = synchronous;
       reopenFailure = new AdapterError(code, "native fixture failure");
@@ -420,3 +457,74 @@ for (const code of ["NOT_FOUND", "FORBIDDEN", "CONFLICT", "UNAVAILABLE"] as cons
     }
   });
 }
+
+for (const code of [
+  "NOT_FOUND",
+  "FORBIDDEN",
+  "CONFLICT",
+  "UNAUTHENTICATED",
+  "CAPACITY",
+  "RATE_LIMIT",
+  "INTERNAL",
+  "UNAVAILABLE",
+  "TIMEOUT",
+  "INVALID_ARGUMENT",
+  "UNSUPPORTED",
+] as const) {
+  test(`inspection and referenced preflight normalize adapter ${code} failures`, async () => {
+    const f = fixture(true);
+    const client = await f.connect();
+
+    try {
+      const box = await client.sandboxes.get(f.reference);
+
+      for (const synchronous of [false, true]) {
+        f.failInspection(code, synchronous);
+        const error = await box.inspect().catch((error) => error);
+        expect(error).toBeInstanceOf(SandbarError);
+        expect(error).toMatchObject({ code, effect: "none" });
+      }
+
+      f.failPreflight(code);
+      const before = f.dispatched.length;
+
+      for (const operation of [
+        () => box.exec(["true"]),
+        () => box.writeFile("/fixture", new Uint8Array([1])),
+        () => box.destroy(),
+      ]) {
+        const error = await operation().catch((error) => error);
+        expect(error).toBeInstanceOf(SandbarError);
+        expect(error).toMatchObject({ code, effect: "none" });
+      }
+
+      expect(f.dispatched.length).toBe(before);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("inspection keeps caller cancellation typed and normalizes its owned timeout", async () => {
+  const f = fixture(true);
+  const client = await f.connect();
+  const timeoutController = new AbortController();
+  const timeout = spyOn(AbortSignal, "timeout").mockReturnValue(timeoutController.signal);
+
+  try {
+    const box = await client.sandboxes.get(f.reference);
+    f.holdInspection();
+    const caller = new AbortController();
+    const cancelled = box.inspect({ signal: caller.signal });
+    caller.abort("stop");
+    await expect(cancelled).rejects.toMatchObject({ code: "WAIT_ABORTED", effect: "none" });
+    const timed = box.inspect();
+    timeoutController.abort(new DOMException("Timed out", "TimeoutError"));
+    const error = await timed.catch((error) => error);
+    expect(error).toBeInstanceOf(SandbarError);
+    expect(error).toMatchObject({ code: "TIMEOUT", effect: "none" });
+  } finally {
+    timeout.mockRestore();
+    await client.close();
+  }
+});

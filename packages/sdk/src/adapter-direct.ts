@@ -740,50 +740,58 @@ export class AdapterSandbox {
 
     assertSignal(options.signal);
 
+    const timeout = AbortSignal.timeout(30000);
+
     const signal = AbortSignal.any([
       this.client.signal,
       ...(options.signal ? [options.signal] : []),
-      AbortSignal.timeout(30000),
+      timeout,
     ]);
 
-    const result = await readWhileOpen(
-      this.client,
-      raceAbort(
-        this.client.session.inspect(sandboxInput(this.id, this.reference), {
+    try {
+      const result = await readWhileOpen(
+        this.client,
+        raceAbort(
+          this.client.session.inspect(sandboxInput(this.id, this.reference), {
+            signal,
+            deadline: Date.now() + 30000,
+          }),
           signal,
-          deadline: Date.now() + 30000,
-        }),
-        signal,
-      ).catch((error) => {
-        assertSignal(options.signal);
-        throw error;
-      }),
-    );
+        ),
+      );
 
-    if (!result) throw new SandbarError("NOT_FOUND", "Sandbox is missing, expired, or deleted");
+      if (!result) throw new SandbarError("NOT_FOUND", "Sandbox is missing, expired, or deleted");
 
-    if (result.id !== this.id)
-      throw new SandbarError("INVALID_RESPONSE", "Provider returned another sandbox", "unknown");
+      if (result.id !== this.id)
+        throw new SandbarError("INVALID_RESPONSE", "Provider returned another sandbox", "unknown");
 
-    if (result.reference) {
-      if (result.reference.kind !== "sandbox" || result.reference.nativeId !== this.id)
-        throw new SandbarError("INVALID_RESPONSE", "Provider sandbox identity differs");
-      assertResourceScope(result.reference, {
-        provider: this.client.provider,
-        scope: this.client.scope,
-      });
+      if (result.reference) {
+        if (result.reference.kind !== "sandbox" || result.reference.nativeId !== this.id)
+          throw new SandbarError("INVALID_RESPONSE", "Provider sandbox identity differs");
+        assertResourceScope(result.reference, {
+          provider: this.client.provider,
+          scope: this.client.scope,
+        });
 
-      if (this.reference) assertSandboxReference(result.reference, this.reference);
+        if (this.reference) assertSandboxReference(result.reference, this.reference);
+      }
+
+      return {
+        ...unknownSandboxFacts(),
+        reference: this.reference,
+        nativeState: null,
+        ...result,
+        observedAt: new Date().toISOString(),
+        state: SandboxState.parse(result.state),
+      };
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (timeout.aborted) throw new SandbarError("TIMEOUT", "Sandbox inspection timed out");
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
     }
-
-    return {
-      ...unknownSandboxFacts(),
-      reference: this.reference,
-      nativeState: null,
-      ...result,
-      observedAt: new Date().toISOString(),
-      state: SandboxState.parse(result.state),
-    };
   }
   async submitExec(
     input: ExecInput | readonly string[],
@@ -1243,13 +1251,7 @@ export class AdapterDirectClient {
           if (error instanceof AdapterError && error.code === "UNSUPPORTED")
             throw new UnsupportedFeatureError(kind, [error.message]);
 
-          if (
-            error instanceof AdapterError &&
-            (error.code === "INVALID_ARGUMENT" ||
-              error.code === "TIMEOUT" ||
-              error.code === "UNAVAILABLE")
-          )
-            throw new SandbarError(error.code, error.message);
+          if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
           throw error;
         }
 
