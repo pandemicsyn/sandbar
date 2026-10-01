@@ -1,6 +1,6 @@
 # TypeScript resource SDK
 
-`sandbar-sdk` uses an installed adapter in the caller's server-side Node.js or Bun process. The implemented built-in Daytona adapter is available from `sandbar-sdk/daytona`. The experimental Modal integration is installed separately as `sandbar-modal` and uses the same public adapter contract as custom integrations. The fake provider is a deterministic test fixture. Live provider qualification remains separate from the packaged API shape.
+`sandbar-sdk` uses an installed adapter in the caller's server-side Node.js or Bun process. Built-in Daytona and E2B adapters are available from `sandbar-sdk/daytona` and `sandbar-sdk/e2b`. The experimental Modal integration is installed separately as `sandbar-modal` and uses the same public adapter contract as custom integrations. The fake provider is a deterministic test fixture. Live provider qualification remains separate from the packaged API shape.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
@@ -17,9 +17,12 @@ import { daytona } from "sandbar-sdk/daytona";
 const sandbar = await Sandbar.connect(daytona({ apiKey: process.env.DAYTONA_API_KEY!, target: "us" }));
 try {
   const box = await sandbar.sandboxes.create({ environment: Image.prepared("your-snapshot-id") });
-  const result = await box.exec(["printf", "hello"]);
-  console.log(result.stdoutText(4096));
-  await box.destroy();
+  try {
+    const result = await box.exec(["printf", "hello"]);
+    console.log(result.stdoutText(4096));
+  } finally {
+    await box.destroy();
+  }
 } finally {
   await sandbar.close();
 }
@@ -51,6 +54,8 @@ Tracing uses your application’s OpenTelemetry provider. Set `tracing: false` t
 Persist resource and operation references as versioned JSON in your own application storage. Their historical observations do not depend on the original API key or a mandatory signature. Reopen with current credentials for the same verified native scope; E2B credential rotation requires verified `teamId` configuration. `onReference` is awaited before stage dispatches and when evidence changes. Observation stays read-only; explicit `operation.continue()` may advance a proven never-submitted next stage. Serialize continuation across processes through your own lease or compare-and-swap. E2B cleanup deletes the containing template, not an individual build, and rejects known shared expansion; the provider offers no transactional read/delete generation condition.
 
 Empty restore resource and mount maps are equivalent to omitting those overrides. Snapshot and volume deletion persist a rejected stage when cancellation is known to precede native dispatch. The SDK allows up to one second after caller cancellation to join deletion finalization and surface a proven rejection with `effect: "none"`; client close remains immediate, and a stalled finalization still reports uncertainty. Other mutation waits retain their existing cancellation behavior.
+
+Start with the [everyday SDK guides](https://sandbarsdk.dev/docs/guides/resources/) and [snapshots/volumes](https://sandbarsdk.dev/docs/guides/snapshots-and-volumes/). Save `captured.snapshot.reference` or `volume.reference` in application storage and reopen with `client.snapshots.get(...)` or `client.volumes.get(...)` on a fresh matching connection. Handles expose `provider` and `id`. Confirmed partial capture errors expose the snapshot reference and capture details through `SandbarError.outcome`; do not parse native tokens or repeat capture. The [compiled example](../../apps/docs/examples/recovery-outcomes.ts) demonstrates these paths. Existing checkpoint/continuation APIs are advanced compatibility paths, not a prerequisite for ordinary application persistence.
 
 For explicit direct connection annotations, import `DirectSandbarClient` and `DirectSandboxHandle` from `sandbar-sdk`. They include `client.snapshots`, `client.volumes` and `sandbox.snapshot()`. `SandbarClient` and `SandboxHandle` are aliases for those complete SDK surfaces.
 

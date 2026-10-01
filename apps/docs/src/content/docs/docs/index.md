@@ -21,6 +21,7 @@ Copy a prompt to give your coding agent the right imports, examples, and constra
 | Create a sandbox and run commands    | [Sandboxes and execution](/docs/guides/resources/)           |
 | Read and write files, capture output | [Files and output](/docs/guides/files-and-output/)           |
 | Choose an image or build one         | [Images and networking](/docs/guides/images-and-networking/) |
+| Save snapshots or reuse volumes      | [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) |
 | Handle a timeout or lost response    | [Errors and recovery](/docs/guides/recovery/)                |
 | Fix common setup issues              | [Troubleshooting](/docs/guides/troubleshooting/)             |
 

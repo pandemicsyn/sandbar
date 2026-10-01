@@ -17,7 +17,7 @@ const restored = await snapshot.restore({ networkPolicy: "blocked" });
 
 Save the complete versioned reference, rather than just its display ID. It includes provider, scope and immutable native selectors. E2B captures select an exact build, while the containing template ID is also needed for deletion. A changed default tag cannot replace the captured build. Volume handles also expose `provider`, `id` and `reference`.
 
-Daytona captures filesystem state and may stop and restart the source. E2B captures filesystem and memory, with native pause/resume behavior. The returned `capture` describes actual guarantees; `source` reports the state observed when the call finishes. An `observedAt` timestamp describes a historical observation, not fresh provider state. Snapshot restore mount support remains limited to the provider's supported contract.
+Daytona captures filesystem state and may stop and restart the source. E2B captures filesystem and memory, with native pause/resume behavior. The returned `capture` describes actual guarantees; `source` reports the state observed when the call finishes. An `observedAt` timestamp describes a historical observation, not fresh provider state. Both built-in providers reject capture with external mounts and restore with mount/resource overrides (empty override maps are equivalent to omission).
 
 A failure in `database.save` after the SDK returns is an application storage error: the caller still has the successful capture. There is a crash window between native creation and saving its reference. Applications choose storage and recovery policy; Sandbar does not promise exactly-once creation.
 

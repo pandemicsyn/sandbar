@@ -22,7 +22,7 @@ try {
 }
 ```
 
-Use the sandbox handle for execution, files, inspection, and destruction. Call `sandbar.close()` in an outer `finally` when you're done with the connection, as in [Getting started](/docs/direct-quickstart/). Each sandbox needs its own explicit cleanup.
+Use the sandbox handle for execution, files, inspection, and destruction. Call `sandbar.close()` in an outer `finally` when you're done with the connection, as in [Getting started](/docs/direct-quickstart/). Each sandbox needs its own explicit cleanup. `close()` releases local client state and waiting; it does not destroy remote compute or retained storage.
 
 ## Pass arguments literally
 
@@ -38,7 +38,7 @@ const output = await box.exec({
 });
 ```
 
-The image must contain the executable and working directory. The default execution deadline is 300 seconds; the default combined output limit is 1 MiB.
+The image must contain the executable and working directory. The default execution deadline is 300 seconds; the default combined output limit is 1 MiB. `deadlineSeconds` bounds this command through the adapter’s native execution timeout; it does not set or extend sandbox lifetime. E2B `timeoutSeconds` (default 300) and Daytona `ttlMinutes` (default 60) configure native compute lifetime separately. Lifetime expiry is a fallback, not confirmed cleanup, and does not expire retained artifacts.
 
 ## Use a shell explicitly
 
@@ -71,7 +71,7 @@ A nonzero exit is a completed command. `NoExitCodeError` means execution complet
 
 ## Submit and wait separately
 
-`box.submitExec(input)` and `sandbar.sandboxes.submitCreate(input)` return an operation handle with `reference`, `observe()`, and `wait()`. Use them when your application needs to save a reference or manage waiting explicitly. Ordinary `exec()` and `create()` submit and wait for you.
+`box.submitExec(input)` and `sandbar.sandboxes.submitCreate(input)` return an operation handle with `reference`, `observe()`, and `wait()`. Use them when your application needs to save a reference or manage waiting explicitly. Ordinary `exec()` and `create()` submit and wait for you. `wait({ signal })` cancellation stops local waiting and preserves an operation reference; it does not terminate the remote command. Use recovery to observe an already-submitted operation before deciding what to do next. The current SDK has no public per-command termination API.
 
 ## Serializable resource identity
 

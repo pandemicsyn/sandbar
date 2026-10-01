@@ -31,6 +31,9 @@ test("direct quickstart uses the independent fake provider", async () => {
         expect(await box.readFile("/input.bin")).toEqual(Uint8Array.of(0, 255));
         const result = await box.exec({ command });
         expect(result.stdoutText(4096)).toBe("hello");
+        expect(result.stdoutText(2)).toBe("he…");
+        expect(result.truncated).toBe(false);
+        expect(result.stdout).toEqual(new TextEncoder().encode("hello"));
       } finally {
         await box.destroy();
       }
