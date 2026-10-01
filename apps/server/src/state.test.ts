@@ -181,7 +181,7 @@ test("service create checks agree with direct checks, unavailable capture is gat
     const directCaps = await direct.capabilities();
     expect(directCaps.snapshots.capture.status).toBe("supported");
     expect(remoteCaps.snapshots.capture.status).toBe("unsupported");
-    const { mounts: _mounts, ...legacyDirectCaps } = directCaps;
+    const { mounts: _mounts, lifecycle: _lifecycle, ...legacyDirectCaps } = directCaps;
     expect({ ...remoteCaps, observedAt: "dated" }).toEqual({
       ...Capabilities.parse(legacyDirectCaps),
       snapshots: {

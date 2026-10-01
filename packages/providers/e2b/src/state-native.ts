@@ -1,3 +1,4 @@
+import { sandboxReference } from "sandbar-adapter";
 import { z } from "zod";
 import { resourceHistory } from "./resource-history";
 import {
@@ -965,7 +966,14 @@ export function e2bState(input: {
         )
           return ctx.unknown("Restored sandbox identity is unverified");
 
-        return { id: current.id, state: current.state === "running" ? "running" : "unknown" };
+        return {
+          id: current.id,
+          reference: sandboxReference("e2b", input.scope, current.id, {
+            operation: current.metadata.sandbar_operation!,
+            submission: current.metadata.sandbar_submission!,
+          }),
+          state: current.state === "running" ? "running" : "unknown",
+        };
       },
       async continue(attempt, ctx) {
         const token = restoreToken.safeParse(attempt.token);

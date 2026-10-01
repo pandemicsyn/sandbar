@@ -10,6 +10,7 @@ import {
 
 export const scenarios = [
   "sandbox-lifecycle",
+  "lifecycle-reopen",
   "execution",
   "files",
   "network-controls",

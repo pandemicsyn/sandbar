@@ -547,7 +547,14 @@ test("OCI create builds a correlated E2B template inside submit and reports it a
       signal,
     );
 
-    expect(result).toEqual({ kind: "completed", value: { id: "sandbox_oci", state: "running" } });
+    expect(result).toMatchObject({
+      kind: "completed",
+      value: {
+        id: "sandbox_oci",
+        state: "running",
+        reference: { kind: "sandbox", provider: "e2b" },
+      },
+    });
     expect(buildName).toMatch(/^sandbar-[a-f0-9]{40}$/);
     expect(creates).toBe(1);
 

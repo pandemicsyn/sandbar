@@ -15,7 +15,10 @@ export type Scope = {
   partition: Readonly<Record<string, string>>;
 };
 
-export type Sandbox = { readonly id: string };
+export type Sandbox = {
+  readonly id: string;
+  readonly reference?: import("./state").SandboxReference;
+};
 
 export type RecoveryResource = Sandbox | ResourceReference;
 
@@ -45,6 +48,7 @@ export type CreateInput = {
 
 export type CreateValue = {
   id: string;
+  reference?: import("./state").SandboxReference;
   state: "running" | "unknown";
   mounts?: import("./state").MountSpec[];
 };
@@ -114,6 +118,7 @@ export type AdapterErrorCode =
   | "INVALID_ARGUMENT"
   | "UNSUPPORTED"
   | "UNAUTHENTICATED"
+  | "FORBIDDEN"
   | "NOT_FOUND"
   | "CONFLICT"
   | "CAPACITY"
@@ -126,6 +131,7 @@ const AdapterErrorCodeSchema = z.enum([
   "INVALID_ARGUMENT",
   "UNSUPPORTED",
   "UNAUTHENTICATED",
+  "FORBIDDEN",
   "NOT_FOUND",
   "CONFLICT",
   "CAPACITY",
@@ -271,10 +277,19 @@ export type AdapterSession<
   create: Mutation<CreateInput, CreateValue, CP, CT, undefined>;
   imageBuild?: Mutation<ImageBuildInput, ImageBuildValue, ImageBuildInput, Json, undefined>;
   destroy: Mutation<import("./resources").DestroyInput, DestroyValue, DP, Json, Sandbox>;
+  reopen?: (
+    reference: import("./state").SandboxReference,
+    ctx: ReadContext,
+  ) => Promise<import("./state").SandboxInfo>;
   inspect?: (
     box: Sandbox,
     ctx: ReadContext,
-  ) => Promise<{ id: string; state: import("./state").SandboxState } | null>;
+  ) => Promise<
+    | ({ id: string; state: import("./state").SandboxState } & Partial<
+        import("./state").SandboxInfo
+      >)
+    | null
+  >;
   exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox>;
   files?: {
     maxBytes: number;

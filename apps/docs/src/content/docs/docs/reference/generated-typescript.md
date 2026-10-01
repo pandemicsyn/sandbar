@@ -30,11 +30,13 @@ Import from `sandbar-sdk`.
 | `Capabilities`              | type      |
 | `CreateInput`               | type      |
 | `CreatePlan`                | type      |
+| `Deadline`                  | type      |
 | `diagnosticContext`         | re-export |
 | `DiagnosticContext`         | type      |
 | `DirectCapabilities`        | type      |
 | `ExecInput`                 | type      |
 | `ExecOutput`                | type      |
+| `Fact`                      | type      |
 | `Image`                     | re-export |
 | `ImageBuildResult`          | type      |
 | `ImageInput`                | type      |
@@ -59,6 +61,8 @@ Import from `sandbar-sdk`.
 | `SandbarClient`             | type      |
 | `SandbarError`              | re-export |
 | `SandboxHandle`             | type      |
+| `SandboxInfo`               | type      |
+| `SandboxReference`          | type      |
 | `SandboxState`              | type      |
 | `SnapshotInfo`              | re-export |
 | `SnapshotPlan`              | type      |

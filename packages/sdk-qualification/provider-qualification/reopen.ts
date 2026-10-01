@@ -10,6 +10,7 @@ export async function reopenInFreshProcess(
     connection: RunLedger["connection"];
     reference: ResourceReference;
     profilePath?: string;
+    sandboxProbe?: { path: string; base64: string; expires: import("sandbar-sdk").Deadline };
   },
   signal: AbortSignal,
 ) {

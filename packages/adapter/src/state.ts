@@ -447,6 +447,7 @@ export type CreatePlan = {
 };
 
 export type StateCapabilities = {
+  lifecycle: { reopen: Support<{}>; inspect: Support<{}> };
   snapshots: {
     capture: Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>;
     restore: Support<RestoreCapabilities>;
@@ -539,6 +540,7 @@ export async function stateCapabilities(
     yes ? { status: "supported", value: {} } : unsupportedState();
 
   return {
+    lifecycle: { reopen: implemented(!!session.reopen), inspect: implemented(!!session.inspect) },
     snapshots: {
       capture,
       restore: session.snapshotRestore ? resources.restore : unsupportedState(),
@@ -704,6 +706,12 @@ const supportSchema = <S extends z.ZodType>(value: S) =>
   ]);
 
 export const DirectCapabilities = z.strictObject({
+  lifecycle: z
+    .strictObject({
+      reopen: supportSchema(z.strictObject({})),
+      inspect: supportSchema(z.strictObject({})),
+    })
+    .optional(),
   commands: z.array(z.enum(["argv", "shell"])),
   images: z.array(z.enum(["prepared", "oci"])),
   network: z.array(z.string()),
@@ -790,3 +798,75 @@ export const CreateCheck = z.discriminatedUnion("status", [
     z.strictObject({ status: z.literal(status), reason: z.string().min(1).max(1024) }),
   ),
 ]);
+
+/** Current native observation; unknown deadlines never imply unlimited lifetime. */
+export type SandboxReference = ResourceReference<"sandbox">;
+
+export type Fact<T> = { status: "known"; value: T } | { status: "unknown"; reason: string };
+
+export type Deadline =
+  | {
+      status: "known";
+      at: string;
+      action: "destroy" | "suspend";
+      scope: "running-session" | "sandbox";
+    }
+  | { status: "none" }
+  | { status: "unknown"; reason: string };
+
+export interface SandboxInfo {
+  reference: SandboxReference | null;
+  state: SandboxState;
+  nativeState: string | null;
+  observedAt: string;
+  expires: Deadline;
+  idleStop: Fact<{ seconds: number; action: "stop" | "suspend" } | null>;
+  retention: Fact<{ autoDeleteAfterStoppedSeconds: number | null }>;
+  execution: Fact<{ nativeId: string }>;
+}
+
+/** Native creation selectors only; this reference carries no past observations. */
+export function sandboxReference(
+  provider: string,
+  scope: import("./index").Scope,
+  nativeId: string,
+  creation: { operation: string; submission: string },
+): SandboxReference {
+  if (!creation.operation || !creation.submission)
+    throw new AdapterError("CONFLICT", "Native sandbox creation correlation is missing");
+
+  return validateResourceReference({
+    version: 1,
+    kind: "sandbox",
+    provider,
+    scope,
+    nativeId,
+    ownership: "verified-created",
+    receipt: JSON.stringify(creation),
+  });
+}
+
+export function assertSandboxReference(actual: SandboxReference, expected: SandboxReference): void {
+  assertResourceIdentity(actual, expected);
+
+  if (actual.receipt !== expected.receipt || expected.history !== undefined)
+    throw new AdapterError("CONFLICT", "Native sandbox creation correlation differs");
+}
+
+export function unknownSandboxFacts() {
+  return {
+    expires: { status: "unknown" as const, reason: "Native expiry is unavailable" },
+    idleStop: { status: "unknown" as const, reason: "Native idle policy is unavailable" },
+    retention: { status: "unknown" as const, reason: "Native retention is unavailable" },
+    execution: { status: "unknown" as const, reason: "Native execution identity is unavailable" },
+  };
+}
+
+export function nativeDeadline(
+  at: string | null | undefined,
+  scope: "running-session" | "sandbox",
+): Deadline {
+  return at && z.iso.datetime({ offset: true }).safeParse(at).success
+    ? { status: "known", at, action: "destroy", scope }
+    : { status: "unknown", reason: "Native expiry is absent or invalid" };
+}

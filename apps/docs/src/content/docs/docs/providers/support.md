@@ -10,6 +10,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Feature                       | Daytona                                                  | E2B                                                                               |
 | ----------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Sandbox lifecycle             | [Supported · passed at 8449def7](#daytona-lifecycle)     | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
+| Scoped sandbox reopening      | [Conditional · not-run](#daytona-reopening)              | [Conditional · not-run](#e2b-reopening)                                           |
 | Execution and captured output | [Supported · passed at 8449def7](#daytona-execution)     | [Supported · passed at 8449def7](#e2b-execution)                                  |
 | Binary files and overwrite    | [Conditional · passed at 8449def7](#daytona-files)       | [Conditional · passed at 8449def7](#e2b-files)                                    |
 | OCI image builds              | [Conditional · not-run](#daytona-oci)                    | [Conditional · not-run](#e2b-oci)                                                 |
@@ -27,6 +28,12 @@ The [live evidence detail](/docs/providers/live-qualification/) retains exact av
 ### Sandbox lifecycle
 
 The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified.
+
+<a id="daytona-reopening"></a>
+
+### Scoped sandbox reopening
+
+Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Deterministic native/packed coverage; new live workflow not run.
 
 <a id="daytona-execution"></a>
 
@@ -77,6 +84,12 @@ Writable create-time mounts/subpaths; read-only unsupported. The Bun producer wr
 ### Sandbox lifecycle
 
 The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed.
+
+<a id="e2b-reopening"></a>
+
+### Scoped sandbox reopening
+
+Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Deterministic native/packed coverage; new live workflow not run.
 
 <a id="e2b-execution"></a>
 

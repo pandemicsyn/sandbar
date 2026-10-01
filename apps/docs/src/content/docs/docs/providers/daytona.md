@@ -79,3 +79,11 @@ Application-retained capture history supports independent restore after source d
 Native mapping evidence: [Daytona snapshots](https://www.daytona.io/docs/snapshots/) and [volumes](https://www.daytona.io/docs/en/volumes/), checked against REST 0.218.0 DTOs.
 
 Mounted volumes are object-backed rather than POSIX filesystems. `writeFile(..., { overwrite: true })` stages bytes privately on the sandbox filesystem before writing and verifying the mounted destination. Atomic no-clobber `writeFile` on mounted paths is unsupported and rejects before effects; ordinary root-filesystem no-clobber writes remain supported. The private staging location must remain outside mounted storage. A completed file write does not certify a shutdown durability barrier.
+
+## Scoped sandbox reopening
+
+Persist `sandbox.reference` from create, restore or recovered results, then use `freshClient.sandboxes.get(savedReference)` to reopen the same native compute. `inspect()` reports fresh state, native state, local observation time and available deadline/policy facts. Reopening never creates, resumes or extends lifetime; inactive compute remains inactive and guest calls require running state. Unknown expiry is not unlimited lifetime, and elapsed expiry does not prove deletion. Native absence, forbidden access, unavailable reads and identity/configuration conflict remain distinct errors.
+
+References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Timeout control and suspension/resumption are later slices.
+
+Daytona validates organization, region, endpoint, toolbox origin, native network policy and private visibility. `autoDestroyAt` remains a sandbox-wide expiry while stopped/archived. Idle-stop and deletion-after-stop intervals are separate observed policies. A rotated key in the same organization works with the same binding.

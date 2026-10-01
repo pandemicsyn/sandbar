@@ -3,7 +3,7 @@ import { AdapterError, type DirectCapabilities } from "sandbar-adapter";
 
 /** Keep the existing HTTP contract scoped to operations that the service exposes. */
 function serviceCapabilities(input: DirectCapabilities) {
-  const { mounts: _mounts, ...caps } = input;
+  const { mounts: _mounts, lifecycle: _lifecycle, ...caps } = input;
 
   const absent = {
     status: "unsupported" as const,

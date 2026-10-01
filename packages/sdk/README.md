@@ -60,3 +60,27 @@ Tracing uses your application’s OpenTelemetry provider. Set `tracing: false` t
 Persist resource and operation references as versioned JSON in your own application storage. Their historical observations do not depend on the original API key or a mandatory signature. Reopen with current credentials for the same verified native scope; E2B credential rotation requires verified `teamId` configuration. `onReference` is awaited before stage dispatches and when evidence changes. Observation stays read-only; explicit `operation.continue()` may advance a proven never-submitted next stage. Serialize continuation across processes through your own lease or compare-and-swap. E2B cleanup deletes the containing template, not an individual build, and rejects known shared expansion; the provider offers no transactional read/delete generation condition.
 
 Empty restore resource and mount maps are equivalent to omitting those overrides. Snapshot and volume deletion persist a rejected stage when cancellation is known to precede native dispatch. The SDK allows up to one second after caller cancellation to join deletion finalization and surface a proven rejection with `effect: "none"`; client close remains immediate, and a stalled finalization still reports uncertainty. Other mutation waits retain their existing cancellation behavior.
+
+
+## Reopen Sandbar-created compute
+
+Direct SDK sandbox handles expose `reference: SandboxReference | null`. Save that reference in an application-owned trusted store and configure a fresh connection with the same native binding:
+
+```ts
+const reference = sandbox.reference ?? (await sandbox.inspect()).reference;
+if (!reference) throw new Error("Verified sandbox identity is unavailable");
+const saved = JSON.parse(JSON.stringify(reference));
+await client.close();
+const reopened = await freshClient.sandboxes.get(saved);
+const info = await reopened.inspect();
+if (info.state === "running") {
+  const bytes = await reopened.readFile("/tmp/work.txt");
+  const output = await reopened.exec(["/bin/sh", "-c", "printf reopened"]);
+}
+```
+
+References contain native identity, provider/scope and the native creation selectors required for verification; no credentials, observations or workflow journal. Successful create, snapshot restore and recovered results issue references after native verification. Legacy adapters may return null; a failed optional identity read after confirmed Daytona creation also returns a usable handle with null reference rather than hiding completed creation. A later `inspect().reference` can supply verified identity when native metadata becomes readable. Do not save null or synthesize a reference from the display ID.
+
+`get` reads native detail and never creates, resumes or extends lifetime. Stopped/suspended resources remain inactive. `inspect` supplies current `nativeState`, local receipt `observedAt`, hard expiry, idle-stop policy and stopped-retention facts. Unknown facts remain unknown; an elapsed deadline alone does not establish deletion. Missing/expired/deleted resources fail `NOT_FOUND`, native authorization fails `FORBIDDEN`, transport/detail access fails `UNAVAILABLE`, and identity/configuration mismatch fails `CONFLICT`. A destroyed tombstone can be inspected but cannot be reopened.
+
+Applications own persistence, fresh credentials and serialization of competing operations. There is a crash window before the reference is saved. Existing operation recovery remains separate and read-only; reopening compute does not replay a command or recover a mutation. Timeout setters, suspend/resume and service parity remain deferred. Deterministic/packed tests cover this slice; its new live reopening workflow has not run.

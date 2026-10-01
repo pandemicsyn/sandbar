@@ -1,5 +1,14 @@
 import { z } from "zod";
 import { e2bState } from "./state-native";
+import {
+  sandboxReference,
+  assertSandboxReference,
+  assertResourceScope,
+  unknownSandboxFacts,
+  nativeDeadline,
+  type SandboxInfo,
+  type SandboxReference,
+} from "sandbar-adapter";
 import { createHash } from "node:crypto";
 import {
   MountDurability as importMountDurability,
@@ -206,6 +215,55 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         const record = await transport.get(id);
 
         return record && owned(record) ? record : null;
+      };
+
+      const inspection = async (id: string, expected?: SandboxReference): Promise<SandboxInfo> => {
+        let record;
+
+        try {
+          await verifyAuthority();
+          record = await transport.get(id);
+
+          if (record && (record.id !== id || !owned(record)))
+            throw new AdapterError(
+              "CONFLICT",
+              "E2B native identity, scope, or creation markers differ",
+            );
+        } catch (error) {
+          if (error instanceof AdapterError) throw error;
+          throw new AdapterError("UNAVAILABLE", "E2B native detail is unavailable");
+        }
+
+        if (!record)
+          throw new AdapterError("NOT_FOUND", "E2B sandbox is missing, expired, or deleted");
+
+        const reference = sandboxReference("e2b", boundScope, record.id, {
+          operation: record.metadata.sandbar_operation!,
+          submission: record.metadata.sandbar_submission!,
+        });
+
+        if (expected) assertSandboxReference(reference, expected);
+
+        return {
+          ...unknownSandboxFacts(),
+          reference,
+          observedAt: new Date().toISOString(),
+          nativeState: record.state,
+          state:
+            record.state === "running"
+              ? "running"
+              : record.state === "paused"
+                ? "suspended"
+                : "unknown",
+          expires:
+            record.state === "paused"
+              ? { status: "none" }
+              : nativeDeadline(record.endAt, "running-session"),
+          retention:
+            record.state === "paused"
+              ? { status: "known", value: { autoDeleteAfterStoppedSeconds: null } }
+              : unknownSandboxFacts().retention,
+        };
       };
 
       const requireRunning = async (id: string): Promise<E2BRecord> => {
@@ -470,6 +528,10 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
               return {
                 id,
+                reference: sandboxReference("e2b", boundScope, id, {
+                  operation: record.metadata.sandbar_operation!,
+                  submission: record.metadata.sandbar_submission!,
+                }),
                 mounts: input.mounts,
                 state: record.state === "running" ? ("running" as const) : ("unknown" as const),
               };
@@ -526,6 +588,10 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
             return {
               id: record.id,
+              reference: sandboxReference("e2b", boundScope, record.id, {
+                operation: record.metadata.sandbar_operation!,
+                submission: record.metadata.sandbar_submission!,
+              }),
               mounts: attempt.mounts,
               state: record.state === "running" ? ("running" as const) : ("unknown" as const),
             };
@@ -666,15 +732,13 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             );
           },
         },
-        async inspect(box) {
-          const record = await find(box.id);
+        async reopen(reference) {
+          assertResourceScope(reference, { provider: "e2b", scope: boundScope });
 
-          return record
-            ? {
-                id: record.id,
-                state: record.state === "running" ? ("running" as const) : ("unknown" as const),
-              }
-            : null;
+          return inspection(reference.nativeId, reference);
+        },
+        async inspect(box) {
+          return { id: box.id, ...(await inspection(box.id, box.reference)) };
         },
         async inventory(input) {
           await verifyAuthority();

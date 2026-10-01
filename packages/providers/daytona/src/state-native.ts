@@ -60,6 +60,12 @@ const NativeBox = z.object({
   target: z.string(),
   state: z.string(),
   sandboxClass: z.string().optional(),
+  labels: z.record(z.string(), z.string()).optional(),
+  networkBlockAll: z.boolean().optional(),
+  public: z.boolean().optional(),
+  autoDestroyAt: z.string().nullable().optional(),
+  autoStopInterval: z.number().nullable().optional(),
+  autoDeleteInterval: z.number().nullable().optional(),
   volumes: z
     .array(
       z.object({ volumeId: z.string(), mountPath: z.string(), subpath: z.string().optional() }),
@@ -250,9 +256,11 @@ export function daytonaState(input: {
       throw new AdapterError(
         response.status === 404
           ? "NOT_FOUND"
-          : response.status === 403 || [502, 503, 504].includes(response.status)
-            ? "UNAVAILABLE"
-            : "INTERNAL",
+          : [401, 403].includes(response.status)
+            ? "FORBIDDEN"
+            : response.status >= 500
+              ? "UNAVAILABLE"
+              : "INTERNAL",
         `Daytona state HTTP ${response.status}`,
       );
 

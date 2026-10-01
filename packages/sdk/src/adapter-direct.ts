@@ -17,6 +17,11 @@ import {
 } from "./observability";
 import {
   SandboxState,
+  unknownSandboxFacts,
+  validateResourceReference,
+  assertSandboxReference,
+  type SandboxReference,
+  type SandboxInfo,
   stateCapabilities,
   resolveSnapshot,
   checkCreate,
@@ -600,10 +605,24 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
 }
 
 export class AdapterSandbox {
+  #reference: SandboxReference | null;
+  get reference(): SandboxReference | null {
+    return this.#reference;
+  }
   constructor(
     private readonly client: AdapterDirectClient,
     readonly id: string,
+    reference: SandboxReference | null = null,
   ) {
+    if (reference) {
+      reference = validateResourceReference(reference);
+      assertResourceScope(reference, { provider: client.provider, scope: client.scope });
+
+      if (reference.kind !== "sandbox" || reference.nativeId !== id)
+        throw new SandbarError("INVALID_RESPONSE", "Sandbox identity differs");
+    }
+
+    this.#reference = reference ? freezeReference(reference) : null;
     instrument(this, "capabilities", client.telemetry, "sandbar.capabilities");
     instrument(this, "checkSnapshot", client.telemetry, "sandbar.snapshot.check");
     instrument(this, "inspect", client.telemetry, "sandbar.sandbox.inspect");
@@ -694,9 +713,7 @@ export class AdapterSandbox {
 
     return true;
   }
-  async inspect(
-    options: WaitOptions = {},
-  ): Promise<{ state: import("sandbar-adapter").SandboxState }> {
+  async inspect(options: WaitOptions = {}): Promise<SandboxInfo> {
     this.client.ensureOpen();
 
     if (!this.client.session.inspect) unsupported("inspect");
@@ -712,7 +729,10 @@ export class AdapterSandbox {
     const result = await readWhileOpen(
       this.client,
       raceAbort(
-        this.client.session.inspect({ id: this.id }, { signal, deadline: Date.now() + 30000 }),
+        this.client.session.inspect(
+          { id: this.id, reference: this.reference ?? undefined },
+          { signal, deadline: Date.now() + 30000 },
+        ),
         signal,
       ).catch((error) => {
         assertSignal(options.signal);
@@ -720,12 +740,30 @@ export class AdapterSandbox {
       }),
     );
 
-    if (!result) return { state: "unknown" };
+    if (!result) throw new SandbarError("NOT_FOUND", "Sandbox is missing, expired, or deleted");
 
     if (result.id !== this.id)
       throw new SandbarError("INVALID_RESPONSE", "Provider returned another sandbox", "unknown");
 
-    return { state: SandboxState.parse(result.state) };
+    if (result.reference) {
+      if (result.reference.kind !== "sandbox" || result.reference.nativeId !== this.id)
+        throw new SandbarError("INVALID_RESPONSE", "Provider sandbox identity differs");
+      assertResourceScope(result.reference, {
+        provider: this.client.provider,
+        scope: this.client.scope,
+      });
+
+      if (this.reference) assertSandboxReference(result.reference, this.reference);
+    }
+
+    return {
+      ...unknownSandboxFacts(),
+      reference: this.reference,
+      nativeState: null,
+      ...result,
+      observedAt: new Date().toISOString(),
+      state: SandboxState.parse(result.state),
+    };
   }
   async submitExec(
     input: ExecInput | readonly string[],
@@ -1068,6 +1106,7 @@ export class AdapterDirectClient {
   };
   readonly signal: AbortSignal;
   readonly sandboxes: {
+    get: (reference: SandboxReference, options?: WaitOptions) => Promise<AdapterSandbox>;
     checkCreate: (input: CreateInput) => Promise<Support<CreatePlan>>;
     create: (input: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
     submitCreate: (
@@ -1297,6 +1336,7 @@ export class AdapterDirectClient {
       },
     };
     this.sandboxes = {
+      get: (reference, options = {}) => this.reopenSandbox(reference, options),
       checkCreate: (input) => this.checkCreate(input),
       create: async (input, options = {}) =>
         waitFor(this.telemetry, await internalMethod(this.submitCreate)(input, options), options),
@@ -1474,10 +1514,49 @@ export class AdapterDirectClient {
         )
           throw asUnknown(ref, "Requested native mounts are not confirmed ready");
 
-        return new AdapterSandbox(this, result.value.id);
+        return new AdapterSandbox(this, result.value.id, result.value.reference ?? null);
       },
       { ...options, mounts: request.mounts },
     );
+  }
+  private async reopenSandbox(
+    reference: SandboxReference,
+    options: WaitOptions,
+  ): Promise<AdapterSandbox> {
+    this.ensureOpen();
+    reference = validateResourceReference(reference);
+
+    if (reference.kind !== "sandbox")
+      throw new SandbarError("INVALID_ARGUMENT", "Expected sandbox reference");
+    assertResourceScope(reference, { provider: this.provider, scope: this.scope });
+
+    if (!this.session.reopen) unsupported("reopen");
+    assertSignal(options.signal);
+
+    const signal = AbortSignal.any([
+      this.signal,
+      ...(options.signal ? [options.signal] : []),
+      AbortSignal.timeout(30000),
+    ]);
+
+    const info = await readWhileOpen(
+      this,
+      raceAbort(
+        this.session.reopen(reference, { signal, deadline: Date.now() + 30000 }),
+        signal,
+      ).catch((error) => {
+        assertSignal(options.signal);
+        throw error;
+      }),
+    );
+
+    if (!info.reference)
+      throw new SandbarError("INVALID_RESPONSE", "Provider did not verify sandbox identity");
+    assertSandboxReference(info.reference, reference);
+
+    if (info.state === "destroyed") throw new SandbarError("NOT_FOUND", "Sandbox is destroyed");
+
+    return new AdapterSandbox(this, reference.nativeId, reference);
   }
   async submitBuild(
     input: ImageBuildInput,
@@ -1737,7 +1816,7 @@ export class AdapterDirectClient {
             )
               throw asUnknown(ref, "Recovered mounts not confirmed ready");
 
-            return new AdapterSandbox(this, value.id);
+            return new AdapterSandbox(this, value.id, value.reference ?? null);
           },
           undefined,
           reference.kind,

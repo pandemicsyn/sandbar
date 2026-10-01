@@ -168,6 +168,7 @@ const FileWriteInputSchema = z.strictObject({
 
 const CreateValueSchema = z.strictObject({
   id: Id,
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
   state: z.enum(["running", "unknown"]),
   mounts: z.array(MountSpec).max(32).optional(),
 });
