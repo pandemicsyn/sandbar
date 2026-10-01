@@ -32,12 +32,12 @@ The [execution brief](specs/interactive-execution-and-access.md#usage-and-delive
 
 ## Next: lifecycle controls, then storage composition
 
-Sandbox reopen/inspect is complete as an implementation slice. Timeout mutation and suspend/resume follow as separate PRs; both now have their merged lifecycle and recovery prerequisites.
+Sandbox reopen/inspect is complete as an implementation slice. Lifetime renewal and suspend/resume follow as separate PRs; both now have their merged lifecycle and recovery prerequisites.
 
-1. **Reset native timeout:** accept explicit timeout scope before implementation. The proposal defaults to running-session scope for E2B and requires explicit sandbox-wide TTL for Daytona; resetting can shorten remaining lifetime.
-2. **Suspend/resume:** accept native no-argument preservation defaults and optional exact requirements. The proposal uses Daytona container filesystem preservation and E2B memory pause, with native execution evidence or explicit unknown rather than fabricated continuity.
+1. **Renew lifetime:** implement `renew()` / `renew({ forSeconds })`, with reset/add mechanics and unit rounding handled by the configured adapter. Document native expiry and suspension-clock behavior during setup; application calls do not choose scopes.
+2. **Suspend/resume:** implement no-argument operations using native defaults, with meaningful preservation requirements configured once in the adapter. Filesystem is a minimum guarantee; memory behavior and actual execution evidence remain documented and reported honestly.
 
-These remain product decisions in the [lifecycle spec](specs/sandbox-lifecycle.md#decisions-to-accept-and-later-documentation-edits). Neither mutation API is implemented. Keep mounted suspension and snapshot emulation outside these slices.
+This direction is accepted in the [lifecycle spec](specs/sandbox-lifecycle.md#accepted-direction-and-implementation-documentation). Neither mutation API is implemented. Keep these as separate small PRs, with provider choices concentrated in setup rather than capability negotiation throughout application code. Mounted suspension and snapshot emulation remain outside these slices.
 
 Mounted snapshot/restore composition and stronger volume visibility/durability/locking/rename semantics follow concrete provider requirements. Current unsupported combinations remain explicit. Capacity/placement, attach/detach, volume versions and native forks are optional extensions driven by demonstrated need. See [storage follow-ups](specs/sdk-recovery-dx.md#later-volume-guarantees-and-mounted-restore). Expanded persistence hooks, normalized recovery-facts envelopes and generic continuation/workflow machinery remain deferred.
 

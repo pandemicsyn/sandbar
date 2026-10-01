@@ -1,14 +1,41 @@
 # Sandbox lifecycle
 
-Implementation brief · September 29, 2026 · Slice 1 implemented on this branch; later slices remain proposed
+Accepted SDK experience · Reopen/inspect merged in PR #38; renewal and suspend/resume remain proposed
 
-Follow [ROADMAP.md](../ROADMAP.md#next-make-everyday-sandbox-and-storage-lifecycles-usable) after the current SDK cleanup. This refines [state portability §4](provider-state-portability.md#4-suspension-resumption-and-expiry), using its reference, scope and no-replay rules. Base: `origin/main` at `01e1c0eaf6a24bf28af3a1c64e56a9b7ae03ddf4`. Ship three useful slices below; do not build a generic lifecycle engine first.
+Follow [ROADMAP.md](../ROADMAP.md#next-lifecycle-controls-then-storage-composition) after the current SDK cleanup. This refines [state portability §4](provider-state-portability.md#4-suspension-resumption-and-expiry), using its reference, scope and no-replay rules. Reopen/inspect is merged; ship the two remaining mutation slices separately without a generic lifecycle engine.
 
 ## Selected contract
 
-Reopen Sandbar-created compute, inspect current state/deadlines, reset an explicitly selected native timeout, and explicitly suspend/resume the same logical resource. Initial suspension covers Daytona **containers** and E2B **memory pause**. E2B filesystem-only pause is a real native choice but deferred; Daytona VM/GPU/Windows suspension is also deferred. No snapshot/delete/recreate emulation, raw-ID adoption, streaming processes, PTYs/tunnels, new providers, automatic paid snapshot policy, mounted suspension, or volume cleanup-policy configuration.
+Reopen Sandbar-created compute, inspect current state/deadlines, renew lifetime through the configured adapter policy, and explicitly suspend/resume the same logical resource. Initial suspension covers Daytona **containers** and E2B **memory pause**. E2B filesystem-only pause is a real native choice but deferred; Daytona VM/GPU/Windows suspension is also deferred. No snapshot/delete/recreate emulation, raw-ID adoption, streaming processes, PTYs/tunnels, new providers, automatic paid snapshot policy, mounted suspension, or volume cleanup-policy configuration.
 
-Slice 1 exports sandbox references, `sandboxes.get`, enriched `inspect` and reopen/inspect capabilities. Timeout/suspend/resume signatures below remain **proposed, not exported**. The merged [recovery DX contract](sdk-recovery-dx.md) supersedes earlier recovery-facts/expanded-persistence wording. Extend the direct `AdapterSandbox`/`AdapterDirectClient` with the legacy-adapter fallback below. Reuse exported `ResourceReference`, `Support`, `SandboxState`, `WaitOptions`, `AdapterOperation` and the recovery DX result/error model. The new types below are public through `sandbar-sdk` and, where used by hooks, `sandbar-adapter`.
+Slice 1 exports sandbox references, `sandboxes.get`, enriched `inspect` and reopen/inspect capabilities. Renew/suspend/resume signatures below remain **proposed, not exported**. The merged [recovery DX contract](sdk-recovery-dx.md) supersedes earlier recovery-facts/expanded-persistence wording. Extend the direct `AdapterSandbox`/`AdapterDirectClient` with the legacy-adapter fallback below. Reuse exported `ResourceReference`, `Support`, `SandboxState`, `WaitOptions`, `AdapterOperation` and the recovery DX result/error model. Implementation will export the new types below through `sandbar-sdk` and, where used by hooks, `sandbar-adapter`.
+
+### SDK experience and adapter setup
+
+Applications should switch providers by changing adapter setup, while retaining their lifecycle workflow. Use `renew()`, `suspend()`, `resume()` and the existing `destroy()`, `get()` and `inspect()` methods. The adapter owns native reset/add/stop/pause/start mechanics. Ordinary calls do not select timeout scopes or negotiate preservation requirements. No `renewable: true` permission flag, mandatory requirements list, or background renewal loop is needed.
+
+Proposed built-in adapter options share this small shape; these additions are not exported yet:
+
+```ts
+interface AdapterLifecycleOptions {
+  lifetimeSeconds?: number; // initial lifetime and default renew window
+  suspension?: {
+    preserve: Preservation; // minimum required preservation; omitted = native default
+  };
+}
+
+// Existing bound adapter entrypoints; add lifecycle to their existing option types.
+daytona({ apiKey, target: "us", lifecycle: { lifetimeSeconds: 600 } });
+e2b({ apiKey, teamId, templateId: "base", lifecycle: { lifetimeSeconds: 600 } });
+```
+
+Omitting lifecycle settings preserves the existing provider defaults: Daytona `ttlMinutes`, E2B `timeoutSeconds`, and native suspension behavior. Explicit `lifecycle.lifetimeSeconds` uses seconds and takes the place of the existing provider lifetime option; reject supplying both rather than inventing precedence. The adapter converts units and may round up to its supported minimum/granularity, reporting the resolved setting. Do not silently round down or clamp an unsupported upper bound. Configured defaults survive reopening through the newly connected adapter; they are not copied into resource identity or silently applied by `get()`.
+
+Filesystem preservation is a minimum when explicitly configured: E2B memory preservation can satisfy it. A memory requirement cannot be satisfied by a filesystem-only adapter. Reject known unsupported configuration during connection, before allocation; resource-specific restrictions still need validation before mutation. A requirement for fresh processes is a different choice from preserving files; do not invent a switch where the mapped provider offers no such mode. E2B filesystem-only mode remains deferred until implemented. Snapshot requirements keep their existing exact contract; this change concerns lifecycle suspension only.
+
+Provider setup documentation must explain initial lifetime, renewal behavior and limits, expiry action, whether clocks continue during suspension, saved-state retention, process/connection effects and any real alternatives. These differences need not be erased or renegotiated on every call. Advanced capability inspection remains optional. A provider lacking an operation is still a valid adapter: advertise the limitation and throw the existing typed `UNSUPPORTED` error before effects when called. No hidden snapshot/delete/recreate fallback.
+
+### Proposed interface
 
 ```ts
 type SandboxReference = ResourceReference<"sandbox">;
@@ -32,17 +59,14 @@ interface SandboxInfo {
   execution: Fact<{ nativeId: string }>; // only actual execution/session identity evidence
 }
 
-interface TimeoutRequest {
-  remainingSeconds: number;
-  scope?: TimeoutScope; // defaults to running-session; never silently chooses sandbox
-}
-interface TimeoutResult {
+interface RenewRequest { forSeconds: number }
+interface RenewResult {
   reference: SandboxReference;
-  requested: { remainingSeconds: number; scope: TimeoutScope };
+  requested: { forSeconds: number };
   acknowledged: true;
-  observation: SandboxInfo | null; // read failure after ACK does not erase acceptance
+  observation: SandboxInfo | null; // failed metadata read does not erase acceptance
 }
-interface SuspendRequest { requirements?: { preserve?: Preservation } }
+
 interface SuspendResult {
   reference: SandboxReference;
   preserve: Preservation; // established by this acknowledged operation
@@ -50,7 +74,6 @@ interface SuspendResult {
   connections: "dropped";
   observation: SandboxInfo;
 }
-interface ResumeRequest { remainingSeconds?: number } // E2B new session; omitted = configured timeout
 interface ResumeResult {
   reference: SandboxReference;
   execution: "fresh" | "resumed" | "unknown";
@@ -63,12 +86,12 @@ interface ResumeResult {
 interface LifecycleSandbox {
   readonly reference: SandboxReference | null; // null when verified identity is unsupported
   inspect(options?: WaitOptions): Promise<SandboxInfo>;
-  setTimeout(input: TimeoutRequest, options?: WaitOptions): Promise<TimeoutResult>;
-  submitSetTimeout(input: TimeoutRequest, options?: WaitOptions): Promise<AdapterOperation<TimeoutResult>>;
-  suspend(input?: SuspendRequest, options?: WaitOptions): Promise<SuspendResult>;
-  submitSuspend(input?: SuspendRequest, options?: WaitOptions): Promise<AdapterOperation<SuspendResult>>;
-  resume(input?: ResumeRequest, options?: WaitOptions): Promise<ResumeResult>;
-  submitResume(input?: ResumeRequest, options?: WaitOptions): Promise<AdapterOperation<ResumeResult>>;
+  renew(input?: RenewRequest, options?: WaitOptions): Promise<RenewResult>;
+  submitRenew(input?: RenewRequest, options?: WaitOptions): Promise<AdapterOperation<RenewResult>>;
+  suspend(options?: WaitOptions): Promise<SuspendResult>;
+  submitSuspend(options?: WaitOptions): Promise<AdapterOperation<SuspendResult>>;
+  resume(options?: WaitOptions): Promise<ResumeResult>;
+  submitResume(options?: WaitOptions): Promise<AdapterOperation<ResumeResult>>;
 }
 // Added to client.sandboxes; returns the existing direct handle with the additions above:
 // get(reference: SandboxReference, options?: WaitOptions): Promise<AdapterSandbox>
@@ -97,23 +120,26 @@ Every successful inspection is a new observation, not a promise that state remai
 
 E2B `endAt` describes an active session; when paused it is not a saved-state retention deadline. For verified E2B paused state, return `expires: { status: "none" }` and `retention: { status: "known", value: { autoDeleteAfterStoppedSeconds: null } }` from the documented indefinite paused-retention policy; ignore stale `endAt`. This is a documented state-specific mapping, not a generic missing-field rule. Daytona `autoDestroyAt` is a sandbox-wide hard deadline, still active while stopped/archived. `idleStop` is a policy interval, not a calculated expiry: SDK interactions can reset Daytona activity. Expose its observed interval separately; do not derive expiry from `updatedAt`. Retention, idle stop and hard expiry can coexist. Keep auto-archive detail in provider docs for now; it is not deletion. `none`/null requires affirmative provider semantics, not missing JSON fields.
 
-### Timeout control
+### Renewal
 
-`setTimeout` **replaces** remaining lifetime; it can shorten it. It is not an additive “extend by” call and not monotonic. Require a positive safe integer; no disable/zero mode initially. Default scope is `running-session` to preserve the old sketch; Daytona callers must explicitly select `scope: "sandbox"`. Both mappings require current `running` state in this release. No idle-timeout, pause-retention or snapshot-retention mutation is implied.
+`renew({ forSeconds: N })` requests at least another N seconds before the adapter's configured lifetime policy expires, measured from provider processing of the renewal. `renew()` uses the configured initial lifetime. This is neither “add exactly N seconds” nor a guarantee never to shorten an existing longer deadline. The adapter may replace a deadline or add time, and may grant extra time for native granularity. No caller-selected native scope, automatic heartbeat, or promise to stop unrelated idle/retention policies. Explicit destruction, infrastructure failure, and concurrent external lifecycle changes remain possible. Do not describe this as a guaranteed period of execution.
 
-E2B: POST `/sandboxes/{id}/timeout` with integer seconds; native SDK `Sandbox.setTimeout(id, seconds * 1000, { retries: 0, ... })` is acceptable. Use observed `endAt` after ACK. Keep the initial Sandbar 60–3600-second policy bounds, matching current create configuration; document these as SDK bounds, not provider limits. Native Hobby/Pro continuous-runtime caps are 1/24 hours and can constrain the accepted deadline. No plan guessing or silently clamped success; reject known-invalid requests before effects, report native rejection, and expose actual post-read values.
+Validate a positive safe integer and resolved adapter bounds before mutation. Initial mappings require running state. Known account limits reject before dispatch where possible; native rejection remains an error, not silently clamped success. Both providers below use kill/destroy on lifetime expiry in the initial mapping. The inspected clock scope remains useful descriptive information, not an application call option.
 
-Daytona: POST `/sandbox/{id}/ttl/{minutes}`, then use response/detail `autoDestroyAt`. Accept only positive multiples of 60 seconds, at most 86400 seconds under the current Sandbar configuration ceiling. Reject finer precision; do not round. Existing native TTL support also appears in published SDK 0.218.0. Native organization/region/class lifespan policy may impose tighter caps; missing entitlement data is unknown, not unlimited. This scope remains active through a subsequent suspension and can delete its saved filesystem. Resume does not reset it.
+- E2B: POST `/sandboxes/{id}/timeout`, integer seconds. The native `Sandbox.setTimeout(id, seconds * 1000, { retries: 0, ... })` path is acceptable. Reset the active deadline from now; use observed `endAt` after ACK. Retain existing Sandbar 60–3600-second resolved bounds, with smaller positive requests rounded up to 60 seconds. Native continuous-runtime caps may prevent renewal. Paused retention is separate; resume starts a new session using the configured initial lifetime.
+- Daytona: POST `/sandbox/{id}/ttl/{minutes}`. Round a positive request up to whole minutes, reset hard TTL from now, and use response/detail `autoDestroyAt`. Retain the current 24-hour resolved SDK ceiling; native organization/region/class limits may be tighter. The TTL keeps ticking while stopped/archived and can delete saved files; resume does not reset it. Document this at adapter setup. A request for 61 seconds becomes 2 minutes, rather than failing because application code used provider-independent seconds.
 
-Both use provider processing time as the relative origin. Do not claim an exact acceptance timestamp, exact deletion scheduling, an atomic read/modify/write extension or pause-independent runtime budget. Inspect again to see the latest deadline. A failure to inspect after a successful ACK returns the acknowledged result with `observation: null`; a lost ACK stays uncertain even if a similar-looking deadline is later read.
+Future adapters can use a native additive extension if it meets the requested window. An idle policy qualifies only if its supported renewal mechanism and threshold provide that window; a random guest/SDK call is not sufficient evidence. Providers without a safe mapped renewal report unsupported. Do not approximate atomic additive extension or introduce scheduling/replacement machinery to implement this slice.
+
+The result records provider acknowledgement and, when available, a current observation. Do not invent an exact acceptance timestamp or precise deletion scheduling. Failed inspection after ACK returns `observation: null`; a lost ACK remains uncertain even if a similar deadline is later observed. Neither the result nor capabilities reserve the sandbox against other controllers.
 
 ### Suspension and resumption
 
-Default `suspend()` resolves native behavior from the actual sandbox: Daytona container stop preserves private filesystem and ends processes; E2B pause preserves filesystem and memory. Optional `requirements.preserve` is an exact check of that default, not a mode selector. Reject mismatch/unknown before mutation. E2B filesystem-only mode can later be a typed connection default (`suspension.preserve`), but do not add an inactive option now. No per-call provider bag or profile-ID selection.
+Default `suspend()` resolves native behavior from the actual sandbox: Daytona container stop preserves private filesystem and ends processes; E2B pause preserves filesystem and memory. Optional adapter `lifecycle.suspension.preserve` checks a minimum guarantee before mutation; extra memory preservation satisfies a filesystem requirement. Reject unmet/unknown guarantees. It is not a per-call native mode selector. E2B filesystem-only mode can later become a real adapter choice, but do not add an inactive option now. No per-call provider bag or profile-ID selection.
 
 Only running sources with no native external mounts qualify for first-release suspend. Resume applies the same class, mount and configuration checks to the inactive resource; mounted or unknown-mount resume is also unavailable. Daytona also requires a verified container class and auto-delete disabled (negative native interval); ephemeral/immediate or timed deletion-on-stop is unavailable. Its independent hard TTL must be reported, not disabled. Reject mount-bearing sources before stop/pause; no new flush or writable-volume guarantee. Native sources with unknown mount/config facts are unavailable. Snapshot methods retain their own separate contracts; do not run suspend/resume concurrently with snapshot capture, destroy or other lifecycle changes.
 
-Daytona: POST stop with native default graceful behavior, poll GET until stopped; no force-kill fallback. Resume from stopped or archived container by POST start, poll until started. Same native UUID, fresh processes, dropped connections. Filesystem survives native archive/start as well, without Sandbar creating a reusable snapshot. E2B: POST pause with `memory: true`; on successful ACK plus paused observation return filesystem+memory/preserved processes. Resume from paused by **one explicit** POST `/v2/sandboxes/{id}/connect`, passing configured `timeoutSeconds` (or validated `ResumeRequest.remainingSeconds`), with memory restore default and no reboot override. Poll GET for running. The resume operation itself resets the E2B session lifetime; Daytona rejects `remainingSeconds` rather than adding a second TTL mutation.
+Daytona: POST stop with native default graceful behavior, poll GET until stopped; no force-kill fallback. Resume from stopped or archived container by POST start, poll until started. Same native UUID, fresh processes, dropped connections. Filesystem survives native archive/start as well, without Sandbar creating a reusable snapshot. E2B: POST pause with `memory: true`; on successful ACK plus paused observation return filesystem+memory/preserved processes. Resume from paused by **one explicit** POST `/v2/sandboxes/{id}/connect`, passing the resolved configured initial lifetime, with memory restore default and no reboot override. Poll GET for running. The resume operation itself resets the E2B session lifetime; Daytona keeps its current hard TTL. No resume timeout argument or hidden second renewal mutation; callers can explicitly renew once running.
 
 E2B does not expose paused memory provenance or a stable execution-generation identifier in the inspected detail schema. Thus a fresh-process resume cannot certify actual process continuity from `state: paused`, or trust a saved suspension receipt as current evidence after an external pause cycle. Return `execution: "unknown"` and unknown execution identity in that case; native memory-pause documentation is a conditional guarantee, not proof of this resource's current pause mode. Historical acknowledged preservation remains accessible through the recovered suspend outcome. The first E2B implementation always returns `execution: "unknown"`: application serialization cannot itself prove absence of external lifecycle writers. Reserve `resumed` for future native evidence; do not implement a history-based continuity heuristic. Daytona container resume reports `fresh`, also without a fabricated execution ID. Connections must be reopened; neither result promises live TCP continuity.
 
@@ -127,7 +153,7 @@ Extend `client.capabilities()` and `box.capabilities()` with one small lifecycle
 interface LifecycleCapabilities {
   reopen: Support<{}>;
   inspect: Support<{}>;
-  timeout: Record<TimeoutScope, Support<{ minSeconds: number; maxSeconds: number; stepSeconds: number }>>;
+  renew: Support<{ minSeconds: number; maxSeconds: number; stepSeconds: number; scope: TimeoutScope }>;
   suspend: Support<{ preserve: Preservation; processes: "terminated" | "preserved"; connections: "dropped" }>;
   resume: Support<{ sourceStates: SandboxState[]; setsSessionTimeout: boolean }>;
 }
@@ -139,24 +165,23 @@ Bounds above are the adapter's request bounds; they are not guaranteed account e
 | --- | --- | --- | --- |
 | Reopen, inspect | Native scoped GET | Native scoped GET | Valid creation correlation and original binding; E2B teamId for key rotation |
 | Guest exec/files after reopen | Existing toolbox path | GET + local envd client | Running; E2B auto-resume off and detail token present |
-| Session timeout | Unsupported mapping | Supported mapping | E2B kill-on-timeout; 60–3600 s Sandbar bounds plus native continuous-runtime cap |
-| Sandbox-wide timeout | Supported mapping | Unsupported mapping | Daytona multiples of 60 s; ≤24 h SDK bound, native policy may be tighter |
+| Renew | Reset hard TTL, round up to minutes | Reset active session deadline | Same SDK call; native scope, expiry and limits documented at setup; rounding never grants less time |
 | Suspend | Native stop, filesystem | Native memory pause | No mounts; Daytona auto-delete disabled; E2B account/API must accept memory pause |
 | Resume | Native start from stopped/archived | Native v2 connect from paused | Saved compute still exists; E2B new session timeout, process provenance may remain unknown |
 | Memory suspend on Daytona / filesystem-only on E2B | Deferred VM mapping | Deferred real native mode | Not claims of native impossibility |
 
-Use an optional public adapter hook `reopen(reference, ReadContext): Promise<SandboxInfo>` and enrich the existing `inspect` result with optional lifecycle fields, including a verified reference issued from scoped native detail. The direct SDK normalizes legacy inspect results to `reference: null`, `nativeState: null`, a receipt timestamp and unknown lifecycle facts; do not fabricate a reference from `id`. Existing third-party create/exec/files/destroy and inspect remain usable with `box.reference === null`; get and lifecycle mutations are unsupported without their hooks. Daytona/E2B create/restore decoders obtain verified detail before returning a non-null reference, retaining the allocation recovery reference if that read fails. Add `setTimeout`, `suspend`, `resume` as the existing `Mutation<Input, Value, ...>` form. Mutation inputs carry the validated sandbox reference plus the corresponding request; results above are plain serializable values. Add only `sandbox_set_timeout`, `sandbox_suspend`, `sandbox_resume` operation kinds and their result decoders. Keep provider-specific read/prepare/submit/observe code next to existing state-native fixtures. Do not route the new operations through legacy SPI orchestration or extract a new engine.
+Use an optional public adapter hook `reopen(reference, ReadContext): Promise<SandboxInfo>` and enrich the existing `inspect` result with optional lifecycle fields, including a verified reference issued from scoped native detail. The direct SDK normalizes legacy inspect results to `reference: null`, `nativeState: null`, a receipt timestamp and unknown lifecycle facts; do not fabricate a reference from `id`. Existing third-party create/exec/files/destroy and inspect remain usable with `box.reference === null`; get and lifecycle mutations are unsupported without their hooks. Daytona/E2B create/restore decoders obtain verified detail before returning a non-null reference, retaining the allocation recovery reference if that read fails. Add `renew`, `suspend`, `resume` as the existing `Mutation<Input, Value, ...>` form. Mutation inputs carry the validated sandbox reference plus the corresponding request; results above are plain serializable values. Add only `sandbox_renew`, `sandbox_suspend`, `sandbox_resume` operation kinds and their result decoders. Keep provider-specific read/prepare/submit/observe code next to existing state-native fixtures. Do not route the new operations through legacy SPI orchestration or extract a new engine.
 
 ## Recovery, cancellation and concurrency
 
-Depend on [recovery DX](sdk-recovery-dx.md) for typed partial results, recovered result typing and `onReference` on normal bound connections. Reuse its application-owned persistence hook and checkpoint ordering. No competing journal, lock service, HMAC, operation object model or continuation protocol. Applications serialize lifecycle mutations per sandbox, including external controllers if they need continuity claims; Sandbar cannot provide distributed exactly-once execution or fence dashboard changes.
+Depend on the merged [recovery DX](sdk-recovery-dx.md) for typed partial results, recovered result typing and application-owned resource/recovery references. Preserve existing checkpoint ordering; expanded persistence callbacks remain deferred. No competing journal, lock service, HMAC, operation object model or continuation protocol. Applications serialize lifecycle mutations per sandbox, including external controllers if they need continuity claims; Sandbar cannot provide distributed exactly-once execution or fence dashboard changes.
 
-Each selected mutation has one native dispatch stage. Persist reference, validated identity, requested semantics and a dispatch barrier before it; recheck cancellation immediately before dispatch. Persist ACK and resulting facts before exposing completion. No hidden native retries, no retry after timeout/connection loss, no automatic inverse action. Before dispatch cancellation has effect `none`; after possible dispatch it only stops local waiting. Use existing aborted/unknown errors with recovery references and partial facts. Polls are reads and can be retried within existing bounded read policy.
+Each selected mutation has one native dispatch stage. Use the existing recovery reference, validated identity, requested semantics and dispatch barrier; recheck cancellation immediately before dispatch. Retain confirmed ACK and essential outcomes using the existing recovery representation; metadata/persistence failure must not relabel confirmed success as provider uncertainty. No hidden native retries, no retry after timeout/connection loss, no automatic inverse action. Before dispatch cancellation has effect `none`; after possible dispatch it only stops local waiting. Use existing aborted/unknown errors with recovery references and partial facts. Polls are reads and can be retried within existing bounded read policy.
 
 | Operation | Completion and lost-ACK treatment | Explicit continuation |
 | --- | --- | --- |
 | get / inspect | Repeat reads safely; never changes lifetime/state | Not applicable |
-| setTimeout | ACK confirms acceptance; later GET is current deadline, not attribution. Without ACK, keep unknown and expose latest observation; do not reset again | None after possible dispatch; a new user-selected timeout is a new mutation |
+| renew | ACK confirms acceptance; later GET is current deadline, not attribution. Without ACK, keep unknown and expose latest observation; do not reset again | None after possible dispatch; a new caller-selected renewal is a new mutation |
 | suspend | ACK + target-state read establishes completion/profile. Lost ACK may prove stopped/paused, but not E2B requested preservation; retain partial state, never guess memory | No second stage; no resume compensation |
 | resume | ACK + running read establishes completion; lost ACK may show running but cannot prove our transition or execution continuity | No second stage; never resubmit connect/start |
 
@@ -164,52 +189,49 @@ If the inherited runtime exposes a proven never-submitted continuation, it may d
 
 ## Application examples
 
-These examples describe the proposed API, not code runnable against current main. `store` is an application-owned durable JSON store; production code owns per-sandbox serialization. Normal `Sandbar.connect(e2b(...))`, `Image.prepared`, `exec` and `readFile` are existing APIs. PRs must compile the completed examples against packed public packages.
+Lifecycle settings and methods below are proposed, not runnable against current main. Keep the existing `Sandbar.connect` and bound adapter entrypoints; no client-construction redesign is needed. `Image.prepared`, exec arrays and store calls follow the existing public API. Applications own durable storage and per-sandbox mutation serialization. Implementation PRs must compile the completed examples against packed public packages.
 
 ```ts
 import { Sandbar, Image, type SandboxReference } from "sandbar-sdk";
+import { daytona } from "sandbar-sdk/daytona";
 import { e2b } from "sandbar-sdk/e2b";
 
-// Invocation A. Explicit team scope survives rotation; keep the template binding stable.
-const client = await Sandbar.connect(e2b({ apiKey, teamId, templateId: "base" }));
-const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+// Only provider setup changes. Image selection is provider setup too.
+const daytonaSetup = {
+  adapter: daytona({ apiKey: daytonaKey, target: "us", lifecycle: { lifetimeSeconds: 600 } }),
+  environment: Image.prepared("daytona-small"),
+};
+const e2bSetup = {
+  adapter: e2b({ apiKey: e2bKey, teamId, templateId: "base", lifecycle: { lifetimeSeconds: 600 } }),
+  environment: Image.prepared("base"),
+};
+
+const setup = daytonaSetup; // switch to e2bSetup; workflow below stays the same
+const client = await Sandbar.connect(setup.adapter);
+const box = await client.sandboxes.create({ environment: setup.environment });
 if (!box.reference) throw new Error("Provider cannot issue a reopenable identity");
 await store.put("workspace", JSON.stringify(box.reference));
-await client.close(); // does not destroy compute
 
-// Invocation B, with a current valid key for the same team.
-const next = await Sandbar.connect(e2b({ apiKey: rotatedKey, teamId, templateId: "base" }));
-// get validates this untrusted JSON at runtime; the cast is not validation.
+await box.exec(["python", "prepare.py"]);
+await box.renew({ forSeconds: 600 }); // provider handles reset/add mechanics and units
+await box.exec(["python", "process.py"]);
+await box.suspend(); // Daytona files; E2B files + memory; reconnect sockets on resume
+await client.close(); // compute/state persists under the documented provider policy
+
+// Later, with the same provider binding and a current credential:
+const next = await Sandbar.connect(setup.adapter);
 const saved = JSON.parse(await store.get("workspace")) as SandboxReference;
-const reopened = await next.sandboxes.get(saved); // NOT_FOUND is a terminal absence, never create
-const info = await reopened.inspect();
-if (info.state === "running") {
-  await reopened.setTimeout({ remainingSeconds: 900 });
-  const output = await reopened.exec(["printf", "still the same workspace"]);
-  console.log(output.stdoutText());
-}
+const reopened = await next.sandboxes.get(saved); // read-only; no implicit wake or renewal
+await reopened.resume(); // expired/deleted state fails; never creates empty replacement
+await reopened.renew(); // configured 600-second window, explicitly requested
+await reopened.exec(["python", "finish.py"]); // start the next application process explicitly
+await reopened.destroy();
 await next.close();
 ```
 
-```ts
-// Under the application's per-sandbox lease; client has the recovery DX onReference hook
-// persisting every operation checkpoint before dispatch (see sdk-recovery-dx.md).
-const suspended = await box.suspend(); // Daytona files; E2B files + memory
-await store.put("workspace", JSON.stringify(suspended.reference));
-// Later, even in a new process:
-const sleeping = await client.sandboxes.get(savedReference); // does not wake it
-const resumed = await sleeping.resume(); // explicit native transition
-console.log(resumed.execution); // fresh / unknown initially; never an invented generation
-const bytes = await sleeping.readFile("/home/user/work.txt");
+The same configured application can use either adapter for new sandboxes; references still belong to their original provider. Provider switching does not migrate a saved sandbox or its state. Filesystem-oriented applications must tolerate the documented native memory behavior; applications requiring memory preservation configure it at adapter setup and select a compatible provider.
 
-// Daytona lifetime is explicitly sandbox-wide and keeps ticking during suspension:
-await daytonaBox.setTimeout({ remainingSeconds: 900, scope: "sandbox" });
-
-// A requirement checks the configured default; it does not select a different native mode:
-await e2bBox.suspend({ requirements: { preserve: "filesystem+memory" } });
-```
-
-On an aborted/uncertain mutation, persist the error's operation reference, use existing `client.recover(reference)` and observe/wait for typed partial outcomes. `sandboxes.get(resourceReference)` reopens compute; it does not recover a mutation. Do not catch uncertainty and call suspend/resume/setTimeout again. With no durable `onReference` hook, process loss can lose the operation record: the resource can still be inspected, but its current state is not proof of that lost operation.
+On an aborted/uncertain mutation, use the error's existing recovery reference and `client.recover(reference)` to observe/wait for typed partial outcomes. Do not blindly call renew/suspend/resume again. Reopening a resource does not recover a mutation or prove that a lost operation completed. Follow the merged recovery DX contract, without introducing expanded persistence hooks or a lifecycle journal.
 
 ## Evidence and exact native recipes
 
@@ -224,36 +246,32 @@ Public research checked September 29, 2026; **no paid/live calls, account probes
 
 ## Delivery and acceptance
 
+Slice 1 below is historical acceptance context and merged in PR #38. Only slices 2 and 3 are pending implementation.
+
 Estimates include API, adapters, deterministic tests and docs; they are review-complexity estimates, not line-count commitments. Each implementation PR should remain roughly a few hundred production lines plus focused fixtures/examples, with PR1/PR3 potentially approaching a low-thousands total diff because of native-boundary tests. If either needs another broad state framework or many thousands of production lines, cut scope as indicated instead of growing a foundation PR.
 
 | PR | Independently useful scope | Dependencies / likely complexity | Acceptance and explicit cut line |
 | --- | --- | --- | --- |
 | 1. Reopen and inspect | Saved sandbox references, get, enriched inspect, both providers; E2B read-only guest attachment for existing exec/files | Current main; moderate, roughly 2–4 focused engineering days plus review. Coordinate any create/restore decoder changes with recovery DX | Fresh-process file/exec flow, state/deadline/errors and key rotation fixtures; no implicit connect/start/timeout. If E2B attachment proves incompatible, ship Daytona first and retain E2B control-plane inspection with guest access unavailable; do not add a new envd client framework. No mutations or generic transition engine |
-| 2. Reset explicit native timeout | setTimeout + submit form, E2B session and Daytona sandbox scopes, recovery, docs | PR1 + merged recovery DX; small, roughly 1–2 days plus review | Exact units/bounds, unsupported scopes before effects, ACK vs lost ACK, observed deadline and packed examples. No idle policy, retention setters, zero/disable or lifetime automation |
-| 3. Suspend/resume | Daytona container stop/start and E2B memory pause/connect, single-stage recovery and default requirements | PR1 + recovery DX; PR2 recommended for examples but not mechanically required; moderate, roughly 3–5 days plus review | Same logical ID, filesystem/process distinctions, unknown execution identity, no replay, expired state and dropped connections. If too large, initial release keeps Daytona suspend/resume and defers E2B mutations explicitly; no filesystem-only E2B mode, VM profiles, mounted suspension or capture integration |
+| 2. Renew configured lifetime | renew + submit form, adapter-owned E2B session and Daytona hard TTL mappings, recovery, docs | PR1 + merged recovery DX; small, roughly 1–2 days plus review | Portable seconds, upward unit rounding/bounds, unsupported before effects, ACK vs lost ACK, observed deadline and packed examples. No idle policy, retention setters, zero/disable or lifetime automation |
+| 3. Suspend/resume | Daytona container stop/start and E2B memory pause/connect, single-stage recovery and adapter configuration | PR1 + recovery DX; PR2 recommended for examples but not mechanically required; moderate, roughly 3–5 days plus review | Same logical ID, filesystem/process distinctions, unknown execution identity, no replay, expired state and dropped connections. If too large, initial release keeps Daytona suspend/resume and defers E2B mutations explicitly; no filesystem-only E2B mode, VM profiles, mounted suspension or capture integration |
 
 Minimal offline coverage uses existing adapter/runtime and native HTTP fixtures, with no new certification framework:
 
 1. PR1: create/restore/recovered-reference JSON roundtrip into a fresh connection; forged/malformed/wrong-scope/marker references; E2B same-team rotation and key-scope rejection; stable template binding; 404 vs 403 vs 5xx; stopped/paused/unknown states; deadline absence/invalid timestamp/clock skew. Exercise real pinned E2B client against fake HTTP through exec/read/write/observation, including pause between preflight and guest request: no control-plane POST, no auto-resume, no replay or timeout extension. Ensure auto-resume true/missing and missing token fail before guest IO.
-2. PR2: units, non-multiple Daytona timeout, unsupported scope/state/cap, cancellation before/after barrier, ACK with failed follow-up GET, lost ACK and repeated observation without another POST. Recovery JSON survives a fresh client; relative reset is never treated as idempotent.
-3. PR3: defaults/exact mismatch, class/mount/auto-delete gates, expired source, current and raced source state, E2B pause 409/503, ACK/poll failures, lost responses, stale observation ordering, same ID and no invented generation. Verify native request counts and no create/capture/delete/implicit restart. Reuse recovery-DX checkpoint failure tests rather than duplicating its exhaustive suite.
+2. PR2: units, Daytona upward rounding, unsupported state/cap, cancellation before/after barrier, ACK with failed follow-up GET, lost ACK and repeated observation without another POST. Recovery JSON survives a fresh client; relative reset is never treated as idempotent.
+3. PR3: native defaults/configured minimum mismatch, class/mount/auto-delete gates, expired source, current and raced source state, E2B pause 409/503, ACK/poll failures, lost responses, stale observation ordering, same ID and no invented generation. Verify native request counts and no create/capture/delete/implicit restart. Reuse recovery-DX checkpoint failure tests rather than duplicating its exhaustive suite.
 
-Extend the [maintained public-SDK Bun suites](../packages/sdk-qualification/provider-qualification/README.md) with only `lifecycle-reopen`, `lifecycle-timeout`, `lifecycle-suspend-resume` scenarios. Each requires later **explicit live authorization**, actual public methods, fixture/packed checks first, actual tested-revision provenance, and separate passed/failed/unsupported/blocked/not-run evidence. Branches and merged revisions use the maintained Bun suites and shared fixtures; no bespoke lifecycle runner is needed. Representative plan per provider: one owned compute allocation, peak one, borrowed prepared image, no builds/volumes/reusable snapshots; exercise ≤10 minutes, teardown ≤2 minutes. Daytona hard TTL ≤15 minutes including any reset; E2B each active session ≤5 minutes, at most one explicit pause/resume. Paused E2B has no automatic retention expiry: approval must cover residual storage and durable explicit kill reconciliation after interruption. Persist identity/checkpoints before effects; reuse the private ledger and admission lock, never a disposable cleanup record.
+Extend the [maintained public-SDK Bun suites](../packages/sdk-qualification/provider-qualification/README.md) with only `lifecycle-reopen`, `lifecycle-renew`, `lifecycle-suspend-resume` scenarios. Each requires later **explicit live authorization**, actual public methods, fixture/packed checks first, actual tested-revision provenance, and separate passed/failed/unsupported/blocked/not-run evidence. Branches and merged revisions use the maintained Bun suites and shared fixtures; no bespoke lifecycle runner is needed. Representative plan per provider: one owned compute allocation, peak one, borrowed prepared image, no builds/volumes/reusable snapshots; exercise ≤10 minutes, teardown ≤2 minutes. Daytona hard TTL ≤15 minutes including any reset; E2B each active session ≤5 minutes, at most one explicit pause/resume. Paused E2B has no automatic retention expiry: approval must cover residual storage and durable explicit kill reconciliation after interruption. Persist identity/checkpoints before effects; reuse the private ledger and admission lock, never a disposable cleanup record.
 
 - PR1 live: write known bytes, close, new process opens reference, inspects, reads and execs; repeat after deletion to assert absence. Use ordinary team/organization identity; rotation/adversarial faults stay offline unless separately authorized. Confirm E2B deadline was not extended by reconnect/guest access.
-- PR2 live: change remaining lifetime once, inspect provider deadline with a tolerance bounded by request duration/clock uncertainty, verify scope/precision rejection is effect-free, then explicit cleanup. No waiting for multi-hour caps or asserting exact deletion time.
+- PR2 live: change remaining lifetime once, inspect provider deadline with a tolerance bounded by request duration/clock uncertainty, verify unit rounding and limit rejection, then explicit cleanup. No waiting for multi-hour caps or asserting exact deletion time.
 - PR3 live: write/read bytes, launch a bounded background counter through existing exec, suspend, reopen while inactive, assert guest calls do not wake it, explicitly resume and verify identity/files. Daytona old process absent; E2B correlated memory-pause process/counter continues. A PID alone is insufficient continuity evidence. Teardown from both active and inactive paths across the fixture/live selection; clean the one logical sandbox, never its borrowed template. Streaming-process APIs are not required.
 
 Run implementation gates appropriate to the changed packages: focused tests, sequential `check`/builds, `test`, lint/format, `package:smoke`, `docs:check` and required CI. This spec PR needs Markdown/link/type-sketch verification and existing docs gates only; it adds no runnable API or provider qualification claim.
 
-## Decisions to accept and later documentation edits
+## Accepted direction and implementation documentation
 
-The recommendations above resolve the research questions; three product choices need acceptance before the affected implementation, not more broad provider research:
+The SDK experience is accepted: concentrate provider choices in adapter setup; expose `renew()` and no-argument `suspend()`/`resume()`; use native defaults and minimum configured suspension guarantees; keep actual clock and process facts honest. This supersedes the explicit-scope `setTimeout` proposal and per-call exact suspension requirement. Mutation implementations and live qualification are still pending.
 
-- PR2: preserve session scope as the default while adding explicit sandbox-wide TTL. This extends §4's session-only wording without silently mapping Daytona TTL to a session.
-- PR3: replace mandatory exact preservation with a native no-argument default plus optional exact requirement; initially ship only container filesystem and E2B memory profiles.
-- PR3: replace mandatory execution-generation output with native evidence or explicit unknown, and permit E2B fresh-process resume without claiming process continuity when current pause provenance is unavailable.
-
-Keep PR1 unblocked by these choices. Implementation must pass the concrete pinned-constructor/token-routing fixture before advertising E2B guest reopening; if it fails, use the PR1 cut line above, not an unsafe fallback. Live behavior remains unqualified until authorized acceptance runs; undocumented precision and generation IDs are deliberately not promised.
-
-Do not edit concurrent owners' files in this research PR. After acceptance, the docs owner should link this file from ROADMAP's lifecycle paragraph and `specs/README.md`; replace §4 examples/mandatory preservation and generation language with a short link plus accepted semantics; update §8 step 4 accordingly. Implementation PRs update provider guides, lifecycle examples, capability/API references and only the affected maintained runner/support rows. Preserve historical live revision/configuration evidence. The separate volume cleanup-policy task and global roadmap/index completion remain with their owners.
+Keep renewal and suspend/resume as separate small PRs. No new providers, memory-mode expansion, mounted suspension, generic engine or client configuration framework. The implementation updates built-in option types/config validation, public adapter hooks, provider docs, packed examples and the affected support/acceptance rows together. Each provider guide must show its setup and defaults, the unchanged application workflow, actual renewal limits/rounding, expiry during suspension, process/connection effects, and recovery/cleanup behavior. Preserve historical live evidence and mark planned, implemented and live-qualified support separately.

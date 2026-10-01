@@ -286,21 +286,20 @@ Applications may choose the writable-volume cleanup policy upfront for a client 
 
 ## 4. Suspension, resumption, and expiry
 
-```ts
-await box.suspend({ preserve: "filesystem+memory" });
-const resumed = await box.resume();
-// resumed includes the same logical sandbox reference and the current execution generation
+The accepted [lifecycle implementation brief](sandbox-lifecycle.md) defines the pending renewal and suspend/resume APIs. Reopen/inspect merged in PR #38; mutation APIs below remain proposed.
 
-await box.setTimeout({ remainingSeconds: 900 });
+```ts
+await box.renew({ forSeconds: 900 });
+await box.suspend();
+const resumed = await box.resume();
+// Same logical resource; execution is fresh, resumed or explicitly unknown.
 ```
 
-Suspension requires explicit exact preservation and verified native support. A `SuspensionProfile` binds that preservation to supported source states, connection interruption, expiry, and restore restrictions. A provider's own persistent logical sandbox may cold-boot new execution sessions; filesystem suspension can express that honestly. Memory suspension must preserve processes, not merely reuse a name.
+Concentrate meaningful lifetime and preservation choices in adapter setup, with sensible native defaults. The application should not select native timeout scopes or pass preservation requirements on every call. `renew()` uses the configured initial lifetime; an explicit window is in portable seconds, with adapter-owned reset/add mechanics and upward rounding. Document expiry action, running-versus-hard-clock behavior, retention, process/connection effects and limitations for each provider. Explicitly configured suspension preservation is a minimum; additional memory preservation can satisfy filesystem preservation. Snapshot requirements retain their separate exact contract.
 
-`resume` keeps logical identity and reports execution generation/session changes. It must fail if saved state expired; never silently create a fresh empty sandbox. Sandbar must not synthesize checkpoint/delete/recreate and call it native suspension. `destroy` permanently ends the logical compute resource; native `stop` alone is insufficient when that object can auto-resume.
+Resume retains logical identity and reports actual execution evidence or unknown. Expired saved state fails; never silently create a fresh empty sandbox. Do not synthesize checkpoint/delete/recreate and call it native suspension. `destroy` permanently ends logical compute; native stop alone is insufficient when that object can resume.
 
-No automatic resume during inspect, list, recovery, exec, or file operations in this first contract. A stopped sandbox needs an explicit resume. Adapters must avoid native SDK helpers that auto-resume or replay commands; inability to do so makes the operation unsupported. Vercel's current SDK behavior makes this a particular implementation consideration.
-
-`setTimeout` means expire this running session the requested number of seconds from provider acceptance; it does not configure snapshot retention. Separate eventual create-time options can express maximum lifetime, idle timeout, and timeout action (`destroy` or exact-preservation `suspend`). Unsupported lifecycle policies must fail rather than inherit a different provider default. Do not silently enable automatic paid snapshot creation.
+Get/inspect/list/recovery and guest operations do not implicitly resume or renew in this slice. Adapters avoid native helpers that auto-resume or replay commands. Unsupported operations reject before mutation without making the adapter unusable for unrelated features. No automatic paid snapshots or background heartbeat loops.
 
 ## 5. When a provider has no snapshots
 

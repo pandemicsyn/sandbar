@@ -11,6 +11,10 @@ Sandbar is a TypeScript SDK for working with sandbox providers.
 - [specs/README.md](specs/README.md) — contracts and proposals; [package conventions](specs/package-conventions.md) — public names and boundaries. Archives are historical context.
 - [.agents/skills](.agents/skills) — task guidance, including [provider research briefs](.agents/skills/provider-research/SKILL.md) and [adding built-in or external providers](.agents/skills/add-provider/SKILL.md).
 
+## SDK experience
+
+Sandbar should let applications switch providers with changes concentrated in adapter setup. Use a small, consistent SDK vocabulary and sensible native defaults; adapters handle provider mechanics. Put meaningful provider choices in adapter configuration rather than requiring capability negotiation, permission flags, or native options throughout application code. Document each adapter's defaults, guarantees, and limitations. Report unsupported operations clearly, preserve confirmed outcomes and resource identities, and never hide a replacement resource or silently weaken an explicitly configured guarantee. Prefer this experience over exact parity between native APIs.
+
 ## Make changes
 
 Read the relevant package, nearby tests and docs before editing. Use tested examples for available behavior; proposals do not authorize new features.
