@@ -83,7 +83,25 @@ Consistency is unknown unless native evidence or caller preparation establishes 
 
 Use a [Daytona connection](/docs/providers/daytona/) named `sandbar` configured with `networkPolicy: "daytona-default"`. Mounts attach during sandbox creation. `volume.at(path)` only creates a descriptor; it does not attach storage or mutate the provider.
 
-Writable mounted compute currently needs `destroy({ storage: "allow-unconfirmed" })`. The default cleanup refuses unverified shutdown durability. The explicit option permits termination and reports each mount's unconfirmed durability; **it is not a flush or durability guarantee**. Finish finite writers before destroying compute.
+The default `require-durable` policy blocks compute destruction when writable-volume durability cannot be confirmed. Choose `allow-unconfirmed` only when your application accepts cleanup without a confirmed write barrier. It does not establish account eligibility or promise flushed or durable writes. Finish finite writers before destroying compute.
+
+Configure the policy once on a direct connection, or override it on `destroy` or `submitDestroy`: the call option wins, then `cleanup.storage`, then `require-durable`. Configuration is validated and copied before the provider connects. For the Daytona connection used below:
+
+```ts
+import { Sandbar } from "sandbar-sdk";
+import { daytona } from "sandbar-sdk/daytona";
+
+const sandbar = await Sandbar.connect(
+  daytona({
+    apiKey: process.env.DAYTONA_API_KEY!,
+    target: "us",
+    networkPolicy: "daytona-default",
+  }),
+  { cleanup: { storage: "allow-unconfirmed" } },
+);
+```
+
+Close this connection in an outer `finally` after handling owned resources, as in [Getting started](/docs/direct-quickstart/).
 
 ```ts
 const volume = await sandbar.volumes.create({ name: "workspace-data" });
@@ -101,13 +119,16 @@ try {
     overwrite: true,
   });
 } finally {
-  const cleanup = await box.destroy({ storage: "allow-unconfirmed" });
-  console.log(cleanup.mountDurability);
+  const cleanup = await box.destroy(); // Uses the configured cleanup policy.
+  console.log(cleanup.mountDurability); // Durability can still be unconfirmed.
+  // Per-call override: await box.destroy({ storage: "require-durable" });
 }
 // Only after compute cleanup is confirmed and the data is no longer needed:
 await volume.delete();
 await removeSavedResource(volume.reference);
 ```
+
+A different connection default does not change an existing recovered operation or authorize mutation replay.
 
 To keep the data, omit the final deletion and saved-record removal, then attach `volume.at("/mnt/workspace")` when creating the next sandbox. Volumes survive `destroy()` and `close()`, and compute TTL does not expire them. If create or destroy becomes uncertain, keep the volume reference and reconcile compute before deleting storage. A failed readiness check or write must not trigger unsafe artifact deletion. Delete only the resources your application intends to remove; automatic cleanup never adopts borrowed volumes.
 

@@ -1624,11 +1624,12 @@ async function interruptedMountedDestroy(mode: "tombstone" | "absent" | "checkpo
     { preconnect: fetch.preconnect },
   );
 
-  const connect = () =>
+  const connect = (storage: "require-durable" | "allow-unconfirmed" = "allow-unconfirmed") =>
     Sandbar.connect({
       adapter: createDaytonaAdapter(fetcher),
       config: { target: "us" },
       credentials: { apiKey: "fixture" },
+      cleanup: { storage },
       onReference(reference) {
         saved = structuredClone(reference);
 
@@ -1644,7 +1645,6 @@ async function interruptedMountedDestroy(mode: "tombstone" | "absent" | "checkpo
 
   try {
     const destruction = new AdapterSandbox(client, "mounted-box").destroy({
-      storage: "allow-unconfirmed",
       signal: abort.signal,
     });
 
@@ -1672,7 +1672,7 @@ async function interruptedMountedDestroy(mode: "tombstone" | "absent" | "checkpo
     await expect(destruction).rejects.toMatchObject({ code: "WAIT_ABORTED" });
     expect(deletes).toBe(1);
     expect(saved).toBeDefined();
-    const reopened = await connect();
+    const reopened = await connect("require-durable");
 
     try {
       const persisted = structuredClone(saved!);
@@ -1773,11 +1773,12 @@ for (const mode of ["gateway", "abort", "policy"] as const) {
       { preconnect: fetch.preconnect },
     );
 
-    const connect = () =>
+    const connect = (storage: "require-durable" | "allow-unconfirmed" = "require-durable") =>
       Sandbar.connect({
         adapter: createDaytonaAdapter(fetcher),
         config: { target: "us" },
         credentials: { apiKey: "fixture" },
+        cleanup: { storage },
         onReference(reference) {
           if (reference.kind !== "destroy") return;
           saved = structuredClone(reference);
@@ -1803,7 +1804,7 @@ for (const mode of ["gateway", "abort", "policy"] as const) {
       expect(saved?.token).toMatchObject({ sandboxId: "pre-delete", stage: "rejected" });
       expect(deletes).toBe(0);
       const before = reads;
-      const reopened = await connect();
+      const reopened = await connect("allow-unconfirmed");
 
       try {
         const recovered = await reopened.recover(saved!);

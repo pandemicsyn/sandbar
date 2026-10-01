@@ -10,7 +10,7 @@ New features target the direct SDK and public adapter API. Service expansion is 
 - [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) — ordinary results, direct partial outcomes and provider-identifying snapshot/volume handles merged in PR #33. Expanded persistence callbacks and workflow machinery remain deferred.
 - Provider acceptance merged in PR #32; use the [maintained Bun runner](../packages/sdk-qualification/provider-qualification/README.md) and generated evidence, not proposed qualification behavior.
 - Public direct resource types and caller input errors merged in PR #35.
-- Cleanup configuration and [lifecycle slice 1 reopen/inspect](sandbox-lifecycle.md) are delegated implementation work, not merged. Streaming/cancellation is delegated scoping only. See the [authoritative roadmap](../ROADMAP.md) for task identities and order. Later lifecycle choices and mounted storage composition remain later work.
+- Cleanup configuration merged in PR #34. [Lifecycle slice 1 reopen/inspect](sandbox-lifecycle.md) is delegated implementation work, not merged. The streaming/cancellation brief merged in PR #36; runtime implementation remains unshipped. See the [authoritative roadmap](../ROADMAP.md) for task identities and order. Later lifecycle choices and mounted storage composition remain later work.
 
 ## Implemented observability contract
 
@@ -18,7 +18,7 @@ New features target the direct SDK and public adapter API. Service expansion is 
 
 ## Later design work
 
-- [Interactive execution and access](interactive-execution-and-access.md) — initial process, streaming, terminal, endpoint and tunnel contracts. Not an implementation commitment or a prerequisite for state portability.
+- [First streaming execution slice](interactive-execution-and-access.md) — E2B text-streaming implementation brief merged in PR #36. No streaming runtime is implemented; terminals, endpoints and tunnels remain later work.
 
 Vercel and Tensorlake adapter specs will be written later. Accounting is deferred; management feature plans are not maintained here. Rust is not on the roadmap.
 
