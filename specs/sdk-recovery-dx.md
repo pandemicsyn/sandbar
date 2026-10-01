@@ -114,6 +114,8 @@ This checklist records the merged PR #33 scope; it does not reopen that PR or ma
 
 ## Later: volume guarantees and mounted restore
 
+See the focused [storage composition proposal](storage-composition.md) for concrete workflows, native limits and bounded delivery slices.
+
 Schedule these with a concrete provider implementation after this DX unit, rather than making them prerequisites for PR #25:
 
 - Separate backing technology from observable visibility, rename, locking, concurrent-writer behavior, and durability boundaries. Unknown is valid, but shared schemas must allow verified stronger guarantees. Do not equate object-backed storage with one filesystem contract or reduce durability to an unexplained boolean.
