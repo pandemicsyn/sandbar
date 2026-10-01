@@ -37,7 +37,7 @@ console.log(result.stdoutText(4096));
 if (result.truncated) console.warn("Command output was truncated");
 ```
 
-`stdout` and `stderr` are `Uint8Array` values. Keep those bytes for binary processing; `stdoutText(maxBytes)` and `stderrText(maxBytes)` decode bounded UTF-8 for display. The helpers default to 16 KiB.
+`stdout` and `stderr` are `Uint8Array` values. Keep those bytes for binary processing; `stdoutText(maxBytes)` and `stderrText(maxBytes)` decode bounded UTF-8 for display. The helpers default to 16 KiB. This display bound is separate from capture: `stdoutText(4096)` can add an ellipsis while `result.truncated` is false and all captured bytes remain in `stdout`. Increasing the display bound cannot recover bytes lost at the capture limit.
 
 The execution output limit defaults to 1 MiB combined across both streams. `truncated` means output may be incomplete, including when a stream reaches the cap before its end can be confirmed. Streaming file APIs are not implemented.
 

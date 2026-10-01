@@ -416,7 +416,7 @@ Accepted snapshot direction: no-argument `snapshot()` with adapter-owned native 
 
 ## 9. Current PR completion and follow-up boundary
 
-[PR #25](https://github.com/pandemicsyn/sandbar/pull/25) delivers the current snapshot/volume slice. Independent review of `0cdc3cca5cb544e57656be7de62dbf1da4d157e1` identified the following completion requirements. Check the latest revision for fixes; these are acceptance criteria, not a claim that every finding remains open.
+[PR #25](https://github.com/pandemicsyn/sandbar/pull/25) merged the snapshot/volume slice. This section preserves its historical acceptance boundary; it is not an open delivery queue. Independent review of `0cdc3cca5cb544e57656be7de62dbf1da4d157e1` identified the following completion requirements. Check the latest revision for fixes; these are acceptance criteria, not a claim that every finding remains open.
 
 | Fix in the current PR | Required evidence |
 | --- | --- |

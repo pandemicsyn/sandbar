@@ -1,6 +1,6 @@
 # Ordinary provider integration tests
 
-PR #32 stays open as a draft while replacing custom test orchestration. The contract is simple: configure an adapter, exercise Sandbar's public SDK in ordinary Bun tests, assert observable behavior, clean test-owned resources, and generate a support table with concise caveats. The user owns final review and merge. No further paid allocations are authorized by this restructuring.
+PR #32 merged into main as `742cc82` on September 30, 2026, replacing custom test orchestration. Historical and Bun evidence retain their actual tested revisions; no current-head pass is implied. The contract is simple: configure an adapter, exercise Sandbar's public SDK in ordinary Bun tests, assert observable behavior, clean test-owned resources, and generate a support table with concise caveats. The user owns final review and merge. No further paid allocations are authorized by this restructuring.
 
 ## Test shape
 
@@ -41,7 +41,7 @@ See the [operator README](../packages/sdk-qualification/provider-qualification/R
 
 The user subsequently authorized live tests with failure cleanup checks. At clean source `1505ee0`, the ordinary Daytona Bun suites produced five passing tests and one lifecycle failure: the running owned sandbox was absent from managed inventory. Execution, files, snapshot roundtrip, volume CRUD and mounted persistence passed. The finite run used six total compute allocations (peak two), one snapshot and one volume; every creator has confirmed cleanup and all clients closed. A final read-only inventory found no known owned retained artifacts, but the failed managed inventory assertion means empty compute inventory is not independent cleanup proof.
 
-E2B reconciliation made no allocation and still returned `OUTCOME_UNKNOWN` for the preserved original volume receipt. No new E2B tests were admitted. Raw JUnit, provider logs and receipts remain private; sanitized records retain exact source/configuration and failed lifecycle evidence. No creator retry, image build or additional live budget is included. PR #32 remains draft and unmerged.
+E2B reconciliation made no allocation and still returned `OUTCOME_UNKNOWN` for the preserved original volume receipt. No new E2B tests were admitted. Raw JUnit, provider logs and receipts remain private; sanitized records retain exact source/configuration and failed lifecycle evidence. No creator retry, image build or additional live budget is included. These results are preserved in the merged PR #32 evidence; the original failed assertions are not relabeled as passes.
 
 ## Failure investigation and E2B selection
 
