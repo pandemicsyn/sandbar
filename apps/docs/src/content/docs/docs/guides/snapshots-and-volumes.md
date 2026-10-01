@@ -15,10 +15,13 @@ const source = await sandbar.sandboxes.create({
   networkPolicy: "blocked",
 });
 let retainedSnapshot; // Keep custody available if application persistence fails.
+let captureSettled = true; // No capture has been submitted yet.
 try {
   const check = await source.checkSnapshot();
   if (check.status !== "supported") throw new Error(check.reason);
+  captureSettled = false;
   const captured = await source.snapshot();
+  captureSettled = true;
   retainedSnapshot = captured.snapshot.reference;
   await saveResource(JSON.stringify(retainedSnapshot));
   console.log(captured.capture, captured.source);
@@ -33,16 +36,22 @@ try {
     await restored.destroy();
   }
   await captured.snapshot.delete();
+  await removeSavedResource(retainedSnapshot);
   retainedSnapshot = undefined;
 } catch (error) {
   console.error("Capture/restore failed; retained snapshot:", retainedSnapshot);
   throw error;
 } finally {
-  await source.destroy();
+  // A failed capture may still be stopping, capturing or restarting the source.
+  if (captureSettled) await source.destroy();
 }
 ```
 
-`saveResource` is your application's durable persistence function. Snapshot deletion is separate from source and restored-compute destruction. If saving, restore, or cleanup fails, retain the snapshot reference for reconciliation; do not delete a potentially dependent artifact. Close the connection in an outer `finally`, as in [Getting started](/docs/direct-quickstart/). If capture itself becomes uncertain, save its operation reference using [Errors and recovery](/docs/guides/recovery/).
+`saveResource` and `removeSavedResource` are your application's durable persistence functions. Remove or tombstone the saved record only after artifact deletion is confirmed. If that bookkeeping fails, reconcile the record as deleted rather than reopening it or repeating the native delete.
+
+Snapshot deletion is separate from source and restored-compute destruction. If saving, restore, or cleanup fails, retain the snapshot reference for reconciliation; do not delete a potentially dependent artifact.
+
+Close the connection in an outer `finally`, as in [Getting started](/docs/direct-quickstart/). If capture throws, this example conservatively leaves the source intact. Preserve the error’s operation reference and any known partial snapshot identity using [Errors and recovery](/docs/guides/recovery/); resolve the capture/restart outcome before destroying the source. A local cancellation does not establish that the provider stopped working.
 
 Restore requires a supported **explicit network policy**. Before creating a source for a round trip, check `(await sandbar.capabilities()).snapshots.restore`. Capture and restore support are independent; a successful capture check is not a reservation or a promise that restore is supported.
 
@@ -92,9 +101,10 @@ try {
 }
 // Only after compute cleanup is confirmed and the data is no longer needed:
 await volume.delete();
+await removeSavedResource(volume.reference);
 ```
 
-To keep the data, omit the final deletion and attach `volume.at("/mnt/workspace")` when creating the next sandbox. Volumes survive `destroy()` and `close()`, and compute TTL does not expire them. If create or destroy becomes uncertain, keep the volume reference and reconcile compute before deleting storage. A failed readiness check or write must not trigger unsafe artifact deletion. Delete only the resources your application intends to remove; automatic cleanup never adopts borrowed volumes.
+To keep the data, omit the final deletion and saved-record removal, then attach `volume.at("/mnt/workspace")` when creating the next sandbox. Volumes survive `destroy()` and `close()`, and compute TTL does not expire them. If create or destroy becomes uncertain, keep the volume reference and reconcile compute before deleting storage. A failed readiness check or write must not trigger unsafe artifact deletion. Delete only the resources your application intends to remove; automatic cleanup never adopts borrowed volumes.
 
 Mount paths must be absolute, normalized, nonoverlapping and outside reserved paths. Daytona supports writable subpaths. Its volumes are object-backed; mounted `writeFile` needs `overwrite: true`, and atomic no-clobber on mounted paths is unsupported. A verified write does not establish shutdown durability, POSIX semantics, locking or atomic rename guarantees.
 
