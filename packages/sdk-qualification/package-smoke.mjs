@@ -707,6 +707,32 @@ try {
   await checkTypes(modal, "modal");
   await checkTypes(e2b, "e2b");
   await checkTypes(builtins, "builtins");
+  await writeFile(
+    join(custom, "text-streaming.ts"),
+    await readFile(join(root, "apps/docs/examples/text-streaming.ts"), "utf8"),
+  );
+  await writeFile(
+    join(custom, "streaming-tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+        skipLibCheck: false,
+        types: [],
+      },
+      include: ["text-streaming.ts"],
+    }),
+  );
+  run(join(root, "node_modules/.bin/tsc"), ["-p", "streaming-tsconfig.json"], custom);
+  await writeFile(
+    join(custom, "streaming.mjs"),
+    await readFile(join(root, "packages/sdk-qualification/streaming-packed.mjs"), "utf8"),
+  );
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["streaming.mjs"], custom)}`);
   inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
   inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);

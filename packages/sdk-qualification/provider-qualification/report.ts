@@ -12,6 +12,7 @@ export const scenarios = [
   "sandbox-lifecycle",
   "lifecycle-reopen",
   "execution",
+  "execution-streaming",
   "files",
   "network-controls",
   "connect",
@@ -134,7 +135,13 @@ export const reportSchema = z
   .superRefine((report, ctx) => {
     for (const [index, record] of report.records.entries()) {
       if (
-        ["sandbox-lifecycle", "execution", "files", "network-controls"].includes(record.scenario) &&
+        [
+          "sandbox-lifecycle",
+          "execution",
+          "execution-streaming",
+          "files",
+          "network-controls",
+        ].includes(record.scenario) &&
         !record.runner
       )
         ctx.addIssue({

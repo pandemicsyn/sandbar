@@ -1,6 +1,6 @@
 # First streaming execution slice
 
-Proposed implementation brief · September 30, 2026 · Not implemented
+Implementation contract · September 30, 2026 · Coding slice under review; live validation not run
 
 Research baseline: freshly fetched `origin/main` at `d186cea` (PRs #32 and #33 merged). This replaces the broad interactive-execution draft with one delivery decision. Preserve [ordinary results and minimal identities](sdk-recovery-dx.md); its older PR-status sentence is historical. No new persistence callbacks, completion-facts envelopes, continuation framework is required.
 
@@ -8,7 +8,7 @@ Deliver one command start, timely separate stdout/stderr **text**, and confirmed
 
 ## Evidence and provider support
 
-These are researched native candidates, **not shipped Sandbar support or live qualification**. No paid calls were made. The baseline adapters still expose only bounded exec. E2B is pinned to `e2b@2.51.0` in `packages/providers/e2b/package.json` and `bun.lock`. Daytona uses single-attempt REST/toolbox calls; its reference SDK is `@daytona/sdk@0.218.0`, not a runtime dependency.
+The table records the original research candidates, not live qualification. No paid calls were made. The research baseline exposed only bounded exec; the coding slice now implements finite E2B text streaming as described below. E2B is pinned to `e2b@2.51.0` in `packages/providers/e2b/package.json` and `bun.lock`. Daytona uses single-attempt REST/toolbox calls; its reference SDK is `@daytona/sdk@0.218.0`, not a runtime dependency.
 
 | Behavior | E2B 2.51.0 | Daytona 0.218 reference | First delivery |
 | --- | --- | --- | --- |
@@ -28,9 +28,9 @@ Primary sources, inspected September 30, 2026:
 
 Daytona integration is deferred rather than blocked on a new universal process abstraction. A later native-boundary investigation must establish initial-log completeness, bounded WebSocket framing, session cleanup and any termination guarantee before enabling it. Modal and third-party adapters return `UNSUPPORTED` without starting anything.
 
-## Proposed public contract
+## Public contract
 
-Names below are proposed exports, not examples of currently shipping APIs. Add only to the direct SDK handle.
+The coding slice adds these exports to the direct SDK handle only. It is under review; merged status belongs to the roadmap.
 
 ```ts
 // Reuse the existing command, cwd and env validation, not ExecInput wholesale.
@@ -80,6 +80,8 @@ type ProcessStartContext = {
   onOutput(chunk: { stream: "stdout" | "stderr"; text: string }): void;
 };
 interface NativeProcess {
+  // Optional synchronous confirmed evidence during final decoder callbacks.
+  readonly confirmedExit?: NativeProcessExit;
   wait(): Promise<NativeProcessExit>;
   detach(): Promise<void>;
 }
@@ -124,7 +126,7 @@ See the [selected helper API and capture/display contract](output-and-timeouts.m
 
 ## Usage and delivery
 
-Proposed first-slice usage (compile against packed public packages in the coding PR):
+First-slice usage (compiled against packed public packages in the coding slice):
 
 ```ts
 const process = await sandbox.processes.start({
@@ -146,7 +148,7 @@ This is for finite text commands whose output fits the budget. Long-running/high
 
 Delivery fits up to three small coding PRs, independently reviewable:
 
-1. **Ready to delegate after the non-resuming E2B guest-attachment prerequisite:** reuse the lifecycle spec's read-only attachment work before enabling streaming; the broader sandbox-reopen API is not a dependency. Then deliver the fixed adapter/direct-SDK local handle contract plus E2B text streaming, bounded admission, wait/detach, unsupported runtime deadline and deterministic native-boundary fixtures. No Daytona implementation or new durable identity contract. Add public compiled/packed Node and Bun examples, docs and ordinary results. This spec PR authorizes planning only; implementation requires its own task.
+1. **Ready to delegate after the non-resuming E2B guest-attachment prerequisite:** reuse the lifecycle spec's read-only attachment work before enabling streaming; the broader sandbox-reopen API is not a dependency. Then deliver the fixed adapter/direct-SDK local handle contract plus E2B text streaming, bounded admission, wait/detach, unsupported runtime deadline and deterministic native-boundary fixtures. No Daytona implementation or new durable identity contract. Add public compiled/packed Node and Bun examples, docs and ordinary results. The separately authorized coding task implements this slice.
 2. Read cancellation consistency: `SandboxHandle` now derives from the direct handle; removed shared/service types are not part of this slice. Add `readFile(path, { signal? })`, export `ReadOptions` as the common signal option type while preserving inspection’s existing `WaitOptions` compatibility, and apply one fixed 30-second local read deadline across buffered provider results and streamed chunks. Race waits against caller abort, deadline and client close, including noncooperative providers/readers. Dispose late streams, cancel/release owned readers without awaiting cleanup, and remove timers/listeners. Read-only errors use `WAIT_ABORTED`, `TIMEOUT` and `CLIENT_CLOSED` with effect `none`; native read failures retain their code. Native download cancellation is best effort; earlier scope inspection may finish independently. Preserve byte bounds, successful bytes and E2B non-resuming attachment. This PR does not change writes, execution deadlines, remote workloads or sandbox lifetime. Deterministic fixtures and packed Node/Bun consumers verify local semantics; maintained live file acceptance exercises signal-bearing reads and pre-abort, with paid qualification pending.
 3. [Full-decode/preview helpers and bounded-exec timeout clarity](output-and-timeouts.md#delivery-and-acceptance): two independent small slices with selected signatures/defaults, pinned-source audit and acceptance. Native runtime enforcement or a raw binary transport needs fresh evidence and its own scoped proposal; do not make them hidden additions to this PR.
 
@@ -166,6 +168,6 @@ Use deterministic native-boundary fixtures; paid live qualification remains sepa
 - Native E2B connection uses retries 0, stdin false, disabled RPC timeout and separate setup cancellation; paused sandbox is rejected without automatic resume. Exercise the actual pinned client against fake HTTP with a pause between running preflight and attachment: no POST connect, resume, timeout extension or command replay. Auto-resume true/missing and missing detail token fail before guest I/O. Snapshot/suspend/destroy interruption cannot attach to a different execution.
 - Compile the concise workflow against exported types and execute it using packed public SDK/adapter consumers on Node and Bun.
 
-Run focused SDK/adapter/E2B tests first, then sequential shared builds and required CI gates (`check:built`, lint, format, offline tests, packed consumers, observability and docs/examples). This design-only PR changes no public exports; compiled proposed process examples and live acceptance are requirements for the coding PR, not evidence collected here.
+Run focused SDK/adapter/E2B tests first, then sequential shared builds and required CI gates (`check:built`, lint, format, offline tests, packed consumers, observability and docs/examples). The coding slice adds public process exports, deterministic pinned-client fixtures and compiled/packed Node/Bun examples. Live acceptance remains not-run pending separate paid-call authorization; offline results do not qualify live behavior.
 
 PTYs, terminals, stdin, arbitrary signals, process inventory/reopening, retained replay/cursors, endpoints/tunnels, broad filesystem APIs, sandbox reopen, cleanup configuration, and generic workflows are explicit scope cuts. Global ROADMAP/index reconciliation belongs to the separate docs task; this PR edits only this execution spec.

@@ -42,6 +42,7 @@ E2B uses `SANDBAR_QUAL_PROVIDER=e2b`, optional `SANDBAR_E2B_TEAM_ID`, and `SANDB
 
 | Suite/case | Maximum owned resources per fixture | What the assertions prove |
 | --- | --- | --- |
+| `streaming.test.ts` / `execution-streaming` (E2B only) | 1 compute, zero snapshots/volumes | Finite text arrives before exit, separate stderr, ordinary nonzero result, owned compute teardown. Setup 90s, exercise 240s, cleanup 60s, E2B native TTL 300s. Not run; separate paid authorization required. |
 | `sandbox.test.ts` | 1 compute | Running inspect/inventory, argv/env/cwd/stdout/stderr, shell, nonzero error, binary files, overwrite, rejected no-clobber and unchanged bytes; `lifecycle-reopen` persists the scoped reference, closes/reconnects, reopens in a separate OS process, checks original bytes/exec and unchanged deadline, deletes owned compute and verifies absence. E2B requires a known session deadline for no-extension evidence. Owned teardown uses the existing ledger. |
 | `snapshots.test.ts` | 3 total compute, peak 2; 1 snapshot | Native default capture/source lifecycle, exact metadata, two-way filesystem isolation, advertised RAM nonce/counter or fresh-process observations, serialized reference reopened by a separate OS process, fresh SDK connection after source deletion, second restore of original bytes, independent storage deletion. |
 | `volumes.test.ts -t volume-crud` | 1 volume; no compute | Create/readiness/inspect/delete without implying mounts. |

@@ -787,6 +787,28 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
           return { items, nextCursor: page.nextToken };
         },
+        processes: transport.startText
+          ? {
+              async start(input, ctx) {
+                await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+                if (ctx.signal.aborted)
+                  throw new AdapterError("UNAVAILABLE", "Process setup stopped");
+
+                const command =
+                  input.command.kind === "argv"
+                    ? `/bin/bash -c 'exec "$@"' sandbar ${input.command.argv.map(shellQuote).join(" ")}`
+                    : `/bin/bash -c ${shellQuote(input.command.script)}`;
+
+                return transport.startText!(
+                  input.sandbox.id,
+                  command,
+                  { cwd: input.cwd, env: input.env },
+                  ctx,
+                );
+              },
+            }
+          : undefined,
         exec: {
           recovery: {
             version: 1,
