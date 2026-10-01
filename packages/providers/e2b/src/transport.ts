@@ -118,6 +118,7 @@ export type E2BTransport = {
     id: string,
     path: string,
     maxBytes: number,
+    signal?: AbortSignal,
   ): Promise<{ bytes: Uint8Array; truncated: boolean }>;
   write(id: string, path: string, bytes: Uint8Array): Promise<void>;
   remove(id: string, path: string): Promise<void>;
@@ -131,6 +132,7 @@ export function shellQuote(value: string): string {
 export async function collectBounded(
   stream: ReadableStream<Uint8Array>,
   maxBytes: number,
+  signal?: AbortSignal,
 ): Promise<{ bytes: Uint8Array; truncated: boolean }> {
   const result = new Uint8Array(maxBytes);
   const reader = stream.getReader();
@@ -138,7 +140,9 @@ export async function collectBounded(
 
   try {
     for (;;) {
-      const part = await reader.read();
+      signal?.throwIfAborted();
+      const part = await readChunk(reader, signal);
+      signal?.throwIfAborted();
 
       if (part.done) return { bytes: result.slice(0, used), truncated: false };
 
@@ -148,14 +152,49 @@ export async function collectBounded(
       used += copy;
 
       if (copy < part.value.length) {
-        await reader.cancel();
-
         return { bytes: result, truncated: true };
       }
     }
   } finally {
+    disposeFileReader(reader);
+  }
+}
+
+function disposeFileReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    void reader.cancel().catch(() => undefined);
+  } catch {
+    // Native stream cleanup is best effort and must not hold local cancellation.
+  } finally {
     reader.releaseLock();
   }
+}
+
+function readChunk(reader: ReadableStreamDefaultReader<Uint8Array>, signal?: AbortSignal) {
+  const pending = reader.read();
+
+  if (!signal) return pending;
+
+  return new Promise<Awaited<ReturnType<typeof reader.read>>>((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(signal.reason);
+    };
+
+    signal.addEventListener("abort", abort, { once: true });
+    pending.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+
+    if (signal.aborted) abort();
+  });
 }
 
 /** Pinned e2b@2.51.0. Every control-plane call explicitly disables its 429 retry loop. */
@@ -186,9 +225,10 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
   async function attach(
     id: string,
     logger?: { error(label: string, status: number): void },
+    signal?: AbortSignal,
   ): Promise<Sandbox> {
-    const response = await controlGet(`/sandboxes/${encodeURIComponent(id)}`);
-    const detail = await readNative(response, Detail);
+    const response = await controlGet(`/sandboxes/${encodeURIComponent(id)}`, signal);
+    const detail = await readNative(response, Detail, signal);
 
     if (detail.sandboxID !== id) throw new AdapterError("CONFLICT", "E2B identity differs");
 
@@ -239,21 +279,24 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     }
   }
 
-  async function controlGet(path: string): Promise<Response> {
+  async function controlGet(path: string, signal?: AbortSignal): Promise<Response> {
     return fetcher(`${E2B_ENDPOINT}${path}`, {
       headers: { "X-API-Key": apiKey, Accept: "application/json" },
-      signal: AbortSignal.timeout(30_000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+        : AbortSignal.timeout(30_000),
     });
   }
 
   async function readNative<S extends z.ZodType>(
     response: Response,
     schema: S,
+    signal?: AbortSignal,
   ): Promise<z.output<S>> {
     if (!response.ok) throw new NativeReadError(response.status);
 
     if (!response.body) throw new Error("E2B returned no native data");
-    const body = await collectBounded(response.body, MAX_BYTES);
+    const body = await collectBounded(response.body, MAX_BYTES, signal);
 
     if (body.truncated) throw new Error("E2B native response exceeded its byte bound");
 
@@ -591,13 +634,18 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
       return result.stdout;
     },
-    async read(id, path, maxBytes) {
-      const sandbox = await attach(id);
+    async read(id, path, maxBytes, signal) {
+      signal?.throwIfAborted();
+      const sandbox = await attach(id, undefined, signal);
+      signal?.throwIfAborted();
 
-      return collectBounded(
-        await sandbox.files.read(path, { format: "stream", requestTimeoutMs: 30_000 }),
-        maxBytes,
-      );
+      const stream = await sandbox.files.read(path, {
+        format: "stream",
+        requestTimeoutMs: 30_000,
+        signal,
+      });
+
+      return collectBounded(stream, maxBytes, signal);
     },
     async write(id, path, bytes) {
       let stage: "connect" | "upload" = "connect";

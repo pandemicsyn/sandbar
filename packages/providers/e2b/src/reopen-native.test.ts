@@ -324,3 +324,58 @@ test("pinned native creation explicitly disables timeout pause and auto-resume",
   ).toBe("sandbox_one");
   expect(creates).toBe(1);
 });
+
+test("pinned E2B file read forwards abort to download and cancels a stalled native body", async () => {
+  const f = fixture();
+  const fetcher = globalThis.fetch;
+  let entered!: () => void;
+
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+
+  let signal: AbortSignal | undefined;
+  let cancelled = 0;
+
+  const stream = new ReadableStream<Uint8Array>({
+    pull() {
+      return new Promise<void>(() => {});
+    },
+    cancel() {
+      cancelled++;
+    },
+  });
+
+  globalThis.fetch = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+
+      if (new URL(request.url).pathname === "/files") {
+        signal = request.signal;
+        entered();
+
+        return new Response(stream);
+      }
+
+      return fetcher(input, init);
+    },
+    { preconnect() {} },
+  );
+  const controller = new AbortController();
+
+  const read = f.transport
+    .read("sandbox_one", "/tmp/value", 16, controller.signal)
+    .catch((error: Error) => error);
+
+  await started;
+  await Promise.resolve();
+  controller.abort(new Error("caller stopped"));
+  expect(await read).toBe(controller.signal.reason);
+  expect(signal?.aborted).toBe(true);
+  expect(cancelled).toBe(1);
+  // The pinned SDK keeps its private body reader locked even after cancel.
+  // Sandbar releases its own reader; native wrapper cleanup is best effort.
+  expect(
+    f.calls.filter((c) => c.url.origin === "https://api.e2b.app").every((c) => c.method === "GET"),
+  ).toBe(true);
+});

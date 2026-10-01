@@ -376,3 +376,6 @@ export function validateResourceInput<S extends z.ZodType>(
 
   return parsed.data;
 }
+
+/** Options for local read-only sandbox observation. */
+export type ReadOptions = { signal?: AbortSignal };

@@ -43,6 +43,7 @@ export type {
   DirectSandbarClient,
   DirectSandboxHandle,
   SandboxHandle,
+  ReadOptions,
   OperationHandle,
   RecoveryReference,
   SandbarClient,

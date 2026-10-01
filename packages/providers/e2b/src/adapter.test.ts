@@ -1514,3 +1514,46 @@ test.each(["prepare", "submit"] as const)(
     }
   },
 );
+
+for (const cancelMode of ["stall", "reject"] as const) {
+  test(`E2B bounded file reader releases on abort despite ${cancelMode} cleanup`, async () => {
+    let cancelled = 0;
+    const controller = new AbortController();
+
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {
+        return new Promise<void>(() => {});
+      },
+      cancel() {
+        cancelled++;
+
+        return cancelMode === "stall"
+          ? new Promise<void>(() => {})
+          : Promise.reject(Error("cleanup failed"));
+      },
+    });
+
+    const read = collectBounded(stream, 16, controller.signal).catch((error: Error) => error);
+    controller.abort(new Error("caller stopped"));
+    expect(await read).toBe(controller.signal.reason);
+    expect(cancelled).toBe(1);
+    expect(stream.locked).toBe(false);
+  });
+}
+
+test("E2B capacity cleanup does not await an uncooperative reader", async () => {
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(Uint8Array.of(0, 255, 128));
+    },
+    cancel() {
+      return new Promise<void>(() => {});
+    },
+  });
+
+  expect(await collectBounded(stream, 2)).toEqual({
+    bytes: Uint8Array.of(0, 255),
+    truncated: true,
+  });
+  expect(stream.locked).toBe(false);
+});

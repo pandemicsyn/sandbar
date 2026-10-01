@@ -864,10 +864,17 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         },
         files: {
           maxBytes: MAX_BYTES,
-          async read(input) {
+          async read(input, ctx) {
             requirePath(input.path);
             await requireRunning(input.sandbox.id, input.sandbox.reference);
-            const result = await transport.read(input.sandbox.id, input.path, MAX_BYTES);
+            ctx.signal.throwIfAborted();
+
+            const result = await transport.read(
+              input.sandbox.id,
+              input.path,
+              MAX_BYTES,
+              ctx.signal,
+            );
 
             if (result.truncated)
               throw new AdapterError("CAPACITY", "E2B file exceeds the read bound");

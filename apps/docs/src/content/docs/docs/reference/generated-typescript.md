@@ -54,6 +54,7 @@ Import from `sandbar-sdk`.
 | `outputText`                | re-export |
 | `PreparedAdapterAttempt`    | re-export |
 | `PreparedImage`             | type      |
+| `ReadOptions`               | type      |
 | `RecoveredOperation`        | type      |
 | `RecoveryReference`         | type      |
 | `ResourceKind`              | re-export |

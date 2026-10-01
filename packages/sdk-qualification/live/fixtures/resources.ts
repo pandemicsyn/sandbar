@@ -285,7 +285,7 @@ export class TestResources {
   }
 
   read(box: AdapterSandbox, path: string) {
-    return boundedRead(box.readFile(path), this.signal);
+    return box.readFile(path, { signal: this.signal });
   }
 
   async exec(box: AdapterSandbox, script: string) {

@@ -271,7 +271,11 @@ function unknown(submissionId: string, reason: string): DriverResult {
   return { status: "unknown", effect: "possible", submissionId, reason };
 }
 
-async function boundedBytes(response: Response, limit: number): Promise<Uint8Array> {
+async function boundedBytes(
+  response: Response,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
   const length = response.headers.get("content-length");
 
   if (length && Number(length) > limit) throw new Error("Daytona response exceeds bound");
@@ -281,21 +285,42 @@ async function boundedBytes(response: Response, limit: number): Promise<Uint8Arr
   const chunks: Uint8Array[] = [];
   let size = 0;
 
+  const cancel = () => {
+    try {
+      void reader.cancel().catch(() => undefined);
+    } catch {
+      /* Native reader cancellation is best effort. */
+    } finally {
+      reader.releaseLock();
+    }
+  };
+
+  signal?.addEventListener("abort", cancel, { once: true });
+
   try {
+    if (signal?.aborted) {
+      cancel();
+      signal.throwIfAborted();
+    }
+
     for (;;) {
       const part = await reader.read();
+
+      signal?.throwIfAborted();
 
       if (part.done) break;
       size += part.value.length;
 
       if (size > limit) {
-        await reader.cancel();
+        if (signal) cancel();
+        else await reader.cancel();
         throw new Error("Daytona response exceeds bound");
       }
 
       chunks.push(part.value);
     }
   } finally {
+    signal?.removeEventListener("abort", cancel);
     reader.releaseLock();
   }
 
@@ -354,6 +379,7 @@ export class DaytonaDriver implements ProviderDriver {
     contentType?: string,
     toolbox?: Sandbox,
     timeoutMs = 30_000,
+    signal?: AbortSignal,
   ): Promise<Response> {
     const base = toolbox?.toolboxProxyUrl ? canonicalUrl(toolbox.toolboxProxyUrl) : this.apiUrl;
 
@@ -372,7 +398,9 @@ export class DaytonaDriver implements ProviderDriver {
       headers,
       body,
       redirect: "error",
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs),
     });
   }
   private async json<T extends z.ZodType>(
@@ -1324,9 +1352,15 @@ export class DaytonaDriver implements ProviderDriver {
       return null;
     }
   }
-  async readFile(input: { sandbox: SandboxRef; path: string }): Promise<Uint8Array> {
+  async readFile(input: {
+    sandbox: SandboxRef;
+    path: string;
+    signal?: AbortSignal;
+  }): Promise<Uint8Array> {
     validPath(input.path);
     const native = await this.toolbox(input.sandbox);
+
+    input.signal?.throwIfAborted();
 
     const response = await this.request(
       "GET",
@@ -1334,6 +1368,8 @@ export class DaytonaDriver implements ProviderDriver {
       undefined,
       undefined,
       native,
+      30_000,
+      input.signal,
     );
 
     if (response.status === 404) throw new ProviderReadError("NOT_FOUND", "Daytona file not found");
@@ -1342,7 +1378,7 @@ export class DaytonaDriver implements ProviderDriver {
       throw new ProviderReadError("INVALID_RESPONSE", "Daytona file download failed");
 
     try {
-      return await boundedBytes(response, 1_048_576);
+      return await boundedBytes(response, 1_048_576, input.signal);
     } catch {
       throw new ProviderReadError(
         "INVALID_RESPONSE",

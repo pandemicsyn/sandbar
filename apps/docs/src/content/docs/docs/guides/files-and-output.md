@@ -14,6 +14,16 @@ const bytes = await box.readFile(path);
 console.log(bytes);
 ```
 
+File reads accept caller cancellation while keeping `readFile(path)` available:
+
+```ts
+const bytes = await box.readFile(path, { signal: AbortSignal.timeout(5000) });
+```
+
+One fixed **30-second local deadline** covers the provider response and all file chunks. Caller abort rejects with `WAIT_ABORTED`, the local deadline with `TIMEOUT`, and client close with `CLIENT_CLOSED`. These are read-only failures with no uncertain mutation or recovery reference. Native read failures retain their error code.
+
+Sandbar stops the local wait promptly even if an adapter ignores its signal. It cancels and releases local readers, including streams returned after cancellation, without awaiting native cleanup. Daytona download requests and E2B detail/file requests receive cancellation signals; earlier scope inspection may finish independently. Native request cancellation is best effort and does not terminate remote commands or change sandbox lifetime. E2B retains its verified, non-resuming guest attachment checks.
+
 Each file read or write is capped at **1 MiB** and buffered in memory. The parent directory must already exist and be writable by the provider's file operations.
 
 `overwrite` defaults to `false`: writing to an existing destination must fail without replacing it. To replace a file deliberately:
