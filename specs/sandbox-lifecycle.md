@@ -1,20 +1,20 @@
 # Sandbox lifecycle
 
-Accepted SDK experience · Reopen/inspect merged in PR #38; renewal implemented in the focused PR; suspend/resume remains proposed
+Accepted SDK experience · Updated October 1, 2026 · Reopen/inspect merged in PR #38; renewal merged in PR #55; suspend/resume remains unimplemented
 
-Follow [ROADMAP.md](../ROADMAP.md#next-lifecycle-controls-then-storage-composition) after the current SDK cleanup. This refines [state portability §4](provider-state-portability.md#4-suspension-resumption-and-expiry), using its reference, scope and no-replay rules. Reopen/inspect is merged; ship the two remaining mutation slices separately without a generic lifecycle engine.
+Follow [ROADMAP.md](../ROADMAP.md#next-lifecycle-controls-then-storage-composition) after the current SDK cleanup. This refines [state portability §4](provider-state-portability.md#4-suspension-resumption-and-expiry), using its reference, scope and no-replay rules. Reopen/inspect and renewal are merged; suspend/resume is the remaining mutation slice. Do not introduce a generic lifecycle engine.
 
 ## Selected contract
 
 Reopen Sandbar-created compute, inspect current state/deadlines, renew lifetime through the configured adapter policy, and explicitly suspend/resume the same logical resource. Initial suspension covers Daytona **containers** and E2B **memory pause**. E2B filesystem-only pause is a real native choice but deferred; Daytona VM/GPU/Windows suspension is also deferred. No snapshot/delete/recreate emulation, raw-ID adoption, streaming processes, PTYs/tunnels, new providers, automatic paid snapshot policy, mounted suspension, or volume cleanup-policy configuration.
 
-Slice 1 exports sandbox references, `sandboxes.get`, enriched `inspect` and reopen/inspect capabilities. Renewal is exported in the focused implementation PR; suspend/resume signatures below remain **proposed, not exported**. The merged [recovery DX contract](sdk-recovery-dx.md) supersedes earlier recovery-facts/expanded-persistence wording. Extend the direct `AdapterSandbox`/`AdapterDirectClient` with the legacy-adapter fallback below. Reuse exported `ResourceReference`, `Support`, `SandboxState`, `WaitOptions`, `AdapterOperation` and the recovery DX result/error model. Implementation will export the new types below through `sandbar-sdk` and, where used by hooks, `sandbar-adapter`.
+Slice 1 exports sandbox references, `sandboxes.get`, enriched `inspect` and reopen/inspect capabilities. Renewal is exported on main by PR #55; suspend/resume signatures below remain **proposed, not exported**. The merged [recovery DX contract](sdk-recovery-dx.md) supersedes earlier recovery-facts/expanded-persistence wording. Extend the direct `AdapterSandbox`/`AdapterDirectClient` with the legacy-adapter fallback below. Reuse exported `ResourceReference`, `Support`, `SandboxState`, `WaitOptions`, `AdapterOperation` and the recovery DX result/error model. Current exports are authoritative for reopen/renew types; suspend/resume additions below remain a proposed extension through `sandbar-sdk` and `sandbar-adapter`.
 
 ### SDK experience and adapter setup
 
 Applications should switch providers by changing adapter setup, while retaining their lifecycle workflow. Use `renew()`, `suspend()`, `resume()` and the existing `destroy()`, `get()` and `inspect()` methods. The adapter owns native reset/add/stop/pause/start mechanics. Ordinary calls do not select timeout scopes or negotiate preservation requirements. No `renewable: true` permission flag, mandatory requirements list, or background renewal loop is needed.
 
-The focused renewal PR exports `lifecycle.lifetimeSeconds`. The suspension portion of this proposed shape remains unexported:
+PR #55 exports `lifecycle.lifetimeSeconds`. The suspension portion of this proposed shape remains unexported:
 
 ```ts
 interface AdapterLifecycleOptions {
@@ -189,7 +189,7 @@ If the inherited runtime exposes a proven never-submitted continuation, it may d
 
 ## Application examples
 
-Lifecycle settings and methods below are proposed, not runnable against current main. Keep the existing `Sandbar.connect` and bound adapter entrypoints; no client-construction redesign is needed. `Image.prepared`, exec arrays and store calls follow the existing public API. Applications own durable storage and per-sandbox mutation serialization. Implementation PRs must compile the completed examples against packed public packages.
+This combined example includes unimplemented `suspend()` / `resume()` calls and is not runnable end to end. Lifetime configuration, renewal and reopening are implemented; see [the compiled renewal example](../apps/docs/examples/sandbox-renew.ts) for current usage. Keep the existing `Sandbar.connect` and bound adapter entrypoints; no client-construction redesign is needed. `Image.prepared`, exec arrays and store calls follow the existing public API. Applications own durable storage and per-sandbox mutation serialization. Implementation PRs must compile the completed examples against packed public packages.
 
 ```ts
 import { Sandbar, Image, type SandboxReference } from "sandbar-sdk";
@@ -246,7 +246,7 @@ Public research checked September 29, 2026; renewal mappings rechecked September
 
 ## Delivery and acceptance
 
-Slice 1 below is historical acceptance context and merged in PR #38. Slice 2 is implemented in the focused renewal PR and awaits merge/live qualification; slice 3 remains pending implementation.
+Slices 1 and 2 below are merged in PRs #38 and #55; their live qualification remains not-run. Slice 3 is the next implementation. The table preserves scope and acceptance context, not an open queue for the first two slices.
 
 Estimates include API, adapters, deterministic tests and docs; they are review-complexity estimates, not line-count commitments. Each implementation PR should remain roughly a few hundred production lines plus focused fixtures/examples, with PR1/PR3 potentially approaching a low-thousands total diff because of native-boundary tests. If either needs another broad state framework or many thousands of production lines, cut scope as indicated instead of growing a foundation PR.
 
@@ -272,6 +272,6 @@ Run implementation gates appropriate to the changed packages: focused tests, seq
 
 ## Accepted direction and implementation documentation
 
-The SDK experience is accepted: concentrate provider choices in adapter setup; expose `renew()` and no-argument `suspend()`/`resume()`; use native defaults and minimum configured suspension guarantees; keep actual clock and process facts honest. This supersedes the explicit-scope `setTimeout` proposal and per-call exact suspension requirement. Renewal is implemented in the focused PR with deterministic native-boundary and packed checks; its live qualification is not run. Suspend/resume implementation remains pending.
+The SDK experience is accepted: concentrate provider choices in adapter setup; expose `renew()` and no-argument `suspend()`/`resume()`; use native defaults and minimum configured suspension guarantees; keep actual clock and process facts honest. This supersedes the explicit-scope `setTimeout` proposal and per-call exact suspension requirement. Renewal merged in PR #55 with deterministic native-boundary and packed checks; its live qualification is not run. Suspend/resume implementation remains pending.
 
 Keep renewal and suspend/resume as separate small PRs. No new providers, memory-mode expansion, mounted suspension, generic engine or client configuration framework. The implementation updates built-in option types/config validation, public adapter hooks, provider docs, packed examples and the affected support/acceptance rows together. Each provider guide must show its setup and defaults, the unchanged application workflow, actual renewal limits/rounding, expiry during suspension, process/connection effects, and recovery/cleanup behavior. Preserve historical live evidence and mark planned, implemented and live-qualified support separately.

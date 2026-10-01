@@ -4,24 +4,17 @@ Keep this directory for focused implementation specs and a small set of current 
 
 New features target the SDK and public adapter API; see the [delivery rule](../plans/implementation-plan.md#delivery-rule).
 
-## Merged foundation and current work
+## Implemented contracts and remaining slices
 
-- [Provider state portability](provider-state-portability.md) — snapshot/volume support merged in PR #25. Later lifecycle and richer storage contracts remain proposals until implemented.
-- [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) — ordinary results, direct partial outcomes and provider-identifying snapshot/volume handles merged in PR #33. Expanded persistence callbacks and workflow machinery remain deferred.
-- Provider acceptance merged in PR #32; use the [maintained Bun runner](../packages/sdk-qualification/provider-qualification/README.md) and generated evidence, not proposed qualification behavior.
-- Public direct resource types and caller input errors merged in PR #35.
-- Cleanup configuration merged in PR #34. [Lifecycle reopen/inspect](sandbox-lifecycle.md) merged in PR #38; the accepted follow-up uses adapter-configured defaults, `renew()`, and no-argument suspend/resume, with mutation implementations still pending. The streaming/cancellation brief merged in PR #36; runtime implementation remains unshipped. See the [authoritative roadmap](../ROADMAP.md) for task identities and order. Later lifecycle choices and mounted storage composition remain later work.
-- [Output helpers and bounded-exec timeout clarity](output-and-timeouts.md) — focused slice 3 implementation brief: full decoding, structured previews and pinned native timeout evidence. Runtime changes remain unshipped.
+- [Provider state portability](provider-state-portability.md) — snapshots/volumes merged in #25; cleanup configuration in #34. Richer mounted storage composition and volume guarantees remain later work.
+- [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) — ordinary results, direct partial outcomes and provider-identifying handles merged in #33. Expanded persistence callbacks and workflow machinery remain deferred.
+- Provider acceptance merged in #32; use the [maintained Bun suites](../packages/sdk-qualification/provider-qualification/README.md) and generated evidence. Public direct resource types and caller input errors merged in #35.
+- [Sandbox lifecycle](sandbox-lifecycle.md) — reopen/inspect merged in #38 and adapter-configured `renew()` in #55. No-argument suspend/resume is the next accepted implementation slice; it is not exported yet.
+- [Streaming execution and read cancellation](interactive-execution-and-access.md) — bounded E2B text streaming merged in #52 and local read cancellation in #51. Live validation of these new behaviors remains pending. Remote process termination/reopening, binary streaming, other provider streams, terminals, endpoints and tunnels remain outside the shipped slice.
+- [Output helpers and bounded-exec timeout clarity](output-and-timeouts.md) — full decoding/structured previews merged in #53; provider timeout documentation and offline fixtures in #54. Native enforcement changes and deployed termination qualification remain separate work.
+- [SDK observability and diagnostics](sdk-observability.md) — SDK tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes merged in #24. Metrics/events remain later work.
 
-## Implemented observability contract
-
-- [SDK observability and diagnostics](sdk-observability.md) — direct SDK tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes merged in PR #24. Metrics/events remain later work.
-
-## Later design work
-
-- [First streaming execution slice](interactive-execution-and-access.md) — E2B text-streaming implementation brief merged in PR #36. No streaming runtime is implemented; terminals, endpoints and tunnels remain later work.
-
-Vercel and Tensorlake adapter specs will be written later. Accounting is deferred. Rust is not on the roadmap.
+Use the [authoritative roadmap](../ROADMAP.md) for order and qualification gaps. Merged code is not live qualification; retain the actual tested revision/configuration. Vercel and Tensorlake adapters remain behind the SDK usability gate. Accounting is deferred; the service/management UI were removed in #39, and Rust is not planned.
 
 ## Current engineering contracts
 

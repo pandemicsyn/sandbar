@@ -1,6 +1,6 @@
 # Provider state portability
 
-Direction accepted September 28, 2026; recovery and E2B requirements revised September 29, 2026 · Snapshot and core volume mutations implemented in the direct SDK; lifecycle and version slices remain proposed
+Direction accepted September 28, 2026; recovery and E2B requirements revised September 29, 2026 · Snapshots, core volumes, reopen/inspect and renewal implemented; suspend/resume, mounted restore and volume versions remain later slices
 
 This records the accepted SDK and adapter direction for snapshots, volumes, and lifecycle control. Daytona, E2B, Vercel Sandbox, and Tensorlake inform the portable contracts; implementing the future Vercel and Tensorlake adapters is separate work to specify later. Existing exports remain the authority for implemented behavior. The signatures below remain design sketches, not a current API inventory; use SDK and adapter exports for implemented behavior.
 
@@ -229,7 +229,7 @@ Daytona's default adapter submission records the observed initial state and each
 
 Do not claim full success until the requested final lifecycle state is confirmed. If capture succeeded but restart failed, preserve and report the snapshot reference, capture completion, observed source state, and restart failure; do not discard the artifact or submit a second capture. Report capture and restart failures separately when both fail. Restarting does not recover former processes or application readiness.
 
-If a stop, capture, or start response is uncertain, retain its stage and recovery evidence. Do not replay it or start the source while capture may still be in progress. Once a definitive safe outcome is established, the active submission or an explicitly requested continuation may submit a proven never-submitted next stage through the controlled mutation path described below. Observation itself stays read-only. If the process exits or a local deadline expires, persist pending/unknown state; a later invocation must be able to reconcile and finish a still-required restart without capturing again. In particular, a capture that becomes ready after the current 60-second implementation budget must not strand the source merely because submission waiting ended. Cancellation does not prove remote work stopped and does not authorize background work beyond bounded finalization; a caller can subsequently request continuation from saved state. Never repeat an uncertain mutation.
+If a stop, capture, or start response is uncertain, retain its stage and recovery evidence. Do not replay it or start the source while capture may still be in progress. Once a definitive safe outcome is established, the active submission or an explicitly requested continuation may submit a proven never-submitted next stage through the controlled mutation path described below. Observation itself stays read-only. If the process exits or a local deadline expires, persist pending/unknown state; a later invocation must be able to reconcile and finish a still-required restart without capturing again. In particular, a capture that becomes ready after the local wait budget must not strand the source merely because submission waiting ended. Cancellation does not prove remote work stopped and does not authorize background work beyond bounded finalization; a caller can subsequently request continuation from saved state. Never repeat an uncertain mutation.
 
 ## 3. Persistent volumes and mount sessions
 
@@ -278,20 +278,20 @@ Mount operations are independently optional:
 
 Automatic replication is not evidence for an immediate flush receipt. Leave unsupported barriers/version operations unavailable rather than sleeping and claiming durability. Tensorlake's pinned snapshots motivate this optional interface, but exact barrier APIs still need native-boundary verification before implementation.
 
-Sandbox destruction never deletes volumes. Extend the destroy result to include confirmed compute termination, retained resources, and per-mount durability outcomes. With writable mounts, the proposed default is `storage: "require-durable"`; use provider durability evidence or a supported barrier, and reject before compute deletion if it cannot be established. A barrier must cover the departing session through shutdown, using a verified drain/freeze/close protocol; flushing while writers continue is insufficient. A failed cleanup after a submitted flush can have storage effects and must not be called effect-free. Explicit `storage: "allow-unconfirmed"` still permits compute cleanup and reports the risk to unsaved data. Volume-free destroy retains today's behavior. This default is a deliberate API decision to review.
+Sandbox destruction never deletes volumes. Extend the destroy result to include confirmed compute termination, retained resources, and per-mount durability outcomes. With writable mounts, the implemented default is `storage: "require-durable"`; use provider durability evidence or a supported barrier, and reject before compute deletion if it cannot be established. A barrier must cover the departing session through shutdown, using a verified drain/freeze/close protocol; flushing while writers continue is insufficient. A failed cleanup after a submitted flush can have storage effects and must not be called effect-free. Explicit `storage: "allow-unconfirmed"` still permits compute cleanup and reports the risk to unsaved data. Volume-free destroy retains today's behavior. This default is preserved by the connection cleanup policy.
 
-### Accepted cleanup configuration follow-up
+### Implemented cleanup configuration
 
-Applications may choose the writable-volume cleanup policy upfront for a client connection and override it per destroy call. Resolve the explicit call option first, then the configured policy, then the existing `require-durable` default. The public configuration signature remains to be specified; this decision does not change current implementation behavior. `allow-unconfirmed` permits compute cleanup without claiming a durability barrier, and never deletes retained volumes. Keep actual per-mount durability and retained-resource reporting. This is the next bounded cleanup-ergonomics task in [the roadmap](../ROADMAP.md), separate from richer volume guarantees and mounted restore.
+Applications may choose the writable-volume cleanup policy upfront for a client connection and override it per destroy call. Resolve the explicit call option first, then the configured policy, then the existing `require-durable` default. PR #34 implements `cleanup.storage` on SDK connections, with a per-call `storage` override. `allow-unconfirmed` permits compute cleanup without claiming a durability barrier, and never deletes retained volumes. Keep actual per-mount durability and retained-resource reporting. This is implemented independently of the later richer volume guarantees and mounted restore in [the roadmap](../ROADMAP.md).
 
 ## 4. Suspension, resumption, and expiry
 
-The accepted [lifecycle implementation brief](sandbox-lifecycle.md) defines the pending renewal and suspend/resume APIs. Reopen/inspect merged in PR #38; mutation APIs below remain proposed.
+The accepted [lifecycle contract](sandbox-lifecycle.md) includes reopen/inspect merged in PR #38 and renewal merged in PR #55. Suspend/resume below remains unimplemented; its native defaults and setup-time minimum requirements are accepted.
 
 ```ts
 await box.renew({ forSeconds: 900 });
-await box.suspend();
-const resumed = await box.resume();
+await box.suspend(); // proposed, not exported yet
+const resumed = await box.resume(); // proposed, not exported yet
 // Same logical resource; execution is fresh, resumed or explicitly unknown.
 ```
 
@@ -397,11 +397,13 @@ await Sandbox.deleteSnapshot(templateId);
 
 ## 8. Implementation sequence and acceptance
 
-1. Add resource references, request-specific capability evaluation, errors, and operation plumbing. Test a minimal adapter with no snapshot/volume concepts; keep today's core operations usable.
-2. Deliver no-argument snapshot capture/inspect/restore/delete end to end through the direct SDK, migrating foundation requirement evaluation to optional strict checks of configured defaults. Include source disruption, retained-resource reporting, and native-boundary coverage. Use deterministic contrasting profiles: stopping filesystem capture with restart, native pause/resume memory capture, and no capture support.
-3. Add native create-time mounts and volume lifecycle. Keep volume versions and dynamic attachments optional. Exercise storage scope, unavailable beta access, failed mount readiness, durability-before-destroy, and explicit unconfirmed cleanup.
-4. Add exact-preservation suspend/resume and timeout control, with execution-generation handling and native auto-resume disabled. Then add one verified volume-version adapter and native forks as justified.
-5. Address resource sizing, richer images, streaming processes, broader files, and network policies as separate focused contracts. Their capabilities should follow the same exact-requirement rules; this proposal does not bundle the entire inventory into one implementation.
+The [roadmap](../ROADMAP.md) owns delivery order. Implementation status:
+
+1. Resource references and capability evaluation merged in #23; no-argument snapshot capture/inspect/restore/delete and core volume lifecycle/create-time mounts in #25. Cleanup configuration merged in #34.
+2. Ordinary partial results and resource identity DX merged in #33; reopen/inspect in #38 and configured lifetime renewal in #55.
+3. Read cancellation, finite E2B text streaming, full-output previews and timeout clarification merged in #51–#54. Their precise boundaries are in the focused [execution](interactive-execution-and-access.md) and [output](output-and-timeouts.md) contracts.
+4. Next: native suspend/resume with setup-time minimum preservation requirements, honest execution evidence and no implicit auto-resume. This supersedes the old per-call exact-preservation/timeout-scope design; snapshot requirements retain their separate exact semantics.
+5. Mounted restore, stronger storage semantics, volume versions/native forks, resource sizing and broader process/file/network features require separately scoped provider work. None is implied by a future-shaped example in this document.
 
 Required tests include no-argument defaults; unsupported-before-mutation; explicit filesystem-only requirements on a memory-only adapter; Daytona running-source stop/capture/start, already-stopped capture without start, and leave-stopped configuration; restart after definitive capture failure; retained snapshot on restart failure; uncertain stop/capture/start without replay or unsafe continuation; E2B native pause/resume without redundant lifecycle calls; captured and restored process behavior; lost capture/restore/delete responses; expired or foreign references; no implicit fresh sandbox on resume; incompatible policy before memory restore; unpinned external mounts; readonly enforcement; concurrent writers and version identity; unknown ownership; and direct SDK recovery across fresh processes and credential rotation. Retain existing legacy checkpoint/continuation regressions where those paths remain supported; new callback/crash-boundary machinery is not an acceptance requirement for the September 30 DX follow-up. Focus new tests on clear partial results, persisted exact resource identities and no automatic mutation replay. E2B cases must cover immutable restore after default-tag movement, deletion of the dedicated containing resource, alias/identity mismatch, missing build, and incomplete build-correlation evidence. Include reopening after source deletion and distinguish explicit deletion from incidental cleanup ownership. Qualification must also inspect native retry/auto-resume behavior, not just callback counts. Paid live qualification requires separate authorization.
 
@@ -413,7 +415,7 @@ Accepted September 30 DX direction: applications persist minimal credential-inde
 
 Accepted snapshot direction: no-argument `snapshot()` with adapter-owned native defaults; only real configuration choices; Daytona container source restart by default when previously running; optional exact requirement checks; explicit returned capture/restore semantics; no implicit archive or cross-provider fallback. Explicit restore networking, native create-time mounts first, and durability-required destruction for writable mounts remain in the broader proposal. No production exports or provider behavior change with this document.
 
-## 9. Current PR completion and follow-up boundary
+## 9. Historical snapshot/volume acceptance boundary
 
 [PR #25](https://github.com/pandemicsyn/sandbar/pull/25) merged the snapshot/volume slice. This section preserves its historical acceptance boundary; it is not an open delivery queue. Independent review of `0cdc3cca5cb544e57656be7de62dbf1da4d157e1` identified the following completion requirements. Check the latest revision for fixes; these are acceptance criteria, not a claim that every finding remains open.
 
@@ -426,18 +428,12 @@ Accepted snapshot direction: no-argument `snapshot()` with adapter-owned native 
 
 These are correctness and evidence fixes to existing promises. Add focused regressions, review the final diff independently, and run required final gates. Do not repeatedly run broad gates on intermediate revisions when focused tests answer the current question. Correct claims when evidence is missing; additional paid runs require separate authorization and are not granted by this document.
 
-The current bounded follow-up is [SDK results, errors and persisted resource identities](sdk-recovery-dx.md): clear ordinary call outcomes, provider-identifying handles, minimal saved locators and directly accessible partial results. It preserves the shipped race/custody fixes above; generic persistence and workflow recovery expansion are deferred.
+The follow-up [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) merged in PR #33: clear ordinary call outcomes, provider-identifying handles, minimal saved locators and directly accessible partial results. It preserves the shipped race/custody fixes above; generic persistence and workflow recovery expansion are deferred.
 
 Richer volume semantics and capability-driven mounted restore are later work, paired with a concrete provider requirement. The reviewed slice may honestly expose limited volume metadata and reject mounted restore; it must not claim those extension points already work. Capacity/placement options, arbitrary provider option bags, a generic workflow engine are not new requirements for PR #25.
 
 ## Foundation implementation decisions
 
-This section records the already-merged foundation, including its earlier required-preservation request shape. The next snapshot slice must update that shape and its checks to the optional request/default behavior above; this historical implementation does not override the accepted design.
+The initial foundation (#23) introduced resource references, scope/identity checks, read-only snapshot-profile evaluation and create-time requirements. Its capture/volume stubs and mandatory-preservation request shape were superseded by the no-argument snapshot and volume implementation in #25. Historical details remain in Git history; they are not current unsupported-feature claims or an outstanding migration.
 
-The first bounded slice exports a version-1 resource reference schema and scope/identity checks, read-only snapshot-profile evaluation, asynchronous capability observations, and create-time snapshot requirements through SDK clients. Reference ownership is explicit; generations are opaque native evidence and must be supplied for reusable locators. Existing sandbox/image identity APIs and recovery-reference version 2 remain intact. The adapter mutation resource constraint accepts resource references while retaining the legacy sandbox observation field; artifact operation kinds and result dispatch wait for their feature slice.
-
-An optional typed `snapshotCapture` declaration gates the read-only `snapshotProfiles` hook. No public capture method or native capture implementation is added. Other snapshot operations, volumes and suspension remain unsupported. Profiles include mount handling and minimum retention evidence; resolved plans report restore restrictions as unknown, because restore restrictions need the next slice's inspected artifact evidence. Cleanup preferences are manual in this slice. A check is not a reservation. Required creation checks evaluate the selected environment for a future running source and require the adapter to return unknown if class evidence cannot be established without effects. Unsupported creation throws effect-free `UNSUPPORTED`; unavailable and unknown requirements block creation with `UNAVAILABLE`, retaining distinct statuses in the read-only check.
-
-The direct capability getter is now asynchronous. No placement/filtering engine is added. Built-in provider support is unchanged and has no state-operation qualification claim.
-
-Review clarification: capability revalidation finishes before the durable submission barrier, and SDK dispatch reuses that validation without running read hooks after the marker. Lifecycle outcomes resolve relative to observed source state, so unchanged accepts a stopped outcome for an already-stopped source.
+Current capabilities are observations, not reservations. Preserve unsupported-before-mutation checks, native identity and scope validation, and existing dispatch/no-replay safeguards. Use current SDK/adapter exports and the focused contracts for implementation details.
