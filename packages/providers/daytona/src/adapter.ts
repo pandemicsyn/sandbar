@@ -1,4 +1,6 @@
 import {
+  RenewRequest,
+  ResolvedRenewInput,
   sandboxReference,
   assertSandboxReference,
   assertResourceScope,
@@ -21,16 +23,37 @@ import {
 import type { DriverResult } from "@sandbar/provider-spi";
 import { daytonaProvider, daytonaRegistration, type DaytonaEndpointPair } from "./index";
 
-const Configuration = z.strictObject({
-  apiUrl: z.url().default("https://app.daytona.io/api"),
-  toolboxOrigin: z.url().default("https://proxy.app.daytona.io"),
-  target: z.string().min(1),
-  networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
-  snapshots: z
-    .strictObject({ restartAfterCapture: z.boolean().default(true) })
-    .default({ restartAfterCapture: true }),
-  ttlMinutes: z.coerce.number().int().min(1).max(1440).default(60),
-});
+const Configuration = z
+  .strictObject({
+    apiUrl: z.url().default("https://app.daytona.io/api"),
+    toolboxOrigin: z.url().default("https://proxy.app.daytona.io"),
+    target: z.string().min(1),
+    networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
+    snapshots: z
+      .strictObject({ restartAfterCapture: z.boolean().default(true) })
+      .default({ restartAfterCapture: true }),
+    ttlMinutes: z.coerce.number().int().min(1).max(1440).optional(),
+    lifecycle: z
+      .strictObject({ lifetimeSeconds: z.number().int().positive().safe().max(86400).optional() })
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.lifecycle?.lifetimeSeconds !== undefined && value.ttlMinutes !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["lifecycle", "lifetimeSeconds"],
+        message: "Supply one lifetime option",
+      });
+  })
+  .transform((value) => ({
+    ...value,
+    ttlMinutes:
+      value.lifecycle?.lifetimeSeconds === undefined
+        ? (value.ttlMinutes ?? 60)
+        : Math.ceil(value.lifecycle.lifetimeSeconds / 60),
+  }));
+
+const RenewToken = z.strictObject({ acknowledged: z.literal(true) });
 
 const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
@@ -1025,6 +1048,145 @@ export function createDaytonaAdapter(
               "Daytona destroy cannot be replayed",
               token.success ? destroyOutcome(token.data) : undefined,
             );
+          },
+        },
+        async renewCapabilities(target, ctx) {
+          if (
+            target.sandbox &&
+            (await inspection(target.sandbox.id, target.sandbox.reference, ctx)).state !== "running"
+          )
+            return { status: "unavailable" as const, reason: "Renewal requires running compute" };
+
+          return {
+            status: "supported" as const,
+            value: {
+              minSeconds: 60,
+              maxSeconds: 86400,
+              stepSeconds: 60,
+              scope: "sandbox" as const,
+            },
+          };
+        },
+        renew: {
+          recovery: { version: 1, token: RenewToken },
+          async prepare(input, ctx) {
+            assertResourceScope(input.sandbox.reference, {
+              provider: "daytona",
+              scope: resourceBinding,
+            });
+
+            const requested = RenewRequest.parse({
+              forSeconds: input.forSeconds ?? config.ttlMinutes * 60,
+            }).forSeconds;
+
+            if (requested > 86400)
+              throw new AdapterError(
+                "INVALID_ARGUMENT",
+                "Renewal exceeds the adapter lifetime ceiling",
+              );
+            const forSeconds = Math.ceil(requested / 60) * 60;
+            const info = await inspection(input.sandbox.id, input.sandbox.reference, ctx);
+
+            if (info.state !== "running")
+              throw new AdapterError("UNAVAILABLE", "Renewal requires running compute");
+
+            return ResolvedRenewInput.parse({ ...input, forSeconds });
+          },
+          async submit(input, ctx) {
+            if (ctx.signal.aborted)
+              return ctx.reject("UNAVAILABLE", "Renewal cancelled before dispatch");
+
+            try {
+              const response = await resourceState.renew(
+                input.sandbox.id,
+                input.forSeconds,
+                ctx.signal,
+              );
+
+              if ([400, 401, 403, 404, 409, 422, 429].includes(response.status))
+                return ctx.reject(
+                  response.status === 404
+                    ? "NOT_FOUND"
+                    : [401, 403].includes(response.status)
+                      ? "FORBIDDEN"
+                      : response.status === 409
+                        ? "CONFLICT"
+                        : response.status === 429
+                          ? "RATE_LIMIT"
+                          : "INVALID_ARGUMENT",
+                  "Daytona renewal rejected",
+                );
+
+              if (!response.ok)
+                throw new AdapterError("UNAVAILABLE", "Daytona renewal acknowledgement was lost");
+            } catch {
+              return ctx.unknown(
+                "Daytona renewal acknowledgement was lost; never replay this reset",
+                {
+                  kind: "sandbox_renew",
+                  status: "unknown",
+                  reference: input.sandbox.reference,
+                  requested: { forSeconds: input.forSeconds },
+                  observation: await inspection(input.sandbox.id, input.sandbox.reference, {
+                    signal: ctx.signal,
+                    deadline: Date.now() + 30000,
+                  }).catch(() => null),
+                },
+              );
+            }
+
+            // One effect is complete. A failed compatibility save cannot erase its ACK.
+            try {
+              await ctx.checkpoint({ acknowledged: true });
+            } catch {
+              /* Return the confirmed result below. */
+            }
+
+            const observation = await inspection(input.sandbox.id, input.sandbox.reference, {
+              signal: ctx.signal,
+              deadline: Date.now() + 30000,
+            }).catch(() => null);
+
+            return {
+              reference: input.sandbox.reference,
+              requested: { forSeconds: input.forSeconds },
+              acknowledged: true as const,
+              observation,
+            };
+          },
+          async observe(attempt, ctx) {
+            if (!attempt.sandbox?.reference || !attempt.renewal)
+              return ctx.unknown("Saved renewal intent or identity is missing");
+            assertResourceScope(attempt.sandbox.reference, {
+              provider: "daytona",
+              scope: resourceBinding,
+            });
+            const acknowledged = RenewToken.safeParse(attempt.token).success;
+
+            const observation = await inspection(
+              attempt.sandbox.id,
+              attempt.sandbox.reference,
+              ctx,
+            ).catch(() => null);
+
+            if (!acknowledged)
+              return ctx.unknown(
+                "A current deadline cannot prove renewal acknowledgement; never replay",
+                {
+                  kind: "sandbox_renew",
+                  status: "unknown",
+                  reference: attempt.sandbox.reference,
+                  requested: attempt.renewal,
+                  observation,
+                },
+              );
+
+            return {
+              reference: attempt.sandbox.reference,
+              requested: attempt.renewal,
+              acknowledged: true as const,
+              observation,
+            };
           },
         },
         async reopen(reference, ctx) {

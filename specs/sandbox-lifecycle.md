@@ -1,6 +1,6 @@
 # Sandbox lifecycle
 
-Accepted SDK experience · Reopen/inspect merged in PR #38; renewal and suspend/resume remain proposed
+Accepted SDK experience · Reopen/inspect merged in PR #38; renewal implemented in the focused PR; suspend/resume remains proposed
 
 Follow [ROADMAP.md](../ROADMAP.md#next-lifecycle-controls-then-storage-composition) after the current SDK cleanup. This refines [state portability §4](provider-state-portability.md#4-suspension-resumption-and-expiry), using its reference, scope and no-replay rules. Reopen/inspect is merged; ship the two remaining mutation slices separately without a generic lifecycle engine.
 
@@ -8,13 +8,13 @@ Follow [ROADMAP.md](../ROADMAP.md#next-lifecycle-controls-then-storage-compositi
 
 Reopen Sandbar-created compute, inspect current state/deadlines, renew lifetime through the configured adapter policy, and explicitly suspend/resume the same logical resource. Initial suspension covers Daytona **containers** and E2B **memory pause**. E2B filesystem-only pause is a real native choice but deferred; Daytona VM/GPU/Windows suspension is also deferred. No snapshot/delete/recreate emulation, raw-ID adoption, streaming processes, PTYs/tunnels, new providers, automatic paid snapshot policy, mounted suspension, or volume cleanup-policy configuration.
 
-Slice 1 exports sandbox references, `sandboxes.get`, enriched `inspect` and reopen/inspect capabilities. Renew/suspend/resume signatures below remain **proposed, not exported**. The merged [recovery DX contract](sdk-recovery-dx.md) supersedes earlier recovery-facts/expanded-persistence wording. Extend the direct `AdapterSandbox`/`AdapterDirectClient` with the legacy-adapter fallback below. Reuse exported `ResourceReference`, `Support`, `SandboxState`, `WaitOptions`, `AdapterOperation` and the recovery DX result/error model. Implementation will export the new types below through `sandbar-sdk` and, where used by hooks, `sandbar-adapter`.
+Slice 1 exports sandbox references, `sandboxes.get`, enriched `inspect` and reopen/inspect capabilities. Renewal is exported in the focused implementation PR; suspend/resume signatures below remain **proposed, not exported**. The merged [recovery DX contract](sdk-recovery-dx.md) supersedes earlier recovery-facts/expanded-persistence wording. Extend the direct `AdapterSandbox`/`AdapterDirectClient` with the legacy-adapter fallback below. Reuse exported `ResourceReference`, `Support`, `SandboxState`, `WaitOptions`, `AdapterOperation` and the recovery DX result/error model. Implementation will export the new types below through `sandbar-sdk` and, where used by hooks, `sandbar-adapter`.
 
 ### SDK experience and adapter setup
 
 Applications should switch providers by changing adapter setup, while retaining their lifecycle workflow. Use `renew()`, `suspend()`, `resume()` and the existing `destroy()`, `get()` and `inspect()` methods. The adapter owns native reset/add/stop/pause/start mechanics. Ordinary calls do not select timeout scopes or negotiate preservation requirements. No `renewable: true` permission flag, mandatory requirements list, or background renewal loop is needed.
 
-Proposed built-in adapter options share this small shape; these additions are not exported yet:
+The focused renewal PR exports `lifecycle.lifetimeSeconds`. The suspension portion of this proposed shape remains unexported:
 
 ```ts
 interface AdapterLifecycleOptions {
@@ -235,7 +235,7 @@ On an aborted/uncertain mutation, use the error's existing recovery reference an
 
 ## Evidence and exact native recipes
 
-Public research checked September 29, 2026; **no paid/live calls, account probes or new live qualification**. Documentation describes guarantees; pinned source establishes request behavior, not the deployed backend's exact timing. Unverified field availability, external races, precise expiry enforcement and E2B execution identity remain untested/unknown, not implementation blockers when represented honestly.
+Public research checked September 29, 2026; renewal mappings rechecked September 30 against the same Daytona OpenAPI SHA-256 and installed E2B 2.51.0 lifecycle/timeout source; **no paid/live calls, account probes or new live qualification**. Documentation describes guarantees; pinned source establishes request behavior, not the deployed backend's exact timing. Unverified field availability, external races, precise expiry enforcement and E2B execution identity remain untested/unknown, not implementation blockers when represented honestly.
 
 - **Daytona baseline:** Sandbar uses direct fetch against the v0.218 REST/toolbox surface, not `@daytona/sdk` at runtime. Existing `state-native.ts` already implements stop/read/start for cold snapshots; reuse request/error conventions, not the capture workflow. Published [SDK 0.218.0 Sandbox source](https://unpkg.com/@daytona/sdk@0.218.0/esm/Sandbox.js) implements `setTtl` and start/stop. Keep single-attempt fetch mutations; do not adopt its retrying connection adapter.
 - **Daytona current schema:** [official OpenAPI](https://www.daytona.io/docs/openapi.json), fetched SHA-256 `ae430ff2feb4df0f4c71958b5ac64f837e935ffe85042793eb5588ab7c354379`, identifies itself as API `1.0`; docs UI is v0.220. Inspect `Sandbox` fields `id`, `organizationId`, `target`, `sandboxClass`, `labels`, `volumes`, `autoStopInterval`, `autoDeleteInterval`, `autoDestroyAt`, and `state`. GET `/sandbox/{id}`; POST `/sandbox/{id}/stop`, `/start`, `/ttl/{ttlMinutes}`. TTL response is a Sandbox, not an operation-generation receipt. The schema also documents organization/region/class lifespan caps. Do not label this fetched schema “pinned v0.218.” Revalidate compatibility fixtures when implementing.
@@ -246,7 +246,7 @@ Public research checked September 29, 2026; **no paid/live calls, account probes
 
 ## Delivery and acceptance
 
-Slice 1 below is historical acceptance context and merged in PR #38. Only slices 2 and 3 are pending implementation.
+Slice 1 below is historical acceptance context and merged in PR #38. Slice 2 is implemented in the focused renewal PR and awaits merge/live qualification; slice 3 remains pending implementation.
 
 Estimates include API, adapters, deterministic tests and docs; they are review-complexity estimates, not line-count commitments. Each implementation PR should remain roughly a few hundred production lines plus focused fixtures/examples, with PR1/PR3 potentially approaching a low-thousands total diff because of native-boundary tests. If either needs another broad state framework or many thousands of production lines, cut scope as indicated instead of growing a foundation PR.
 
@@ -272,6 +272,6 @@ Run implementation gates appropriate to the changed packages: focused tests, seq
 
 ## Accepted direction and implementation documentation
 
-The SDK experience is accepted: concentrate provider choices in adapter setup; expose `renew()` and no-argument `suspend()`/`resume()`; use native defaults and minimum configured suspension guarantees; keep actual clock and process facts honest. This supersedes the explicit-scope `setTimeout` proposal and per-call exact suspension requirement. Mutation implementations and live qualification are still pending.
+The SDK experience is accepted: concentrate provider choices in adapter setup; expose `renew()` and no-argument `suspend()`/`resume()`; use native defaults and minimum configured suspension guarantees; keep actual clock and process facts honest. This supersedes the explicit-scope `setTimeout` proposal and per-call exact suspension requirement. Renewal is implemented in the focused PR with deterministic native-boundary and packed checks; its live qualification is not run. Suspend/resume implementation remains pending.
 
 Keep renewal and suspend/resume as separate small PRs. No new providers, memory-mode expansion, mounted suspension, generic engine or client configuration framework. The implementation updates built-in option types/config validation, public adapter hooks, provider docs, packed examples and the affected support/acceptance rows together. Each provider guide must show its setup and defaults, the unchanged application workflow, actual renewal limits/rounding, expiry during suspension, process/connection effects, and recovery/cleanup behavior. Preserve historical live evidence and mark planned, implemented and live-qualified support separately.

@@ -11,6 +11,7 @@ import {
 export const scenarios = [
   "sandbox-lifecycle",
   "lifecycle-reopen",
+  "lifecycle-renew",
   "execution",
   "execution-streaming",
   "files",

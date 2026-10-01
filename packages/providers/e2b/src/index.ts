@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { e2bState } from "./state-native";
 import {
+  RenewRequest,
+  ResolvedRenewInput,
   sandboxReference,
   assertSandboxReference,
   assertResourceScope,
@@ -20,6 +22,7 @@ import {
   type ExecValue,
 } from "sandbar-adapter";
 import {
+  E2BRenewRejected,
   createSdkTransport,
   E2B_ENDPOINT,
   MAX_BYTES,
@@ -30,21 +33,42 @@ import {
 
 import { classifyWriteFailure, WriteFailure, writeFailureReason } from "./write-failure";
 
-const Configuration = z.strictObject({
-  teamId: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(/^[A-Za-z0-9_-]+$/)
-    .optional(),
-  templateId: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
-    .default("base"),
-  timeoutSeconds: z.number().int().min(60).max(3600).default(300),
-});
+const Configuration = z
+  .strictObject({
+    teamId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9_-]+$/)
+      .optional(),
+    templateId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
+      .default("base"),
+    timeoutSeconds: z.number().int().min(60).max(3600).optional(),
+    lifecycle: z
+      .strictObject({ lifetimeSeconds: z.number().int().positive().safe().max(3600).optional() })
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.lifecycle?.lifetimeSeconds !== undefined && value.timeoutSeconds !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["lifecycle", "lifetimeSeconds"],
+        message: "Supply one lifetime option",
+      });
+  })
+  .transform((value) => ({
+    ...value,
+    timeoutSeconds:
+      value.lifecycle?.lifetimeSeconds === undefined
+        ? (value.timeoutSeconds ?? 300)
+        : Math.max(60, value.lifecycle.lifetimeSeconds),
+  }));
+
+const RenewToken = z.strictObject({ acknowledged: z.literal(true) });
 
 const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
@@ -237,7 +261,11 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         return record && owned(record) ? record : null;
       };
 
-      const inspection = async (id: string, expected?: SandboxReference): Promise<SandboxInfo> => {
+      const inspection = async (
+        id: string,
+        expected?: SandboxReference,
+        renewalPolicy = false,
+      ): Promise<SandboxInfo> => {
         let record;
 
         try {
@@ -263,6 +291,15 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         });
 
         if (expected) assertSandboxReference(reference, expected);
+
+        if (
+          renewalPolicy &&
+          (record.lifecycle?.onTimeout !== "kill" || record.lifecycle?.autoResume !== false)
+        )
+          throw new AdapterError(
+            "UNAVAILABLE",
+            "E2B renewal requires known kill-on-timeout with auto-resume off",
+          );
 
         return {
           ...unknownSandboxFacts(),
@@ -763,6 +800,132 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             );
           },
         },
+        async renewCapabilities(target) {
+          if (!transport.renew)
+            return { status: "unsupported" as const, reason: "Renewal transport is not mapped" };
+
+          if (
+            target.sandbox &&
+            (await inspection(target.sandbox.id, target.sandbox.reference, true)).state !==
+              "running"
+          )
+            return { status: "unavailable" as const, reason: "Renewal requires running compute" };
+
+          return {
+            status: "supported" as const,
+            value: {
+              minSeconds: 60,
+              maxSeconds: 3600,
+              stepSeconds: 1,
+              scope: "running-session" as const,
+            },
+          };
+        },
+        renew: transport.renew
+          ? {
+              recovery: { version: 1, token: RenewToken },
+              async prepare(input) {
+                assertResourceScope(input.sandbox.reference, {
+                  provider: "e2b",
+                  scope: boundScope,
+                });
+
+                const requested = RenewRequest.parse({
+                  forSeconds: input.forSeconds ?? config.timeoutSeconds,
+                }).forSeconds;
+
+                if (requested > 3600)
+                  throw new AdapterError(
+                    "INVALID_ARGUMENT",
+                    "Renewal exceeds the adapter lifetime ceiling",
+                  );
+                const forSeconds = Math.max(60, requested);
+                const info = await inspection(input.sandbox.id, input.sandbox.reference, true);
+
+                if (info.state !== "running")
+                  throw new AdapterError("UNAVAILABLE", "Renewal requires running compute");
+
+                return ResolvedRenewInput.parse({ ...input, forSeconds });
+              },
+              async submit(input, ctx) {
+                if (ctx.signal.aborted)
+                  return ctx.reject("UNAVAILABLE", "Renewal cancelled before dispatch");
+
+                try {
+                  await transport.renew!(input.sandbox.id, input.forSeconds, ctx.signal);
+                } catch (error) {
+                  if (error instanceof E2BRenewRejected)
+                    return ctx.reject(error.code, error.message);
+
+                  return ctx.unknown(
+                    "E2B renewal acknowledgement was lost; never replay this reset",
+                    {
+                      kind: "sandbox_renew",
+                      status: "unknown",
+                      reference: input.sandbox.reference,
+                      requested: { forSeconds: input.forSeconds },
+                      observation: await inspection(
+                        input.sandbox.id,
+                        input.sandbox.reference,
+                      ).catch(() => null),
+                    },
+                  );
+                }
+
+                // One effect is complete. A failed compatibility save cannot erase its ACK.
+                try {
+                  await ctx.checkpoint({ acknowledged: true });
+                } catch {
+                  /* Return the confirmed result below. */
+                }
+
+                const observation = await inspection(
+                  input.sandbox.id,
+                  input.sandbox.reference,
+                ).catch(() => null);
+
+                return {
+                  reference: input.sandbox.reference,
+                  requested: { forSeconds: input.forSeconds },
+                  acknowledged: true as const,
+                  observation,
+                };
+              },
+              async observe(attempt, ctx) {
+                if (!attempt.sandbox?.reference || !attempt.renewal)
+                  return ctx.unknown("Saved renewal intent or identity is missing");
+                assertResourceScope(attempt.sandbox.reference, {
+                  provider: "e2b",
+                  scope: boundScope,
+                });
+                const acknowledged = RenewToken.safeParse(attempt.token).success;
+
+                const observation = await inspection(
+                  attempt.sandbox.id,
+                  attempt.sandbox.reference,
+                ).catch(() => null);
+
+                if (!acknowledged)
+                  return ctx.unknown(
+                    "A current deadline cannot prove renewal acknowledgement; never replay",
+                    {
+                      kind: "sandbox_renew",
+                      status: "unknown",
+                      reference: attempt.sandbox.reference,
+                      requested: attempt.renewal,
+                      observation,
+                    },
+                  );
+
+                return {
+                  reference: attempt.sandbox.reference,
+                  requested: attempt.renewal,
+                  acknowledged: true as const,
+                  observation,
+                };
+              },
+            }
+          : undefined,
         async reopen(reference) {
           assertResourceScope(reference, { provider: "e2b", scope: boundScope });
 

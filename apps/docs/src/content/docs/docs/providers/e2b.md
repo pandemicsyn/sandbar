@@ -11,24 +11,24 @@ E2B also supports [finite text streaming](/docs/guides/text-streaming/) through 
 import { Image, Sandbar } from "sandbar-sdk";
 import { e2b } from "sandbar-sdk/e2b";
 
-const sandbar = await Sandbar.connect(
-  e2b({
-    apiKey: process.env.E2B_API_KEY!,
-  }),
+// Provider setup: adapter credentials, region/template and prepared image.
+const client = await Sandbar.connect(
+  e2b({ apiKey: process.env.E2B_API_KEY!, lifecycle: { lifetimeSeconds: 600 } }),
 );
+const preparedImage = "base";
+
 try {
-  const box = await sandbar.sandboxes.create({
-    environment: Image.prepared("base"),
-    networkPolicy: "blocked",
-  });
+  const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
   try {
-    await box.writeFile("/home/user/example.txt", new TextEncoder().encode("hello"));
-    console.log((await box.exec(["cat", "/home/user/example.txt"])).stdoutText());
+    await box.exec(["/bin/sh", "-c", "printf ready"]);
+    const renewed = await box.renew();
+    await box.renew({ forSeconds: 61 });
+    console.log(renewed.requested, renewed.observation?.expires);
   } finally {
     await box.destroy();
   }
 } finally {
-  await sandbar.close();
+  await client.close();
 }
 ```
 
@@ -36,12 +36,13 @@ Set `E2B_API_KEY` before running this on the server. `E2B_API_ID` is not require
 
 ## Connection options
 
-| Option           | Default  | Purpose                                                 |
-| ---------------- | -------- | ------------------------------------------------------- |
-| `apiKey`         | Required | Authenticated E2B API key.                              |
-| `templateId`     | `base`   | Public base template or a ready owned template ID/name. |
-| `timeoutSeconds` | `300`    | Native sandbox lifetime, from 60 to 3,600 seconds.      |
-| `teamId`         | Omitted  | Optional verified team scope.                           |
+| Option                      | Default  | Purpose                                                                              |
+| --------------------------- | -------- | ------------------------------------------------------------------------------------ |
+| `apiKey`                    | Required | Authenticated E2B API key.                                                           |
+| `templateId`                | `base`   | Public base template or a ready owned template ID/name.                              |
+| `lifecycle.lifetimeSeconds` | Omitted  | Initial/default renewal window in seconds; mutually exclusive with `timeoutSeconds`. |
+| `timeoutSeconds`            | `300`    | Native sandbox lifetime, from 60 to 3,600 seconds.                                   |
+| `teamId`                    | Omitted  | Optional verified team scope.                                                        |
 
 For an owned template, configure its selector on the connection and pass it to `Image.prepared(...)`. Supported names are untagged or use `:default`; arbitrary named tags and public aliases are outside this integration's current scope.
 
@@ -59,6 +60,29 @@ Prepared templates and explicit OCI builds are implemented. Builds can retain a 
 
 Destroy each sandbox explicitly, then close the client. Native timeout is a fallback, not a cleanup confirmation. The [support matrix](/docs/providers/support/) distinguishes live baseline coverage from image-build and network tests.
 
+## Configured lifetime renewal
+
+The application workflow is the same for both built-in adapters:
+
+```ts
+const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
+await box.exec(["/bin/sh", "-c", "printf ready"]);
+const renewed = await box.renew();
+await box.renew({ forSeconds: 61 });
+await box.destroy();
+await client.close();
+```
+
+Set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and default `renew()` window. Omission keeps the existing 300-second `timeoutSeconds` default. Supplying both `lifecycle.lifetimeSeconds` and `timeoutSeconds` rejects during connection before native effects. These defaults stay local to the connection: reopening uses the new connection's default only when you explicitly call `renew()`. `get()` and `inspect()` never apply it.
+
+E2B raises positive requests below 60 seconds to 60; other seconds remain exact, up to a resolved 3,600-second SDK ceiling. One native timeout POST resets the active session deadline from provider processing. New Sandbar compute uses kill on timeout with auto-resume off. Paused retention is separate from the running-session clock: stale `endAt` is ignored while paused, and native paused state has indefinite retention requiring explicit cleanup. The returned observation reports running `endAt` when available. See [native timeout reset](https://docs.e2b.dev/api-reference/sandboxes/set-sandbox-timeout) and [paused retention](https://docs.e2b.dev/sandbox/persistence).
+
+Both mappings require running compute. E2B also requires known native kill-on-timeout with auto-resume off; missing or externally changed policy rejects `UNAVAILABLE` before reset. Use positive safe integer seconds; upper bounds and invalid inputs reject before the renewal POST without downward rounding or clamping. Native account/region/runtime limits can be tighter and native rejection remains an error. Renewal may shorten an existing longer deadline, is not additive, and does not guarantee uninterrupted execution or exact expiry scheduling. Serialize lifecycle changes across application and external controllers.
+
+`RenewResult.requested.forSeconds` records the resolved native setting, `acknowledged: true` confirms provider acceptance, and `observation` is current metadata or `null` if the follow-up read failed. A lost ACK stays `OUTCOME_UNKNOWN` even if a later deadline looks right. `submitRenew()` and `client.recover(savedOperationReference)` use existing typed recovery; observation never sends another renewal POST. Caller cancellation before dispatch has no effect; after possible dispatch it stops local waiting with the recovery reference. Persist ordinary sandbox references in your own trusted store, and save result metadata separately when useful.
+
+Renewal has deterministic native-boundary and packed Node/Bun coverage. The maintained `lifecycle-renew` live scenario is not run. Sandbar suspend/resume methods remain a later slice; the native suspension clocks above describe provider behavior.
+
 ## Runtime snapshots and volumes
 
 `box.snapshot()` uses E2B's reusable native capture with no snapshot configuration. It includes private filesystem, memory and process state. E2B briefly pauses the running source and resumes it; active connections are dropped. Restore resumes captured process state in new compute. Sandbar saves the raw native template ID and captured build UUID separately and submits `templateId:buildUUID`, with the requested network policy in the original create request before resumed memory executes. External volume capture is unsupported. These workflows have fixture coverage and historical live evidence at the revisions recorded in the [generated support table](/docs/providers/support/). The Bun roundtrip passed at `8449def`; this is not current-head certification.
@@ -73,6 +97,6 @@ Private-beta volume create, inspect, list and owned deletion are mapped; names a
 
 Persist `sandbox.reference` from create, restore or recovered results, then use `freshClient.sandboxes.get(savedReference)` to reopen the same native compute. `inspect()` reports fresh state, native state, local observation time and available deadline/policy facts. Reopening never creates, resumes or extends lifetime; inactive compute remains inactive and guest calls require running state. Unknown expiry is not unlimited lifetime, and elapsed expiry does not prove deletion. Native absence, forbidden access, unavailable reads and identity/configuration conflict remain distinct errors.
 
-References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Timeout control and suspension/resumption are later slices.
+References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Configured renewal is available; suspension/resumption remain later slices.
 
 E2B same-team key rotation requires configured `teamId`; API-key-scoped references reject rotation. Keep the original configured template. Running deadlines use native `endAt`; paused resources ignore stale session deadlines and report documented indefinite paused retention. Exec/files attach through authenticated detail and a local pinned client, requiring explicit `autoResume: false`, a guest token and trusted routing. Missing or changed guest policy fails unavailable before guest IO. There is no implicit connect POST. An external policy change after the check remains a documented native race.

@@ -135,6 +135,10 @@ async function flow() {
   const box = await client.sandboxes.create({ environment: Image.prepared("image-1") });
   const handle: SandboxHandle = box;
   const options: ReadOptions = { signal: new AbortController().signal };
+  const renewal: import("sandbar-sdk").RenewResult = await handle.renew({ forSeconds: 61 }, options);
+  const renewalOperation = await handle.submitRenew();
+  const renewed = await renewalOperation.wait();
+  void renewal; void renewed;
   await handle.inspect(options);
   await handle.inspect({ ...options, pollMs: 500 });
   await handle.readFile("/file", options);
@@ -184,7 +188,7 @@ void flow;
 import { Sandbar, Image } from "sandbar-sdk";
 import { e2b, createE2BAdapter } from "sandbar-sdk/e2b";
 async function flow() {
-  const client = await Sandbar.connect(e2b({ apiKey: "fixture" }));
+  const client = await Sandbar.connect(e2b({ apiKey: "fixture", lifecycle: { lifetimeSeconds: 600 } }));
   const built = await client.images.build({ source: Image.oci("node:24") });
   const prepared = Image.prepared(built.prepared);
   const builtBox = await client.sandboxes.create({ environment: prepared, networkPolicy: "blocked" });
@@ -206,7 +210,7 @@ import { Sandbar } from "sandbar-sdk";
 import { daytona } from "sandbar-sdk/daytona";
 import { e2b } from "sandbar-sdk/e2b";
 async function flow() {
-  const daytonaClient = await Sandbar.connect(daytona({ apiKey: "fixture", target: "us" }));
+  const daytonaClient = await Sandbar.connect(daytona({ apiKey: "fixture", target: "us", lifecycle: { lifetimeSeconds: 600 } }));
   const e2bClient = await Sandbar.connect(e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" }));
   await daytonaClient.close();
   await e2bClient.close();
@@ -293,7 +297,7 @@ try {
 const daytonaSource = `
 import { Sandbar, Image } from "sandbar-sdk";
 import { createDaytonaAdapter } from "@sandbar/provider-daytona";
-let name = "", mutations = 0, snapshotName = "", labels = {};
+let name = "", mutations = 0, snapshotName = "", labels = {}, renewalWindows = [];
 const files = new Map([["/file", Uint8Array.from([0,255])]]);
 const origin = "https://proxy.app.daytona.io/toolbox";
 const native = (state = "started") => ({ labels, id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
@@ -311,6 +315,7 @@ const mock = async (input, init = {}) => {
   if (url.pathname.startsWith("/api/snapshots/")) return snapshotName && [snapshotName, "built-1"].includes(decodeURIComponent(url.pathname.split("/").at(-1)))
     ? json({ id: "built-1", name: snapshotName, imageName: "alpine:3.21", organizationId: "org-1", state: "active", regionIds: ["us"], sandboxClass: "container" }) : new Response(null, { status: 404 });
   if (url.pathname === "/api/sandbox" && init.method === "POST") { mutations++; const body = JSON.parse(init.body); name = body.name; labels = body.labels; return json(native()); }
+  if (url.pathname.startsWith("/api/sandbox/native-1/ttl/")) { mutations++; renewalWindows.push(Number(url.pathname.split("/").at(-1))*60); return json(native()); }
   if (url.pathname === "/api/sandbox/native-1" && init.method === "DELETE") { mutations++; return json(native("destroyed")); }
   if (url.pathname === "/api/sandbox/native-1") return json(native());
   if (url.pathname.endsWith("/process/execute")) {
@@ -348,6 +353,10 @@ try {
   try {
     const reopened = await fresh.sandboxes.get(JSON.parse(JSON.stringify(box.reference)));
     if ((await reopened.inspect()).state !== "running" || reopened.id !== box.id) throw Error("Packed sandbox reopening differs");
+    const renewal = await reopened.submitRenew({forSeconds:61});
+    if((await renewal.wait()).requested.forSeconds!==120)throw Error("Packed Daytona rounding differs");
+    const recovered=await fresh.recover(JSON.parse(JSON.stringify(renewal.reference)));
+    if(recovered.kind!=="sandbox_renew"||(await recovered.wait()).requested.forSeconds!==120||renewalWindows.join()!=="120")throw Error("Packed Daytona renewal replay");
   } finally { await fresh.close(); }
   const result = await box.exec({ command: { kind: "shell", script: "printf test" } });
   if (result.stdout[0] !== 0 || result.stdout[1] !== 255 || result.stderr[0] !== 127) throw new Error("Binary output mismatch");
@@ -359,7 +368,7 @@ try {
   const bytes = await box.readFile("/file", { signal: new AbortController().signal });
   if (bytes[0] !== 0 || bytes[1] !== 255) throw new Error("Binary file mismatch");
   await box.destroy();
-  if (mutations !== 7) throw new Error("Mutation replay in packed consumer: " + mutations);
+  if (mutations !== 8) throw new Error("Mutation replay in packed consumer: " + mutations);
   process.stdout.write("packed Daytona fixture flow passed\\n");
 } finally { await client.close(); }
 `;
@@ -422,7 +431,7 @@ process.stdout.write("packed Modal fixture flow passed\\n");
 const e2bSource = `
 import { Sandbar, Image, OutcomeUnknownError } from "sandbar-sdk";
 import { createE2BAdapter } from "sandbar-sdk/e2b";
-let creates = 0, kills = 0, closes = 0, buildName = "", retained = "";
+let creates = 0, kills = 0, closes = 0, buildName = "", retained = "", renewalWindows = [];
 let record;
 let failWrite = false;
 const snapshots=new Map(),volumes=new Map();
@@ -438,11 +447,12 @@ const transport = {
   async create(input) {
     if (!["base", "template_1", "template_oci", "snapshot_packed:11111111-1111-4111-8111-111111111111"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
     creates++;
-    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
+    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",lifecycle:{onTimeout:"kill",autoResume:false},envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
     return record.id;
   },
   async get(id) { return record?.id === id ? record : null; },
   async list(metadata) { return { items: record && Object.entries(metadata).every(([k,v]) => record.metadata[k] === v) ? [record] : [] }; },
+  async renew(id, seconds) { if(id!==record?.id)throw Error("Wrong renewal ID"); renewalWindows.push(seconds); },
   async kill(id) { if (id !== record?.id) throw Error("Wrong kill"); retained = record.metadata.sandbar_build ? record.templateId : ""; kills++; record = undefined; return true; },
   async run(_id, script) {
     if (script.includes("ln -T --")) { const staged = [...files.keys()].find((path) => path.includes(".sandbar-write-")); if (!staged) throw Error("Missing staged file"); files.set("/tmp/no-clobber.bin", files.get(staged)); return "CREATED"; }
@@ -471,6 +481,10 @@ try {
   if (result.stdout[0] !== 0 || result.stdout[1] !== 255 || result.stderr[0] !== 254) throw Error("Binary command output changed");
   await box.writeFile("/tmp/packed.bin", binary, { overwrite: true });
   await box.writeFile("/tmp/no-clobber.bin", binary, { overwrite: false });
+  const renewal=await box.submitRenew({forSeconds:1});
+  if((await renewal.wait()).requested.forSeconds!==60)throw Error("Packed E2B minimum differs");
+  const recoveredRenewal=await client.recover(JSON.parse(JSON.stringify(renewal.reference)));
+  if(recoveredRenewal.kind!=="sandbox_renew"||(await recoveredRenewal.wait()).requested.forSeconds!==60||renewalWindows.join()!=="60")throw Error("Packed E2B renewal replay");
   const loaded = await box.readFile("/tmp/packed.bin");
   if (loaded.some((byte, i) => byte !== binary[i])) throw Error("Binary file changed");
   await box.writeFile("/tmp/packed-failure.bin", binary, {overwrite: true});
@@ -712,6 +726,10 @@ try {
     await readFile(join(root, "apps/docs/examples/text-streaming.ts"), "utf8"),
   );
   await writeFile(
+    join(custom, "sandbox-renew.ts"),
+    await readFile(join(root, "apps/docs/examples/sandbox-renew.ts"), "utf8"),
+  );
+  await writeFile(
     join(custom, "streaming-tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
@@ -722,7 +740,7 @@ try {
         skipLibCheck: false,
         types: [],
       },
-      include: ["text-streaming.ts"],
+      include: ["text-streaming.ts", "sandbox-renew.ts"],
     }),
   );
   run(join(root, "node_modules/.bin/tsc"), ["-p", "streaming-tsconfig.json"], custom);

@@ -3,32 +3,34 @@ title: Daytona
 description: Connect to Daytona with explicit region, prepared image, and network policy settings.
 ---
 
-Import `daytona` from `sandbar-sdk/daytona`. Start with an active Linux snapshot in your target region and explicitly select Daytona's default networking.
+Import `daytona` from `sandbar-sdk/daytona`. Start with an active Linux snapshot in your target region. The example uses strict blocked networking, which requires eligible organization settings; the policy section below shows the explicit `daytona-default` alternative.
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
 import { daytona } from "sandbar-sdk/daytona";
 
-const sandbar = await Sandbar.connect(
+// Provider setup: adapter credentials, region/template and prepared image.
+const client = await Sandbar.connect(
   daytona({
     apiKey: process.env.DAYTONA_API_KEY!,
     target: "us",
-    ttlMinutes: 15,
-    networkPolicy: "daytona-default",
+    lifecycle: { lifetimeSeconds: 600 },
   }),
 );
+const preparedImage = "daytona-small";
+
 try {
-  const box = await sandbar.sandboxes.create({
-    environment: Image.prepared("daytona-small"),
-    networkPolicy: "daytona-default",
-  });
+  const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
   try {
-    console.log((await box.exec(["printf", "hello"])).stdoutText());
+    await box.exec(["/bin/sh", "-c", "printf ready"]);
+    const renewed = await box.renew();
+    await box.renew({ forSeconds: 61 });
+    console.log(renewed.requested, renewed.observation?.expires);
   } finally {
     await box.destroy();
   }
 } finally {
-  await sandbar.close();
+  await client.close();
 }
 ```
 
@@ -36,13 +38,14 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 
 ## Connection options
 
-| Option                          | Default   | Purpose                                           |
-| ------------------------------- | --------- | ------------------------------------------------- |
-| `apiKey`                        | Required  | Daytona API key.                                  |
-| `target`                        | Required  | Available native region ID, such as `us`.         |
-| `ttlMinutes`                    | `60`      | Native sandbox lifetime, from 1 to 1,440 minutes. |
-| `snapshots.restartAfterCapture` | `true`    | Restart only a previously running capture source. |
-| `networkPolicy`                 | `blocked` | `blocked` or explicit `daytona-default`.          |
+| Option                          | Default   | Purpose                                                                          |
+| ------------------------------- | --------- | -------------------------------------------------------------------------------- |
+| `apiKey`                        | Required  | Daytona API key.                                                                 |
+| `target`                        | Required  | Available native region ID, such as `us`.                                        |
+| `lifecycle.lifetimeSeconds`     | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `ttlMinutes`. |
+| `ttlMinutes`                    | `60`      | Native sandbox lifetime, from 1 to 1,440 minutes.                                |
+| `snapshots.restartAfterCapture` | `true`    | Restart only a previously running capture source.                                |
+| `networkPolicy`                 | `blocked` | `blocked` or explicit `daytona-default`.                                         |
 
 `Sandbar.connect` verifies native organization and region with authenticated reads. Scope includes the organization, target, endpoint, and selected network policy. Use the same scope to recover a prior operation.
 
@@ -57,6 +60,29 @@ Omitting the policy selects `blocked`. This requires successful organization eli
 Commands support argv and POSIX shell. Binary output capture requires `/bin/sh`, `mktemp`, `mkfifo`, `cat`, `wc`, `head`, `od`, and `rm`. File staging and receipts also need `mkdir`, `rmdir`, `mv`, and compatible copy/link utilities. Atomic no-clobber requires `ln -T` and hard-link support.
 
 The live baseline uses the prepared `daytona-small` workflow in `us`; it does not qualify arbitrary snapshots. Explicit OCI builds are implemented but need separate live evidence and cleanup for retained snapshots. See [Images and networking](/docs/guides/images-and-networking/).
+
+## Configured lifetime renewal
+
+The application workflow is the same for both built-in adapters:
+
+```ts
+const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
+await box.exec(["/bin/sh", "-c", "printf ready"]);
+const renewed = await box.renew();
+await box.renew({ forSeconds: 61 });
+await box.destroy();
+await client.close();
+```
+
+Set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and default `renew()` window. Omission keeps the existing 60-minute `ttlMinutes` default. Supplying both `lifecycle.lifetimeSeconds` and `ttlMinutes` rejects during connection before native effects. These defaults stay local to the connection: reopening uses the new connection's default only when you explicitly call `renew()`. `get()` and `inspect()` never apply it.
+
+Daytona rounds positive integer seconds upward to whole minutes: 1 → 60, 61 → 120. The resolved ceiling is 86,400 seconds (24 hours). One native TTL POST resets the hard deadline from provider processing and expiry destroys the sandbox. This clock keeps ticking while stopped or archived and can delete saved files. Idle stop and deletion after stopping are separate policies; renewing does not disable them. The returned observation reports `autoDestroyAt` when available. See [native wall-clock TTL](https://www.daytona.io/docs/en/sandboxes/#wall-clock-ttl).
+
+Both mappings require running compute. Use positive safe integer seconds; upper bounds and invalid inputs reject before the renewal POST without downward rounding or clamping. Native account/region/runtime limits can be tighter and native rejection remains an error. Renewal may shorten an existing longer deadline, is not additive, and does not guarantee uninterrupted execution or exact expiry scheduling. Serialize lifecycle changes across application and external controllers.
+
+`RenewResult.requested.forSeconds` records the resolved native setting, `acknowledged: true` confirms provider acceptance, and `observation` is current metadata or `null` if the follow-up read failed. A lost ACK stays `OUTCOME_UNKNOWN` even if a later deadline looks right. `submitRenew()` and `client.recover(savedOperationReference)` use existing typed recovery; observation never sends another renewal POST. Caller cancellation before dispatch has no effect; after possible dispatch it stops local waiting with the recovery reference. Persist ordinary sandbox references in your own trusted store, and save result metadata separately when useful.
+
+Renewal has deterministic native-boundary and packed Node/Bun coverage. The maintained `lifecycle-renew` live scenario is not run. Sandbar suspend/resume methods remain a later slice; the native suspension clocks above describe provider behavior.
 
 ## Runtime snapshots
 
@@ -84,6 +110,6 @@ Mounted volumes are object-backed rather than POSIX filesystems. `writeFile(...,
 
 Persist `sandbox.reference` from create, restore or recovered results, then use `freshClient.sandboxes.get(savedReference)` to reopen the same native compute. `inspect()` reports fresh state, native state, local observation time and available deadline/policy facts. Reopening never creates, resumes or extends lifetime; inactive compute remains inactive and guest calls require running state. Unknown expiry is not unlimited lifetime, and elapsed expiry does not prove deletion. Native absence, forbidden access, unavailable reads and identity/configuration conflict remain distinct errors.
 
-References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Timeout control and suspension/resumption are later slices.
+References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Configured renewal is available; suspension/resumption remain later slices.
 
 Daytona validates organization, region, endpoint, toolbox origin, native network policy and private visibility. `autoDestroyAt` remains a sandbox-wide expiry while stopped/archived. Idle-stop and deletion-after-stop intervals are separate observed policies. A rotated key in the same organization works with the same binding.

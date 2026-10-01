@@ -1852,5 +1852,18 @@ export function daytonaState(input: {
     },
   };
 
-  return { fields, box, inspectSnapshot, inspectVolume };
+  async function renew(id: string, seconds: number, signal: AbortSignal) {
+    const response = await request(
+      "POST",
+      `/sandbox/${encodeURIComponent(id)}/ttl/${seconds / 60}`,
+      undefined,
+      { signal, deadline: Date.now() + 30000 },
+    );
+
+    void response.body?.cancel().catch(() => undefined);
+
+    return response;
+  }
+
+  return { fields, box, inspectSnapshot, inspectVolume, renew };
 }

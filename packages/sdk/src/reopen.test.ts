@@ -586,3 +586,23 @@ for (const code of ["NOT_FOUND", "FORBIDDEN", "CONFLICT"] as const) {
     }
   });
 }
+
+test("legacy and reopen-capable third-party adapters without renewal stay usable", async () => {
+  for (const reopening of [false, true]) {
+    const f = fixture(reopening);
+    const client = await f.connect();
+
+    try {
+      const box = await client.sandboxes.create({ environment: Image.prepared("fixture") });
+      expect((await box.capabilities()).lifecycle?.renew.status).toBe("unsupported");
+      await expect(box.renew()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+      await expect(box.submitRenew({ forSeconds: 60 })).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+        effect: "none",
+      });
+      expect(f.saved.filter((ref) => ref.kind === "sandbox_renew")).toHaveLength(0);
+    } finally {
+      await client.close();
+    }
+  }
+});

@@ -18,7 +18,10 @@ import {
   type ObservabilityOptions,
 } from "./observability";
 import {
-  SandboxState,
+  SandboxInfoSchema,
+  RenewRequest,
+  RenewResult,
+  ResolvedRenewInput,
   unknownSandboxFacts,
   validateResourceReference,
   assertSandboxReference,
@@ -99,53 +102,6 @@ export { Image, outputText } from "./resource";
 
 export type { AdapterRecoveryReference } from "./adapter-reference";
 
-const UnknownFact = z.strictObject({ status: z.literal("unknown"), reason: z.string().min(1) });
-
-const SandboxInfoSchema = z.strictObject({
-  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).nullable(),
-  state: SandboxState,
-  nativeState: z.string().nullable(),
-  observedAt: z.iso.datetime({ offset: true }),
-  expires: z.discriminatedUnion("status", [
-    z.strictObject({
-      status: z.literal("known"),
-      at: z.iso.datetime({ offset: true }),
-      action: z.enum(["destroy", "suspend"]),
-      scope: z.enum(["running-session", "sandbox"]),
-    }),
-    z.strictObject({ status: z.literal("none") }),
-    UnknownFact,
-  ]),
-  idleStop: z.discriminatedUnion("status", [
-    z.strictObject({
-      status: z.literal("known"),
-      value: z
-        .strictObject({
-          seconds: z.number().nonnegative().finite(),
-          action: z.enum(["stop", "suspend"]),
-        })
-        .nullable(),
-    }),
-    UnknownFact,
-  ]),
-  retention: z.discriminatedUnion("status", [
-    z.strictObject({
-      status: z.literal("known"),
-      value: z.strictObject({
-        autoDeleteAfterStoppedSeconds: z.number().nonnegative().finite().nullable(),
-      }),
-    }),
-    UnknownFact,
-  ]),
-  execution: z.discriminatedUnion("status", [
-    z.strictObject({
-      status: z.literal("known"),
-      value: z.strictObject({ nativeId: z.string().min(1) }),
-    }),
-    UnknownFact,
-  ]),
-});
-
 function canonicalScope(scope: Scope): string {
   return JSON.stringify({
     authority: scope.authority,
@@ -183,11 +139,16 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
       ? copy.resource?.kind === "volume"
       : !copy.resource;
 
+  const boundRenewal =
+    (copy.kind === "sandbox_renew") === !!copy.renewal &&
+    (copy.kind !== "sandbox_renew" || !!copy.sandboxReference);
+
   const boundCapture = (copy.kind === "snapshot_capture") === !!copy.capture;
 
   return boundSandbox &&
     boundResource &&
     boundCapture &&
+    boundRenewal &&
     (copy.kind === "file_write") === !!copy.file
     ? certifyRecoveryReference(copy)
     : copy;
@@ -288,6 +249,7 @@ export type AdapterCapabilities = DirectCapabilities;
 
 export type RecoveredOperation =
   | AdapterOperation<AdapterSandbox, "create" | "snapshot_restore">
+  | AdapterOperation<RenewResult, "sandbox_renew">
   | AdapterOperation<SnapshotResult, "snapshot_capture">
   | AdapterOperation<AdapterVolume, "volume_create">
   | AdapterOperation<ArtifactDeletionResult, "snapshot_delete" | "volume_delete">
@@ -295,6 +257,26 @@ export type RecoveredOperation =
   | AdapterOperation<ExecOutput, "exec">
   | AdapterOperation<DestroyValue, "destroy">
   | AdapterOperation<void, "file_write">;
+
+function decodeRenew(result: RuntimeResult, ref: AdapterRecoveryReference): RenewResult {
+  if (
+    result.kind !== "completed" ||
+    !("acknowledged" in result.value) ||
+    !ref.sandboxReference ||
+    !ref.renewal
+  )
+    throw asUnknown(ref);
+  const value = RenewResult.parse(result.value);
+  assertSandboxReference(value.reference, ref.sandboxReference);
+
+  if (value.requested.forSeconds !== ref.renewal.forSeconds)
+    throw asUnknown(ref, "Resolved renewal window differs");
+
+  if (value.observation?.reference)
+    assertSandboxReference(value.observation.reference, ref.sandboxReference);
+
+  return value;
+}
 
 function sandboxInput(id: string, reference?: SandboxReference | null) {
   return reference ? { id, reference } : { id };
@@ -500,6 +482,7 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
               : undefined,
             resource: this.reference.resource,
             mounts: this.reference.mounts,
+            renewal: this.reference.renewal,
             capture: this.reference.capture,
             token: this.reference.token,
             version: this.reference.tokenVersion,
@@ -707,6 +690,30 @@ export class AdapterSandbox {
       return startProcess(this.client, sandboxInput(this.id, this.reference), input, options);
     },
   };
+  async submitRenew(
+    input?: RenewRequest,
+    options: WaitOptions = {},
+  ): Promise<AdapterOperation<RenewResult, "sandbox_renew">> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+
+    const request =
+      input === undefined
+        ? undefined
+        : validateResourceInput(RenewRequest, input, "Invalid renewal window");
+
+    if (!this.reference) unsupported("Lifetime renewal without a verified sandbox reference");
+
+    return this.client.submit(
+      "sandbox_renew",
+      { sandbox: { id: this.id, reference: this.reference }, ...request },
+      decodeRenew,
+      { ...options, sandboxId: this.id, sandboxReference: this.reference },
+    );
+  }
+  async renew(input?: RenewRequest, options: WaitOptions = {}): Promise<RenewResult> {
+    return (await this.submitRenew(input, options)).wait(options);
+  }
   async submitSnapshot(
     request: SnapshotRequest = {},
     options: WaitOptions = {},
@@ -1003,6 +1010,7 @@ export type AdvancedOperationKind = OperationKind;
 export type AdvancedIdentity = { operationId: string; submissionId: string; invocationKey: string };
 
 export type AdvancedObservation = {
+  renewal?: RenewRequest;
   capture?: AdapterRecoveryReference["capture"];
   scope: Scope;
   kind: OperationKind;
@@ -1029,6 +1037,10 @@ class BeforeSubmitError extends Error {
   }
 }
 
+const preparedRenewals = new WeakMap<PreparedAdapterAttempt, RenewRequest>();
+
+const dispatchedRenewals = new WeakSet<PreparedAdapterAttempt>();
+
 export class PreparedAdapterAttempt {
   private used = false;
   constructor(
@@ -1036,7 +1048,12 @@ export class PreparedAdapterAttempt {
     private readonly prepared: PreparedOperation,
     private readonly kind: OperationKind,
     private readonly maxOutputBytes?: number,
-  ) {}
+  ) {
+    if (kind === "sandbox_renew")
+      preparedRenewals.set(this, {
+        forSeconds: ResolvedRenewInput.parse(prepared.input).forSeconds,
+      });
+  }
   /** The callback must durably record the submission marker; false cancels dispatch. */
   async submit(
     identity: AdvancedIdentity,
@@ -1087,6 +1104,8 @@ export class PreparedAdapterAttempt {
     assertSignal(options.signal);
 
     if (!permitted) return null;
+
+    if (this.kind === "sandbox_renew") dispatchedRenewals.add(this);
     this.client.telemetry.submitted();
 
     const submissionWaitSignal =
@@ -1249,6 +1268,18 @@ export class AdapterDirectClient {
           ? AbortSignal.any([this.signal, options.signal])
           : this.signal;
 
+        if (kind === "sandbox_renew") {
+          const parsed = ResolvedRenewInput.partial({ forSeconds: true }).safeParse(input);
+
+          if (!parsed.success)
+            throw new SandbarError("INVALID_ARGUMENT", "Invalid renewal request");
+          const renewal = parsed.data;
+          assertResourceScope(renewal.sandbox.reference, {
+            provider: this.provider,
+            scope: this.scope,
+          });
+        }
+
         if ("snapshot" in input)
           assertResourceScope(ResourceReference.parse(input.snapshot), {
             provider: this.provider,
@@ -1301,6 +1332,7 @@ export class AdapterDirectClient {
               "exec",
               "file_write",
               "image_build",
+              "sandbox_renew",
               "snapshot_capture",
               "snapshot_restore",
               "snapshot_delete",
@@ -1312,6 +1344,7 @@ export class AdapterDirectClient {
             sandboxId: z.string().min(1).max(512).optional(),
             sandboxReference: ReferenceSchema.shape.sandboxReference,
             resource: ResourceReference.optional(),
+            renewal: ReferenceSchema.shape.renewal,
             capture: CaptureExpectation.optional(),
             mounts: z.array(importMountSpec).max(32).optional(),
             token: z.json().optional(),
@@ -1325,6 +1358,11 @@ export class AdapterDirectClient {
             "Observation scope differs from the verified connection",
           );
 
+        if (checked.kind === "sandbox_renew" && (!checked.renewal || !checked.sandboxReference))
+          throw new SandbarError(
+            "INVALID_ARGUMENT",
+            "Renewal observation requires saved intent and identity",
+          );
         this.assertRecoverySandbox(checked);
         assertRecoveryResourceKind(checked.kind, checked.resource);
 
@@ -1344,7 +1382,9 @@ export class AdapterDirectClient {
             "volume_delete",
           ].includes(checked.kind) &&
             checked.sandboxId) ||
-          (["destroy", "exec", "file_write", "snapshot_capture"].includes(checked.kind) &&
+          (["destroy", "exec", "file_write", "snapshot_capture", "sandbox_renew"].includes(
+            checked.kind,
+          ) &&
             !checked.sandboxId) ||
           (["snapshot_restore", "snapshot_delete", "volume_delete"].includes(checked.kind) &&
             !checked.resource)
@@ -1371,6 +1411,7 @@ export class AdapterDirectClient {
                   ? sandboxInput(checked.sandboxId, checked.sandboxReference)
                   : undefined,
                 resource: checked.resource,
+                renewal: checked.renewal,
                 capture: checked.capture,
                 mounts: checked.mounts,
                 token: checked.token,
@@ -1699,6 +1740,7 @@ export class AdapterDirectClient {
       sandboxId: options.sandboxId,
       sandboxReference: options.sandboxReference,
       resource: options.resource,
+      renewal: preparedRenewals.get(prepared),
       capture: options.capture,
       mounts: options.mounts,
       file: options.file,
@@ -1763,6 +1805,10 @@ export class AdapterDirectClient {
           reference,
         );
 
+      if (waiting.aborted && kind === "sandbox_renew" && !dispatchedRenewals.has(prepared)) {
+        throw new SandbarError("WAIT_ABORTED", "Waiting stopped before renewal dispatch", "none");
+      }
+
       if (waiting.aborted) abortWaiting(reference, waiting.reason);
       throw asUnknown(reference, "Provider submission outcome is unknown");
     }
@@ -1781,6 +1827,20 @@ export class AdapterDirectClient {
 
     if (checked.kind !== reference.kind)
       throw asUnknown(reference, "Provider partial result does not match operation");
+
+    if (checked.kind === "sandbox_renew") {
+      if (!reference.sandboxReference || !reference.renewal)
+        throw asUnknown(reference, "Saved renewal intent is missing");
+      assertSandboxReference(checked.reference, reference.sandboxReference);
+
+      if (checked.requested.forSeconds !== reference.renewal.forSeconds)
+        throw asUnknown(reference, "Observed renewal intent differs");
+
+      if (checked.observation?.reference)
+        assertSandboxReference(checked.observation.reference, reference.sandboxReference);
+
+      return checked;
+    }
 
     const resources =
       checked.kind === "snapshot_capture"
@@ -1856,6 +1916,12 @@ export class AdapterDirectClient {
     if (reference.kind === "snapshot_capture" && !reference.capture)
       throw new SandbarError("INVALID_ARGUMENT", "Recovery capture expectations are missing");
 
+    if (reference.kind === "sandbox_renew" && (!reference.renewal || !reference.sandboxReference))
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Recovery renewal intent and identity are missing",
+      );
+
     this.assertRecoverySandbox(reference);
     assertRecoveryResourceKind(reference.kind, reference.resource);
 
@@ -1879,7 +1945,9 @@ export class AdapterDirectClient {
       throw new SandbarError("INVALID_ARGUMENT", "Create reference cannot have a sandbox");
 
     if (
-      ["destroy", "exec", "file_write", "snapshot_capture"].includes(reference.kind) &&
+      ["destroy", "exec", "file_write", "snapshot_capture", "sandbox_renew"].includes(
+        reference.kind,
+      ) &&
       !reference.sandboxId
     )
       throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox is missing");
@@ -1891,6 +1959,8 @@ export class AdapterDirectClient {
     };
 
     switch (reference.kind) {
+      case "sandbox_renew":
+        return new AdapterOperation(this, reference, decodeRenew, undefined, "sandbox_renew");
       case "snapshot_capture":
         return new AdapterOperation(
           this,

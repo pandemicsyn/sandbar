@@ -140,6 +140,53 @@ export const SandboxState = z.enum([
 
 export type SandboxState = z.infer<typeof SandboxState>;
 
+const UnknownFact = z.strictObject({ status: z.literal("unknown"), reason: z.string().min(1) });
+
+export const SandboxInfoSchema = z.strictObject({
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).nullable(),
+  state: SandboxState,
+  nativeState: z.string().nullable(),
+  observedAt: z.iso.datetime({ offset: true }),
+  expires: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      at: z.iso.datetime({ offset: true }),
+      action: z.enum(["destroy", "suspend"]),
+      scope: z.enum(["running-session", "sandbox"]),
+    }),
+    z.strictObject({ status: z.literal("none") }),
+    UnknownFact,
+  ]),
+  idleStop: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z
+        .strictObject({
+          seconds: z.number().nonnegative().finite(),
+          action: z.enum(["stop", "suspend"]),
+        })
+        .nullable(),
+    }),
+    UnknownFact,
+  ]),
+  retention: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z.strictObject({
+        autoDeleteAfterStoppedSeconds: z.number().nonnegative().finite().nullable(),
+      }),
+    }),
+    UnknownFact,
+  ]),
+  execution: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z.strictObject({ nativeId: z.string().min(1) }),
+    }),
+    UnknownFact,
+  ]),
+});
+
 export const SnapshotProfile = z.strictObject({
   id: z.string().min(1).max(128),
   preserve: z.enum(["filesystem", "filesystem+memory"]),
@@ -296,6 +343,13 @@ export type SnapshotCaptureValue = z.infer<typeof SnapshotCaptureValue>;
 
 /** Known native results accompanying an incomplete operation; never dispatch authority. */
 export const OperationOutcome = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("sandbox_renew"),
+    status: z.literal("unknown"),
+    reference: ResourceReference.extend({ kind: z.literal("sandbox") }),
+    requested: z.strictObject({ forSeconds: z.number().int().positive().safe() }),
+    observation: SandboxInfoSchema.nullable(),
+  }),
   z
     .strictObject({
       kind: z.literal("snapshot_capture"),
@@ -420,7 +474,11 @@ export type CreatePlan = {
 };
 
 export type StateCapabilities = {
-  lifecycle: { reopen: Support<{}>; inspect: Support<{}> };
+  lifecycle: {
+    reopen: Support<{}>;
+    inspect: Support<{}>;
+    renew: Support<import("./lifecycle").RenewLimits>;
+  };
   snapshots: {
     capture: Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>;
     restore: Support<RestoreCapabilities>;
@@ -513,7 +571,17 @@ export async function stateCapabilities(
     yes ? { status: "supported", value: {} } : unsupportedState();
 
   return {
-    lifecycle: { reopen: implemented(!!session.reopen), inspect: implemented(!!session.inspect) },
+    lifecycle: {
+      reopen: implemented(!!session.reopen),
+      inspect: implemented(!!session.inspect),
+      renew:
+        session.renew && session.renewCapabilities
+          ? await readBeforeDeadline(
+              (ctx) => session.renewCapabilities!(structuredClone(target), ctx),
+              context,
+            )
+          : unsupportedState(),
+    },
     snapshots: {
       capture,
       restore: session.snapshotRestore ? resources.restore : unsupportedState(),
@@ -681,6 +749,14 @@ const supportSchema = <S extends z.ZodType>(value: S) =>
 export const DirectCapabilities = z.strictObject({
   lifecycle: z
     .strictObject({
+      renew: supportSchema(
+        z.strictObject({
+          minSeconds: z.number().int().positive().safe(),
+          maxSeconds: z.number().int().positive().safe(),
+          stepSeconds: z.number().int().positive().safe(),
+          scope: z.enum(["sandbox", "running-session"]),
+        }),
+      ),
       reopen: supportSchema(z.strictObject({})),
       inspect: supportSchema(z.strictObject({})),
     })

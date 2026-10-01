@@ -37,6 +37,8 @@ export type ImageBuildValue = { preparedId: string; retainedResources: RetainedA
 
 export * from "./resources";
 
+export * from "./lifecycle";
+
 export type CreateInput = {
   image: Image;
   networkPolicy: string;
@@ -203,6 +205,7 @@ export type RecoveryAttempt<
   readonly sandbox: S;
   readonly resource?: ResourceReference;
   readonly mounts?: import("./state").MountSpec[];
+  readonly renewal?: import("./lifecycle").RenewRequest;
   readonly capture?: import("./state").SnapshotCaptureInput["expectation"];
   readonly token?: T;
 };
@@ -252,6 +255,15 @@ export type AdapterSession<
     target: { sandbox?: Sandbox; create?: CreateInput },
     ctx: ReadContext,
   ) => Promise<Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>>;
+  renew?: Mutation<
+    import("./lifecycle").RenewInput,
+    import("./lifecycle").RenewResult,
+    import("./lifecycle").ResolvedRenewInput
+  >;
+  renewCapabilities?: (
+    target: { sandbox?: Sandbox },
+    ctx: ReadContext,
+  ) => Promise<Support<import("./lifecycle").RenewLimits>>;
   snapshotCapture?: Mutation<
     import("./resources").SnapshotCaptureInput,
     import("./resources").SnapshotCaptureValue

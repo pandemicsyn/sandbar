@@ -32,6 +32,23 @@ class NativeReadError extends AdapterError {
   }
 }
 
+export class E2BRenewRejected extends AdapterError {
+  constructor(status: number) {
+    super(
+      status === 404
+        ? "NOT_FOUND"
+        : [401, 403].includes(status)
+          ? "FORBIDDEN"
+          : status === 409
+            ? "CONFLICT"
+            : status === 429
+              ? "RATE_LIMIT"
+              : "INVALID_ARGUMENT",
+      `E2B renewal rejected (${status})`,
+    );
+  }
+}
+
 /** Positive native rejection; messages and response bodies never enter recovery. */
 export class E2BVolumeCreateRejected extends Error {
   constructor(readonly status: 400 | 401 | 403) {
@@ -61,6 +78,7 @@ export type E2BRecord = {
   metadata: Record<string, string>;
   state: string;
   endAt?: string | null;
+  lifecycle?: { onTimeout?: string; autoResume?: boolean };
   envdVersion?: string;
   /** Native detail proves guest IO can attach without resuming or changing lifetime. */
   attachmentReady?: boolean;
@@ -120,6 +138,7 @@ export type E2BTransport = {
     limit: number,
     nextToken?: string,
   ): Promise<{ items: E2BRecord[]; nextToken?: string }>;
+  renew?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
     id: string,
@@ -235,7 +254,9 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     envdVersion: z.string().optional(),
     envdAccessToken: z.string().min(1).max(8192).optional(),
     domain: z.string().optional(),
-    lifecycle: z.object({ autoResume: z.boolean().optional() }).optional(),
+    lifecycle: z
+      .object({ onTimeout: z.string().optional(), autoResume: z.boolean().optional() })
+      .optional(),
     endAt: z.string().nullable().optional(),
     volumeMounts: z.array(z.object({ name: z.string(), path: z.string() })).optional(),
   });
@@ -289,6 +310,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
           !!info.envdVersion &&
           info.domain === "e2b.app",
         endAt: info.endAt,
+        lifecycle: info.lifecycle,
         volumeMounts: info.volumeMounts,
       };
     } catch (error) {
@@ -636,6 +658,25 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       }));
 
       return { items, nextToken: paginator.nextToken };
+    },
+    async renew(id, seconds, signal) {
+      const response = await fetcher(
+        `${E2B_ENDPOINT}/sandboxes/${encodeURIComponent(id)}/timeout`,
+        {
+          method: "POST",
+          headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify({ timeout: seconds }),
+          redirect: "error",
+          signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+        },
+      );
+
+      void response.body?.cancel().catch(() => undefined);
+
+      if ([400, 401, 403, 404, 409, 422, 429].includes(response.status))
+        throw new E2BRenewRejected(response.status);
+
+      if (!response.ok) throw new AdapterError("UNAVAILABLE", "E2B renewal response is uncertain");
     },
     async kill(id, signal) {
       return Sandbox.kill(id, { ...opts, signal });
