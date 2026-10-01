@@ -208,11 +208,23 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           record.metadata.sandbar_template === record.templateId ||
           (record.metadata.sandbar_template === "base" && !record.metadata.sandbar_build));
 
-      const find = async (id: string): Promise<E2BRecord | null> => {
+      const find = async (id: string, expected?: SandboxReference): Promise<E2BRecord | null> => {
         if (!nativeId.test(id))
           throw new AdapterError("INVALID_ARGUMENT", "Invalid E2B sandbox ID");
         await verifyAuthority();
         const record = await transport.get(id);
+
+        if (record && expected) {
+          if (record.id !== id || !owned(record))
+            throw new AdapterError("CONFLICT", "E2B sandbox identity or scope differs");
+          assertSandboxReference(
+            sandboxReference("e2b", boundScope, record.id, {
+              operation: record.metadata.sandbar_operation!,
+              submission: record.metadata.sandbar_submission!,
+            }),
+            expected,
+          );
+        }
 
         return record && owned(record) ? record : null;
       };
@@ -266,8 +278,11 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         };
       };
 
-      const requireRunning = async (id: string): Promise<E2BRecord> => {
-        const record = await find(id);
+      const requireRunning = async (
+        id: string,
+        expected?: SandboxReference,
+      ): Promise<E2BRecord> => {
+        const record = await find(id, expected);
 
         if (!record)
           throw new AdapterError("NOT_FOUND", "E2B sandbox is outside the verified scope");
@@ -600,7 +615,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         destroy: {
           recovery: { version: 2, token: DestroyToken },
           async prepare(box) {
-            const record = await find(box.id);
+            const record = await find(box.id, box.reference);
 
             if (!record)
               throw new AdapterError("NOT_FOUND", "E2B sandbox is outside the verified scope");
@@ -616,7 +631,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             return box;
           },
           async submit(box, ctx) {
-            const record = await find(box.id);
+            const record = await find(box.id, box.reference);
 
             if (!record)
               return ctx.reject("NOT_FOUND", "E2B sandbox is outside the verified scope");
@@ -762,7 +777,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             token: ExecToken,
           },
           async prepare(input) {
-            await requireRunning(input.sandbox.id);
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
 
             if (
               input.command.kind === "argv" &&
@@ -824,7 +839,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             const token = ExecToken.safeParse(attempt.token);
 
             if (!token.success) return null;
-            await requireRunning(attempt.sandbox.id);
+            await requireRunning(attempt.sandbox.id, attempt.sandbox.reference);
             const paths = executionPaths(attempt.submissionId);
 
             return readExecution(attempt.sandbox.id, paths, token.data.maxOutputBytes);
@@ -834,7 +849,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           maxBytes: MAX_BYTES,
           async read(input) {
             requirePath(input.path);
-            await requireRunning(input.sandbox.id);
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
             const result = await transport.read(input.sandbox.id, input.path, MAX_BYTES);
 
             if (result.truncated)
@@ -846,7 +861,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             recovery: { version: 1, token: WriteToken },
             async prepare(input) {
               requirePath(input.path);
-              await requireRunning(input.sandbox.id);
+              await requireRunning(input.sandbox.id, input.sandbox.reference);
 
               if (input.bytes.length > MAX_BYTES)
                 throw new AdapterError("CAPACITY", "E2B file write exceeds the byte bound");
@@ -923,7 +938,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               const token = WriteToken.safeParse(attempt.token);
 
               if (!token.success) return ctx.unknown("E2B file write lacks recovery evidence");
-              await requireRunning(attempt.sandbox.id);
+              await requireRunning(attempt.sandbox.id, attempt.sandbox.reference);
               const { path, staged, bytesWritten, digest, failure } = token.data;
               requirePath(path);
 

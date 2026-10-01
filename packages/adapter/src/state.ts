@@ -298,7 +298,10 @@ export const SnapshotInfo = z.strictObject({
 export type SnapshotInfo = z.infer<typeof SnapshotInfo>;
 
 export const SnapshotCaptureInput = z.strictObject({
-  sandbox: z.strictObject({ id: z.string().min(1).max(512) }),
+  sandbox: z.strictObject({
+    id: z.string().min(1).max(512),
+    reference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
+  }),
   request: SnapshotRequest,
   expectation: z.strictObject({ profile: SnapshotProfile, sourceState: SandboxState }).optional(),
 });
@@ -409,6 +412,7 @@ export type InventoryInput = z.infer<typeof InventoryInput>;
 
 export const DestroyInput = z.strictObject({
   id: z.string().min(1).max(512),
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
   storage: z.enum(["require-durable", "allow-unconfirmed"]).optional(),
 });
 

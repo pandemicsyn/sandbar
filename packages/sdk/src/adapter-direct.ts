@@ -239,6 +239,10 @@ export type RecoveredOperation =
   | AdapterOperation<DestroyValue, "destroy">
   | AdapterOperation<void, "file_write">;
 
+function sandboxInput(id: string, reference?: SandboxReference | null) {
+  return reference ? { id, reference } : { id };
+}
+
 export class AdapterOperation<T, K extends OperationKind = OperationKind> {
   readonly durability = "process" as const;
   private first: RuntimeResult | undefined;
@@ -260,6 +264,7 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
     first?: RuntimeResult,
     // SAFETY: default K is OperationKind; internal narrowed constructors pass a validated kind.
     readonly kind: K = reference.kind as K,
+    private readonly sandboxReference?: SandboxReference,
   ) {
     this.#reference = reference;
     certifyOperationReference(this, () => this.#reference);
@@ -322,7 +327,9 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
         {
           operationId: this.reference.operationId,
           submissionId: this.reference.submissionId,
-          sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+          sandbox: this.reference.sandboxId
+            ? sandboxInput(this.reference.sandboxId, this.sandboxReference)
+            : undefined,
           resource: this.reference.resource,
           mounts: this.reference.mounts,
           capture: this.reference.capture,
@@ -432,7 +439,9 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
           {
             operationId: this.reference.operationId,
             submissionId: this.reference.submissionId,
-            sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+            sandbox: this.reference.sandboxId
+              ? sandboxInput(this.reference.sandboxId, this.sandboxReference)
+              : undefined,
             resource: this.reference.resource,
             mounts: this.reference.mounts,
             capture: this.reference.capture,
@@ -653,7 +662,7 @@ export class AdapterSandbox {
     return this.client.submit(
       "snapshot_capture",
       {
-        sandbox: { id: this.id },
+        sandbox: sandboxInput(this.id, this.reference),
         request,
         expectation: { profile: plan.value.profile, sourceState: plan.value.sourceState },
       },
@@ -665,6 +674,7 @@ export class AdapterSandbox {
       {
         ...options,
         sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
         capture: { profile: plan.value.profile, sourceState: plan.value.sourceState },
       },
     );
@@ -676,7 +686,9 @@ export class AdapterSandbox {
     return (await this.submitSnapshot(request, options)).wait(options);
   }
   capabilities(): Promise<AdapterCapabilities> {
-    return internalMethod(this.client.capabilities)({ sandbox: { id: this.id } });
+    return internalMethod(this.client.capabilities)({
+      sandbox: sandboxInput(this.id, this.reference),
+    });
   }
   async checkSnapshot(request: SnapshotRequest = {}): Promise<Support<SnapshotPlan>> {
     return this.checkSnapshotWithSignal(request, this.client.signal);
@@ -688,7 +700,7 @@ export class AdapterSandbox {
     assertSignal(signal);
 
     const caps = await internalMethod(this.client.capabilities)(
-      { sandbox: { id: this.id } },
+      { sandbox: sandboxInput(this.id, this.reference) },
       { signal },
     );
 
@@ -729,10 +741,10 @@ export class AdapterSandbox {
     const result = await readWhileOpen(
       this.client,
       raceAbort(
-        this.client.session.inspect(
-          { id: this.id, reference: this.reference ?? undefined },
-          { signal, deadline: Date.now() + 30000 },
-        ),
+        this.client.session.inspect(sandboxInput(this.id, this.reference), {
+          signal,
+          deadline: Date.now() + 30000,
+        }),
         signal,
       ).catch((error) => {
         assertSignal(options.signal);
@@ -778,7 +790,7 @@ export class AdapterSandbox {
     return this.client.submit(
       "exec",
       {
-        sandbox: { id: this.id },
+        sandbox: sandboxInput(this.id, this.reference),
         command: request.command,
         cwd: request.cwd,
         env: request.env,
@@ -796,7 +808,12 @@ export class AdapterSandbox {
           execOutput(output.exitCode, output.stdout, output.stderr, output.truncated),
         );
       },
-      { ...options, sandboxId: this.id, maxOutputBytes: request.maxOutputBytes },
+      {
+        ...options,
+        sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
+        maxOutputBytes: request.maxOutputBytes,
+      },
     );
   }
   async exec(
@@ -819,7 +836,7 @@ export class AdapterSandbox {
     const value = await readWhileOpen(
       this.client,
       this.client.session.files.read(
-        { sandbox: { id: this.id }, path },
+        { sandbox: sandboxInput(this.id, this.reference), path },
         { signal: this.client.signal, deadline: Date.now() + 30_000 },
       ),
     );
@@ -882,7 +899,7 @@ export class AdapterSandbox {
     const op = await this.client.submit(
       "file_write",
       {
-        sandbox: { id: this.id },
+        sandbox: sandboxInput(this.id, this.reference),
         path,
         bytes: payload,
         overwrite: options.overwrite ?? false,
@@ -895,7 +912,12 @@ export class AdapterSandbox {
         )
           throw asUnknown(ref);
       },
-      { ...options, sandboxId: this.id, file: { path, bytes: payload.length } },
+      {
+        ...options,
+        sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
+        file: { path, bytes: payload.length },
+      },
     );
 
     await waitFor(this.client.telemetry, op, options);
@@ -905,7 +927,7 @@ export class AdapterSandbox {
   ): Promise<AdapterOperation<import("sandbar-adapter").DestroyValue>> {
     const op = await this.client.submit<import("sandbar-adapter").DestroyValue>(
       "destroy",
-      { id: this.id, storage: options.storage },
+      { ...sandboxInput(this.id, this.reference), storage: options.storage },
       (result, ref) => {
         if (
           result.kind !== "completed" ||
@@ -916,7 +938,7 @@ export class AdapterSandbox {
 
         return result.value;
       },
-      { ...options, sandboxId: this.id },
+      { ...options, sandboxId: this.id, sandboxReference: this.reference ?? undefined },
     );
 
     return op;
@@ -1524,19 +1546,27 @@ export class AdapterDirectClient {
     options: WaitOptions,
   ): Promise<AdapterSandbox> {
     this.ensureOpen();
-    reference = validateResourceReference(reference);
 
-    if (reference.kind !== "sandbox")
-      throw new SandbarError("INVALID_ARGUMENT", "Expected sandbox reference");
-    assertResourceScope(reference, { provider: this.provider, scope: this.scope });
+    try {
+      reference = validateResourceReference(reference);
+
+      if (reference.kind !== "sandbox")
+        throw new SandbarError("INVALID_ARGUMENT", "Expected sandbox reference");
+      assertResourceScope(reference, { provider: this.provider, scope: this.scope });
+    } catch (error) {
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
 
     if (!this.session.reopen) unsupported("reopen");
     assertSignal(options.signal);
 
+    const timeout = AbortSignal.timeout(30000);
+
     const signal = AbortSignal.any([
       this.signal,
       ...(options.signal ? [options.signal] : []),
-      AbortSignal.timeout(30000),
+      timeout,
     ]);
 
     const info = await readWhileOpen(
@@ -1546,6 +1576,8 @@ export class AdapterDirectClient {
         signal,
       ).catch((error) => {
         assertSignal(options.signal);
+
+        if (timeout.aborted) throw new SandbarError("TIMEOUT", "Sandbox reopen timed out");
         throw error;
       }),
     );
@@ -1590,6 +1622,7 @@ export class AdapterDirectClient {
     options: {
       signal?: AbortSignal;
       sandboxId?: string;
+      sandboxReference?: SandboxReference;
       resource?: ResourceReference;
       capture?: z.infer<typeof CaptureExpectation>;
       mounts?: import("sandbar-adapter").MountSpec[];
@@ -1681,7 +1714,7 @@ export class AdapterDirectClient {
       throw asUnknown(reference, "Provider submission outcome is unknown");
     }
 
-    return new AdapterOperation(this, reference, decode, first, kind);
+    return new AdapterOperation(this, reference, decode, first, kind, options.sandboxReference);
   }
   checkedOutcome(
     reference: AdapterRecoveryReference,

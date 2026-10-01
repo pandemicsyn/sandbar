@@ -123,7 +123,10 @@ export type RuntimeResult =
 
 const Id = z.string().min(1).max(512);
 
-const SandboxSchema = z.strictObject({ id: Id });
+const SandboxSchema = z.strictObject({
+  id: Id,
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
+});
 
 const CreateInputSchema = z.strictObject({
   image: z.discriminatedUnion("kind", [

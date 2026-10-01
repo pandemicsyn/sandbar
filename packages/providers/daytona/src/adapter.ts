@@ -552,7 +552,10 @@ export function createDaytonaAdapter(
 
           return result;
         },
-        async resourceCapabilities() {
+        async resourceCapabilities(target, ctx) {
+          if (target.sandbox?.reference)
+            await inspection(target.sandbox.id, target.sandbox.reference, ctx);
+
           const fields = await resourceState.fields.resourceCapabilities!(
             {},
             { signal: new AbortController().signal, deadline: Date.now() + 30000 },
@@ -775,8 +778,9 @@ export function createDaytonaAdapter(
             let nativeBox;
 
             try {
-              nativeBox = await resourceState.box(box.id, ctx);
-            } catch {
+              nativeBox = await resourceState.box(box.id, ctx, box.reference);
+            } catch (error) {
+              if (error instanceof AdapterError) throw error;
               throw new AdapterError("UNAVAILABLE", "Daytona inspection failed before deletion");
             }
 
@@ -803,10 +807,14 @@ export function createDaytonaAdapter(
 
             try {
               mounts = (
-                await resourceState.box(box.id, {
-                  signal: ctx.signal,
-                  deadline: Date.now() + 30000,
-                })
+                await resourceState.box(
+                  box.id,
+                  {
+                    signal: ctx.signal,
+                    deadline: Date.now() + 30000,
+                  },
+                  box.reference,
+                )
               ).volumes;
             } catch (error) {
               const code = error instanceof AdapterError ? error.code : "UNAVAILABLE";
@@ -1025,7 +1033,18 @@ export function createDaytonaAdapter(
         },
         exec: {
           recovery: { version: 1, token: ExecToken },
+          async prepare(input, ctx) {
+            if (input.sandbox.reference)
+              await inspection(input.sandbox.id, input.sandbox.reference, ctx);
+
+            return input;
+          },
           async submit(input, ctx) {
+            if (input.sandbox.reference)
+              await inspection(input.sandbox.id, input.sandbox.reference, {
+                signal: ctx.signal,
+                deadline: Date.now() + 30000,
+              });
             let receiptDeadline: number | undefined;
 
             const result = await driver.exec({
@@ -1066,6 +1085,9 @@ export function createDaytonaAdapter(
             )
               return null;
 
+            if (attempt.sandbox.reference)
+              await inspection(attempt.sandbox.id, attempt.sandbox.reference, ctx);
+
             const result = await driver.observeExec({
               sandbox: native(attempt.sandbox.id),
               submissionId: attempt.submissionId,
@@ -1089,12 +1111,30 @@ export function createDaytonaAdapter(
         },
         files: {
           maxBytes: caps.maxFileBytes,
-          async read(input) {
+          async read(input, ctx) {
+            if (input.sandbox.reference)
+              await inspection(input.sandbox.id, input.sandbox.reference, {
+                signal: ctx.signal,
+                deadline: Date.now() + 30000,
+              });
+
             return driver.readFile({ sandbox: native(input.sandbox.id), path: input.path });
           },
           write: {
             recovery: { version: 1, token: WriteToken },
+            async prepare(input, ctx) {
+              if (input.sandbox.reference)
+                await inspection(input.sandbox.id, input.sandbox.reference, ctx);
+
+              return input;
+            },
             async submit(input, ctx) {
+              if (input.sandbox.reference)
+                await inspection(input.sandbox.id, input.sandbox.reference, {
+                  signal: ctx.signal,
+                  deadline: Date.now() + 30000,
+                });
+
               const result = await driver.writeFile({
                 sandbox: native(input.sandbox.id),
                 identity: identity(ctx),
@@ -1124,6 +1164,9 @@ export function createDaytonaAdapter(
                 (token && (!token.success || token.data.submissionId !== attempt.submissionId))
               )
                 return null;
+
+              if (attempt.sandbox.reference)
+                await inspection(attempt.sandbox.id, attempt.sandbox.reference, ctx);
 
               const result = await driver.observeWrite({
                 sandbox: native(attempt.sandbox.id),

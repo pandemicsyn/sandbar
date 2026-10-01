@@ -7,6 +7,10 @@ import {
   type AttemptContext,
   type ObserveContext,
   assertResourceScope,
+  assertSandboxReference,
+  sandboxReference,
+  type SandboxReference,
+  type Sandbox,
   resolveSnapshot,
   type AdapterSession,
   type Scope,
@@ -286,7 +290,7 @@ export function daytonaState(input: {
     return schema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
   }
 
-  async function box(id: string, ctx?: ReadContext) {
+  async function box(id: string, ctx?: ReadContext, expected?: SandboxReference) {
     const value = await json(
       await request("GET", `/sandbox/${encodeURIComponent(id)}`, undefined, ctx),
       NativeBox,
@@ -298,6 +302,18 @@ export function daytonaState(input: {
       value.target !== input.target
     )
       throw new AdapterError("CONFLICT", "Sandbox scope differs");
+
+    if (expected) {
+      const operation = value.labels?.["sandbar.operation"];
+      const submission = value.labels?.["sandbar.submission"];
+
+      if (!operation || !submission)
+        throw new AdapterError("CONFLICT", "Native sandbox creation correlation is missing");
+      assertSandboxReference(
+        sandboxReference("daytona", scope, id, { operation, submission }),
+        expected,
+      );
+    }
 
     return value;
   }
@@ -485,16 +501,13 @@ export function daytonaState(input: {
     return info;
   }
 
-  async function profiles(
-    target: { sandbox?: { id: string }; create?: CreateInput },
-    ctx: ReadContext,
-  ) {
+  async function profiles(target: { sandbox?: Sandbox; create?: CreateInput }, ctx: ReadContext) {
     if (!target.sandbox)
       return {
         status: "unknown" as const,
         reason: "Capture eligibility requires actual container source evidence",
       };
-    const source = await box(target.sandbox.id, ctx);
+    const source = await box(target.sandbox.id, ctx, target.sandbox.reference);
 
     return profileFor(source);
   }
@@ -1427,7 +1440,7 @@ export function daytonaState(input: {
       recovery: { version: 1, token: Token },
       async prepare(value, ctx) {
         const support = await profiles({ sandbox: value.sandbox }, ctx);
-        const source = await box(value.sandbox.id, ctx);
+        const source = await box(value.sandbox.id, ctx, value.sandbox.reference);
 
         const plan = resolveSnapshot(
           support,
@@ -1482,7 +1495,7 @@ export function daytonaState(input: {
 
         if (prior.status !== 404)
           return ctx.reject("CONFLICT", "Capture name absence is unverified");
-        const source = await box(value.sandbox.id, context);
+        const source = await box(value.sandbox.id, context, value.sandbox.reference);
 
         const initial =
           source.state === "started"

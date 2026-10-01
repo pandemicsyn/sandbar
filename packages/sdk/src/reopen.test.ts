@@ -1,12 +1,13 @@
-import { expect, test } from "bun:test";
+import { expect, test, spyOn } from "bun:test";
 import { z } from "zod";
 import {
   defineAdapter,
   sandboxReference,
   unknownSandboxFacts,
   type AdapterSession,
+  type Sandbox,
 } from "sandbar-adapter";
-import { Sandbar, Image } from "./index";
+import { Sandbar, Image, SandbarError } from "./index";
 
 function fixture(reopening: boolean) {
   const scope = { authority: { kind: "fixture", id: "account" }, partition: {} };
@@ -18,6 +19,11 @@ function fixture(reopening: boolean) {
 
   let hold = false;
   let inspected = 0;
+  const dispatched: { operation: string; sandbox: Sandbox }[] = [];
+
+  const record = (operation: string, sandbox: Sandbox) => {
+    dispatched.push({ operation, sandbox });
+  };
 
   const adapter = defineAdapter({
     name: "reopen-fixture",
@@ -26,16 +32,90 @@ function fixture(reopening: boolean) {
     async connect() {
       const session: AdapterSession = {
         scope,
-        supports: { images: ["prepared"], network: ["blocked"] },
+        supports: {
+          images: ["prepared"],
+          network: ["blocked"],
+          exec: { commands: ["argv", "shell"], maxOutputBytes: 1_048_576 },
+          fileWrite: { overwrite: true, noClobber: true },
+        },
         async create() {
           if (reopening) return { id: "native", state: "running", reference };
 
           return { id: "native", state: "running" };
         },
-        async destroy() {
+        async snapshotProfiles(target) {
+          if (target.sandbox) record("snapshotProfiles", target.sandbox);
+
+          return {
+            status: "supported",
+            value: {
+              defaultProfileId: "fixture",
+              profiles: [
+                {
+                  id: "fixture",
+                  preserve: "filesystem",
+                  sourceStates: ["running"],
+                  interruption: "none",
+                  sourceAfter: "unchanged",
+                  consistency: "crash-consistent",
+                  connections: "dropped",
+                  mountHandling: "none",
+                  restoreExecution: "fresh",
+                },
+              ],
+            },
+          };
+        },
+        async snapshotCapture(input, ctx) {
+          record("snapshotCapture", input.sandbox);
+
+          return ctx.reject("UNSUPPORTED", "fixture");
+        },
+        async resourceCapabilities(target) {
+          if (target.sandbox) record("capabilities", target.sandbox);
+          const unsupported = { status: "unsupported" as const, reason: "fixture" };
+
+          return { restore: unsupported, volumes: unsupported, mounts: unsupported };
+        },
+        exec: {
+          recovery: { version: 1, token: z.strictObject({}) },
+          async submit(input, ctx) {
+            record("exec", input.sandbox);
+
+            return ctx.pending({}, { pollAfterMs: 1 });
+          },
+          async observe(attempt) {
+            if (attempt.sandbox) record("observeExec", attempt.sandbox);
+
+            return {
+              exitCode: 0,
+              stdout: new Uint8Array(),
+              stderr: new Uint8Array(),
+              truncated: false,
+            };
+          },
+        },
+        files: {
+          maxBytes: 1024,
+          async read(input) {
+            record("read", input.sandbox);
+
+            return new Uint8Array();
+          },
+          async write(input) {
+            record("write", input.sandbox);
+
+            return { bytesWritten: input.bytes.length };
+          },
+        },
+        async destroy(input) {
+          record("destroy", input);
+
           return { computeStopped: true, retainedResources: [] };
         },
-        async inspect() {
+        async inspect(input) {
+          record("inspect", input);
+
           return { id: "native", state: "running" };
         },
       };
@@ -62,6 +142,7 @@ function fixture(reopening: boolean) {
   return {
     connect: () => Sandbar.connect({ adapter, config: {}, credentials: {} }),
     reference,
+    dispatched,
     hold() {
       hold = true;
     },
@@ -105,6 +186,82 @@ test("reopen rejects mismatched scope before native IO and normalizes caller can
     controller.abort("caller stop");
     await expect(opening).rejects.toMatchObject({ code: "WAIT_ABORTED" });
   } finally {
+    await client.close();
+  }
+});
+
+test("reopened handles retain verified reference in every sandbox dispatch and execution observation", async () => {
+  const f = fixture(true);
+  const client = await f.connect();
+
+  try {
+    const box = await client.sandboxes.get(f.reference);
+    await box.inspect();
+    await box.capabilities();
+    await box.checkSnapshot();
+    await expect(box.snapshot()).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    await box.exec(["true"]);
+    await box.readFile("/fixture");
+    await box.writeFile("/fixture", new Uint8Array([1]));
+    await box.destroy();
+    expect(new Set(f.dispatched.map((call) => call.operation))).toEqual(
+      new Set([
+        "inspect",
+        "capabilities",
+        "snapshotProfiles",
+        "snapshotCapture",
+        "exec",
+        "observeExec",
+        "read",
+        "write",
+        "destroy",
+      ]),
+    );
+
+    for (const call of f.dispatched)
+      expect(call.sandbox).toEqual({ id: "native", reference: f.reference });
+  } finally {
+    await client.close();
+  }
+});
+
+test("invalid sandbox references surface SandbarError with no effect before reopening", async () => {
+  const f = fixture(true);
+  const client = await f.connect();
+
+  try {
+    for (const reference of [
+      { ...f.reference, nativeId: "" },
+      { ...f.reference, provider: "other" },
+      { ...f.reference, scope: { ...f.reference.scope, partition: { region: "other" } } },
+    ]) {
+      const error = await client.sandboxes.get(reference).catch((error) => error);
+      expect(error).toBeInstanceOf(SandbarError);
+      expect(error).toMatchObject({ effect: "none" });
+    }
+
+    expect(f.inspected()).toBe(0);
+  } finally {
+    await client.close();
+  }
+});
+
+test("SDK reopen timeout normalizes a non-cooperative hook", async () => {
+  const f = fixture(true);
+  const client = await f.connect();
+  const controller = new AbortController();
+  const timeout = spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+
+  try {
+    f.hold();
+    const opening = client.sandboxes.get(f.reference);
+    expect(timeout).toHaveBeenCalledWith(30000);
+    controller.abort(new DOMException("Timed out", "TimeoutError"));
+    const error = await opening.catch((error) => error);
+    expect(error).toBeInstanceOf(SandbarError);
+    expect(error).toMatchObject({ code: "TIMEOUT", effect: "none" });
+  } finally {
+    timeout.mockRestore();
     await client.close();
   }
 });

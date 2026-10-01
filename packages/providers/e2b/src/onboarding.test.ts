@@ -318,7 +318,17 @@ test("sandbox references reopen fresh scoped connections without creation and di
     await expect(reopened.readFile("/tmp/value")).rejects.toMatchObject({ code: "UNAVAILABLE" });
     record.state = "native-future-state";
     expect((await reopened.inspect()).state).toBe("unknown");
+    record.state = "running";
     record.metadata.sandbar_operation = "different";
+
+    for (const operation of [
+      () => reopened.exec(["true"]),
+      () => reopened.readFile("/tmp/value"),
+      () => reopened.writeFile("/tmp/value", new Uint8Array([1])),
+      () => reopened.destroy(),
+    ])
+      await expect(operation()).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.records.has(box.id)).toBe(true);
     await expect(fresh.sandboxes.get(saved)).rejects.toMatchObject({ code: "CONFLICT" });
     record.metadata.sandbar_operation = JSON.parse(saved.receipt).operation;
 

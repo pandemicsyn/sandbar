@@ -182,3 +182,32 @@ test("Daytona confirmed creation preserves the handle when optional reference ve
     await client.close();
   }
 });
+
+test("Daytona reopened operations reject changed creation markers before dispatch", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const created = await client.sandboxes.create({
+      environment: Image.prepared("prepared"),
+      networkPolicy: "blocked",
+    });
+
+    const box = await client.sandboxes.get(created.reference!);
+    f.native.labels["sandbar.operation"] = "changed";
+    const before = f.calls.length;
+
+    for (const operation of [
+      () => box.exec(["true"]),
+      () => box.readFile("/tmp/value"),
+      () => box.writeFile("/tmp/value", new Uint8Array([1])),
+      () => box.capabilities(),
+      () => box.snapshot(),
+      () => box.destroy(),
+    ])
+      await expect(operation()).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.calls.slice(before).every((call) => call.startsWith("GET "))).toBe(true);
+  } finally {
+    await client.close();
+  }
+});
