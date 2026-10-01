@@ -1,39 +1,62 @@
 # Sandbar roadmap
 
-SDK usability comes before more adapters. This is the authoritative queue; specs describe contracts and proposals. Delegated work is in progress, and becomes implemented only when merged.
+SDK usability comes before more adapters. This is the authoritative queue; specs describe contracts and proposals. Work becomes implemented when merged, while live validation retains its actual tested revision and configuration.
 
 ## Merged foundation
 
-Snapshot/volume support merged in [PR #25](https://github.com/pandemicsyn/sandbar/pull/25), tracing/diagnostics in PR #24, CI cleanup in [PR #29](https://github.com/pandemicsyn/sandbar/pull/29), provider acceptance in [PR #32](https://github.com/pandemicsyn/sandbar/pull/32), and ordinary recovery results/resource identities in [PR #33](https://github.com/pandemicsyn/sandbar/pull/33). Main at `29489f6` also includes public types/errors [PR #35](https://github.com/pandemicsyn/sandbar/pull/35), cleanup configuration [PR #34](https://github.com/pandemicsyn/sandbar/pull/34), and the streaming brief [PR #36](https://github.com/pandemicsyn/sandbar/pull/36) (spec only). See [CI validation](CI.md), the [acceptance plan](plans/provider-acceptance.md) and [recovery direction](specs/sdk-recovery-dx.md).
+Snapshot/volume support (#25), tracing/diagnostics (#24), CI cleanup (#29), provider acceptance (#32), and ordinary recovery results/resource identities (#33) are implemented. See [CI validation](CI.md), the [acceptance plan](plans/provider-acceptance.md) and [recovery direction](specs/sdk-recovery-dx.md).
 
-[PR #30](https://github.com/pandemicsyn/sandbar/pull/30) merged into `agent/ci-cleanup` after #29 merged. Its commit is absent from main's ancestry. This documentation pass selectively integrates still-relevant guidance against current code; its old recovery and harness descriptions do not establish shipped behavior.
+The latest SDK DX work is also merged:
 
-## Now: focused SDK usability work
+- [PR #34](https://github.com/pandemicsyn/sandbar/pull/34): connection cleanup policy and per-call overrides.
+- [PR #35](https://github.com/pandemicsyn/sandbar/pull/35): direct public types and actionable caller input errors.
+- [PR #37](https://github.com/pandemicsyn/sandbar/pull/37): documentation reconciliation, including still-relevant guidance from #30.
+- [PR #38](https://github.com/pandemicsyn/sandbar/pull/38): scoped sandbox references, fresh-process reopening, state and deadline inspection. Reopening does not implicitly create, resume or extend lifetime. Live reopening validation remains pending.
+- [PR #39](https://github.com/pandemicsyn/sandbar/pull/39): removal of the optional service and management UI. The project now focuses on the SDK and adapter API.
 
-| Work                                  | Status                                   | Scope                                                                                                                                                                      |
-| ------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Volume cleanup configuration          | Merged in PR #34                         | Task `01a0f028-e7d6-7f70-9dd2-50e17296636f`: upfront connection policy and per-call override.                                                                              |
-| Public types and errors               | Merged in PR #35                         | Task `01a0f4e3-70c7-73c1-bb40-6a161180b73e`: direct resource types and caller input errors.                                                                                |
-| Lifecycle slice 1: reopen and inspect | Delegated; in progress, not merged       | Task `01a0f4e3-ac2a-70d2-aabe-0684b897f7c1`: saved compute identity, fresh-process reopening, state and available deadlines. [Lifecycle spec](specs/sandbox-lifecycle.md). |
-| Streaming and cancellation scope      | Spec merged in PR #36; no implementation | Task `01a0f4e3-f581-7061-9398-17a555b52990`: first E2B text-streaming slice. [Implementation brief](specs/interactive-execution-and-access.md).                            |
-| Documentation reconciliation          | In progress, not merged                  | Everyday SDK examples, provider limitations and truthful indexes/status against current main.                                                                              |
+The [streaming implementation brief](specs/interactive-execution-and-access.md) merged in [PR #36](https://github.com/pandemicsyn/sandbar/pull/36). It is a spec, not shipped streaming support.
 
-Implemented cleanup policy precedence is per-call choice, `cleanup.storage`, then the existing `require-durable` default. `allow-unconfirmed` permits compute destruction without promising flushed writes or deleting retained volumes. This task adds no flush implementation or background cleanup service. See the [state contract](specs/provider-state-portability.md#3-persistent-volumes-and-mount-sessions).
+Cleanup policy precedence is per-call choice, `cleanup.storage`, then `require-durable`. `allow-unconfirmed` permits compute destruction without promising flushed writes or deleting retained volumes. See the [state contract](specs/provider-state-portability.md#3-persistent-volumes-and-mount-sessions).
 
-Slice 1 adds no implicit creation, resume or timeout extension. Verify the pinned E2B guest-attachment path before claiming support; use the [lifecycle spec](specs/sandbox-lifecycle.md)'s scope cuts if needed. Paid live acceptance needs separate authorization.
+## Now: execution and cancellation DX
 
-## Next: decide later lifecycle slices and storage composition
+Keep these as separate, bounded PRs. Read cancellation and output helpers can proceed independently of streaming.
 
-Timeout mutation and suspend/resume follow slice 1 and the merged recovery foundation. Their timeout scope, native defaults and execution-evidence choices remain product decisions in the [lifecycle spec](specs/sandbox-lifecycle.md#decisions-to-accept-and-later-documentation-edits). Slice 1 does not depend on accepting those later choices. Keep delivery in separate bounded PRs.
+| Priority | Work                               | Readiness and scope                                                                                                                                                                                                                                                                                                                                                               |
+| -------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1        | E2B text streaming                 | Scoped, not implemented. The non-resuming guest-attachment prerequisite landed in #38. First slice: one command start, timely stdout/stderr text, confirmed exit and local detach. Finite output with explicit limits; no remote kill, process reopening, binary streaming or Daytona implementation. Confirm this limited first slice meets the intended use case before coding. |
+| 2        | Read cancellation consistency      | Scoped, not implemented. Add caller cancellation to `readFile`, align inspection options, and enforce consistent local read deadlines and cleanup. Cancellation stops local observation; it does not terminate remote workloads.                                                                                                                                                  |
+| 3        | Output helpers and timeout clarity | Scoped, not implemented. Separate full captured-output decoding from bounded display without changing existing defaults. Audit and document bounded-exec timeout semantics, especially the distinction between an E2B RPC timeout and confirmed remote termination. Native runtime enforcement needs a separate evidence-backed change.                                           |
 
-Mounted snapshot/restore composition, stronger volume visibility/durability/locking/rename semantics, capacity/placement, attach/detach, volume versions and native forks require concrete provider work. Current unsupported combinations remain explicit. See [storage follow-ups](specs/sdk-recovery-dx.md#later-volume-guarantees-and-mounted-restore). Expanded persistence hooks, normalized recovery-facts envelopes and generic continuation/workflow machinery remain deferred.
+The [execution brief](specs/interactive-execution-and-access.md#usage-and-delivery) defines signatures, defaults, provider limitations, acceptance cases and scope cuts. Do not introduce a generic process or durable workflow framework to deliver these slices.
 
-Historical live evidence covers its recorded revision and configuration. The generated [support table](apps/docs/src/content/docs/docs/providers/support.md) preserves blocked/not-run results. E2B volume access remains blocked by account HTTP 403; Sandbar E2B mounts are unsupported separately. Offline fixtures do not qualify live provider behavior.
+## Next: lifecycle controls, then storage composition
+
+Sandbox reopen/inspect is complete as an implementation slice. Timeout mutation and suspend/resume follow as separate PRs; both now have their merged lifecycle and recovery prerequisites.
+
+1. **Reset native timeout:** accept explicit timeout scope before implementation. The proposal defaults to running-session scope for E2B and requires explicit sandbox-wide TTL for Daytona; resetting can shorten remaining lifetime.
+2. **Suspend/resume:** accept native no-argument preservation defaults and optional exact requirements. The proposal uses Daytona container filesystem preservation and E2B memory pause, with native execution evidence or explicit unknown rather than fabricated continuity.
+
+These remain product decisions in the [lifecycle spec](specs/sandbox-lifecycle.md#decisions-to-accept-and-later-documentation-edits). Neither mutation API is implemented. Keep mounted suspension and snapshot emulation outside these slices.
+
+Mounted snapshot/restore composition and stronger volume visibility/durability/locking/rename semantics follow concrete provider requirements. Current unsupported combinations remain explicit. Capacity/placement, attach/detach, volume versions and native forks are optional extensions driven by demonstrated need. See [storage follow-ups](specs/sdk-recovery-dx.md#later-volume-guarantees-and-mounted-restore). Expanded persistence hooks, normalized recovery-facts envelopes and generic continuation/workflow machinery remain deferred.
+
+## Qualification gaps
+
+The generated [support table](apps/docs/src/content/docs/docs/providers/support.md) separates implementation from live evidence. Current follow-ups are:
+
+- Run the maintained scoped-reopening scenarios for Daytona and E2B after explicit paid-run authorization; both are currently marked not-run.
+- Investigate and disposition the recorded failed E2B network probe. Fix an integration defect if found, or document the demonstrated provider/configuration limitation; do not promote the result to a pass without evidence.
+- Preserve the distinction between E2B volume account access blocked by HTTP 403 and Sandbar E2B mounts being unsupported. Resolve the historical volume-creation uncertainty only with sufficient evidence; newer successful cleanup does not erase it.
+
+Use the existing Bun suites and generated docs. Historical passes cover their recorded revision/configuration; offline fixtures do not qualify live behavior. This roadmap does not authorize paid calls or require a new testing framework.
 
 ## Gate before new adapters
 
-Vercel, Tensorlake and other adapters remain behind SDK usability. Before scheduling one, review whether applications can create/execute/transfer files, save and reopen supported resources, handle partial or uncertain outcomes, manage supported lifecycles and output, and clean up with clear retained-storage ownership. Tested public examples and the maintained acceptance runner must make those workflows understandable. This milestone does not require universal provider parity; reassess material DX gaps with the user before scheduling new adapters.
+Vercel, Tensorlake and other adapters remain behind SDK usability. Before scheduling one, review whether applications can create/execute/transfer files, save and reopen supported resources, handle partial or uncertain outcomes, manage supported lifecycles and output, and clean up with clear retained-storage ownership. Tested public examples and the maintained acceptance suites must make those workflows understandable. Resolve or explicitly disposition material qualification failures and missing evidence.
+
+This milestone does not require universal provider parity. Reassess material DX gaps with the user before scheduling new adapters; completing one small streaming slice does not automatically satisfy the gate.
 
 ## Later
 
-Advanced process/access features and storage extensions follow demonstrated needs. Additional observability metrics/events remain deferred. Accounting remains deferred. Rust is not planned. [Detailed plans](plans/implementation-plan.md) do not override this queue.
+Advanced process/access features and storage extensions follow demonstrated needs. Additional observability metrics/events and accounting remain deferred. The removed service and management UI are not on the delivery queue. Rust is not planned. [Detailed plans](plans/implementation-plan.md) do not override this queue.
