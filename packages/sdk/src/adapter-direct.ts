@@ -1054,6 +1054,12 @@ export class PreparedAdapterAttempt {
         forSeconds: ResolvedRenewInput.parse(prepared.input).forSeconds,
       });
   }
+  /** Resolved renewal intent to persist in beforeSubmit and supply to operations.observe. */
+  get renewal(): Readonly<RenewRequest> | undefined {
+    const renewal = preparedRenewals.get(this);
+
+    return renewal ? { ...renewal } : undefined;
+  }
   /** The callback must durably record the submission marker; false cancels dispatch. */
   async submit(
     identity: AdvancedIdentity,

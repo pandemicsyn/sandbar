@@ -139,6 +139,12 @@ async function flow() {
   const renewalOperation = await handle.submitRenew();
   const renewed = await renewalOperation.wait();
   void renewal; void renewed;
+  if (!box.reference) throw Error("Missing sandbox reference");
+  const preparedRenewal = await client.operations.prepare("sandbox_renew", {
+    sandbox: { id: box.id, reference: box.reference }, forSeconds: 61,
+  });
+  const resolvedRenewal: Readonly<import("sandbar-sdk").RenewRequest> | undefined = preparedRenewal.renewal;
+  void resolvedRenewal;
   await handle.inspect(options);
   await handle.inspect({ ...options, pollMs: 500 });
   await handle.readFile("/file", options);

@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { Image, Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
+import {
+  Image,
+  Sandbar,
+  type AdapterRecoveryReference,
+  type AdvancedObservation,
+} from "sandbar-sdk";
 import { createDaytonaAdapter } from "./adapter";
 
 function fixture() {
@@ -408,5 +413,85 @@ test("Daytona renewal uses current credentials and preserves native detail denia
     expect(f.windows).toEqual([]);
   } finally {
     await client.close();
+  }
+});
+
+test("advanced renewal ledger saves resolved intent before dispatch and recovers without replay", async () => {
+  for (const explicit of [false, true]) {
+    for (const lost of [false, true]) {
+      const f = fixture();
+      const { client, box } = await create(f, { lifecycle: { lifetimeSeconds: 61 } });
+
+      if (!box.reference) throw Error("Missing sandbox reference");
+
+      const sandbox = { id: box.id, reference: box.reference };
+
+      const prepared = await client.operations.prepare(
+        "sandbox_renew",
+        explicit ? { sandbox, forSeconds: 61 } : { sandbox },
+      );
+
+      expect(prepared.renewal).toEqual({ forSeconds: 120 });
+      // Mutating a caller's copy cannot change the intent saved or dispatched.
+      Object.assign(prepared.renewal ?? {}, { forSeconds: 600 });
+      expect(prepared.renewal).toEqual({ forSeconds: 120 });
+      let saved: AdvancedObservation | undefined;
+
+      if (lost) f.renewMode("lost");
+
+      try {
+        await prepared.submit(
+          { operationId: "renew-op", submissionId: "renew-sub", invocationKey: "renew-key" },
+          {
+            beforeSubmit: async () => {
+              expect(f.windows).toEqual([]);
+              saved = JSON.parse(
+                JSON.stringify({
+                  scope: client.scope,
+                  kind: "sandbox_renew",
+                  operationId: "renew-op",
+                  submissionId: "renew-sub",
+                  sandboxId: box.id,
+                  sandboxReference: box.reference,
+                  renewal: prepared.renewal,
+                }),
+              );
+
+              return true;
+            },
+            onCheckpoint: async (token, tokenVersion) => {
+              if (!saved) throw Error("Missing submission marker");
+              saved = JSON.parse(JSON.stringify({ ...saved, token, tokenVersion }));
+            },
+          },
+        );
+      } finally {
+        await client.close();
+      }
+
+      if (!saved) throw Error("Missing saved renewal");
+      expect(saved.renewal).toEqual({ forSeconds: 120 });
+      const fresh = await f.connect({ lifecycle: { lifetimeSeconds: 600 } });
+
+      try {
+        const result = await fresh.operations.observe(saved);
+
+        if (lost) {
+          expect(result).toMatchObject({
+            kind: "unknown",
+            outcome: { requested: { forSeconds: 120 } },
+          });
+        } else {
+          expect(result).toMatchObject({
+            kind: "completed",
+            value: { acknowledged: true, requested: { forSeconds: 120 } },
+          });
+        }
+
+        expect(f.windows).toEqual([120]);
+      } finally {
+        await fresh.close();
+      }
+    }
   }
 });
