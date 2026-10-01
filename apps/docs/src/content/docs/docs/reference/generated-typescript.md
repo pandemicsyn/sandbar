@@ -58,6 +58,7 @@ Import from `sandbar-sdk`.
 | `ProcessFailure`            | type      |
 | `ProcessHandle`             | type      |
 | `ProcessOutput`             | type      |
+| `ReadOptions`               | type      |
 | `RecoveredOperation`        | type      |
 | `RecoveryReference`         | type      |
 | `ResourceKind`              | re-export |
