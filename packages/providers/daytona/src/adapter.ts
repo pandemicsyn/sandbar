@@ -1,4 +1,9 @@
 import {
+  SandboxInfoSchema,
+  LifecycleInput,
+  ResolvedLifecycleInput,
+  SuspendResult,
+  ResumeResult,
   RenewRequest,
   ResolvedRenewInput,
   sandboxReference,
@@ -34,7 +39,12 @@ const Configuration = z
       .default({ restartAfterCapture: true }),
     ttlMinutes: z.coerce.number().int().min(1).max(1440).optional(),
     lifecycle: z
-      .strictObject({ lifetimeSeconds: z.number().int().positive().safe().max(86400).optional() })
+      .strictObject({
+        lifetimeSeconds: z.number().int().positive().safe().max(86400).optional(),
+        suspension: z
+          .strictObject({ preserve: z.enum(["filesystem", "filesystem+memory"]) })
+          .optional(),
+      })
       .optional(),
   })
   .superRefine((value, ctx) => {
@@ -53,7 +63,59 @@ const Configuration = z
         : Math.ceil(value.lifecycle.lifetimeSeconds / 60),
   }));
 
+const CompactObservation = SandboxInfoSchema.omit({ reference: true });
+
+const SuspendToken = z.strictObject({
+  acknowledged: z.literal(true),
+  preserve: z.literal("filesystem"),
+  processes: z.literal("terminated"),
+  connections: z.literal("dropped"),
+  completed: SuspendResult.omit({ reference: true })
+    .extend({ observation: CompactObservation })
+    .optional(),
+});
+
+function compactCompletion(value: SuspendResult | ResumeResult) {
+  const { reference: _reference, ...result } = value;
+  const { reference: _observedReference, ...observation } = value.observation;
+
+  return { ...result, observation };
+}
+
+const ResumeToken = z.strictObject({
+  acknowledged: z.literal(true),
+  completed: ResumeResult.omit({ reference: true })
+    .extend({ observation: CompactObservation })
+    .optional(),
+});
+
 const RenewToken = z.strictObject({ acknowledged: z.literal(true) });
+
+function suspendOutcome(
+  reference: SandboxReference,
+  acknowledged: boolean,
+  observation: SandboxInfo | null,
+): OperationOutcome {
+  if (!acknowledged)
+    return {
+      kind: "sandbox_suspend",
+      status: "unknown",
+      reference,
+      acknowledged: false,
+      observation,
+    };
+
+  return {
+    kind: "sandbox_suspend",
+    status: "partial",
+    reference,
+    acknowledged: true,
+    preserve: "filesystem",
+    processes: "terminated",
+    connections: "dropped",
+    observation,
+  };
+}
 
 const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
@@ -288,6 +350,12 @@ export function createDaytonaAdapter(
     config: configSchema,
     credentials: Credentials,
     async connect({ config, credentials }) {
+      if (config.lifecycle?.suspension?.preserve === "filesystem+memory")
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "Daytona container suspension preserves filesystem only",
+        );
+
       const { driver, scope } = await daytonaProvider({
         apiKey: credentials.apiKey,
         apiUrl: config.apiUrl,
@@ -411,6 +479,49 @@ export function createDaytonaAdapter(
                 }
               : unknownSandboxFacts().retention,
         };
+      };
+
+      const lifecycleSource = async (
+        box: import("sandbar-adapter").Sandbox,
+        ctx: import("sandbar-adapter").ReadContext,
+      ) => {
+        if (!box.reference)
+          throw new AdapterError("UNSUPPORTED", "Verified sandbox identity required");
+        assertResourceScope(box.reference, { provider: "daytona", scope: resourceBinding });
+        const info = await inspection(box.id, box.reference, ctx);
+        const nativeBox = await resourceState.box(box.id, ctx, box.reference);
+
+        if (nativeBox.state !== info.nativeState)
+          throw new AdapterError("UNAVAILABLE", "Native lifecycle state changed during validation");
+
+        if (!nativeBox.sandboxClass)
+          throw new AdapterError("UNAVAILABLE", "Native sandbox class unavailable");
+
+        if (nativeBox.sandboxClass !== "container")
+          throw new AdapterError(
+            "UNSUPPORTED",
+            "Suspension supports known Daytona containers only",
+          );
+
+        if (!nativeBox.mountsKnown)
+          throw new AdapterError("UNAVAILABLE", "Native mount facts unavailable");
+
+        if (nativeBox.volumes.length)
+          throw new AdapterError("UNSUPPORTED", "Suspension requires known unmounted compute");
+
+        if (
+          nativeBox.autoDeleteInterval == null ||
+          !Number.isSafeInteger(nativeBox.autoDeleteInterval)
+        )
+          throw new AdapterError("UNAVAILABLE", "Native auto-delete policy unavailable");
+
+        if (nativeBox.autoDeleteInterval >= 0)
+          throw new AdapterError(
+            "UNAVAILABLE",
+            "Suspension requires auto-delete disabled (negative interval)",
+          );
+
+        return info;
       };
 
       const referenceFor = async (
@@ -1048,6 +1159,418 @@ export function createDaytonaAdapter(
               "Daytona destroy cannot be replayed",
               token.success ? destroyOutcome(token.data) : undefined,
             );
+          },
+        },
+        async suspensionCapabilities(target, ctx) {
+          if (target.sandbox) {
+            try {
+              const info = await lifecycleSource(target.sandbox, ctx);
+
+              if (info.state !== "running")
+                return {
+                  status: "unavailable" as const,
+                  reason: "Suspension requires running compute",
+                };
+            } catch (error) {
+              return {
+                status:
+                  error instanceof AdapterError && error.code === "UNSUPPORTED"
+                    ? ("unsupported" as const)
+                    : error instanceof Error &&
+                        [
+                          "Native mount facts unavailable",
+                          "Native sandbox class unavailable",
+                          "Native auto-delete policy unavailable",
+                        ].includes(error.message)
+                      ? ("unknown" as const)
+                      : ("unavailable" as const),
+                reason:
+                  error instanceof Error
+                    ? error.message
+                    : "Native lifecycle eligibility unavailable",
+              };
+            }
+          }
+
+          return {
+            status: "supported" as const,
+            value: {
+              preserve: "filesystem" as const,
+              processes: "terminated" as const,
+              connections: "dropped" as const,
+            },
+          };
+        },
+        async resumeCapabilities(target, ctx) {
+          if (target.sandbox) {
+            try {
+              const info = await lifecycleSource(target.sandbox, ctx);
+
+              if (!["stopped", "suspended"].includes(info.state))
+                return {
+                  status: "unavailable" as const,
+                  reason: "Resume requires inactive compute",
+                };
+            } catch (error) {
+              return {
+                status:
+                  error instanceof AdapterError && error.code === "UNSUPPORTED"
+                    ? ("unsupported" as const)
+                    : error instanceof Error &&
+                        [
+                          "Native mount facts unavailable",
+                          "Native sandbox class unavailable",
+                          "Native auto-delete policy unavailable",
+                        ].includes(error.message)
+                      ? ("unknown" as const)
+                      : ("unavailable" as const),
+                reason:
+                  error instanceof Error
+                    ? error.message
+                    : "Native lifecycle eligibility unavailable",
+              };
+            }
+          }
+
+          return {
+            status: "supported" as const,
+            value: {
+              sourceStates: ["stopped" as const, "suspended" as const],
+              setsSessionTimeout: false,
+            },
+          };
+        },
+        suspend: {
+          recovery: { version: 1, token: SuspendToken },
+          async prepare(input, ctx) {
+            LifecycleInput.parse(input);
+            const info = await lifecycleSource(input.sandbox, ctx);
+
+            if (info.state === "destroyed")
+              throw new AdapterError("NOT_FOUND", "Sandbox is destroyed");
+
+            if (["stopped", "suspended"].includes(info.state))
+              throw new AdapterError("CONFLICT", "Sandbox is already inactive");
+
+            if (!(info.state === "running"))
+              throw new AdapterError("UNAVAILABLE", "Sandbox is transitioning or unavailable");
+
+            return ResolvedLifecycleInput.parse({
+              ...input,
+              intent: { action: "suspend", preserve: "filesystem" },
+            });
+          },
+          async submit(input, ctx) {
+            if (ctx.signal.aborted)
+              return ctx.reject("UNAVAILABLE", "Lifecycle cancelled before dispatch");
+
+            try {
+              const response = await resourceState.transition(input.sandbox.id, "stop", ctx.signal);
+
+              if ([400, 401, 403, 404, 422, 429].includes(response.status))
+                return ctx.reject(
+                  response.status === 404
+                    ? "NOT_FOUND"
+                    : [401, 403].includes(response.status)
+                      ? "FORBIDDEN"
+                      : response.status === 429
+                        ? "RATE_LIMIT"
+                        : "INVALID_ARGUMENT",
+                  "Daytona lifecycle mutation rejected",
+                );
+
+              if (!response.ok) throw new AdapterError("UNAVAILABLE", "Lifecycle ACK unavailable");
+            } catch {
+              const box = input.sandbox;
+
+              const observation = await inspection(box.id, box.reference, {
+                signal: ctx.signal,
+                deadline: Date.now() + 30000,
+              }).catch(() => null);
+
+              const acknowledged = false;
+
+              return ctx.unknown(
+                "Lifecycle acknowledgement unavailable; never replay",
+                suspendOutcome(box.reference!, acknowledged, observation),
+              );
+            }
+
+            try {
+              await ctx.checkpoint({
+                acknowledged: true,
+                preserve: "filesystem",
+                processes: "terminated",
+                connections: "dropped",
+              });
+            } catch {
+              /* ACK remains known. */
+            }
+
+            const box = input.sandbox;
+
+            const observation = await inspection(box.id, box.reference, {
+              signal: ctx.signal,
+              deadline: Date.now() + 30000,
+            }).catch(() => null);
+
+            if (observation && ["stopped", "suspended"].includes(observation.state)) {
+              const completed = {
+                reference: input.sandbox.reference,
+                preserve: "filesystem" as const,
+                processes: "terminated" as const,
+                connections: "dropped" as const,
+                observation,
+              };
+
+              try {
+                await ctx.checkpoint(
+                  z.json().parse({
+                    acknowledged: true,
+                    preserve: "filesystem",
+                    processes: "terminated",
+                    connections: "dropped",
+                    completed: compactCompletion(completed),
+                  }),
+                );
+              } catch {
+                /* Completion remains known. */
+              }
+
+              return completed;
+            }
+
+            const acknowledged = true;
+
+            if (!observation)
+              return ctx.unknown(
+                "Lifecycle acknowledged; target observation unavailable",
+                suspendOutcome(box.reference!, acknowledged, observation),
+              );
+
+            return ctx.pending(
+              {
+                acknowledged: true,
+                preserve: "filesystem",
+                processes: "terminated",
+                connections: "dropped",
+              },
+              { pollAfterMs: 100 },
+            );
+          },
+          async observe(attempt, ctx) {
+            if (!attempt.sandbox?.reference || attempt.lifecycle?.action !== "suspend")
+              return ctx.unknown("Saved lifecycle identity or intent missing");
+            const box = attempt.sandbox;
+            assertResourceScope(box.reference!, { provider: "daytona", scope: resourceBinding });
+            const token = SuspendToken.safeParse(attempt.token);
+
+            if (token.success && token.data.completed)
+              return {
+                ...token.data.completed,
+                reference: box.reference!,
+                observation: { ...token.data.completed.observation, reference: box.reference! },
+              };
+
+            const observation = await inspection(box.id, box.reference, {
+              signal: ctx.signal,
+              deadline: Date.now() + 30000,
+            }).catch(() => null);
+
+            const acknowledged = token.success;
+
+            if (!acknowledged || !observation)
+              return ctx.unknown(
+                "Lifecycle outcome incomplete; observation cannot establish attribution",
+                suspendOutcome(box.reference!, acknowledged, observation),
+              );
+            const input = { sandbox: { id: box.id, reference: box.reference! } };
+
+            if (["stopped", "suspended"].includes(observation.state))
+              return ctx.pending(
+                z.json().parse({
+                  acknowledged: true,
+                  preserve: "filesystem",
+                  processes: "terminated",
+                  connections: "dropped",
+                  completed: compactCompletion({
+                    reference: input.sandbox.reference,
+                    preserve: "filesystem" as const,
+                    processes: "terminated" as const,
+                    connections: "dropped" as const,
+                    observation,
+                  }),
+                }),
+                { pollAfterMs: 1 },
+              );
+
+            return ctx.pending(
+              {
+                acknowledged: true,
+                preserve: "filesystem",
+                processes: "terminated",
+                connections: "dropped",
+              },
+              { pollAfterMs: 100 },
+            );
+          },
+        },
+        resume: {
+          recovery: { version: 1, token: ResumeToken },
+          async prepare(input, ctx) {
+            LifecycleInput.parse(input);
+            const info = await lifecycleSource(input.sandbox, ctx);
+
+            if (info.state === "destroyed")
+              throw new AdapterError("NOT_FOUND", "Sandbox is destroyed");
+
+            if (info.state === "running")
+              throw new AdapterError("CONFLICT", "Sandbox is already running");
+
+            if (!["stopped", "suspended"].includes(info.state))
+              throw new AdapterError("UNAVAILABLE", "Sandbox is transitioning or unavailable");
+
+            return ResolvedLifecycleInput.parse({ ...input, intent: { action: "resume" } });
+          },
+          async submit(input, ctx) {
+            if (ctx.signal.aborted)
+              return ctx.reject("UNAVAILABLE", "Lifecycle cancelled before dispatch");
+
+            try {
+              const response = await resourceState.transition(
+                input.sandbox.id,
+                "start",
+                ctx.signal,
+              );
+
+              if ([400, 401, 403, 404, 422, 429].includes(response.status))
+                return ctx.reject(
+                  response.status === 404
+                    ? "NOT_FOUND"
+                    : [401, 403].includes(response.status)
+                      ? "FORBIDDEN"
+                      : response.status === 429
+                        ? "RATE_LIMIT"
+                        : "INVALID_ARGUMENT",
+                  "Daytona lifecycle mutation rejected",
+                );
+
+              if (!response.ok) throw new AdapterError("UNAVAILABLE", "Lifecycle ACK unavailable");
+            } catch {
+              const box = input.sandbox;
+
+              const observation = await inspection(box.id, box.reference, {
+                signal: ctx.signal,
+                deadline: Date.now() + 30000,
+              }).catch(() => null);
+
+              const acknowledged = false;
+
+              return ctx.unknown("Lifecycle acknowledgement unavailable; never replay", {
+                kind: "sandbox_resume" as const,
+                status: acknowledged ? ("partial" as const) : ("unknown" as const),
+                reference: box.reference!,
+                acknowledged,
+                observation,
+              });
+            }
+
+            try {
+              await ctx.checkpoint({ acknowledged: true });
+            } catch {
+              /* ACK remains known. */
+            }
+
+            const box = input.sandbox;
+
+            const observation = await inspection(box.id, box.reference, {
+              signal: ctx.signal,
+              deadline: Date.now() + 30000,
+            }).catch(() => null);
+
+            if (observation && observation.state === "running") {
+              const completed = {
+                reference: input.sandbox.reference,
+                execution: "fresh" as const,
+                executionIdentity: unknownSandboxFacts().execution,
+                connections: "dropped" as const,
+                observation,
+              };
+
+              try {
+                await ctx.checkpoint(
+                  z.json().parse({ acknowledged: true, completed: compactCompletion(completed) }),
+                );
+              } catch {
+                /* Completion remains known. */
+              }
+
+              return completed;
+            }
+
+            const acknowledged = true;
+
+            if (!observation)
+              return ctx.unknown("Lifecycle acknowledged; target observation unavailable", {
+                kind: "sandbox_resume" as const,
+                status: acknowledged ? ("partial" as const) : ("unknown" as const),
+                reference: box.reference!,
+                acknowledged,
+                observation,
+              });
+
+            return ctx.pending({ acknowledged: true }, { pollAfterMs: 100 });
+          },
+          async observe(attempt, ctx) {
+            if (!attempt.sandbox?.reference || attempt.lifecycle?.action !== "resume")
+              return ctx.unknown("Saved lifecycle identity or intent missing");
+            const box = attempt.sandbox;
+            assertResourceScope(box.reference!, { provider: "daytona", scope: resourceBinding });
+            const token = ResumeToken.safeParse(attempt.token);
+
+            if (token.success && token.data.completed)
+              return {
+                ...token.data.completed,
+                reference: box.reference!,
+                observation: { ...token.data.completed.observation, reference: box.reference! },
+              };
+
+            const observation = await inspection(box.id, box.reference, {
+              signal: ctx.signal,
+              deadline: Date.now() + 30000,
+            }).catch(() => null);
+
+            const acknowledged = token.success;
+
+            if (!acknowledged || !observation)
+              return ctx.unknown(
+                "Lifecycle outcome incomplete; observation cannot establish attribution",
+                {
+                  kind: "sandbox_resume" as const,
+                  status: acknowledged ? ("partial" as const) : ("unknown" as const),
+                  reference: box.reference!,
+                  acknowledged,
+                  observation,
+                },
+              );
+            const input = { sandbox: { id: box.id, reference: box.reference! } };
+
+            if (observation.state === "running")
+              return ctx.pending(
+                z.json().parse({
+                  acknowledged: true,
+                  completed: compactCompletion({
+                    reference: input.sandbox.reference,
+                    execution: "fresh" as const,
+                    executionIdentity: unknownSandboxFacts().execution,
+                    connections: "dropped" as const,
+                    observation,
+                  }),
+                }),
+                { pollAfterMs: 1 },
+              );
+
+            return ctx.pending({ acknowledged: true }, { pollAfterMs: 100 });
           },
         },
         async renewCapabilities(target, ctx) {

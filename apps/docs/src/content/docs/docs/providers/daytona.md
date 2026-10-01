@@ -82,7 +82,7 @@ Both mappings require running compute. Use positive safe integer seconds; upper 
 
 `RenewResult.requested.forSeconds` records the resolved native setting, `acknowledged: true` confirms provider acceptance, and `observation` is current metadata or `null` if the follow-up read failed. A lost ACK stays `OUTCOME_UNKNOWN` even if a later deadline looks right. `submitRenew()` and `client.recover(savedOperationReference)` use existing typed recovery; observation never sends another renewal POST. Caller cancellation before dispatch has no effect; after possible dispatch it stops local waiting with the recovery reference. Persist ordinary sandbox references in your own trusted store, and save result metadata separately when useful.
 
-Renewal has deterministic native-boundary and packed Node/Bun coverage. The maintained `lifecycle-renew` live scenario is not run. Sandbar suspend/resume methods remain a later slice; the native suspension clocks above describe provider behavior.
+Renewal has deterministic native-boundary and packed Node/Bun coverage. The maintained `lifecycle-renew` live scenario is not run. Sandbar suspend/resume methods use the native policies below; their live scenario is not run.
 
 ## Runtime snapshots
 
@@ -110,7 +110,7 @@ Mounted volumes are object-backed rather than POSIX filesystems. `writeFile(...,
 
 Persist `sandbox.reference` from create, restore or recovered results, then use `freshClient.sandboxes.get(savedReference)` to reopen the same native compute. `inspect()` reports fresh state, native state, local observation time and available deadline/policy facts. Reopening never creates, resumes or extends lifetime; inactive compute remains inactive and guest calls require running state. Unknown expiry is not unlimited lifetime, and elapsed expiry does not prove deletion. Native absence, forbidden access, unavailable reads and identity/configuration conflict remain distinct errors.
 
-References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Configured renewal is available; suspension/resumption remain later slices.
+References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Configured renewal is available; native suspension/resumption are available on eligible unmounted compute.
 
 Daytona validates organization, region, endpoint, toolbox origin, native network policy and private visibility. `autoDestroyAt` remains a sandbox-wide expiry while stopped/archived. Idle-stop and deletion-after-stop intervals are separate observed policies. A rotated key in the same organization works with the same binding.
 
@@ -119,3 +119,23 @@ Daytona validates organization, region, endpoint, toolbox origin, native network
 Sandbar uses direct REST rather than a Daytona SDK pin; native fixtures follow REST 0.218.0. `deadlineSeconds` (default 300) maps to `/process/execute`'s `timeout` field. Local HTTP waiting uses a separate `(deadlineSeconds + 10) * 1000` timer after preflight; the adapter's receipt window begins after submission. Neither is a total SDK wall-clock bound.
 
 Daytona's [process reference](https://www.daytona.io/docs/en/typescript-sdk/process/) documents server command termination on timeout. Deployed capture-wrapper cleanup, forced-termination receipts and descendant/process-group coverage remain unverified. HTTP timeout or loss alone proves neither command exit nor absence of side effects. Sandbar investigates the original receipt without resubmission or implicit destroy; successful execution with unavailable or malformed output remains unconfirmed. Sandbox `ttlMinutes` is independent. See [execution and waiting timeouts](/docs/guides/resources/#execution-and-waiting-timeouts), including the experimental Modal mapping and caller signals. Offline fixtures establish request wiring and receipt recovery, not live termination.
+
+## Suspend and resume
+
+Configure a minimum guarantee once in adapter setup, then use the same application calls:
+
+```ts
+const suspended = await box.suspend();
+// Save box.reference in your trusted store, then close the original connection.
+const reopened = await freshClient.sandboxes.get(savedReference); // stays inactive
+const resumed = await reopened.resume();
+await reopened.destroy(); // explicit cleanup of the same native sandbox
+```
+
+`daytona({ apiKey, target: "us", lifecycle: { suspension: { preserve: "filesystem" } } })` uses native container stop/start. Omitting the requirement uses the same filesystem default. A memory minimum rejects `UNSUPPORTED` at connection before allocation. Only known containers with known empty mounts and a negative native auto-delete interval qualify; memory/VM/GPU/Windows and mounted suspension are outside this release. Native stop ends processes and drops sockets; resume reports fresh execution with unknown native execution identity. Stopped or archived containers start under the same scoped UUID. There is no force-kill fallback or replacement creation.
+
+The hard TTL continues while stopped/archived and can delete saved files. Resume neither disables nor resets it. Use `inspect()` to read its absolute deadline and request `renew()` while running when needed. Unknown policy/class/mount facts reject before mutation; mounted resources and unmapped classes reject `UNSUPPORTED`; enabled native auto-delete rejects `UNAVAILABLE`. A missing, expired or deleted resource is `NOT_FOUND`.
+
+Both operations have one dispatch stage and no automatic retry or inverse action. Already inactive suspend and already running resume reject `CONFLICT`; transitional resources reject `UNAVAILABLE`. ACK plus a target-state read establishes completion. An acknowledged partial error retains native preservation facts even if the later read fails; ACK alone does not certify target state. A lost response, 409 or 503 stays uncertain even if a later read matches the target. Use the error's recovery reference to observe without replay. Applications serialize lifecycle changes across external controllers.
+
+See the [compiled same-workflow example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-suspend-resume.ts). Deterministic native-boundary and packed Node/Bun checks cover this mapping; `lifecycle-suspend-resume` live qualification remains **not run**. Existing snapshot requirements retain their exact matching semantics.

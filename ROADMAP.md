@@ -30,7 +30,7 @@ Cleanup policy precedence remains per-call choice, `cleanup.storage`, then `requ
 
 ## Next: lifecycle controls, then storage composition
 
-**Suspend/resume is the next implementation slice.** Reopening and configured renewal are merged. The accepted [lifecycle contract](specs/sandbox-lifecycle.md#accepted-direction-and-implementation-documentation) calls for no-argument `suspend()` / `resume()`, native defaults, and meaningful preservation requirements configured once in the adapter. Filesystem preservation is a minimum; report memory/process behavior and actual execution evidence honestly.
+**Suspend/resume implementation is in progress, pending review and merge.** Reopening and configured renewal are merged. The accepted [lifecycle contract](specs/sandbox-lifecycle.md#accepted-direction-and-implementation-documentation) calls for no-argument `suspend()` / `resume()`, native defaults, and meaningful preservation requirements configured once in the adapter. Filesystem preservation is a minimum; report memory/process behavior and actual execution evidence honestly.
 
 Keep this one bounded slice: Daytona containers and E2B memory pause, same logical resource, explicit unsupported behavior and no hidden replacement. Mounted suspension, snapshot emulation, filesystem-only E2B mode and a generic lifecycle engine remain out of scope. Update adapter options, provider docs, deterministic/packed tests and maintained live scenarios together; implementation does not authorize paid runs.
 
@@ -40,7 +40,7 @@ After that, scope mounted snapshot/restore composition and stronger volume visib
 
 The generated [support table](apps/docs/src/content/docs/docs/providers/support.md) separates implementation from live evidence. Current follow-ups are:
 
-- Run the maintained scoped-reopening and lifetime-renewal scenarios for Daytona and E2B after explicit paid-run authorization; both workflows are currently marked not-run.
+- Run the maintained scoped-reopening and lifetime-renewal scenarios for Daytona and E2B after explicit paid-run authorization; those workflows and the new suspend/resume scenario are currently marked not-run.
 - Qualify the new E2B streaming scenario and signal-bearing file-read cases. Earlier execution/file passes do not establish these new behaviors. Streaming is implemented even though the generated feature table does not yet have a separate streaming row; include that reporting follow-up when recording evidence.
 - Investigate and disposition the recorded failed E2B network probe. Fix an integration defect if found, or document the demonstrated provider/configuration limitation; do not promote the result to a pass without evidence.
 - Preserve the distinction between E2B volume account access blocked by HTTP 403 and Sandbar E2B mounts being unsupported. Resolve the historical volume-creation uncertainty only with sufficient evidence; newer successful cleanup does not erase it.

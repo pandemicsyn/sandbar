@@ -6,7 +6,10 @@ export function daytona(options: {
   apiKey: string;
   target: string;
   ttlMinutes?: number;
-  lifecycle?: { lifetimeSeconds?: number };
+  lifecycle?: {
+    lifetimeSeconds?: number;
+    suspension?: { preserve: "filesystem" | "filesystem+memory" };
+  };
   snapshots?: { restartAfterCapture?: boolean };
   networkPolicy?: "blocked" | "daytona-default";
 }): BoundAdapter {

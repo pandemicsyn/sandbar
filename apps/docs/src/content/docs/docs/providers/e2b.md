@@ -81,7 +81,7 @@ Both mappings require running compute. E2B also requires known native kill-on-ti
 
 `RenewResult.requested.forSeconds` records the resolved native setting, `acknowledged: true` confirms provider acceptance, and `observation` is current metadata or `null` if the follow-up read failed. A lost ACK stays `OUTCOME_UNKNOWN` even if a later deadline looks right. `submitRenew()` and `client.recover(savedOperationReference)` use existing typed recovery; observation never sends another renewal POST. Caller cancellation before dispatch has no effect; after possible dispatch it stops local waiting with the recovery reference. Persist ordinary sandbox references in your own trusted store, and save result metadata separately when useful.
 
-Renewal has deterministic native-boundary and packed Node/Bun coverage. The maintained `lifecycle-renew` live scenario is not run. Sandbar suspend/resume methods remain a later slice; the native suspension clocks above describe provider behavior.
+Renewal has deterministic native-boundary and packed Node/Bun coverage. The maintained `lifecycle-renew` live scenario is not run. Sandbar suspend/resume methods use the native policies below; their live scenario is not run.
 
 ## Runtime snapshots and volumes
 
@@ -97,7 +97,7 @@ Private-beta volume create, inspect, list and owned deletion are mapped; names a
 
 Persist `sandbox.reference` from create, restore or recovered results, then use `freshClient.sandboxes.get(savedReference)` to reopen the same native compute. `inspect()` reports fresh state, native state, local observation time and available deadline/policy facts. Reopening never creates, resumes or extends lifetime; inactive compute remains inactive and guest calls require running state. Unknown expiry is not unlimited lifetime, and elapsed expiry does not prove deletion. Native absence, forbidden access, unavailable reads and identity/configuration conflict remain distinct errors.
 
-References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Configured renewal is available; suspension/resumption remain later slices.
+References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Configured renewal is available; native suspension/resumption are available on eligible unmounted compute.
 
 E2B same-team key rotation requires configured `teamId`; API-key-scoped references reject rotation. Keep the original configured template. Running deadlines use native `endAt`; paused resources ignore stale session deadlines and report documented indefinite paused retention. Exec/files attach through authenticated detail and a local pinned client, requiring explicit `autoResume: false`, a guest token and trusted routing. Missing or changed guest policy fails unavailable before guest IO. There is no implicit connect POST. An external policy change after the check remains a documented native race.
 
@@ -106,3 +106,23 @@ E2B same-team key rotation requires configured `teamId`; API-key-scoped referenc
 `deadlineSeconds` defaults to 300. The pinned `e2b@2.51.0` client receives this value in milliseconds as foreground RPC `timeoutMs` and handshake `requestTimeoutMs`; the handshake timer clears when a PID arrives. This establishes observation deadlines, without a verified remote command-termination guarantee. A command may continue after RPC observation ends. Sandbar polls its original status/output files without replaying submission; setup, polling and output reads mean this is not a total SDK wait budget.
 
 Use an explicit caller `signal` to stop local waiting. Neither a local abort nor an RPC timeout implicitly kills compute or changes the independent sandbox `timeoutSeconds`. A valid exit marker followed by failed output retrieval can still leave the public result pending or unknown. See [execution and waiting timeouts](/docs/guides/resources/#execution-and-waiting-timeouts). Offline fixtures exercise the pinned client timers and no-kill request paths; they do not prove deployed envd termination.
+
+## Suspend and resume
+
+Configure a minimum guarantee once in adapter setup, then use the same application calls:
+
+```ts
+const suspended = await box.suspend();
+// Save box.reference in your trusted store, then close the original connection.
+const reopened = await freshClient.sandboxes.get(savedReference); // stays inactive
+const resumed = await reopened.resume();
+await reopened.destroy(); // explicit cleanup of the same native sandbox
+```
+
+`e2b({ apiKey, teamId, templateId: "base", lifecycle: { suspension: { preserve: "filesystem" } } })` uses native `memory: true` pause. Its filesystem-plus-memory default satisfies either filesystem or memory minimum. Filesystem-only pause is deferred. Only running compute with known empty mounts and known kill-on-timeout/auto-resume-off policy qualifies. Mounted resources reject `UNSUPPORTED`; unknown mounts or changed policy reject before mutation. Pausing preserves process memory and drops existing sockets; reconnect application sockets after resumption.
+
+Paused state has indefinite native retention and requires explicit cleanup; its stale running-session `endAt` is not a retention deadline. Explicit `resume()` sends one v2 connect from paused with the current adapter's resolved initial lifetime (300 seconds by default, or `lifecycle.lifetimeSeconds`). It sends no reboot override or second renewal. Execution remains `unknown`: neither saved receipts nor PIDs prove that an external actor preserved the original pause provenance. `get()`, `inspect()`, exec and files never resume implicitly. Missing, expired or deleted state is `NOT_FOUND`, with no replacement allocation.
+
+Both operations have one dispatch stage and no automatic retry or inverse action. Already inactive suspend and already running resume reject `CONFLICT`; transitional resources reject `UNAVAILABLE`. ACK plus a target-state read establishes completion. An acknowledged partial error retains native preservation facts even if the later read fails; ACK alone does not certify target state. A lost response, 409 or 503 stays uncertain even if a later read matches the target. Use the error's recovery reference to observe without replay. Applications serialize lifecycle changes across external controllers.
+
+See the [compiled same-workflow example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-suspend-resume.ts). Deterministic native-boundary and packed Node/Bun checks cover this mapping; `lifecycle-suspend-resume` live qualification remains **not run**. Existing snapshot requirements retain their exact matching semantics.

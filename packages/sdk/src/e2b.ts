@@ -99,6 +99,8 @@ export interface E2BTransport {
     }[];
     nextToken?: string;
   }>;
+  suspend?: (id: string, signal: AbortSignal) => Promise<void>;
+  resume?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   renew?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
@@ -129,7 +131,10 @@ export function e2b(options: {
   teamId?: string;
   templateId?: string;
   timeoutSeconds?: number;
-  lifecycle?: { lifetimeSeconds?: number };
+  lifecycle?: {
+    lifetimeSeconds?: number;
+    suspension?: { preserve: "filesystem" | "filesystem+memory" };
+  };
 }): BoundAdapter {
   return bindAdapter(
     createE2BAdapter(),

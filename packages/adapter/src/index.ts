@@ -205,6 +205,7 @@ export type RecoveryAttempt<
   readonly sandbox: S;
   readonly resource?: ResourceReference;
   readonly mounts?: import("./state").MountSpec[];
+  readonly lifecycle?: import("./lifecycle").LifecycleIntent;
   readonly renewal?: import("./lifecycle").RenewRequest;
   readonly capture?: import("./state").SnapshotCaptureInput["expectation"];
   readonly token?: T;
@@ -255,6 +256,32 @@ export type AdapterSession<
     target: { sandbox?: Sandbox; create?: CreateInput },
     ctx: ReadContext,
   ) => Promise<Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>>;
+  suspend?: Mutation<
+    import("./lifecycle").LifecycleInput,
+    import("./lifecycle").SuspendResult,
+    import("./lifecycle").ResolvedLifecycleInput
+  >;
+  resume?: Mutation<
+    import("./lifecycle").LifecycleInput,
+    import("./lifecycle").ResumeResult,
+    import("./lifecycle").ResolvedLifecycleInput
+  >;
+  suspensionCapabilities?: (
+    target: { sandbox?: Sandbox },
+    ctx: ReadContext,
+  ) => Promise<
+    Support<{
+      preserve: "filesystem" | "filesystem+memory";
+      processes: "terminated" | "preserved";
+      connections: "dropped";
+    }>
+  >;
+  resumeCapabilities?: (
+    target: { sandbox?: Sandbox },
+    ctx: ReadContext,
+  ) => Promise<
+    Support<{ sourceStates: import("./state").SandboxState[]; setsSessionTimeout: boolean }>
+  >;
   renew?: Mutation<
     import("./lifecycle").RenewInput,
     import("./lifecycle").RenewResult,

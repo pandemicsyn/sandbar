@@ -10,6 +10,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Feature                       | Daytona                                                  | E2B                                                                               |
 | ----------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Sandbox lifecycle             | [Supported · passed at 8449def7](#daytona-lifecycle)     | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
+| Native sandbox suspend/resume | [Conditional · not-run](#daytona-suspension)             | [Conditional · not-run](#e2b-suspension)                                          |
 | Configured lifetime renewal   | [Conditional · not-run](#daytona-renewal)                | [Conditional · not-run](#e2b-renewal)                                             |
 | Scoped sandbox reopening      | [Conditional · not-run](#daytona-reopening)              | [Conditional · not-run](#e2b-reopening)                                           |
 | Execution and captured output | [Supported · passed at 8449def7](#daytona-execution)     | [Supported · passed at 8449def7](#e2b-execution)                                  |
@@ -29,6 +30,12 @@ The [live evidence detail](/docs/providers/live-qualification/) retains exact av
 ### Sandbox lifecycle
 
 The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified.
+
+<a id="daytona-suspension"></a>
+
+### Native sandbox suspend/resume
+
+Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Native/packed fixtures; lifecycle-suspend-resume live not run.
 
 <a id="daytona-renewal"></a>
 
@@ -91,6 +98,12 @@ Writable create-time mounts/subpaths; read-only unsupported. The Bun producer wr
 ### Sandbox lifecycle
 
 The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed.
+
+<a id="e2b-suspension"></a>
+
+### Native sandbox suspend/resume
+
+Known unmounted E2B memory pause retains processes under the same ID; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Native/packed fixtures; lifecycle-suspend-resume live not run.
 
 <a id="e2b-renewal"></a>
 

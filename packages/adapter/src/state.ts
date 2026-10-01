@@ -343,6 +343,49 @@ export type SnapshotCaptureValue = z.infer<typeof SnapshotCaptureValue>;
 
 /** Known native results accompanying an incomplete operation; never dispatch authority. */
 export const OperationOutcome = z.discriminatedUnion("kind", [
+  z
+    .strictObject({
+      kind: z.literal("sandbox_suspend"),
+      status: z.enum(["completed", "partial", "unknown"]),
+      reference: ResourceReference.extend({ kind: z.literal("sandbox") }),
+      acknowledged: z.boolean(),
+      preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
+      processes: z.enum(["terminated", "preserved"]).optional(),
+      connections: z.literal("dropped").optional(),
+      observation: SandboxInfoSchema.nullable(),
+    })
+    .refine((v) =>
+      v.acknowledged
+        ? !!v.preserve &&
+          !!v.processes &&
+          !!v.connections &&
+          (v.status === "partial" ||
+            (v.status === "completed" &&
+              !!v.observation &&
+              ["stopped", "suspended"].includes(v.observation.state)))
+        : !v.preserve && !v.processes && !v.connections && v.status === "unknown",
+    ),
+  z
+    .strictObject({
+      kind: z.literal("sandbox_resume"),
+      status: z.enum(["completed", "partial", "unknown"]),
+      reference: ResourceReference.extend({ kind: z.literal("sandbox") }),
+      acknowledged: z.boolean(),
+      observation: SandboxInfoSchema.nullable(),
+      execution: z.enum(["fresh", "resumed", "unknown"]).optional(),
+      executionIdentity: SandboxInfoSchema.shape.execution.optional(),
+      connections: z.enum(["dropped", "unknown"]).optional(),
+    })
+    .refine((v) =>
+      v.acknowledged
+        ? v.status === "partial" ||
+          (v.status === "completed" &&
+            v.observation?.state === "running" &&
+            !!v.execution &&
+            !!v.executionIdentity &&
+            !!v.connections)
+        : v.status === "unknown",
+    ),
   z.strictObject({
     kind: z.literal("sandbox_renew"),
     status: z.literal("unknown"),
@@ -477,6 +520,12 @@ export type StateCapabilities = {
   lifecycle: {
     reopen: Support<{}>;
     inspect: Support<{}>;
+    suspend: Support<{
+      preserve: "filesystem" | "filesystem+memory";
+      processes: "terminated" | "preserved";
+      connections: "dropped";
+    }>;
+    resume: Support<{ sourceStates: SandboxState[]; setsSessionTimeout: boolean }>;
     renew: Support<import("./lifecycle").RenewLimits>;
   };
   snapshots: {
@@ -488,7 +537,11 @@ export type StateCapabilities = {
   };
   volumes: Support<VolumeCapabilities>;
   mounts: Support<MountCapabilities>;
-  suspension: Support<never>;
+  suspension: Support<{
+    preserve: "filesystem" | "filesystem+memory";
+    processes: "terminated" | "preserved";
+    connections: "dropped";
+  }>;
 };
 
 export const unsupportedState = (): Support<never> => ({
@@ -570,8 +623,24 @@ export async function stateCapabilities(
   const implemented = (yes: boolean): Support<{}> =>
     yes ? { status: "supported", value: {} } : unsupportedState();
 
+  const suspension =
+    session.suspend && session.suspensionCapabilities
+      ? await readBeforeDeadline(
+          (ctx) => session.suspensionCapabilities!(structuredClone(target), ctx),
+          context,
+        )
+      : unsupportedState();
+
   return {
     lifecycle: {
+      suspend: suspension,
+      resume:
+        session.resume && session.resumeCapabilities
+          ? await readBeforeDeadline(
+              (ctx) => session.resumeCapabilities!(structuredClone(target), ctx),
+              context,
+            )
+          : unsupportedState(),
       reopen: implemented(!!session.reopen),
       inspect: implemented(!!session.inspect),
       renew:
@@ -606,7 +675,7 @@ export async function stateCapabilities(
           }
         : resources.volumes,
     mounts: session.checkMounts ? resources.mounts : unsupportedState(),
-    suspension: unsupportedState(),
+    suspension,
   };
 }
 
@@ -757,6 +826,16 @@ export const DirectCapabilities = z.strictObject({
           scope: z.enum(["sandbox", "running-session"]),
         }),
       ),
+      suspend: supportSchema(
+        z.strictObject({
+          preserve: z.enum(["filesystem", "filesystem+memory"]),
+          processes: z.enum(["terminated", "preserved"]),
+          connections: z.literal("dropped"),
+        }),
+      ),
+      resume: supportSchema(
+        z.strictObject({ sourceStates: z.array(SandboxState), setsSessionTimeout: z.boolean() }),
+      ),
       reopen: supportSchema(z.strictObject({})),
       inspect: supportSchema(z.strictObject({})),
     })
@@ -783,7 +862,13 @@ export const DirectCapabilities = z.strictObject({
   }),
   volumes: supportSchema(VolumeCapabilities),
   mounts: supportSchema(MountCapabilities).optional(),
-  suspension: AbsentSupport,
+  suspension: supportSchema(
+    z.strictObject({
+      preserve: z.enum(["filesystem", "filesystem+memory"]),
+      processes: z.enum(["terminated", "preserved"]),
+      connections: z.literal("dropped"),
+    }),
+  ),
 });
 
 export type DirectCapabilities = Omit<

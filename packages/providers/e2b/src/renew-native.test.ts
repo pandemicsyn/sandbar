@@ -20,14 +20,22 @@ type NativeFixtureDetail = {
   domain: string;
   lifecycle?: { onTimeout?: string; autoResume?: boolean };
   endAt: string;
+  volumeMounts?: { name: string; path: string }[];
 };
 
 const NativePayload = z.object({
-  timeout: z.number().int(),
+  timeout: z.number().int().optional(),
+  memory: z.boolean().optional(),
   metadata: z.record(z.string(), z.string()).optional(),
   autoPause: z.boolean().optional(),
   autoResume: z.object({ enabled: z.boolean() }).optional(),
 });
+
+function expectedPreservation(action: "suspend" | "resume") {
+  if (action === "suspend") return { preserve: "filesystem+memory", processes: "preserved" };
+
+  return {};
+}
 
 function fixture() {
   const calls: {
@@ -47,12 +55,15 @@ function fixture() {
     domain: "e2b.app",
     lifecycle: { onTimeout: "kill", autoResume: false },
     endAt: "2026-10-01T01:00:00Z",
+    volumeMounts: [],
   };
 
   let mode = "ok",
     postStatus = 204,
     authStatus = 200,
     failedRead = false;
+
+  let detailStatus = 200;
 
   let entered = () => {},
     release = () => {};
@@ -88,6 +99,21 @@ function fixture() {
         return Response.json(detail, { status: 201 });
       }
 
+      if (
+        ["/sandboxes/sandbox_one/pause", "/v2/sandboxes/sandbox_one/connect"].includes(url.pathname)
+      ) {
+        entered();
+
+        if (mode === "hold") await held;
+        detail.state = url.pathname.endsWith("/pause") ? "paused" : "running";
+
+        if (mode === "lost") throw new TypeError("lost ACK");
+
+        if (mode === "get-failed") failedRead = true;
+
+        return new Response(null, { status: postStatus });
+      }
+
       if (url.pathname === "/sandboxes/sandbox_one/timeout") {
         entered();
 
@@ -103,7 +129,7 @@ function fixture() {
       if (url.pathname === "/sandboxes/sandbox_one") {
         if (failedRead) throw new TypeError("read failed");
 
-        return Response.json(detail);
+        return Response.json(detail, { status: detailStatus });
       }
 
       throw Error(`Unexpected fixture ${request.method} ${url.pathname}`);
@@ -116,7 +142,10 @@ function fixture() {
   const connect = (
     config: {
       timeoutSeconds?: number;
-      lifecycle?: { lifetimeSeconds?: number };
+      lifecycle?: {
+        lifetimeSeconds?: number;
+        suspension?: { preserve: "filesystem" | "filesystem+memory" };
+      };
       teamId?: string;
     } = {},
     onReference?: (ref: AdapterRecoveryReference) => void | Promise<void>,
@@ -135,6 +164,12 @@ function fixture() {
     connect,
     postEntered,
     release,
+    status(v: number) {
+      detailStatus = v;
+    },
+    available() {
+      failedRead = false;
+    },
     mode(v: string) {
       mode = v;
     },
@@ -399,6 +434,407 @@ test("e2b renewal rejects a mismatched provider/scope before native reads", asyn
       ).rejects.toMatchObject({ code: "CONFLICT" });
       expect(f.calls.length).toBe(count);
     }
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B suspend/resume native defaults and saved-reference workflow retain identity", async () => {
+  for (const preserve of [undefined, "filesystem", "filesystem+memory"] as const) {
+    const f = fixture();
+
+    const config: Parameters<ReturnType<typeof fixture>["connect"]>[0] = {
+      lifecycle: { lifetimeSeconds: 61 },
+    };
+
+    if (preserve) config.lifecycle!.suspension = { preserve };
+    const { client, box } = await create(f, config);
+
+    try {
+      const saved = JSON.parse(JSON.stringify(box.reference));
+      const _before = await box.inspect();
+      const caps = await box.capabilities();
+      expect(caps.lifecycle?.suspend).toMatchObject({
+        status: "supported",
+        value: { preserve: "filesystem+memory", processes: "preserved", connections: "dropped" },
+      });
+      const op = await box.submitSuspend();
+      const suspended = await op.wait();
+      expect(suspended).toMatchObject({
+        reference: saved,
+        preserve: "filesystem+memory",
+        processes: "preserved",
+        connections: "dropped",
+        observation: { state: "suspended" },
+      });
+      expect(suspended.observation.expires).toEqual({ status: "none" });
+      await expect(box.suspend()).rejects.toMatchObject({ code: "CONFLICT", effect: "none" });
+
+      const fresh = await f.connect(
+        { lifecycle: { lifetimeSeconds: 600 } },
+        undefined,
+        "rotated-key",
+      );
+
+      try {
+        const reopened = await fresh.sandboxes.get(saved);
+        expect((await reopened.inspect()).state).toBe("suspended");
+        expect((await reopened.capabilities()).lifecycle?.resume.status).toBe("supported");
+
+        const beforeCalls = f.calls.filter(
+          (c) => c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+        ).length;
+
+        await expect(reopened.exec(["true"])).rejects.toMatchObject({ code: "UNAVAILABLE" });
+        await expect(reopened.readFile("/file")).rejects.toMatchObject({ code: "UNAVAILABLE" });
+        expect(
+          f.calls.filter(
+            (c) =>
+              c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+          ),
+        ).toHaveLength(beforeCalls);
+        const resumed = await reopened.resume();
+        expect(resumed).toMatchObject({
+          reference: saved,
+          execution: "unknown",
+          executionIdentity: { status: "unknown" },
+          observation: { state: "running" },
+        });
+        await expect(reopened.resume()).rejects.toMatchObject({ code: "CONFLICT", effect: "none" });
+        expect(reopened.reference).toEqual(saved);
+        const recovered = await fresh.recover(JSON.parse(JSON.stringify(op.reference)));
+
+        if (recovered.kind !== "sandbox_suspend") throw Error("kind");
+        expect(await recovered.wait()).toEqual(suspended);
+        expect(
+          f.calls.filter(
+            (c) =>
+              c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+          ),
+        ).toHaveLength(2);
+        expect(
+          f.calls
+            .filter(
+              (c) =>
+                c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+            )
+            .map((c) => c.body),
+        ).toEqual([{ memory: true }, { timeout: 600 }]);
+        expect(f.windows()).toEqual([]);
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await client.close();
+    }
+  }
+});
+
+test.each(["mounted", "unknown-mounts", "transition", "missing", "policy"])(
+  "E2B lifecycle gate %s rejects before POST",
+  async (gate) => {
+    const f = fixture();
+    const { client, box } = await create(f);
+
+    try {
+      if (gate === "mounted") f.detail.volumeMounts = [{ name: "vol", path: "/mnt" }];
+
+      if (gate === "unknown-mounts") f.detail.volumeMounts = undefined;
+
+      if (gate === "transition") f.detail.state = "stopping";
+
+      if (gate === "missing") f.status(404);
+
+      if (gate === "policy") f.detail.lifecycle = { autoResume: true };
+      await expect(box.suspend()).rejects.toMatchObject({
+        code:
+          gate === "missing"
+            ? "NOT_FOUND"
+            : gate === "mounted" || false
+              ? "UNSUPPORTED"
+              : "UNAVAILABLE",
+        effect: "none",
+      });
+      expect(
+        f.calls.filter(
+          (c) => c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+        ),
+      ).toHaveLength(0);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each(["suspend", "resume"] as const)(
+  "E2B %s ACK preserves partial facts and fresh-client recovery never replays",
+  async (action) => {
+    const f = fixture();
+    let saved: AdapterRecoveryReference | undefined;
+
+    const { client, box } = await create(f, { lifecycle: { lifetimeSeconds: 61 } }, (ref) => {
+      if (ref.kind === `sandbox_${action}`) saved = JSON.parse(JSON.stringify(ref));
+    });
+
+    if (action === "resume") f.detail.state = "paused";
+    f.mode("get-failed");
+
+    try {
+      const op = action === "suspend" ? await box.submitSuspend() : await box.submitResume();
+      await expect(op.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: {
+          kind: `sandbox_${action}`,
+          status: "partial",
+          acknowledged: true,
+          observation: null,
+          ...expectedPreservation(action),
+        },
+      });
+      expect(saved?.lifecycle).toEqual(
+        action === "suspend"
+          ? { action, preserve: "filesystem+memory" }
+          : { action, forSeconds: 61 },
+      );
+      f.available();
+
+      const fresh = await f.connect(
+        { lifecycle: { lifetimeSeconds: 600 } },
+        undefined,
+        "rotated-key",
+      );
+
+      try {
+        const recovered = await fresh.recover(saved!);
+        expect(await recovered.wait()).toMatchObject({ reference: box.reference });
+        expect(
+          f.calls.filter(
+            (c) =>
+              c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+          ),
+        ).toHaveLength(1);
+        // A confirmed read is historical evidence: later external state change or failed metadata cannot erase it.
+        f.detail.state = "stopping";
+        f.mode("get-failed");
+        const again = await fresh.recover(JSON.parse(JSON.stringify(recovered.reference)));
+        expect(await again.wait()).toEqual(await recovered.wait());
+        expect(
+          f.calls.filter(
+            (c) =>
+              c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+          ),
+        ).toHaveLength(1);
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each(["lost", "409", "503"])(
+  "E2B suspend unacknowledged %s remains unknown despite matching state",
+  async (mode) => {
+    const f = fixture();
+    const { client, box } = await create(f);
+
+    if (mode === "lost") f.mode(mode);
+    else f.postStatus(Number(mode));
+
+    try {
+      const op = await box.submitSuspend();
+      await expect(op.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: { status: "unknown", acknowledged: false, observation: { state: "suspended" } },
+      });
+      const recovered = await client.recover(JSON.parse(JSON.stringify(op.reference)));
+      await expect(recovered.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: { acknowledged: false },
+      });
+      expect(
+        f.calls.filter(
+          (c) => c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test("E2B lifecycle cancellation before dispatch has no effect; after dispatch only stops local wait", async () => {
+  const f = fixture();
+  const pre = new AbortController();
+
+  const { client, box } = await create(f, {}, (ref) => {
+    if (ref.kind === "sandbox_suspend") pre.abort();
+  });
+
+  try {
+    await expect(box.suspend({ signal: pre.signal })).rejects.toMatchObject({
+      code: "WAIT_ABORTED",
+      effect: "none",
+    });
+    expect(
+      f.calls.filter(
+        (c) => c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    await client.close();
+  }
+
+  const g = fixture();
+  const post = new AbortController();
+  const setup = await create(g);
+  g.mode("hold");
+
+  try {
+    const waiting = setup.box.suspend({ signal: post.signal });
+    await g.postEntered;
+    post.abort();
+    await expect(waiting).rejects.toMatchObject({
+      code: "WAIT_ABORTED",
+      effect: "possible",
+      reference: { kind: "sandbox_suspend" },
+    });
+    g.release();
+    expect(
+      g.calls.filter(
+        (c) => c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+      ),
+    ).toHaveLength(1);
+  } finally {
+    g.release();
+    await setup.client.close();
+  }
+});
+
+test.each(["suspend", "resume"] as const)(
+  "E2B %s cancellation after ACK retains native facts",
+  async (action) => {
+    for (const completed of [false, true]) {
+      const f = fixture();
+      const abort = new AbortController();
+
+      const { client, box } = await create(f, {}, (ref) => {
+        if (
+          ref.kind === `sandbox_${action}` &&
+          ref.token &&
+          z
+            .object({ acknowledged: z.literal(true), completed: z.json().optional() })
+            .safeParse(ref.token).success &&
+          !!z.object({ completed: z.json().optional() }).parse(ref.token).completed === completed
+        )
+          abort.abort();
+      });
+
+      if (action === "resume") f.detail.state = "paused";
+
+      try {
+        await expect(
+          action === "suspend"
+            ? box.suspend({ signal: abort.signal })
+            : box.resume({ signal: abort.signal }),
+        ).rejects.toMatchObject({
+          code: "WAIT_ABORTED",
+          outcome: {
+            kind: `sandbox_${action}`,
+            status: completed ? "completed" : "partial",
+            acknowledged: true,
+            ...expectedPreservation(action),
+          },
+        });
+        expect(
+          f.calls.filter(
+            (c) =>
+              c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+          ),
+        ).toHaveLength(1);
+      } finally {
+        await client.close();
+      }
+    }
+  },
+);
+
+test.each(["suspend", "resume"] as const)(
+  "E2B %s checkpoint callback failure does not erase confirmed success",
+  async (action) => {
+    const f = fixture();
+
+    const { client, box } = await create(f, {}, (ref) => {
+      if (ref.kind === `sandbox_${action}` && ref.token) throw Error("storage failed");
+    });
+
+    if (action === "resume") f.detail.state = "paused";
+
+    try {
+      const result = action === "suspend" ? await box.suspend() : await box.resume();
+      expect(result.reference).toEqual(box.reference!);
+      expect(
+        f.calls.filter(
+          (c) => c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each(["lost", "409", "503"])(
+  "E2B resume %s cannot attribute observed running state",
+  async (mode) => {
+    const f = fixture();
+    const { client, box } = await create(f);
+    f.detail.state = "paused";
+
+    if (mode === "lost") f.mode(mode);
+    else f.postStatus(Number(mode));
+
+    try {
+      const op = await box.submitResume();
+      await expect(op.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: { status: "unknown", acknowledged: false, observation: { state: "running" } },
+      });
+      const recovered = await client.recover(JSON.parse(JSON.stringify(op.reference)));
+      await expect(recovered.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: { acknowledged: false },
+      });
+      expect(
+        f.calls.filter(
+          (c) => c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test("E2B inactive mounted/unknown resources cannot resume and capabilities agree", async () => {
+  const f = fixture();
+  const { client, box } = await create(f);
+  f.detail.state = "paused";
+
+  try {
+    f.detail.volumeMounts = [{ name: "v", path: "/mnt" }];
+    await expect(box.resume()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+    expect((await box.capabilities()).lifecycle?.resume.status).toBe("unsupported");
+    f.detail.volumeMounts = undefined;
+    await expect(box.resume()).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+    f.status(404);
+    await expect(box.resume()).rejects.toMatchObject({ code: "NOT_FOUND", effect: "none" });
+    expect(
+      f.calls.filter(
+        (c) => c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+      ),
+    ).toHaveLength(0);
   } finally {
     await client.close();
   }

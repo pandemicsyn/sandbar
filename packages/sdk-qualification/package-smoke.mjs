@@ -138,6 +138,11 @@ async function flow() {
   const renewal: import("sandbar-sdk").RenewResult = await handle.renew({ forSeconds: 61 }, options);
   const renewalOperation = await handle.submitRenew();
   const renewed = await renewalOperation.wait();
+  const suspended: import("sandbar-sdk").SuspendResult = await handle.suspend(options);
+  const resumed: import("sandbar-sdk").ResumeResult = await handle.resume(options);
+  await (await handle.submitSuspend(options)).wait(options);
+  await (await handle.submitResume(options)).wait(options);
+  void suspended; void resumed;
   void renewal; void renewed;
   if (!box.reference) throw Error("Missing sandbox reference");
   const preparedRenewal = await client.operations.prepare("sandbox_renew", {
@@ -322,12 +327,14 @@ try {
 `;
 
 const daytonaSource = `
+import { saveWorkspace, finishWorkspace, daytonaSetup } from "./lifecycle-example.mjs";
 import { Sandbar, Image } from "sandbar-sdk";
 import { createDaytonaAdapter } from "@sandbar/provider-daytona";
+let nativeState = "started";
 let name = "", mutations = 0, snapshotName = "", labels = {}, renewalWindows = [];
 const files = new Map([["/file", Uint8Array.from([0,255])]]);
 const origin = "https://proxy.app.daytona.io/toolbox";
-const native = (state = "started") => ({ labels, id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
+const native = (state = nativeState) => ({ sandboxClass: "container", volumes: [], autoDeleteInterval: -1, labels, id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
 const mock = async (input, init = {}) => {
   const url = new URL(String(input));
   const json = value => Response.json(value);
@@ -341,7 +348,8 @@ const mock = async (input, init = {}) => {
   }
   if (url.pathname.startsWith("/api/snapshots/")) return snapshotName && [snapshotName, "built-1"].includes(decodeURIComponent(url.pathname.split("/").at(-1)))
     ? json({ id: "built-1", name: snapshotName, imageName: "alpine:3.21", organizationId: "org-1", state: "active", regionIds: ["us"], sandboxClass: "container" }) : new Response(null, { status: 404 });
-  if (url.pathname === "/api/sandbox" && init.method === "POST") { mutations++; const body = JSON.parse(init.body); name = body.name; labels = body.labels; return json(native()); }
+  if (url.pathname === "/api/sandbox" && init.method === "POST") { nativeState = "started"; mutations++; const body = JSON.parse(init.body); name = body.name; labels = body.labels; return json(native()); }
+  if (["/api/sandbox/native-1/stop", "/api/sandbox/native-1/start"].includes(url.pathname)) { mutations++; nativeState = url.pathname.endsWith("/stop") ? "stopped" : "started"; return new Response(null, {status: 204}); }
   if (url.pathname.startsWith("/api/sandbox/native-1/ttl/")) { mutations++; renewalWindows.push(Number(url.pathname.split("/").at(-1))*60); return json(native()); }
   if (url.pathname === "/api/sandbox/native-1" && init.method === "DELETE") { mutations++; return json(native("destroyed")); }
   if (url.pathname === "/api/sandbox/native-1") return json(native());
@@ -380,6 +388,14 @@ try {
   try {
     const reopened = await fresh.sandboxes.get(JSON.parse(JSON.stringify(box.reference)));
     if ((await reopened.inspect()).state !== "running" || reopened.id !== box.id) throw Error("Packed sandbox reopening differs");
+    const saved = JSON.parse(JSON.stringify(reopened.reference));
+    const suspend = await reopened.submitSuspend();
+    if ((await suspend.wait()).preserve !== "filesystem") throw Error("Packed Daytona preservation differs");
+    const inactive = await fresh.sandboxes.get(saved);
+    if ((await inactive.inspect()).state !== "stopped") throw Error("Packed inactive reopen woke sandbox");
+    if ((await inactive.resume()).execution !== "fresh" || inactive.id !== box.id) throw Error("Packed Daytona resume differs");
+    const recoveredSuspend = await fresh.recover(JSON.parse(JSON.stringify(suspend.reference)));
+    if (recoveredSuspend.kind !== "sandbox_suspend" || (await recoveredSuspend.wait()).observation.state !== "stopped") throw Error("Packed suspend recovery differs");
     const renewal = await reopened.submitRenew({forSeconds:61});
     if((await renewal.wait()).requested.forSeconds!==120)throw Error("Packed Daytona rounding differs");
     const recovered=await fresh.recover(JSON.parse(JSON.stringify(renewal.reference)));
@@ -395,7 +411,12 @@ try {
   const bytes = await box.readFile("/file", { signal: new AbortController().signal });
   if (bytes[0] !== 0 || bytes[1] !== 255) throw new Error("Binary file mismatch");
   await box.destroy();
-  if (mutations !== 8) throw new Error("Mutation replay in packed consumer: " + mutations);
+  if (mutations !== 10) throw new Error("Mutation replay in packed consumer: " + mutations);
+  globalThis.fetch = mock;
+  let savedExample;
+  const savedResult = await saveWorkspace(daytonaSetup("fixture"), "built-1", async ref => { savedExample=JSON.parse(JSON.stringify(ref)); });
+  const finished = await finishWorkspace(daytonaSetup("rotated-fixture"), savedExample);
+  if(savedResult.observation.state!=="stopped" || finished.inactive.state!=="stopped" || finished.resumed.reference.nativeId!==savedExample.nativeId || new TextDecoder().decode(finished.bytes)!=="saved") throw Error("Packed public lifecycle example differs");
   process.stdout.write("packed Daytona fixture flow passed\\n");
 } finally { await client.close(); }
 `;
@@ -479,6 +500,8 @@ const transport = {
   },
   async get(id) { return record?.id === id ? record : null; },
   async list(metadata) { return { items: record && Object.entries(metadata).every(([k,v]) => record.metadata[k] === v) ? [record] : [] }; },
+  async suspend(id) { if(id!==record?.id)throw Error("Wrong suspend ID"); record.state = "paused"; },
+  async resume(id, seconds) { if(id!==record?.id || seconds!==300)throw Error("Wrong resume intent"); record.state = "running"; },
   async renew(id, seconds) { if(id!==record?.id)throw Error("Wrong renewal ID"); renewalWindows.push(seconds); },
   async kill(id) { if (id !== record?.id) throw Error("Wrong kill"); retained = record.metadata.sandbar_build ? record.templateId : ""; kills++; record = undefined; return true; },
   async run(_id, script) {
@@ -512,6 +535,14 @@ try {
   if((await renewal.wait()).requested.forSeconds!==60)throw Error("Packed E2B minimum differs");
   const recoveredRenewal=await client.recover(JSON.parse(JSON.stringify(renewal.reference)));
   if(recoveredRenewal.kind!=="sandbox_renew"||(await recoveredRenewal.wait()).requested.forSeconds!==60||renewalWindows.join()!=="60")throw Error("Packed E2B renewal replay");
+  const suspended = await box.suspend();
+  if(suspended.preserve!=="filesystem+memory")throw Error("Packed E2B preservation differs");
+  const fresh = await Sandbar.connect({adapter:createE2BAdapter(()=>transport),config:{},credentials:{apiKey:"fixture"}});
+  try {
+    const inactive = await fresh.sandboxes.get(JSON.parse(JSON.stringify(box.reference)));
+    if((await inactive.inspect()).state!=="suspended")throw Error("Packed E2B inactive reopen woke sandbox");
+    if((await inactive.resume()).execution!=="unknown" || inactive.id!==box.id)throw Error("Packed E2B execution evidence differs");
+  } finally { await fresh.close(); }
   const loaded = await box.readFile("/tmp/packed.bin");
   if (loaded.some((byte, i) => byte !== binary[i])) throw Error("Binary file changed");
   await box.writeFile("/tmp/packed-failure.bin", binary, {overwrite: true});
@@ -550,7 +581,7 @@ try {
   const fromBuild = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
   await fromBuild.destroy();
 } finally { await client.close(); }
-if (creates !== 4 || kills !== 4 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
+if (creates !== 4 || kills !== 4 || closes !== 2) throw Error("Packed E2B mutation or cleanup count mismatch");
 process.stdout.write("packed E2B fixture flow passed\\n");
 `;
 
@@ -738,6 +769,16 @@ try {
   await consumer(custom, customDeps, archiveOverrides, customSource);
   await consumer(direct, directDeps, archiveOverrides, directSource);
   await consumer(daytona, daytonaDeps, archiveOverrides, daytonaSource);
+
+  const lifecycleExample = await Bun.build({
+    entrypoints: [join(root, "apps/docs/examples/sandbox-suspend-resume.ts")],
+    target: "node",
+    external: ["sandbar-sdk", "sandbar-sdk/daytona", "sandbar-sdk/e2b"],
+    write: false,
+  });
+
+  if (!lifecycleExample.success) throw Error("Public lifecycle example compilation failed");
+  await writeFile(join(daytona, "lifecycle-example.mjs"), await lifecycleExample.outputs[0].text());
   await consumer(modal, modalDeps, archiveOverrides, modalSource);
   await consumer(e2b, e2bDeps, archiveOverrides, e2bSource);
   await consumer(builtins, sdkDeps, archiveOverrides, builtinsSource);
@@ -757,6 +798,10 @@ try {
     await readFile(join(root, "apps/docs/examples/sandbox-renew.ts"), "utf8"),
   );
   await writeFile(
+    join(custom, "sandbox-suspend-resume.ts"),
+    await readFile(join(root, "apps/docs/examples/sandbox-suspend-resume.ts"), "utf8"),
+  );
+  await writeFile(
     join(custom, "streaming-tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
@@ -767,7 +812,7 @@ try {
         skipLibCheck: false,
         types: [],
       },
-      include: ["text-streaming.ts", "sandbox-renew.ts"],
+      include: ["text-streaming.ts", "sandbox-renew.ts", "sandbox-suspend-resume.ts"],
     }),
   );
   run(join(root, "node_modules/.bin/tsc"), ["-p", "streaming-tsconfig.json"], custom);

@@ -37,3 +37,45 @@ export const RenewLimits = z.strictObject({
 });
 
 export type RenewLimits = z.infer<typeof RenewLimits>;
+
+/** Resolved native intent saved before dispatch; ordinary callers choose this at setup. */
+export const LifecycleIntent = z.discriminatedUnion("action", [
+  z.strictObject({
+    action: z.literal("suspend"),
+    preserve: z.enum(["filesystem", "filesystem+memory"]),
+  }),
+  z.strictObject({
+    action: z.literal("resume"),
+    forSeconds: RenewRequest.shape.forSeconds.optional(),
+  }),
+]);
+
+export type LifecycleIntent = z.infer<typeof LifecycleIntent>;
+
+export const LifecycleInput = z.strictObject({ sandbox: RenewInput.shape.sandbox });
+
+export type LifecycleInput = z.infer<typeof LifecycleInput>;
+
+export const ResolvedLifecycleInput = LifecycleInput.extend({ intent: LifecycleIntent });
+
+export type ResolvedLifecycleInput = z.infer<typeof ResolvedLifecycleInput>;
+
+export const SuspendResult = z.strictObject({
+  reference: RenewResult.shape.reference,
+  preserve: z.enum(["filesystem", "filesystem+memory"]),
+  processes: z.enum(["terminated", "preserved"]),
+  connections: z.literal("dropped"),
+  observation: SandboxInfoSchema,
+});
+
+export type SuspendResult = z.infer<typeof SuspendResult>;
+
+export const ResumeResult = z.strictObject({
+  reference: RenewResult.shape.reference,
+  execution: z.enum(["fresh", "resumed", "unknown"]),
+  executionIdentity: SandboxInfoSchema.shape.execution,
+  connections: z.enum(["dropped", "unknown"]),
+  observation: SandboxInfoSchema,
+});
+
+export type ResumeResult = z.infer<typeof ResumeResult>;

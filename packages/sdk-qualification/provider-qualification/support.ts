@@ -21,6 +21,7 @@ export const features = {
       "close",
     ],
   },
+  suspension: { label: "Native sandbox suspend/resume", scenarios: ["lifecycle-suspend-resume"] },
   renewal: { label: "Configured lifetime renewal", scenarios: ["lifecycle-renew"] },
   reopening: { label: "Scoped sandbox reopening", scenarios: ["lifecycle-reopen"] },
   execution: {
@@ -66,6 +67,10 @@ export const builtinSupport: SupportMetadata[] = [
     id: "daytona",
     name: "Daytona",
     features: {
+      suspension: {
+        support: "conditional",
+        note: "Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Native/packed fixtures; lifecycle-suspend-resume live not run.",
+      },
       renewal: {
         support: "conditional",
         note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.",
@@ -112,6 +117,10 @@ export const builtinSupport: SupportMetadata[] = [
     id: "e2b",
     name: "E2B",
     features: {
+      suspension: {
+        support: "conditional",
+        note: "Known unmounted E2B memory pause retains processes under the same ID; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Native/packed fixtures; lifecycle-suspend-resume live not run.",
+      },
       renewal: {
         support: "conditional",
         note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.",
