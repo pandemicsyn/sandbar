@@ -10,7 +10,11 @@ import {
   type SnapshotPlan,
   type CreatePlan,
 } from "sandbar-adapter";
-import type { AdapterRecoveryReference } from "./adapter-direct";
+import type {
+  AdapterDirectClient,
+  AdapterSandbox,
+  AdapterRecoveryReference,
+} from "./adapter-direct";
 import type { RetainedArtifact, Scope } from "sandbar-adapter";
 import { z } from "zod";
 import {
@@ -110,6 +114,24 @@ export interface OperationHandle<T> {
   wait(options?: { signal?: AbortSignal; pollMs?: number }): Promise<T>;
 }
 
+/** Public direct connection surface, including snapshots and retained volumes. */
+export type DirectSandbarClient = Pick<
+  AdapterDirectClient,
+  | "provider"
+  | "capabilities"
+  | "images"
+  | "sandboxes"
+  | "snapshots"
+  | "volumes"
+  | "operations"
+  | "recover"
+  | "close"
+>;
+
+/** Public direct sandbox surface, including capture and provider support checks. */
+export type DirectSandboxHandle = Pick<AdapterSandbox, keyof AdapterSandbox>;
+
+/** Compatibility surface shared with the service client. Use DirectSandboxHandle for direct connections. */
 export interface SandboxHandle {
   readonly id: string;
   capabilities(): Promise<Capabilities | DirectCapabilities>;
@@ -135,6 +157,7 @@ export interface SandboxHandle {
   }): Promise<void | DestroyValue>;
 }
 
+/** Compatibility surface shared with the service client. Use DirectSandbarClient for direct connections. */
 export interface SandbarClient {
   capabilities(): Promise<Capabilities | DirectCapabilities>;
   readonly images: {
@@ -491,4 +514,17 @@ export async function awaitSubmission<T>(
     if (known && signal?.aborted) throw new WaitAbortedError(known, signal.reason);
     throw error;
   }
+}
+
+/** Validate caller input only; native response validation must remain separate. */
+export function validateResourceInput<S extends z.ZodType>(
+  schema: S,
+  value: z.input<S>,
+  message: string,
+): z.output<S> {
+  const parsed = schema.safeParse(value);
+
+  if (!parsed.success) throw new SandbarError("INVALID_ARGUMENT", message);
+
+  return parsed.data;
 }
