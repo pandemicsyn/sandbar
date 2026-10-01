@@ -117,7 +117,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       execution: {
         support: "supported",
-        note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration.",
+        note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Finite bounded text streaming is implemented with local-only handles; deterministic pinned-client/packed coverage, live streaming scenario not run.",
       },
       files: {
         support: "conditional",

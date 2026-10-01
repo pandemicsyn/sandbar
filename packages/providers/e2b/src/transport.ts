@@ -1,5 +1,17 @@
-import { Sandbox, SandboxNotFoundError, Template, Volume } from "e2b";
-import { AdapterError } from "sandbar-adapter";
+import {
+  Sandbox,
+  SandboxNotFoundError,
+  Template,
+  Volume,
+  CommandExitError,
+  type CommandHandle,
+} from "e2b";
+import {
+  AdapterError,
+  type NativeProcess,
+  type ProcessStartContext,
+  type ProcessObservationFailure,
+} from "sandbar-adapter";
 import { z } from "zod";
 import { classifyWriteFailure, E2BWriteFailure } from "./write-failure";
 
@@ -114,6 +126,12 @@ export type E2BTransport = {
     script: string,
     options: { cwd?: string; env?: Record<string, string>; timeoutMs: number },
   ): Promise<string>;
+  startText?: (
+    id: string,
+    script: string,
+    options: { cwd?: string; env?: Record<string, string> },
+    ctx: ProcessStartContext,
+  ) => Promise<NativeProcess>;
   read(
     id: string,
     path: string,
@@ -621,6 +639,94 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     },
     async kill(id, signal) {
       return Sandbox.kill(id, { ...opts, signal });
+    },
+    async startText(id, script, options, ctx) {
+      const sandbox = await attach(id, undefined, ctx.signal);
+
+      if (ctx.signal.aborted) throw new AdapterError("UNAVAILABLE", "Process setup stopped");
+      const stream = new AbortController();
+      let native: CommandHandle | undefined;
+      let abandoned = false;
+      let disconnected = false;
+
+      const disconnect = (): Promise<void> => {
+        if (!native || disconnected) return Promise.resolve();
+        disconnected = true;
+
+        return native.disconnect();
+      };
+
+      const stop = () => {
+        abandoned = true;
+        stream.abort();
+
+        void disconnect().catch(() => undefined);
+      };
+
+      ctx.signal.addEventListener("abort", stop, { once: true });
+
+      const deliver = (streamName: "stdout" | "stderr", text: string) => {
+        if (abandoned) return;
+
+        try {
+          ctx.onOutput({ stream: streamName, text });
+        } catch (error) {
+          abandoned = true;
+          stream.abort();
+
+          void disconnect().catch(() => undefined);
+          throw error;
+        }
+      };
+
+      try {
+        native = await sandbox.commands.run(script, {
+          background: true,
+          stdin: false,
+          timeoutMs: 0,
+          requestTimeoutMs: 30_000,
+          cwd: options.cwd,
+          envs: options.env,
+          signal: stream.signal,
+          onStdout: (text) => deliver("stdout", text),
+          onStderr: (text) => deliver("stderr", text),
+        });
+        const handle = native;
+
+        const confirmedExit = () =>
+          Number.isSafeInteger(handle.exitCode) ? { exitCode: handle.exitCode! } : undefined;
+
+        const wait = handle.wait().then(
+          (result) => ({ exitCode: result.exitCode }),
+          // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native wait rejects arbitrary values; only the pinned error class and public exitCode supply evidence.
+          (error: unknown) => {
+            if (error instanceof CommandExitError) return { exitCode: error.exitCode };
+
+            const failure: ProcessObservationFailure = new AdapterError(
+              "UNAVAILABLE",
+              "E2B process observation failed",
+            );
+
+            failure.confirmedExit = confirmedExit();
+            throw failure;
+          },
+        );
+
+        void wait.catch(() => undefined);
+
+        if (abandoned) void disconnect().catch(() => undefined);
+
+        return {
+          get confirmedExit() {
+            return confirmedExit();
+          },
+          wait: () => wait,
+          detach: disconnect,
+        };
+      } finally {
+        // Setup cancellation must not stay connected to an established stream.
+        ctx.signal.removeEventListener("abort", stop);
+      }
     },
     async run(id, script, options) {
       const sandbox = await attach(id);

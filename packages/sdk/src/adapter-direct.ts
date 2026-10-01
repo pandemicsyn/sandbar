@@ -1,5 +1,6 @@
 import { readFileBytes } from "./file-read";
 import { freezeReference } from "./freeze-reference";
+import { startProcess, type StartProcessInput, type ProcessHandle } from "./processes";
 import { certifyRecoveryReference, certifyOperationReference } from "./recovery-diagnostics";
 import {
   ReferenceSchema,
@@ -695,7 +696,17 @@ export class AdapterSandbox {
     instrument(this, "readFile", client.telemetry, "sandbar.file.read");
     instrument(this, "writeFile", client.telemetry, "sandbar.file.write", { effect: "applied" });
     instrument(this, "destroy", client.telemetry, "sandbar.sandbox.destroy", { effect: "applied" });
+    instrument(this.processes, "start", client.telemetry, "sandbar.process.start", {
+      effect: "possible",
+    });
   }
+  readonly processes = {
+    start: (input: StartProcessInput, options: WaitOptions = {}): Promise<ProcessHandle> => {
+      this.client.ensureOpen();
+
+      return startProcess(this.client, sandboxInput(this.id, this.reference), input, options);
+    },
+  };
   async submitSnapshot(
     request: SnapshotRequest = {},
     options: WaitOptions = {},

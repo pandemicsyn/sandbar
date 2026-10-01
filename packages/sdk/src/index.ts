@@ -1,5 +1,13 @@
 import { connectDirect } from "./adapter-direct";
 
+export type {
+  StartProcessInput,
+  ProcessOutput,
+  ProcessExit,
+  ProcessHandle,
+  ProcessFailure,
+} from "./processes";
+
 export {
   AdapterDirectClient,
   AdapterSandbox,

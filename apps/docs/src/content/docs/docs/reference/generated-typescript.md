@@ -54,6 +54,10 @@ Import from `sandbar-sdk`.
 | `outputText`                | re-export |
 | `PreparedAdapterAttempt`    | re-export |
 | `PreparedImage`             | type      |
+| `ProcessExit`               | type      |
+| `ProcessFailure`            | type      |
+| `ProcessHandle`             | type      |
+| `ProcessOutput`             | type      |
 | `ReadOptions`               | type      |
 | `RecoveredOperation`        | type      |
 | `RecoveryReference`         | type      |
@@ -74,6 +78,7 @@ Import from `sandbar-sdk`.
 | `SnapshotRequest`           | re-export |
 | `SnapshotRequirements`      | re-export |
 | `SnapshotResult`            | type      |
+| `StartProcessInput`         | type      |
 | `Support`                   | type      |
 | `UnsupportedFeatureError`   | re-export |
 | `validateResourceReference` | re-export |
@@ -149,6 +154,8 @@ Import from `sandbar-adapter`.
 | `isOutcome`                    | function  |
 | `Json`                         | type      |
 | `Mutation`                     | type      |
+| `NativeProcess`                | interface |
+| `NativeProcessExit`            | type      |
 | `ObserveContext`               | type      |
 | `observeOperation`             | re-export |
 | `OperationInput`               | type      |
@@ -161,6 +168,10 @@ Import from `sandbar-adapter`.
 | `PolicyAdapterDefinition`      | type      |
 | `PreparedOperation`            | type      |
 | `prepareOperation`             | re-export |
+| `ProcessObservationFailure`    | type      |
+| `ProcessOutput`                | type      |
+| `ProcessStartContext`          | type      |
+| `ProcessStartInput`            | type      |
 | `ReadContext`                  | type      |
 | `RecoveryAttempt`              | type      |
 | `RecoveryResource`             | type      |

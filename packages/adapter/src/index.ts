@@ -77,6 +77,32 @@ export type ExecValue = {
   truncated: boolean;
 };
 
+/** Finite decoded text observation; detach never terminates compute. */
+export type ProcessOutput = { stream: "stdout" | "stderr"; text: string };
+
+export type NativeProcessExit = { exitCode: number };
+
+export type ProcessObservationFailure = AdapterError & { confirmedExit?: NativeProcessExit };
+
+export type ProcessStartContext = ReadContext & {
+  onOutput(chunk: ProcessOutput): void;
+};
+
+export interface NativeProcess {
+  /** Synchronous confirmed evidence, including during final decoder callbacks. */
+  readonly confirmedExit?: NativeProcessExit;
+  wait(): Promise<NativeProcessExit>;
+  detach(): Promise<void>;
+}
+
+export type ProcessStartInput = {
+  sandbox: Sandbox;
+  command: Command;
+  cwd?: string;
+  env?: Record<string, string>;
+  maxOutputBytes: number;
+};
+
 export type FileWriteInput = {
   sandbox: Sandbox;
   path: string;
@@ -291,6 +317,7 @@ export type AdapterSession<
     | null
   >;
   exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox>;
+  processes?: { start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess> };
   files?: {
     maxBytes: number;
     read?: (

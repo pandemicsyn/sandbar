@@ -95,7 +95,7 @@ Scoped Sandbar-created compute only; fresh connection/process reopen, state/dead
 
 ### Execution and captured output
 
-Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration.
+Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Finite bounded text streaming is implemented with local-only handles; deterministic pinned-client/packed coverage, live streaming scenario not run.
 
 <a id="e2b-files"></a>
 
