@@ -1,6 +1,6 @@
 # Implementation sequence
 
-Updated September 29, 2026. SDK completeness and qualified provider integrations come first. The optional service is a distant milestone.
+Updated September 30, 2026. SDK completeness and qualified provider integrations come first. The optional service is a distant milestone.
 
 ## Delivery rule
 
@@ -8,37 +8,15 @@ New features ship through the direct SDK and public adapter API. New HTTP routes
 
 Preserve existing service behavior and keep existing regression checks passing. Make narrow compatibility fixes when shared contracts change; do not expand the service to mirror each new SDK feature. Document SDK-only support explicitly. This decision does not delete the service or remove existing tests, and does not weaken SDK scope validation, recovery references, unknown-effect handling, or no-replay guarantees.
 
-## Current: complete the snapshot and volume PR
+## Merged SDK foundation and current queue
 
-[PR #25](https://github.com/pandemicsyn/sandbar/pull/25) implements snapshot capture/inspect/restore/delete, retained volumes, and supported create-time mounts under the [state portability spec](../specs/provider-state-portability.md). It is in review, not merged behavior.
+Snapshot/volume support merged in PR #25; provider acceptance merged in PR #32; ordinary results, partial errors and provider-identifying snapshot/volume handles merged in PR #33. The [roadmap](../ROADMAP.md) records verification at `d186cea` and the current delegated tasks. Use current package code and tests for shipped behavior.
 
-Finish the [current PR acceptance fixes](../specs/provider-state-portability.md#9-current-pr-completion-and-follow-up-boundary): prevent stale observation from overwriting continuation checkpoints; persist retained-volume custody before compute destruction; prove two-way filesystem write isolation; and correct release/evidence claims. Check the latest revision rather than assuming every reviewed finding is still open. Add focused regressions and final independent review/required gates. Missing live evidence stays explicitly unverified; paid runs need separate authorization.
+The merged [acceptance tooling](../packages/sdk-qualification/provider-qualification/README.md) uses ordinary Bun suites and an offline generated support table. Preserve actual historical revisions, blocked access and not-run evidence. A fixture pass is not live qualification. PR30's still-relevant documentation is being selectively reconciled against main, rather than cherry-picked wholesale.
 
-### Completion status and remaining gates
+Public types/errors merged in PR #35 and cleanup configuration in PR #34. Lifecycle slice 1 reopen/inspect is in progress, not merged. The streaming/cancellation brief merged in PR #36 as spec work only. Connection `cleanup.storage` and per-call `storage` are available. Later timeout mutation and suspend/resume retain product decisions and dependencies in the [lifecycle spec](../specs/sandbox-lifecycle.md).
 
-The implementation and focused regressions now address stale observation checkpoints, retained-volume custody, native artifact identity, immutable recovery references, two-way filesystem isolation checks, explicit deletion safeguards, and checkpoint persistence. Daytona destruction now preserves known pre-dispatch rejection and recovers confirmed absence after an uncertain DELETE without replay; capture/deletion distinguish definitive native rejection from ambiguous failures. Compact artifact checkpoints and bounded capture names cover valid large inputs. Both providers reject oversized compute-cleanup custody before destruction without truncating retained identities. Keep this work in the current PR until current-head independent review and required GitHub checks pass; do not treat an earlier green revision as completion.
-
-Renewed live authorization validated both providers' snapshot round trips at `5db0558`, including two-way write isolation and serialized references reopened through a fresh connection after source deletion. Daytona volume persistence and exact cleanup also passed. E2B volume creation returned HTTP 403 in a focused follow-up; the adapter now durably records definitive native rejection and recovers it without replay. The earlier E2B volume attempt lacks a captured native status and remains uncertain despite complete inventory finding no matching volume. Do not claim E2B volume acceptance or erase that unresolved custody record. These are unmerged diagnostic results, not published support-matrix certification. Daytona's private diagnostic capture wait is ten minutes.
-
-After the current PR passes its gates, update the completion status and retain the contracts in `specs/`. Do not archive the state portability spec while its lifecycle and richer storage work remain planned; completed implementation-plan entries can move into historical context without marking those follow-ups complete.
-
-A bounded consolidation review covers the failure classes already found: size and native identifier bounds, kind/scope binding, cancellation, uncertain dispatch, stale observation, retained custody, destructive target checks, and observation without replay. The confirmed size-limit defects have focused regressions. Feature scope is frozen; optional improvements belong in the follow-up. Oversized cleanup custody must fail clearly before native destruction, without truncating retained identities.
-
-Do not expand this PR into richer volume metadata, mounted restore, or a new public partial-outcome API. Existing correctness and resource-custody guarantees are required now.
-
-## After PR #25: simplify provider acceptance
-
-Follow [the provider acceptance plan](provider-acceptance.md): retain meaningful live SDK workflows, consolidate branch and release testing into one maintained runner, and generate a small support matrix with explicit provider limitations and validation status. Schedule this cleanup before onboarding more adapters; it does not block or expand PR #25.
-
-## Current SDK DX: results, errors and resource identities
-
-Follow the September 30 direction in [the focused spec](../specs/sdk-recovery-dx.md) when revising PR #33:
-
-1. Ordinary calls return clear confirmations or errors and preserve known partial results directly.
-2. Snapshot and volume handles identify their provider; minimal serializable references reopen the exact native artifact with current credentials in a fresh process.
-3. Ambiguous native responses remain unconfirmed, without automatic replay. Applications own persistence and recovery policy and can use supported native discovery/inspection.
-
-Expanded persistence callbacks, generic completion-facts envelopes, application-backed dispatch barriers and generic continuation advice are deferred. Preserve necessary shipped compatibility and safety guards; do not expand legacy operation recovery into a prerequisite for usable resource APIs. The root [roadmap](../ROADMAP.md) controls sequencing and status.
+[Recovery direction](../specs/sdk-recovery-dx.md) keeps ordinary calls and application-owned persistence central. Expanded persistence callbacks, normalized recovery-facts envelopes, application-backed dispatch barriers and generic continuation/workflow machinery are deferred. Shipped compatibility paths and no-replay/deletion safeguards remain supported.
 
 ## Later state extensions with concrete provider requirements
 
@@ -58,7 +36,7 @@ The direct tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes fr
 - Close remaining SDK gaps in images, resource configuration, files, and networking as focused contracts with demonstrated use cases.
 - Establish several usable, qualified provider integrations. Vercel and Tensorlake specs will be written when scheduled; provider distribution and ordering remain in [package conventions](../specs/package-conventions.md).
 
-Provider integrations can proceed alongside SDK features where contracts are ready. Do not wait for universal native feature parity or claim support without evidence.
+New providers remain behind the roadmap’s SDK usability gate. Universal native parity is not required; support claims still require evidence.
 
 ## Distant milestone: optional service
 

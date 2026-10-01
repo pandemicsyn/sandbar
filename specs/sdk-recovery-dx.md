@@ -1,6 +1,8 @@
 # SDK results, errors and persisted resource identities
 
-Accepted direction · September 30, 2026 · PR #33 must be revised; not implemented on main
+Accepted direction · September 30, 2026 · Focused implementation merged in PR #33 at `d186cea`
+
+PR #33 shipped provider identity on snapshot/volume handles and ordinary typed partial outcomes while retaining existing compatibility formats and stage guards. The sketches below record design intent, not an exact API inventory; use [current usage](../apps/docs/src/content/docs/docs/guides/recovery.md) and public types for shipped signatures. In particular, existing version-1 references still accept compatibility history/receipt fields. Expanded persistence hooks, normalized facts envelopes and generic workflow machinery remain deferred.
 
 Sandbar makes provider operations convenient and their outcomes understandable. Applications own persistence and recovery policy. Ordinary function calls return useful results or clear errors, with the identities needed to reopen known resources from another process. This direction supersedes the earlier requirements here for normalized recovery-facts envelopes, expanded persistence callbacks, shared durable checkpoint helpers and generic continuation advice.
 
@@ -101,7 +103,9 @@ Preserve already-shipped APIs/formats as necessary, and keep existing recovery r
 
 ## Acceptance and delivery
 
-- Revise PR #33 around these results, errors and identities. Remove unmerged generic persistence/continuation additions and tests/docs that exist only to qualify that expanded contract. Keep independently useful correctness fixes and typed native pending-operation results where justified.
+This checklist records the merged PR #33 scope; it does not reopen that PR or mark later proposals implemented.
+
+- Center results, errors and identities. Exclude generic persistence/continuation additions and tests/docs that exist only to qualify that expanded contract. Keep independently useful correctness fixes and typed native pending-operation results where justified.
 - Make provider identity discoverable on snapshot/volume handles and their saved references. Preserve immutable artifact identity, scope verification and existing deletion safeguards.
 - Prove successful snapshot capture, JSON persistence and reopening through a fresh connection; preserve supported source-independent lifetime and current-credential behavior.
 - Prove partial capture/restart errors expose the retained snapshot directly, unknown responses remain unknown, and no mutation is automatically replayed. Metadata/serialization failures must not conceal known completion or discard an identity.

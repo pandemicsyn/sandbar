@@ -1,13 +1,16 @@
 # Specifications
 
-Keep this directory for focused implementation specs and a small set of current engineering contracts. Public usage belongs in [the docs site](../apps/docs/README.md), qualification belongs [with its harness](../packages/sdk-qualification/README.md), and sequencing belongs in [plans](../plans/implementation-plan.md).
+Keep this directory for focused implementation specs and a small set of current engineering contracts. Public usage belongs in [the docs site](../apps/docs/README.md), qualification belongs [with its harness](../packages/sdk-qualification/README.md), and sequencing belongs in the [roadmap](../ROADMAP.md).
 
 New features target the direct SDK and public adapter API. Service expansion is deferred until the SDK is mature and several provider integrations are established; see the [delivery rule](../plans/implementation-plan.md#delivery-rule). Preserve existing service behavior and regression coverage, without requiring new feature parity.
 
-## Current implementation and next unit
+## Merged foundation and current work
 
-- [Provider state portability](provider-state-portability.md) — the snapshot/volume slice is in [PR #25](https://github.com/pandemicsyn/sandbar/pull/25); its [current completion criteria](provider-state-portability.md#9-current-pr-completion-and-follow-up-boundary) separate correctness fixes from later extensions. Remaining lifecycle features are planned.
-- [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) — revise PR #33 around ordinary calls, provider identity, minimal saved references and clear partial/unknown outcomes. Expanded persistence callbacks and durable workflow machinery are deferred. Richer volume semantics and mounted restore wait for concrete provider work.
+- [Provider state portability](provider-state-portability.md) — snapshot/volume support merged in PR #25. Later lifecycle and richer storage contracts remain proposals until implemented.
+- [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) — ordinary results, direct partial outcomes and provider-identifying snapshot/volume handles merged in PR #33. Expanded persistence callbacks and workflow machinery remain deferred.
+- Provider acceptance merged in PR #32; use the [maintained Bun runner](../packages/sdk-qualification/provider-qualification/README.md) and generated evidence, not proposed qualification behavior.
+- Public direct resource types and caller input errors merged in PR #35.
+- Cleanup configuration merged in PR #34. [Lifecycle slice 1 reopen/inspect](sandbox-lifecycle.md) is delegated implementation work, not merged. The streaming/cancellation brief merged in PR #36; runtime implementation remains unshipped. See the [authoritative roadmap](../ROADMAP.md) for task identities and order. Later lifecycle choices and mounted storage composition remain later work.
 
 ## Implemented observability contract
 
@@ -15,7 +18,7 @@ New features target the direct SDK and public adapter API. Service expansion is 
 
 ## Later design work
 
-- [Interactive execution and access](interactive-execution-and-access.md) — initial process, streaming, terminal, endpoint and tunnel contracts. Not an implementation commitment or a prerequisite for state portability.
+- [First streaming execution slice](interactive-execution-and-access.md) — E2B text-streaming implementation brief merged in PR #36. No streaming runtime is implemented; terminals, endpoints and tunnels remain later work.
 
 Vercel and Tensorlake adapter specs will be written later. Accounting is deferred; management feature plans are not maintained here. Rust is not on the roadmap.
 
