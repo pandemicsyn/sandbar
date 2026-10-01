@@ -38,7 +38,37 @@ const output = await box.exec({
 });
 ```
 
-The image must contain the executable and working directory. The default execution deadline is 300 seconds; the default combined output limit is 1 MiB. `deadlineSeconds` bounds this command through the adapter’s native execution timeout; it does not set or extend sandbox lifetime. E2B `timeoutSeconds` (default 300) and Daytona `ttlMinutes` (default 60) configure native compute lifetime separately. Lifetime expiry is a fallback, not confirmed cleanup, and does not expire retained artifacts.
+The image must contain the executable and working directory. `deadlineSeconds` defaults to 300 and accepts integers from 1 to 3,600; the default combined output limit is 1 MiB. The deadline has provider-specific execution or observation semantics. It does not bound the total SDK call, including setup, polling and output retrieval, or set or extend sandbox lifetime.
+
+## Execution and waiting timeouts
+
+| Boundary       | What it limits                                                                                                                                                                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Caller waiting | A call's `signal` stops local waiting. After submission, `WAIT_ABORTED` preserves the execution reference and reports effect possible; compute may continue.                                                                          |
+| Request/RPC    | A provider HTTP/RPC observation window can end without exit evidence. A timer error is not a termination receipt.                                                                                                                     |
+| Remote process | Daytona and Modal document native command runtime bounds. E2B's pinned mapping establishes an RPC deadline; remote termination remains unverified. Descendant termination and deployed wrapper behavior are unverified for all three. |
+| Sandbox expiry | E2B and Modal `timeoutSeconds` (default 300) and Daytona `ttlMinutes` (default 60) configure separate native compute lifetime. Expiry may interrupt command/output, does not confirm cleanup, and does not expire retained artifacts. |
+
+Use a caller signal when you need to bound local waiting:
+
+```ts
+const result = await box.exec(
+  { command: { kind: "argv", argv: ["node", "job.js"] }, deadlineSeconds: 10 },
+  { signal: AbortSignal.timeout(15_000) },
+);
+```
+
+The 15-second signal stops local waiting without killing remote compute. `deadlineSeconds: 10` retains the provider behavior described below. [Recover the original execution reference](/docs/guides/recovery/) to investigate uncertainty; do not automatically submit it again.
+
+| Provider                                         | Current bounded-exec mapping                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E2B (`e2b@2.51.0`)                               | `deadlineSeconds * 1000` becomes foreground `commands.run` RPC `timeoutMs` and handshake `requestTimeoutMs`. The handshake timer clears at PID acknowledgement. RPC failure does not establish remote termination; status/output files can be observed later. No automatic total SDK wait timer follows from this deadline.                                            |
+| Daytona (direct REST; fixtures based on 0.218.0) | `/process/execute` receives `timeout: deadlineSeconds`; HTTP waiting is separately bounded by `(deadlineSeconds + 10) * 1000`, after preflight. Daytona documents server command termination. Sandbar's capture wrapper, descendants and forced-termination receipt behavior remain unverified live. The same post-submission receipt window guides later observation. |
+| Modal (experimental, `modal@0.10.1`)             | Native `TaskExecStart.timeoutSecs` is distinct from sandbox lifetime. Start lookup and initial result observation share a local `(deadlineSeconds + 5) * 1000` window; later observations use fresh context deadlines. Modal documents a process runtime bound; deployed private-router and descendant termination remain unverified live.                             |
+
+The E2B timer distinction follows the exact [2.51.0 client artifact](https://unpkg.com/e2b@2.51.0/dist/index.mjs), rather than older descriptive SDK references. Native runtime intent comes from Daytona’s [process reference](https://www.daytona.io/docs/en/typescript-sdk/process/) and Modal’s [command guide](https://modal.com/docs/guide/sandbox-spawn). Modal’s [sandbox lifetime guide](https://modal.com/docs/guide/sandboxes) describes the separate expiry boundary. These sources establish client wiring or documented intent; offline fixtures do not establish deployed termination.
+
+Local timeout paths do not implicitly kill or destroy the sandbox and do not replay command submission. Completion and output are separate evidence: a successful command may still be publicly unconfirmed if E2B output-file reads, Daytona response/receipt retrieval, or Modal output streams fail. Current APIs return completion only after the required output evidence is available; they do not independently expose every known native exit through output failure.
 
 ## Use a shell explicitly
 

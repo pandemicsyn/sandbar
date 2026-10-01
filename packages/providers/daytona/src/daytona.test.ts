@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { z } from "zod";
@@ -2474,3 +2474,87 @@ for (const cancelMode of ["stall", "reject"] as const) {
     expect(stream.locked).toBe(false);
   });
 }
+
+test("REST 0.218 exec timeout is separate from HTTP observation and original receipt recovery", async () => {
+  const timer = spyOn(AbortSignal, "timeout");
+  const local = new AbortController();
+  const durations: number[] = [];
+  timer.mockImplementation((ms) => {
+    durations.push(ms);
+
+    return ms === 17_000 ? local.signal : new AbortController().signal;
+  });
+  let executes = 0;
+  let receiptAvailable = false;
+  const requests: { method: string; path: string }[] = [];
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const url = new URL(String(input));
+    requests.push({ method: init?.method ?? "GET", path: url.pathname });
+
+    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
+
+    if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+    if (url.pathname.endsWith("/process/execute")) {
+      executes++;
+      expect(JSON.parse(String(init?.body))).toMatchObject({ cwd: "/tmp", timeout: 7 });
+      expect(durations).toContain(17_000);
+      expect(init?.signal?.aborted).toBe(false);
+      local.abort(new DOMException("HTTP budget expired", "TimeoutError"));
+      expect(init?.signal?.aborted).toBe(true);
+      throw local.signal.reason;
+    }
+
+    if (url.pathname.endsWith("/files/download")) {
+      expect(url.searchParams.get("path")).toContain("/receipt");
+
+      if (!receiptAvailable) return new Response(null, { status: 503 });
+
+      return new Response("SANDBAR-EXEC-V1\n0\n1\n0\n61\nSANDBAR-STDERR\nSANDBAR-END\n");
+    }
+
+    throw new Error(`Unexpected timeout fixture ${url.pathname}`);
+  });
+
+  try {
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+    expect(
+      await provider.driver.exec({
+        sandbox,
+        identity: identity("timeout-original"),
+        command: { kind: "argv", argv: ["true"] },
+        cwd: "/tmp",
+        deadlineSeconds: 7,
+        maxOutputBytes: 10,
+      }),
+    ).toMatchObject({ status: "unknown", effect: "possible", submissionId: "timeout-original" });
+    expect(
+      await provider.driver.observeExec({
+        sandbox,
+        submissionId: "timeout-original",
+        maxOutputBytes: 10,
+      }),
+    ).toBeNull();
+    receiptAvailable = true;
+    expect(
+      await provider.driver.observeExec({
+        sandbox,
+        submissionId: "timeout-original",
+        maxOutputBytes: 10,
+      }),
+    ).toMatchObject({
+      status: "completed",
+      value: { observation: { exitCode: 0, stdoutBase64: "YQ==" } },
+    });
+    expect(executes).toBe(1);
+    expect(requests.filter((request) => request.method !== "GET")).toEqual([
+      { method: "POST", path: "/toolbox/native-1/process/execute" },
+    ]);
+  } finally {
+    timer.mockRestore();
+  }
+});

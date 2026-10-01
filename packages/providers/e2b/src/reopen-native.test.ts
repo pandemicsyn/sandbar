@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { Sandbox } from "e2b";
 import { createSdkTransport } from "./transport";
 import { createE2BAdapter } from "./index";
 import { Sandbar } from "sandbar-sdk";
@@ -10,7 +11,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function fixture() {
+function fixture(start?: (request: Request) => Promise<Response>) {
   const calls: { method: string; url: URL; headers: Headers }[] = [];
 
   const detail = {
@@ -55,30 +56,14 @@ function fixture() {
         return Response.json([{ path: "/tmp/value", name: "value", type: "file" }]);
 
       if (url.pathname.endsWith("/Start")) {
-        type ProcessFrame = {
-          event?: {
-            start?: { pid: number };
-            data?: { stdout: string };
-            end?: { exitCode: number };
-          };
-        };
-
-        const frame = (value: ProcessFrame, flags = 0) => {
-          const bytes = new TextEncoder().encode(JSON.stringify(value));
-          const framed = new Uint8Array(bytes.length + 5);
-          framed[0] = flags;
-          new DataView(framed.buffer).setUint32(1, bytes.length);
-          framed.set(bytes, 5);
-
-          return framed;
-        };
+        if (start) return start(request);
 
         return new Response(
           Buffer.concat([
-            frame({ event: { start: { pid: 1 } } }),
-            frame({ event: { data: { stdout: btoa("fixture-output") } } }),
-            frame({ event: { end: { exitCode: 0 } } }),
-            frame({}, 2),
+            processFrame({ event: { start: { pid: 1 } } }),
+            processFrame({ event: { data: { stdout: btoa("fixture-output") } } }),
+            processFrame({ event: { end: { exitCode: 0 } } }),
+            processFrame({}, 2),
           ]),
           { headers: { "Content-Type": "application/connect+json" } },
         );
@@ -379,3 +364,98 @@ test("pinned E2B file read forwards abort to download and cancels a stalled nati
     f.calls.filter((c) => c.url.origin === "https://api.e2b.app").every((c) => c.method === "GET"),
   ).toBe(true);
 });
+
+type NativeProcessFrame = {
+  event?: { start?: { pid: number }; data?: { stdout: string }; end?: { exitCode: number } };
+  error?: { code: string; message: string };
+};
+
+function processFrame(value: NativeProcessFrame, flags = 0): Uint8Array {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  const framed = new Uint8Array(bytes.length + 5);
+  framed[0] = flags;
+  new DataView(framed.buffer).setUint32(1, bytes.length);
+  framed.set(bytes, 5);
+
+  return framed;
+}
+
+test("pinned E2B maps bounded exec to RPC options without a process runtime field", async () => {
+  const f = fixture(async (request) => {
+    expect(request.headers.get("connect-timeout-ms")).toBe("1234");
+    expect(await request.json()).toEqual({
+      process: { cmd: "/bin/bash", args: ["-l", "-c", "sleep 10"] },
+    });
+
+    return new Response(
+      Buffer.concat([
+        processFrame({ event: { start: { pid: 1 } } }),
+        processFrame({ error: { code: "deadline_exceeded", message: "RPC observation ended" } }, 2),
+      ]),
+      { headers: { "Content-Type": "application/connect+json" } },
+    );
+  });
+
+  await expect(f.transport.run("sandbox_one", "sleep 10", { timeoutMs: 1234 })).rejects.toThrow();
+  expect(f.calls.filter((call) => call.url.pathname.endsWith("/Start"))).toHaveLength(1);
+  expect(f.calls.some((call) => /Kill|SendSignal|kill|connect/.test(call.url.pathname))).toBe(
+    false,
+  );
+  expect(
+    f.calls
+      .filter((call) => call.url.origin === "https://api.e2b.app")
+      .every((call) => call.method === "GET"),
+  ).toBe(true);
+});
+
+test.each([false, true])(
+  "pinned E2B handshake timer clears only after PID: %s",
+  async (acknowledged) => {
+    let requestSignal: AbortSignal | undefined;
+
+    const f = fixture(async (request) => {
+      requestSignal = request.signal;
+      expect(request.headers.get("connect-timeout-ms")).toBe("1000");
+
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            request.signal.addEventListener(
+              "abort",
+              () => controller.error(request.signal.reason),
+              { once: true },
+            );
+
+            if (acknowledged) controller.enqueue(processFrame({ event: { start: { pid: 1 } } }));
+            // Complete after the handshake budget but before the independent RPC budget.
+            setTimeout(() => {
+              if (request.signal.aborted) return;
+              controller.enqueue(processFrame({ event: { end: { exitCode: 0 } } }));
+              controller.enqueue(processFrame({}, 2));
+              controller.close();
+            }, 80);
+          },
+        }),
+        { headers: { "Content-Type": "application/connect+json" } },
+      );
+    });
+
+    // Exercise the actual pinned Commands/CommandHandle implementation with distinct timers.
+    const sandbox = new Sandbox({
+      sandboxId: "sandbox_one",
+      envdVersion: "0.5.0",
+      envdAccessToken: "guest-only-token",
+      sandboxDomain: "e2b.app",
+      sandboxUrl: "https://sandbox.e2b.app",
+      apiKey: "control-only-key",
+    });
+
+    const run = sandbox.commands.run("sleep 10", { timeoutMs: 1000, requestTimeoutMs: 25 });
+
+    if (acknowledged) expect((await run).exitCode).toBe(0);
+    else await expect(run).rejects.toThrow("handshake timed out");
+    expect(requestSignal?.aborted).toBe(true); // CommandHandle/start cleanup is local.
+    expect(f.calls.filter((call) => call.url.pathname.endsWith("/Start"))).toHaveLength(1);
+    expect(f.calls.some((call) => /Kill|SendSignal|kill/.test(call.url.pathname))).toBe(false);
+  },
+);

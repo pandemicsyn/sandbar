@@ -34,6 +34,8 @@ let holdWait = false;
 
 let loseStdin = false;
 
+let loseOutput = false;
+
 let firstStream: "stdout" | "stderr" | undefined;
 
 let waitReply = message(field(1, 7));
@@ -86,6 +88,17 @@ server.addService(
     taskExecStdioRead(call: grpc.ServerWritableStream<Buffer, Buffer>) {
       const descriptor = parse(call.request).get(4);
       expect(descriptor === 1 || descriptor === 2).toBe(true);
+
+      if (loseOutput && descriptor === 2) {
+        call.emit(
+          "error",
+          Object.assign(new Error("output unavailable after exit"), {
+            code: grpc.status.UNAVAILABLE,
+          }),
+        );
+
+        return;
+      }
 
       const emit = () => {
         call.write(
@@ -411,5 +424,40 @@ test("abort or close during either control lookup prevents new channels and rout
     }
   } finally {
     channels.mockRestore();
+  }
+});
+
+test("local deadline permits later original-ID recovery; exit alone cannot hide output failure", async () => {
+  starts = 0;
+  const wire = router();
+
+  try {
+    await wire.start({
+      sandboxId: "sb-fixture",
+      execId: "submission-1",
+      command: ["true"],
+      timeoutSeconds: 7,
+    });
+    holdWait = true;
+    await expect(
+      wire.result("sb-fixture", "submission-1", 4, AbortSignal.timeout(10)),
+    ).rejects.toThrow();
+    holdWait = false;
+    waitReply = message(field(1, 0));
+    loseOutput = true;
+    await expect(wire.result("sb-fixture", "submission-1", 4)).rejects.toThrow();
+    loseOutput = false;
+    expect(await wire.result("sb-fixture", "submission-1", 4)).toMatchObject({
+      exitCode: 0,
+      stdout: Uint8Array.from([0, 255, 129]),
+      stderr: Uint8Array.from([42]),
+    });
+    expect(starts).toBe(1);
+    expect(parse(seen.at(-1)!).get(6)).toBe(7);
+  } finally {
+    holdWait = false;
+    loseOutput = false;
+    waitReply = message(field(1, 7));
+    wire.close();
   }
 });

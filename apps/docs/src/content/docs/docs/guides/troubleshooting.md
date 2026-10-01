@@ -29,7 +29,9 @@ Use an absolute path in an existing writable directory, keep the payload at or b
 
 ## A timeout leaves the outcome unknown
 
-Do not submit the same operation again automatically. Save the recovery reference, reconnect in the same scope if needed, and observe the original attempt. See [Errors and recovery](/docs/guides/recovery/).
+A request/RPC timeout does not prove a command exited or stopped. E2B’s pinned command timeout is an RPC observation limit; Daytona and Modal document native process bounds with deployed wrapper/descendant limits unverified. `deadlineSeconds` is not a total SDK wait timer. Provide a caller signal for a local waiting budget; it does not kill compute. See [execution and waiting timeouts](/docs/guides/resources/#execution-and-waiting-timeouts).
+
+Do not submit the same operation again automatically. Successful command status with unavailable output can still leave the public outcome unconfirmed. Save the recovery reference, reconnect in the same scope if needed, and observe the original attempt. See [Errors and recovery](/docs/guides/recovery/).
 
 ## A sandbox is still running after close
 

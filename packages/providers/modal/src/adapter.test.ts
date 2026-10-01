@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { adapterSuite } from "sandbar-adapter/testing";
 import { createModalAdapter, modalWriteScript } from "./adapter";
 import type { ModalTransport } from "./transport";
@@ -564,5 +564,113 @@ test("OCI create builds only in submit and never replays an uncertain image or s
     else expect(await (await client.recover(reference)).observe()).toMatchObject({ id: "sb-oci" });
     expect(creates).toBe(1);
     await client.close();
+  }
+});
+
+test("Modal submission window covers start lookup and result; observation gets its own deadline", async () => {
+  const timers: { ms: number; controller: AbortController }[] = [];
+
+  const timer = spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    const controller = new AbortController();
+    timers.push({ ms, controller });
+
+    return controller.signal;
+  });
+
+  let tags: Record<string, string> = {};
+  let starts = 0;
+  let terminated = 0;
+  let resultAvailable = false;
+  let startSignal: AbortSignal | undefined;
+
+  const transport: ModalTransport = {
+    async lookupApp() {
+      return "ap-fixture";
+    },
+    async imageExists() {
+      return true;
+    },
+    async create(input) {
+      expect(input.timeoutMs).toBe(300_000);
+      tags = input.tags;
+
+      return "sb-fixture";
+    },
+    async findByName() {
+      return { id: "sb-fixture", tags, running: true };
+    },
+    async *list() {
+      yield { id: "sb-fixture", tags, running: true };
+    },
+    async terminate() {
+      terminated++;
+
+      return true;
+    },
+    async poll() {
+      return "running";
+    },
+    async readBytes() {
+      return new Uint8Array();
+    },
+    async fileExists() {
+      return false;
+    },
+    async start(input, signal) {
+      starts++;
+      expect(input.timeoutSeconds).toBe(7);
+      expect(timers.at(-1)?.ms).toBe(12_000);
+      startSignal = signal;
+      // Lookup/start work consumes the same adapter window as the initial result.
+      await Promise.resolve();
+      timers.at(-1)!.controller.abort(new DOMException("local timeout", "TimeoutError"));
+    },
+    async stdin() {},
+    async result(_sandbox, _id, _max, signal) {
+      if (starts === 1 && !resultAvailable && signal === startSignal) {
+        expect(signal?.aborted).toBe(true);
+        throw signal?.reason;
+      }
+
+      expect(signal).not.toBe(startSignal);
+
+      if (!resultAvailable) throw new Error("exit succeeded but output unavailable");
+
+      return { exitCode: 0, stdout: Uint8Array.of(97), stderr: new Uint8Array(), truncated: false };
+    },
+    close() {},
+  };
+
+  const client = await Sandbar.connect({
+    adapter: createModalAdapter(() => transport),
+    config: { appName: "existing", environment: "main" },
+    credentials: { tokenId: "ak", tokenSecret: "as" },
+  });
+
+  try {
+    const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture") });
+
+    const operation = await box.submitExec({
+      command: { kind: "argv", argv: ["true"] },
+      deadlineSeconds: 7,
+    });
+
+    const reference = operation.reference;
+    await expect((await client.recover(reference)).observe()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      effect: "possible",
+    });
+    expect(timers.at(-1)?.ms).toBeGreaterThan(0);
+    expect(timers.at(-1)?.ms).toBeLessThanOrEqual(30_000);
+    resultAvailable = true;
+    expect(await (await client.recover(reference)).observe()).toMatchObject({
+      exitCode: 0,
+      stdout: Uint8Array.of(97),
+    });
+    expect(starts).toBe(1);
+    expect(terminated).toBe(0);
+  } finally {
+    await client.close();
+    timer.mockRestore();
   }
 });
