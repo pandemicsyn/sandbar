@@ -21,7 +21,7 @@ bun run package:smoke
 bun run docs:check
 ```
 
-Run shared builds sequentially. Focused tests are useful during iteration; package/API changes also require packed qualification. Root CI additionally runs source checks, the docs build, and release/installer fixtures. See [release instructions](../../RELEASE.md) for publication requirements; a successful package smoke run does not publish anything.
+Run shared builds sequentially. Focused tests are useful during iteration; package/API changes also require packed qualification. Root CI additionally runs source checks and the docs build; packed consumers and observability fixtures run when packaging inputs change, as described in [CI coverage](../../CI.md). Full release/installer rehearsals run in the release workflow. See [release instructions](../../RELEASE.md) for publication requirements; a successful package smoke run does not publish anything.
 
 ## Provider evidence
 

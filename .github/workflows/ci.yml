@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
-      release: ${{ steps.scope.outputs.release }}
+      packed: ${{ steps.scope.outputs.packed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,21 +26,30 @@ jobs:
         with:
           node-version: 22
       - run: bun install --frozen-lockfile
-      - name: Select release rehearsal coverage
+      - name: Select packed consumer coverage
         id: scope
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
+          set -euo pipefail
           if [ "$EVENT" = workflow_dispatch ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
-            echo 'release=true' >> "$GITHUB_OUTPUT"
+            echo 'packed=true' >> "$GITHUB_OUTPUT"
           else
-            git diff --name-only "$BASE" HEAD > "$RUNNER_TEMP/changed-files"
-            if grep -Eq '(^package.json$|^bun.lock$|^tsconfig.json$|^\.github/|^\.changeset/(config\.json|pre\.json)$|^scripts/|(^|/)(package.json|tsconfig[^/]*\.json|build-assets.ts|flatten-declarations\.mjs|\.npmignore)$)' "$RUNNER_TEMP/changed-files"; then
-              echo 'release=true' >> "$GITHUB_OUTPUT"
+            # Include both sides of renames so moving a packaging input out still qualifies.
+            git diff --no-renames --name-only "$BASE" HEAD > "$RUNNER_TEMP/changed-files"
+            if grep -Eq \
+              -e '(^bun.lock$|^\.github/workflows/|^\.changeset/(config\.json|pre\.json)$|^scripts/)' \
+              -e '(^|/)(package.json|tsconfig[^/]*\.json|build-assets\.ts|flatten-declarations\.mjs|\.npmignore|\.gitignore)$' \
+              -e '^packages/([^/]+|providers/[^/]+)/src/(index|client|server|adapter|portable|testing|daytona|e2b)\.ts$' \
+              -e '^packages/([^/]+|providers/[^/]+)/assets/' \
+              -e '^packages/sdk-qualification/.*\.(ts|mjs|json)$' \
+              -e '^apps/docs/examples/recovery-outcomes\.ts$' \
+              "$RUNNER_TEMP/changed-files"; then
+              echo 'packed=true' >> "$GITHUB_OUTPUT"
             else
               test "$?" -eq 1
-              echo 'release=false' >> "$GITHUB_OUTPUT"
+              echo 'packed=false' >> "$GITHUB_OUTPUT"
             fi
           fi
       - run: bun run lint && bun run format:check
@@ -81,6 +90,7 @@ jobs:
         run: bun run test:sdk:built
   packed:
     needs: build
+    if: needs.build.outputs.packed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -102,16 +112,6 @@ jobs:
         run: bun run package:smoke:built
       - name: Local OpenTelemetry, Sentry and Datadog fixtures
         run: bun run observability:check
-      - uses: pnpm/action-setup@v6
-        if: needs.build.outputs.release == 'true'
-        with:
-          version: 10.18.3
-          run_install: false
-      - name: Stable and prerelease version and installer rehearsal
-        if: needs.build.outputs.release == 'true'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bun run release:fixture
   docs:
     needs: build
     runs-on: ubuntu-latest
@@ -139,7 +139,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
-      - name: Require every validation job
+      - name: Require selected validation jobs
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: echo "$RESULTS" | jq -e 'all(.[]; .result == "success")'
+        run: |
+          echo "$RESULTS" | jq -e '
+            .build.result == "success" and
+            .offline.result == "success" and
+            .docs.result == "success" and
+            (if .build.outputs.packed == "false" then
+              .packed.result == "skipped"
+            else
+              .build.outputs.packed == "true" and .packed.result == "success"
+            end)
+          '
