@@ -116,22 +116,11 @@ On normal native stream end plus confirmed exit, output drains and ends. `output
 | Terminate command remotely | Future verified process termination API | Unsupported here; no whole-sandbox fallback |
 | End sandbox lifetime | Existing provider TTL or explicit `sandbox.destroy()` | Separate lifecycle operation affecting compute |
 
-Current bounded `exec()` defaults to `deadlineSeconds: 300` and combined 1 MiB capture. Daytona maps the deadline to `/process/execute` server timeout (current official docs describe termination); E2B maps it to `commands.run` RPC/request timeout, with redirected output/status files. E2B source does not prove remote termination at that deadline. Keep the signature/default for compatibility, explicitly document its current provider limitation, and schedule a focused timeout-contract audit rather than claiming a portable runtime bound or silently substituting sandbox destruction. A timed-out wait or unknown exec outcome must not trigger resubmission.
+Current bounded-exec timeout analysis and output-helper delivery are maintained in the [focused output/timeout brief](output-and-timeouts.md). It distinguishes RPC/request waiting from verified runtime enforcement and retains existing defaults. This does not change this streaming slice's rejection of `deadlineSeconds` before dispatch.
 
 ## Full decoding and bounded display
 
-Current `stdout`/`stderr` contain captured bytes. `truncated` describes capture loss, not display shortening. `stdoutText()`/`stderrText()` use a default 16,384-byte preview plus `…`; an explicit numeric bound is validated through 1 MiB. A large intact capture therefore can display an ellipsis with `truncated === false`.
-
-Keep those existing defaults and numeric overloads. In a separate small compatibility PR, add `stdoutText({ full: true })` / `stderrText({ full: true })` to decode all captured bytes without a display suffix, and explicit `stdoutPreview({ maxBytes?: number })` / `stderrPreview(...)` returning `{ text, shortened }`. Preview default stays 16 KiB; retain existing decoder/replacement behavior when a byte boundary splits UTF-8. Document old names as preview aliases without removing or changing them. Full decode cannot recover discarded capture; callers still check `truncated`. These additive names avoid an unannounced memory/display change and let UI code inspect `shortened` without parsing `…`. No change to streaming `text` fidelity is implied.
-
-For today's API, full decode is already possible:
-
-```ts
-const result = await sandbox.exec(["printf", "hello"]);
-const full = new TextDecoder().decode(result.stdout); // all captured stdout
-const preview = result.stdoutText(); // bounded display
-console.log({ full, preview, captureLost: result.truncated });
-```
+See the [selected helper API and capture/display contract](output-and-timeouts.md#selected-helper-api). Existing 16 KiB display defaults stay unchanged; full decode and structured previews are a separate additive SDK slice. The focused brief owns signatures, byte/UTF-8 behavior, examples and acceptance.
 
 ## Usage and delivery
 
@@ -159,7 +148,7 @@ Delivery fits up to three small coding PRs, independently reviewable:
 
 1. **Ready to delegate after the non-resuming E2B guest-attachment prerequisite:** reuse the lifecycle spec's read-only attachment work before enabling streaming; the broader sandbox-reopen API is not a dependency. Then deliver the fixed adapter/direct-SDK local handle contract plus E2B text streaming, bounded admission, wait/detach, unsupported runtime deadline and deterministic native-boundary fixtures. No Daytona implementation or new durable identity contract. Add public compiled/packed Node and Bun examples, docs and ordinary results. This spec PR authorizes planning only; implementation requires its own task.
 2. Read cancellation consistency: direct `inspect({ signal })` exists, but shared `SandboxHandle.inspect()` omits options; `readFile(path)` has no caller signal and only client-close cancellation. Its adapter context has a deadline but the SDK read does not race a local timeout consistently. Add `readFile(path, { signal? })`, align shared inspect typing and apply the 30-second local read deadline/caller/client signals to buffered and streaming reads. Abort cleanup cancels only local readers. Audit native signal cooperation separately; no write/lifecycle semantics change. This is useful independently and does not gate streaming.
-3. Full-decode/preview helpers and focused bounded-exec timeout documentation/audit above. Native runtime enforcement or a raw binary transport needs fresh evidence and its own scoped proposal; do not make them hidden additions to this PR.
+3. [Full-decode/preview helpers and bounded-exec timeout clarity](output-and-timeouts.md#delivery-and-acceptance): two independent small slices with selected signatures/defaults, pinned-source audit and acceptance. Native runtime enforcement or a raw binary transport needs fresh evidence and its own scoped proposal; do not make them hidden additions to this PR.
 
 The smallest slice chooses text-only E2B with finite output and local-only handles. The actual product choice for review is whether that limitation is useful enough to ship first; if binary streaming or remote kill is mandatory, this brief does not pretend the larger work is ready. Queue limits and no-reconnect behavior are selected defaults, not unspecified implementation choices.
 

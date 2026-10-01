@@ -11,6 +11,7 @@ New features target the SDK and public adapter API; see the [delivery rule](../p
 - Provider acceptance merged in PR #32; use the [maintained Bun runner](../packages/sdk-qualification/provider-qualification/README.md) and generated evidence, not proposed qualification behavior.
 - Public direct resource types and caller input errors merged in PR #35.
 - Cleanup configuration merged in PR #34. [Lifecycle slice 1 reopen/inspect](sandbox-lifecycle.md) is delegated implementation work, not merged. The streaming/cancellation brief merged in PR #36; runtime implementation remains unshipped. See the [authoritative roadmap](../ROADMAP.md) for task identities and order. Later lifecycle choices and mounted storage composition remain later work.
+- [Output helpers and bounded-exec timeout clarity](output-and-timeouts.md) — focused slice 3 implementation brief: full decoding, structured previews and pinned native timeout evidence. Runtime changes remain unshipped.
 
 ## Implemented observability contract
 
