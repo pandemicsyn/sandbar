@@ -1,6 +1,6 @@
 # Sandbar documentation site
 
-This workspace builds the development documentation at the canonical origin `https://sandbarsdk.dev`. It is static Astro 7 with Starlight 0.42 and Pagefind. The landing page is `/`; curated docs are under `/docs/`. It has no runtime dependency on the Sandbar service or management UI.
+This workspace builds the development documentation at the canonical origin `https://sandbarsdk.dev`. It is static Astro 7 with Starlight 0.42 and Pagefind. The landing page is `/`; curated docs are under `/docs/`.
 
 ## Work locally
 
@@ -12,9 +12,7 @@ bun run docs:check
 bun run --cwd apps/docs dev
 ```
 
-`docs:check` builds public workspace packages, checks Astro content and TypeScript examples, validates internal Markdown routes and anchors, checks generated TypeScript, provider evidence, and internal OpenAPI reference drift, builds the static site and Pagefind index, checks output, and runs direct/remote quickstart flows against temporary fake and service processes. The fake is a simulation only.
-
-Edit the executable contract in `apps/server/src/openapi.ts`, run `bun run --cwd apps/server openapi:generate`, then `bun run --cwd apps/docs reference:generate` when routes change. Commit both generated artifacts. The generated HTTP reference lives in `internal/reference/http.md`. Do not edit it by hand.
+`docs:check` builds public workspace packages, checks Astro content and TypeScript examples, validates Markdown routes and anchors, checks generated TypeScript and provider evidence, builds the static site and Pagefind index, checks output, and runs SDK quickstart flows against temporary fake provider processes. The fake is a simulation only.
 
 ## Cloudflare Workers Static Assets
 
@@ -29,10 +27,6 @@ The `sandbar-docs` Worker serves `sandbarsdk.dev` and `www.sandbarsdk.dev`; both
 The public docs focus on the SDK: getting started, agent prompts, everyday guides,
 provider setup and tested support, adapter authoring, and TypeScript reference.
 The landing page is maintained separately in `src/pages/index.astro`.
-
-Service setup and HTTP documentation are retained in `internal/`, outside the
-content collection, navigation, and Pagefind search until that feature is ready.
-Internal source links are historical authoring context, not published routes.
 
 The getting started page imports `examples/getting-started-{daytona,e2b,modal}.ts`
 as its displayed code, so all three copyable examples are checked by the examples

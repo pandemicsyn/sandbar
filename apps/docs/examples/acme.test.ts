@@ -3,7 +3,7 @@ import { Image, Sandbar } from "sandbar-sdk";
 import { acme } from "./acme-adapter";
 import { AcmeClient } from "./acme-native";
 
-test("copyable Acme adapter uses the SDK without a service or database", async () => {
+test("copyable Acme adapter uses the SDK", async () => {
   const before = {
     creates: AcmeClient.creates,
     destroys: AcmeClient.destroys,

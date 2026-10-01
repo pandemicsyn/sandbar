@@ -3,9 +3,9 @@ title: Snapshots and volumes
 description: Capture and restore a sandbox, mount retained storage, save references, and clean up resources.
 ---
 
-Snapshots retain captured sandbox state independently of the source. Volumes retain storage independently of compute. These APIs are available on direct SDK connections; the service client has no snapshot or volume endpoints.
+Snapshots retain captured sandbox state independently of the source. Volumes retain storage independently of compute. These APIs are available on SDK connections.
 
-Use `DirectSandbarClient` and `DirectSandboxHandle` from `sandbar-sdk` when annotating direct clients and sandboxes. The compatible `SandbarClient` and `SandboxHandle` types expose the common service subset and hide direct snapshot/volume APIs.
+Use `DirectSandbarClient` and `DirectSandboxHandle` from `sandbar-sdk` when annotating direct clients and sandboxes. `SandbarClient` and `SandboxHandle` are aliases for the same complete SDK surfaces.
 
 Malformed caller inputs in these APIs reject with `SandbarError` (`INVALID_ARGUMENT`, effect `none`) before mutation. Unsupported restore preflight throws `UnsupportedFeatureError`; its `unmetRequirements` lists each unmet network, sizing, independent lifecycle or mount requirement. Independent lifecycle is required unless explicitly set to `false`.
 

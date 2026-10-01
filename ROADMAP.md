@@ -36,4 +36,4 @@ Vercel, Tensorlake and other adapters remain behind SDK usability. Before schedu
 
 ## Later
 
-Advanced process/access features and storage extensions follow demonstrated needs. Additional observability metrics/events remain deferred. Service expansion, management and accounting stay distant; preserve existing service regressions without requiring new SDK parity. Rust is not planned. [Detailed plans](plans/implementation-plan.md) do not override this queue.
+Advanced process/access features and storage extensions follow demonstrated needs. Additional observability metrics/events remain deferred. Accounting remains deferred. Rust is not planned. [Detailed plans](plans/implementation-plan.md) do not override this queue.

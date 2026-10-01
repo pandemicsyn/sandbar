@@ -7,7 +7,7 @@
     }
   ],
   "commit": false,
-  "fixed": [["sandbar-adapter", "sandbar-sdk", "sandbar-service"]],
+  "fixed": [["sandbar-adapter", "sandbar-sdk"]],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

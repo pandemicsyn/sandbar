@@ -68,15 +68,10 @@ jobs:
         run: bun run lint && bun run format:check
       - name: Build fresh shared packages
         run: bun run build:packages
-      - name: Install Chromium for service regressions
-        run: bunx playwright install --with-deps chromium
-        working-directory: apps/web
       - name: Typecheck and test
-        env:
-          SANDBAR_TEST_BUILT_WEB: "true"
-        run: bun run check:built && bun run test:sdk:built && bun run test:service:built
+        run: bun run check:built && bun run test:sdk:built
       - name: Build and qualify packed consumers
-        run: bun run --cwd apps/server build && bun run package:smoke:built
+        run: bun run package:smoke:built
       - name: Qualify tracing and release rehearsals
         env:
           GITHUB_TOKEN: ${{ github.token }}

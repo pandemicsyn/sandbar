@@ -1,12 +1,12 @@
 # Implementation sequence
 
-Updated September 30, 2026. SDK completeness and qualified provider integrations come first. The optional service is a distant milestone.
+Updated September 30, 2026. SDK completeness and qualified provider integrations come first.
 
 ## Delivery rule
 
-New features ship through the direct SDK and public adapter API. New HTTP routes, remote-client parity, durable service orchestration, persistence/migrations, service tracing, and management UI work are not feature acceptance or release requirements.
+New features ship through the SDK and public adapter API.
 
-Preserve existing service behavior and keep existing regression checks passing. Make narrow compatibility fixes when shared contracts change; do not expand the service to mirror each new SDK feature. Document SDK-only support explicitly. This decision does not delete the service or remove existing tests, and does not weaken SDK scope validation, recovery references, unknown-effect handling, or no-replay guarantees.
+SDK scope validation, recovery references, unknown-effect handling, and no-replay guarantees remain mandatory.
 
 ## Merged SDK foundation and current queue
 
@@ -28,7 +28,7 @@ Keep these scoped separately from the recovery follow-up. Current limitations re
 
 ## Implemented: SDK tracing and diagnostics
 
-The direct tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes from the [observability spec](../specs/sdk-observability.md) merged in PR #24. Bounded metrics and structured diagnostic events remain later work after tracing is stable. Service propagation, persisted trace context, and runner tracing remain deferred with the service.
+The direct tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes from the [observability spec](../specs/sdk-observability.md) merged in PR #24. Bounded metrics and structured diagnostic events remain later work after tracing is stable.
 
 ## Broaden the SDK and provider coverage
 
@@ -38,16 +38,8 @@ The direct tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes fr
 
 New providers remain behind the roadmap’s SDK usability gate. Universal native parity is not required; support claims still require evidence.
 
-## Distant milestone: optional service
-
-Revisit service expansion only after the SDK feature set is mature, several provider integrations have useful qualification, and a concrete service use case justifies the work. Existing Daytona/E2B baseline support alone does not trigger this milestone.
-
-Then scope HTTP/remote-client coverage, durable background orchestration and recovery, persistence and authorization, service observability, and any management workflows against actual needs. Feature parity must be selected deliberately at that time; it is not an automatic backlog attached to every SDK change.
-
-Accounting remains separate and deferred. Rust is not on the roadmap. Effect remains parked and is not an implementation or release gate.
-
 ## Existing implementation and evidence
 
-The SDK, public adapter API, optional service and management UI already exist. Use [architecture](../specs/design.md), [public documentation](../apps/docs/README.md), and [qualification](../packages/sdk-qualification/README.md) for current behavior and evidence. Completed and superseded plans are available in Git history.
+The SDK and public adapter API already exist. Use [architecture](../specs/design.md), [public documentation](../apps/docs/README.md), and [qualification](../packages/sdk-qualification/README.md) for current behavior and evidence. Completed and superseded plans are available in Git history.
 
 Publication, deployment and paid provider calls require separate authorization. This sequence does not authorize them or introduce additional feature requirements from removed specs.

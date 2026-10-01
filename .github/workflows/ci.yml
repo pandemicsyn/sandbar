@@ -36,7 +36,7 @@ jobs:
             echo 'release=true' >> "$GITHUB_OUTPUT"
           else
             git diff --name-only "$BASE" HEAD > "$RUNNER_TEMP/changed-files"
-            if grep -Eq '(^package.json$|^bun.lock$|^tsconfig.json$|^\.github/|^\.changeset/(config\.json|pre\.json)$|^scripts/|(^|/)(package.json|tsconfig[^/]*\.json|build-assets.ts|flatten-declarations\.mjs|\.npmignore)$)|^apps/web/(vite\.config\.[^/]+|index\.html)$' "$RUNNER_TEMP/changed-files"; then
+            if grep -Eq '(^package.json$|^bun.lock$|^tsconfig.json$|^\.github/|^\.changeset/(config\.json|pre\.json)$|^scripts/|(^|/)(package.json|tsconfig[^/]*\.json|build-assets.ts|flatten-declarations\.mjs|\.npmignore)$)' "$RUNNER_TEMP/changed-files"; then
               echo 'release=true' >> "$GITHUB_OUTPUT"
             else
               test "$?" -eq 1
@@ -47,12 +47,10 @@ jobs:
       - name: Build shared packages once, in dependency order
         run: bun run build:packages
       - run: bun run check:built
-      - name: Build server
-        run: bun run --cwd apps/server build
       - name: Archive fresh outputs for this commit and run
         run: |
           shopt -s nullglob
-          tar -czf "$RUNNER_TEMP/sandbar-build.tar.gz" packages/*/dist packages/providers/*/dist apps/server/dist apps/web/dist
+          tar -czf "$RUNNER_TEMP/sandbar-build.tar.gz" packages/*/dist packages/providers/*/dist
       - uses: actions/upload-artifact@v4
         with:
           name: built-${{ github.sha }}
@@ -81,32 +79,6 @@ jobs:
         run: tar -xzf "$RUNNER_TEMP/sandbar-build.tar.gz"
       - name: SDK, adapter and offline provider contracts
         run: bun run test:sdk:built
-  service:
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: bun install --frozen-lockfile
-      - uses: actions/download-artifact@v4
-        with:
-          name: built-${{ github.sha }}
-          path: ${{ runner.temp }}
-      - name: Restore this run's build outputs
-        run: tar -xzf "$RUNNER_TEMP/sandbar-build.tar.gz"
-      - name: Install Chromium
-        run: bunx playwright install --with-deps chromium
-        working-directory: apps/web
-      - name: Existing service, store and management UI regressions
-        env:
-          SANDBAR_TEST_BUILT_WEB: "true"
-        run: bun run test:service:built
   packed:
     needs: build
     runs-on: ubuntu-latest
@@ -163,7 +135,7 @@ jobs:
         run: bun run docs:check:built
   verify:
     if: always()
-    needs: [build, offline, service, packed, docs]
+    needs: [build, offline, packed, docs]
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
