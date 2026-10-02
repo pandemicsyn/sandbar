@@ -53,7 +53,7 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 
 ### Binary files and overwrite
 
-Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified.
+Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.
 
 <a id="daytona-directories"></a>
 
@@ -121,7 +121,7 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 
 ### Binary files and overwrite
 
-Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths.
+Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.
 
 <a id="e2b-directories"></a>
 

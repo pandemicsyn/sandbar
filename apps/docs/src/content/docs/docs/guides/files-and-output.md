@@ -1,9 +1,34 @@
 ---
 title: Files and output
-description: Transfer binary files and read bounded command output.
+description: Transfer text and binary files and read bounded command output.
 ---
 
-## Write and read a file
+## Write and read text
+
+Use `writeTextFile` and `readTextFile` for UTF-8 without encoding boilerplate:
+
+```ts
+import { Image, Sandbar } from "sandbar-sdk";
+import { e2b } from "sandbar-sdk/e2b";
+
+const client = await Sandbar.connect(e2b({ apiKey: process.env.E2B_API_KEY! }));
+try {
+  const box = await client.sandboxes.create({ environment: Image.prepared("base") });
+  try {
+    await box.writeTextFile("/home/user/input.json", JSON.stringify({ name: "Ada" }));
+    console.log(await box.readTextFile("/home/user/input.json"));
+    await box.writeTextFile("/home/user/input.json", "", { overwrite: true });
+  } finally {
+    await box.destroy();
+  }
+} finally {
+  await client.close();
+}
+```
+
+These helpers call the byte APIs below and inherit their limits, absolute-path validation, cancellation, errors and recovery. Limits count encoded bytes, not string length; an oversized read fails instead of returning a prefix. Reads decode the complete bounded result, replace malformed UTF-8 and consume an initial UTF-8 BOM. Empty text is valid. Text is never parsed, shortened or newline-normalized; parent directories must exist, and helpers do not resume compute. Writes default to `overwrite: false`. Pass `{ signal }` to either helper for cancellation. Each helper uses the existing file-operation tracing spans.
+
+## Write and read bytes
 
 File APIs take absolute paths inside the sandbox and preserve bytes. This example uses E2B's default `/home/user` workspace:
 
