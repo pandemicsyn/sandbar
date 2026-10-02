@@ -10,7 +10,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Feature                       | Daytona                                                  | E2B                                                                               |
 | ----------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Sandbox lifecycle             | [Supported · passed at 8449def7](#daytona-lifecycle)     | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
-| Native sandbox suspend/resume | [Conditional · not-run](#daytona-suspension)             | [Conditional · not-run](#e2b-suspension)                                          |
+| Native sandbox suspend/resume | [Conditional · passed at 6796b30b](#daytona-suspension)  | [Conditional · failed](#e2b-suspension)                                           |
 | Protected HTTP preview        | [Conditional · not-run](#daytona-previewProtected)       | [Unsupported · not-run](#e2b-previewProtected)                                    |
 | Public HTTP preview           | [Unsupported · not-run](#daytona-previewPublic)          | [Conditional · not-run](#e2b-previewPublic)                                       |
 | Configured lifetime renewal   | [Conditional · not-run](#daytona-renewal)                | [Conditional · not-run](#e2b-renewal)                                             |
@@ -38,7 +38,7 @@ The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced nat
 
 ### Native sandbox suspend/resume
 
-Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Native/packed fixtures; lifecycle-suspend-resume live not run.
+Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Bun lifecycle-suspend-resume passed at 6796b30 with confirmed owned cleanup.
 
 <a id="daytona-previewProtected"></a>
 
@@ -124,7 +124,7 @@ The ordinary Bun base baseline passed at 8449def with API-key authority in the d
 
 ### Native sandbox suspend/resume
 
-Known unmounted E2B memory pause retains processes under the same ID; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Native/packed fixtures; lifecycle-suspend-resume live not run.
+Known unmounted E2B memory pause retains processes under the same ID; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Live case failed before pause at cb39884 because native mount facts were unavailable; owned cleanup confirmed. Initial guest-routing failure at 6796b30 is retained; no E2B lifecycle pass.
 
 <a id="e2b-previewProtected"></a>
 

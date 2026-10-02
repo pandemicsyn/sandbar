@@ -46,7 +46,7 @@ For storage, current unsupported combinations remain explicit. Capacity/placemen
 
 The generated [support table](apps/docs/src/content/docs/docs/providers/support.md) separates implementation from live evidence. Current follow-ups are:
 
-- Run the maintained scoped-reopening and lifetime-renewal scenarios for Daytona and E2B after explicit paid-run authorization; those workflows and the new suspend/resume scenario are currently marked not-run.
+- Run the maintained scoped-reopening and lifetime-renewal scenarios for Daytona and E2B after explicit paid-run authorization; those workflows are marked not-run. Suspend/resume passed for Daytona at `6796b30`; E2B failed before pause at `cb39884` because current native mount facts were unavailable. All three lifecycle test allocations have confirmed cleanup; E2B remains a live-readiness blocker.
 - Qualify the new E2B streaming scenario and signal-bearing file-read cases. Earlier execution/file passes do not establish these new behaviors. Streaming is implemented even though the generated feature table does not yet have a separate streaming row; include that reporting follow-up when recording evidence.
 - Investigate and disposition the recorded failed E2B network probe. Fix an integration defect if found, or document the demonstrated provider/configuration limitation; do not promote the result to a pass without evidence.
 - Preserve the distinction between E2B volume account access blocked by HTTP 403 and Sandbar E2B mounts being unsupported. Resolve the historical volume-creation uncertainty only with sufficient evidence; newer successful cleanup does not erase it.

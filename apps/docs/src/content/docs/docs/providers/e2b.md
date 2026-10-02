@@ -82,7 +82,7 @@ Both mappings require running compute. E2B also requires known native kill-on-ti
 
 `RenewResult.requested.forSeconds` records the resolved native setting, `acknowledged: true` confirms provider acceptance, and `observation` is current metadata or `null` if the follow-up read failed. A lost ACK stays `OUTCOME_UNKNOWN` even if a later deadline looks right. `submitRenew()` and `client.recover(savedOperationReference)` use existing typed recovery; observation never sends another renewal POST. Caller cancellation before dispatch has no effect; after possible dispatch it stops local waiting with the recovery reference. Persist ordinary sandbox references in your own trusted store, and save result metadata separately when useful.
 
-Renewal has deterministic native-boundary and packed Node/Bun coverage. The maintained `lifecycle-renew` live scenario is not run. Sandbar suspend/resume methods use the native policies below; their live scenario is not run.
+Renewal has deterministic native-boundary and packed Node/Bun coverage. The maintained `lifecycle-renew` live scenario is not run. Sandbar suspend/resume methods use the native policies below; the E2B lifecycle case failed before pause at `cb39884` with confirmed cleanup.
 
 ## Runtime snapshots and volumes
 
@@ -110,6 +110,8 @@ Use an explicit caller `signal` to stop local waiting. Neither a local abort nor
 
 ## Suspend and resume
 
+**Live readiness is blocked.** The maintained Bun `lifecycle-suspend-resume` case failed before pause at `cb39884` on October 2, 2026 because current native detail omitted mount facts. The earlier guest-routing failure at `6796b30` remains recorded. Both runs have confirmed owned cleanup and client close; E2B suspend/resume has no live pass. Unknown mount facts remain an effect-free `UNAVAILABLE` restriction. The current API does not provide the mount evidence this contract requires; the workflow below applies only when that evidence is available.
+
 Configure a minimum guarantee once in adapter setup, then use the same application calls:
 
 ```ts
@@ -126,4 +128,4 @@ Paused state has indefinite native retention and requires explicit cleanup; its 
 
 Both operations have one dispatch stage and no automatic retry or inverse action. Already inactive suspend and already running resume reject `CONFLICT`; transitional resources reject `UNAVAILABLE`. ACK plus a target-state read establishes completion. An acknowledged partial error retains native preservation facts even if the later read fails; ACK alone does not certify target state. A lost response, 409 or 503 stays uncertain even if a later read matches the target. Use the error's recovery reference to observe without replay. Applications serialize lifecycle changes across external controllers.
 
-See the [compiled same-workflow example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-suspend-resume.ts). Deterministic native-boundary and packed Node/Bun checks cover this mapping; `lifecycle-suspend-resume` live qualification remains **not run**. Existing snapshot requirements retain their exact matching semantics.
+See the [compiled same-workflow example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-suspend-resume.ts). Deterministic native-boundary and packed Node/Bun checks cover this mapping; live qualification is blocked as described above. Existing snapshot requirements retain their exact matching semantics.

@@ -72,7 +72,7 @@ export const builtinSupport: SupportMetadata[] = [
     features: {
       suspension: {
         support: "conditional",
-        note: "Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Native/packed fixtures; lifecycle-suspend-resume live not run.",
+        note: "Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Bun lifecycle-suspend-resume passed at 6796b30 with confirmed owned cleanup.",
       },
       previewProtected: {
         support: "conditional",
@@ -134,7 +134,7 @@ export const builtinSupport: SupportMetadata[] = [
     features: {
       suspension: {
         support: "conditional",
-        note: "Known unmounted E2B memory pause retains processes under the same ID; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Native/packed fixtures; lifecycle-suspend-resume live not run.",
+        note: "Known unmounted E2B memory pause retains processes under the same ID; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Live case failed before pause at cb39884 because native mount facts were unavailable; owned cleanup confirmed. Initial guest-routing failure at 6796b30 is retained; no E2B lifecycle pass.",
       },
       previewPublic: {
         support: "conditional",

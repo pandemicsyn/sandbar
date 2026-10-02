@@ -19,6 +19,19 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `6796b30b08ccb80ad845fc8b24d72c2d02eb4e35`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `6796b30b08ccb80ad845fc8b24d72c2d02eb4e35`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/57).
+
+| Scenario                 | Latest live result | Date       |
+| ------------------------ | ------------------ | ---------- |
+| lifecycle-suspend-resume | passed             | 2026-10-02 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
 - SDK: 0.0.0, commit `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
 - Fresh-process reopen: not recorded.
 - Harness commit: `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
@@ -153,6 +166,19 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 | snapshot-roundtrip                                        | unsupported        | 2026-09-28 |
 
 ## E2B
+
+### blocked-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `cb39884724bb6c70f070d10409c7ffbb4b5131c0`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `cb39884724bb6c70f070d10409c7ffbb4b5131c0`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/57).
+
+| Scenario                 | Latest live result | Date       |
+| ------------------------ | ------------------ | ---------- |
+| lifecycle-suspend-resume | failed             | 2026-10-02 |
 
 ### paired-internet-blocked-requested · native-default · /home/user
 
