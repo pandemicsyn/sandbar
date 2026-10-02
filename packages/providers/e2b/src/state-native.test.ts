@@ -1493,7 +1493,7 @@ test("E2B restore accepts empty mount and resource maps without native overrides
 
     const restored = await captured.snapshot.restore({
       networkPolicy: "blocked",
-      mounts: {},
+      mounts: [],
       resources: {},
     });
 

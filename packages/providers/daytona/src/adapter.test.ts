@@ -1136,6 +1136,7 @@ test.each([
             ? snapshotName
             : "other-snapshot",
     labels: restoreLabels,
+    volumes: [],
   });
 
   const fetchImpl: typeof fetch = Object.assign(
@@ -1268,7 +1269,7 @@ test.each([
     const operation = await capture.snapshot.submitRestore({
       networkPolicy: "blocked",
       resources: {},
-      mounts: {},
+      mounts: [],
     });
 
     const reference = structuredClone(operation.reference);

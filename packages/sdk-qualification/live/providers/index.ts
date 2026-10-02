@@ -86,6 +86,8 @@ export async function configuredProvider(saved?: RunLedger["connection"]) {
         target: required("SANDBAR_DAYTONA_TARGET"),
         snapshotId: required("SANDBAR_DAYTONA_SNAPSHOT_ID"),
         networkPolicy: process.env.SANDBAR_DAYTONA_NETWORK_POLICY ?? "blocked",
+        ttlMinutes: process.env.SANDBAR_STORAGE_COMPOSITION === "1" ? 10 : 15,
+        restartAfterCapture: process.env.SANDBAR_STORAGE_COMPOSITION !== "1",
       },
     );
 

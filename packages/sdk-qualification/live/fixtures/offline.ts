@@ -7,6 +7,7 @@ import {
   SnapshotInfo,
   type VolumeInfo,
   ResourceReference,
+  sandboxReference,
   type MountSpec,
 } from "sandbar-adapter";
 import { Sandbar } from "sandbar-sdk";
@@ -35,6 +36,7 @@ export async function fixture(
     checkpointFailure?: boolean;
     memory?: boolean;
     restoreUnsupported?: boolean;
+    unknownRestore?: boolean;
     mountsUnsupported?: boolean;
     volumeFailure?: "rejected" | "uncertain";
     readyAfterInspect?: number;
@@ -315,13 +317,24 @@ export async function fixture(
         async snapshotInspect(reference) {
           return snapshots.get(reference.nativeId)!.info;
         },
-        async snapshotRestore(input) {
+        async snapshotRestore(input, ctx) {
           calls.restore++;
 
           const restored = allocate(snapshots.get(input.snapshot.nativeId)!.files);
 
           if (options.aliasRestoredFilesystem)
             boxes.get("box_1")!.files = boxes.get(restored.id)!.files;
+
+          if (options.unknownRestore)
+            return ctx.unknown("Mount verification unavailable", {
+              kind: "snapshot_restore",
+              status: "unknown",
+              mounts: [],
+              sandbox: sandboxReference(ref("snapshot", "unused").provider, scope, restored.id, {
+                operation: ctx.operationId,
+                submission: ctx.submissionId,
+              }),
+            });
 
           return restored;
         },

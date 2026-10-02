@@ -38,6 +38,7 @@ export const scenarios = [
   "network-internet",
   "network-blocked",
   "snapshot-roundtrip",
+  "storage-composition",
   "volume-persistence",
   "volume-crud",
 ] as const;

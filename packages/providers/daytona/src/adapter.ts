@@ -142,6 +142,8 @@ const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
 const Token = z.strictObject({ submissionId: z.string().min(1).max(128) });
 
+const RestoreToken = Token.extend({ sandboxId: z.string().min(1).max(512).optional() });
+
 const ImageToken = Token.extend({
   image: z.string().min(1).max(512),
   discoveryDeadline: z.number().int().nonnegative().optional(),
@@ -614,25 +616,89 @@ export function createDaytonaAdapter(
         return token;
       };
 
+      const restoreToken = (
+        submissionId: string,
+        sandboxId?: string,
+      ): { submissionId: string } | { submissionId: string; sandboxId: string } => {
+        if (sandboxId) return { submissionId, sandboxId };
+
+        return { submissionId };
+      };
+
+      const restoreUnknown = (
+        result: Awaited<ReturnType<typeof driver.create>>,
+        mounts: import("sandbar-adapter").MountSpec[],
+        ctx: AttemptContext | ObserveContext,
+      ) => {
+        const detail = result.acknowledgedSandbox ?? result.nativeSandbox;
+
+        return ctx.unknown(
+          result.status === "unknown" ? result.reason : "Restore verification is incomplete",
+          {
+            kind: "snapshot_restore",
+            status: "unknown",
+            sandbox: detail
+              ? sandboxReference("daytona", resourceBinding, detail.id, {
+                  operation: detail.labels!["sandbar.operation"]!,
+                  submission: detail.labels!["sandbar.submission"]!,
+                })
+              : undefined,
+            mounts,
+          },
+        );
+      };
+
+      const validateRestore = async (
+        input: import("sandbar-adapter").SnapshotRestoreInput,
+        ctx: import("sandbar-adapter").ReadContext,
+      ) => {
+        const info = await resourceState.inspectSnapshot(input.snapshot, ctx);
+
+        if (
+          info.mountHandling !== "none" ||
+          info.mounts.length ||
+          info.state !== "ready" ||
+          info.preserve !== "filesystem" ||
+          info.restoreExecution !== "fresh" ||
+          Object.keys(input.request.resources ?? {}).length
+        )
+          throw new AdapterError(
+            "UNSUPPORTED",
+            "Only mount-free filesystem/fresh container snapshots can be restored",
+          );
+
+        if (input.request.mounts?.length) {
+          if (input.request.networkPolicy !== "daytona-default")
+            throw new AdapterError(
+              "UNSUPPORTED",
+              "Mounted restore requires explicit daytona-default; blocked startup enforcement is unqualified",
+            );
+
+          const checked = await resourceState.fields.checkMounts!(
+            {
+              image: { kind: "prepared", value: input.snapshot.nativeId },
+              networkPolicy: input.request.networkPolicy,
+              mounts: input.request.mounts,
+            },
+            ctx,
+          );
+
+          if (checked.status !== "supported")
+            throw new AdapterError(
+              checked.status === "unsupported" ? "UNSUPPORTED" : "UNAVAILABLE",
+              checked.reason,
+            );
+        }
+      };
+
       const createMutation = {
-        recovery: { version: 1, token: Token },
+        mountInput: "specs" as const,
+        recovery: { version: 1, token: RestoreToken },
         async prepare(
           input: import("sandbar-adapter").SnapshotRestoreInput,
           ctx: import("sandbar-adapter").ReadContext,
         ) {
-          const info = await resourceState.inspectSnapshot(input.snapshot, ctx);
-
-          if (
-            info.mountHandling !== "none" ||
-            info.state !== "ready" ||
-            info.preserve !== "filesystem" ||
-            Object.keys(input.request.resources ?? {}).length ||
-            Object.keys(input.request.mounts ?? {}).length
-          )
-            throw new AdapterError(
-              "UNSUPPORTED",
-              "Only mount-free container cold restore is mapped",
-            );
+          await validateRestore(input, ctx);
 
           const plan = await driver.prepare({
             scope,
@@ -646,49 +712,136 @@ export function createDaytonaAdapter(
           return input;
         },
         async submit(input: import("sandbar-adapter").SnapshotRestoreInput, ctx: AttemptContext) {
-          const info = await resourceState.inspectSnapshot(input.snapshot, {
-            signal: ctx.signal,
-            deadline: Date.now() + 30000,
-          });
-
-          if (
-            info.state !== "ready" ||
-            info.mountHandling !== "none" ||
-            info.preserve !== "filesystem"
-          )
-            return ctx.reject("UNAVAILABLE", "Snapshot provenance changed before restore");
+          try {
+            await validateRestore(input, { signal: ctx.signal, deadline: Date.now() + 30000 });
+          } catch (error) {
+            if (error instanceof AdapterError) return ctx.reject(error.code, error.message);
+            throw error;
+          }
 
           if (ctx.signal.aborted)
             return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
 
-          return createResult(
-            await driver.create({
-              scope,
-              identity: identity(ctx),
-              image: input.snapshot.nativeId,
-              imageKind: "prepared",
-              requireSnapshotIdentity: true,
-              networkPolicy: input.request.networkPolicy,
-              signal: ctx.signal,
-            }),
-            ctx,
-            referenceFor,
-          );
+          const result = await driver.create({
+            scope,
+            identity: identity(ctx),
+            image: input.snapshot.nativeId,
+            imageKind: "prepared",
+            requireSnapshotIdentity: true,
+            networkPolicy: input.request.networkPolicy,
+            mounts: input.request.mounts,
+            signal: ctx.signal,
+          });
+
+          const acknowledged = result.acknowledgedSandbox ?? result.nativeSandbox;
+
+          if (acknowledged) {
+            await ctx.checkpoint(restoreToken(ctx.submissionId, acknowledged.id)).catch((error) => {
+              if (error instanceof AdapterCheckpointError)
+                error.outcome = restoreUnknown(result, input.request.mounts ?? [], ctx).outcome;
+              throw error;
+            });
+          }
+
+          if (result.status === "unknown")
+            return restoreUnknown(result, input.request.mounts ?? [], ctx);
+
+          if (result.status === "pending")
+            return ctx.pending(restoreToken(ctx.submissionId, result.nativeSandbox?.id), {
+              pollAfterMs: result.observeAfterMs,
+            });
+          const value = await createResult(result, ctx, referenceFor, true);
+
+          return "id" in value ? { ...value, mounts: input.request.mounts } : value;
         },
         async observe(attempt: import("sandbar-adapter").RecoveryAttempt, ctx: ObserveContext) {
           if (!attempt.resource || attempt.resource.kind !== "snapshot")
             return ctx.unknown("Missing restore snapshot identity");
 
-          const value = await driver.observe({
-            scope,
-            submissionId: attempt.submissionId,
-            operationId: attempt.operationId,
-            expectedSnapshotId: attempt.resource.nativeId,
-          });
+          const saved = RestoreToken.safeParse(attempt.token);
 
-          return value
-            ? observedCreate(value, ctx, attempt.submissionId, attempt.operationId, referenceFor)
-            : null;
+          const known =
+            saved.success && saved.data.sandboxId
+              ? {
+                  id: saved.data.sandboxId,
+                  labels: {
+                    "sandbar.operation": attempt.operationId,
+                    "sandbar.submission": attempt.submissionId,
+                  },
+                }
+              : undefined;
+
+          let value;
+
+          try {
+            value = await driver.observe({
+              scope,
+              submissionId: attempt.submissionId,
+              operationId: attempt.operationId,
+              expectedSnapshotId: attempt.resource.nativeId,
+            });
+          } catch {
+            value = null;
+          }
+
+          if (!value)
+            return known
+              ? restoreUnknown(
+                  {
+                    status: "unknown",
+                    effect: "possible",
+                    submissionId: attempt.submissionId,
+                    reason: "Restore inspection unavailable; acknowledged compute retained",
+                    acknowledgedSandbox: known,
+                  },
+                  attempt.mounts ?? [],
+                  ctx,
+                )
+              : null;
+          const mounts = attempt.mounts ?? [];
+          const detail = value.nativeSandbox;
+
+          if (known && detail && known.id !== detail.id)
+            return restoreUnknown({ ...value, acknowledgedSandbox: known }, mounts, ctx);
+
+          if (value.status === "unknown")
+            return restoreUnknown(
+              { ...value, acknowledgedSandbox: value.acknowledgedSandbox ?? known },
+              mounts,
+              ctx,
+            );
+
+          if (value.status === "pending")
+            return ctx.pending(restoreToken(attempt.submissionId, detail?.id ?? known?.id), {
+              pollAfterMs: value.observeAfterMs,
+            });
+
+          if (
+            !detail ||
+            detail.volumes?.length !== mounts.length ||
+            detail.networkBlockAll !== (config.networkPolicy === "blocked") ||
+            detail.public !== false ||
+            mounts.some(
+              (mount) =>
+                !detail.volumes?.some(
+                  (actual) =>
+                    actual.volumeId === mount.volume.nativeId &&
+                    actual.mountPath === mount.path &&
+                    actual.subpath === mount.subpath,
+                ),
+            )
+          )
+            return restoreUnknown(value, mounts, ctx);
+
+          const restored = await observedCreate(
+            value,
+            ctx,
+            attempt.submissionId,
+            attempt.operationId,
+            referenceFor,
+          );
+
+          return "id" in restored ? { ...restored, mounts: attempt.mounts } : restored;
         },
       };
 
@@ -699,6 +852,7 @@ export function createDaytonaAdapter(
         async snapshotInspect(ref: ResourceReference, ctx: import("sandbar-adapter").ReadContext) {
           const info = await resourceState.inspectSnapshot(ref, ctx);
           info.restore.networkPolicies = [...caps.networkPolicies];
+          info.restore.mounts = true;
 
           return info;
         },
@@ -710,7 +864,10 @@ export function createDaytonaAdapter(
         ) {
           const result = await resourceState.fields.snapshotList!(page, ctx);
 
-          for (const info of result.items) info.restore.networkPolicies = [...caps.networkPolicies];
+          for (const info of result.items) {
+            info.restore.networkPolicies = [...caps.networkPolicies];
+            info.restore.mounts = true;
+          }
 
           return result;
         },
@@ -730,7 +887,7 @@ export function createDaytonaAdapter(
               value: {
                 networkPolicies: [...caps.networkPolicies],
                 resources: false,
-                mounts: false,
+                mounts: true,
                 independentLifecycle: true,
               },
             },

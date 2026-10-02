@@ -125,7 +125,10 @@ type Config = z.infer<typeof Input>;
 
 type Sandbox = z.infer<typeof NativeSandbox>;
 
-type DaytonaCreateResult = DriverResult & { nativeSandbox?: Sandbox };
+type DaytonaCreateResult = DriverResult & {
+  nativeSandbox?: Sandbox;
+  acknowledgedSandbox?: { id: string; labels: Record<string, string> };
+};
 
 function volumeContains(native: Sandbox, path: string): boolean {
   const normalized = path.replace(/\/+/g, "/");
@@ -806,12 +809,15 @@ export class DaytonaDriver implements ProviderDriver {
     const name = `sandbar-${input.identity.submissionId}`;
     let snapshotId = input.image;
     let retainedSnapshotId: string | undefined;
+    let acknowledged: { id: string; labels: Record<string, string> } | undefined;
 
-    const uncertain = (reason: string) =>
-      unknown(
+    const uncertain = (reason: string): DaytonaCreateResult => ({
+      ...unknown(
         input.identity.submissionId,
         retainedSnapshotId ? `${reason}; snapshot ${retainedSnapshotId} may be retained` : reason,
-      );
+      ),
+      acknowledgedSandbox: acknowledged,
+    });
 
     if (input.imageKind === "oci") {
       const snapshotName = `sandbar-image-${input.identity.submissionId}`;
@@ -917,7 +923,34 @@ export class DaytonaDriver implements ProviderDriver {
         ttlMinutes: this.config.configuration.ttlMinutes,
       };
 
-      const value = await this.json("POST", "/sandbox", NativeSandbox, body);
+      const response = await this.request(
+        "POST",
+        "/sandbox",
+        JSON.stringify(body),
+        "application/json",
+      );
+
+      if (!response.ok) throw new Error("Daytona create rejected");
+      const raw = await boundedJson(response, z.unknown());
+
+      const receipt = NativeSandbox.pick({
+        id: true,
+        name: true,
+        organizationId: true,
+        target: true,
+        labels: true,
+      }).safeParse(raw);
+
+      if (
+        receipt.success &&
+        receipt.data.organizationId === this.scope.accountId &&
+        receipt.data.target === this.scope.region &&
+        receipt.data.name === name &&
+        receipt.data.labels?.["sandbar.submission"] === input.identity.submissionId &&
+        receipt.data.labels?.["sandbar.operation"] === input.identity.operationId
+      )
+        acknowledged = { id: receipt.data.id, labels: receipt.data.labels };
+      const value = NativeSandbox.parse(raw);
 
       if (value.name !== name) return uncertain("Daytona returned a different sandbox name");
 
@@ -929,7 +962,8 @@ export class DaytonaDriver implements ProviderDriver {
 
       let mountDetail: Sandbox | null = null;
 
-      if (input.mounts?.length) {
+      if (input.mounts?.length || input.requireSnapshotIdentity) {
+        const expectedMounts = input.mounts ?? [];
         mountDetail = await this.sandbox(value.id);
 
         if (
@@ -937,7 +971,12 @@ export class DaytonaDriver implements ProviderDriver {
           mountDetail.name !== name ||
           mountDetail.labels?.["sandbar.submission"] !== input.identity.submissionId ||
           mountDetail.labels?.["sandbar.operation"] !== input.identity.operationId ||
-          input.mounts.some(
+          mountDetail.volumes?.length !== expectedMounts.length ||
+          mountDetail.networkBlockAll !== (input.networkPolicy === "blocked") ||
+          mountDetail.public !== false ||
+          (input.requireSnapshotIdentity &&
+            !(await this.matchesSnapshot(mountDetail.snapshot, snapshotId))) ||
+          expectedMounts.some(
             (mount) =>
               !mountDetail!.volumes?.some(
                 (attached) =>
@@ -976,6 +1015,7 @@ export class DaytonaDriver implements ProviderDriver {
           effect: "possible",
           submissionId: input.identity.submissionId,
           observeAfterMs: 1000,
+          nativeSandbox,
         };
 
       return {
@@ -1108,12 +1148,18 @@ export class DaytonaDriver implements ProviderDriver {
       input.expectedSnapshotId !== undefined &&
       !(await this.matchesSnapshot(detail.snapshot, input.expectedSnapshotId))
     )
-      return unknown(input.submissionId, "Daytona sandbox snapshot identity is unconfirmed");
+      return {
+        ...unknown(input.submissionId, "Daytona sandbox snapshot identity is unconfirmed"),
+        nativeSandbox: detail,
+      };
 
     const observation = observed(this.scope, detail, this.config.configuration.networkPolicy);
 
     if (["destroyed", "error", "build_failed"].includes(detail.state))
-      return unknown(input.submissionId, "Daytona sandbox did not reach running state");
+      return {
+        ...unknown(input.submissionId, "Daytona sandbox did not reach running state"),
+        nativeSandbox: detail,
+      };
 
     if (["stopped", "paused", "archived"].includes(detail.state))
       return {
@@ -1130,6 +1176,7 @@ export class DaytonaDriver implements ProviderDriver {
         effect: "possible",
         submissionId: input.submissionId,
         observeAfterMs: 1000,
+        nativeSandbox: detail,
       };
 
     return {
