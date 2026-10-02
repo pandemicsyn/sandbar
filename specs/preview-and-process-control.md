@@ -48,41 +48,105 @@ The standard Daytona credential is for the caller's own HTTP client, never an en
 
 ## Process control that means what it says
 
-Keep the existing `processes.start`, `output`, `wait` and `detach` vocabulary. Proposed additions:
+### Decision: one native termination request through an active local handle
+
+Recommend `terminate()` on the existing `ProcessHandle`, with E2B first. This is a proposal, not shipped runtime behavior. It refines the older termination gate in [the streaming contract](interactive-execution-and-access.md): the first useful operation accepts the native PID-selection race described below; it does **not** promise immutable execution targeting. Requiring proof that a PID can never be reused would leave E2B unsupported despite its documented, useful kill operation. Applications that require that stronger guarantee cannot use this mapping. Do not manufacture generation proof to satisfy them.
 
 ```ts
-// Proposed on ProcessHandle, only after native identity/termination review:
-terminate(options?: { signal?: AbortSignal }): Promise<void>;
-
-// A later, separate stdin extension:
-// start({ command, stdin: "pipe" })
-writeInput(text: string, options?: { signal?: AbortSignal }): Promise<void>;
-closeInput(options?: { signal?: AbortSignal }): Promise<void>;
+// Proposed public addition; existing ProcessExit stays unchanged.
+type ProcessTermination = {
+  status: "requested" | "not-found" | "exited";
+};
+// On ProcessHandle:
+// terminate(options?: { signal?: AbortSignal }): Promise<ProcessTermination>;
 ```
 
+`requested` means the native termination request was acknowledged. It does not confirm exit, the original execution's identity at signal delivery, or descendant cleanup. `not-found` means the native selector was absent, not that this command's exit was observed. `exited` means this handle already has a validated terminal result and sent no request; `wait()` retrieves it. A returned request status remains historical even if exit arrives immediately afterward. Only `wait()` supplies the ordinary `ProcessExit`, including `outputComplete`.
+
+Keep arbitrary signals, graceful escalation timers, process inventory, public PIDs and persisted process references out of this slice. The E2B default is its native SIGKILL operation: abrupt termination, no application cleanup guarantee, no process-tree promise. Recommend no additional adapter permission/capability switch: deliberately calling `terminate()` is the user's choice to request this documented native behavior. Provider mechanics and limitations belong in adapter documentation. Supporting a future stronger identity mode would require new evidence and an explicit setup choice, not a silently stronger label on today's PID request.
+
+### Evidence at the native boundary
+
+Inspected October 2, 2026, against freshly fetched main `e52c7f4`, installed `e2b@2.51.0` and published reference `@daytona/sdk@0.218.0`. Daytona is not an SDK runtime dependency. No live provider calls were run. Current official documentation and public server source corroborate behavior but do not establish the deployed guest/server version.
+
+| Boundary | Evidence | Decision |
+| --- | --- | --- |
+| E2B termination | Installed `dist/index.js`: `CommandHandle.kill()` delegates to `Commands.kill(pid)`; the latter sends `SendSignal` with PID selector and numeric signal 9, returning true on acknowledgement and false on RPC NotFound. `CommandHandle.kill()` has no request options; `Commands.kill(pid, { signal, requestTimeoutMs })` does. | Viable as a documented native PID request through the captured handle connection. Use the latter public method internally for bounded cancellation; no new connect/start or shell `kill` command. |
+| E2B terminal event | Pinned decoder reads EndEvent's integer `exitCode` and error, stores the result before final callback delivery, then `wait()` returns it or throws `CommandExitError` for nonzero. The wire also has `exited`/`status`, but the public handle does not expose those as structured signal evidence. Proto3 defaults an omitted scalar `exitCode` to zero; the public handle cannot prove wire-field presence. | Preserve validated native terminal integers, including -1. Do not turn acknowledged SIGKILL into an exit result or infer signal 9 from error text. |
+| Daytona termination | Pinned `esm/Process.js` delegates `deleteSession(sessionId)` to DELETE session; session command IDs support status/log reads. There is no ordinary session-command kill method. PTY kill is a different execution mode. Current docs describe session deletion as termination and removal. | Deferred for current handles: Daytona does not implement `processes.start`. A dedicated one-command session is a plausible later mapping, but deletion may erase the status/log evidence needed by wait. No per-command or confirmed-exit claim from DELETE alone. |
+
+Reproducible pinned evidence: [E2B 2.51.0 tarball](https://registry.npmjs.org/e2b/-/e2b-2.51.0.tgz), installed `dist/index.js` SHA-256 `2279dd39f81fa4211e8206961fb73f478ae7b73d58f21db4c5370bf9f7fc9bfc`; [Daytona 0.218.0 tarball](https://registry.npmjs.org/@daytona/sdk/-/sdk-0.218.0.tgz), tarball SHA-256 `403c89ad9c9e292c27b12a953229d050dd09f6635b25e089e60767318cdbf803`. Inspect E2B `Commands.kill`, `CommandHandle.kill/iterateEvents/handleEvents`, generated EndEvent declarations; Daytona `Process.deleteSession/getSessionCommand/getSessionCommandLogs` and generated process API paths.
+
+Official [E2B background commands](https://docs.e2b.dev/commands/background) demonstrate run/kill; they do not establish an immutable selector. Public envd source at commit `f2fc4829bd1e8a74d4212c08a0ae4bc3bbd119d2` shows [PID lookup and removal](https://github.com/e2b-dev/infra/blob/f2fc4829bd1e8a74d4212c08a0ae4bc3bbd119d2/packages/envd/internal/services/process/service.go) and [signal dispatch](https://github.com/e2b-dev/infra/blob/f2fc4829bd1e8a74d4212c08a0ae4bc3bbd119d2/packages/envd/internal/services/process/signal.go): the caller supplies a PID, not the identity of a retained handler. Compare-and-delete protects server bookkeeping from deleting a successor; it does not bind a stale caller to the original process. This is corroboration, not a pinned server guarantee.
+
+The same commit's [handler implementation](https://github.com/e2b-dev/infra/blob/f2fc4829bd1e8a74d4212c08a0ae4bc3bbd119d2/packages/envd/internal/services/process/handler/handler.go) cancels output on termination signals and emits `ProcessState.ExitCode()` after Wait. [Go documents -1 for signal termination](https://pkg.go.dev/os#ProcessState.ExitCode). Therefore a native terminal -1 is useful terminal evidence, but not a conventional shell status such as 137 or proof of which signal caused exit. Normal and nonzero terminal results remain ordinary `wait()` values. A transport that supplies only a signal without a terminal integer cannot fit today's exit shape: it must reject observation rather than synthesize an integer; a structured signal-only result requires a separately reviewed exit-type change before that mapping ships. Native pipe cancellation also prevents an all-produced-output guarantee; `outputComplete` retains the existing meaning of all native text delivered, not all bytes the workload attempted to write.
+
+Official [Daytona process reference](https://www.daytona.io/docs/en/typescript-sdk/process/), [process guide](https://www.daytona.io/docs/en/process-code-execution/) and [toolbox schema](https://www.daytona.io/docs/toolbox-openapi.json) establish session and command operations. The current schema is mutable (`v0.0.0-dev`); current SDK docs identify v0.220. Neither proves 0.218 deployment behavior. Enabling session deletion would first need evidence about running commands, descendants, deletion acknowledgement, status/log retention, session-ID reuse and lifecycle interruption. A single-command session avoids terminating another command by design, but is not yet evidence that deletion preserves this observation contract. No Daytona user option is needed now; the mapping remains unsupported. PTYs, injected supervisors and whole-sandbox destruction are outside this operation.
+
+### Target identity and local lifetime
+
+Only an established local handle can issue the operation. Capture the original E2B SDK connection and private native PID; do not reacquire credentials by calling mutating `Sandbox.connect`, reattach by PID, or consult process inventory to pretend to prove identity.
+
+| Situation | Required behavior and practical limit |
+| --- | --- |
+| Already confirmed exit, even after output failure/detach | Refresh synchronous validated native exit evidence first. Return `exited`, zero signal calls; repeated `wait()` preserves the terminal integer. Pre-aborted callers still reject before work. |
+| Active stream, exit not yet observed | One native PID signal request. Remote exit/removal and PID reuse can occur before the client sees the terminal event or between local checking and native lookup. The wrong successor may be signalled. Local checks narrow this window; they cannot eliminate it. |
+| Observed transport loss, output overflow, iterator return/abort, explicit detach or client close without confirmed exit | Invalidate termination authority on that handle; reject before dispatch (`UNAVAILABLE`, or `CLIENT_CLOSED` for a closed client). Do not retain a detached PID as a remotely usable handle. This means a caller should terminate before releasing observation. |
+| Sandbox pause/resume, stop/start, restore, expiration or external lifecycle-policy change | Do not reconnect or carry authority into reopened compute. Invalidate on a locally known lifecycle transition or stream interruption; maintain the existing running/scoped/auto-resume-off guest rules. An external transition can race dispatch without local notification. Same sandbox ID or running preflight is not generation proof. No lifecycle change is induced by terminate; no external lifecycle watcher or generic registry is required. |
+| Request acknowledged but stream ends without terminal evidence | Return `requested`; `wait()` rejects `UNAVAILABLE`. Do not assume SIGKILL acknowledgement is terminal evidence. |
+| Response lost or local cancellation after possible dispatch | Request outcome is unknown. Do not retry, send a second signal, restart the command, reconnect or destroy the sandbox. Continue using any still-working output/wait stream to learn exit. |
+
+The remaining active-handle race is an explicit native limitation, not a guarantee that the SDK can detect every reused PID. Deterministic fixtures must demonstrate it honestly. If an application cannot accept signalling a successor during that window, E2B's current public selector is unsuitable; safe portable termination must wait for upstream execution-bound selectors. Do not add a mandatory generation protocol, hidden helper process or generic recovery journal to make this narrow operation available.
+
+### Request, cancellation and error behavior
+
+Use a fixed 30-second local request deadline and the caller/client-close signals, independent of the command stream. Pre-abort rejects `WAIT_ABORTED` with effect `none`; unsupported native method and locally invalidated authority reject before dispatch. Once native mutation may have been submitted, cancellation, deadline, malformed acknowledgement or transport failure rejects `OUTCOME_UNKNOWN` with effect `possible` and existing minimal provider/sandbox context. A native false/NotFound maps to `not-found`, never an invented exit. Only an adapter rejection that proves no effect may claim effect `none`. Abort attempts to stop request IO; it cannot undo a dispatched signal, and must not detach the process output stream. Late response handling must release local resources without changing the settled caller result. Cache separately observed terminal evidence even if termination's acknowledgement is lost.
+
+Allow at most one native termination attempt per local handle. Concurrent/repeated calls reject `INVALID_ARGUMENT` before another dispatch, unless a terminal result is already confirmed (`exited`). Do not cache an unknown request as success or retry it after timeout. This small guard avoids repeated signals against a stale PID; it is not durable idempotency. Independent `wait()` calls remain repeatable and caller-cancellable. No stream lock should make output delivery wait for termination IO.
+
+The adapter addition is an optional native `terminate(ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>` on `NativeProcess`; reuse the context's cancellation/deadline machinery for local waiting only. The SDK supplies `exited`, validates results, serializes the one request attempt and rejects unsupported adapters without dispatch. The method name describes a mutation even though its context reuses local IO bounds; do not assign read-only error/effect semantics to it. No durable operation reference is introduced.
+
+### Concrete workflow (proposed API, finite output)
+
 ```ts
+import { SandbarError } from "sandbar-sdk";
+
 const job = await box.processes.start({
   command: { kind: "argv", argv: ["node", "job.js"] },
 });
+// Handle output failure immediately so it cannot become an unhandled rejection.
 const drain = (async () => {
-  for await (const chunk of job.output()) console.log(chunk.text);
-})();
+  for await (const chunk of job.output()) {
+    (chunk.stream === "stdout" ? console.log : console.error)(chunk.text);
+  }
+})().then(
+  () => ({ ok: true as const }),
+  error => ({ ok: false as const, error }),
+);
 try {
-  // Application cancellation deliberately ends the remote command.
-  await job.terminate(); // proposed; not a shipped method
-  const exit = await job.wait();
-  console.log(exit.exitCode);
-  await drain;
+  // Application decides to stop its job. SIGKILL on E2B; PID race applies.
+  try {
+    const request = await job.terminate({ signal: AbortSignal.timeout(5000) });
+    console.log(request.status); // requested / not-found / exited; not an exit code
+  } catch (error) {
+    if (!(error instanceof SandbarError) || error.code !== "OUTCOME_UNKNOWN") throw error;
+    console.error("Termination acknowledgement is unknown", error);
+    // Observe independently below; never repeat the termination request.
+  }
+  const exit = await job.wait({ signal: AbortSignal.timeout(5000) });
+  console.log(exit.exitCode, exit.outputComplete); // native -1 is possible
+  const output = await drain;
+  if (!output.ok) console.error(output.error);
 } finally {
-  await job.detach(); // release local observation; never a remote kill
+  await job.detach(); // release local observation; never terminate remotely
 }
 ```
 
-The sketch separates requesting termination from observing exit. The implementation must specify native hard/graceful behavior per provider. `terminate()` success means a confirmed request targeting that execution, not proof that all descendants exited. If identity or request outcome cannot be confirmed, report it directly; never kill a possibly reused PID, replay command start, or destroy the whole sandbox as fallback. Aborting a termination wait does not undo a possibly dispatched termination request. Preserve already confirmed exit if observation later fails; never manufacture an exit code or add a fabricated zero exit for signal termination. If a provider reports only a signal, revise the exit result explicitly before enabling that mapping.
+If `terminate()` rejects `OUTCOME_UNKNOWN`, handle that error in application code and try `job.wait({ signal: ... })` to observe independently; never automatically call terminate again. A confirmed terminal result remains readable even after output failure. A `wait()` abort only ends that waiter. Termination need not produce a terminal event before the wait deadline; `not-found` also cannot supply one. An output failure may invalidate termination before the application calls it, so cleanup must report that limitation rather than fall back to sandbox destruction. This example is a design sketch; the first implementation PR must add a compiled public-package recipe.
 
-Start with a local handle and one useful termination operation, not arbitrary signals, process inventory or persisted process references. Native evidence must establish how the handle still targets its execution after exit, PID reuse, sandbox suspend/resume and transport loss. The existing streaming spec records PID-only limitations: do not bypass them with an invented generation token. An unsupported provider/handle gives a clear error without remote effect.
+### Separate future input work
 
-For stdin, default remains closed. An explicitly piped process may accept UTF-8 text and an explicit EOF. Successful input acknowledgement does not prove application consumption; a lost acknowledgement must not cause automatic replay. Calling `writeInput` after closing input rejects before dispatch; a failed close does not falsely mark remote EOF confirmed. Caller cancellation stops waiting, not the workload. Byte input, PTYs, terminal resize and interactive shells are separate work.
+Stdin remains closed. A later extension may opt in with `start({ stdin: "pipe", ... })`, `writeInput(text, { signal? })` and `closeInput({ signal? })`. UTF-8 input acknowledgements do not prove application consumption; lost acknowledgements cannot be automatically replayed. Reject writes after confirmed EOF before dispatch; failed close cannot falsely confirm EOF. Input cancellation stops local waiting, not the workload. Byte input, PTYs, resize and interactive shells remain separate. No input implementation is required by this termination decision.
 
 ## Long-running server workflow and output limits
 
@@ -92,8 +156,12 @@ Before advertising long-running output, verify a bounded native transport or ups
 
 ## Scope and delivery
 
-1. **Preview access.** Resolve the native access evidence above, finalize the smallest return/config shape, then ship supported provider mappings, docs and tests. Include invalid ports, protected/public differences, missing readiness, expired access and no hidden lifecycle changes.
-2. **Termination through existing handles.** Resolve native execution identity and exit representation, then ship one verified operation with fixtures covering exited commands, reused identifiers, lost acknowledgements and local cancellation. A provider that cannot prove targeting remains unsupported. Native feasibility is a prerequisite, not an invitation to add a process supervisor.
-3. **Input and sustained observation.** Scope separately after the first two decisions. Implement input only with delivery semantics documented; change streaming budgets only with evidence of bounded retention. No dependency on this slice for preview access.
+Keep the existing roadmap ordering and shipped preview design. This proposal contains no runtime implementation and does not reconcile status owned by the roadmap task. Process work is at most three separate implementation PRs:
 
-These are small delivery candidates, not one combined implementation PR. Update this brief with evidence and settled signatures before delegating dependent coding work. The main SDK contract owns results; adapters own native mechanics. Run deterministic tests, packed consumer examples and docs checks. Maintain ordinary provider acceptance scenarios, with live runs separately authorized and support claims tied to actual evidence. No new qualification framework or generic recovery journal.
+1. **Ready to delegate: E2B termination through active handles.** Add the public result/method and optional adapter method described above, implement one public pinned `Commands.kill` call through the original connection, and document abrupt PID-based targeting. Keep the existing integer exit shape and preserve native -1. Wire local deadline/cancellation without aborting output; reject inactive/unsupported handles, guard repeat dispatch and preserve confirmed exits. Include SDK state-machine tests, fake adapter coverage, deterministic pinned RPC fixtures, packed consumer usage and a compiled recipe/provider docs. Do not enable Daytona, stdin or change output budgets. Update the older streaming termination gate narrowly in this coding PR so the shipped contract matches the new documented native limitation.
+2. **Optional, independently gated stdin PR.** Settle delivery/EOF state, pin native acknowledgements and cancellation, then implement explicit UTF-8 pipe input only. It must not depend on removing output caps or adding persisted handles.
+3. **Separately researched sustained-output PR.** Establish bounded native transport/retention and initial-log completeness before changing streaming limits or enabling Daytona sessions. Session deletion requires the additional evidence above and its own reviewed termination contract; defer it if it cannot preserve usable wait behavior. Do not bundle that investigation into the first PR.
+
+First-PR acceptance: zero native signal calls for pre-abort, known exit (including a flush failure), detached/lost-stream/closed-client handles and unsupported mappings; exactly one PID + SIGKILL RPC for active E2B; true acknowledgement, NotFound, RPC rejection, malformed result, lost acknowledgement, 30-second timeout and caller abort; exit-before-dispatch and exit-during-request; concurrent/repeated calls; negative native terminal integer and adapter-level signal-only/missing terminal evidence (do not claim the pinned decoder detects an omitted proto3 scalar); output continues during request; known lifecycle invalidation with no connect/resume; successor PID fixture explicitly demonstrates that an unobserved remote reuse cannot be detected by this selector. Assert no retries, start replay, supervisor, reconnect, sandbox kill or fabricated exit. Preserve existing `outputComplete` behavior under native output cancellation.
+
+Run Bun 1.3.14 frozen install, sequential package builds/checks, offline tests, lint/format, packed consumer checks for the API change and docs checks. Maintain existing live acceptance scenarios; any live kill/exit behavior remains separately authorized and unqualified until run. Independent native-correctness and DevEx/complexity reviews must clear the final proposal before opening its PR, and the implementation must receive the same focused reviews before merge. User owns final proposal review and merge; no direct push to main.
