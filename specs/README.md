@@ -6,7 +6,7 @@ New features target the SDK and public adapter API; see the [delivery rule](../p
 
 ## Implemented contracts and remaining slices
 
-- [Provider state portability](provider-state-portability.md) — snapshots/volumes merged in #25; cleanup configuration in #34. Richer mounted storage composition and volume guarantees remain later work.
+- [Provider state portability](provider-state-portability.md) — snapshots/volumes merged in #25; cleanup configuration in #34. The [storage composition brief](storage-composition.md) specifies consistent create/restore mounts, a settled API migration and a bounded Daytona cold-restore slice with startup acceptance; mounted capture and richer guarantees remain deferred.
 - [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) — ordinary results, direct partial outcomes and provider-identifying handles merged in #33. Expanded persistence callbacks and workflow machinery remain deferred.
 - Provider acceptance merged in #32; use the [maintained Bun suites](../packages/sdk-qualification/provider-qualification/README.md) and generated evidence. Public direct resource types and caller input errors merged in #35.
 - [Sandbox lifecycle](sandbox-lifecycle.md) — reopen/inspect merged in #38 and adapter-configured `renew()` in #55. No-argument suspend/resume remains open and unmerged in #57; it is not exported on main.

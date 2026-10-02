@@ -3,7 +3,7 @@ title: Snapshots and volumes
 description: Capture and restore a sandbox, mount retained storage, save references, and clean up resources.
 ---
 
-Snapshots retain captured sandbox state independently of the source. Volumes retain storage independently of compute. These APIs are available on SDK connections.
+Snapshots retain captured sandbox state independently of the source. Volumes retain storage independently of compute. These APIs are available on SDK connections. Snapshot preservation, volume management and mounting are separate provider capabilities; support for one does not imply support for the others.
 
 Use `DirectSandbarClient` and `DirectSandboxHandle` from `sandbar-sdk` when annotating direct clients and sandboxes. `SandbarClient` and `SandboxHandle` are aliases for the same complete SDK surfaces.
 
@@ -81,7 +81,7 @@ Consistency is unknown unless native evidence or caller preparation establishes 
 
 ## Create and mount a volume
 
-Use a [Daytona connection](/docs/providers/daytona/) named `sandbar` configured with `networkPolicy: "daytona-default"`. Mounts attach during sandbox creation. `volume.at(path)` only creates a descriptor; it does not attach storage or mutate the provider.
+Use a [Daytona connection](/docs/providers/daytona/) named `sandbar` configured with `networkPolicy: "daytona-default"`. Mounts attach during sandbox creation. `volume.at(path)` only creates a descriptor; it does not attach storage or mutate the provider. Reusing the same volume in another supported sandbox creation selects its current shared data. Creating a different volume starts with independent empty storage; it does not copy the first volume. A sandbox snapshot must not be assumed to freeze external volume contents.
 
 The default `require-durable` policy blocks compute destruction when writable-volume durability cannot be confirmed. Choose `allow-unconfirmed` only when your application accepts cleanup without a confirmed write barrier. It does not establish account eligibility or promise flushed or durable writes. Finish finite writers before destroying compute.
 
@@ -136,14 +136,14 @@ Mount paths must be absolute, normalized, nonoverlapping and outside reserved pa
 
 ### Current combinations
 
-| Workflow                                  | Current boundary                                                                                         |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Capture a sandbox with external mounts    | Unsupported on both adapters                                                                             |
-| Restore with mounts or resource overrides | Unsupported; empty override maps are equivalent to omission                                              |
-| Daytona writable create-time mounts       | Implemented; readiness and immutable volume identity checked                                             |
-| E2B volume CRUD                           | Mapped to private-beta native APIs; live validation blocked by account HTTP 403                          |
-| E2B create-time mounts                    | Unsupported separately: native mount requests/observations use reusable names without mounted volume IDs |
-| Read-only mounts or volume versions       | Not implemented on either adapter                                                                        |
+| Workflow                                  | Current boundary                                                                                                          |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Capture a sandbox with external mounts    | Unsupported on both adapters                                                                                              |
+| Restore with mounts or resource overrides | Unsupported; empty override maps are equivalent to omission                                                               |
+| Daytona writable create-time mounts       | Implemented; readiness and immutable volume identity checked                                                              |
+| E2B volume CRUD                           | Mapped to private-beta native APIs; live validation blocked by account HTTP 403                                           |
+| E2B create-time mounts                    | Unsupported separately: inspected native requests/observations select names without proving exact mounted volume identity |
+| Read-only mounts or volume versions       | Not implemented on either adapter                                                                                         |
 
 ## Save and reopen references
 
