@@ -64,7 +64,7 @@ Create and restore share `mounts: MountSpec[]` from `volume.at(path)`. Daytona s
 
 The coordinated SDK/adapter release R replaces legacy action maps. Nonempty maps reject with `INVALID_ARGUMENT` and migration guidance. The SDK-only empty-object alias remains in R and the next published release R+1, then is removed at the next API release. Public types use arrays. Nonempty arrays require `snapshotRestore.mountInput: "specs"` before hook preparation; older hooks receive mount-free requests with no mounts field. Record actual R during version preparation. Snapshot, volume, sandbox and operation reference formats stay unchanged.
 
-Unknown restore outcomes expose selected `mounts` and an acknowledged `sandbox` reference when available. Persist these with the operation reference and reconcile read-only without another allocation. The new mounted-restore startup acceptance remains unrun until the prepared first-action sentinel image prerequisite are supplied; deterministic and packed evidence are separate from live qualification.
+Unknown restore outcomes expose selected `mounts` and an acknowledged `sandbox` reference when available. Persist these with the operation reference and reconcile read-only without another allocation. The first bounded mounted-restore acceptance at `824946d` passed A startup evidence, then failed a harness snapshot-name/ID assertion before B. The corrected identity lookup has offline coverage; the full workflow remains unqualified. Deterministic and packed evidence are separate from live qualification.
 
 
 ## Reopen Sandbar-created compute

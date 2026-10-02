@@ -77,7 +77,7 @@ export const builtinSupport: SupportMetadata[] = [
     features: {
       storageComposition: {
         support: "conditional",
-        note: "Implemented exact-volume-ID mounts on known mount-free filesystem/fresh restore with explicit daytona-default. Blocked mounted restore, mounted capture and memory composition unsupported. Native fixtures/packed compatibility are separate from first-action startup acceptance, which awaits an existing sentinel image; no live pass yet.",
+        note: "Implemented exact-volume-ID mounts on known mount-free filesystem/fresh restore with explicit daytona-default. Blocked mounted restore, mounted capture and memory composition unsupported. Native fixtures/packed compatibility are separate from first-action acceptance. The bounded case at 824946d passed A startup evidence, then failed a harness snapshot-name/ID assertion before B; native selector resolution is corrected offline. No full live workflow pass yet.",
       },
       suspension: {
         support: "conditional",

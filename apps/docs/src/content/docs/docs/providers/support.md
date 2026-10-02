@@ -21,7 +21,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Directory primitives                | [Unsupported · not-run](#daytona-directories)            | [Conditional · not-run](#e2b-directories)                                         |
 | OCI image builds                    | [Conditional · not-run](#daytona-oci)                    | [Conditional · not-run](#e2b-oci)                                                 |
 | Measured network controls           | [Conditional · not-run](#daytona-network)                | [Supported · failed](#e2b-network)                                                |
-| Cold snapshot with selected storage | [Conditional · not-run](#daytona-storageComposition)     | [Unsupported · not-run](#e2b-storageComposition)                                  |
+| Cold snapshot with selected storage | [Conditional · failed](#daytona-storageComposition)      | [Unsupported · not-run](#e2b-storageComposition)                                  |
 | Snapshot roundtrip                  | [Conditional · passed at 1505ee0d](#daytona-snapshots)   | [Conditional · passed at 8449def7](#e2b-snapshots)                                |
 | Volume CRUD                         | [Supported · passed at 1505ee0d](#daytona-volumes)       | [Unsupported · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
 | Mounted persistence                 | [Conditional · passed at 1505ee0d](#daytona-persistence) | [Unsupported · not-run](#e2b-persistence)                                         |
@@ -106,7 +106,7 @@ daytona-default permits essential services and is not strict blocked egress. Tie
 
 ### Cold snapshot with selected storage
 
-Implemented exact-volume-ID mounts on known mount-free filesystem/fresh restore with explicit daytona-default. Blocked mounted restore, mounted capture and memory composition unsupported. Native fixtures/packed compatibility are separate from first-action startup acceptance, which awaits an existing sentinel image; no live pass yet.
+Implemented exact-volume-ID mounts on known mount-free filesystem/fresh restore with explicit daytona-default. Blocked mounted restore, mounted capture and memory composition unsupported. Native fixtures/packed compatibility are separate from first-action acceptance. The bounded case at 824946d passed A startup evidence, then failed a harness snapshot-name/ID assertion before B; native selector resolution is corrected offline. No full live workflow pass yet.
 
 <a id="daytona-snapshots"></a>
 

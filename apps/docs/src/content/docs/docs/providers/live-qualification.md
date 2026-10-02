@@ -19,6 +19,19 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `824946d1c91157910f45d80ea2c1d4541bf13972`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `824946d1c91157910f45d80ea2c1d4541bf13972`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/69).
+
+| Scenario            | Latest live result | Date       |
+| ------------------- | ------------------ | ---------- |
+| storage-composition | failed             | 2026-10-02 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
 - SDK: 0.0.0, commit `6796b30b08ccb80ad845fc8b24d72c2d02eb4e35`.
 - Fresh-process reopen: not recorded.
 - Harness commit: `6796b30b08ccb80ad845fc8b24d72c2d02eb4e35`.

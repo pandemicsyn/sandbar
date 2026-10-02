@@ -155,14 +155,14 @@ Daytona validates scope, readiness, writable access, nonoverlapping paths and ex
 
 When acknowledged compute cannot be verified, an uncertain restore's `error.outcome` with kind `snapshot_restore` retains `sandbox` when known and the selected `mounts`. Save those identities and the operation reference and inspect without replay. The sandbox reference stays limited to identity and native creation selectors; current mounts come from authenticated native reads during reopening, recovery and cleanup. Compute cleanup retains application volumes and requires deliberate acceptance of unconfirmed writable-storage durability.
 
-The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/storage-composition.ts) and its mock test cover shared data, independently created empty data, private-only restore and full-reference reopening. These fixtures establish request mapping, not native startup ordering. The maintained first-action live scenario remains gated on an existing sentinel image; prior snapshot and persistence passes do not qualify this combination.
+The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/storage-composition.ts) and its mock test cover shared data, independently created empty data, private-only restore and full-reference reopening. These fixtures establish request mapping, not native startup ordering. The first bounded live case at `824946d` passed A startup evidence, then failed a harness snapshot-name/ID assertion before B. Exact native selector resolution is corrected offline; the complete workflow remains unqualified. Prior snapshot and persistence passes do not qualify this combination.
 
 ### Current combinations
 
 | Workflow                                   | Current boundary                                                                                                             |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | Capture a sandbox with external mounts     | Unsupported on both adapters                                                                                                 |
-| Daytona cold restore with selected volumes | Implemented for known mount-free filesystem/fresh snapshots and explicit daytona-default; startup acceptance pending fixture |
+| Daytona cold restore with selected volumes | Implemented for known mount-free filesystem/fresh snapshots and explicit daytona-default; first live workflow failed; corrected selector lookup is fixture-tested; full acceptance pending authorized confirmation |
 | Resource overrides, memory plus mounts     | Unsupported; empty resource overrides are equivalent to omission                                                             |
 | Daytona writable create-time mounts        | Implemented; readiness and immutable volume identity checked                                                                 |
 | E2B volume CRUD                            | Mapped to private-beta native APIs; live validation blocked by account HTTP 403                                              |
