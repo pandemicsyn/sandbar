@@ -20,7 +20,7 @@ Use the [authoritative roadmap](../ROADMAP.md) for order and qualification gaps.
 
 ## Accepted upcoming DX work
 
-Stdin and sustained output are separate next slices under the [process contract](preview-and-process-control.md); they do not change today's finite-streaming limits. Storage composition remains a proposal in #56 pending design review; coding follows those basics.
+Stdin and sustained output are separate next slices under the [process contract](preview-and-process-control.md); they do not change today's finite-streaming limits. The accepted [storage composition design and implementation brief](storage-composition.md) merged in #56; coding follows those basics.
 
 The lifecycle case's fresh-process inactive reopening and E2B RAM continuity do not qualify the separate full reopen, renewal, streaming or signal-bearing read scenarios. Keep actual tested revisions/configurations and prior failures visible. Provider-specific choices belong in setup, while ordinary application calls stay short; confirmed outcomes and persisted resource identities remain available without requiring recovery machinery for normal calls.
 

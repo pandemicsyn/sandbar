@@ -50,7 +50,7 @@ The standard Daytona credential is for the caller's own HTTP client, never an en
 
 ### Decision: one native termination request through an active local handle
 
-`terminate()` on the existing `ProcessHandle` shipped for E2B in #66, following the design in #65. It refines the older termination gate in [the streaming contract](interactive-execution-and-access.md): the first useful operation accepts the native PID-selection race described below; it does **not** promise immutable execution targeting. Requiring proof that a PID can never be reused would leave E2B unsupported despite its documented, useful kill operation. Applications that require that stronger guarantee cannot use this mapping. Do not manufacture generation proof to satisfy them.
+`terminate()` on the existing `ProcessHandle` shipped for E2B in #66, following the design in #64. It refines the older termination gate in [the streaming contract](interactive-execution-and-access.md): the first useful operation accepts the native PID-selection race described below; it does **not** promise immutable execution targeting. Requiring proof that a PID can never be reused would leave E2B unsupported despite its documented, useful kill operation. Applications that require that stronger guarantee cannot use this mapping. Do not manufacture generation proof to satisfy them.
 
 ```ts
 // Exported public result; existing ProcessExit stays unchanged.
