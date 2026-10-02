@@ -99,7 +99,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       files: {
         support: "conditional",
-        note: "Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified.",
+        note: "Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
       },
       oci: {
         support: "conditional",
@@ -157,7 +157,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       files: {
         support: "conditional",
-        note: "Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths.",
+        note: "Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
       },
       oci: {
         support: "conditional",

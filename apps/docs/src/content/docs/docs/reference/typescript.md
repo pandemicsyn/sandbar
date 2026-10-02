@@ -50,6 +50,8 @@ Build results contain `prepared` and `retainedResources`. A prepared handle is b
 | `box.inspect({ signal? })`                                                                 | Read current state where supported.                                  |
 | `box.exec(input, { signal? })`                                                             | Run a command and return bounded binary output.                      |
 | `box.submitExec(input, options?)`                                                          | Submit execution and return an operation handle.                     |
+| `box.readTextFile(path, { signal? })`                                                      | Read the complete bounded file as UTF-8.                             |
+| `box.writeTextFile(path, text, { overwrite?, signal? })`                                   | Write UTF-8; byte limits apply; overwrite defaults to false.         |
 | `box.readFile(path, { signal? })`                                                          | Read up to 1 MiB as a `Uint8Array`.                                  |
 | `box.writeFile(path, bytes, { overwrite?, signal? })`                                      | Write up to 1 MiB; overwrite defaults to false.                      |
 | `box.destroy({ signal? })`                                                                 | Wait for confirmed compute termination.                              |
