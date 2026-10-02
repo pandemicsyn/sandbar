@@ -59,6 +59,7 @@ const restoreToken = z.strictObject({
   selector: z.string().min(1).max(256),
   state: z.enum(["uncertain", "accepted", "rejected"]),
   sandboxId: z.string().min(1).max(512).optional(),
+  allowPublicTraffic: z.boolean().optional(),
 });
 
 export function e2bState(input: {
@@ -66,6 +67,7 @@ export function e2bState(input: {
   transport: E2BTransport;
   scopeMarker: string;
   timeoutSeconds: number;
+  allowPublicTraffic?: boolean;
   apiKey: string;
   find: (id: string, expected?: SandboxReference) => Promise<E2BRecord | null>;
 }) {
@@ -881,7 +883,13 @@ export function e2bState(input: {
         if (ctx.signal.aborted)
           return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
         const selector = `${value.snapshot.nativeId}:${value.snapshot.generation}`;
-        const token: z.infer<typeof restoreToken> = { selector, state: "uncertain" };
+
+        const token: z.infer<typeof restoreToken> = {
+          selector,
+          state: "uncertain",
+          allowPublicTraffic: input.allowPublicTraffic ?? false,
+        };
+
         await ctx.checkpoint(token);
 
         if (ctx.signal.aborted) {
@@ -902,6 +910,7 @@ export function e2bState(input: {
           },
           timeoutMs: input.timeoutSeconds * 1000,
           allowInternetAccess: value.request.networkPolicy === "internet",
+          allowPublicTraffic: token.allowPublicTraffic,
           signal: ctx.signal,
         });
 
@@ -965,6 +974,12 @@ export function e2bState(input: {
           !Object.entries(metadata).every(([key, value]) => current.metadata[key] === value)
         )
           return ctx.unknown("Restored sandbox identity is unverified");
+
+        // Version-1 tokens written before preview configuration used native-public traffic.
+        const allowPublicTraffic = token.data.allowPublicTraffic ?? true;
+
+        if (current.allowPublicTraffic !== allowPublicTraffic)
+          return ctx.unknown("Restored sandbox inbound visibility is unverified; no replay");
 
         return {
           id: current.id,

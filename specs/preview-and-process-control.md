@@ -1,16 +1,16 @@
 # Preview access and useful process control
 
-Accepted next priority · Design brief; API sketches pending native evidence · October 2, 2026
+Accepted priority · Preview slice implemented in this branch; process API sketches pending native evidence · October 2, 2026
 
 Schedule after [default creation and everyday files](sandbox-basics-dx.md), before new adapters. Applications should be able to start a server, obtain usable access information and deliberately stop their command. Keep provider choices in setup and common calls short. This brief does not enlarge the shipped [finite streaming contract](interactive-execution-and-access.md) or claim new native support.
 
 ## Preview access
 
-Proposed ordinary call and return shape:
+Settled preview call and return shape (deterministic coverage; live validation not run):
 
 ```ts
 const preview = await box.preview(3000);
-// Proposed discriminated result:
+// Discriminated result:
 // { access: "public", url: string }
 // | { access: "protected", url: string, headers: Record<string, string> }
 ```
@@ -19,18 +19,32 @@ const preview = await box.preview(3000);
 const preview = await box.preview(3000);
 const response = await fetch(preview.url, {
   headers: preview.access === "protected" ? preview.headers : undefined,
+  redirect: "error",
 });
 ```
 
 A protected result is for an HTTP client that can supply the required headers; it is not automatically a browser-openable link. Public results may be opened in a browser, but expose the service to whoever can reach that URL. If native protection instead requires a browser sign-in or URL credential, settle that representation explicitly before implementing that provider; do not disguise it as header authentication.
 
-The desired provider setup option is `preview: { access: "protected" | "public" }`. Protected access is the intended default where enforceable; public exposure requires an explicit setup choice. This is a proposed policy, not a claim that both current providers can implement it. An adapter unable to enforce the requested mode reports `UNSUPPORTED` with an actionable reason; it never silently publishes an unauthenticated URL. Do not implement a shared gateway merely to hide native differences.
+Adapter setup is `preview: { access: "protected" | "public" }`, defaulting to protected. The implemented mappings are Daytona protected and E2B explicit public. Unsupported choices fail clearly: Daytona public setup rejects before connection IO; E2B protected `preview()` rejects without native lookup. Newly created/restored E2B sandboxes nevertheless set `allowPublicTraffic: false` by default, independently of outbound network policy, and verify observed visibility before confirming creation or restore. Missing or mismatched visibility leaves an uncertain outcome while retaining confirmed resource identity. Existing sandboxes are not privatized by connecting; E2B public lookup requires current native public visibility and auto-resume off.
 
-`preview(port)` validates an integer port from 1 through 65535 and resolves native access to the existing sandbox. It does not start a server, open outbound internet access, resume compute or create replacement compute. Producing access information does not prove the port is listening. A connection-refused response after obtaining the URL remains possible; document that distinction in the basic recipe rather than hiding an unbounded readiness loop.
+`preview(port, { signal? })` validates an integer port from 1 through 65535 and resolves access to existing running compute. It does not start a server, resume compute, change outbound policy, extend lifetime or replace compute. Daytona's native GET may activate the requested preview route. Producing access information does not prove a listener is ready; connection refusal or proxy errors remain possible. Local cancellation stops waiting, not compute; native reads may finish afterward. The result is not stored in sandbox references, operation recovery or diagnostics.
 
-URLs and credentials are ephemeral access information, not durable sandbox identity. Document native expiry, invalidation on suspend/resume and revocation behavior per provider; do not invent a common lifetime guarantee. Redact credentials and credential-bearing URLs from diagnostics. Reopening a sandbox uses its ordinary reference and requests fresh access information. No grant inventory, revoke API, TCP tunnel or port-forwarding service is required for the first slice.
+### Native evidence and decisions
 
-Before coding, record the pinned native endpoint/SDK mapping, default port exposure (including exposure before this method runs), authentication enforcement, expiry and any mutation for Daytona and E2B. Setup alone must not promise that native ports are private. If either provider cannot satisfy the default safely, document the limitation and require an explicit supported choice. Add support reporting and qualification cases for the actual selected access modes.
+Inspected October 2, 2026, against Sandbar base `52a95be`, published `@daytona/sdk@0.218.0` (inspection only, not runtime dependency) and runtime `e2b@2.51.0`. No paid calls were run.
+
+| Provider | Default exposure before lookup | Native mapping and enforcement | Expiry, mutation and lifecycle |
+| --- | --- | --- | --- |
+| Daytona | Existing Sandbar create sends `public: false`; native detail must continue to report private visibility. A lookup does not repair changed visibility. | `GET /sandbox/{id}/ports/{port}/preview-url`, returns URL/token; fetch supplies `x-daytona-preview-token`. Standard token authenticates all sandbox ports, including terminal/toolbox command and file access. It is a sandbox-wide credential, not a shareable viewing grant. | Pinned SDK warns that GET can open a preview route. Standard token cannot be individually revoked; official docs say stop/start rotates it, pause/resume retains it. Only running, scoped compute is accepted; no start/connect call is sent. No common expiry promise. |
+| E2B | Native URLs are public by default. This implementation explicitly sets `network.allowPublicTraffic: false` for protected/default creation and restore, or true for explicit public setup. | Public lookup reads scoped detail, requiring running state, `network.allowPublicTraffic: true`, domain `e2b.app` and `lifecycle.autoResume: false`; URL matches pinned `getHost(port)`. No endpoint mutation or guest attachment. | GET detail has no `trafficAccessToken`; create/connect return it. Pinned connect is `POST /v2/sandboxes/{id}/connect`, which may resume or alter session lifetime, so it is not used for preview. Public URL is usable only while native compute/listener remains available; request fresh access after reopening. |
+
+Evidence: [Daytona preview authentication and lifetime](https://www.daytona.io/docs/en/preview/), [published pinned SDK](https://www.npmjs.com/package/@daytona/sdk/v/0.218.0), [last public Daytona server source](https://github.com/daytonaio/daytona/blob/01c502bb1f1ff8f2885d0cd490e043736083dca8/apps/api/src/sandbox/services/sandbox.service.ts#L1876) (v0.190, corroboration rather than proof of deployed v0.218), [E2B public access enforcement](https://docs.e2b.dev/network/restrict-public-access), [pinned E2B SDK](https://www.npmjs.com/package/e2b/v/2.51.0). SDK source inspection confirms the creation flag, plain GET detail schema, hostname formula and mutating connect path. Current documentation is distinct from pinned native source and from unrun live evidence.
+
+**P1 — E2B protected access (product decision / native feasibility):** fresh protected access after reopening cannot be delivered through the pinned read-only API. Decide whether to wait for an upstream read-only credential endpoint or explicitly scope a future feature to locally retained creation credentials with separately proven resume/expiry behavior. This slice does neither, does not persist credentials as identity and never silently returns public access. Protected creation is enforceable; usable protected preview access remains unsupported.
+
+**P2 — Daytona public access (product decision):** the pinned visibility setting publishes sandbox ports globally, while the existing adapter verifies private visibility across creation/reopening/state operations. Supporting public mode requires accepting that sandbox-wide exposure and reconciling those guarantees, not toggling visibility from `preview(port)`. It remains explicitly unsupported in this slice. Signed credential URLs, per-port share grants and revocation APIs are deferred.
+
+The standard Daytona credential is for the caller's own HTTP client, never an end-user share link. Requests carrying its custom header must reject redirects, as the compiled recipe does, to prevent a cross-origin redirect from disclosing sandbox-wide authority. Both return branches carry ephemeral access information, not durable identity or readiness. Credentials and URLs are excluded from telemetry; response validation failures use fixed messages. Reopening uses the ordinary reference and asks for access again. No grant inventory, gateway, tunnel or implicit server management is introduced. See the compiled [preview recipe](../apps/docs/examples/sandbox-preview.ts) and [provider guide](../apps/docs/src/content/docs/docs/guides/preview-access.md).
 
 ## Process control that means what it says
 

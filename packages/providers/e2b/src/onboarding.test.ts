@@ -45,6 +45,7 @@ function fixture() {
         id: `sb_${calls.create}`,
         templateId: input.templateId === "base" ? "canonical_base" : input.templateId,
         metadata: input.metadata,
+        allowPublicTraffic: input.allowPublicTraffic,
         state: "running",
       };
 
@@ -167,9 +168,23 @@ test("lost base create recovers by exact native markers after reconnect without 
     connection = await connectAdapter(f.adapter, options);
     const record = f.records.get("sb_1")!;
     record.metadata.sandbar_operation = "op_other";
-    expect(await observeOperation(connection.session, "create", identity, signal)).toBeNull();
+    expect(
+      await observeOperation(
+        connection.session,
+        "create",
+        { ...identity, token: { allowPublicTraffic: false }, version: 1 },
+        signal,
+      ),
+    ).toBeNull();
     record.metadata.sandbar_operation = identity.operationId;
-    expect(await observeOperation(connection.session, "create", identity, signal)).toMatchObject({
+    expect(
+      await observeOperation(
+        connection.session,
+        "create",
+        { ...identity, token: { allowPublicTraffic: false }, version: 1 },
+        signal,
+      ),
+    ).toMatchObject({
       kind: "completed",
       value: { id: "sb_1", state: "running" },
     });

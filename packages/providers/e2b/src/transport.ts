@@ -87,6 +87,8 @@ export type E2BRecord = {
   metadata: Record<string, string>;
   state: string;
   endAt?: string | null;
+  domain?: string;
+  allowPublicTraffic?: boolean;
   lifecycle?: { onTimeout?: string; autoResume?: boolean };
   envdVersion?: string;
   /** Native detail proves guest IO can attach without resuming or changing lifetime. */
@@ -138,6 +140,7 @@ export type E2BTransport = {
     metadata: Record<string, string>;
     timeoutMs: number;
     allowInternetAccess: boolean;
+    allowPublicTraffic?: boolean;
     volumeMounts?: Record<string, string>;
     signal?: AbortSignal;
   }): Promise<string>;
@@ -266,6 +269,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     envdVersion: z.string().optional(),
     envdAccessToken: z.string().min(1).max(8192).optional(),
     domain: z.string().optional(),
+    network: z.object({ allowPublicTraffic: z.boolean().optional() }).optional(),
     lifecycle: z
       .object({ onTimeout: z.string().optional(), autoResume: z.boolean().optional() })
       .optional(),
@@ -322,6 +326,8 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
           !!info.envdVersion &&
           info.domain === "e2b.app",
         endAt: info.endAt,
+        domain: info.domain,
+        allowPublicTraffic: info.network?.allowPublicTraffic,
         lifecycle: info.lifecycle,
         volumeMounts: info.volumeMounts,
       };
@@ -644,6 +650,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         timeoutMs: input.timeoutMs,
         lifecycle: { onTimeout: "kill", autoResume: false },
         allowInternetAccess: input.allowInternetAccess,
+        network: { allowPublicTraffic: input.allowPublicTraffic ?? false },
         volumeMounts: input.volumeMounts,
         signal: input.signal,
       });

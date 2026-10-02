@@ -10,6 +10,8 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Feature                       | Daytona                                                  | E2B                                                                               |
 | ----------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Sandbox lifecycle             | [Supported · passed at 8449def7](#daytona-lifecycle)     | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
+| Protected HTTP preview        | [Conditional · not-run](#daytona-previewProtected)       | [Unsupported · not-run](#e2b-previewProtected)                                    |
+| Public HTTP preview           | [Unsupported · not-run](#daytona-previewPublic)          | [Conditional · not-run](#e2b-previewPublic)                                       |
 | Configured lifetime renewal   | [Conditional · not-run](#daytona-renewal)                | [Conditional · not-run](#e2b-renewal)                                             |
 | Scoped sandbox reopening      | [Conditional · not-run](#daytona-reopening)              | [Conditional · not-run](#e2b-reopening)                                           |
 | Execution and captured output | [Supported · passed at 8449def7](#daytona-execution)     | [Supported · passed at 8449def7](#e2b-execution)                                  |
@@ -30,6 +32,18 @@ The [live evidence detail](/docs/providers/live-qualification/) retains exact av
 ### Sandbox lifecycle
 
 The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified.
+
+<a id="daytona-previewProtected"></a>
+
+### Protected HTTP preview
+
+Daytona protected header access only; standard token grants sandbox-wide command/file authority. Public setup unsupported. Native lookup can activate a route; no server start/resume or readiness claim. New live preview case not run.
+
+<a id="daytona-previewPublic"></a>
+
+### Public HTTP preview
+
+Daytona sandbox-wide publication requires a separate product decision; preview never changes visibility.
 
 <a id="daytona-renewal"></a>
 
@@ -98,6 +112,18 @@ Writable create-time mounts/subpaths; read-only unsupported. The Bun producer wr
 ### Sandbox lifecycle
 
 The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed.
+
+<a id="e2b-previewProtected"></a>
+
+### Protected HTTP preview
+
+Fresh traffic-token retrieval is absent from the pinned read-only detail API. Native connect may resume compute; protected preview rejects without calling it. Newly created/restored compute is private by default.
+
+<a id="e2b-previewPublic"></a>
+
+### Public HTTP preview
+
+E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. New live preview and changed inbound-default behavior not qualified.
 
 <a id="e2b-renewal"></a>
 

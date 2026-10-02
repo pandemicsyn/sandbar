@@ -8,6 +8,7 @@ export function daytona(options: {
   target: string;
   environment?: ImageInput;
   ttlMinutes?: number;
+  preview?: { access: "protected" | "public" };
   lifecycle?: { lifetimeSeconds?: number };
   snapshots?: { restartAfterCapture?: boolean };
   networkPolicy?: "blocked" | "daytona-default";
@@ -17,6 +18,7 @@ export function daytona(options: {
     environment: options.environment,
     ttlMinutes: options.ttlMinutes,
     lifecycle: options.lifecycle,
+    preview: options.preview,
     snapshots: options.snapshots,
     networkPolicy: options.networkPolicy,
   };

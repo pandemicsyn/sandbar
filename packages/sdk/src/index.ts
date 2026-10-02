@@ -80,6 +80,7 @@ export type {
   RenewRequest,
   RenewResult,
   SandboxInfo,
+  Preview,
   Fact,
   Deadline,
   CreatePlan,

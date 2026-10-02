@@ -26,6 +26,7 @@ function fixture() {
     envdVersion: "0.5.0",
     envdAccessToken: "guest-token",
     domain: "e2b.app",
+    network: { allowPublicTraffic: false },
     lifecycle: { onTimeout: "kill", autoResume: false },
     endAt: "2026-10-02T01:00:00Z",
   };

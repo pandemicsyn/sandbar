@@ -8,7 +8,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 CASES = {
-    "sandbox-lifecycle", "execution", "execution-streaming", "files", "file-directories", "lifecycle-reopen", "lifecycle-renew", "snapshot-roundtrip",
+    "sandbox-lifecycle", "execution", "execution-streaming", "files", "file-directories", "lifecycle-reopen", "lifecycle-renew", "preview-protected", "preview-public", "snapshot-roundtrip",
     "volume-crud", "volume-persistence", "network-controls",
 }
 FIELDS = ("provider", "sdkCommit", "harnessCommit", "sdkVersion", "nativeVersion", "runtime", "platform", "timestamp", "configuration")

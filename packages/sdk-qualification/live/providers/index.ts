@@ -117,6 +117,8 @@ export async function configuredProvider(saved?: RunLedger["connection"]) {
     saved ?? {
       teamId: process.env.SANDBAR_E2B_TEAM_ID,
       templateId: process.env.SANDBAR_E2B_TEMPLATE_ID ?? "base",
+      preview:
+        process.env.SANDBAR_E2B_PREVIEW_ACCESS === "public" ? { access: "public" } : undefined,
     },
   );
 

@@ -51,6 +51,7 @@ const ledgerSchema = z.strictObject({
           .optional(),
         templateId: z.string().regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/),
         timeoutSeconds: z.literal(300),
+        preview: z.strictObject({ access: z.enum(["protected", "public"]) }).optional(),
       }),
     ])
     .optional(),
