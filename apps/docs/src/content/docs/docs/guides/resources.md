@@ -101,7 +101,7 @@ A nonzero exit is a completed command. `NoExitCodeError` means execution complet
 
 ## Submit and wait separately
 
-`box.submitExec(input)` and `sandbar.sandboxes.submitCreate(input)` return an operation handle with `reference`, `observe()`, and `wait()`. Use them when your application needs to save a reference or manage waiting explicitly. Ordinary `exec()` and `create()` submit and wait for you. `wait({ signal })` cancellation stops local waiting and preserves an operation reference; it does not terminate the remote command. Use recovery to observe an already-submitted operation before deciding what to do next. The current SDK has no public per-command termination API.
+`box.submitExec(input)` and `sandbar.sandboxes.submitCreate(input)` return an operation handle with `reference`, `observe()`, and `wait()`. Use them when your application needs to save a reference or manage waiting explicitly. Ordinary `exec()` and `create()` submit and wait for you. `wait({ signal })` cancellation stops local waiting and preserves an operation reference; it does not terminate the remote command. Use recovery to observe an already-submitted operation before deciding what to do next. Active E2B streaming process handles provide explicit native SIGKILL termination; this operation-handle API does not terminate commands. See [finite text streaming](/docs/guides/text-streaming/) for PID targeting limits.
 
 ## Serializable resource identity
 

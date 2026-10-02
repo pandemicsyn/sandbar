@@ -5,7 +5,7 @@ description: Connect to E2B with an API key, select a template, and use the test
 
 Import `e2b` from `sandbar-sdk/e2b`. The built-in adapter uses the E2B API key and public `base` template by default.
 
-E2B also supports [finite text streaming](/docs/guides/text-streaming/) through `sandbox.processes.start()`. Separate stdout/stderr text, confirmed zero/nonzero exit and prompt local detach use bounded queues and a cumulative output budget. No process runtime deadline, binary streaming or remote process kill is provided. Live streaming validation remains unrun.
+E2B also supports [finite text streaming](/docs/guides/text-streaming/) through `sandbox.processes.start()`. Separate stdout/stderr text, confirmed zero/nonzero exit and prompt local detach use bounded queues and a cumulative output budget. Active local handles also support native SIGKILL termination with an explicit PID-reuse race; request acknowledgement is separate from confirmed exit. No process runtime deadline or binary streaming is provided. Live streaming validation remains unrun.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";

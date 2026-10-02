@@ -105,6 +105,8 @@ export interface NativeProcess {
   /** Synchronous confirmed evidence, including during final decoder callbacks. */
   readonly confirmedExit?: NativeProcessExit;
   wait(): Promise<NativeProcessExit>;
+  /** One native termination request, not confirmed exit. Local IO bounds only. */
+  terminate?(ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>;
   detach(): Promise<void>;
 }
 

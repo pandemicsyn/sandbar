@@ -760,7 +760,35 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
   }
 }
 
+// Shared only within one client/scope, never native execution-generation proof.
+const processControls = new WeakMap<AdapterDirectClient, Map<string, { active: boolean }>>();
+
+function processControl(client: AdapterDirectClient, sandboxId: string): { active: boolean } {
+  let controls = processControls.get(client);
+
+  if (!controls) {
+    controls = new Map();
+    processControls.set(client, controls);
+  }
+
+  let control = controls.get(sandboxId);
+
+  if (!control) {
+    control = { active: true };
+    controls.set(sandboxId, control);
+  }
+
+  return control;
+}
+
 export class AdapterSandbox {
+  private invalidateProcessControl(): void {
+    const controls = processControls.get(this.client);
+    const control = controls?.get(this.id);
+
+    if (control) control.active = false;
+    controls?.delete(this.id);
+  }
   #reference: SandboxReference | null;
   get reference(): SandboxReference | null {
     return this.#reference;
@@ -802,7 +830,15 @@ export class AdapterSandbox {
     start: (input: StartProcessInput, options: WaitOptions = {}): Promise<ProcessHandle> => {
       this.client.ensureOpen();
 
-      return startProcess(this.client, sandboxInput(this.id, this.reference), input, options);
+      const control = processControl(this.client, this.id);
+
+      return startProcess(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        input,
+        options,
+        () => control.active,
+      );
     },
   };
   async submitSuspend(
@@ -883,6 +919,9 @@ export class AdapterSandbox {
     if (plan.status === "unsupported") throw new UnsupportedFeatureError("snapshot", [plan.reason]);
 
     if (plan.status !== "supported") throw new SandbarError("UNAVAILABLE", plan.reason, "none");
+
+    assertSignal(signal);
+    this.invalidateProcessControl();
 
     return this.client.submit(
       "snapshot_capture",
@@ -1292,6 +1331,10 @@ export class AdapterSandbox {
   async submitDestroy(
     options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
   ): Promise<AdapterOperation<import("sandbar-adapter").DestroyValue>> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+    this.invalidateProcessControl();
+
     const op = await this.client.submit<import("sandbar-adapter").DestroyValue>(
       "destroy",
       {
@@ -2542,6 +2585,7 @@ export class AdapterDirectClient {
   close(): Promise<void> {
     if (!this.closePromise) {
       this.closed = true;
+      processControls.delete(this);
       this.closePromise = this.connection.close();
     }
 

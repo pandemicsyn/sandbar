@@ -24,6 +24,7 @@ export const features = {
   suspension: { label: "Native sandbox suspend/resume", scenarios: ["lifecycle-suspend-resume"] },
   previewProtected: { label: "Protected HTTP preview", scenarios: ["preview-protected"] },
   previewPublic: { label: "Public HTTP preview", scenarios: ["preview-public"] },
+  termination: { label: "Local-handle process termination", scenarios: ["execution-termination"] },
   renewal: { label: "Configured lifetime renewal", scenarios: ["lifecycle-renew"] },
   reopening: { label: "Scoped sandbox reopening", scenarios: ["lifecycle-reopen"] },
   execution: {
@@ -73,6 +74,10 @@ export const builtinSupport: SupportMetadata[] = [
       suspension: {
         support: "conditional",
         note: "Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Bun lifecycle-suspend-resume passed at 6796b30 with confirmed owned cleanup.",
+      },
+      termination: {
+        support: "unsupported",
+        note: "No process handles or verified session-command termination mapping. Session deletion is deferred; no sandbox-destruction fallback.",
       },
       previewProtected: {
         support: "conditional",
@@ -139,6 +144,10 @@ export const builtinSupport: SupportMetadata[] = [
       previewPublic: {
         support: "conditional",
         note: "E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. New live preview and changed inbound-default behavior not qualified.",
+      },
+      termination: {
+        support: "conditional",
+        note: "Active local handles issue one native SIGKILL PID request. PID reuse can target a successor; no descendant cleanup guarantee. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. Bounded Bun live case passed at 131a8c6 with borrowed base on darwin-arm64/Bun 1.3.14 after the fixed-default routing correction: ready output, request acknowledgement/reuse, independently observed nonzero terminal result, owned cleanup and client close. The prior 4cc6a20 attachment failure remains recorded. Other images/platforms and signal delivery races are unqualified.",
       },
       previewProtected: {
         support: "unsupported",

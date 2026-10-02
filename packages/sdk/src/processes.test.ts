@@ -4,7 +4,10 @@ import { z } from "zod";
 import {
   AdapterError,
   defineAdapter,
+  sandboxReference,
+  unknownSandboxFacts,
   type NativeProcess,
+  type Sandbox,
   type ProcessStartContext,
 } from "sandbar-adapter";
 import { Sandbar, Image, diagnosticContext, type StartProcessInput } from "./index";
@@ -22,7 +25,13 @@ function deferred<T>() {
 }
 
 async function fixture(
-  options: { early?: string; late?: boolean; unsupported?: boolean; noncooperative?: boolean } = {},
+  options: {
+    early?: string;
+    late?: boolean;
+    unsupported?: boolean;
+    noncooperative?: boolean;
+    verified?: boolean;
+  } = {},
 ) {
   const exit = deferred<{ exitCode: number }>();
   const start = deferred<NativeProcess>();
@@ -30,6 +39,12 @@ async function fixture(
   let starts = 0;
   let detaches = 0;
   let confirmedExit: { exitCode: number } | undefined;
+  let creates = 0;
+
+  const scope = { authority: { kind: "fixture", id: "one" }, partition: {} };
+
+  const reference = (id: string) =>
+    sandboxReference("stream.fixture", scope, id, { operation: id, submission: id });
 
   const native: NativeProcess = {
     get confirmedExit() {
@@ -49,9 +64,24 @@ async function fixture(
     credentials: z.object({}),
     async connect() {
       return {
-        scope: { authority: { kind: "fixture", id: "one" }, partition: {} },
+        scope,
         supports: { images: ["prepared"], network: ["blocked"] },
-        create: async () => ({ id: "one", state: "running" }),
+        create: async () => {
+          const id = ++creates === 1 ? "one" : "two";
+
+          const sandbox: Sandbox = { id, state: "running" };
+
+          if (options.verified) sandbox.reference = reference(id);
+
+          return sandbox;
+        },
+        reopen: async (ref) => ({
+          ...unknownSandboxFacts(),
+          reference: ref,
+          nativeState: "running",
+          state: "running",
+          observedAt: new Date().toISOString(),
+        }),
         destroy: async () => ({ computeStopped: true, retainedResources: [] }),
         processes: options.unsupported
           ? undefined
@@ -417,5 +447,310 @@ test("late confirmed evidence enriches latched output failure without changing i
     recoveryAvailable: false,
   });
   expect(await p.wait()).toEqual({ exitCode: 9, outputComplete: false });
+  await f.client.close();
+});
+
+test("termination shares one request and caller abort leaves other waiters and output active", async () => {
+  const f = await fixture();
+  const result = deferred<{ status: "requested" }>();
+  let calls = 0;
+  f.native.terminate = async (ctx) => {
+    calls++;
+    expect(ctx.deadline - Date.now()).toBeGreaterThan(29_000);
+    expect(ctx.signal.aborted).toBe(false);
+
+    return result.promise;
+  };
+
+  const p = await f.box.processes.start(input);
+  await expect(p.terminate({ signal: AbortSignal.abort() })).rejects.toMatchObject({
+    code: "WAIT_ABORTED",
+    effect: "none",
+  });
+  expect(calls).toBe(0);
+  const cancel = new AbortController();
+  const a = p.terminate({ signal: cancel.signal });
+  const b = p.terminate();
+  cancel.abort();
+  await expect(a).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+  expect(f.detaches).toBe(0);
+  const out = p.output()[Symbol.asyncIterator]();
+  f.ctx.onOutput({ stream: "stdout", text: "still observed" });
+  expect((await out.next()).value?.text).toBe("still observed");
+  result.resolve({ status: "requested" });
+  const acknowledged = await b;
+
+  expect(acknowledged).toEqual({ status: "requested" });
+  acknowledged.status = "not-found"; // Caller mutation must not corrupt cached native evidence.
+  expect(await p.terminate()).toEqual({ status: "requested" });
+  await p.detach();
+  expect(await p.terminate()).toEqual({ status: "requested" });
+  f.confirm(-1);
+  expect(await p.terminate()).toEqual({ status: "exited" });
+  expect(await p.wait()).toEqual({ exitCode: -1, outputComplete: false });
+  expect(calls).toBe(1);
+  await f.client.close();
+});
+
+test.each(["detach", "close", "lost", "overflow", "unsupported", "exit"])(
+  "termination %s rejects or returns exit without dispatch",
+  async (mode) => {
+    const f = await fixture();
+    let calls = 0;
+
+    if (mode !== "unsupported")
+      f.native.terminate = async () => {
+        calls++;
+
+        return { status: "requested" };
+      };
+
+    const p = await f.box.processes.start({ ...input, maxOutputBytes: 1 });
+
+    if (mode === "detach") await p.detach();
+
+    if (mode === "close") await f.client.close();
+
+    if (mode === "lost") {
+      f.exit.reject(new Error("lost"));
+      await Bun.sleep(0);
+    }
+
+    if (mode === "overflow")
+      expect(() => f.ctx.onOutput({ stream: "stdout", text: "too much" })).toThrow();
+
+    if (mode === "exit") {
+      f.confirm(7);
+      await p.detach();
+    }
+
+    if (mode === "exit") expect(await p.terminate()).toEqual({ status: "exited" });
+    else {
+      let code = "UNAVAILABLE";
+
+      if (mode === "close") code = "CLIENT_CLOSED";
+
+      if (mode === "unsupported") code = "UNSUPPORTED";
+      await expect(p.terminate()).rejects.toMatchObject({ code, effect: "none" });
+    }
+
+    expect(calls).toBe(0);
+    await f.client.close();
+  },
+);
+
+test("termination caches absence without manufacturing exit", async () => {
+  const f = await fixture();
+  let calls = 0;
+  f.native.terminate = async () => {
+    calls++;
+
+    return { status: "not-found" };
+  };
+
+  const p = await f.box.processes.start(input);
+  expect(await p.terminate()).toEqual({ status: "not-found" });
+  expect(await p.terminate()).toEqual({ status: "not-found" });
+  await expect(p.wait({ signal: AbortSignal.abort() })).rejects.toMatchObject({
+    code: "WAIT_ABORTED",
+  });
+  expect(calls).toBe(1);
+  await f.client.close();
+});
+
+test.each(["lost", "malformed", "close"])(
+  "termination caches %s uncertainty without redispatch or erasing exit",
+  async (mode) => {
+    const f = await fixture();
+    const result = deferred<{ status: "requested" }>();
+    let calls = 0;
+    f.native.terminate = async () => {
+      calls++;
+
+      if (mode === "lost") throw new AdapterError("UNAVAILABLE", "private remote error");
+
+      if (mode === "malformed") return JSON.parse('{"status":"killed"}');
+
+      return result.promise;
+    };
+
+    const p = await f.box.processes.start(input);
+    const request = p.terminate();
+
+    if (mode === "close") await f.client.close();
+    await expect(request).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+    await expect(p.terminate()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    f.confirm(-1);
+    expect(await p.terminate()).toEqual({ status: "exited" });
+    expect(await p.wait()).toMatchObject({ exitCode: -1 });
+    expect(calls).toBe(1);
+    await f.client.close();
+  },
+);
+
+test("shared termination deadline releases noncooperative IO and never retries", async () => {
+  const f = await fixture();
+  let calls = 0;
+  let requestSignal!: AbortSignal;
+  f.native.terminate = async (ctx) => {
+    calls++;
+    requestSignal = ctx.signal;
+
+    return new Promise(() => {});
+  };
+
+  const p = await f.box.processes.start(input);
+  const original = globalThis.setTimeout;
+  let expire!: () => void;
+  globalThis.setTimeout = Object.assign(
+    (handler: TimerHandler, ms?: number, ...args: unknown[]) => {
+      if (ms === 30_000) {
+        expire = () => {
+          // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Invoke only the function member of platform TimerHandler.
+          if (typeof handler === "function") handler();
+        };
+
+        return original(() => {}, 60_000);
+      }
+
+      return original(handler, ms, ...args);
+    },
+    original,
+  );
+
+  try {
+    const request = p.terminate();
+    expire();
+    await expect(request).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(requestSignal.aborted).toBe(true);
+    await expect(p.terminate()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(calls).toBe(1);
+    expect(f.detaches).toBe(0);
+  } finally {
+    globalThis.setTimeout = original;
+    await f.client.close();
+  }
+});
+
+test("confirmed exit with never-closing stream bounds drain by local observation abort", async () => {
+  const f = await fixture();
+  let calls = 0;
+  f.native.terminate = async () => {
+    calls++;
+
+    return { status: "requested" };
+  };
+
+  const p = await f.box.processes.start(input);
+  const observation = new AbortController();
+
+  const drain = (async () => {
+    for await (const chunk of p.output({ signal: observation.signal }))
+      expect(chunk.text).toBe("early");
+  })().catch((error) => error);
+
+  f.confirm(0); // Native wait remains pending forever; output does not close.
+  expect(await p.wait({ signal: observation.signal })).toMatchObject({ exitCode: 0 });
+  expect(await p.terminate()).toEqual({ status: "exited" });
+  observation.abort();
+  expect(await drain).toMatchObject({ code: "WAIT_ABORTED" });
+  await p.detach();
+  expect(f.detaches).toBe(1);
+  expect(calls).toBe(0);
+  expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: false });
+  await f.client.close();
+});
+
+test("confirmed exit during termination is independent of pending request acknowledgement", async () => {
+  const f = await fixture();
+  const result = deferred<{ status: "requested" }>();
+  let calls = 0;
+  f.native.terminate = async () => {
+    calls++;
+
+    return result.promise;
+  };
+
+  const p = await f.box.processes.start(input);
+  const request = p.terminate();
+  f.confirm(-1);
+  expect(await p.terminate()).toEqual({ status: "exited" });
+  expect(await p.wait()).toMatchObject({ exitCode: -1 });
+  result.resolve({ status: "requested" });
+  expect(await request).toEqual({ status: "requested" });
+  expect(calls).toBe(1);
+  await f.client.close();
+});
+
+test.each(['{"signal":9}', '{"exitCode":null}'])(
+  "adapter-only terminal evidence %s cannot fabricate an exit",
+  async (value) => {
+    const f = await fixture();
+    const p = await f.box.processes.start(input);
+    f.exit.resolve(JSON.parse(value));
+    await expect(p.wait()).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    await expect(p.terminate()).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    await f.client.close();
+  },
+);
+
+test("same sandbox lifecycle submission fences old handles without detaching or signalling them", async () => {
+  const f = await fixture();
+  let calls = 0;
+  f.native.terminate = async () => {
+    calls++;
+
+    return { status: "requested" };
+  };
+
+  const p = await f.box.processes.start(input);
+  const older = await f.box.processes.start(input);
+
+  await expect(f.box.destroy({ signal: AbortSignal.abort() })).rejects.toBeInstanceOf(Error);
+  expect(await p.terminate()).toEqual({ status: "requested" });
+  // A pre-aborted lifecycle call does not consume this handle's authority.
+  expect(f.detaches).toBe(0);
+  await f.box.destroy();
+  await expect(older.terminate()).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+  expect(await p.terminate()).toEqual({ status: "requested" });
+  expect(f.detaches).toBe(0);
+  expect(calls).toBe(1);
+  f.confirm(0);
+  expect(await p.terminate()).toEqual({ status: "exited" });
+  await f.client.close();
+});
+
+test("same-client verified aliases share lifecycle fences without invalidating other sandboxes", async () => {
+  const f = await fixture({ verified: true });
+  let calls = 0;
+  f.native.terminate = async () => {
+    calls++;
+
+    return { status: "requested" };
+  };
+
+  const alias = await f.client.sandboxes.get(f.box.reference!);
+  const other = await f.client.sandboxes.create({ environment: Image.prepared("two") });
+  const old = await f.box.processes.start(input);
+  const oldContext = f.ctx;
+  const cached = await f.box.processes.start(input);
+  const unrelated = await other.processes.start(input);
+  const output = old.output()[Symbol.asyncIterator]();
+  expect(await cached.terminate()).toEqual({ status: "requested" });
+  await alias.destroy();
+  await expect(old.terminate()).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+  expect(await cached.terminate()).toEqual({ status: "requested" });
+  expect(await unrelated.terminate()).toEqual({ status: "requested" });
+  oldContext.onOutput({ stream: "stdout", text: "still observing" });
+  expect(await output.next()).toMatchObject({ value: { text: "still observing" } });
+  // Lifecycle bookkeeping does not detach native observation.
+  expect(f.detaches).toBe(0);
+  const fresh = await f.box.processes.start(input);
+  expect(await fresh.terminate()).toEqual({ status: "requested" });
+  f.confirm(-1);
+  expect(await old.terminate()).toEqual({ status: "exited" });
+  expect(await old.wait()).toMatchObject({ exitCode: -1 });
+  await output.return?.();
+  expect(calls).toBe(3);
   await f.client.close();
 });
