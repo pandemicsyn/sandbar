@@ -6,6 +6,7 @@ export function daytona(options: {
   apiKey: string;
   target: string;
   ttlMinutes?: number;
+  preview?: { access: "protected" | "public" };
   lifecycle?: { lifetimeSeconds?: number };
   snapshots?: { restartAfterCapture?: boolean };
   networkPolicy?: "blocked" | "daytona-default";
@@ -14,6 +15,7 @@ export function daytona(options: {
     target: options.target,
     ttlMinutes: options.ttlMinutes,
     lifecycle: options.lifecycle,
+    preview: options.preview,
     snapshots: options.snapshots,
     networkPolicy: options.networkPolicy,
   };

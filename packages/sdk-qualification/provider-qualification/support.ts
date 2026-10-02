@@ -21,6 +21,8 @@ export const features = {
       "close",
     ],
   },
+  previewProtected: { label: "Protected HTTP preview", scenarios: ["preview-protected"] },
+  previewPublic: { label: "Public HTTP preview", scenarios: ["preview-public"] },
   renewal: { label: "Configured lifetime renewal", scenarios: ["lifecycle-renew"] },
   reopening: { label: "Scoped sandbox reopening", scenarios: ["lifecycle-reopen"] },
   execution: {
@@ -66,6 +68,14 @@ export const builtinSupport: SupportMetadata[] = [
     id: "daytona",
     name: "Daytona",
     features: {
+      previewProtected: {
+        support: "conditional",
+        note: "Daytona protected header access only; standard token grants sandbox-wide command/file authority. Public setup unsupported. Native lookup can activate a route; no server start/resume or readiness claim. New live preview case not run.",
+      },
+      previewPublic: {
+        support: "unsupported",
+        note: "Daytona sandbox-wide publication requires a separate product decision; preview never changes visibility.",
+      },
       renewal: {
         support: "conditional",
         note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.",
@@ -112,6 +122,14 @@ export const builtinSupport: SupportMetadata[] = [
     id: "e2b",
     name: "E2B",
     features: {
+      previewPublic: {
+        support: "conditional",
+        note: "E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. New live preview and changed inbound-default behavior not qualified.",
+      },
+      previewProtected: {
+        support: "unsupported",
+        note: "Fresh traffic-token retrieval is absent from the pinned read-only detail API. Native connect may resume compute; protected preview rejects without calling it. Newly created/restored compute is private by default.",
+      },
       renewal: {
         support: "conditional",
         note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.",

@@ -39,6 +39,8 @@ export * from "./resources";
 
 export * from "./lifecycle";
 
+export * from "./preview";
+
 export type CreateInput = {
   image: Image;
   networkPolicy: string;
@@ -329,6 +331,10 @@ export type AdapterSession<
     | null
   >;
   exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox>;
+  preview?: (
+    input: { sandbox: Sandbox; port: number },
+    ctx: ReadContext,
+  ) => Promise<import("./preview").Preview>;
   processes?: { start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess> };
   files?: {
     maxBytes: number;

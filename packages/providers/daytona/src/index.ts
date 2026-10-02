@@ -271,7 +271,7 @@ function unknown(submissionId: string, reason: string): DriverResult {
   return { status: "unknown", effect: "possible", submissionId, reason };
 }
 
-async function boundedBytes(
+export async function boundedBytes(
   response: Response,
   limit: number,
   signal?: AbortSignal,

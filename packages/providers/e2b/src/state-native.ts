@@ -66,6 +66,7 @@ export function e2bState(input: {
   transport: E2BTransport;
   scopeMarker: string;
   timeoutSeconds: number;
+  allowPublicTraffic?: boolean;
   apiKey: string;
   find: (id: string, expected?: SandboxReference) => Promise<E2BRecord | null>;
 }) {
@@ -902,6 +903,7 @@ export function e2bState(input: {
           },
           timeoutMs: input.timeoutSeconds * 1000,
           allowInternetAccess: value.request.networkPolicy === "internet",
+          allowPublicTraffic: input.allowPublicTraffic ?? false,
           signal: ctx.signal,
         });
 

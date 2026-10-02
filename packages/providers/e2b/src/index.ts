@@ -2,6 +2,7 @@ import { z } from "zod";
 import { e2bState } from "./state-native";
 import {
   RenewRequest,
+  PreviewPort,
   ResolvedRenewInput,
   sandboxReference,
   assertSandboxReference,
@@ -48,6 +49,9 @@ const Configuration = z
       .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
       .default("base"),
     timeoutSeconds: z.number().int().min(60).max(3600).optional(),
+    preview: z
+      .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
+      .default({ access: "protected" }),
     lifecycle: z
       .strictObject({ lifetimeSeconds: z.number().int().positive().safe().max(3600).optional() })
       .optional(),
@@ -385,6 +389,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         scopeMarker,
         timeoutSeconds: config.timeoutSeconds,
         apiKey: credentials.apiKey,
+        allowPublicTraffic: config.preview.access === "public",
         find,
       });
 
@@ -393,6 +398,46 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         scope: {
           authority,
           partition: { endpoint: E2B_ENDPOINT, template: config.templateId },
+        },
+        async preview(input, ctx) {
+          if (!PreviewPort.safeParse(input.port).success)
+            throw new AdapterError(
+              "INVALID_ARGUMENT",
+              "Preview port must be an integer from 1 through 65535",
+            );
+
+          if (config.preview.access !== "public")
+            throw new AdapterError(
+              "UNSUPPORTED",
+              "E2B protected preview credentials cannot be retrieved read-only after reopening; select preview.access public explicitly or use Daytona protected previews",
+            );
+          ctx.signal.throwIfAborted();
+          const record = await find(input.sandbox.id, input.sandbox.reference);
+
+          if (!record)
+            throw new AdapterError("NOT_FOUND", "E2B sandbox is outside the verified scope");
+
+          if (record.id !== input.sandbox.id)
+            throw new AdapterError("CONFLICT", "E2B preview response identity differs");
+
+          if (record.state !== "running")
+            throw new AdapterError(
+              "UNAVAILABLE",
+              "E2B preview requires running compute; resume explicitly before requesting access",
+            );
+          ctx.signal.throwIfAborted();
+
+          if (
+            record.allowPublicTraffic !== true ||
+            record.domain !== "e2b.app" ||
+            record.lifecycle?.autoResume !== false
+          )
+            throw new AdapterError(
+              "UNAVAILABLE",
+              "E2B public preview requires confirmed public traffic, e2b.app domain, and auto-resume off",
+            );
+
+          return { access: "public" as const, url: `https://${input.port}-${record.id}.e2b.app` };
         },
         supports: {
           images: ["prepared", "oci"],
@@ -573,6 +618,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 templateId,
                 timeoutMs: config.timeoutSeconds * 1000,
                 allowInternetAccess: input.networkPolicy === "internet",
+                allowPublicTraffic: config.preview.access === "public",
                 metadata,
                 signal: ctx.signal,
               });

@@ -55,6 +55,7 @@ Import from `sandbar-sdk`.
 | `outputText`                | re-export |
 | `PreparedAdapterAttempt`    | re-export |
 | `PreparedImage`             | type      |
+| `Preview`                   | type      |
 | `ProcessExit`               | type      |
 | `ProcessFailure`            | type      |
 | `ProcessHandle`             | type      |

@@ -19,6 +19,9 @@ import {
 } from "./observability";
 import {
   SandboxInfoSchema,
+  PreviewResult,
+  PreviewPort,
+  type Preview,
   RenewRequest,
   RenewResult,
   ResolvedRenewInput,
@@ -673,6 +676,7 @@ export class AdapterSandbox {
     this.#reference = reference ? freezeReference(reference) : null;
     instrument(this, "capabilities", client.telemetry, "sandbar.capabilities");
     instrument(this, "checkSnapshot", client.telemetry, "sandbar.snapshot.check");
+    instrument(this, "preview", client.telemetry, "sandbar.sandbox.preview");
     instrument(this, "inspect", client.telemetry, "sandbar.sandbox.inspect");
     instrument(this, "submitExec", client.telemetry, "sandbar.exec.submit", { effect: "possible" });
     instrument(this, "exec", client.telemetry, "sandbar.exec", { effect: "applied" });
@@ -864,6 +868,55 @@ export class AdapterSandbox {
 
       if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
       throw error;
+    }
+  }
+  /** Resolve access to an existing running sandbox; URL availability is not readiness. */
+  async preview(port: number, options: { signal?: AbortSignal } = {}): Promise<Preview> {
+    this.client.ensureOpen();
+
+    if (!PreviewPort.safeParse(port).success)
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Preview port must be an integer from 1 through 65535",
+      );
+
+    if (!this.client.session.preview) unsupported("preview");
+    assertSignal(options.signal);
+    const timeout = AbortSignal.timeout(30000);
+
+    const signal = AbortSignal.any([
+      this.client.signal,
+      ...(options.signal ? [options.signal] : []),
+      timeout,
+    ]);
+
+    try {
+      const result = await readWhileOpen(
+        this.client,
+        raceAbort(
+          this.client.session.preview(
+            { sandbox: sandboxInput(this.id, this.reference), port },
+            { signal, deadline: Date.now() + 30000 },
+          ),
+          signal,
+        ),
+      );
+
+      const parsed = PreviewResult.safeParse(result);
+
+      if (!parsed.success)
+        throw new SandbarError("INVALID_RESPONSE", "Invalid preview access response");
+
+      return parsed.data;
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (timeout.aborted) throw new SandbarError("TIMEOUT", "Preview access timed out");
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+
+      if (error instanceof SandbarError) throw error;
+      throw new SandbarError("UNAVAILABLE", "Preview access is unavailable");
     }
   }
   async submitExec(

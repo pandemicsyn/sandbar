@@ -757,6 +757,10 @@ try {
     await readFile(join(root, "apps/docs/examples/sandbox-renew.ts"), "utf8"),
   );
   await writeFile(
+    join(custom, "sandbox-preview.ts"),
+    await readFile(join(root, "apps/docs/examples/sandbox-preview.ts"), "utf8"),
+  );
+  await writeFile(
     join(custom, "streaming-tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
@@ -767,7 +771,7 @@ try {
         skipLibCheck: false,
         types: [],
       },
-      include: ["text-streaming.ts", "sandbox-renew.ts"],
+      include: ["text-streaming.ts", "sandbox-renew.ts", "sandbox-preview.ts"],
     }),
   );
   run(join(root, "node_modules/.bin/tsc"), ["-p", "streaming-tsconfig.json"], custom);
