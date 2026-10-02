@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { ResourceReference, MountSpec, SnapshotProfile, SandboxState } from "sandbar-adapter";
+import {
+  FileMutationIntent,
+  ResourceReference,
+  MountSpec,
+  SnapshotProfile,
+  SandboxState,
+} from "sandbar-adapter";
 
 export const CaptureExpectation = z.strictObject({
   profile: SnapshotProfile,
@@ -15,6 +21,8 @@ export const ReferenceSchema = z.strictObject({
     "destroy",
     "exec",
     "file_write",
+    "file_mkdir",
+    "file_remove",
     "image_build",
     "sandbox_renew",
     "snapshot_capture",
@@ -36,6 +44,7 @@ export const ReferenceSchema = z.strictObject({
   capture: CaptureExpectation.optional(),
   resource: ResourceReference.optional(),
   mounts: z.array(MountSpec).max(32).optional(),
+  fileMutation: FileMutationIntent.optional(),
   file: z
     .strictObject({
       path: z.string().min(1).max(4096),

@@ -1,3 +1,4 @@
+import { FileMutationIntent, FileMutationValue } from "./files";
 import {
   checkCreate,
   stateCapabilities,
@@ -72,6 +73,10 @@ export type RuntimeSession = Omit<
     maxBytes: number;
     read?: NonNullable<AdapterSession["files"]>["read"];
     write?: unknown;
+    list?: NonNullable<AdapterSession["files"]>["list"];
+    exists?: NonNullable<AdapterSession["files"]>["exists"];
+    makeDirectory?: unknown;
+    remove?: unknown;
   };
 };
 
@@ -80,6 +85,8 @@ export type OperationKind =
   | "destroy"
   | "exec"
   | "file_write"
+  | "file_mkdir"
+  | "file_remove"
   | "image_build"
   | "sandbox_renew"
   | "snapshot_capture"
@@ -95,6 +102,7 @@ export type OperationInput =
   | ImageBuildInput
   | ExecInput
   | FileWriteInput
+  | import("./files").FileMutationInput
   | Sandbox
   | import("./resources").SnapshotCaptureInput
   | import("./resources").SnapshotRestoreInput
@@ -104,6 +112,7 @@ export type OperationInput =
 export type SpecialOutcome = Pending | Unknown | Rejected;
 
 export type OperationResult =
+  | import("./files").FileMutationValue
   | import("./index").CreateValue
   | import("./lifecycle").RenewResult
   | DestroyValue
@@ -355,6 +364,8 @@ async function validateValue(
 
   if (kind === "destroy") return DestroyValueSchema.parse(value);
 
+  if (kind === "file_mkdir" || kind === "file_remove") return FileMutationValue.parse(value);
+
   if (kind === "file_write") return WriteValueSchema.parse(value);
   const parsed = ExecValueSchema.parse(value);
   const limit = Math.min(MAX_OUTPUT, maxOutputBytes);
@@ -473,6 +484,12 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
     case "exec":
       op = session.exec;
       break;
+    case "file_mkdir":
+      op = session.files?.makeDirectory;
+      break;
+    case "file_remove":
+      op = session.files?.remove;
+      break;
     case "file_write":
       op = session.files?.write;
       break;
@@ -570,6 +587,18 @@ function checkCapability(
       throw new AdapterError("UNSUPPORTED", "Requested command or output limit is unsupported");
 
     return request;
+  }
+
+  if (kind === "file_mkdir" || kind === "file_remove") {
+    const request = FileMutationIntent.extend({ sandbox: SandboxSchema }).parse(input);
+
+    if (kind === "file_remove" && request.path.split("/").every((segment) => segment === ""))
+      throw new AdapterError("INVALID_ARGUMENT", "Cannot remove sandbox root");
+
+    return {
+      ...request,
+      path: request.path.split("/").filter(Boolean).join("/").replace(/^/, "/"),
+    };
   }
 
   if (kind === "file_write") {

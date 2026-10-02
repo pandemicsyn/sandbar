@@ -103,3 +103,5 @@ export type { MountCapabilities, VolumeCapabilities, RestoreCapabilities } from 
 export { diagnosticContext } from "./observability";
 
 export type { ObservabilityOptions, DiagnosticContext } from "./observability";
+
+export type { FileEntry } from "sandbar-adapter";
