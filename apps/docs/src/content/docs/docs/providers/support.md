@@ -15,6 +15,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Configured lifetime renewal   | [Conditional · not-run](#daytona-renewal)                | [Conditional · not-run](#e2b-renewal)                                             |
 | Scoped sandbox reopening      | [Conditional · not-run](#daytona-reopening)              | [Conditional · not-run](#e2b-reopening)                                           |
 | Execution and captured output | [Supported · passed at 8449def7](#daytona-execution)     | [Supported · passed at 8449def7](#e2b-execution)                                  |
+| Finite text streaming         | [Unsupported · not-run](#daytona-streaming)              | [Conditional · not-run](#e2b-streaming)                                           |
 | Binary files and overwrite    | [Conditional · passed at 8449def7](#daytona-files)       | [Conditional · passed at 8449def7](#e2b-files)                                    |
 | Directory primitives          | [Unsupported · not-run](#daytona-directories)            | [Conditional · not-run](#e2b-directories)                                         |
 | OCI image builds              | [Conditional · not-run](#daytona-oci)                    | [Conditional · not-run](#e2b-oci)                                                 |
@@ -31,7 +32,7 @@ The [live evidence detail](/docs/providers/live-qualification/) retains exact av
 
 ### Sandbox lifecycle
 
-The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified.
+The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified. The current suite omits the create environment to exercise adapter defaults; historical passes do not qualify that newer path.
 
 <a id="daytona-previewProtected"></a>
 
@@ -62,6 +63,12 @@ Scoped Sandbar-created compute only; fresh connection/process reopen, state/dead
 ### Execution and captured output
 
 Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration.
+
+<a id="daytona-streaming"></a>
+
+### Finite text streaming
+
+Daytona does not expose processes.start/output/wait; captured exec output is a separate workflow.
 
 <a id="daytona-files"></a>
 
@@ -111,7 +118,7 @@ Writable create-time mounts/subpaths; read-only unsupported. The Bun producer wr
 
 ### Sandbox lifecycle
 
-The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed.
+The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed. The current suite omits the create environment to exercise the configured template default; historical passes do not qualify that newer path or private inbound defaults.
 
 <a id="e2b-previewProtected"></a>
 
@@ -141,7 +148,13 @@ Scoped Sandbar-created compute only; fresh connection/process reopen, state/dead
 
 ### Execution and captured output
 
-Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Finite bounded text streaming is implemented with local-only handles; deterministic pinned-client/packed coverage, live streaming scenario not run.
+Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Streaming is reported separately and is not qualified by this captured-output pass.
+
+<a id="e2b-streaming"></a>
+
+### Finite text streaming
+
+Finite bounded text only, local process handles and auto-resume-off running guests. Pinned-client/packed fixtures cover start/output/wait/detach; execution-streaming live workflow not run. No binary streaming, durable reopen or remote process-control claim.
 
 <a id="e2b-files"></a>
 

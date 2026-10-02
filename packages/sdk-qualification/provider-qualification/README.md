@@ -16,6 +16,10 @@ Ordinary CI skips live cases. Deterministic fixtures exercise the same assertion
 
 ## Explicitly authorized live runs
 
+The [next feature acceptance proposal](next-live-run.md) selects existing cases,
+records configuration and compute/time bounds, and identifies remaining billing
+and account prerequisites. It is awaiting authorization; it grants no live budget.
+
 Prepare a concrete budget and obtain explicit user authorization before running live tests. Credentials or `SANDBAR_LIVE=1` do not grant permission. The preload refuses ordinary CI and missing authorization, then rebuilds packages before SDK imports. Debug runs may use a dirty checkout, but the docs importer rejects dirty-source evidence. Record the exact tested revision; branch and merged revisions use the same command.
 
 Use an existing owner-only persistent `SANDBAR_QUAL_LEDGER_DIR`, outside the checkout and temporary directories. Keep this directory across runs. Use a fresh owner-only `SANDBAR_LIVE_REPORT_DIR` for each invocation's private context/JUnit. Built-in credentials can be injected or read from owner-only `~/.config/sandbar.env`; never print or commit them.
@@ -42,7 +46,7 @@ E2B uses `SANDBAR_QUAL_PROVIDER=e2b`, optional `SANDBAR_E2B_TEAM_ID`, and `SANDB
 
 | Suite/case | Maximum owned resources per fixture | What the assertions prove |
 | --- | --- | --- |
-| `streaming.test.ts` / `execution-streaming` (E2B only) | 1 compute, zero snapshots/volumes | Finite text arrives before exit, separate stderr, ordinary nonzero result, owned compute teardown. Setup 90s, exercise 240s, cleanup 60s, E2B native TTL 300s. Not run; separate paid authorization required. |
+| `streaming.test.ts` / `execution-streaming` (E2B only) | 1 compute, zero snapshots/volumes | Finite text arrives before exit, separate stderr, ordinary nonzero result, owned compute teardown. Setup 30s, exercise 240s, cleanup 60s, E2B native TTL 300s. Not run; separate paid authorization required. |
 | `sandbox.test.ts` | 1 compute | Running inspect/inventory, argv/env/cwd/stdout/stderr, shell, nonzero error, binary files, overwrite, rejected no-clobber and unchanged bytes; `lifecycle-renew` sends one 61-second request (Daytona resolves 120, E2B 61), checks the observed deadline within request-duration plus five seconds of clock tolerance, rejects above the SDK ceiling without another POST, then uses existing owned cleanup. No additional allocations; live scenario not run. `lifecycle-reopen` persists the scoped reference, closes/reconnects, reopens in a separate OS process, checks original bytes/exec and unchanged deadline, deletes owned compute and verifies absence. E2B requires a known session deadline for no-extension evidence. Owned teardown uses the existing ledger. |
 | `snapshots.test.ts` | 3 total compute, peak 2; 1 snapshot | Native default capture/source lifecycle, exact metadata, two-way filesystem isolation, advertised RAM nonce/counter or fresh-process observations, serialized reference reopened by a separate OS process, fresh SDK connection after source deletion, second restore of original bytes, independent storage deletion. |
 | `volumes.test.ts -t volume-crud` | 1 volume; no compute | Create/readiness/inspect/delete without implying mounts. |
@@ -98,7 +102,7 @@ Supported E2B suites ran at `8449def` with zero volumes: lifecycle, execution, f
 
 ### Preview access acceptance (not run)
 
-`live/preview.test.ts` maintains `preview-protected` for Daytona and `preview-public` for E2B. It uses one owned prepared-image sandbox, zero snapshots/volumes, Python 3 for a temporary HTTP listener, setup 90 seconds, exercise 240 seconds and cleanup 60 seconds. Native fallback expiry is the existing 15-minute Daytona TTL or 300-second E2B session. Explicit paid authorization and the normal private ledger/preload remain required. E2B public exposure also requires `SANDBAR_E2B_PREVIEW_ACCESS=public`; routing saves that choice for reconciliation. This publishes HTTP ports from creation, including any image-owned services. Ordinary protected/default E2B profiles remain private and cannot run public preview acceptance.
+`live/preview.test.ts` maintains `preview-protected` for Daytona and `preview-public` for E2B. It uses one owned prepared-image sandbox, zero snapshots/volumes, Python 3 for a temporary HTTP listener, setup 30 seconds, exercise 240 seconds and cleanup 60 seconds. Native fallback expiry is the existing 15-minute Daytona TTL or 300-second E2B session. Explicit paid authorization and the normal private ledger/preload remain required. E2B public exposure also requires `SANDBAR_E2B_PREVIEW_ACCESS=public`; routing saves that choice for reconciliation. This publishes HTTP ports from creation, including any image-owned services. Ordinary protected/default E2B profiles remain private and cannot run public preview acceptance.
 
 The body checks access before listener readiness, unchanged expiry after lookup, correct content, anonymous/invalid-header denial for Daytona, reopened access, missing compute rejection and owned teardown. Python absence or proxy errors fail the case and do not become qualification. No expiry-timer or native pause/resume token assertion is claimed; those remain documentation/source evidence and deterministic unsupported-state checks. Earlier lifecycle/exec passes do not qualify the new E2B inbound protection default. Neither case has run.
 

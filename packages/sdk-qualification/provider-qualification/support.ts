@@ -30,6 +30,7 @@ export const features = {
     workflow: "execution",
     scenarios: ["exec-argv", "exec-shell", "exec-nonzero"],
   },
+  streaming: { label: "Finite text streaming", scenarios: ["execution-streaming"] },
   files: {
     label: "Binary files and overwrite",
     workflow: "files",
@@ -91,7 +92,11 @@ export const builtinSupport: SupportMetadata[] = [
       },
       lifecycle: {
         support: "supported",
-        note: "The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified.",
+        note: "The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified. The current suite omits the create environment to exercise adapter defaults; historical passes do not qualify that newer path.",
+      },
+      streaming: {
+        support: "unsupported",
+        note: "Daytona does not expose processes.start/output/wait; captured exec output is a separate workflow.",
       },
       execution: {
         support: "supported",
@@ -149,11 +154,15 @@ export const builtinSupport: SupportMetadata[] = [
       },
       lifecycle: {
         support: "supported",
-        note: "The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed.",
+        note: "The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed. The current suite omits the create environment to exercise the configured template default; historical passes do not qualify that newer path or private inbound defaults.",
+      },
+      streaming: {
+        support: "conditional",
+        note: "Finite bounded text only, local process handles and auto-resume-off running guests. Pinned-client/packed fixtures cover start/output/wait/detach; execution-streaming live workflow not run. No binary streaming, durable reopen or remote process-control claim.",
       },
       execution: {
         support: "supported",
-        note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Finite bounded text streaming is implemented with local-only handles; deterministic pinned-client/packed coverage, live streaming scenario not run.",
+        note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Streaming is reported separately and is not qualified by this captured-output pass.",
       },
       files: {
         support: "conditional",
