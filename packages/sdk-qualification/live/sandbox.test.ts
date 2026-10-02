@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { AdapterSandbox } from "sandbar-sdk";
 import { TestResources } from "./fixtures/resources";
-import { liveEnabled, setupLive, finishLive, reopenSnapshot } from "./providers";
+import { liveEnabled, featureSupported, setupLive, finishLive, reopenSnapshot } from "./providers";
 import { boundedRead } from "../provider-qualification/bounds";
 
 export async function lifecycle(t: TestResources, box: AdapterSandbox, inventoryWaitMs = 30000) {
@@ -128,13 +128,73 @@ export async function files(t: TestResources, box: AdapterSandbox, root = "/tmp"
   expect(await t.read(box, path)).toEqual(second);
 }
 
+export async function directories(t: TestResources, box: AdapterSandbox, fileRoot: string) {
+  const root = `${fileRoot}/sandbar-directories-${t.ledger.runId}`;
+  const options = { recursive: true, signal: t.signal };
+  t.at("sandbox/directories");
+  await box.makeDirectory(`${root}/nested/results`, options);
+  await box.makeDirectory(`${root}/nested/results`, options);
+  await box.makeDirectory(`${root}/target`, options);
+  const sentinel = `${root}/target/sentinel.bin`;
+  const bytes = Uint8Array.of(0, 255, 129);
+  await box.writeFile(sentinel, bytes, { signal: t.signal });
+  await box.exec(
+    [
+      "/bin/sh",
+      "-c",
+      'ln -s "$1/missing" "$1/dangling"; ln -s "$1/target" "$1/child"; ln -s "$1/target" "$1/parent"',
+      "_",
+      root,
+    ],
+    { signal: t.signal },
+  );
+  expect(await box.fileExists(`${root}/dangling`, { signal: t.signal })).toBe(true);
+  expect(await box.fileExists(`${root}/missing`, { signal: t.signal })).toBe(false);
+  await expect(box.makeDirectory(sentinel, options)).rejects.toMatchObject({
+    code: "INVALID_ARGUMENT",
+  });
+  await expect(box.removeFile("///", options)).rejects.toMatchObject({
+    code: "INVALID_ARGUMENT",
+    effect: "none",
+  });
+  await expect(box.removeFile(root, { signal: t.signal })).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+    effect: "none",
+  });
+  await expect(
+    box.makeDirectory(`${root}/unexpected/child`, { signal: t.signal }),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+  expect(await box.fileExists(`${root}/unexpected`, { signal: t.signal })).toBe(false);
+  await expect(box.listFiles(root, { signal: t.signal })).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+    effect: "none",
+  });
+  await box.removeFile(`${root}/child/`, options);
+  expect(await box.readFile(sentinel, { signal: t.signal })).toEqual(bytes);
+  await box.removeFile(`${root}/parent/sentinel.bin`, options);
+  expect(await box.fileExists(sentinel, { signal: t.signal })).toBe(false); // Parent links follow the native namespace.
+  await box.writeFile(sentinel, bytes, { signal: t.signal });
+  await box.removeFile(`${root}/dangling/`, options);
+  expect(await box.fileExists(`${root}/dangling`, { signal: t.signal })).toBe(false);
+  await box.removeFile(`${root}/missing`, options);
+  await box.removeFile(root, options);
+  expect(await box.fileExists(root, { signal: t.signal })).toBe(false);
+}
+
 describe("Sandbar sandbox", () => {
   let fixture: Awaited<ReturnType<typeof setupLive>> | undefined;
   let box: AdapterSandbox;
   beforeAll(async () => {
     if (liveEnabled) {
       fixture = await setupLive(
-        ["sandbox-lifecycle", "execution", "files", "lifecycle-reopen", "lifecycle-renew"],
+        [
+          "sandbox-lifecycle",
+          "execution",
+          "files",
+          "lifecycle-reopen",
+          "lifecycle-renew",
+          ...(featureSupported("directories") ? ["file-directories" as const] : []),
+        ],
         {
           compute: 1,
           snapshots: 0,
@@ -169,6 +229,11 @@ describe("Sandbar sandbox", () => {
   (liveEnabled ? test : test.skip)(
     "files",
     async () => files(fixture!.resources, box, fixture!.fileRoot),
+    241000,
+  );
+  (liveEnabled && featureSupported("directories") ? test : test.skip)(
+    "file-directories",
+    async () => directories(fixture!.resources, box, fixture!.fileRoot),
     241000,
   );
   (liveEnabled ? test : test.skip)(

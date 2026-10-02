@@ -15,6 +15,7 @@ export const scenarios = [
   "execution",
   "execution-streaming",
   "files",
+  "file-directories",
   "network-controls",
   "connect",
   "create-prepared",
@@ -141,6 +142,7 @@ export const reportSchema = z
           "execution",
           "execution-streaming",
           "files",
+          "file-directories",
           "network-controls",
         ].includes(record.scenario) &&
         !record.runner

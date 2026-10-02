@@ -235,11 +235,11 @@ import {writeFile,access} from "node:fs/promises";
 import {dirname,join} from "node:path";
 import {TestResources} from ${JSON.stringify(resourcesPath)};
 import {fixture} from ${JSON.stringify(fixturePath)};
-let t,f;
+// Initialize custody before the timed hook so cleanup always has its owner.
+const f=await fixture();
+const factory=${phase === "setup" ? "async (hook)=>{await new Promise(r=>setTimeout(r,100));return f.connect(hook);}" : "f.connect"};
+const t=new TestResources(factory,f.ledger,"base","blocked",{compute:1,snapshots:0,volumes:0,exerciseMs:500,cleanupMs:500});
 beforeAll(async()=>{
- f=await fixture();
- const factory=${phase === "setup" ? "async (hook)=>{await new Promise(r=>setTimeout(r,100));return f.connect(hook);}" : "f.connect"};
- t=new TestResources(factory,f.ledger,"base","blocked",{compute:1,snapshots:0,volumes:0,exerciseMs:500,cleanupMs:500});
  await t.open();
  if(${JSON.stringify(phase)}==="test")await t.create("sandbox/source");
 },${phase === "setup" ? 20 : 500});
