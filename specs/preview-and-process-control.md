@@ -1,8 +1,8 @@
 # Preview access and useful process control
 
-Accepted priority · Preview slice implemented in this branch; process API sketches pending native evidence · October 2, 2026
+Accepted priority · Preview slice merged in #60; process API sketches pending native evidence · October 2, 2026
 
-Schedule after [default creation and everyday files](sandbox-basics-dx.md), before new adapters. Applications should be able to start a server, obtain usable access information and deliberately stop their command. Keep provider choices in setup and common calls short. This brief does not enlarge the shipped [finite streaming contract](interactive-execution-and-access.md) or claim new native support.
+Preview access and [default creation and everyday files](sandbox-basics-dx.md) are merged. Process termination is the next focused design/implementation, followed separately by stdin and sustained output, before storage coding and new adapters. Applications should be able to start a server, obtain usable access information and deliberately stop their command. Keep provider choices in setup and common calls short. This brief does not enlarge the shipped [finite streaming contract](interactive-execution-and-access.md) or claim new native support.
 
 ## Preview access
 
@@ -158,7 +158,7 @@ Before advertising long-running output, verify a bounded native transport or ups
 
 ## Scope and delivery
 
-Keep the existing roadmap ordering and shipped preview design. This proposal contains no runtime implementation and does not reconcile status owned by the roadmap task. Process work is at most three separate implementation PRs:
+Preview access merged in #60: the settled return/config shape, supported provider mappings, docs and deterministic/packed tests are shipped. Live preview and changed E2B inbound-default qualification remain not-run; unsupported access choices above remain separate decisions. Keep the existing roadmap ordering and shipped preview design. This proposal contains no runtime implementation. Remaining process work is at most three separate implementation PRs:
 
 1. **Ready to delegate: E2B termination through active handles.** Add the public result/method and optional adapter method described above, implement one public pinned `Commands.kill` call through the original connection, and document abrupt PID-based targeting. Keep the existing integer exit shape and preserve native -1. Wire local deadline/cancellation without aborting output; reject inactive/unsupported handles, guard repeat dispatch and preserve confirmed exits. Include SDK state-machine tests, fake adapter coverage, deterministic pinned RPC fixtures, packed consumer usage and a compiled recipe/provider docs. Do not enable Daytona, stdin or change output budgets. Update the older streaming termination gate narrowly in this coding PR so the shipped contract matches the new documented native limitation.
 2. **Optional, independently gated stdin PR.** Settle delivery/EOF state, pin native acknowledgements and cancellation, then implement explicit UTF-8 pipe input only. It must not depend on removing output caps or adding persisted handles.
