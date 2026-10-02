@@ -446,11 +446,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             "Native lifecycle state or policy changed during validation",
           );
 
-        if (!record.volumeMounts)
-          throw new AdapterError("UNAVAILABLE", "Native mount facts unavailable");
-
-        if (record.volumeMounts.length)
-          throw new AdapterError("UNSUPPORTED", "Suspension requires known unmounted compute");
+        // Missing mount metadata stays unknown; preservation covers private state only.
+        if (record.volumeMounts?.length)
+          throw new AdapterError("UNSUPPORTED", "Suspension with native mounts is unsupported");
 
         if (ctx.signal.aborted)
           throw new AdapterError("UNAVAILABLE", "Lifecycle validation cancelled");
@@ -1102,7 +1100,6 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                     ? ("unsupported" as const)
                     : error instanceof Error &&
                         [
-                          "Native mount facts unavailable",
                           "Native sandbox class unavailable",
                           "Native auto-delete policy unavailable",
                         ].includes(error.message)
@@ -1145,7 +1142,6 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                     ? ("unsupported" as const)
                     : error instanceof Error &&
                         [
-                          "Native mount facts unavailable",
                           "Native sandbox class unavailable",
                           "Native auto-delete policy unavailable",
                         ].includes(error.message)

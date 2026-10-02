@@ -124,7 +124,7 @@ The ordinary Bun base baseline passed at 8449def with API-key authority in the d
 
 ### Native sandbox suspend/resume
 
-Known unmounted E2B memory pause retains processes under the same ID; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Live case failed before pause at cb39884 because native mount facts were unavailable; owned cleanup confirmed. Initial guest-routing failure at 6796b30 is retained; no E2B lifecycle pass.
+E2B memory pause preserves private filesystem/RAM under the same ID; known native mounts are unsupported, missing mount metadata stays unknown, and external-storage durability/consistency is excluded; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Live case failed before pause at cb39884 because native mount facts were unavailable; owned cleanup confirmed. Initial guest-routing failure at 6796b30 is retained; revised private-state eligibility confirmation is pending, with no E2B lifecycle pass yet.
 
 <a id="e2b-previewProtected"></a>
 

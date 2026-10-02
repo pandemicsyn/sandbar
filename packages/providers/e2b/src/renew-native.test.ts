@@ -532,7 +532,7 @@ test("E2B suspend/resume native defaults and saved-reference workflow retain ide
   }
 });
 
-test.each(["mounted", "unknown-mounts", "transition", "missing", "policy"])(
+test.each(["mounted", "transition", "missing", "policy"])(
   "E2B lifecycle gate %s rejects before POST",
   async (gate) => {
     const f = fixture();
@@ -541,20 +541,18 @@ test.each(["mounted", "unknown-mounts", "transition", "missing", "policy"])(
     try {
       if (gate === "mounted") f.detail.volumeMounts = [{ name: "vol", path: "/mnt" }];
 
-      if (gate === "unknown-mounts") f.detail.volumeMounts = undefined;
-
       if (gate === "transition") f.detail.state = "stopping";
 
       if (gate === "missing") f.status(404);
 
       if (gate === "policy") f.detail.lifecycle = { autoResume: true };
       await expect(box.suspend()).rejects.toMatchObject({
-        code:
-          gate === "missing"
-            ? "NOT_FOUND"
-            : gate === "mounted" || false
-              ? "UNSUPPORTED"
-              : "UNAVAILABLE",
+        code: {
+          missing: "NOT_FOUND",
+          mounted: "UNSUPPORTED",
+          transition: "UNAVAILABLE",
+          policy: "UNAVAILABLE",
+        }[gate],
         effect: "none",
       });
       expect(
@@ -819,7 +817,7 @@ test.each(["lost", "409", "503"])(
   },
 );
 
-test("E2B inactive mounted/unknown resources cannot resume and capabilities agree", async () => {
+test("E2B inactive mounted resources cannot resume and capabilities agree", async () => {
   const f = fixture();
   const { client, box } = await create(f);
   f.detail.state = "paused";
@@ -828,8 +826,6 @@ test("E2B inactive mounted/unknown resources cannot resume and capabilities agre
     f.detail.volumeMounts = [{ name: "v", path: "/mnt" }];
     await expect(box.resume()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
     expect((await box.capabilities()).lifecycle?.resume.status).toBe("unsupported");
-    f.detail.volumeMounts = undefined;
-    await expect(box.resume()).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
     f.status(404);
     await expect(box.resume()).rejects.toMatchObject({ code: "NOT_FOUND", effect: "none" });
     expect(
@@ -841,3 +837,48 @@ test("E2B inactive mounted/unknown resources cannot resume and capabilities agre
     await client.close();
   }
 });
+
+test.each(["missing", "empty"] as const)(
+  "E2B %s mount metadata allows private-state suspension and fresh-client resume",
+  async (mounts) => {
+    const f = fixture();
+    const { client, box } = await create(f);
+    const saved = JSON.parse(JSON.stringify(box.reference));
+    f.detail.volumeMounts = mounts === "empty" ? [] : undefined;
+
+    try {
+      expect((await box.capabilities()).lifecycle?.suspend.status).toBe("supported");
+      expect(await box.suspend()).toMatchObject({
+        preserve: "filesystem+memory",
+        observation: { state: "suspended" },
+      });
+      // Native paused detail omits mount metadata even when running detail supplied it.
+      f.detail.volumeMounts = undefined;
+      await client.close();
+      const fresh = await f.connect({ lifecycle: { lifetimeSeconds: 600 } });
+
+      try {
+        const reopened = await fresh.sandboxes.get(saved);
+        expect((await reopened.capabilities()).lifecycle?.resume.status).toBe("supported");
+        expect(await reopened.resume()).toMatchObject({
+          reference: saved,
+          execution: "unknown",
+          observation: { state: "running" },
+        });
+        expect(f.detail.volumeMounts).toBeUndefined();
+        expect(
+          f.calls
+            .filter(
+              (c) =>
+                c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+            )
+            .map((c) => c.body),
+        ).toEqual([{ memory: true }, { timeout: 600 }]);
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
