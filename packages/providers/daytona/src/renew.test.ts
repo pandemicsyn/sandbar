@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { expect, test } from "bun:test";
 import {
   Image,
@@ -6,6 +7,12 @@ import {
   type AdvancedObservation,
 } from "sandbar-sdk";
 import { createDaytonaAdapter } from "./adapter";
+
+function expectedPreservation(action: "suspend" | "resume") {
+  if (action === "suspend") return { preserve: "filesystem", processes: "terminated" };
+
+  return {};
+}
 
 function fixture() {
   let creates = 0;
@@ -45,6 +52,9 @@ function fixture() {
     autoDestroyAt: "2026-10-01T01:00:00Z",
     autoStopInterval: 5,
     autoDeleteInterval: -1,
+    sandboxClass: "container",
+    // SAFETY: This deterministic fixture allows omitted native mount metadata.
+    volumes: [] as { volumeId: string; mountPath: string }[] | undefined,
   };
 
   const calls: string[] = [];
@@ -83,6 +93,23 @@ function fixture() {
 
       if (url.pathname === "/api/sandbox" && method === "GET")
         return Response.json({ items: [native] });
+
+      if (
+        ["/api/sandbox/native-reopen/stop", "/api/sandbox/native-reopen/start"].includes(
+          url.pathname,
+        )
+      ) {
+        enteredPost();
+
+        if (renewMode === "hold") await postHeld;
+        native.state = url.pathname.endsWith("/stop") ? "stopped" : "started";
+
+        if (renewMode === "lost") throw new TypeError("lost ACK");
+
+        if (renewMode === "get-failed") unavailable = true;
+
+        return new Response(null, { status: postStatus });
+      }
 
       if (url.pathname.startsWith("/api/sandbox/native-reopen/ttl/")) {
         expect(method).toBe("POST");
@@ -131,7 +158,10 @@ function fixture() {
     connect: (
       config: {
         ttlMinutes?: number;
-        lifecycle?: { lifetimeSeconds?: number };
+        lifecycle?: {
+          lifetimeSeconds?: number;
+          suspension?: { preserve: "filesystem" | "filesystem+memory" };
+        };
         target?: string;
       } = {},
       onReference?: (ref: AdapterRecoveryReference) => void | Promise<void>,
@@ -145,6 +175,9 @@ function fixture() {
       }),
     status(value: number) {
       status = value;
+    },
+    available() {
+      unavailable = false;
     },
     unavailable() {
       unavailable = true;
@@ -495,3 +528,491 @@ test("advanced renewal ledger saves resolved intent before dispatch and recovers
     }
   }
 });
+
+test("Daytona suspend/resume native defaults and saved-reference workflow retain identity", async () => {
+  for (const preserve of [undefined, "filesystem", "filesystem"] as const) {
+    const f = fixture();
+
+    const config: Parameters<ReturnType<typeof fixture>["connect"]>[0] = {
+      lifecycle: { lifetimeSeconds: 61 },
+    };
+
+    if (preserve) config.lifecycle!.suspension = { preserve };
+    const { client, box } = await create(f, config);
+
+    try {
+      const saved = JSON.parse(JSON.stringify(box.reference));
+      const before = await box.inspect();
+      const caps = await box.capabilities();
+      expect(caps.lifecycle?.suspend).toMatchObject({
+        status: "supported",
+        value: { preserve: "filesystem", processes: "terminated", connections: "dropped" },
+      });
+      const op = await box.submitSuspend();
+      const suspended = await op.wait();
+      expect(suspended).toMatchObject({
+        reference: saved,
+        preserve: "filesystem",
+        processes: "terminated",
+        connections: "dropped",
+        observation: { state: "stopped" },
+      });
+      expect(suspended.observation.expires).toEqual(before.expires);
+      await expect(box.suspend()).rejects.toMatchObject({ code: "CONFLICT", effect: "none" });
+
+      const fresh = await f.connect(
+        { lifecycle: { lifetimeSeconds: 600 } },
+        undefined,
+        "rotated-key",
+      );
+
+      try {
+        const reopened = await fresh.sandboxes.get(saved);
+        expect((await reopened.inspect()).state).toBe("stopped");
+        expect((await reopened.capabilities()).lifecycle?.resume.status).toBe("supported");
+
+        const beforeCalls = f.calls.filter(
+          (c) =>
+            c === "POST /api/sandbox/native-reopen/stop" ||
+            c === "POST /api/sandbox/native-reopen/start",
+        ).length;
+
+        await expect(reopened.exec(["true"])).rejects.toThrow();
+        await expect(reopened.readFile("/file")).rejects.toThrow();
+        expect(
+          f.calls.filter(
+            (c) =>
+              c === "POST /api/sandbox/native-reopen/stop" ||
+              c === "POST /api/sandbox/native-reopen/start",
+          ),
+        ).toHaveLength(beforeCalls);
+        const resumed = await reopened.resume();
+        expect(resumed).toMatchObject({
+          reference: saved,
+          execution: "fresh",
+          executionIdentity: { status: "unknown" },
+          observation: { state: "running" },
+        });
+        await expect(reopened.resume()).rejects.toMatchObject({ code: "CONFLICT", effect: "none" });
+        expect(reopened.reference).toEqual(saved);
+        const recovered = await fresh.recover(JSON.parse(JSON.stringify(op.reference)));
+
+        if (recovered.kind !== "sandbox_suspend") throw Error("kind");
+        expect(await recovered.wait()).toEqual(suspended);
+        expect(
+          f.calls.filter(
+            (c) =>
+              c === "POST /api/sandbox/native-reopen/stop" ||
+              c === "POST /api/sandbox/native-reopen/start",
+          ),
+        ).toHaveLength(2);
+        expect(resumed.observation.expires).toEqual(before.expires);
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await client.close();
+    }
+  }
+});
+
+test.each(["mounted", "unknown-mounts", "transition", "missing", "class", "auto-delete"])(
+  "Daytona lifecycle gate %s rejects before POST",
+  async (gate) => {
+    const f = fixture();
+    const { client, box } = await create(f);
+
+    try {
+      if (gate === "mounted") f.native.volumes = [{ volumeId: "vol", mountPath: "/mnt" }];
+
+      if (gate === "unknown-mounts") f.native.volumes = undefined;
+
+      if (gate === "transition") f.native.state = "stopping";
+
+      if (gate === "missing") f.status(404);
+
+      if (gate === "class") f.native.sandboxClass = "linux-vm";
+
+      if (gate === "auto-delete") f.native.autoDeleteInterval = 0;
+      await expect(box.suspend()).rejects.toMatchObject({
+        code:
+          gate === "missing"
+            ? "NOT_FOUND"
+            : gate === "mounted" || gate === "class"
+              ? "UNSUPPORTED"
+              : "UNAVAILABLE",
+        effect: "none",
+      });
+      expect(
+        f.calls.filter(
+          (c) =>
+            c === "POST /api/sandbox/native-reopen/stop" ||
+            c === "POST /api/sandbox/native-reopen/start",
+        ),
+      ).toHaveLength(0);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each(["suspend", "resume"] as const)(
+  "Daytona %s ACK preserves partial facts and fresh-client recovery never replays",
+  async (action) => {
+    const f = fixture();
+    let saved: AdapterRecoveryReference | undefined;
+
+    const { client, box } = await create(f, { lifecycle: { lifetimeSeconds: 61 } }, (ref) => {
+      if (ref.kind === `sandbox_${action}`) saved = JSON.parse(JSON.stringify(ref));
+    });
+
+    if (action === "resume") f.native.state = "stopped";
+    f.renewMode("get-failed");
+
+    try {
+      const op = action === "suspend" ? await box.submitSuspend() : await box.submitResume();
+      await expect(op.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: {
+          kind: `sandbox_${action}`,
+          status: "partial",
+          acknowledged: true,
+          observation: null,
+          ...expectedPreservation(action),
+        },
+      });
+      expect(saved?.lifecycle).toEqual(
+        action === "suspend" ? { action, preserve: "filesystem" } : { action },
+      );
+      f.available();
+
+      const fresh = await f.connect(
+        { lifecycle: { lifetimeSeconds: 600 } },
+        undefined,
+        "rotated-key",
+      );
+
+      try {
+        const recovered = await fresh.recover(saved!);
+        expect(await recovered.wait()).toMatchObject({ reference: box.reference });
+        expect(
+          f.calls.filter(
+            (c) =>
+              c === "POST /api/sandbox/native-reopen/stop" ||
+              c === "POST /api/sandbox/native-reopen/start",
+          ),
+        ).toHaveLength(1);
+        // A confirmed read is historical evidence: later external state change or failed metadata cannot erase it.
+        f.native.state = "stopping";
+        f.renewMode("get-failed");
+        f.unavailable();
+        const again = await fresh.recover(JSON.parse(JSON.stringify(recovered.reference)));
+        expect(await again.wait()).toEqual(await recovered.wait());
+        expect(
+          f.calls.filter(
+            (c) =>
+              c === "POST /api/sandbox/native-reopen/stop" ||
+              c === "POST /api/sandbox/native-reopen/start",
+          ),
+        ).toHaveLength(1);
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each(["lost", "409", "503"])(
+  "Daytona suspend unacknowledged %s remains unknown despite matching state",
+  async (mode) => {
+    const f = fixture();
+    const { client, box } = await create(f);
+
+    if (mode === "lost") f.renewMode(mode);
+    else f.postStatus(Number(mode));
+
+    try {
+      const op = await box.submitSuspend();
+      await expect(op.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: { status: "unknown", acknowledged: false, observation: { state: "stopped" } },
+      });
+      const recovered = await client.recover(JSON.parse(JSON.stringify(op.reference)));
+      await expect(recovered.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: { acknowledged: false },
+      });
+      expect(
+        f.calls.filter(
+          (c) =>
+            c === "POST /api/sandbox/native-reopen/stop" ||
+            c === "POST /api/sandbox/native-reopen/start",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test("Daytona lifecycle cancellation before dispatch has no effect; after dispatch only stops local wait", async () => {
+  const f = fixture();
+  const pre = new AbortController();
+
+  const { client, box } = await create(f, {}, (ref) => {
+    if (ref.kind === "sandbox_suspend") pre.abort();
+  });
+
+  try {
+    await expect(box.suspend({ signal: pre.signal })).rejects.toMatchObject({
+      code: "WAIT_ABORTED",
+      effect: "none",
+    });
+    expect(
+      f.calls.filter(
+        (c) =>
+          c === "POST /api/sandbox/native-reopen/stop" ||
+          c === "POST /api/sandbox/native-reopen/start",
+      ),
+    ).toHaveLength(0);
+  } finally {
+    await client.close();
+  }
+
+  const g = fixture();
+  const post = new AbortController();
+  const setup = await create(g);
+  g.renewMode("hold");
+
+  try {
+    const waiting = setup.box.suspend({ signal: post.signal });
+    await g.postEntered;
+    post.abort();
+    await expect(waiting).rejects.toMatchObject({
+      code: "WAIT_ABORTED",
+      effect: "possible",
+      reference: { kind: "sandbox_suspend" },
+    });
+    g.releasePost();
+    expect(
+      g.calls.filter(
+        (c) =>
+          c === "POST /api/sandbox/native-reopen/stop" ||
+          c === "POST /api/sandbox/native-reopen/start",
+      ),
+    ).toHaveLength(1);
+  } finally {
+    g.releasePost();
+    await setup.client.close();
+  }
+});
+
+test("Daytona rejects memory minimum at connection before allocation", async () => {
+  const f = fixture();
+  await expect(
+    f.connect({ lifecycle: { suspension: { preserve: "filesystem+memory" } } }),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  expect(f.calls).toHaveLength(0);
+});
+
+test.each(["suspend", "resume"] as const)(
+  "Daytona %s cancellation after ACK retains native facts",
+  async (action) => {
+    for (const completed of [false, true]) {
+      const f = fixture();
+      const abort = new AbortController();
+
+      const { client, box } = await create(f, {}, (ref) => {
+        if (
+          ref.kind === `sandbox_${action}` &&
+          ref.token &&
+          z
+            .object({ acknowledged: z.literal(true), completed: z.json().optional() })
+            .safeParse(ref.token).success &&
+          !!z.object({ completed: z.json().optional() }).parse(ref.token).completed === completed
+        )
+          abort.abort();
+      });
+
+      if (action === "resume") f.native.state = "stopped";
+
+      try {
+        await expect(
+          action === "suspend"
+            ? box.suspend({ signal: abort.signal })
+            : box.resume({ signal: abort.signal }),
+        ).rejects.toMatchObject({
+          code: "WAIT_ABORTED",
+          outcome: {
+            kind: `sandbox_${action}`,
+            status: completed ? "completed" : "partial",
+            acknowledged: true,
+            ...expectedPreservation(action),
+          },
+        });
+        expect(
+          f.calls.filter(
+            (c) =>
+              c === "POST /api/sandbox/native-reopen/stop" ||
+              c === "POST /api/sandbox/native-reopen/start",
+          ),
+        ).toHaveLength(1);
+      } finally {
+        await client.close();
+      }
+    }
+  },
+);
+
+test.each(["suspend", "resume"] as const)(
+  "Daytona %s checkpoint callback failure does not erase confirmed success",
+  async (action) => {
+    const f = fixture();
+
+    const { client, box } = await create(f, {}, (ref) => {
+      if (ref.kind === `sandbox_${action}` && ref.token) throw Error("storage failed");
+    });
+
+    if (action === "resume") f.native.state = "stopped";
+
+    try {
+      const result = action === "suspend" ? await box.suspend() : await box.resume();
+      expect(result.reference).toEqual(box.reference!);
+      expect(
+        f.calls.filter(
+          (c) =>
+            c === "POST /api/sandbox/native-reopen/stop" ||
+            c === "POST /api/sandbox/native-reopen/start",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each(["lost", "409", "503"])(
+  "Daytona resume %s cannot attribute observed running state",
+  async (mode) => {
+    const f = fixture();
+    const { client, box } = await create(f);
+    f.native.state = "stopped";
+
+    if (mode === "lost") f.renewMode(mode);
+    else f.postStatus(Number(mode));
+
+    try {
+      const op = await box.submitResume();
+      await expect(op.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: { status: "unknown", acknowledged: false, observation: { state: "running" } },
+      });
+      const recovered = await client.recover(JSON.parse(JSON.stringify(op.reference)));
+      await expect(recovered.wait()).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: { acknowledged: false },
+      });
+      expect(
+        f.calls.filter(
+          (c) =>
+            c === "POST /api/sandbox/native-reopen/stop" ||
+            c === "POST /api/sandbox/native-reopen/start",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test("Daytona inactive mounted/unknown resources cannot resume and capabilities agree", async () => {
+  const f = fixture();
+  const { client, box } = await create(f);
+  f.native.state = "stopped";
+
+  try {
+    f.native.volumes = [{ volumeId: "v", mountPath: "/mnt" }];
+    await expect(box.resume()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+    expect((await box.capabilities()).lifecycle?.resume.status).toBe("unsupported");
+    f.native.volumes = undefined;
+    await expect(box.resume()).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+    f.status(404);
+    await expect(box.resume()).rejects.toMatchObject({ code: "NOT_FOUND", effect: "none" });
+    expect(
+      f.calls.filter(
+        (c) =>
+          c === "POST /api/sandbox/native-reopen/stop" ||
+          c === "POST /api/sandbox/native-reopen/start",
+      ),
+    ).toHaveLength(0);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona archived resume starts the same UUID once without resetting hard TTL", async () => {
+  const f = fixture();
+  const { client, box } = await create(f);
+  f.native.state = "archived";
+
+  try {
+    const deadline = (await box.inspect()).expires;
+    const result = await box.resume();
+    expect(result.observation.expires).toEqual(deadline);
+    expect(result.reference.nativeId).toBe(box.id);
+    expect(result.execution).toBe("fresh");
+    expect(f.calls.filter((c) => c === "POST /api/sandbox/native-reopen/start")).toHaveLength(1);
+    expect(f.windows).toHaveLength(0);
+  } finally {
+    await client.close();
+  }
+});
+
+test.each(["suspend", "resume"] as const)(
+  "Daytona %s recovery persistence failure retains confirmed lifecycle facts",
+  async (action) => {
+    const f = fixture();
+    const { client, box } = await create(f);
+
+    if (action === "resume") f.native.state = "stopped";
+    f.renewMode("get-failed");
+
+    try {
+      const op = action === "suspend" ? await box.submitSuspend() : await box.submitResume();
+
+      f.available();
+
+      const fresh = await f.connect({}, () => {
+        throw Error("storage failed");
+      });
+
+      try {
+        const recovered = await fresh.recover(JSON.parse(JSON.stringify(op.reference)));
+        await expect(recovered.wait()).rejects.toMatchObject({
+          code: "OUTCOME_UNKNOWN",
+          outcome: {
+            kind: `sandbox_${action}`,
+            status: "completed",
+            acknowledged: true,
+            observation: { state: action === "suspend" ? "stopped" : "running" },
+            ...expectedPreservation(action),
+          },
+        });
+        expect(await recovered.wait()).toMatchObject({ reference: box.reference });
+        expect(
+          f.calls.filter(
+            (c) =>
+              c === "POST /api/sandbox/native-reopen/stop" ||
+              c === "POST /api/sandbox/native-reopen/start",
+          ),
+        ).toHaveLength(1);
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);

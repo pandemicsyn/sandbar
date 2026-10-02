@@ -50,6 +50,7 @@ interface ProcessHandle {
   readonly provider: string;
   output(options?: { signal?: AbortSignal }): AsyncIterable<ProcessOutput>;
   wait(options?: { signal?: AbortSignal }): Promise<ProcessExit>;
+  terminate(options?: { signal?: AbortSignal }): Promise<{ status: "requested" | "not-found" | "exited" }>;
   detach(): Promise<void>; // local, idempotent, prompt
 }
 // On a direct sandbox:
@@ -58,7 +59,7 @@ interface ProcessHandle {
 
 A successful start returns a handle as soon as the native start event supplies its local handle, not when the command exits. Attach the output receiver before dispatch so early output cannot fall between start and subscription. A single consumer can call `output()` once; a second call rejects `INVALID_ARGUMENT` without changing the first consumer. `wait()` can be called repeatedly/concurrently and returns the same confirmed exitCode, with outputComplete sampled at settlement; each caller's abort only ends that caller's wait. It does not detach the output receiver or abort the native command stream.
 
-The handle is local observation state, has no serialized `reference`, no public PID identity and no `get()`/`inspect()`/`submitStart()` API. Its provider connection owns native credentials. Do not invent a serializable generation token to make unsafe native PID selectors look safe. No public termination method is added until it can target the same execution reliably; explicit termination remains unsupported, and sandbox `destroy()` is a separate deliberate lifecycle action.
+The handle is local observation state, has no serialized `reference`, no public PID identity and no `get()`/`inspect()`/`submitStart()` API. Its provider connection owns native credentials. Do not invent a serializable generation token to make unsafe native PID selectors look safe. The first slice did not provide termination. The follow-up [termination contract](preview-and-process-control.md#process-control-that-means-what-it-says) adds E2B local-handle `terminate()` as a native PID request with explicit exit/reuse races, shared cached acknowledgement and no replay. It does not promise immutable execution targeting. Sandbox `destroy()` remains a separate deliberate lifecycle action.
 
 Pre-aborted start rejects `WAIT_ABORTED` before dispatch. Abort or transport loss after dispatch can mean the command started: reject `OUTCOME_UNKNOWN`, with provider and sandbox ID only where known; no automatic retry and no claim that these fields can reopen the command. If the native handle arrives after local start abandonment, disconnect it immediately. Do not orphan a local socket, kill the command, or wait indefinitely for a non-cooperative provider. No new generic error family is needed; proposed process failures use current error conventions with a typed optional confirmed `ProcessExit` where available.
 
@@ -83,6 +84,7 @@ interface NativeProcess {
   // Optional synchronous confirmed evidence during final decoder callbacks.
   readonly confirmedExit?: NativeProcessExit;
   wait(): Promise<NativeProcessExit>;
+  terminate?(ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>;
   detach(): Promise<void>;
 }
 // Optional session member:
@@ -115,7 +117,7 @@ On normal native stream end plus confirmed exit, output drains and ends. `output
 | Stop this local wait after 5 seconds | `wait({ signal: AbortSignal.timeout(5000) })` | Only that waiter stops; command/output continue |
 | Stop watching output | Abort `output()` or call `detach()` | Release local observation; command may keep running |
 | End command after a runtime limit | `start({ deadlineSeconds: ... })` | Unsupported here; reject before dispatch |
-| Terminate command remotely | Future verified process termination API | Unsupported here; no whole-sandbox fallback |
+| Terminate command remotely | E2B `process.terminate({ signal? })` | One native PID SIGKILL request; acknowledgement is not exit, PID reuse race, no whole-sandbox fallback |
 | End sandbox lifetime | Existing provider TTL or explicit `sandbox.destroy()` | Separate lifecycle operation affecting compute |
 
 Current bounded-exec timeout analysis and output-helper delivery are maintained in the [focused output/timeout brief](output-and-timeouts.md). It distinguishes RPC/request waiting from verified runtime enforcement and retains existing defaults. This does not change this streaming slice's rejection of `deadlineSeconds` before dispatch.
@@ -152,7 +154,7 @@ The delivery slices are merged:
 2. **Read cancellation — PR #51.** `readFile(path, { signal? })` and exported `ReadOptions` preserve inspection's existing `WaitOptions` compatibility. One fixed 30-second local deadline covers provider results and streamed chunks, including noncooperative reads. Late streams are disposed and local readers released without waiting indefinitely. Read-only errors use `WAIT_ABORTED`, `TIMEOUT` and `CLIENT_CLOSED` with effect `none`; native failures retain their code. Native download cancellation is best effort. The updated live file scenario has not been qualified.
 3. **[Output helpers and timeout clarity](output-and-timeouts.md#delivery-and-acceptance) — PRs #53 and #54.** Full decode/structured previews, provider timeout documentation and deterministic wiring tests are implemented. Native runtime enforcement and raw binary transport remain separate proposals.
 
-The shipped streaming scope is finite E2B text with local-only handles. Binary streaming, remote kill and reattachment need their own design and provider evidence; they are not implicit follow-ups required to finish #52.
+The shipped streaming scope is finite E2B text with local-only handles. Binary streaming and reattachment need their own design and provider evidence; they are not implicit follow-ups required to finish #52.
 
 ## Acceptance for the coding slice
 

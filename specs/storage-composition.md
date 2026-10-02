@@ -1,22 +1,22 @@
 # Storage composition
 
-Proposal · revised October 2, 2026 against Sandbar `52a95be` · native evidence inspected October 1 · no runtime changes
+Accepted design · revised October 2, 2026 against Sandbar `0a022a8` · implementation brief, no runtime changes
 
-## Recommendation
+## Scope
 
 Use **`mounts: MountSpec[]` on both create and restore**, with the existing `volume.at(path)` helper. One descriptor selects storage for the workload; there is no second `attach` input or sharing permission flag. Start with **Daytona mount-free filesystem snapshot restore plus caller-selected volumes**: reusable private code/configuration state alongside independently retained application data. This does **not** capture and restore an already mounted workspace; that second workflow needs native exclusion/provenance evidence.
 
 For a mount-free snapshot, omitted `mounts` means no mounts. Supplying the same volume deliberately shares its current mutable data; selecting a separately created volume gives separate data. Neither choice pins captured-time bytes or copies data. Never create storage implicitly, substitute a missing volume or silently discard recorded mounts. Existing mounted-source and memory-plus-storage restore remain unsupported in the first slice.
 
-The migration decision is concrete: replace the exposed but currently unsupported restore action-map with the common array input in the next coordinated SDK/adapter API change. Give old action-map callers an actionable migration error, preserve compatible mount-free calls and saved references, and review release/versioning implications before implementation. Do not retain two permanent APIs to avoid migrating an inactive extension point.
+The next coordinated SDK/adapter API release replaces the inactive restore action-map with this array. Keep the SDK-only empty-object mount-free alias through that release and one subsequent published release; remove it in the following API release. Nonempty legacy maps reject with a migration message. The [migration contract](#compatibility-and-migration) below is settled.
 
-Daytona's existing native create path accepts snapshot identity, volume IDs and network policy together. This is enough to begin scoped mapping/fixture work, not enough to claim startup safety. **Release requires evidence that mounts and policy apply before application startup**, including image entrypoints. A post-create read cannot prove that order. Missing evidence blocks this mapping; optional stronger storage guarantees do not.
+Daytona's native create path accepts snapshot identity, volume IDs and network policy together. Implement the scoped mapping with the [startup acceptance gate](#startup-evidence-and-bounded-live-acceptance). The read-only check found useful mount ordering evidence but contrary evidence for early `networkBlockAll` enforcement in an older public runner. Keep `daytona-default` explicit; do not advertise blocked-before-entrypoint behavior without applicable ordering evidence and the live check.
 
-Storage implementation is **fourth**, after active [suspend/resume](sandbox-lifecycle.md), [default creation/everyday files](sandbox-basics-dx.md), and [preview/process basics](preview-and-process-control.md). Research may continue now; it does not change the [roadmap](../ROADMAP.md) or authorize implementation. This proposal supplements [state portability](provider-state-portability.md) and [ordinary recovery DX](sdk-recovery-dx.md).
+Creation defaults, text helpers, lifecycle operations and process termination are merged on this baseline. Follow the [roadmap](../ROADMAP.md) for scheduling; this brief does not reorder work. It supplements [state portability](provider-state-portability.md) and [ordinary recovery DX](sdk-recovery-dx.md). Runtime implementation and the bounded live run will be delegated separately after this spec review.
 
 ## Mocked application walkthrough
 
-These are **proposed, uncompiled examples with deterministic mock responses**, not live-provider instructions or a new exported mock API. Restore currently rejects nonempty mounts and exposes the legacy action-map shape. The examples also use creation defaults and text helpers from the earlier [everyday DX proposal](sandbox-basics-dx.md). Implementation must turn these scenarios into compiled public examples backed by native-boundary fixtures.
+These are **proposed, uncompiled examples with deterministic mock responses**, not live-provider instructions or a new exported mock API. Restore currently rejects nonempty mounts and exposes the legacy action-map shape. Creation defaults and text helpers are shipped; the array restore input is proposed. See [everyday files](sandbox-basics-dx.md) for those existing helpers. Implementation must turn these scenarios into compiled public examples backed by native-boundary fixtures.
 
 The mock represents a qualified filesystem/fresh-execution adapter. It supplies a caller-provisioned `report-worker-v1` image, a ready mount-free snapshot, ready ID-addressable volumes and support for the requested network policy. Its simulated startup installs mounts and policy before the image entrypoint. These fixture assumptions do not establish Daytona's native startup order, capture exclusions or shutdown durability; those remain the release gates below. IDs such as `snapshot-001` and `volume-001` are mock responses, never IDs applications construct.
 
@@ -30,13 +30,15 @@ function openClient() {
   return Sandbar.connect(daytona({
     apiKey: process.env.DAYTONA_API_KEY!,
     target: "us",
-    environment: Image.prepared("report-worker-v1"), // proposed setup default
+    environment: Image.prepared("report-worker-v1"),
+    networkPolicy: "daytona-default",
   }));
 }
 
 const client = await openClient();
 const data = await client.volumes.create({ name: "customer-data" });
 const writer = await client.sandboxes.create({
+  networkPolicy: "daytona-default",
   mounts: [data.at("/data")],
 });
 await writer.writeTextFile("/data/report.json", '{"total":7}', {
@@ -44,7 +46,7 @@ await writer.writeTextFile("/data/report.json", '{"total":7}', {
 });
 
 // Capture private application state from a separate, mount-free sandbox.
-const base = await client.sandboxes.create();
+const base = await client.sandboxes.create({ networkPolicy: "daytona-default" });
 await base.writeTextFile("/tmp/app-version.txt", "v1");
 const captured = await base.snapshot();
 ```
@@ -55,16 +57,19 @@ The same descriptor vocabulary works for both operations:
 
 ```ts
 const mount = data.at("/data");
-const created = await client.sandboxes.create({ mounts: [mount] });
+const created = await client.sandboxes.create({
+  networkPolicy: "daytona-default",
+  mounts: [mount],
+});
 const restored = await captured.snapshot.restore({
-  networkPolicy: "blocked",
+  networkPolicy: "daytona-default",
   mounts: [mount],
 });
 console.log(await restored.readTextFile("/tmp/app-version.txt")); // "v1"
 console.log(await restored.readTextFile("/data/report.json"));    // '{"total":7}'
 ```
 
-Mock observations: `created` starts from the configured image; `restored` starts from `snapshot-001`. Both select exactly `volume-001`. Selecting that volume deliberately shares its current mutable data with the writer and other users. A snapshot does not freeze those bytes. The mock establishes the expected mapping, not portable concurrent-writer or flush guarantees. `blocked` requires Daytona account policy eligibility; if unavailable it rejects before creation. An application that accepts provider-managed egress configures and selects `daytona-default` explicitly.
+Mock observations: `created` starts from the configured image; `restored` starts from `snapshot-001`. Both select exactly `volume-001`. Selecting that volume deliberately shares its current mutable data with the writer and other users. A snapshot does not freeze those bytes. The mock establishes the expected mapping, not portable concurrent-writer or flush guarantees. This example explicitly accepts provider-managed egress through `daytona-default`; it makes no blocked-network promise. A stricter policy must be qualified under the startup gate and otherwise reject before creation, never fall back.
 
 ### 2. Save full references and reopen through a fresh connection
 
@@ -82,7 +87,7 @@ const saved = JSON.parse(records.get("report-job")!);
 const snapshot = await freshClient.snapshots.get(saved.snapshot);
 const selectedData = await freshClient.volumes.get(saved.data);
 const reopened = await snapshot.restore({
-  networkPolicy: "blocked",
+  networkPolicy: "daytona-default",
   mounts: [selectedData.at("/data")],
 });
 ```
@@ -94,10 +99,10 @@ Mock observations: reopening inspects the saved snapshot and volume identities i
 ```ts
 const experimentData = await freshClient.volumes.create({ name: "experiment-data" });
 const experiment = await snapshot.restore({
-  networkPolicy: "blocked",
+  networkPolicy: "daytona-default",
   mounts: [experimentData.at("/data")],
 });
-const privateOnly = await snapshot.restore({ networkPolicy: "blocked" });
+const privateOnly = await snapshot.restore({ networkPolicy: "daytona-default" });
 ```
 
 | Mock restore input | Selected data | Expected observation |
@@ -127,7 +132,7 @@ import { UnsupportedFeatureError } from "sandbar-sdk";
 
 try {
   await snapshot.restore({
-    networkPolicy: "blocked",
+    networkPolicy: "daytona-default",
     mounts: [selectedData.at("/data")],
   });
 } catch (error) {
@@ -163,14 +168,13 @@ await client.close();
 
 Mock observations: all acknowledged compute deletions are confirmed; the snapshot and `volume-002` are deleted; `volume-001` remains accessible through its saved reference. In an application, update/tombstone saved records only after the relevant artifact deletion is confirmed. This is a successful cleanup sequence, not an unconditional `finally`: if restore or cleanup has an uncertain outcome, preserve identities and reconcile the acknowledged compute before deleting dependent artifacts.
 
-The configured cleanup policy can supply the repeated compute choice. `allow-unconfirmed` accepts unconfirmed shutdown durability; it is not a flush promise. Storage and snapshots remain retained until separately deleted, with provider-specific retention costs; the production Daytona volume documentation currently lists volumes as included at no additional cost. Never infer that retained compute/snapshots or other providers' storage are free.
+The configured cleanup policy can supply the repeated compute choice. `allow-unconfirmed` accepts unconfirmed shutdown durability; it is not a flush promise. Retained resources remain the application's responsibility until separately deleted.
 
 ## Public and adapter shape
 
-Retain `Volume.at(path, { access, subpath })`, ordinary snapshot results, scoped resource managers, and `snapshot.restore()`. Change only the restore mount input; no new volume mutation or recovery operation:
+Keep `volume.at(path, { access, subpath })`, bound snapshot handles and the ordinary result/error model. The only workload-input change is:
 
 ```ts
-// Proposed SDK and sandbar-adapter schema change; other fields retained.
 interface RestoreRequest {
   networkPolicy: string;
   mounts?: MountSpec[];
@@ -178,105 +182,76 @@ interface RestoreRequest {
   requireIndependentLifecycle?: boolean;
 }
 // Existing RestoreCapabilities / SnapshotInfo.restore.mounts: boolean
-// means this adapter implements the selected mount workflow, subject to
-// snapshot provenance and native constraints. False still rejects mounts.
-// Proposed optional marker on the existing adapter hook:
-// snapshotRestore.mountInput?: "specs"
-// snapshotRestore.prepare/submit({ snapshot, request }, context)
-// snapshotRestore.observe(attempt, context)
+// Optional adapter hook marker: snapshotRestore.mountInput?: "specs"
+// Existing snapshotRestore.prepare / submit / observe operations remain.
 ```
 
-Keep the existing `restore.mounts` support field; callers do not negotiate capabilities. The hook marker below is an internal SDK/adapter compatibility check, not a workload option. True alone never authorizes arbitrary snapshot/mount combinations: SDK/adapter validation still checks actual capture scope and execution. An old adapter cannot be assumed to accept arrays merely because it advertises the earlier action-map support. Coordinate the adapter contract migration described below.
+The support boolean describes the qualified combination, not every snapshot/mount combination. Callers need no negotiation. Nonempty arrays require the hook marker before adapter preparation; see migration below.
 
-Slice 1 requires positively known `preserve: "filesystem"`, `restoreExecution: "fresh"`, no recorded mounts and `mountHandling: "none"`. Unknown provenance rejects. Validate every selected volume reference against the configured provider, authority and routing scope; inspect readiness; reject read-only, overlapping paths, unsupported subpaths/access/classes and incompatible requirements before dispatch. The selected Daytona mapping uses exact native volume IDs. Revalidate at submission; preparation is not a reservation. Meaningful provider mechanics/defaults stay in typed setup; selected volume identities and sharing intent stay in the workload call.
+Slice 1 accepts a ready snapshot with `preserve: "filesystem"`, `restoreExecution: "fresh"`, no recorded native mounts and `mountHandling: "none"` under the existing capture-reference validation. Validate selected volume provider, authority, routing scope, exact native ID and readiness; reject unsupported read-only access, overlapping paths, subpaths/classes and policy combinations before dispatch. Revalidate at submission; preparation is not a reservation.
 
-Reuse Daytona `checkMounts` and the create driver: `POST /sandbox` with exact snapshot ID, `volumes: [{ volumeId, mountPath, subpath }]` and `networkBlockAll`. Confirm actual snapshot identity and the complete expected mount set before success. Preserve selected mounts in the restore recovery input and outcome, separate from the sandbox reference. Keep ordinary sandbox references limited to identity and native creation selectors under the [reopening contract](sandbox-lifecycle.md#reopening-and-identity); do not add mount descriptors or observations. Obtain the current mount set through authenticated native inspection when reopening, cleaning up or observing recovery, rather than treating saved selections as current state. Do not restore memory, attach after creation or accept a substitute on failed lookup. Native boot-order proof is separate from serialization/fixture correctness.
+Reuse Daytona `checkMounts` and the create driver: one `POST /sandbox` selects the exact snapshot ID, `volumes: [{ volumeId, mountPath, subpath }]` and the explicit supported network policy. Confirm actual snapshot identity and the complete expected mount set before returning success. No post-create attachment, name-based replacement or automatic retry.
 
-## Mounted capture and recorded mounts: useful, deferred
+Selected mounts belong in restore recovery input and direct outcomes, separate from the sandbox reference. Keep ordinary sandbox references limited to identity and native creation selectors under the [reopening contract](sandbox-lifecycle.md#reopening-and-identity). Obtain current mounts through authenticated native inspection for reopening, cleanup and read-only recovery; saved selections are not current observations.
 
-A filesystem-only capture excluding external volume bytes is useful for retaining code plus a list of data connections. Daytona containers would be the natural extension of the current implementation, but pinned source only says filesystem capture; it does not prove FUSE mount exclusion. Daytona's alternate v2 documentation explicitly excludes **VM** volumes; that cannot qualify this container mapping. Do not enable mounted capture merely by changing `mountHandling` to `excluded`.
+## Existing capture provenance supports reopening
 
-A later mounted capture should return the actual exclusion scope, captured private state and full mount descriptors (`volume` reference, absolute path, access, subpath). Descriptors are external references, not a volume snapshot/version or evidence of flushed data. Record whether the native artifact itself retains mount declarations; current inspected container evidence leaves this unknown. Never label included bytes or an unverified scope as excluded. Underlying private bytes at mountpoints also need fixture/native evidence before promising their contents.
+Read-only inspection at `0a022a8` confirms this path already exists; no new provenance fields are needed:
 
-The same array should later select live storage for every recorded mount path. For example, `mounts: [originalData.at("/data")]` explicitly reuses/shares that data; `mounts: [replacementData.at("/data")]` replaces it. No additional `share`/`replace` action map is needed.
+- [`observedCapture` / `inspectSnapshot`](../packages/providers/daytona/src/state-native.ts) issue existing snapshot `history` containing source ID/class, filesystem preservation, `mounts: "none"` and consistency. [`resourceHistory.read`](../packages/providers/daytona/src/resource-history.ts) validates its schema, kind, native ID and generation. Inspection separately verifies native snapshot ID, organization, source-sandbox ID, container class and regional readiness before reusing historical capture facts.
+- Reopening reads the retained snapshot, not the original source sandbox. Existing [native-boundary tests](../packages/providers/daytona/src/state-native.test.ts) serialize the full reference, use a fresh connection/key and make source reads return 404 while snapshot inspection still reports `mountHandling: "none"`. The first implementation extends that case through mounted restore. Native retention of the corroborating snapshot fields is part of live acceptance; if missing, provenance remains unavailable.
+- These are references in an application-owned trusted store, not signed attestations. Keep full returned history and the existing validation. Malformed history cannot supply provenance and native identity/source/class mismatches reject, but the validator does not independently authenticate historical mount absence; well-formed forged history is outside the trusted-store contract. `inspectSnapshot` restores the existing mount-free classification from matching source/class/preservation history, not a new mount attestation. Imported snapshots without usable provenance remain unknown. Snapshot history is distinct from the observation-free **sandbox** reference.
 
-**Every recorded path needs a supplied descriptor.** A missing descriptor rejects before effects, including omitted input and `[]`; it never means omission. Native validation determines whether access/subpath replacements are supported. New mount paths are allowed only when the adapter can enforce them before startup; overlap rejects. Returning a recorded descriptor in inspect metadata is useful, but the caller must deliberately select it for restore. Reuse means current mutable data, not captured-time bytes.
+Here, mount-free means the capture mapping records no native provider volume attachments. It does not enumerate every guest filesystem or certify absence of guest-created FUSE/network mounts. Source-local private filesystem state is the supported claim; external flush, atomicity and remote-storage consistency stay unknown. The merged E2B lifecycle likewise allows private filesystem/RAM preservation when native mount metadata is missing and rejects known attached volumes for its initial subset. That lifecycle rule does not enable E2B mounted snapshot restore or change this Daytona-only implementation slice.
 
-Explicit omission remains deferred: it may expose an underlying captured directory and cause application writes to land on private disk. A later implementation must establish and document exactly which directory becomes visible before startup; an unexplained empty-directory assumption is insufficient. No silent masking or directory clearing. Memory restoration with changed, shared or omitted external storage remains unsupported until native compatibility and pre-execution ordering are established; quiescing writers alone cannot prove compatibility with captured process caches/open handles. Copy/version/fork remains a separate explicit operation, not a mount selection.
+## Startup evidence and bounded live acceptance
 
-| Default alternative | Assessment |
+**Focused finding, October 2:** published SDK `@daytona/sdk@0.218.0` forwards snapshot, volumes and `networkBlockAll` together. The available public runner tag `v0.190.0` at `01c502bb1f1ff8f2885d0cd490e043736083dca8` prepares volume binds before `ContainerCreate`, then calls `Start`; however, `networkBlockAll` rules are set asynchronously **after** `Start`. `Start` calls `ContainerStart` before waiting for daemon readiness. This source is not verified as the deployed v0.218 API backend, so it establishes a concrete ordering risk, not the behavior of every production sandbox.
+
+Evidence: [SDK 0.218.0 artifact](https://registry.npmjs.org/@daytona/sdk/-/sdk-0.218.0.tgz), [runner create](https://github.com/daytonaio/daytona/blob/01c502bb1f1ff8f2885d0cd490e043736083dca8/apps/runner/pkg/docker/create.go#L152), [runner start](https://github.com/daytonaio/daytona/blob/01c502bb1f1ff8f2885d0cd490e043736083dca8/apps/runner/pkg/docker/start.go#L55), and [entrypoint selection](https://github.com/daytonaio/daytona/blob/01c502bb1f1ff8f2885d0cd490e043736083dca8/apps/runner/pkg/docker/container_configs.go#L143). The production [volume contract](https://www.daytona.io/docs/en/volumes/#mount-volumes) documents creation-time mounts; the [network contract](https://www.daytona.io/docs/en/network-limits/) documents policy selection and account eligibility, but does not establish earliest-entrypoint enforcement. A native flag read after creation cannot close that gap.
+
+**Release rule:** qualify native-ID mounts with explicit `daytona-default` using the documented creation contract, the relevant source ordering and the entrypoint sentinel below. This policy accepts provider-managed egress; do not relabel it isolated. Enabling `blocked` for this mounted-restore slice additionally requires an applicable deployed-server ordering path or explicit provider guarantee that policy precedes the image workload, plus the same live check. The inspected docs alone do not satisfy that stricter claim; a finite passing probe cannot override the contrary source ordering. Until that evidence is available, reject `blocked` plus mounts before dispatch. This is a specific policy boundary, not an unbounded proof obligation or a requirement for universal atomicity against other actors.
+
+The implementation's maintained live scenario uses a caller-provided prepared container image/test fixture. It must preserve a boot sentinel as the image's first application action across snapshot capture/restore, including any native daemon wrapper. It keeps the toolbox reachable for inspection on failure but runs no application work until the sentinel succeeds. Do not add an image-build framework, entrypoint API or new service merely for qualification.
+
+1. **Budget and setup.** After separate live authorization, allocate at most four sandboxes total (one mount-free capture source, one volume seeder, two restore candidates), two new volumes and one captured snapshot. Borrow the supplied image and an existing operator-controlled TCP canary; never delete those. Require a confirmed image size/default no greater than 2 vCPU, 4 GiB RAM and 10 GiB disk; set each compute TTL to 10 minutes and cap the run at 20 minutes including cleanup. Write at most 1 MiB per volume. No automatic replacement allocations on uncertainty. If the fixture, policy eligibility or budget cannot be met, report not-run before allocation.
+2. **Prepare exact data.** The seeder writes a unique marker to each volume and application data only to volume A; B has no application data. Confirm both markers from the seeder and the canary's reachability as a positive control. The fixture starts idle without application work when its private config is absent, so the bootstrap sentinel does not require a configured data profile; the seeder still receives both volume mounts at creation, while the capture source has none. The mount-free source stores a table mapping both marker IDs to their expected application-data hash/absence and policy in that private config, then captures with the existing `restartAfterCapture: false` setup option. Save the full returned snapshot/volume references and destroy the source before reopening them through a fresh connection. Destroy the seeder when finite writes complete, explicitly accepting unconfirmed shutdown durability; inability to read the markers later fails the case rather than inventing a flush guarantee.
+3. **Observe the first application action.** On each cold restore the sentinel replaces any inherited report, records the current native sandbox ID and a newly generated per-start nonce, and immediately checks `/data/.sentinel-id` and expected data/absence. It makes up to three bounded one-second TCP attempts to the controlled canary before any application work: success is expected for this `daytona-default` fixture; all attempts must fail for a separately qualified `blocked` run. It must not wait for mounts/policy to become ready or retry until a mismatch disappears. Write a bounded private report containing those initial observations and then a distinct application-start marker only on success. Native inspection must also match the exact snapshot, complete selected mounts and requested policy. Bind the report to the current sandbox and fresh start so captured source output cannot count as a pass. The sentinel permits application start only for a recognized A/B profile; the harness must correlate its reported marker/data profile with the exact volume requested for that restore. Passing the other recognized profile is a mismatch, even if its data are internally consistent.
+4. **Two restores and pass criteria.** Restore with A, then restore with B using the same captured private state. Both must observe the correct marker on their first attempt; A sees the seeded application data and B sees its absence. The network behavior and native policy must match the selected scenario before the application-start marker. Confirm a fresh-client sandbox reopen with the unchanged identity-only reference and a native mount read. The run qualifies the tested image, region, provider configuration and revision; it does not prove continuous enforcement on every deployment or concurrent-writer consistency. An unreachable positive-control canary, stale/missing report, mismatch, unexpected connection or uncertain native outcome is a failure/inconclusive result, never a pass from timeout alone.
+5. **Cleanup.** Record every acknowledged compute, snapshot and volume identity as soon as received. Destroy known compute first with the deliberate writable-storage cleanup policy, then delete the captured snapshot and both test-created volumes after dependencies are confirmed clear. Verify deletion/absence through their existing native identity checks; report retained/uncertain resources and stop rather than blindly retry or delete shared/borrowed data. Preserve failed evidence as well as successful evidence in the maintained qualification records.
+
+A sentinel can reveal incorrect initial data or an observed early connection; its negative network result cannot prove the absence of every startup race. That is why the blocked-policy gate needs applicable ordering evidence. Post-create inspection and mock request serialization remain useful checks, but neither substitutes for observing the first application action.
+
+## Outcomes and explicit cuts
+
+| Outcome | Preserve and next action |
 | --- | --- |
-| Automatically reuse recorded volumes | Convenient restart, but a restore may unexpectedly expose shared live mutable data; reject as default |
-| Automatically clone or omit | Invents independent bytes or loses intended data access; extra resources/costs or directory exposure; reject |
-| Require choices only for recorded mounts | Recommended; mount-free restore stays simple, explicit attachment needs no separate sharing flag |
+| Volume creation succeeds; later restore rejects | Keep the received volume reference for reuse or deliberate deletion |
+| Compute acknowledged; identity/mount verification fails | Direct unknown/partial outcome retains scoped compute identity and selected volumes; inspect that compute without replay |
+| Capture completes; source restart fails | Existing partial capture result retains snapshot and source/restart evidence |
+| Response lost after dispatch | Preserve received IDs/native operation selectors; read-only reconciliation, no automatic replacement |
+| Deletion uncertain or dependency conflict | Keep retained identities and prior confirmed deletions; reconcile before explicit cleanup |
 
-## Identity, observations and failures
+Extend the existing ordinary outcome union only enough to expose acknowledged restored compute and selected volumes directly. No composite manifest, persistence callback, generic recovery engine or compensation cascade. Applications own the allocation-to-save crash window. Do not turn missing optional metadata into “nothing created.” Existing scope/ownership and deletion checks remain in force.
 
-Persist exact existing resource references: version/kind, provider, native ID, immutable generation where required, and verified native authority/partition. E2B's snapshot reference needs the captured build generation as well as containing template identity; a current default/tag lookup is insufficient. A volume name may be a native selector; do not present it as immutable identity without evidence of lifetime/generation and binding behavior. Preserve existing history/deletion safeguards for compatibility; assess them before any schema removal.
+Mounted-source capture, mount omission, memory composition, resizing, post-create attachment, copy/version/fork and stronger flush/locking/rename guarantees are outside PR 1. A possible later mounted-capture slice requires specific production container/FUSE exclusion and retained-declaration evidence; filesystem capture alone does not establish exclusion. It would reuse the array to require a descriptor for every recorded path. Omitted/empty input must never silently discard recorded mounts. Guest mounts remain outside the native enumeration guarantee.
 
-Slice 1 adds no composite manifest: applications save the snapshot and chosen volumes separately, then reopen through the current verified connection. Snapshot reopening must remain source-independent where supported after original compute deletion. A future mounted-capture descriptor can live in snapshot metadata once; do not duplicate it in accumulated journals. Historical application-saved mount/capture observations cannot authorize use/deletion or be presented as fresh state. If reopening cannot verify the facts necessary for safe restore, return unavailable/unsupported rather than trusting edited JSON to unlock it.
+The common syntax is intentionally extensible beyond Daytona. E2B volume CRUD/account eligibility and native-ID mounting are separate questions; its name-based mounting is not inherently impossible, but its current Sandbar mapping does not qualify this cold-restore combination. [E2B mounting](https://docs.e2b.dev/volumes/mount) and [snapshot semantics](https://docs.e2b.dev/sandbox/snapshots) remain the native references. Tensorlake's [research #45](https://github.com/pandemicsyn/sandbar/issues/45), [snapshot docs](https://docs.tensorlake.ai/sandboxes/snapshots) and [filesystem mount docs](https://docs.tensorlake.ai/sandboxes/mount-filesystems) own its broader evidence. Its native snapshot ID plus filesystem mount shape fits this vocabulary; live filesystem selection, immutable read-only versions and writable forks remain different operations. Name reuse/generation binding and combined restore ordering must be qualified for that adapter; they are not Daytona prerequisites or authorization to implement another provider.
 
-| Outcome | Preserve and next useful action |
-| --- | --- |
-| Volume created; later compute create/restore rejects | Return/retain the already received volume reference; caller can reuse or explicitly delete it. No composite helper hides that success |
-| Native compute acknowledged; mount/detail verification fails | Ordinary unknown/partial error retains confirmed scoped compute ID/reference and selected volume identities. Inspect that exact compute; never blind retry creation or auto-delete shared storage |
-| Capture completes; source restart fails | Existing partial capture result keeps snapshot reference and actual source/restart evidence; use the snapshot or address the source separately |
-| Response lost after dispatch | Existing unknown result retains every received ID/native operation selector; read-only observation may reconcile, absence from list does not prove no effect |
-| Compute deletion uncertain or snapshot/volume deletion conflicts | Preserve confirmed prior deletions, retained identities and ownership; inspect dependency/use state and explicitly retry only when safe under existing deletion rules |
+## Compatibility and migration
 
-The first restore PR must extend the existing ordinary error outcome union only as needed to expose acknowledged compute and its selected volumes directly; recovery tokens alone are not the public handoff. No new recovery engine, automatic compensation, persistence callback or deletion cascade. Never convert known allocation into “nothing created” because metadata assembly failed. Reopening cannot promise recovery across the application's allocation-to-save crash window.
+The next coordinated SDK/adapter API release changes public `RestoreRequest.mounts` types/schema to `MountSpec[]`. Let that release be R: the SDK accepts legacy empty `{}` at runtime as a deprecated mount-free alias in R **and the next published release R+1**, then removes it in the next API release after R+1 with the appropriate semver boundary. New public types and examples teach only arrays. Nonempty legacy action maps reject before effects with a specific migration message; `share`, `replace` and `omit` are never reinterpreted. Once the empty alias is removed, it follows the existing `INVALID_ARGUMENT` convention.
 
-Visibility and durability remain distinct. Current Daytona mapping reports immediate visibility and last-writer-wins with durability/locking/rename unknown; validate its visibility assertion against the deployed backend before reusing it as stronger acceptance evidence. Production FUSE documentation does not prove cross-writer atomicity or durable shutdown. E2B beta limitations forbid treating locks or permission bits as isolation. Modal's native commit/reload model is a real provider-specific boundary, but its Sandbar adapter implements neither volumes nor snapshots. Do not add universal `flush`, locking, rename or checkpoint APIs for this slice. Read-only must mean native enforcement, never an SDK convention.
+Repository facts checked at `0a022a8`: [`sandbar-sdk`](../packages/sdk/package.json) and [`sandbar-adapter`](../packages/adapter/package.json) both have manifest version `0.0.0`; [Changesets](../.changeset/config.json) fixes them into one version group and the [release manifest](../scripts/release-packages.json) contains exactly these two packages. There are no local version tags. This is repository state, not a registry publication claim. Use one coordinated changeset for the implementation, following the existing public-release process; record the actual R version in its changelog when versioning runs. If released stable types are affected, use the required breaking semver bump. This prose-only spec does not publish or version packages.
 
-## Provider evidence and limits
+Before passing nonempty arrays, the SDK requires `snapshotRestore.mountInput: "specs"`. Missing marker rejects before adapter preparation/submission with upgrade guidance, even if the earlier capability boolean is true. Mount-free requests keep the old path and omit `mounts` at an older hook. The one optional marker is the complete compatibility mechanism; no top-level version negotiation or permanent second workload input.
 
-Inspected October 1, 2026. These are docs/source observations, no paid/live calls or account probes. Sandbar source/fixtures were initially inspected at `0c39ca3`; guidance was reconciled against `52a95be` on October 2; historical account/evidence status remains in the [support table](../apps/docs/src/content/docs/docs/providers/support.md).
+Saved snapshot, volume and sandbox identity formats remain unchanged. Existing operation references must still parse and support read-only observation; normalization cannot replay mutations or unlock unsupported legacy requests. Preserve existing capture-history validation and observation-free sandbox references. Packed old-hook fixtures cover both nonempty rejection before invocation and continued mount-free operation.
 
-| Provider | Native evidence | Implemented Sandbar / proposed use |
-| --- | --- | --- |
-| Daytona production v0.220 docs; pinned published SDK/API baseline v0.218.0 | Snapshot plus ID-based create-time volumes and policy; SDK forwards both in one create request. Container capture API takes `{ name }`, gives no mounted-byte scope proof. FUSE storage persists separately; [deletion returns 409 while active mounts remain](https://www.daytona.io/docs/en/volumes/#delete-volumes) | Volumes and read-write/subpath creation implemented, mounted capture/restore rejected. First slice adds explicit attachments to mount-free container cold restore; startup proof required |
-| E2B `e2b@2.51.0` | Create serializes volume objects as `{ name, path }`, discarding object ID. Snapshot capture contains filesystem+memory. Volume private beta has no volume snapshots/server-side copies/read-only mounts; resume retains original mounts | Volume management mapped, account qualification blocked by recorded HTTP 403; mounts independently unsupported: current mapping has no exact mounted-ID evidence. Name-based selection is unqualified for the promised exact-resource workflow, not inherently impossible |
-| Tensorlake `tensorlake@0.5.136`; [research #45](https://github.com/pandemicsyn/sandbar/issues/45) | Native filesystem/cold and memory/warm snapshots; create options contain snapshot ID and filesystem mounts. Live mounts and permanent-snapshot read-only pins are distinct. `fileSystemId` is the filesystem name, not demonstrated immutable generation identity | No Sandbar adapter. Basic create/restore mount vocabulary fits conceptually, but combined restore behavior, pre-entrypoint ordering, mounted capture scope and name-reuse protection require qualification. Version/fork APIs stay deferred |
-| Modal `modal@0.10.1` | Native sandbox API exposes volume mounts and filesystem snapshots; volume commit/reload governs visibility, concurrent modification requires application coordination | Current adapter exposes neither snapshots nor volume management/mounts. Native surface is a design cross-check, not implemented support or authorization for a new mapping |
+## First implementation PR brief
 
-Primary sources and exact inspected artifacts:
+**Deliver:** the common array migration, scoped SDK validation, Daytona native-ID cold restore mounts, direct partial outcomes, accurate public docs and compiled mock examples in one bounded SDK/adapter PR. Reuse current create/restore drivers and qualification suites. The default supported mounted-restore policy is explicitly configured `daytona-default`; add `blocked` only if the documented gate above is satisfied. Unsupported combinations reject without allocation. The approved design is ready for delegation; this spec review itself changes no runtime code and allocates no resources.
 
-- Daytona [production snapshots](https://www.daytona.io/docs/en/snapshots/), [volumes](https://www.daytona.io/docs/en/volumes/), [OpenAPI](https://www.daytona.io/docs/openapi.json); pinned [SDK 0.218.0 tarball](https://registry.npmjs.org/@daytona/sdk/-/sdk-0.218.0.tgz), `cjs/Daytona.js` create body and `cjs/Sandbox.js:createSnapshot`; API baseline described in [adapter README](../packages/providers/daytona/README.md). Client source establishes request shape, not server boot ordering or byte exclusion.
-- Daytona [alternate v2 volume docs](https://daytona-website-website-prod.daytona.workers.dev/docs/en/volumes): different `/vms`, project scope, disk/bucket types and commit behavior. Do not mix this contract with production `/sandbox`, organization-scoped FUSE mapping; upgrading it is separate provider work.
-- E2B [mounting](https://docs.e2b.dev/volumes/mount), [beta access](https://docs.e2b.dev/volumes), [beta limitations](https://docs.e2b.dev/faq/volumes-beta-limitations), [sandbox snapshots](https://docs.e2b.dev/sandbox/snapshots); pinned [2.51.0 tarball](https://registry.npmjs.org/e2b/-/e2b-2.51.0.tgz), `dist/index.mjs:SandboxApi.createSandbox` and `createSnapshot`. No inference that sandbox snapshots support mounted memory composition from volume-snapshot limitations.
-- Modal [volume guide](https://modal.com/docs/guide/volumes), pinned [0.10.1 tarball](https://registry.npmjs.org/modal/-/modal-0.10.1.tgz), `dist/index.d.ts:SandboxCreateParams` and `Sandbox.snapshotFilesystem`; [adapter source](../packages/providers/modal/src/index.ts). Vercel and Tensorlake implementation remain behind the usability gate.
+**Offline acceptance:** omitted/empty mount-free behavior and the migration window; matching/wrong/missing hook marker; full-reference fresh-client restore after source deletion using existing history; exact volume/subpath mapping; wrong scope/provider/access/overlap rejection before POST; unknown or conflicting provenance; unchanged sandbox references with current mounts from native inspection; complete-set mismatch/read failure retaining acknowledged compute/volumes; lost acknowledgement without replay; and cleanup that retains application volumes. Keep the known-native-mount versus arbitrary guest-mount distinction explicit. Mock fixtures assert native requests, identities and mutation counts, not only display strings.
 
-## Name-based selection and Tensorlake cross-check
-
-[Issue #45](https://github.com/pandemicsyn/sandbar/issues/45) is the research home; this is only its consequence for SDK design. Rechecked October 1 against [snapshot docs](https://docs.tensorlake.ai/sandboxes/snapshots), [mount docs](https://docs.tensorlake.ai/sandboxes/mount-filesystems), [create API](https://docs.tensorlake.ai/api-reference/v2/sandboxes/create), and published [SDK 0.5.136](https://registry.npmjs.org/tensorlake/-/tensorlake-0.5.136.tgz), `dist/index.d.ts:CreateSandboxOptions/FileSystemMount` and `dist/index.js:fileSystemMountToWire`. Snapshot ID and mounts coexist in the native create schema; this supports the design shape, not proof that all combinations work. Filesystem snapshots cold-boot; memory snapshots fix image/resources/entrypoint. Mount readiness before reporting running does not alone prove readiness before an image entrypoint.
-
-Tensorlake exposes three materially different selections: current live filesystem, immutable read-only filesystem version, and a separately forked writable filesystem. Keep them distinct. Ordinary `volume.at(path)` can represent the first; a future version handle can compose through the same mount descriptor once qualified. A pin is not a writable clone, and a sandbox snapshot must not be assumed to pin mounted data automatically. Do not add version/fork operations to the first Daytona PR merely to exercise future extension points.
-
-E2B SDK 2.51.0 serializes even a `Volume` object by `name`; Tensorlake SDK 0.5.136 documents `fileSystemId` as the caller-created filesystem name. These are exact client-side observations, not proof of server-side substitution behavior. Investigate whether names are nonreusable during the reference lifetime, whether an immutable generation is observable/selectable, or whether native creation conditionally binds the intended generation before execution. A provider can implement exact reopening through a name if its native contract establishes that binding.
-
-Practical limit: lookup-then-create plus checking identity after startup cannot by itself prevent transient use of replacement data. If a provider only supports selecting the current resource at a name, state that live namespace semantics explicitly and review whether it meets the workload contract; do not advertise saved exact-artifact reopening or silently degrade to it. Application discipline against concurrent deletion/recreation can be a documented operational constraint, not an atomic SDK guarantee. Read-only pins preserve a data version but do not by themselves prove filesystem namespace identity or authorization across recreation.
-
-For Tensorlake, combined restore behavior, startup ordering, sandbox snapshot mounted-byte scope and retained declarations remain unverified by the inspected cross-check. The common vocabulary fits; exact-resource and supported-combination claims await evidence. Issue #45 owns broader provider investigation. Do not turn these questions into prerequisites for the Daytona ID-based slice or permission for a Tensorlake adapter.
-
-## Delivery and decisions
-
-Two bounded candidates, scheduled only after the earlier roadmap work. Native evidence can be investigated now; no storage coding is authorized by this spec.
-
-1. **Daytona cold restore with explicitly selected mounts** — medium complexity. Coordinate the mount-input migration, SDK validation, existing native create mapping, direct partial outcomes, docs and compiled versions of the mocked walkthrough above. Each fixture asserts native requests, resulting identities, retained resources and mutation counts, not just returned strings. Tests: omitted/empty mount-free restore unchanged; one exact mount/subpath; restore after source deletion through fresh connection; identity-only sandbox reference reopens with mounts obtained from native inspection while selected mounts remain in recovery input/outcome; wrong scope/provider/read-only/overlap rejected before POST; mount mismatch/read failure preserves acknowledged compute/volumes; lost response never replayed; cleanup retains volumes and respects policy. Native gate: mounts/network before image entrypoint. Maintain a live acceptance scenario as not-run until separately authorized. Cuts: mounted capture, sizing, detach, copy, versions and memory composition. No dependency on stronger flush/locking/rename guarantees.
-2. **Daytona mounted filesystem capture with explicit storage selection** — conditional medium-to-large complexity, depends on PR 1 and precise container/FUSE exclusion/provenance evidence. Use the same array to require each recorded path; test private bytes captured, external bytes not frozen, mount declarations/identities retained, safe serialized reopen after source deletion, missing paths/replaced IDs rejected, and restart failure retaining snapshot. Missing native scope/order evidence defers this PR. Cuts: omission, memory, copy/version/fork and mounted suspension. This is optional for the usability gate, not a mandatory universal-storage milestone.
-
-## Compatibility and migration decision
-
-Recommend changing `RestoreRequest.mounts` from the inactive action-map to `MountSpec[]` in a coordinated SDK/adapter release. Preserve omitted input; retain the existing empty-object spelling as a deprecated SDK-only mount-free alias normalized to `[]` for one migration window. New documentation/types teach arrays. Nonempty legacy action maps currently fail unsupported; continue failing before effects with a specific migration message instead of reinterpreting `share`, `replace` or `omit`. Once the alias is removed, invalid input uses the existing `INVALID_ARGUMENT` convention. No `attach` alternative.
-
-This is a public schema/type change even though no mapped workflow accepts nonempty action maps today. Review third-party adapters and release/version policy before committing to the migration window. Before passing nonempty arrays to an adapter, the SDK requires `snapshotRestore.mountInput: "specs"` on that operation hook. A missing marker rejects before prepare/submit with upgrade guidance; the old capability boolean is insufficient. Mount-free requests keep their existing path, omitting the mount field when addressing an older hook. This one optional operation marker preserves older adapters for supported mount-free work; it adds no top-level version framework or caller negotiation. A packed old-hook fixture must prove rejection before any adapter mutation, even if the old hook advertises mount support.
-
-Do not alter saved snapshot/volume/sandbox identity formats. Preserve parsing/read-only observation of already saved legacy operation references; normalization must not replay a mutation or convert unsupported old mount requests into new authority. Add regression fixtures for that migration. Mount-free restore, deletion/cleanup and retention keep their current behavior. The user's final approval covers naming and the intentional migration, not automatic implementation.
-
-Real decisions for user review:
-
-- **Product / migration:** accept the common array recommendation and SDK-only empty-object transition, and choose its release window after checking third-party adapter compatibility?
-- **Validation gate:** can Daytona production cold-container startup order be established? If not, defer PR 1 despite valid create request shape.
-- **Feasibility:** does the selected production container snapshot exclude FUSE bytes and retain usable mount provenance after source deletion? If not established, defer PR 2 and keep mounted capture unsupported.
-
-Suspend/resume remains owned by its lifecycle task and excludes mounted sources. E2B resume retains original mounts and deleting a mounted volume may prevent resume; different external data can invalidate captured process assumptions. Daytona alternate disk-volume pause limits do not establish production FUSE behavior. Research these implications when a concrete mounted-lifecycle workflow is selected; do not expand the active slice here.
+**Ready to merge the implementation:** relevant repository/packed/docs gates pass; compiled examples exercise the exported API; independent correctness/DX review is clear; the bounded live scenario above has a recorded result for the supported policy, exact image/configuration/revision and confirmed cleanup. A failed or not-run startup check does not become a support claim. Report any remaining stricter-policy gate as unsupported rather than silently changing the requested policy. No optional mounted capture, universal storage guarantees or additional provider work is required to complete this first PR.

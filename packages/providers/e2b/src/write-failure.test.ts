@@ -168,6 +168,7 @@ test("write recovery retains sanitized failure across restart and distinguishes 
         id: "sandbox_1",
         templateId: "template_1",
         state: "running" as const,
+        allowPublicTraffic: false,
         metadata,
       };
     },

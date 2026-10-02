@@ -1,3 +1,12 @@
+export {
+  MAX_DIRECTORY_ENTRIES,
+  MAX_DIRECTORY_NAME_BYTES,
+  FileMutationIntent,
+  FileMutationValue,
+} from "./files";
+
+export type { FileEntry, FileMutationInput } from "./files";
+
 import { AdapterError } from "./errors";
 import { OperationOutcome } from "./state";
 
@@ -38,6 +47,8 @@ export type ImageBuildValue = { preparedId: string; retainedResources: RetainedA
 export * from "./resources";
 
 export * from "./lifecycle";
+
+export * from "./preview";
 
 export type CreateInput = {
   image: Image;
@@ -94,6 +105,8 @@ export interface NativeProcess {
   /** Synchronous confirmed evidence, including during final decoder callbacks. */
   readonly confirmedExit?: NativeProcessExit;
   wait(): Promise<NativeProcessExit>;
+  /** One native termination request, not confirmed exit. Local IO bounds only. */
+  terminate?(ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>;
   detach(): Promise<void>;
 }
 
@@ -205,6 +218,7 @@ export type RecoveryAttempt<
   readonly sandbox: S;
   readonly resource?: ResourceReference;
   readonly mounts?: import("./state").MountSpec[];
+  readonly lifecycle?: import("./lifecycle").LifecycleIntent;
   readonly renewal?: import("./lifecycle").RenewRequest;
   readonly capture?: import("./state").SnapshotCaptureInput["expectation"];
   readonly token?: T;
@@ -234,6 +248,17 @@ export type Mutation<
       ) => Promise<V | Pending | Unknown | null>;
     };
 
+/** Lifecycle preparation resolves setup defaults before the SDK saves the dispatch intent. */
+type LifecycleMutation<V> = Extract<
+  Mutation<import("./lifecycle").LifecycleInput, V, import("./lifecycle").ResolvedLifecycleInput>,
+  { submit: unknown }
+> & {
+  prepare: (
+    input: import("./lifecycle").LifecycleInput,
+    ctx: ReadContext,
+  ) => Promise<import("./lifecycle").ResolvedLifecycleInput>;
+};
+
 export type Guarantees<C extends Command["kind"] = Command["kind"]> = {
   images: readonly ("prepared" | "oci")[];
   network: readonly string[];
@@ -250,11 +275,33 @@ export type AdapterSession<
   CT extends Json = Json,
 > = {
   scope: Scope;
+  /** Default for omitted SDK create environments; native create inputs remain required. */
+  defaultImage?:
+    | { kind: "prepared"; value: string; binding?: { provider: string; scope: Scope } }
+    | { kind: "oci"; value: string };
   /** Read-only evidence, scoped to the checked class or sandbox. Never allocate probe resources. */
   snapshotProfiles?: (
     target: { sandbox?: Sandbox; create?: CreateInput },
     ctx: ReadContext,
   ) => Promise<Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>>;
+  suspend?: LifecycleMutation<import("./lifecycle").SuspendResult>;
+  resume?: LifecycleMutation<import("./lifecycle").ResumeResult>;
+  suspensionCapabilities?: (
+    target: { sandbox?: Sandbox },
+    ctx: ReadContext,
+  ) => Promise<
+    Support<{
+      preserve: "filesystem" | "filesystem+memory";
+      processes: "terminated" | "preserved";
+      connections: "dropped";
+    }>
+  >;
+  resumeCapabilities?: (
+    target: { sandbox?: Sandbox },
+    ctx: ReadContext,
+  ) => Promise<
+    Support<{ sourceStates: import("./state").SandboxState[]; setsSessionTimeout: boolean }>
+  >;
   renew?: Mutation<
     import("./lifecycle").RenewInput,
     import("./lifecycle").RenewResult,
@@ -329,6 +376,10 @@ export type AdapterSession<
     | null
   >;
   exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox>;
+  preview?: (
+    input: { sandbox: Sandbox; port: number },
+    ctx: ReadContext,
+  ) => Promise<import("./preview").Preview>;
   processes?: { start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess> };
   files?: {
     maxBytes: number;
@@ -337,6 +388,18 @@ export type AdapterSession<
       ctx: ReadContext,
     ) => Promise<Uint8Array | ReadableStream<Uint8Array>>;
     write?: Mutation<FileWriteInput, FileWriteValue, WP, Json, Sandbox>;
+    /** Must include every immediate entry, including dangling symlinks and unknown types. */
+    list?: (
+      input: { sandbox: Sandbox; path: string },
+      ctx: ReadContext,
+    ) => Promise<import("./files").FileEntry[]>;
+    /** False only for confirmed entry absence; final dangling symlinks exist. */
+    exists?: (input: { sandbox: Sandbox; path: string }, ctx: ReadContext) => Promise<boolean>;
+    makeDirectory?: Mutation<
+      import("./files").FileMutationInput,
+      import("./files").FileMutationValue
+    >;
+    remove?: Mutation<import("./files").FileMutationInput, import("./files").FileMutationValue>;
   };
   inventory?: (
     input: { cursor?: string; limit: number },

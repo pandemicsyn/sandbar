@@ -1,3 +1,5 @@
+import { FileMutationIntent, type FileEntry } from "sandbar-adapter";
+import { directoryEntries, directoryRead } from "./directory-read";
 import { readFileBytes } from "./file-read";
 import { freezeReference } from "./freeze-reference";
 import { startProcess, type StartProcessInput, type ProcessHandle } from "./processes";
@@ -19,6 +21,14 @@ import {
 } from "./observability";
 import {
   SandboxInfoSchema,
+  LifecycleInput,
+  ResolvedLifecycleInput,
+  SuspendResult,
+  ResumeResult,
+  type LifecycleIntent,
+  PreviewResult,
+  PreviewPort,
+  type Preview,
   RenewRequest,
   RenewResult,
   ResolvedRenewInput,
@@ -102,6 +112,12 @@ export { Image, outputText } from "./resource";
 
 export type { AdapterRecoveryReference } from "./adapter-reference";
 
+function directoryPath(path: string): string {
+  validateFilePath(path);
+
+  return "/" + path.split("/").filter(Boolean).join("/");
+}
+
 function canonicalScope(scope: Scope): string {
   return JSON.stringify({
     authority: scope.authority,
@@ -139,6 +155,11 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
       ? copy.resource?.kind === "volume"
       : !copy.resource;
 
+  const boundLifecycle =
+    ["sandbox_suspend", "sandbox_resume"].includes(copy.kind) === !!copy.lifecycle &&
+    (!copy.lifecycle ||
+      (copy.kind === `sandbox_${copy.lifecycle.action}` && !!copy.sandboxReference));
+
   const boundRenewal =
     (copy.kind === "sandbox_renew") === !!copy.renewal &&
     (copy.kind !== "sandbox_renew" || !!copy.sandboxReference);
@@ -148,7 +169,9 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
   return boundSandbox &&
     boundResource &&
     boundCapture &&
+    boundLifecycle &&
     boundRenewal &&
+    ["file_mkdir", "file_remove"].includes(copy.kind) === !!copy.fileMutation &&
     (copy.kind === "file_write") === !!copy.file
     ? certifyRecoveryReference(copy)
     : copy;
@@ -179,6 +202,56 @@ function asUnknown(
   return new OutcomeUnknownError(ref, reason, outcome);
 }
 
+function acknowledgedLifecycleOutcome(
+  ref: AdapterRecoveryReference,
+): import("sandbar-adapter").OperationOutcome | undefined {
+  if (!ref.sandboxReference || !ref.lifecycle) return undefined;
+
+  const token = z
+    .object({
+      acknowledged: z.literal(true),
+      preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
+      processes: z.enum(["terminated", "preserved"]).optional(),
+      connections: z.literal("dropped").optional(),
+      completed: z.record(z.string(), z.json()).optional(),
+    })
+    .safeParse(ref.token);
+
+  if (!token.success) return undefined;
+  const completed = token.data.completed;
+
+  const rawObservation = completed
+    ? z.record(z.string(), z.json()).safeParse(completed.observation)
+    : undefined;
+
+  const observation = rawObservation?.success
+    ? SandboxInfoSchema.safeParse({ ...rawObservation.data, reference: ref.sandboxReference })
+    : undefined;
+
+  const value = OperationOutcome.safeParse({
+    kind: ref.kind,
+    status: observation?.success ? "completed" : "partial",
+    reference: ref.sandboxReference,
+    acknowledged: true,
+    ...(ref.kind === "sandbox_suspend"
+      ? {
+          preserve: completed?.preserve ?? token.data.preserve,
+          processes: completed?.processes ?? token.data.processes,
+          connections: completed?.connections ?? token.data.connections,
+        }
+      : completed
+        ? {
+            execution: completed.execution,
+            executionIdentity: completed.executionIdentity,
+            connections: completed.connections,
+          }
+        : {}),
+    observation: observation?.success ? observation.data : null,
+  });
+
+  return value.success ? value.data : undefined;
+}
+
 function unsupported(feature: string): never {
   throw new SandbarError("UNSUPPORTED", `${feature} is unsupported`);
 }
@@ -196,7 +269,7 @@ function abortWaiting(
   reason: AbortSignal["reason"],
   outcome?: import("sandbar-adapter").OperationOutcome,
 ): never {
-  throw new WaitAbortedError(ref, reason, outcome);
+  throw new WaitAbortedError(ref, reason, outcome ?? acknowledgedLifecycleOutcome(ref));
 }
 
 async function waitForSubmission<T>(
@@ -249,6 +322,8 @@ export type AdapterCapabilities = DirectCapabilities;
 
 export type RecoveredOperation =
   | AdapterOperation<AdapterSandbox, "create" | "snapshot_restore">
+  | AdapterOperation<SuspendResult, "sandbox_suspend">
+  | AdapterOperation<ResumeResult, "sandbox_resume">
   | AdapterOperation<RenewResult, "sandbox_renew">
   | AdapterOperation<SnapshotResult, "snapshot_capture">
   | AdapterOperation<AdapterVolume, "volume_create">
@@ -256,7 +331,39 @@ export type RecoveredOperation =
   | AdapterOperation<ImageBuildResult, "image_build">
   | AdapterOperation<ExecOutput, "exec">
   | AdapterOperation<DestroyValue, "destroy">
-  | AdapterOperation<void, "file_write">;
+  | AdapterOperation<void, "file_write" | "file_mkdir" | "file_remove">;
+
+function decodeSuspend(result: RuntimeResult, ref: AdapterRecoveryReference): SuspendResult {
+  if (result.kind !== "completed" || !ref.sandboxReference || ref.lifecycle?.action !== "suspend")
+    throw asUnknown(ref);
+  const value = SuspendResult.parse(result.value);
+  assertSandboxReference(value.reference, ref.sandboxReference);
+
+  if (
+    value.preserve !== ref.lifecycle.preserve ||
+    !["stopped", "suspended"].includes(value.observation.state)
+  )
+    throw asUnknown(ref, "Suspension evidence differs");
+
+  if (value.observation.reference)
+    assertSandboxReference(value.observation.reference, ref.sandboxReference);
+
+  return value;
+}
+
+function decodeResume(result: RuntimeResult, ref: AdapterRecoveryReference): ResumeResult {
+  if (result.kind !== "completed" || !ref.sandboxReference || ref.lifecycle?.action !== "resume")
+    throw asUnknown(ref);
+  const value = ResumeResult.parse(result.value);
+  assertSandboxReference(value.reference, ref.sandboxReference);
+
+  if (value.observation.state !== "running") throw asUnknown(ref, "Resume evidence differs");
+
+  if (value.observation.reference)
+    assertSandboxReference(value.observation.reference, ref.sandboxReference);
+
+  return value;
+}
 
 function decodeRenew(result: RuntimeResult, ref: AdapterRecoveryReference): RenewResult {
   if (
@@ -482,6 +589,7 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
               : undefined,
             resource: this.reference.resource,
             mounts: this.reference.mounts,
+            lifecycle: this.reference.lifecycle,
             renewal: this.reference.renewal,
             capture: this.reference.capture,
             token: this.reference.token,
@@ -652,7 +760,35 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
   }
 }
 
+// Shared only within one client/scope, never native execution-generation proof.
+const processControls = new WeakMap<AdapterDirectClient, Map<string, { active: boolean }>>();
+
+function processControl(client: AdapterDirectClient, sandboxId: string): { active: boolean } {
+  let controls = processControls.get(client);
+
+  if (!controls) {
+    controls = new Map();
+    processControls.set(client, controls);
+  }
+
+  let control = controls.get(sandboxId);
+
+  if (!control) {
+    control = { active: true };
+    controls.set(sandboxId, control);
+  }
+
+  return control;
+}
+
 export class AdapterSandbox {
+  private invalidateProcessControl(): void {
+    const controls = processControls.get(this.client);
+    const control = controls?.get(this.id);
+
+    if (control) control.active = false;
+    controls?.delete(this.id);
+  }
   #reference: SandboxReference | null;
   get reference(): SandboxReference | null {
     return this.#reference;
@@ -673,9 +809,16 @@ export class AdapterSandbox {
     this.#reference = reference ? freezeReference(reference) : null;
     instrument(this, "capabilities", client.telemetry, "sandbar.capabilities");
     instrument(this, "checkSnapshot", client.telemetry, "sandbar.snapshot.check");
+    instrument(this, "preview", client.telemetry, "sandbar.sandbox.preview");
     instrument(this, "inspect", client.telemetry, "sandbar.sandbox.inspect");
     instrument(this, "submitExec", client.telemetry, "sandbar.exec.submit", { effect: "possible" });
     instrument(this, "exec", client.telemetry, "sandbar.exec", { effect: "applied" });
+    instrument(this, "listFiles", client.telemetry, "sandbar.file.list");
+    instrument(this, "fileExists", client.telemetry, "sandbar.file.exists");
+    instrument(this, "makeDirectory", client.telemetry, "sandbar.file.mkdir", {
+      effect: "applied",
+    });
+    instrument(this, "removeFile", client.telemetry, "sandbar.file.remove", { effect: "applied" });
     instrument(this, "readFile", client.telemetry, "sandbar.file.read");
     instrument(this, "writeFile", client.telemetry, "sandbar.file.write", { effect: "applied" });
     instrument(this, "destroy", client.telemetry, "sandbar.sandbox.destroy", { effect: "applied" });
@@ -687,9 +830,55 @@ export class AdapterSandbox {
     start: (input: StartProcessInput, options: WaitOptions = {}): Promise<ProcessHandle> => {
       this.client.ensureOpen();
 
-      return startProcess(this.client, sandboxInput(this.id, this.reference), input, options);
+      const control = processControl(this.client, this.id);
+
+      return startProcess(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        input,
+        options,
+        () => control.active,
+      );
     },
   };
+  async submitSuspend(
+    options: WaitOptions = {},
+  ): Promise<AdapterOperation<SuspendResult, "sandbox_suspend">> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+
+    if (!this.reference) unsupported("Suspension without a verified sandbox reference");
+    this.invalidateProcessControl();
+
+    return this.client.submit(
+      "sandbox_suspend",
+      { sandbox: { id: this.id, reference: this.reference } },
+      decodeSuspend,
+      { ...options, sandboxId: this.id, sandboxReference: this.reference },
+    );
+  }
+  async suspend(options: WaitOptions = {}): Promise<SuspendResult> {
+    return (await this.submitSuspend(options)).wait(options);
+  }
+  async submitResume(
+    options: WaitOptions = {},
+  ): Promise<AdapterOperation<ResumeResult, "sandbox_resume">> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+
+    if (!this.reference) unsupported("Resumption without a verified sandbox reference");
+    this.invalidateProcessControl();
+
+    return this.client.submit(
+      "sandbox_resume",
+      { sandbox: { id: this.id, reference: this.reference } },
+      decodeResume,
+      { ...options, sandboxId: this.id, sandboxReference: this.reference },
+    );
+  }
+  async resume(options: WaitOptions = {}): Promise<ResumeResult> {
+    return (await this.submitResume(options)).wait(options);
+  }
   async submitRenew(
     input?: RenewRequest,
     options: WaitOptions = {},
@@ -732,6 +921,9 @@ export class AdapterSandbox {
     if (plan.status === "unsupported") throw new UnsupportedFeatureError("snapshot", [plan.reason]);
 
     if (plan.status !== "supported") throw new SandbarError("UNAVAILABLE", plan.reason, "none");
+
+    assertSignal(signal);
+    this.invalidateProcessControl();
 
     return this.client.submit(
       "snapshot_capture",
@@ -788,7 +980,18 @@ export class AdapterSandbox {
 
     return resolveSnapshot(caps.snapshots.capture, request, state);
   }
-  supports(feature: "inspect" | "exec" | "readFile" | "writeFile" | "destroy"): boolean {
+  supports(
+    feature:
+      | "inspect"
+      | "exec"
+      | "readFile"
+      | "writeFile"
+      | "destroy"
+      | "listFiles"
+      | "fileExists"
+      | "makeDirectory"
+      | "removeFile",
+  ): boolean {
     if (feature === "inspect") return !!this.client.session.inspect;
 
     if (feature === "exec")
@@ -797,6 +1000,14 @@ export class AdapterSandbox {
     if (feature === "readFile") return !!this.client.session.files?.read;
 
     if (feature === "writeFile") return !!this.client.session.files?.write;
+
+    if (feature === "listFiles") return !!this.client.session.files?.list;
+
+    if (feature === "fileExists") return !!this.client.session.files?.exists;
+
+    if (feature === "makeDirectory") return !!this.client.session.files?.makeDirectory;
+
+    if (feature === "removeFile") return !!this.client.session.files?.remove;
 
     return true;
   }
@@ -866,6 +1077,55 @@ export class AdapterSandbox {
       throw error;
     }
   }
+  /** Resolve access to an existing running sandbox; URL availability is not readiness. */
+  async preview(port: number, options: { signal?: AbortSignal } = {}): Promise<Preview> {
+    this.client.ensureOpen();
+
+    if (!PreviewPort.safeParse(port).success)
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Preview port must be an integer from 1 through 65535",
+      );
+
+    if (!this.client.session.preview) unsupported("preview");
+    assertSignal(options.signal);
+    const timeout = AbortSignal.timeout(30000);
+
+    const signal = AbortSignal.any([
+      this.client.signal,
+      ...(options.signal ? [options.signal] : []),
+      timeout,
+    ]);
+
+    try {
+      const result = await readWhileOpen(
+        this.client,
+        raceAbort(
+          this.client.session.preview(
+            { sandbox: sandboxInput(this.id, this.reference), port },
+            { signal, deadline: Date.now() + 30000 },
+          ),
+          signal,
+        ),
+      );
+
+      const parsed = PreviewResult.safeParse(result);
+
+      if (!parsed.success)
+        throw new SandbarError("INVALID_RESPONSE", "Invalid preview access response");
+
+      return parsed.data;
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (timeout.aborted) throw new SandbarError("TIMEOUT", "Preview access timed out");
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+
+      if (error instanceof SandbarError) throw error;
+      throw new SandbarError("UNAVAILABLE", "Preview access is unavailable");
+    }
+  }
   async submitExec(
     input: ExecInput | readonly string[],
     options: { signal?: AbortSignal } = {},
@@ -914,6 +1174,107 @@ export class AdapterSandbox {
       await internalMethod(this.submitExec)(input, options),
       options,
     );
+  }
+  /** Decode the complete bounded file as UTF-8, replacing malformed sequences and consuming its BOM. */
+  async readTextFile(path: string, options: ReadOptions = {}): Promise<string> {
+    return new TextDecoder().decode(await this.readFile(path, options));
+  }
+  /** Encode UTF-8 using the byte write's limits, cancellation and no-clobber default. */
+  async writeTextFile(
+    path: string,
+    text: string,
+    options: { overwrite?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JavaScript callers must not silently coerce non-text input during UTF-8 encoding.
+    if (typeof text !== "string")
+      throw new SandbarError("INVALID_ARGUMENT", "Expected text string");
+
+    await this.writeFile(path, new TextEncoder().encode(text), options);
+  }
+  async listFiles(path: string, options: ReadOptions = {}): Promise<FileEntry[]> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.list) unsupported("listFiles");
+    const list = files.list.bind(files);
+
+    return directoryEntries(
+      await directoryRead(
+        (ctx) => list({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+        this.client.signal,
+        options,
+      ),
+    );
+  }
+  async fileExists(path: string, options: ReadOptions = {}): Promise<boolean> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.exists) unsupported("fileExists");
+    const exists = files.exists.bind(files);
+
+    const value = await directoryRead(
+      (ctx) => exists({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+      this.client.signal,
+      options,
+    );
+
+    if (value !== true && value !== false)
+      throw new SandbarError("INVALID_RESPONSE", "Invalid entry existence result");
+
+    return value;
+  }
+  async makeDirectory(
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.fileMutation("file_mkdir", path, options);
+  }
+  async removeFile(
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.fileMutation("file_remove", path, options);
+  }
+  private async fileMutation(
+    kind: "file_mkdir" | "file_remove",
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal },
+  ): Promise<void> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+
+    if (kind === "file_remove" && path === "/")
+      throw new SandbarError("INVALID_ARGUMENT", "Cannot remove sandbox root");
+
+    const intent = validateResourceInput(
+      FileMutationIntent,
+      { path, recursive: options.recursive ?? false },
+      "Invalid filesystem request",
+    );
+
+    const op = await this.client.submit(
+      kind,
+      { sandbox: sandboxInput(this.id, this.reference), ...intent },
+      (result, ref) => {
+        if (
+          result.kind !== "completed" ||
+          !("acknowledged" in result.value) ||
+          result.value.acknowledged !== true
+        )
+          throw asUnknown(ref);
+      },
+      {
+        signal: options.signal,
+        sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
+        fileMutation: intent,
+      },
+    );
+
+    await waitFor(this.client.telemetry, op, options);
   }
   async readFile(path: string, options: ReadOptions = {}): Promise<Uint8Array> {
     this.client.ensureOpen();
@@ -972,6 +1333,10 @@ export class AdapterSandbox {
   async submitDestroy(
     options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
   ): Promise<AdapterOperation<import("sandbar-adapter").DestroyValue>> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+    this.invalidateProcessControl();
+
     const op = await this.client.submit<import("sandbar-adapter").DestroyValue>(
       "destroy",
       {
@@ -1010,6 +1375,7 @@ export type AdvancedOperationKind = OperationKind;
 export type AdvancedIdentity = { operationId: string; submissionId: string; invocationKey: string };
 
 export type AdvancedObservation = {
+  lifecycle?: LifecycleIntent;
   renewal?: RenewRequest;
   capture?: AdapterRecoveryReference["capture"];
   scope: Scope;
@@ -1037,9 +1403,11 @@ class BeforeSubmitError extends Error {
   }
 }
 
+const preparedLifecycles = new WeakMap<PreparedAdapterAttempt, LifecycleIntent>();
+
 const preparedRenewals = new WeakMap<PreparedAdapterAttempt, RenewRequest>();
 
-const dispatchedRenewals = new WeakSet<PreparedAdapterAttempt>();
+const dispatchedLifecycles = new WeakSet<PreparedAdapterAttempt>();
 
 export class PreparedAdapterAttempt {
   private used = false;
@@ -1049,10 +1417,18 @@ export class PreparedAdapterAttempt {
     private readonly kind: OperationKind,
     private readonly maxOutputBytes?: number,
   ) {
+    if (["sandbox_suspend", "sandbox_resume"].includes(kind))
+      preparedLifecycles.set(this, ResolvedLifecycleInput.parse(prepared.input).intent);
+
     if (kind === "sandbox_renew")
       preparedRenewals.set(this, {
         forSeconds: ResolvedRenewInput.parse(prepared.input).forSeconds,
       });
+  }
+  get lifecycle(): Readonly<LifecycleIntent> | undefined {
+    const intent = preparedLifecycles.get(this);
+
+    return intent ? { ...intent } : undefined;
   }
   /** Resolved renewal intent to persist in beforeSubmit and supply to operations.observe. */
   get renewal(): Readonly<RenewRequest> | undefined {
@@ -1111,7 +1487,8 @@ export class PreparedAdapterAttempt {
 
     if (!permitted) return null;
 
-    if (this.kind === "sandbox_renew") dispatchedRenewals.add(this);
+    if (["sandbox_renew", "sandbox_suspend", "sandbox_resume"].includes(this.kind))
+      dispatchedLifecycles.add(this);
     this.client.telemetry.submitted();
 
     const submissionWaitSignal =
@@ -1198,10 +1575,10 @@ export class AdapterDirectClient {
   readonly signal: AbortSignal;
   readonly sandboxes: {
     get: (reference: SandboxReference, options?: WaitOptions) => Promise<AdapterSandbox>;
-    checkCreate: (input: CreateInput) => Promise<Support<CreatePlan>>;
-    create: (input: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
+    checkCreate: (input?: CreateInput) => Promise<Support<CreatePlan>>;
+    create: (input?: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
     submitCreate: (
-      input: CreateInput,
+      input?: CreateInput,
       options?: { signal?: AbortSignal },
     ) => Promise<AdapterOperation<AdapterSandbox>>;
   };
@@ -1274,11 +1651,15 @@ export class AdapterDirectClient {
           ? AbortSignal.any([this.signal, options.signal])
           : this.signal;
 
-        if (kind === "sandbox_renew") {
-          const parsed = ResolvedRenewInput.partial({ forSeconds: true }).safeParse(input);
+        if (["sandbox_renew", "sandbox_suspend", "sandbox_resume"].includes(kind)) {
+          const parsed = (
+            kind === "sandbox_renew"
+              ? ResolvedRenewInput.partial({ forSeconds: true })
+              : LifecycleInput
+          ).safeParse(input);
 
           if (!parsed.success)
-            throw new SandbarError("INVALID_ARGUMENT", "Invalid renewal request");
+            throw new SandbarError("INVALID_ARGUMENT", "Invalid lifecycle mutation input");
           const renewal = parsed.data;
           assertResourceScope(renewal.sandbox.reference, {
             provider: this.provider,
@@ -1337,7 +1718,11 @@ export class AdapterDirectClient {
               "destroy",
               "exec",
               "file_write",
+              "file_mkdir",
+              "file_remove",
               "image_build",
+              "sandbox_suspend",
+              "sandbox_resume",
               "sandbox_renew",
               "snapshot_capture",
               "snapshot_restore",
@@ -1350,6 +1735,7 @@ export class AdapterDirectClient {
             sandboxId: z.string().min(1).max(512).optional(),
             sandboxReference: ReferenceSchema.shape.sandboxReference,
             resource: ResourceReference.optional(),
+            lifecycle: ReferenceSchema.shape.lifecycle,
             renewal: ReferenceSchema.shape.renewal,
             capture: CaptureExpectation.optional(),
             mounts: z.array(importMountSpec).max(32).optional(),
@@ -1368,6 +1754,17 @@ export class AdapterDirectClient {
           throw new SandbarError(
             "INVALID_ARGUMENT",
             "Renewal observation requires saved intent and identity",
+          );
+
+        if (
+          ["sandbox_suspend", "sandbox_resume"].includes(checked.kind) &&
+          (!checked.lifecycle ||
+            checked.kind !== `sandbox_${checked.lifecycle.action}` ||
+            !checked.sandboxReference)
+        )
+          throw new SandbarError(
+            "INVALID_ARGUMENT",
+            "Lifecycle observation requires saved intent and identity",
           );
         this.assertRecoverySandbox(checked);
         assertRecoveryResourceKind(checked.kind, checked.resource);
@@ -1388,9 +1785,17 @@ export class AdapterDirectClient {
             "volume_delete",
           ].includes(checked.kind) &&
             checked.sandboxId) ||
-          (["destroy", "exec", "file_write", "snapshot_capture", "sandbox_renew"].includes(
-            checked.kind,
-          ) &&
+          ([
+            "destroy",
+            "exec",
+            "file_write",
+            "file_mkdir",
+            "file_remove",
+            "snapshot_capture",
+            "sandbox_suspend",
+            "sandbox_resume",
+            "sandbox_renew",
+          ].includes(checked.kind) &&
             !checked.sandboxId) ||
           (["snapshot_restore", "snapshot_delete", "volume_delete"].includes(checked.kind) &&
             !checked.resource)
@@ -1417,6 +1822,7 @@ export class AdapterDirectClient {
                   ? sandboxInput(checked.sandboxId, checked.sandboxReference)
                   : undefined,
                 resource: checked.resource,
+                lifecycle: checked.lifecycle,
                 renewal: checked.renewal,
                 capture: checked.capture,
                 mounts: checked.mounts,
@@ -1529,15 +1935,15 @@ export class AdapterDirectClient {
       maxFileBytes: this.session.files ? fileReadLimit(this.session.files.maxBytes) : 0,
     });
   }
-  async checkCreate(input: CreateInput): Promise<Support<CreatePlan>> {
+  async checkCreate(input?: CreateInput): Promise<Support<CreatePlan>> {
     return this.checkCreateWithSignal(input, this.signal);
   }
   private async checkCreateWithSignal(
-    input: CreateInput,
+    input: CreateInput | undefined,
     signal: AbortSignal,
   ): Promise<Support<CreatePlan>> {
     this.ensureOpen();
-    const request = validateCreate(input);
+    const request = validateCreate(input, this.session.defaultImage);
     this.checkImageBinding(request);
 
     for (const mount of request.mounts ?? [])
@@ -1570,7 +1976,9 @@ export class AdapterDirectClient {
       ),
     );
   }
-  private checkImageBinding(request: CreateInput): void {
+  private checkImageBinding(
+    request: CreateInput & { environment: import("./resource").ImageInput },
+  ): void {
     if (
       request.environment.kind === "prepared" &&
       request.environment.binding &&
@@ -1580,10 +1988,10 @@ export class AdapterDirectClient {
       throw new SandbarError("FORBIDDEN", "Prepared image scope differs from this connection");
   }
   async submitCreate(
-    input: CreateInput,
+    input?: CreateInput,
     options: { signal?: AbortSignal } = {},
   ): Promise<AdapterOperation<AdapterSandbox>> {
-    const request = validateCreate(input);
+    const request = validateCreate(input, this.session.defaultImage);
     this.checkImageBinding(request);
 
     for (const mount of request.mounts ?? [])
@@ -1726,6 +2134,7 @@ export class AdapterDirectClient {
       capture?: z.infer<typeof CaptureExpectation>;
       mounts?: import("sandbar-adapter").MountSpec[];
       file?: { path: string; bytes: number };
+      fileMutation?: AdapterRecoveryReference["fileMutation"];
       maxOutputBytes?: number;
     } = {},
   ): Promise<AdapterOperation<T, K>> {
@@ -1746,10 +2155,12 @@ export class AdapterDirectClient {
       sandboxId: options.sandboxId,
       sandboxReference: options.sandboxReference,
       resource: options.resource,
+      lifecycle: preparedLifecycles.get(prepared),
       renewal: preparedRenewals.get(prepared),
       capture: options.capture,
       mounts: options.mounts,
       file: options.file,
+      fileMutation: options.fileMutation,
       maxOutputBytes: options.maxOutputBytes,
     });
 
@@ -1811,8 +2222,12 @@ export class AdapterDirectClient {
           reference,
         );
 
-      if (waiting.aborted && kind === "sandbox_renew" && !dispatchedRenewals.has(prepared)) {
-        throw new SandbarError("WAIT_ABORTED", "Waiting stopped before renewal dispatch", "none");
+      if (
+        waiting.aborted &&
+        ["sandbox_renew", "sandbox_suspend", "sandbox_resume"].includes(kind) &&
+        !dispatchedLifecycles.has(prepared)
+      ) {
+        throw new SandbarError("WAIT_ABORTED", "Waiting stopped before lifecycle dispatch", "none");
       }
 
       if (waiting.aborted) abortWaiting(reference, waiting.reason);
@@ -1833,6 +2248,25 @@ export class AdapterDirectClient {
 
     if (checked.kind !== reference.kind)
       throw asUnknown(reference, "Provider partial result does not match operation");
+
+    if (checked.kind === "sandbox_suspend" || checked.kind === "sandbox_resume") {
+      if (!reference.sandboxReference || !reference.lifecycle)
+        throw asUnknown(reference, "Saved lifecycle intent is missing");
+      assertSandboxReference(checked.reference, reference.sandboxReference);
+
+      if (checked.observation?.reference)
+        assertSandboxReference(checked.observation.reference, reference.sandboxReference);
+
+      if (
+        checked.kind === "sandbox_suspend" &&
+        checked.acknowledged &&
+        (reference.lifecycle.action !== "suspend" ||
+          checked.preserve !== reference.lifecycle.preserve)
+      )
+        throw asUnknown(reference, "Suspension profile differs");
+
+      return checked;
+    }
 
     if (checked.kind === "sandbox_renew") {
       if (!reference.sandboxReference || !reference.renewal)
@@ -1879,7 +2313,11 @@ export class AdapterDirectClient {
     try {
       await this.onReference?.(reference);
     } catch {
-      throw asUnknown(reference, "Operation reference persistence failed after submission");
+      throw asUnknown(
+        reference,
+        "Operation reference persistence failed after submission",
+        acknowledgedLifecycleOutcome(reference),
+      );
     }
   }
 
@@ -1928,6 +2366,20 @@ export class AdapterDirectClient {
         "Recovery renewal intent and identity are missing",
       );
 
+    if (
+      ["sandbox_suspend", "sandbox_resume"].includes(reference.kind) &&
+      (!reference.lifecycle ||
+        reference.kind !== `sandbox_${reference.lifecycle.action}` ||
+        !reference.sandboxReference)
+    )
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Lifecycle recovery requires saved intent and identity",
+      );
+
+    if (["file_mkdir", "file_remove"].includes(reference.kind) && !reference.fileMutation)
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery filesystem intent is missing");
+
     this.assertRecoverySandbox(reference);
     assertRecoveryResourceKind(reference.kind, reference.resource);
 
@@ -1951,9 +2403,17 @@ export class AdapterDirectClient {
       throw new SandbarError("INVALID_ARGUMENT", "Create reference cannot have a sandbox");
 
     if (
-      ["destroy", "exec", "file_write", "snapshot_capture", "sandbox_renew"].includes(
-        reference.kind,
-      ) &&
+      [
+        "destroy",
+        "exec",
+        "file_write",
+        "file_mkdir",
+        "file_remove",
+        "snapshot_capture",
+        "sandbox_suspend",
+        "sandbox_resume",
+        "sandbox_renew",
+      ].includes(reference.kind) &&
       !reference.sandboxId
     )
       throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox is missing");
@@ -1965,6 +2425,10 @@ export class AdapterDirectClient {
     };
 
     switch (reference.kind) {
+      case "sandbox_suspend":
+        return new AdapterOperation(this, reference, decodeSuspend, undefined, "sandbox_suspend");
+      case "sandbox_resume":
+        return new AdapterOperation(this, reference, decodeResume, undefined, "sandbox_resume");
       case "sandbox_renew":
         return new AdapterOperation(this, reference, decodeRenew, undefined, "sandbox_renew");
       case "snapshot_capture":
@@ -2091,6 +2555,19 @@ export class AdapterDirectClient {
           undefined,
           "destroy",
         );
+      case "file_mkdir":
+      case "file_remove":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
+
+            if (!("acknowledged" in value) || value.acknowledged !== true) throw asUnknown(ref);
+          },
+          undefined,
+          reference.kind,
+        );
       case "file_write":
         return new AdapterOperation(
           this,
@@ -2110,6 +2587,7 @@ export class AdapterDirectClient {
   close(): Promise<void> {
     if (!this.closePromise) {
       this.closed = true;
+      processControls.delete(this);
       this.closePromise = this.connection.close();
     }
 

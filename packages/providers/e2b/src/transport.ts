@@ -1,6 +1,8 @@
 import {
   Sandbox,
   SandboxNotFoundError,
+  AuthenticationError,
+  InvalidArgumentError,
   Template,
   Volume,
   CommandExitError,
@@ -19,6 +21,13 @@ export const E2B_ENDPOINT = "https://api.e2b.app";
 
 export const MAX_BYTES = 1_048_576;
 
+/** A positive guest rejection, never inferred from error text. */
+export class E2BDirectoryRejected extends AdapterError {
+  constructor() {
+    super("INVALID_ARGUMENT", "E2B path is not a directory");
+  }
+}
+
 class NativeReadError extends AdapterError {
   constructor(readonly statusCode: number) {
     super(
@@ -28,6 +37,21 @@ class NativeReadError extends AdapterError {
           ? "FORBIDDEN"
           : "UNAVAILABLE",
       `E2B state read failed (${statusCode})`,
+    );
+  }
+}
+
+export class E2BLifecycleRejected extends AdapterError {
+  constructor(status: number) {
+    super(
+      status === 404
+        ? "NOT_FOUND"
+        : [401, 403].includes(status)
+          ? "FORBIDDEN"
+          : status === 429
+            ? "RATE_LIMIT"
+            : "INVALID_ARGUMENT",
+      `E2B lifecycle mutation rejected (${status})`,
     );
   }
 }
@@ -78,6 +102,8 @@ export type E2BRecord = {
   metadata: Record<string, string>;
   state: string;
   endAt?: string | null;
+  domain?: string;
+  allowPublicTraffic?: boolean;
   lifecycle?: { onTimeout?: string; autoResume?: boolean };
   envdVersion?: string;
   /** Native detail proves guest IO can attach without resuming or changing lifetime. */
@@ -129,6 +155,7 @@ export type E2BTransport = {
     metadata: Record<string, string>;
     timeoutMs: number;
     allowInternetAccess: boolean;
+    allowPublicTraffic?: boolean;
     volumeMounts?: Record<string, string>;
     signal?: AbortSignal;
   }): Promise<string>;
@@ -138,6 +165,8 @@ export type E2BTransport = {
     limit: number,
     nextToken?: string,
   ): Promise<{ items: E2BRecord[]; nextToken?: string }>;
+  suspend?: (id: string, signal: AbortSignal) => Promise<void>;
+  resume?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   renew?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
@@ -158,6 +187,9 @@ export type E2BTransport = {
     signal?: AbortSignal,
   ): Promise<{ bytes: Uint8Array; truncated: boolean }>;
   write(id: string, path: string, bytes: Uint8Array): Promise<void>;
+  exists?: (id: string, path: string, signal: AbortSignal) => Promise<boolean>;
+  makeDirectory?: (id: string, path: string, signal: AbortSignal) => Promise<void>;
+  removeEntry?: (id: string, path: string, signal: AbortSignal) => Promise<void>;
   remove(id: string, path: string): Promise<void>;
   close(): void;
 };
@@ -253,13 +285,35 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     state: z.string(),
     envdVersion: z.string().optional(),
     envdAccessToken: z.string().min(1).max(8192).optional(),
-    domain: z.string().optional(),
+    domain: z.string().nullish(),
+    network: z.object({ allowPublicTraffic: z.boolean().optional() }).optional(),
     lifecycle: z
       .object({ onTimeout: z.string().optional(), autoResume: z.boolean().optional() })
       .optional(),
     endAt: z.string().nullable().optional(),
     volumeMounts: z.array(z.object({ name: z.string(), path: z.string() })).optional(),
   });
+
+  async function lifecyclePost(
+    path: string,
+    body: { memory: true } | { timeout: number },
+    signal: AbortSignal,
+  ): Promise<void> {
+    const response = await fetcher(`${E2B_ENDPOINT}${path}`, {
+      method: "POST",
+      headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      redirect: "error",
+      signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+    });
+
+    void response.body?.cancel().catch(() => undefined);
+
+    if ([400, 401, 403, 404, 422, 429].includes(response.status))
+      throw new E2BLifecycleRejected(response.status);
+
+    if (!response.ok) throw new AdapterError("UNAVAILABLE", "E2B lifecycle response uncertain");
+  }
 
   async function attach(
     id: string,
@@ -271,14 +325,23 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
     if (detail.sandboxID !== id) throw new AdapterError("CONFLICT", "E2B identity differs");
 
-    if (
-      detail.state !== "running" ||
-      detail.lifecycle?.autoResume !== false ||
-      !detail.envdAccessToken ||
-      !detail.envdVersion ||
-      detail.domain !== "e2b.app"
-    )
-      throw new AdapterError("UNAVAILABLE", "E2B read-only guest attachment is unavailable");
+    if (detail.state !== "running")
+      throw new AdapterError("UNAVAILABLE", "E2B guest attachment requires running compute");
+
+    if (detail.lifecycle?.autoResume !== false)
+      throw new AdapterError(
+        "UNAVAILABLE",
+        "E2B guest attachment auto-resume policy is unverified",
+      );
+
+    if (!detail.envdAccessToken)
+      throw new AdapterError("UNAVAILABLE", "E2B guest attachment token is unavailable");
+
+    if (!detail.envdVersion)
+      throw new AdapterError("UNAVAILABLE", "E2B guest attachment version is unavailable");
+
+    if ((detail.domain ?? opts.domain) !== opts.domain)
+      throw new AdapterError("UNAVAILABLE", "E2B guest attachment routing is unsupported");
 
     return new Sandbox({
       ...opts,
@@ -286,7 +349,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       sandboxId: id,
       envdVersion: detail.envdVersion,
       envdAccessToken: detail.envdAccessToken,
-      sandboxDomain: detail.domain,
+      sandboxDomain: detail.domain ?? opts.domain,
     });
   }
 
@@ -308,8 +371,10 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
           info.lifecycle?.autoResume === false &&
           !!info.envdAccessToken &&
           !!info.envdVersion &&
-          info.domain === "e2b.app",
+          (info.domain ?? opts.domain) === opts.domain,
         endAt: info.endAt,
+        domain: info.domain ?? opts.domain,
+        allowPublicTraffic: info.network?.allowPublicTraffic,
         lifecycle: info.lifecycle,
         volumeMounts: info.volumeMounts,
       };
@@ -632,6 +697,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         timeoutMs: input.timeoutMs,
         lifecycle: { onTimeout: "kill", autoResume: false },
         allowInternetAccess: input.allowInternetAccess,
+        network: { allowPublicTraffic: input.allowPublicTraffic ?? false },
         volumeMounts: input.volumeMounts,
         signal: input.signal,
       });
@@ -658,6 +724,16 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       }));
 
       return { items, nextToken: paginator.nextToken };
+    },
+    async suspend(id, signal) {
+      await lifecyclePost(`/sandboxes/${encodeURIComponent(id)}/pause`, { memory: true }, signal);
+    },
+    async resume(id, seconds, signal) {
+      await lifecyclePost(
+        `/v2/sandboxes/${encodeURIComponent(id)}/connect`,
+        { timeout: seconds },
+        signal,
+      );
     },
     async renew(id, seconds, signal) {
       const response = await fetcher(
@@ -762,6 +838,14 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
             return confirmedExit();
           },
           wait: () => wait,
+          async terminate(ctx) {
+            const killed = await sandbox.commands.kill(handle.pid, {
+              signal: ctx.signal,
+              requestTimeoutMs: Math.max(1, ctx.deadline - Date.now()),
+            });
+
+            return { status: killed ? "requested" : "not-found" };
+          },
           detach: disconnect,
         };
       } finally {
@@ -817,6 +901,36 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       } catch (error) {
         throw new E2BWriteFailure(classifyWriteFailure(error, stage, httpStatus));
       }
+    },
+    async exists(id, path, signal) {
+      // Attachment absence is a sandbox error, never a missing guest entry.
+      const sandbox = await attach(id, undefined, signal);
+      signal.throwIfAborted();
+
+      try {
+        return await sandbox.files.exists(path, { requestTimeoutMs: 30_000, signal });
+      } catch (error) {
+        if (error instanceof AuthenticationError)
+          throw new AdapterError("FORBIDDEN", "E2B filesystem access rejected");
+        throw new AdapterError("UNAVAILABLE", "E2B entry existence read failed");
+      }
+    },
+    async makeDirectory(id, path, signal) {
+      const sandbox = await attach(id, undefined, signal);
+      signal.throwIfAborted();
+
+      try {
+        // The native call always creates ancestors; adapter preflight requires recursive:true.
+        await sandbox.files.makeDir(path, { requestTimeoutMs: 30_000, signal });
+      } catch (error) {
+        if (error instanceof InvalidArgumentError) throw new E2BDirectoryRejected();
+        throw error;
+      }
+    },
+    async removeEntry(id, path, signal) {
+      const sandbox = await attach(id, undefined, signal);
+      signal.throwIfAborted();
+      await sandbox.files.remove(path, { requestTimeoutMs: 30_000, signal });
     },
     async remove(id, path) {
       const sandbox = await attach(id);

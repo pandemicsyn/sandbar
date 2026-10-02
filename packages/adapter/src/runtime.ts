@@ -1,3 +1,4 @@
+import { FileMutationIntent, FileMutationValue } from "./files";
 import {
   checkCreate,
   stateCapabilities,
@@ -17,7 +18,7 @@ import {
   VolumeCreateInput,
   VolumeInfo,
 } from "./resources";
-import { RenewInput, RenewResult } from "./lifecycle";
+import { LifecycleInput, SuspendResult, ResumeResult, RenewInput, RenewResult } from "./lifecycle";
 import { z } from "zod";
 import { CreateSandboxInput, ExecRequest, FilePath } from "./portable";
 import {
@@ -51,6 +52,8 @@ export type RuntimeSession = Omit<
   | "exec"
   | "files"
   | "imageBuild"
+  | "suspend"
+  | "resume"
   | "renew"
   | "snapshotCapture"
   | "snapshotRestore"
@@ -59,6 +62,8 @@ export type RuntimeSession = Omit<
   | "volumeDelete"
 > & {
   create: unknown;
+  suspend?: unknown;
+  resume?: unknown;
   renew?: unknown;
   snapshotCapture?: unknown;
   snapshotRestore?: unknown;
@@ -72,6 +77,10 @@ export type RuntimeSession = Omit<
     maxBytes: number;
     read?: NonNullable<AdapterSession["files"]>["read"];
     write?: unknown;
+    list?: NonNullable<AdapterSession["files"]>["list"];
+    exists?: NonNullable<AdapterSession["files"]>["exists"];
+    makeDirectory?: unknown;
+    remove?: unknown;
   };
 };
 
@@ -80,7 +89,11 @@ export type OperationKind =
   | "destroy"
   | "exec"
   | "file_write"
+  | "file_mkdir"
+  | "file_remove"
   | "image_build"
+  | "sandbox_suspend"
+  | "sandbox_resume"
   | "sandbox_renew"
   | "snapshot_capture"
   | "snapshot_restore"
@@ -90,11 +103,13 @@ export type OperationKind =
 
 export type OperationInput =
   | import("./resources").DestroyInput
+  | import("./lifecycle").LifecycleInput
   | import("./lifecycle").RenewInput
   | CreateInput
   | ImageBuildInput
   | ExecInput
   | FileWriteInput
+  | import("./files").FileMutationInput
   | Sandbox
   | import("./resources").SnapshotCaptureInput
   | import("./resources").SnapshotRestoreInput
@@ -104,7 +119,10 @@ export type OperationInput =
 export type SpecialOutcome = Pending | Unknown | Rejected;
 
 export type OperationResult =
+  | import("./files").FileMutationValue
   | import("./index").CreateValue
+  | import("./lifecycle").SuspendResult
+  | import("./lifecycle").ResumeResult
   | import("./lifecycle").RenewResult
   | DestroyValue
   | ExecValue
@@ -342,6 +360,10 @@ async function validateValue(
 
   if (kind === "create" || kind === "snapshot_restore") return CreateValueSchema.parse(value);
 
+  if (kind === "sandbox_suspend") return SuspendResult.parse(value);
+
+  if (kind === "sandbox_resume") return ResumeResult.parse(value);
+
   if (kind === "sandbox_renew") return RenewResult.parse(value);
 
   if (kind === "snapshot_capture") return SnapshotCaptureValue.parse(value);
@@ -354,6 +376,8 @@ async function validateValue(
   if (kind === "image_build") return ImageBuildValueSchema.parse(value);
 
   if (kind === "destroy") return DestroyValueSchema.parse(value);
+
+  if (kind === "file_mkdir" || kind === "file_remove") return FileMutationValue.parse(value);
 
   if (kind === "file_write") return WriteValueSchema.parse(value);
   const parsed = ExecValueSchema.parse(value);
@@ -443,6 +467,12 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
   let op: unknown;
 
   switch (kind) {
+    case "sandbox_suspend":
+      op = session.suspend;
+      break;
+    case "sandbox_resume":
+      op = session.resume;
+      break;
     case "sandbox_renew":
       op = session.renew;
       break;
@@ -473,6 +503,12 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
     case "exec":
       op = session.exec;
       break;
+    case "file_mkdir":
+      op = session.files?.makeDirectory;
+      break;
+    case "file_remove":
+      op = session.files?.remove;
+      break;
     case "file_write":
       op = session.files?.write;
       break;
@@ -489,8 +525,8 @@ function checkCapability(
   kind: OperationKind,
   input: OperationInput,
 ): OperationInput {
-  if (kind === "sandbox_renew") {
-    const value = RenewInput.parse(input);
+  if (["sandbox_renew", "sandbox_suspend", "sandbox_resume"].includes(kind)) {
+    const value = kind === "sandbox_renew" ? RenewInput.parse(input) : LifecycleInput.parse(input);
     assertResourceScope(value.sandbox.reference, {
       provider: value.sandbox.reference.provider,
       scope: session.scope,
@@ -570,6 +606,18 @@ function checkCapability(
       throw new AdapterError("UNSUPPORTED", "Requested command or output limit is unsupported");
 
     return request;
+  }
+
+  if (kind === "file_mkdir" || kind === "file_remove") {
+    const request = FileMutationIntent.extend({ sandbox: SandboxSchema }).parse(input);
+
+    if (kind === "file_remove" && request.path.split("/").every((segment) => segment === ""))
+      throw new AdapterError("INVALID_ARGUMENT", "Cannot remove sandbox root");
+
+    return {
+      ...request,
+      path: request.path.split("/").filter(Boolean).join("/").replace(/^/, "/"),
+    };
   }
 
   if (kind === "file_write") {
@@ -841,6 +889,7 @@ export async function observeOperation(
     sandbox?: Sandbox;
     resource?: import("./state").ResourceReference;
     mounts?: import("./state").MountSpec[];
+    lifecycle?: import("./lifecycle").LifecycleIntent;
     renewal?: import("./lifecycle").RenewRequest;
     capture?: import("./state").SnapshotCaptureInput["expectation"];
     token?: Json;

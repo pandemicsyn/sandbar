@@ -5,20 +5,19 @@ description: Connect to E2B with an API key, select a template, and use the test
 
 Import `e2b` from `sandbar-sdk/e2b`. The built-in adapter uses the E2B API key and public `base` template by default.
 
-E2B also supports [finite text streaming](/docs/guides/text-streaming/) through `sandbox.processes.start()`. Separate stdout/stderr text, confirmed zero/nonzero exit and prompt local detach use bounded queues and a cumulative output budget. No process runtime deadline, binary streaming or remote process kill is provided. Live streaming validation remains unrun.
+E2B also supports [finite text streaming](/docs/guides/text-streaming/) through `sandbox.processes.start()`. Separate stdout/stderr text, confirmed zero/nonzero exit and prompt local detach use bounded queues and a cumulative output budget. Active local handles also support native SIGKILL termination with an explicit PID-reuse race; request acknowledgement is separate from confirmed exit. No process runtime deadline or binary streaming is provided. Live streaming validation remains unrun.
 
 ```ts
-import { Image, Sandbar } from "sandbar-sdk";
+import { Sandbar } from "sandbar-sdk";
 import { e2b } from "sandbar-sdk/e2b";
 
 // Provider setup: adapter credentials, region/template and prepared image.
 const client = await Sandbar.connect(
   e2b({ apiKey: process.env.E2B_API_KEY!, lifecycle: { lifetimeSeconds: 600 } }),
 );
-const preparedImage = "base";
 
 try {
-  const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
+  const box = await client.sandboxes.create();
   try {
     await box.exec(["/bin/sh", "-c", "printf ready"]);
     const renewed = await box.renew();
@@ -44,9 +43,11 @@ Set `E2B_API_KEY` before running this on the server. `E2B_API_ID` is not require
 | `timeoutSeconds`            | `300`    | Native sandbox lifetime, from 60 to 3,600 seconds.                                   |
 | `teamId`                    | Omitted  | Optional verified team scope.                                                        |
 
-For an owned template, configure its selector on the connection and pass it to `Image.prepared(...)`. Supported names are untagged or use `:default`; arbitrary named tags and public aliases are outside this integration's current scope.
+For an owned template, configure its selector once with `templateId`. Supported names are untagged or use `:default`; arbitrary named tags and public aliases are outside this integration's current scope.
 
 Without `teamId`, Sandbar verifies the API key with an authenticated read and binds recovery to that key's scope. Rotating the key changes scope. With `teamId`, Sandbar verifies the team; this allows same-team key rotation without changing authority. Switching scope modes requires a separate connection.
+
+`create()`, `create({ labels: { job: "report" } })`, `checkCreate()` and `submitCreate()` use `templateId`, including its existing `base` default. An explicit per-call `environment` wins for that call only. Invalid or unavailable overrides never fall back to `base`; scoped prepared images retain scope checks. Omitted networking stays blocked. Default-creation live acceptance remains unrun.
 
 ## Files and commands
 
@@ -65,7 +66,7 @@ Destroy each sandbox explicitly, then close the client. Native timeout is a fall
 The application workflow is the same for both built-in adapters:
 
 ```ts
-const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
+const box = await client.sandboxes.create();
 await box.exec(["/bin/sh", "-c", "printf ready"]);
 const renewed = await box.renew();
 await box.renew({ forSeconds: 61 });
@@ -81,7 +82,7 @@ Both mappings require running compute. E2B also requires known native kill-on-ti
 
 `RenewResult.requested.forSeconds` records the resolved native setting, `acknowledged: true` confirms provider acceptance, and `observation` is current metadata or `null` if the follow-up read failed. A lost ACK stays `OUTCOME_UNKNOWN` even if a later deadline looks right. `submitRenew()` and `client.recover(savedOperationReference)` use existing typed recovery; observation never sends another renewal POST. Caller cancellation before dispatch has no effect; after possible dispatch it stops local waiting with the recovery reference. Persist ordinary sandbox references in your own trusted store, and save result metadata separately when useful.
 
-Renewal has deterministic native-boundary and packed Node/Bun coverage. The maintained `lifecycle-renew` live scenario is not run. Sandbar suspend/resume methods remain a later slice; the native suspension clocks above describe provider behavior.
+Renewal has deterministic native-boundary and packed Node/Bun coverage. The maintained `lifecycle-renew` live scenario is not run. Sandbar suspend/resume methods use the native policies below; the E2B lifecycle case passed at `26f516d` with confirmed cleanup, retaining the earlier failures described below.
 
 ## Runtime snapshots and volumes
 
@@ -97,7 +98,7 @@ Private-beta volume create, inspect, list and owned deletion are mapped; names a
 
 Persist `sandbox.reference` from create, restore or recovered results, then use `freshClient.sandboxes.get(savedReference)` to reopen the same native compute. `inspect()` reports fresh state, native state, local observation time and available deadline/policy facts. Reopening never creates, resumes or extends lifetime; inactive compute remains inactive and guest calls require running state. Unknown expiry is not unlimited lifetime, and elapsed expiry does not prove deletion. Native absence, forbidden access, unavailable reads and identity/configuration conflict remain distinct errors.
 
-References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Configured renewal is available; suspension/resumption remain later slices.
+References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its new live workflow remains not-run. Configured renewal is available; native suspension/resumption are available on eligible compute.
 
 E2B same-team key rotation requires configured `teamId`; API-key-scoped references reject rotation. Keep the original configured template. Running deadlines use native `endAt`; paused resources ignore stale session deadlines and report documented indefinite paused retention. Exec/files attach through authenticated detail and a local pinned client, requiring explicit `autoResume: false`, a guest token and trusted routing. Missing or changed guest policy fails unavailable before guest IO. There is no implicit connect POST. An external policy change after the check remains a documented native race.
 
@@ -106,3 +107,25 @@ E2B same-team key rotation requires configured `teamId`; API-key-scoped referenc
 `deadlineSeconds` defaults to 300. The pinned `e2b@2.51.0` client receives this value in milliseconds as foreground RPC `timeoutMs` and handshake `requestTimeoutMs`; the handshake timer clears when a PID arrives. This establishes observation deadlines, without a verified remote command-termination guarantee. A command may continue after RPC observation ends. Sandbar polls its original status/output files without replaying submission; setup, polling and output reads mean this is not a total SDK wait budget.
 
 Use an explicit caller `signal` to stop local waiting. Neither a local abort nor an RPC timeout implicitly kills compute or changes the independent sandbox `timeoutSeconds`. A valid exit marker followed by failed output retrieval can still leave the public result pending or unknown. See [execution and waiting timeouts](/docs/guides/resources/#execution-and-waiting-timeouts). Offline fixtures exercise the pinned client timers and no-kill request paths; they do not prove deployed envd termination.
+
+## Suspend and resume
+
+**Live confirmation passed.** The maintained Bun `lifecycle-suspend-resume` case passed at `26f516d` on October 2, 2026 with confirmed owned cleanup and client close. It verified inactive fresh-process reopening without implicit wake, the same identity/files, preserved RAM nonce and an advancing counter after explicit resume. Earlier failures at `6796b30` (guest routing) and `cb39884` (missing mount facts) remain recorded. This pass covers the private-state mapping, not external storage or remote connection continuity.
+
+Configure a minimum guarantee once in adapter setup, then use the same application calls:
+
+```ts
+const suspended = await box.suspend();
+// Save box.reference in your trusted store, then close the original connection.
+const reopened = await freshClient.sandboxes.get(savedReference); // stays inactive
+const resumed = await reopened.resume();
+await reopened.destroy(); // explicit cleanup of the same native sandbox
+```
+
+`e2b({ apiKey, teamId, templateId: "base", lifecycle: { suspension: { preserve: "filesystem" } } })` uses native `memory: true` pause. Its filesystem-plus-memory default satisfies either filesystem or memory minimum. Filesystem-only pause is deferred. Only running compute with known kill-on-timeout/auto-resume-off policy qualifies. Known nonempty native mounts reject `UNSUPPORTED`; absent mount metadata stays unknown and does not block preservation of the private root filesystem and RAM. Native mount enumeration does not prove all guest storage is local. External storage flush, durability, atomic consistency and remote connection continuity are excluded; changed or unknown lifecycle policy still rejects before mutation. Pausing preserves process memory and drops existing sockets; reconnect application sockets after resumption.
+
+Paused state has indefinite native retention and requires explicit cleanup; its stale running-session `endAt` is not a retention deadline. Explicit `resume()` sends one v2 connect from paused with the current adapter's resolved initial lifetime (300 seconds by default, or `lifecycle.lifetimeSeconds`). It sends no reboot override or second renewal. Execution remains `unknown`: neither saved receipts nor PIDs prove that an external actor preserved the original pause provenance. `get()`, `inspect()`, exec and files never resume implicitly. Missing, expired or deleted state is `NOT_FOUND`, with no replacement allocation.
+
+Both operations have one dispatch stage and no automatic retry or inverse action. Already inactive suspend and already running resume reject `CONFLICT`; transitional resources reject `UNAVAILABLE`. ACK plus a target-state read establishes completion. An acknowledged partial error retains native preservation facts even if the later read fails; ACK alone does not certify target state. A lost response, 409 or 503 stays uncertain even if a later read matches the target. Use the error's recovery reference to observe without replay. Applications serialize lifecycle changes across external controllers.
+
+See the [compiled same-workflow example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-suspend-resume.ts). Deterministic native-boundary and packed Node/Bun checks cover this mapping; live qualification is recorded above. Existing snapshot requirements retain their exact matching semantics.

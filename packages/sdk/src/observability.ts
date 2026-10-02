@@ -200,6 +200,8 @@ const operationKinds = new Set([
   "exec",
   "destroy",
   "file_write",
+  "file_mkdir",
+  "file_remove",
   "image_build",
   "snapshot_capture",
   "snapshot_restore",
@@ -241,6 +243,10 @@ function callType(name: string): string | undefined {
   if (["sandbar.image.build", "sandbar.image.submit_build"].includes(name)) return "image_build";
 
   if (name === "sandbar.file.write") return "file_write";
+
+  if (name === "sandbar.file.mkdir") return "file_mkdir";
+
+  if (name === "sandbar.file.remove") return "file_remove";
 
   if (name === "sandbar.sandbox.destroy") return "destroy";
 

@@ -32,6 +32,7 @@ function fixture() {
   let retainedGeneration: string | undefined;
   const createRequests: { templateId: string; allowInternetAccess: boolean }[] = [];
   let createObservation: "missing" | "id" | "scope" | "submission" | "operation" | undefined;
+  let observedVisibility: "missing" | boolean | undefined;
   let extraTag = false;
   let postCaptureRead: (() => void) | undefined;
   let inventoryBarrier: (() => Promise<void>) | undefined;
@@ -90,6 +91,7 @@ function fixture() {
         templateId: input.templateId.split(":")[0]!,
         metadata: input.metadata,
         state: "running",
+        allowPublicTraffic: input.allowPublicTraffic,
         envdVersion: "0.5.1",
         volumeMounts: modes.omitMounts
           ? []
@@ -109,6 +111,12 @@ function fixture() {
       const box = boxes.get(id);
 
       if (!box || createObservation === "missing") return null;
+
+      if (observedVisibility !== undefined)
+        return {
+          ...box,
+          allowPublicTraffic: observedVisibility === "missing" ? undefined : observedVisibility,
+        };
 
       if (createObservation === "id") return { ...box, id: "other_box" };
 
@@ -252,10 +260,11 @@ function fixture() {
     apiKey = "fixture-key",
     onReference?: (ref: AdapterRecoveryReference) => void,
     teamId?: string,
+    access: "protected" | "public" = "protected",
   ) =>
     Sandbar.connect({
       adapter: createE2BAdapter(() => transport),
-      config: teamId ? { teamId } : {},
+      config: teamId ? { teamId, preview: { access } } : { preview: { access } },
       credentials: { apiKey },
       onReference,
     });
@@ -294,6 +303,9 @@ function fixture() {
     },
     createObservation(value: typeof createObservation) {
       createObservation = value;
+    },
+    observedVisibility(value: typeof observedVisibility) {
+      observedVisibility = value;
     },
   };
 }
@@ -1001,6 +1013,101 @@ test("E2B unsigned capture tokens cannot acquire owned snapshot references durin
   }
 });
 
+for (const access of ["protected", "public"] as const) {
+  for (const observation of ["missing", "opposite"] as const) {
+    test(`E2B create retains acknowledged identity and original ${access} visibility after ${observation} detail`, async () => {
+      const f = fixture();
+      const expected = access === "public";
+      f.observedVisibility(observation === "missing" ? "missing" : !expected);
+      const client = await f.connect("fixture-key", undefined, undefined, access);
+
+      try {
+        const operation = await client.sandboxes.submitCreate({
+          environment: Image.prepared("base"),
+        });
+
+        const failure = await operation.wait().catch((error) => error);
+
+        if (!(failure instanceof OutcomeUnknownError)) throw new Error("Expected unknown create");
+        expect(failure.reference.token).toMatchObject({
+          sandboxId: "box_1",
+          allowPublicTraffic: expected,
+        });
+        f.transport.list = async () => {
+          throw new Error("Known create recovery must read the acknowledged ID directly");
+        };
+
+        const reopened = await f.connect(
+          "fixture-key",
+          undefined,
+          undefined,
+          access === "public" ? "protected" : "public",
+        );
+
+        try {
+          await expect((await reopened.recover(failure.reference)).wait()).rejects.toMatchObject({
+            code: "OUTCOME_UNKNOWN",
+          });
+          f.observedVisibility(undefined);
+          const recovered = await (await reopened.recover(failure.reference)).wait();
+          expect(recovered).toMatchObject({ id: "box_1" });
+          expect(f.calls.create).toBe(1);
+          expect(f.calls.kill).toBe(0);
+        } finally {
+          await reopened.close();
+        }
+      } finally {
+        await client.close();
+      }
+    });
+
+    test(`E2B restore retains acknowledged identity and original ${access} visibility after ${observation} detail`, async () => {
+      const f = fixture();
+      const expected = access === "public";
+      const client = await f.connect("fixture-key", undefined, undefined, access);
+
+      try {
+        const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+        const capture = await source.snapshot();
+        f.observedVisibility(observation === "missing" ? "missing" : !expected);
+
+        const failure = await capture.snapshot
+          .restore({ networkPolicy: "blocked" })
+          .catch((error) => error);
+
+        if (!(failure instanceof OutcomeUnknownError))
+          throw new Error("Expected unknown restore", { cause: failure });
+        expect(failure.reference.token).toMatchObject({
+          sandboxId: "box_2",
+          allowPublicTraffic: expected,
+        });
+
+        const reopened = await f.connect(
+          "fixture-key",
+          undefined,
+          undefined,
+          access === "public" ? "protected" : "public",
+        );
+
+        try {
+          await expect((await reopened.recover(failure.reference)).wait()).rejects.toMatchObject({
+            code: "OUTCOME_UNKNOWN",
+          });
+          f.observedVisibility(undefined);
+          const recovered = await (await reopened.recover(failure.reference)).wait();
+          expect(recovered).toMatchObject({ id: "box_2" });
+          expect(f.calls.create).toBe(2);
+          expect(f.calls.kill).toBe(0);
+        } finally {
+          await reopened.close();
+        }
+      } finally {
+        await client.close();
+      }
+    });
+  }
+}
+
 for (const mode of ["missing", "id", "scope", "submission", "operation"] as const) {
   test(`E2B ordinary create refuses unconfirmed native observation: ${mode}`, async () => {
     const f = fixture();
@@ -1019,6 +1126,84 @@ for (const mode of ["missing", "id", "scope", "submission", "operation"] as cons
     }
   });
 }
+
+test("E2B pre-preview tokenless create recovers original public visibility without replay", async () => {
+  const f = fixture();
+  f.observedVisibility("missing");
+  const client = await f.connect();
+
+  try {
+    const operation = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+
+    const {
+      token: _token,
+      tokenVersion: _version,
+      ...legacy
+    } = structuredClone(operation.reference);
+
+    const reopened = await f.connect();
+
+    try {
+      for (const visibility of ["missing", false] as const) {
+        f.observedVisibility(visibility);
+        await expect((await reopened.recover(legacy)).wait()).rejects.toMatchObject({
+          code: "OUTCOME_UNKNOWN",
+        });
+      }
+
+      f.observedVisibility(true);
+      expect(await (await reopened.recover(legacy)).wait()).toMatchObject({ id: "box_1" });
+      expect(f.calls.create).toBe(1);
+      expect(f.calls.kill).toBe(0);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B pre-preview version-1 restore recovers original public visibility without replay", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const snapshot = (await source.snapshot()).snapshot;
+    f.modes.loseRestore = true;
+    const operation = await snapshot.submitRestore({ networkPolicy: "blocked" });
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    const legacy = structuredClone(operation.reference);
+    legacy.token = z
+      .object({
+        selector: z.string(),
+        state: z.enum(["uncertain", "accepted", "rejected"]),
+        sandboxId: z.string().optional(),
+      })
+      .parse(legacy.token);
+    expect(legacy.tokenVersion).toBe(1);
+    const reopened = await f.connect();
+
+    try {
+      for (const visibility of ["missing", false] as const) {
+        f.observedVisibility(visibility);
+        await expect((await reopened.recover(legacy)).wait()).rejects.toMatchObject({
+          code: "OUTCOME_UNKNOWN",
+        });
+      }
+
+      f.observedVisibility(true);
+      expect(await (await reopened.recover(legacy)).wait()).toMatchObject({ id: "box_2" });
+      expect(f.calls.create).toBe(2);
+      expect(f.calls.kill).toBe(0);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await client.close();
+  }
+});
 
 test("E2B old pending restore cannot confirm a reassigned native build", async () => {
   const f = fixture();

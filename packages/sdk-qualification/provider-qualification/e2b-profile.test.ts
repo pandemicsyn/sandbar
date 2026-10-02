@@ -69,6 +69,7 @@ async function fixture(
         id: "sandbox_fixture",
         templateId: input.templateId,
         metadata: input.metadata,
+        allowPublicTraffic: input.allowPublicTraffic,
         state: "running",
       };
 

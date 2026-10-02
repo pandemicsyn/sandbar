@@ -161,6 +161,7 @@ test("E2B public adapter passes managed compute conformance at its native bounda
         id,
         templateId: input.templateId,
         metadata: input.metadata,
+        allowPublicTraffic: input.allowPublicTraffic,
         state: "running",
       });
 
@@ -531,6 +532,7 @@ test("OCI create builds a correlated E2B template inside submit and reports it a
         id: "sandbox_oci",
         templateId: input.templateId,
         metadata: input.metadata,
+        allowPublicTraffic: input.allowPublicTraffic,
         state: "running",
       };
 
@@ -695,7 +697,14 @@ test("lost OCI build response observes the retained template without submitting 
 
     const result = await submitOperation(prepared, identity, signal);
     expect(result.kind).toBe("unknown");
-    const observed = await observeOperation(connection.session, "create", identity, signal);
+
+    const observed = await observeOperation(
+      connection.session,
+      "create",
+      { ...identity, token: { allowPublicTraffic: false }, version: 1 },
+      signal,
+    );
+
     expect(observed?.kind).toBe("unknown");
     expect(JSON.stringify(observed)).toContain("retained_template");
 
@@ -763,6 +772,7 @@ test("shared image build returns a scoped prepared handle for one native create"
         id: `sandbox_${creates}`,
         templateId: input.templateId,
         metadata: input.metadata,
+        allowPublicTraffic: input.allowPublicTraffic,
         state: "running",
       };
       createdRecords.push(record);
@@ -951,6 +961,7 @@ test.each(["stalled", "output-failure"] as const)(
           id: "sandbox_1",
           templateId: input.templateId,
           metadata: input.metadata,
+          allowPublicTraffic: input.allowPublicTraffic,
           state: "running",
         };
 

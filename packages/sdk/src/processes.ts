@@ -22,6 +22,8 @@ export type StartProcessInput = Pick<
   "command" | "cwd" | "env" | "maxOutputBytes" | "deadlineSeconds"
 >;
 
+export type ProcessTermination = { status: "requested" | "not-found" | "exited" };
+
 export type ProcessExit = { exitCode: number; outputComplete: boolean };
 
 /** Local context only; these fields cannot reopen a command. */
@@ -35,10 +37,13 @@ export interface ProcessHandle {
   readonly provider: string;
   output(options?: { signal?: AbortSignal }): AsyncIterable<ProcessOutput>;
   wait(options?: { signal?: AbortSignal }): Promise<ProcessExit>;
+  terminate(options?: { signal?: AbortSignal }): Promise<ProcessTermination>;
   detach(): Promise<void>;
 }
 
 const Exit = z.object({ exitCode: z.number().int().safe() });
+
+const Termination = z.object({ status: z.enum(["requested", "not-found"]) });
 
 const Chunk = z.object({ stream: z.enum(["stdout", "stderr"]), text: z.string() });
 
@@ -66,6 +71,7 @@ class TextProcess implements ProcessHandle {
   private complete = false;
   private exitCode?: number;
   private failure?: SandbarError;
+  private termination?: Promise<ProcessTermination>;
   private listeners = new Set<() => void>();
   private removeOutputAbort?: () => void;
   private readonly closed = () => {
@@ -76,6 +82,7 @@ class TextProcess implements ProcessHandle {
     private readonly sandboxId: string,
     private readonly max: number,
     private readonly signal: AbortSignal,
+    private readonly controlActive: () => boolean,
   ) {
     signal.addEventListener("abort", this.closed, { once: true });
   }
@@ -332,6 +339,78 @@ class TextProcess implements ProcessHandle {
       await this.changed(options.signal);
     }
   }
+  private terminationFailure(code: string, message: string, effect: "none" | "possible" = "none") {
+    return Object.assign(new SandbarError(code, message, effect), {
+      provider: this.provider,
+      sandboxId: this.sandboxId,
+    });
+  }
+  async terminate(options: { signal?: AbortSignal } = {}): Promise<ProcessTermination> {
+    if (options.signal?.aborted)
+      throw this.terminationFailure("WAIT_ABORTED", "Termination wait aborted before dispatch");
+    this.rememberNativeExit();
+
+    if (this.exitCode !== undefined) return { status: "exited" };
+
+    if (!this.termination) {
+      if (this.signal.aborted) throw this.terminationFailure("CLIENT_CLOSED", "Client is closed");
+
+      if (this.stopped || !this.controlActive())
+        throw this.terminationFailure(
+          "UNAVAILABLE",
+          "Process termination authority is no longer active",
+        );
+      const native = this.native;
+
+      if (!native?.terminate)
+        throw this.terminationFailure("UNSUPPORTED", "Process termination is unsupported");
+      // Dispatch once; caller signals only cancel their own waits on this promise.
+      this.termination = this.requestTermination(native);
+      void this.termination.catch(() => undefined);
+    }
+
+    try {
+      const result = await (options.signal
+        ? raceAbort(this.termination, options.signal)
+        : this.termination);
+
+      return { status: result.status };
+    } catch (error) {
+      if (options.signal?.aborted)
+        throw this.terminationFailure(
+          "OUTCOME_UNKNOWN",
+          "Termination wait stopped; the shared request may still complete",
+          "possible",
+        );
+      throw error;
+    }
+  }
+  private async requestTermination(native: NativeProcess): Promise<ProcessTermination> {
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, this.signal]);
+    const timer = setTimeout(() => controller.abort(), 30_000);
+
+    try {
+      const result = await raceAbort(
+        native.terminate!({ signal, deadline: Date.now() + 30_000 }),
+        signal,
+      );
+
+      const parsed = Termination.safeParse(result);
+
+      if (!parsed.success) throw new Error("Invalid termination acknowledgement");
+
+      return parsed.data;
+    } catch {
+      throw this.terminationFailure(
+        "OUTCOME_UNKNOWN",
+        "Termination was not acknowledged; the request will not be repeated",
+        "possible",
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   async detach(): Promise<void> {
     this.queue = [];
     this.queuedBytes = 0;
@@ -352,6 +431,7 @@ export async function startProcess(
   sandbox: Sandbox,
   input: StartProcessInput,
   options: { signal?: AbortSignal },
+  controlActive: () => boolean,
 ): Promise<ProcessHandle> {
   if (options.signal?.aborted)
     throw new SandbarError("WAIT_ABORTED", "Process start aborted before dispatch");
@@ -389,6 +469,7 @@ export async function startProcess(
     sandbox.id,
     request.maxOutputBytes,
     client.signal,
+    controlActive,
   );
 
   let established = false;

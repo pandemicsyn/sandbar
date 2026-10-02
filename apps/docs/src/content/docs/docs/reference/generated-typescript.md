@@ -40,6 +40,7 @@ Import from `sandbar-sdk`.
 | `ExecInput`                 | type      |
 | `ExecOutput`                | type      |
 | `Fact`                      | type      |
+| `FileEntry`                 | type      |
 | `Image`                     | re-export |
 | `ImageBuildResult`          | type      |
 | `ImageInput`                | type      |
@@ -55,10 +56,12 @@ Import from `sandbar-sdk`.
 | `outputText`                | re-export |
 | `PreparedAdapterAttempt`    | re-export |
 | `PreparedImage`             | type      |
+| `Preview`                   | type      |
 | `ProcessExit`               | type      |
 | `ProcessFailure`            | type      |
 | `ProcessHandle`             | type      |
 | `ProcessOutput`             | type      |
+| `ProcessTermination`        | type      |
 | `ReadOptions`               | type      |
 | `RecoveredOperation`        | type      |
 | `RecoveryReference`         | type      |
@@ -68,6 +71,7 @@ Import from `sandbar-sdk`.
 | `ResourceReference`         | re-export |
 | `RestoreCapabilities`       | type      |
 | `RestoreRequest`            | re-export |
+| `ResumeResult`              | type      |
 | `Sandbar`                   | value     |
 | `SandbarClient`             | type      |
 | `SandbarError`              | re-export |
@@ -83,6 +87,7 @@ Import from `sandbar-sdk`.
 | `SnapshotResult`            | type      |
 | `StartProcessInput`         | type      |
 | `Support`                   | type      |
+| `SuspendResult`             | type      |
 | `UnsupportedFeatureError`   | re-export |
 | `validateResourceReference` | re-export |
 | `VolumeCapabilities`        | type      |
@@ -147,6 +152,10 @@ Import from `sandbar-adapter`.
 | `ExecInput`                    | type      |
 | `ExecRequest`                  | re-export |
 | `ExecValue`                    | type      |
+| `FileEntry`                    | type      |
+| `FileMutationInput`            | type      |
+| `FileMutationIntent`           | re-export |
+| `FileMutationValue`            | re-export |
 | `FileWriteInput`               | type      |
 | `FileWriteValue`               | type      |
 | `Guarantees`                   | type      |
@@ -156,6 +165,8 @@ Import from `sandbar-adapter`.
 | `ImageBuildValue`              | type      |
 | `isOutcome`                    | function  |
 | `Json`                         | type      |
+| `MAX_DIRECTORY_ENTRIES`        | re-export |
+| `MAX_DIRECTORY_NAME_BYTES`     | re-export |
 | `Mutation`                     | type      |
 | `NativeProcess`                | interface |
 | `NativeProcessExit`            | type      |

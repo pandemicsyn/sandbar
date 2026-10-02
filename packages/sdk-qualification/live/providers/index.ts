@@ -33,7 +33,8 @@ const declared =
   external?.support ?? builtinSupport.find((profile) => profile.id === selectedProvider);
 
 export const featureSupported = (feature: keyof SupportMetadata["features"]) =>
-  declared?.features[feature].support !== "unsupported";
+  declared?.features[feature]?.support !== undefined &&
+  declared.features[feature].support !== "unsupported";
 
 const root = resolve(fileURLToPath(new URL("../../../../", import.meta.url)));
 
@@ -117,6 +118,8 @@ export async function configuredProvider(saved?: RunLedger["connection"]) {
     saved ?? {
       teamId: process.env.SANDBAR_E2B_TEAM_ID,
       templateId: process.env.SANDBAR_E2B_TEMPLATE_ID ?? "base",
+      preview:
+        process.env.SANDBAR_E2B_PREVIEW_ACCESS === "public" ? { access: "public" } : undefined,
     },
   );
 
@@ -243,7 +246,12 @@ export async function finishLive(fixture: Awaited<ReturnType<typeof setupLive>>)
 export function reopenSnapshot(
   fixture: Awaited<ReturnType<typeof setupLive>>,
   reference: ResourceReference,
-  sandboxProbe?: { path: string; base64: string; expires: import("sandbar-sdk").Deadline },
+  sandboxProbe?: {
+    path: string;
+    base64: string;
+    inactive?: boolean;
+    expires: import("sandbar-sdk").Deadline;
+  },
 ) {
   return reopenInFreshProcess(
     {

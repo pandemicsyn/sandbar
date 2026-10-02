@@ -1,14 +1,14 @@
 # Default creation and everyday files
 
-Accepted product direction · Proposed API · October 2, 2026
+Implementation contract · Creation defaults (#58), text helpers (#61) and directory APIs (#59) merged · October 2, 2026
 
-Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. This is the next implementation work after [suspend/resume](sandbox-lifecycle.md). Signatures below are proposals, not current exports. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
+Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. Creation defaults, text helpers and directory APIs are merged. Exported directory methods retain the unsupported native mappings below; configured creation and directory live cases remain not-run. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
 ## Creation defaults belong in adapter setup
 
 Allow `client.sandboxes.create()` and `create({ labels: ... })` when the adapter can resolve a default environment. An explicit per-call environment takes precedence. `checkCreate()` and `submitCreate()` resolve exactly the same defaults as `create()`; checking support must not provision resources.
 
-Concrete proposed setup, using existing E2B terminology and one additional Daytona option:
+Implemented setup, using existing E2B terminology and one additional Daytona option:
 
 ```ts
 const e2bClient = await Sandbar.connect(e2b({
@@ -19,7 +19,7 @@ const e2bClient = await Sandbar.connect(e2b({
 const daytonaClient = await Sandbar.connect(daytona({
   apiKey: process.env.DAYTONA_API_KEY!,
   target: "us",
-  environment: Image.prepared("my-project-image"), // proposed setup option
+  environment: Image.prepared("my-project-image"), // default for omitted per-call environments
 }));
 
 // Application code is identical with either configured client.
@@ -34,7 +34,7 @@ const custom = await client.sandboxes.create({
 
 `my-project-image` and `another-project-image` are caller-provisioned identifiers, not bundled images. E2B already defaults its template to `base`; reuse that configuration instead of adding a competing default-template field. For Daytona, require a configured or per-call environment until a documented native default is deliberately supported. Missing both produces an actionable `INVALID_ARGUMENT` before sandbox creation: configure `daytona({ environment: ... })` or pass `create({ environment: ... })`.
 
-Proposed public input is the existing `CreateInput` with optional `environment`; create/check/submit accept an omitted input. Resolve it to a required environment before the existing adapter create boundary. Expose only the minimal adapter authoring extension needed to supply a default; do not make every provider's native create input optional or invent a general configuration registry.
+The public input is the existing `CreateInput` with optional `environment`; create/check/submit accept an omitted input. Resolve it to a required environment before the existing adapter create boundary. The optional adapter session `defaultImage` supplies the default; keep this extension minimal; do not make every provider's native create input optional or invent a general configuration registry.
 
 Defaults are explicit values, not a fallback search. Validate overrides normally: a foreign scoped image rejects before creation; an unavailable template does not fall back to `base`; an OCI image does not cause an unrequested build. Preserve the existing build/restore paths. Never substitute a new sandbox after an uncertain create. Returned sandbox references remain persistable using the shipped contract.
 
@@ -42,7 +42,9 @@ This slice does not change network defaults, lifetime policy, image resolution, 
 
 ## Text files without encoding boilerplate
 
-Add helpers alongside the existing byte methods, without overloading or changing those methods:
+Implementation status: implemented. Thin SDK wrappers and deterministic/packed Node/Bun coverage; no new native operation or live evidence.
+
+Helpers sit alongside the existing byte methods, without overloading or changing those methods:
 
 ```ts
 readTextFile(path: string, options?: ReadOptions): Promise<string>;
@@ -71,7 +73,7 @@ Reuse byte-operation limits, path validation, cancellation and errors. Limits co
 
 ## Directory operations for ordinary application work
 
-A following small slice adds the missing primitives; these are proposed SDK signatures, with optional adapter methods rather than an obligatory emulation layer:
+Slice 3 implements the following SDK signatures with optional adapter methods; live qualification remains pending. The verified built-in subset and unsupported mappings are documented below:
 
 ```ts
 type FileEntry = {
@@ -103,10 +105,35 @@ Behavior requirements:
 - Never implement convenience methods by interpolating paths into arbitrary shell commands. Prefer native file APIs; any necessary command mapping must be explicitly reviewed, correctly quoted and fixture-tested before enabling support. Do not install a hidden guest daemon.
 - Unsupported operations reject before mutation. Support is per operation; text helpers require only the existing read/write support. Do not force users to perform capability negotiation before ordinary calls.
 
-## Small delivery slices and acceptance
+## Merged delivery slices and acceptance
 
 1. **Creation defaults.** SDK/adapter default resolution and built-in setup, public types, provider docs and compiled examples. Test no-argument creation, labels-only creation, override precedence, absent defaults, foreign scoped images, and parity across check/submit/create. Native fixtures assert the resolved environment reaches exactly one create request.
 2. **Text helpers.** Thin wrappers, focused UTF-8/empty/multibyte/limit/overwrite/cancellation tests and packed Node/Bun examples. Reuse existing instrumentation without duplicate provider-call spans. No new native operation or live run is needed to establish encoding behavior.
 3. **Directory primitives.** First record pinned Daytona/E2B native mappings, error codes, symlink behavior and result bounds in this spec. Implement only demonstrated mappings, with native-boundary fixtures and maintained live acceptance cases. Unsupported mappings stay documented; do not hold all primitives for universal parity.
 
-Slices 1 and 2 may share a small PR if their diff remains easy to review. Do not combine directory work, networking or process management into it. Public docs distinguish proposed work from shipped exports until merge; update provider support reporting for newly exposed operations. Live evidence remains not-run until separately authorized and recorded. Run the repository checks appropriate to public API/package changes, including packed examples and docs.
+Creation defaults merged in #58, text helpers in #61 and directory primitives in #59. These acceptance boundaries describe the shipped slices, not a pending coding queue. Live evidence remains not-run until separately authorized and recorded. Run the repository checks appropriate to public API/package changes, including packed examples and docs.
+
+## Slice 1 implementation status
+
+Creation defaults have deterministic SDK/native-boundary fixtures, compiled provider examples and packed consumer coverage. The maintained sandbox acceptance setup now exercises configured creation for Daytona and E2B; no live run has been performed for this slice. Native create dispatch still requires an image and keeps existing networking, build, restore and uncertainty semantics. Text helpers, directory APIs and preview access shipped in separate PRs.
+
+## Slice 3 implementation contract and native evidence
+
+Slice 3 merged in #59 with optional adapter operations; live qualification remains not-run. Creation defaults and text helpers retain their own status above.
+
+Listings have a fixed ceiling of 1,024 entries and 65,536 UTF-8 bytes in child names (summed, excluding metadata). The SDK validates names/types, rejects duplicate names and invalid child names, sorts in code-unit order and raises `OUTPUT_CAPACITY` on overflow. Adapters must return a complete immediate listing or reject; a native API that silently filters entries cannot implement this contract. These are result bounds, not a claim that a provider's unpaginated server bounds its allocation. No built-in listing is enabled in this slice.
+
+| Operation | E2B mapping | Daytona mapping |
+| --- | --- | --- |
+| `listFiles` | Unsupported: `e2b@2.51.0` `files.list({ depth: 1 })` filters protobuf unknown types, including dangling symlinks reported as unknown. | Unsupported: inspected `GET /files` skips failed detail lookups and uses target-following `os.Stat`, losing dangling links and link identity. |
+| `fileExists` | Native `files.exists` / `Filesystem.Stat`; only guest RPC `NotFound` means false. Attachment/control-plane failures propagate. | Unsupported: `GET /files/info` follows the final link; its 404 cannot distinguish a dangling entry from absence. |
+| `makeDirectory` | Native `files.makeDir` / `Filesystem.MakeDir`, only with `recursive: true`; already-directory succeeds, non-directory rejects. Default/nonrecursive request rejects before mutation. | Unsupported in this slice: `POST /files/folder` uses `MkdirAll`; no demonstrated nonrecursive mapping or deployed-version fixture. |
+| `removeFile` | Native `files.remove` / `Filesystem.Remove`, only with `recursive: true`; `os.RemoveAll` removes missing paths successfully and does not walk symlink entries. Default/nonrecursive request rejects before mutation. | Unsupported: inspected DELETE checks target-following `Stat` first, rejects even empty directories without recursion and leaves dangling links untouched on 404. |
+
+Pinned E2B client evidence is the installed `e2b@2.51.0` filesystem source. Server evidence is [infra revision 16f749ccf64db084561ffec6eb9040b98eaf11a9](https://github.com/e2b-dev/infra/tree/16f749ccf64db084561ffec6eb9040b98eaf11a9/packages/envd/internal/services/filesystem): `stat.go`, `dir.go`, `remove.go`, `utils.go`, plus `packages/shared/pkg/filesystem/entry.go`. Stat starts with `Lstat`; link target resolution is best effort, so dangling links remain existing entries. Listing follows its directory operand but not child links; unknown entries are filtered by the pinned JS SDK. MakeDir uses recursive ancestor creation and reports AlreadyExists only for a directory (including a link to a directory). Remove uses `os.RemoveAll`. Native SDK request deadlines and caller signals are forwarded. This source review and deterministic fixtures do not establish the deployed guest version; maintained live cases remain unrun.
+
+Daytona's existing adapter targets REST/toolbox v0.218, but the currently served [toolbox schema](https://www.daytona.io/docs/toolbox-openapi.json) reports `v0.0.0-dev` and does not specify lstat or absence semantics. The pinned public [server revision 01c502bb1f1ff8f2885d0cd490e043736083dca8](https://github.com/daytonaio/daytona/tree/01c502bb1f1ff8f2885d0cd490e043736083dca8/apps/daemon/pkg/toolbox/fs) (v0.190) supplies negative evidence, not a guarantee about v0.218 deployment. All four methods therefore remain explicitly unsupported for Daytona until a suitable native boundary is demonstrated.
+
+For these new operations the SDK collapses repeated slashes and removes trailing slashes after existing absolute-path validation. This makes `/link/` refer to the link entry for removal and refuses every lexical root spelling, including `//`. E2B native operations follow intermediate parent symlinks; recursive removal unlinks final/descendant links rather than following their targets. A caller can still address data through a symlinked parent; this API is not a containment/security boundary and does not promise atomic protection against concurrent namespace changes. Root aliases through intermediate symlinks are not a confinement guarantee.
+
+E2B RPC NotFound is absence only in `fileExists`; attachment 404 is `NOT_FOUND` error, not false. Permission/authentication, transport and unsupported failures reject. Mkdir InvalidArgument rejects; other failures after mutation dispatch remain uncertain without replay. A successful acknowledgement confirms the mkdir/remove call; there is no durable receipt and recovery never repeats either native call. SDK pre-abort/root/unsupported failures are effect-free; cancellation or a lost acknowledgement after dispatch retains an ordinary scoped recovery reference with path and recursive intent. Observation without a receipt remains unknown, even if a later existence check matches the desired state.
