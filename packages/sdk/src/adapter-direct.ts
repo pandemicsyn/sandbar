@@ -1,3 +1,5 @@
+import { FileMutationIntent, type FileEntry } from "sandbar-adapter";
+import { directoryEntries, directoryRead } from "./directory-read";
 import { readFileBytes } from "./file-read";
 import { freezeReference } from "./freeze-reference";
 import { startProcess, type StartProcessInput, type ProcessHandle } from "./processes";
@@ -102,6 +104,12 @@ export { Image, outputText } from "./resource";
 
 export type { AdapterRecoveryReference } from "./adapter-reference";
 
+function directoryPath(path: string): string {
+  validateFilePath(path);
+
+  return "/" + path.split("/").filter(Boolean).join("/");
+}
+
 function canonicalScope(scope: Scope): string {
   return JSON.stringify({
     authority: scope.authority,
@@ -149,6 +157,7 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
     boundResource &&
     boundCapture &&
     boundRenewal &&
+    ["file_mkdir", "file_remove"].includes(copy.kind) === !!copy.fileMutation &&
     (copy.kind === "file_write") === !!copy.file
     ? certifyRecoveryReference(copy)
     : copy;
@@ -256,7 +265,7 @@ export type RecoveredOperation =
   | AdapterOperation<ImageBuildResult, "image_build">
   | AdapterOperation<ExecOutput, "exec">
   | AdapterOperation<DestroyValue, "destroy">
-  | AdapterOperation<void, "file_write">;
+  | AdapterOperation<void, "file_write" | "file_mkdir" | "file_remove">;
 
 function decodeRenew(result: RuntimeResult, ref: AdapterRecoveryReference): RenewResult {
   if (
@@ -676,6 +685,12 @@ export class AdapterSandbox {
     instrument(this, "inspect", client.telemetry, "sandbar.sandbox.inspect");
     instrument(this, "submitExec", client.telemetry, "sandbar.exec.submit", { effect: "possible" });
     instrument(this, "exec", client.telemetry, "sandbar.exec", { effect: "applied" });
+    instrument(this, "listFiles", client.telemetry, "sandbar.file.list");
+    instrument(this, "fileExists", client.telemetry, "sandbar.file.exists");
+    instrument(this, "makeDirectory", client.telemetry, "sandbar.file.mkdir", {
+      effect: "applied",
+    });
+    instrument(this, "removeFile", client.telemetry, "sandbar.file.remove", { effect: "applied" });
     instrument(this, "readFile", client.telemetry, "sandbar.file.read");
     instrument(this, "writeFile", client.telemetry, "sandbar.file.write", { effect: "applied" });
     instrument(this, "destroy", client.telemetry, "sandbar.sandbox.destroy", { effect: "applied" });
@@ -788,7 +803,18 @@ export class AdapterSandbox {
 
     return resolveSnapshot(caps.snapshots.capture, request, state);
   }
-  supports(feature: "inspect" | "exec" | "readFile" | "writeFile" | "destroy"): boolean {
+  supports(
+    feature:
+      | "inspect"
+      | "exec"
+      | "readFile"
+      | "writeFile"
+      | "destroy"
+      | "listFiles"
+      | "fileExists"
+      | "makeDirectory"
+      | "removeFile",
+  ): boolean {
     if (feature === "inspect") return !!this.client.session.inspect;
 
     if (feature === "exec")
@@ -797,6 +823,14 @@ export class AdapterSandbox {
     if (feature === "readFile") return !!this.client.session.files?.read;
 
     if (feature === "writeFile") return !!this.client.session.files?.write;
+
+    if (feature === "listFiles") return !!this.client.session.files?.list;
+
+    if (feature === "fileExists") return !!this.client.session.files?.exists;
+
+    if (feature === "makeDirectory") return !!this.client.session.files?.makeDirectory;
+
+    if (feature === "removeFile") return !!this.client.session.files?.remove;
 
     return true;
   }
@@ -930,6 +964,91 @@ export class AdapterSandbox {
       throw new SandbarError("INVALID_ARGUMENT", "Expected text string");
 
     await this.writeFile(path, new TextEncoder().encode(text), options);
+  }
+  async listFiles(path: string, options: ReadOptions = {}): Promise<FileEntry[]> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.list) unsupported("listFiles");
+    const list = files.list.bind(files);
+
+    return directoryEntries(
+      await directoryRead(
+        (ctx) => list({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+        this.client.signal,
+        options,
+      ),
+    );
+  }
+  async fileExists(path: string, options: ReadOptions = {}): Promise<boolean> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.exists) unsupported("fileExists");
+    const exists = files.exists.bind(files);
+
+    const value = await directoryRead(
+      (ctx) => exists({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+      this.client.signal,
+      options,
+    );
+
+    if (value !== true && value !== false)
+      throw new SandbarError("INVALID_RESPONSE", "Invalid entry existence result");
+
+    return value;
+  }
+  async makeDirectory(
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.fileMutation("file_mkdir", path, options);
+  }
+  async removeFile(
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.fileMutation("file_remove", path, options);
+  }
+  private async fileMutation(
+    kind: "file_mkdir" | "file_remove",
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal },
+  ): Promise<void> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+
+    if (kind === "file_remove" && path === "/")
+      throw new SandbarError("INVALID_ARGUMENT", "Cannot remove sandbox root");
+
+    const intent = validateResourceInput(
+      FileMutationIntent,
+      { path, recursive: options.recursive ?? false },
+      "Invalid filesystem request",
+    );
+
+    const op = await this.client.submit(
+      kind,
+      { sandbox: sandboxInput(this.id, this.reference), ...intent },
+      (result, ref) => {
+        if (
+          result.kind !== "completed" ||
+          !("acknowledged" in result.value) ||
+          result.value.acknowledged !== true
+        )
+          throw asUnknown(ref);
+      },
+      {
+        signal: options.signal,
+        sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
+        fileMutation: intent,
+      },
+    );
+
+    await waitFor(this.client.telemetry, op, options);
   }
   async readFile(path: string, options: ReadOptions = {}): Promise<Uint8Array> {
     this.client.ensureOpen();
@@ -1353,6 +1472,8 @@ export class AdapterDirectClient {
               "destroy",
               "exec",
               "file_write",
+              "file_mkdir",
+              "file_remove",
               "image_build",
               "sandbox_renew",
               "snapshot_capture",
@@ -1404,9 +1525,15 @@ export class AdapterDirectClient {
             "volume_delete",
           ].includes(checked.kind) &&
             checked.sandboxId) ||
-          (["destroy", "exec", "file_write", "snapshot_capture", "sandbox_renew"].includes(
-            checked.kind,
-          ) &&
+          ([
+            "destroy",
+            "exec",
+            "file_write",
+            "file_mkdir",
+            "file_remove",
+            "snapshot_capture",
+            "sandbox_renew",
+          ].includes(checked.kind) &&
             !checked.sandboxId) ||
           (["snapshot_restore", "snapshot_delete", "volume_delete"].includes(checked.kind) &&
             !checked.resource)
@@ -1742,6 +1869,7 @@ export class AdapterDirectClient {
       capture?: z.infer<typeof CaptureExpectation>;
       mounts?: import("sandbar-adapter").MountSpec[];
       file?: { path: string; bytes: number };
+      fileMutation?: AdapterRecoveryReference["fileMutation"];
       maxOutputBytes?: number;
     } = {},
   ): Promise<AdapterOperation<T, K>> {
@@ -1766,6 +1894,7 @@ export class AdapterDirectClient {
       capture: options.capture,
       mounts: options.mounts,
       file: options.file,
+      fileMutation: options.fileMutation,
       maxOutputBytes: options.maxOutputBytes,
     });
 
@@ -1944,6 +2073,8 @@ export class AdapterDirectClient {
         "Recovery renewal intent and identity are missing",
       );
 
+    if (["file_mkdir", "file_remove"].includes(reference.kind) && !reference.fileMutation)
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery filesystem intent is missing");
     this.assertRecoverySandbox(reference);
     assertRecoveryResourceKind(reference.kind, reference.resource);
 
@@ -1967,9 +2098,15 @@ export class AdapterDirectClient {
       throw new SandbarError("INVALID_ARGUMENT", "Create reference cannot have a sandbox");
 
     if (
-      ["destroy", "exec", "file_write", "snapshot_capture", "sandbox_renew"].includes(
-        reference.kind,
-      ) &&
+      [
+        "destroy",
+        "exec",
+        "file_write",
+        "file_mkdir",
+        "file_remove",
+        "snapshot_capture",
+        "sandbox_renew",
+      ].includes(reference.kind) &&
       !reference.sandboxId
     )
       throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox is missing");
@@ -2106,6 +2243,19 @@ export class AdapterDirectClient {
           },
           undefined,
           "destroy",
+        );
+      case "file_mkdir":
+      case "file_remove":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
+
+            if (!("acknowledged" in value) || value.acknowledged !== true) throw asUnknown(ref);
+          },
+          undefined,
+          reference.kind,
         );
       case "file_write":
         return new AdapterOperation(

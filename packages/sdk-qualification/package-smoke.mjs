@@ -153,6 +153,11 @@ async function flow() {
   await handle.readTextFile("/file");
   await handle.writeTextFile("/text", text);
   await handle.writeTextFile("/text", text, { overwrite: true, signal: options.signal });
+  const entries: import("sandbar-sdk").FileEntry[] = await handle.listFiles("/job", options);
+  const exists: boolean = await handle.fileExists("/job/file", options);
+  await handle.makeDirectory("/job/results", { recursive: true, signal: options.signal });
+  await handle.removeFile("/job", { recursive: true, signal: options.signal });
+  void entries; void exists;
   await box.destroy();
   await client.close();
 }
@@ -768,6 +773,10 @@ try {
     await readFile(join(root, "apps/docs/examples/sandbox-renew.ts"), "utf8"),
   );
   await writeFile(
+    join(custom, "directory-files.ts"),
+    await readFile(join(root, "apps/docs/examples/directory-files.ts"), "utf8"),
+  );
+  await writeFile(
     join(custom, "streaming-tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
@@ -778,7 +787,7 @@ try {
         skipLibCheck: false,
         types: [],
       },
-      include: ["text-streaming.ts", "sandbox-renew.ts"],
+      include: ["text-streaming.ts", "sandbox-renew.ts", "directory-files.ts"],
     }),
   );
   run(join(root, "node_modules/.bin/tsc"), ["-p", "streaming-tsconfig.json"], custom);
@@ -789,6 +798,13 @@ try {
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["streaming.mjs"], custom)}`);
+  await writeFile(
+    join(custom, "directories.mjs"),
+    await readFile(join(root, "packages/sdk-qualification/directory-packed.mjs"), "utf8"),
+  );
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["directories.mjs"], custom)}`);
   inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
   inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);

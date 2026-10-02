@@ -61,6 +61,31 @@ Daytona and E2B implement no-clobber writes using staged files and exact-destina
 
 For E2B, use `/home/user` for this workflow. An earlier live test failed when overwriting a user-owned file directly in root-owned sticky `/tmp`; a home-directory pass does not qualify arbitrary paths.
 
+## Directories and entry existence
+
+`listFiles`, `makeDirectory`, `fileExists` and `removeFile` are optional adapter operations. Missing support rejects with `UNSUPPORTED` before mutation. The built-in E2B adapter supports entry existence and **explicitly recursive** creation/removal:
+
+```ts
+await box.makeDirectory("/home/user/job/results", { recursive: true });
+await box.writeFile("/home/user/job/results/output.bin", Uint8Array.of(0, 255));
+if (await box.fileExists("/home/user/job/results/output.bin")) {
+  console.log(await box.readFile("/home/user/job/results/output.bin"));
+}
+await box.removeFile("/home/user/job", { recursive: true });
+```
+
+`fileExists` includes dangling symlinks. It returns false only for confirmed entry absence; authentication, permission, sandbox absence and transport failures reject. This observation does not lock the entry or make a later write safe. Listing/existence accept the same read cancellation options and 30-second local deadline as byte reads.
+
+For an adapter with complete listing support, `listFiles(path)` returns immediate `{ name, type }` children sorted by deterministic code-unit order. Types are `file`, `directory`, `symlink` or `unknown`. There is no recursive walk or pagination. More than **1,024 entries** or **65,536 summed UTF-8 bytes in names** rejects with `OUTPUT_CAPACITY`; invalid/duplicate children reject with `INVALID_RESPONSE`. Neither built-in currently supports listing: E2B's pinned SDK filters unknown entries, and the inspected Daytona listing skips failed entries and loses link identity.
+
+The generic contract requires nonrecursive mkdir to have an existing parent, accepts an existing directory and rejects an existing non-directory. Nonrecursive removal permits files, links and empty directories; nonempty directories require explicit recursion. Missing removal succeeds. E2B's native methods always recurse, so `{ recursive: true }` is required for both methods even when removing one file or link; omitted/false rejects. Daytona and experimental Modal expose none of these new primitives. See [provider support](/docs/providers/support/).
+
+New directory operations validate absolute paths, collapse repeated slashes and remove trailing slashes. Root removal, including `//`, is refused. E2B recursive removal does not walk final or descendant symlink entries, but intermediate parent links are followed. A path such as `/job/link/` unlinks `link`; `/job/link/child` addresses the target's child. This is ordinary filesystem access, not a security boundary or a concurrency guarantee.
+
+Mkdir/remove use ordinary scoped mutation recovery. Successful acknowledgement confirms the call. Cancellation or a lost response after dispatch leaves an uncertain outcome with the saved path/recursion intent; there is no durable native receipt, and recovery never resubmits the mutation. A later existence check cannot prove who changed the entry. The maintained live directory case is **not run**; native fixtures establish request/error mapping, not deployed symlink behavior.
+
+See the executable [directory example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/directory-files.ts) for a byte-only workflow and a listing helper for adapters that support it.
+
 ## Read command output
 
 ```ts
