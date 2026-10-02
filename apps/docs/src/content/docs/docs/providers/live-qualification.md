@@ -158,14 +158,14 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-template / api-key.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
-- SDK: 0.0.0, commit `4cc6a2028c58bbddd1235230f54c5770349041ed`.
+- SDK: 0.0.0, commit `131a8c6f57cf2eb9e3b22029dbc1991f8314b9d0`.
 - Fresh-process reopen: not recorded.
-- Harness commit: `4cc6a2028c58bbddd1235230f54c5770349041ed`.
-- Evidence: [reviewed record](native-termination-readonly-attachment-20261002).
+- Harness commit: `131a8c6f57cf2eb9e3b22029dbc1991f8314b9d0`.
+- Evidence: [reviewed record](native-termination-default-routing-20261002).
 
 | Scenario              | Latest live result | Date       |
 | --------------------- | ------------------ | ---------- |
-| execution-termination | failed             | 2026-10-02 |
+| execution-termination | passed             | 2026-10-02 |
 
 ### paired-internet-blocked-requested · native-default · /home/user
 

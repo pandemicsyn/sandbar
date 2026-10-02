@@ -109,3 +109,6 @@ The `file-directories` case in `live/sandbox.test.ts` uses the suite's existing 
 
 
 The one-sandbox `execution-termination` run at `4cc6a20` failed before process start with read-only E2B guest attachment unavailable. No termination was dispatched and kill/exit remains unqualified. Its owned compute cleanup and SDK close are confirmed; the failed record is retained. A later independently bounded run after the default-domain routing correction is a new acceptance run, not replay of an uncertain mutation.
+
+
+The newly authorized one-sandbox `execution-termination` case passed at clean `131a8c6` after applying the shared fixed-default E2B routing patch. It observed ready stdout, an acknowledged request/repeated-call outcome and an independent nonzero terminal integer, with bounded drain, preserved exit, owned compute cleanup and SDK close. Configuration: borrowed `base`, API-key scope, native default region, requested blocked network, pinned `e2b 2.51.0`, Bun 1.3.14 on darwin-arm64; zero snapshots/volumes/builds. This does not qualify every image/platform or eliminate PID/descendant/lifecycle races. The failed `4cc6a20` record is unchanged. Both runs' private JUnit/logs and owner-only custody remain outside the checkout.

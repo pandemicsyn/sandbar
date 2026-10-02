@@ -138,7 +138,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       termination: {
         support: "conditional",
-        note: "Active local handles issue one native SIGKILL PID request. PID reuse can target a successor; no descendant cleanup guarantee. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. Bounded Bun live case at 4cc6a20 failed before process start because read-only guest attachment was unavailable; no signal/exit behavior qualified. Owned compute cleanup and client close confirmed.",
+        note: "Active local handles issue one native SIGKILL PID request. PID reuse can target a successor; no descendant cleanup guarantee. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. Bounded Bun live case passed at 131a8c6 with borrowed base on darwin-arm64/Bun 1.3.14 after the fixed-default routing correction: ready output, request acknowledgement/reuse, independently observed nonzero terminal result, owned cleanup and client close. The prior 4cc6a20 attachment failure remains recorded. Other images/platforms and signal delivery races are unqualified.",
       },
       previewProtected: {
         support: "unsupported",
