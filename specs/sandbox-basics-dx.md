@@ -1,8 +1,8 @@
 # Default creation and everyday files
 
-Accepted product direction · Proposed API · October 2, 2026
+Accepted product direction · Creation defaults implemented pending merge; file APIs proposed · October 2, 2026
 
-Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. This is the next implementation work after [suspend/resume](sandbox-lifecycle.md). Signatures below are proposals, not current exports. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
+Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. This is the next implementation work after [suspend/resume](sandbox-lifecycle.md). Creation defaults are implemented in this slice, pending merge; text and directory signatures below remain proposals. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
 ## Creation defaults belong in adapter setup
 
@@ -19,7 +19,7 @@ const e2bClient = await Sandbar.connect(e2b({
 const daytonaClient = await Sandbar.connect(daytona({
   apiKey: process.env.DAYTONA_API_KEY!,
   target: "us",
-  environment: Image.prepared("my-project-image"), // proposed setup option
+  environment: Image.prepared("my-project-image"), // default for omitted per-call environments
 }));
 
 // Application code is identical with either configured client.
@@ -34,7 +34,7 @@ const custom = await client.sandboxes.create({
 
 `my-project-image` and `another-project-image` are caller-provisioned identifiers, not bundled images. E2B already defaults its template to `base`; reuse that configuration instead of adding a competing default-template field. For Daytona, require a configured or per-call environment until a documented native default is deliberately supported. Missing both produces an actionable `INVALID_ARGUMENT` before sandbox creation: configure `daytona({ environment: ... })` or pass `create({ environment: ... })`.
 
-Proposed public input is the existing `CreateInput` with optional `environment`; create/check/submit accept an omitted input. Resolve it to a required environment before the existing adapter create boundary. Expose only the minimal adapter authoring extension needed to supply a default; do not make every provider's native create input optional or invent a general configuration registry.
+The public input is the existing `CreateInput` with optional `environment`; create/check/submit accept an omitted input. Resolve it to a required environment before the existing adapter create boundary. The optional adapter session `defaultImage` supplies the default; keep this extension minimal; do not make every provider's native create input optional or invent a general configuration registry.
 
 Defaults are explicit values, not a fallback search. Validate overrides normally: a foreign scoped image rejects before creation; an unavailable template does not fall back to `base`; an OCI image does not cause an unrequested build. Preserve the existing build/restore paths. Never substitute a new sandbox after an uncertain create. Returned sandbox references remain persistable using the shipped contract.
 
@@ -110,3 +110,7 @@ Behavior requirements:
 3. **Directory primitives.** First record pinned Daytona/E2B native mappings, error codes, symlink behavior and result bounds in this spec. Implement only demonstrated mappings, with native-boundary fixtures and maintained live acceptance cases. Unsupported mappings stay documented; do not hold all primitives for universal parity.
 
 Slices 1 and 2 may share a small PR if their diff remains easy to review. Do not combine directory work, networking or process management into it. Public docs distinguish proposed work from shipped exports until merge; update provider support reporting for newly exposed operations. Live evidence remains not-run until separately authorized and recorded. Run the repository checks appropriate to public API/package changes, including packed examples and docs.
+
+## Slice 1 implementation status
+
+Creation defaults have deterministic SDK/native-boundary fixtures, compiled provider examples and packed consumer coverage. The maintained sandbox acceptance setup now exercises configured creation for Daytona and E2B; no live run has been performed for this slice. Native create dispatch still requires an image and keeps existing networking, build, restore and uncertainty semantics. Text, directory and preview APIs are outside this implementation.

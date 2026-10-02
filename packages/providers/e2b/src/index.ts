@@ -390,6 +390,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
       return {
         ...resources.fields,
+        defaultImage: { kind: "prepared", value: config.templateId },
         scope: {
           authority,
           partition: { endpoint: E2B_ENDPOINT, template: config.templateId },

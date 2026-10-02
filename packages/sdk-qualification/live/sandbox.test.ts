@@ -143,7 +143,13 @@ describe("Sandbar sandbox", () => {
       );
       await fixture.resources.setup(async () => {
         await fixture!.resources.open();
-        box = await fixture!.resources.create("sandbox/source");
+        const t = fixture!.resources;
+        box = await t.create(
+          "sandbox/source",
+          undefined,
+          t.network,
+          t.client.provider === "daytona" || t.client.provider === "e2b",
+        );
       });
     }
   }, 96000);

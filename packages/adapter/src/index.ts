@@ -250,6 +250,8 @@ export type AdapterSession<
   CT extends Json = Json,
 > = {
   scope: Scope;
+  /** Default for omitted SDK create environments; native create inputs remain required. */
+  defaultImage?: Image & { binding?: { provider: string; scope: Scope } };
   /** Read-only evidence, scoped to the checked class or sandbox. Never allocate probe resources. */
   snapshotProfiles?: (
     target: { sandbox?: Sandbox; create?: CreateInput },

@@ -1198,10 +1198,10 @@ export class AdapterDirectClient {
   readonly signal: AbortSignal;
   readonly sandboxes: {
     get: (reference: SandboxReference, options?: WaitOptions) => Promise<AdapterSandbox>;
-    checkCreate: (input: CreateInput) => Promise<Support<CreatePlan>>;
-    create: (input: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
+    checkCreate: (input?: CreateInput) => Promise<Support<CreatePlan>>;
+    create: (input?: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
     submitCreate: (
-      input: CreateInput,
+      input?: CreateInput,
       options?: { signal?: AbortSignal },
     ) => Promise<AdapterOperation<AdapterSandbox>>;
   };
@@ -1529,15 +1529,15 @@ export class AdapterDirectClient {
       maxFileBytes: this.session.files ? fileReadLimit(this.session.files.maxBytes) : 0,
     });
   }
-  async checkCreate(input: CreateInput): Promise<Support<CreatePlan>> {
+  async checkCreate(input?: CreateInput): Promise<Support<CreatePlan>> {
     return this.checkCreateWithSignal(input, this.signal);
   }
   private async checkCreateWithSignal(
-    input: CreateInput,
+    input: CreateInput | undefined,
     signal: AbortSignal,
   ): Promise<Support<CreatePlan>> {
     this.ensureOpen();
-    const request = validateCreate(input);
+    const request = validateCreate(input, this.session.defaultImage);
     this.checkImageBinding(request);
 
     for (const mount of request.mounts ?? [])
@@ -1570,7 +1570,9 @@ export class AdapterDirectClient {
       ),
     );
   }
-  private checkImageBinding(request: CreateInput): void {
+  private checkImageBinding(
+    request: CreateInput & { environment: import("./resource").ImageInput },
+  ): void {
     if (
       request.environment.kind === "prepared" &&
       request.environment.binding &&
@@ -1580,10 +1582,10 @@ export class AdapterDirectClient {
       throw new SandbarError("FORBIDDEN", "Prepared image scope differs from this connection");
   }
   async submitCreate(
-    input: CreateInput,
+    input?: CreateInput,
     options: { signal?: AbortSignal } = {},
   ): Promise<AdapterOperation<AdapterSandbox>> {
-    const request = validateCreate(input);
+    const request = validateCreate(input, this.session.defaultImage);
     this.checkImageBinding(request);
 
     for (const mount of request.mounts ?? [])
