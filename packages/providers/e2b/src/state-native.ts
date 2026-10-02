@@ -938,12 +938,9 @@ export function e2bState(input: {
         if (
           !reference ||
           !token.success ||
-          token.data.allowPublicTraffic === undefined ||
           token.data.selector !== `${reference.nativeId}:${reference.generation}`
         )
-          return ctx.unknown(
-            "Original restore selector or inbound visibility is unavailable; no replay",
-          );
+          return ctx.unknown("Original restore selector is unavailable; no replay");
         const info = await snapshotInspect(reference);
 
         if (info.state !== "ready") return ctx.unknown("Original captured build is not ready");
@@ -978,7 +975,10 @@ export function e2bState(input: {
         )
           return ctx.unknown("Restored sandbox identity is unverified");
 
-        if (current.allowPublicTraffic !== token.data.allowPublicTraffic)
+        // Version-1 tokens written before preview configuration used native-public traffic.
+        const allowPublicTraffic = token.data.allowPublicTraffic ?? true;
+
+        if (current.allowPublicTraffic !== allowPublicTraffic)
           return ctx.unknown("Restored sandbox inbound visibility is unverified; no replay");
 
         return {

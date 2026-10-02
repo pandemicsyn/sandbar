@@ -759,7 +759,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             }
           },
           async observe(attempt, ctx) {
-            const token = CreateToken.safeParse(attempt.token);
+            // Pre-preview creates had no recovery metadata and used native-public traffic.
+            const legacy = attempt.token === undefined;
+
+            const token = CreateToken.safeParse(
+              legacy ? { allowPublicTraffic: true } : attempt.token,
+            );
 
             if (!token.success)
               return ctx.unknown(

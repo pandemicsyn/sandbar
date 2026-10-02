@@ -1127,6 +1127,84 @@ for (const mode of ["missing", "id", "scope", "submission", "operation"] as cons
   });
 }
 
+test("E2B pre-preview tokenless create recovers original public visibility without replay", async () => {
+  const f = fixture();
+  f.observedVisibility("missing");
+  const client = await f.connect();
+
+  try {
+    const operation = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+
+    const {
+      token: _token,
+      tokenVersion: _version,
+      ...legacy
+    } = structuredClone(operation.reference);
+
+    const reopened = await f.connect();
+
+    try {
+      for (const visibility of ["missing", false] as const) {
+        f.observedVisibility(visibility);
+        await expect((await reopened.recover(legacy)).wait()).rejects.toMatchObject({
+          code: "OUTCOME_UNKNOWN",
+        });
+      }
+
+      f.observedVisibility(true);
+      expect(await (await reopened.recover(legacy)).wait()).toMatchObject({ id: "box_1" });
+      expect(f.calls.create).toBe(1);
+      expect(f.calls.kill).toBe(0);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+test("E2B pre-preview version-1 restore recovers original public visibility without replay", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const snapshot = (await source.snapshot()).snapshot;
+    f.modes.loseRestore = true;
+    const operation = await snapshot.submitRestore({ networkPolicy: "blocked" });
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    const legacy = structuredClone(operation.reference);
+    legacy.token = z
+      .object({
+        selector: z.string(),
+        state: z.enum(["uncertain", "accepted", "rejected"]),
+        sandboxId: z.string().optional(),
+      })
+      .parse(legacy.token);
+    expect(legacy.tokenVersion).toBe(1);
+    const reopened = await f.connect();
+
+    try {
+      for (const visibility of ["missing", false] as const) {
+        f.observedVisibility(visibility);
+        await expect((await reopened.recover(legacy)).wait()).rejects.toMatchObject({
+          code: "OUTCOME_UNKNOWN",
+        });
+      }
+
+      f.observedVisibility(true);
+      expect(await (await reopened.recover(legacy)).wait()).toMatchObject({ id: "box_2" });
+      expect(f.calls.create).toBe(2);
+      expect(f.calls.kill).toBe(0);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await client.close();
+  }
+});
+
 test("E2B old pending restore cannot confirm a reassigned native build", async () => {
   const f = fixture();
   const client = await f.connect();
