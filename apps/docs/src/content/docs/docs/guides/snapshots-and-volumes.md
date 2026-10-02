@@ -159,15 +159,15 @@ The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/
 
 ### Current combinations
 
-| Workflow                                   | Current boundary                                                                                                             |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Capture a sandbox with external mounts     | Unsupported on both adapters                                                                                                 |
+| Workflow                                   | Current boundary                                                                                                                                                                                                   |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Capture a sandbox with external mounts     | Unsupported on both adapters                                                                                                                                                                                       |
 | Daytona cold restore with selected volumes | Implemented for known mount-free filesystem/fresh snapshots and explicit daytona-default; first live workflow failed; corrected selector lookup is fixture-tested; full acceptance pending authorized confirmation |
-| Resource overrides, memory plus mounts     | Unsupported; empty resource overrides are equivalent to omission                                                             |
-| Daytona writable create-time mounts        | Implemented; readiness and immutable volume identity checked                                                                 |
-| E2B volume CRUD                            | Mapped to private-beta native APIs; live validation blocked by account HTTP 403                                              |
-| E2B create-time mounts                     | Unsupported separately: inspected native requests/observations select names without proving exact mounted volume identity    |
-| Read-only mounts or volume versions        | Not implemented on either adapter                                                                                            |
+| Resource overrides, memory plus mounts     | Unsupported; empty resource overrides are equivalent to omission                                                                                                                                                   |
+| Daytona writable create-time mounts        | Implemented; readiness and immutable volume identity checked                                                                                                                                                       |
+| E2B volume CRUD                            | Mapped to private-beta native APIs; live validation blocked by account HTTP 403                                                                                                                                    |
+| E2B create-time mounts                     | Unsupported separately: inspected native requests/observations select names without proving exact mounted volume identity                                                                                          |
+| Read-only mounts or volume versions        | Not implemented on either adapter                                                                                                                                                                                  |
 
 ## Save and reopen references
 
@@ -221,4 +221,4 @@ Lost acknowledgements can leave billable artifacts without a safely owned identi
 
 ## Evidence
 
-The [generated support table](/docs/providers/support/) and [live evidence](/docs/providers/live-qualification/) preserve exact tested revisions/configuration, historical passes, blocked access and not-run cases. The merged Bun acceptance tooling generates these claims; this documentation change adds no live evidence. E2B volume creation is blocked by account HTTP 403, and the maintained built-in profile skips volume cases before setup. This does not prove that E2B lacks native volumes.
+The [generated support table](/docs/providers/support/) and [live evidence](/docs/providers/live-qualification/) preserve exact tested revisions/configuration, historical passes, blocked access and not-run cases. The maintained Bun acceptance tooling generates these claims, including the failed storage-composition case and its confirmed test-resource cleanup. E2B volume creation is blocked by account HTTP 403, and the maintained built-in profile skips volume cases before setup. This does not prove that E2B lacks native volumes.
