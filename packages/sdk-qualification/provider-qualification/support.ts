@@ -138,7 +138,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       termination: {
         support: "conditional",
-        note: "Active local handles issue one native SIGKILL PID request. PID reuse can target a successor; no descendant cleanup guarantee. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. New bounded live case not yet run.",
+        note: "Active local handles issue one native SIGKILL PID request. PID reuse can target a successor; no descendant cleanup guarantee. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. Bounded Bun live case at 4cc6a20 failed before process start because read-only guest attachment was unavailable; no signal/exit behavior qualified. Owned compute cleanup and client close confirmed.",
       },
       previewProtected: {
         support: "unsupported",

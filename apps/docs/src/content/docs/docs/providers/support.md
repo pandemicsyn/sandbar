@@ -12,7 +12,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Sandbox lifecycle                | [Supported · passed at 8449def7](#daytona-lifecycle)     | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
 | Protected HTTP preview           | [Conditional · not-run](#daytona-previewProtected)       | [Unsupported · not-run](#e2b-previewProtected)                                    |
 | Public HTTP preview              | [Unsupported · not-run](#daytona-previewPublic)          | [Conditional · not-run](#e2b-previewPublic)                                       |
-| Local-handle process termination | [Unsupported · not-run](#daytona-termination)            | [Conditional · not-run](#e2b-termination)                                         |
+| Local-handle process termination | [Unsupported · not-run](#daytona-termination)            | [Conditional · failed](#e2b-termination)                                          |
 | Configured lifetime renewal      | [Conditional · not-run](#daytona-renewal)                | [Conditional · not-run](#e2b-renewal)                                             |
 | Scoped sandbox reopening         | [Conditional · not-run](#daytona-reopening)              | [Conditional · not-run](#e2b-reopening)                                           |
 | Execution and captured output    | [Supported · passed at 8449def7](#daytona-execution)     | [Supported · passed at 8449def7](#e2b-execution)                                  |
@@ -136,7 +136,7 @@ E2B explicit public access only, with observed native visibility and auto-resume
 
 ### Local-handle process termination
 
-Active local handles issue one native SIGKILL PID request. PID reuse can target a successor; no descendant cleanup guarantee. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. New bounded live case not yet run.
+Active local handles issue one native SIGKILL PID request. PID reuse can target a successor; no descendant cleanup guarantee. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. Bounded Bun live case at 4cc6a20 failed before process start because read-only guest attachment was unavailable; no signal/exit behavior qualified. Owned compute cleanup and client close confirmed.
 
 <a id="e2b-renewal"></a>
 
