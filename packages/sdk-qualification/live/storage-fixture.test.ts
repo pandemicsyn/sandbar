@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { storageFixture, startupReport, checkStartup } from "./storage-composition.test";
+import { SandbarError } from "sandbar-sdk";
+import {
+  storageFixture,
+  startupReport,
+  checkStartup,
+  readPublishedReport,
+} from "./storage-composition.test";
 
 const report = {
   sandboxId: "current",
@@ -41,6 +47,54 @@ test("startup evidence cannot pass for stale compute, wrong selected profile", (
   ])
     expect(startupReport.safeParse(changed).success).toBe(false);
 });
+
+test("report publication can lag Toolbox without retrying its evidence", async () => {
+  let reads = 0;
+  const published = JSON.stringify(report);
+
+  const raw = await readPublishedReport(async () => {
+    if (++reads === 1) throw new SandbarError("NOT_FOUND", "Not published");
+
+    return published;
+  }, new AbortController().signal);
+
+  expect(reads).toBe(2);
+  expect(raw).toBe(published);
+  checkStartup(startupReport.parse(JSON.parse(raw)), expected);
+
+  reads = 0;
+
+  const wrong = await readPublishedReport(async () => {
+    reads++;
+
+    return JSON.stringify({ ...report, marker: "wrong" });
+  }, new AbortController().signal);
+
+  expect(() => checkStartup(startupReport.parse(JSON.parse(wrong)), expected)).toThrow();
+  expect(reads).toBe(1);
+});
+
+test("publication waits are finite and never retry other read failures", async () => {
+  let reads = 0;
+
+  await expect(
+    readPublishedReport(async () => {
+      reads++;
+      throw new SandbarError("NOT_FOUND", "Not published");
+    }, new AbortController().signal),
+  ).rejects.toThrow();
+  expect(reads).toBeGreaterThan(0);
+  expect(reads).toBeLessThanOrEqual(20);
+
+  reads = 0;
+  await expect(
+    readPublishedReport(async () => {
+      reads++;
+      throw new SandbarError("INVALID_RESPONSE", "Read failed");
+    }, new AbortController().signal),
+  ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  expect(reads).toBe(1);
+}, 7000);
 
 test("fixture prerequisite refuses oversized defaults, missing sentinel", () => {
   const fixture = {

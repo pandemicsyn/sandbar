@@ -1,7 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { z } from "zod";
+import { SandbarError } from "sandbar-sdk";
 import { liveEnabled, setupLive, finishLive, configuredProvider } from "./providers";
 import type { TestResources } from "./fixtures/resources";
 
@@ -48,6 +50,28 @@ const configPath = "/tmp/sandbar-storage-config.json";
 const reportPath = "/tmp/sandbar-storage-report.json";
 
 const startedPath = "/tmp/sandbar-storage-started.json";
+
+/** Wait only for atomic publication; the first available report is final evidence. */
+export async function readPublishedReport(
+  read: (signal: AbortSignal) => Promise<string>,
+  signal: AbortSignal,
+) {
+  const publicationSignal = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    publicationSignal.throwIfAborted();
+
+    try {
+      return await read(publicationSignal);
+    } catch (error) {
+      if (!(error instanceof SandbarError) || error.code !== "NOT_FOUND") throw error;
+    }
+
+    await delay(250, undefined, { signal: publicationSignal });
+  }
+
+  throw new Error("First-action report was not published within five seconds");
+}
 
 const data = '{"total":7}';
 
@@ -144,8 +168,11 @@ export async function storageComposition(
       ),
     );
 
-    // A slow report is a failure. Never poll until mounts/data appear correct.
-    const rawReport = await box.readTextFile(reportPath, { signal: t.signal });
+    const rawReport = await readPublishedReport(
+      (signal) => box.readTextFile(reportPath, { signal }),
+      t.signal,
+    );
+
     await writeFile(
       join(process.env.SANDBAR_LIVE_REPORT_DIR!, `${role.split("/")[1]}.startup.json`),
       rawReport,

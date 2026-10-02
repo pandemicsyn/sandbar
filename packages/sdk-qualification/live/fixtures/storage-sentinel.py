@@ -16,6 +16,13 @@ REPORT = Path("/tmp/sandbar-storage-report.json")
 STARTED = Path("/tmp/sandbar-storage-started.json")
 
 
+def publish(path, value):
+    pending = path.with_suffix(".pending")
+    pending.write_text(json.dumps(value))
+    os.chmod(pending, 0o600)
+    pending.replace(path)
+
+
 def first_action():
     # Replace inherited evidence before any data observation.
     REPORT.unlink(missing_ok=True)
@@ -43,11 +50,10 @@ def first_action():
     report = dict(sandboxId=sandbox_id, nonce=nonce, runId=config["runId"], marker=marker,
                   dataHash=data_hash, privateState=private_state, policy=config["policy"],
                   firstAttempt=True, applicationStarted=passed)
-    REPORT.write_text(json.dumps(report))
-    os.chmod(REPORT, 0o600)
     if passed:
-        STARTED.write_text(json.dumps(dict(sandboxId=sandbox_id, nonce=nonce)))
-        os.chmod(STARTED, 0o600)
+        publish(STARTED, dict(sandboxId=sandbox_id, nonce=nonce))
+    # Publish the immutable report last, after its correlated start marker.
+    publish(REPORT, report)
 
 
 if __name__ == "__main__":
@@ -55,6 +61,5 @@ if __name__ == "__main__":
         first_action()
     except Exception as error:
         # Missing/invalid evidence fails the harness; keep Toolbox alive for inspection.
-        REPORT.write_text(json.dumps(dict(error=type(error).__name__)))
-        os.chmod(REPORT, 0o600)
+        publish(REPORT, dict(error=type(error).__name__))
     signal.pause()  # No application work follows failure or bootstrap idle.
