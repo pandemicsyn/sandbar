@@ -116,7 +116,6 @@ test.each([
   "missing-policy",
   "missing-token",
   "missing-version",
-  "missing-domain",
   "foreign-domain",
   "paused",
 ])("guest attachment rejects unsafe detail before guest IO: %s", async (mode) => {
@@ -129,8 +128,6 @@ test.each([
   if (mode === "missing-token") Reflect.deleteProperty(f.detail, "envdAccessToken");
 
   if (mode === "missing-version") Reflect.deleteProperty(f.detail, "envdVersion");
-
-  if (mode === "missing-domain") Reflect.deleteProperty(f.detail, "domain");
 
   if (mode === "foreign-domain") f.detail.domain = "untrusted.invalid";
 
@@ -545,5 +542,27 @@ test.each(["handshake", "complete", "rpc"] as const)(
 
       for (const timer of timers) nativeClearTimeout(timer.handle);
     }
+  },
+);
+
+test.each(["omitted", "null"])(
+  "guest attachment resolves %s native domain to the fixed trusted default",
+  async (mode) => {
+    const f = fixture();
+
+    if (mode === "omitted") Reflect.deleteProperty(f.detail, "domain");
+    else Object.assign(f.detail, { domain: null });
+    expect(await f.transport.get("sandbox_one")).toMatchObject({
+      attachmentReady: true,
+      domain: "e2b.app",
+    });
+    expect((await f.transport.read("sandbox_one", "/tmp/value", 100)).bytes).toEqual(
+      new Uint8Array([0, 255, 8]),
+    );
+    expect(
+      f.calls
+        .filter((c) => c.url.origin === "https://api.e2b.app")
+        .every((c) => c.method === "GET"),
+    ).toBe(true);
   },
 );
