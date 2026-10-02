@@ -134,7 +134,7 @@ export const builtinSupport: SupportMetadata[] = [
     features: {
       suspension: {
         support: "conditional",
-        note: "E2B memory pause preserves private filesystem/RAM under the same ID; known native mounts are unsupported, missing mount metadata stays unknown, and external-storage durability/consistency is excluded; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Live case failed before pause at cb39884 because native mount facts were unavailable; owned cleanup confirmed. Initial guest-routing failure at 6796b30 is retained; revised private-state eligibility confirmation is pending, with no E2B lifecycle pass yet.",
+        note: "E2B memory pause preserves private filesystem/RAM under the same ID; known native mounts are unsupported, missing mount metadata stays unknown, and external-storage durability/consistency is excluded; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Live case failed before pause at cb39884 because native mount facts were unavailable; owned cleanup confirmed. Initial guest-routing failure at 6796b30 is retained; Revised private-state lifecycle case passed at 26f516d with confirmed owned cleanup, fresh-process inactive reopening, same files/identity and RAM nonce/counter continuity; prior failures remain recorded.",
       },
       previewPublic: {
         support: "conditional",

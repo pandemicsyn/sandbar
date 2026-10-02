@@ -171,14 +171,14 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-template / api-key.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
-- SDK: 0.0.0, commit `cb39884724bb6c70f070d10409c7ffbb4b5131c0`.
+- SDK: 0.0.0, commit `26f516d1d16c2e37d1b4820802412e4efca1c7dc`.
 - Fresh-process reopen: not recorded.
-- Harness commit: `cb39884724bb6c70f070d10409c7ffbb4b5131c0`.
+- Harness commit: `26f516d1d16c2e37d1b4820802412e4efca1c7dc`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/57).
 
 | Scenario                 | Latest live result | Date       |
 | ------------------------ | ------------------ | ---------- |
-| lifecycle-suspend-resume | failed             | 2026-10-02 |
+| lifecycle-suspend-resume | passed             | 2026-10-02 |
 
 ### paired-internet-blocked-requested · native-default · /home/user
 
