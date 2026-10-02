@@ -152,6 +152,6 @@ binary reads, renewal, scoped reopening, E2B directories, finite streaming and
 the supported preview modes. Do not add termination or suspend/resume reruns,
 network retries or retained storage. Fresh admission and intended routing must
 be verified at dispatch; the earlier read-only preflight is not a future lock
-or resource-readiness guarantee. Direct task authorization for paid dispatch
-and GitHub publication remains pending after automatic approval review rejected
-both actions. No compute was allocated by this audit task.
+or resource-readiness guarantee. Paid dispatch remains pending direct
+authorization. PR publication is authorized; no compute was allocated by this
+audit task.
