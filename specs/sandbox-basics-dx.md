@@ -1,14 +1,14 @@
 # Default creation and everyday files
 
-Accepted product direction · Implemented text helpers and directory APIs; creation defaults implemented pending merge · October 2, 2026
+Implementation contract · Creation defaults (#58), text helpers (#61) and directory APIs (#59) merged · October 2, 2026
 
-Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. This is the next implementation work after [suspend/resume](sandbox-lifecycle.md). Creation defaults are implemented in this slice, pending merge. Text helpers and directory primitives are implemented. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
+Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. Creation defaults, text helpers and directory APIs are merged. Exported directory methods retain the unsupported native mappings below; configured creation and directory live cases remain not-run. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
 ## Creation defaults belong in adapter setup
 
 Allow `client.sandboxes.create()` and `create({ labels: ... })` when the adapter can resolve a default environment. An explicit per-call environment takes precedence. `checkCreate()` and `submitCreate()` resolve exactly the same defaults as `create()`; checking support must not provision resources.
 
-Concrete proposed setup, using existing E2B terminology and one additional Daytona option:
+Implemented setup, using existing E2B terminology and one additional Daytona option:
 
 ```ts
 const e2bClient = await Sandbar.connect(e2b({
@@ -105,21 +105,21 @@ Behavior requirements:
 - Never implement convenience methods by interpolating paths into arbitrary shell commands. Prefer native file APIs; any necessary command mapping must be explicitly reviewed, correctly quoted and fixture-tested before enabling support. Do not install a hidden guest daemon.
 - Unsupported operations reject before mutation. Support is per operation; text helpers require only the existing read/write support. Do not force users to perform capability negotiation before ordinary calls.
 
-## Small delivery slices and acceptance
+## Merged delivery slices and acceptance
 
 1. **Creation defaults.** SDK/adapter default resolution and built-in setup, public types, provider docs and compiled examples. Test no-argument creation, labels-only creation, override precedence, absent defaults, foreign scoped images, and parity across check/submit/create. Native fixtures assert the resolved environment reaches exactly one create request.
 2. **Text helpers.** Thin wrappers, focused UTF-8/empty/multibyte/limit/overwrite/cancellation tests and packed Node/Bun examples. Reuse existing instrumentation without duplicate provider-call spans. No new native operation or live run is needed to establish encoding behavior.
 3. **Directory primitives.** First record pinned Daytona/E2B native mappings, error codes, symlink behavior and result bounds in this spec. Implement only demonstrated mappings, with native-boundary fixtures and maintained live acceptance cases. Unsupported mappings stay documented; do not hold all primitives for universal parity.
 
-Slices 1 and 2 may share a small PR if their diff remains easy to review. Do not combine directory work, networking or process management into it. Public docs distinguish proposed work from shipped exports until merge; update provider support reporting for newly exposed operations. Live evidence remains not-run until separately authorized and recorded. Run the repository checks appropriate to public API/package changes, including packed examples and docs.
+Creation defaults merged in #58, text helpers in #61 and directory primitives in #59. These acceptance boundaries describe the shipped slices, not a pending coding queue. Live evidence remains not-run until separately authorized and recorded. Run the repository checks appropriate to public API/package changes, including packed examples and docs.
 
 ## Slice 1 implementation status
 
-Creation defaults have deterministic SDK/native-boundary fixtures, compiled provider examples and packed consumer coverage. The maintained sandbox acceptance setup now exercises configured creation for Daytona and E2B; no live run has been performed for this slice. Native create dispatch still requires an image and keeps existing networking, build, restore and uncertainty semantics. Text, directory and preview APIs are outside this implementation.
+Creation defaults have deterministic SDK/native-boundary fixtures, compiled provider examples and packed consumer coverage. The maintained sandbox acceptance setup now exercises configured creation for Daytona and E2B; no live run has been performed for this slice. Native create dispatch still requires an image and keeps existing networking, build, restore and uncertainty semantics. Text helpers, directory APIs and preview access shipped in separate PRs.
 
 ## Slice 3 implementation contract and native evidence
 
-Slice 3 exposes optional adapter operations; merge and live qualification remain separate. Creation defaults and text helpers retain their own status above.
+Slice 3 merged in #59 with optional adapter operations; live qualification remains not-run. Creation defaults and text helpers retain their own status above.
 
 Listings have a fixed ceiling of 1,024 entries and 65,536 UTF-8 bytes in child names (summed, excluding metadata). The SDK validates names/types, rejects duplicate names and invalid child names, sorts in code-unit order and raises `OUTPUT_CAPACITY` on overflow. Adapters must return a complete immediate listing or reject; a native API that silently filters entries cannot implement this contract. These are result bounds, not a claim that a provider's unpaginated server bounds its allocation. No built-in listing is enabled in this slice.
 
