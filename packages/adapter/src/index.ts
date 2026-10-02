@@ -218,6 +218,7 @@ export type RecoveryAttempt<
   readonly sandbox: S;
   readonly resource?: ResourceReference;
   readonly mounts?: import("./state").MountSpec[];
+  readonly lifecycle?: import("./lifecycle").LifecycleIntent;
   readonly renewal?: import("./lifecycle").RenewRequest;
   readonly capture?: import("./state").SnapshotCaptureInput["expectation"];
   readonly token?: T;
@@ -247,6 +248,17 @@ export type Mutation<
       ) => Promise<V | Pending | Unknown | null>;
     };
 
+/** Lifecycle preparation resolves setup defaults before the SDK saves the dispatch intent. */
+type LifecycleMutation<V> = Extract<
+  Mutation<import("./lifecycle").LifecycleInput, V, import("./lifecycle").ResolvedLifecycleInput>,
+  { submit: unknown }
+> & {
+  prepare: (
+    input: import("./lifecycle").LifecycleInput,
+    ctx: ReadContext,
+  ) => Promise<import("./lifecycle").ResolvedLifecycleInput>;
+};
+
 export type Guarantees<C extends Command["kind"] = Command["kind"]> = {
   images: readonly ("prepared" | "oci")[];
   network: readonly string[];
@@ -272,6 +284,24 @@ export type AdapterSession<
     target: { sandbox?: Sandbox; create?: CreateInput },
     ctx: ReadContext,
   ) => Promise<Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>>;
+  suspend?: LifecycleMutation<import("./lifecycle").SuspendResult>;
+  resume?: LifecycleMutation<import("./lifecycle").ResumeResult>;
+  suspensionCapabilities?: (
+    target: { sandbox?: Sandbox },
+    ctx: ReadContext,
+  ) => Promise<
+    Support<{
+      preserve: "filesystem" | "filesystem+memory";
+      processes: "terminated" | "preserved";
+      connections: "dropped";
+    }>
+  >;
+  resumeCapabilities?: (
+    target: { sandbox?: Sandbox },
+    ctx: ReadContext,
+  ) => Promise<
+    Support<{ sourceStates: import("./state").SandboxState[]; setsSessionTimeout: boolean }>
+  >;
   renew?: Mutation<
     import("./lifecycle").RenewInput,
     import("./lifecycle").RenewResult,

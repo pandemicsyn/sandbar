@@ -58,24 +58,30 @@ const NativeSnapshot = z.object({
   createdAt: z.string().optional(),
 });
 
-const NativeBox = z.object({
-  id: z.string(),
-  organizationId: z.string(),
-  target: z.string(),
-  state: z.string(),
-  sandboxClass: z.string().optional(),
-  labels: z.record(z.string(), z.string()).optional(),
-  networkBlockAll: z.boolean().optional(),
-  public: z.boolean().optional(),
-  autoDestroyAt: z.string().nullable().optional(),
-  autoStopInterval: z.number().nullable().optional(),
-  autoDeleteInterval: z.number().nullable().optional(),
-  volumes: z
-    .array(
-      z.object({ volumeId: z.string(), mountPath: z.string(), subpath: z.string().optional() }),
-    )
-    .default([]),
-});
+const NativeBox = z
+  .object({
+    id: z.string(),
+    organizationId: z.string(),
+    target: z.string(),
+    state: z.string(),
+    sandboxClass: z.string().optional(),
+    labels: z.record(z.string(), z.string()).optional(),
+    networkBlockAll: z.boolean().optional(),
+    public: z.boolean().optional(),
+    autoDestroyAt: z.string().nullable().optional(),
+    autoStopInterval: z.number().nullable().optional(),
+    autoDeleteInterval: z.number().nullable().optional(),
+    volumes: z
+      .array(
+        z.object({ volumeId: z.string(), mountPath: z.string(), subpath: z.string().optional() }),
+      )
+      .optional(),
+  })
+  .transform((value) => ({
+    ...value,
+    mountsKnown: value.volumes !== undefined,
+    volumes: value.volumes ?? [],
+  }));
 
 const CaptureFacts = z.strictObject({
   preserve: z.literal("filesystem"),
@@ -1865,5 +1871,18 @@ export function daytonaState(input: {
     return response;
   }
 
-  return { fields, box, inspectSnapshot, inspectVolume, renew };
+  async function transition(id: string, action: "stop" | "start", signal: AbortSignal) {
+    const response = await request(
+      "POST",
+      `/sandbox/${encodeURIComponent(id)}/${action}`,
+      undefined,
+      { signal, deadline: Date.now() + 30000 },
+    );
+
+    void response.body?.cancel().catch(() => undefined);
+
+    return response;
+  }
+
+  return { fields, box, inspectSnapshot, inspectVolume, renew, transition };
 }

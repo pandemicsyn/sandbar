@@ -596,6 +596,8 @@ test("legacy and reopen-capable third-party adapters without renewal stay usable
       const box = await client.sandboxes.create({ environment: Image.prepared("fixture") });
       expect((await box.capabilities()).lifecycle?.renew.status).toBe("unsupported");
       await expect(box.renew()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+      await expect(box.suspend()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+      await expect(box.resume()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
       await expect(box.submitRenew({ forSeconds: 60 })).rejects.toMatchObject({
         code: "UNSUPPORTED",
         effect: "none",

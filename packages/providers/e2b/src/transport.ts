@@ -41,6 +41,21 @@ class NativeReadError extends AdapterError {
   }
 }
 
+export class E2BLifecycleRejected extends AdapterError {
+  constructor(status: number) {
+    super(
+      status === 404
+        ? "NOT_FOUND"
+        : [401, 403].includes(status)
+          ? "FORBIDDEN"
+          : status === 429
+            ? "RATE_LIMIT"
+            : "INVALID_ARGUMENT",
+      `E2B lifecycle mutation rejected (${status})`,
+    );
+  }
+}
+
 export class E2BRenewRejected extends AdapterError {
   constructor(status: number) {
     super(
@@ -150,6 +165,8 @@ export type E2BTransport = {
     limit: number,
     nextToken?: string,
   ): Promise<{ items: E2BRecord[]; nextToken?: string }>;
+  suspend?: (id: string, signal: AbortSignal) => Promise<void>;
+  resume?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   renew?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
@@ -276,6 +293,27 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     endAt: z.string().nullable().optional(),
     volumeMounts: z.array(z.object({ name: z.string(), path: z.string() })).optional(),
   });
+
+  async function lifecyclePost(
+    path: string,
+    body: { memory: true } | { timeout: number },
+    signal: AbortSignal,
+  ): Promise<void> {
+    const response = await fetcher(`${E2B_ENDPOINT}${path}`, {
+      method: "POST",
+      headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      redirect: "error",
+      signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+    });
+
+    void response.body?.cancel().catch(() => undefined);
+
+    if ([400, 401, 403, 404, 422, 429].includes(response.status))
+      throw new E2BLifecycleRejected(response.status);
+
+    if (!response.ok) throw new AdapterError("UNAVAILABLE", "E2B lifecycle response uncertain");
+  }
 
   async function attach(
     id: string,
@@ -686,6 +724,16 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       }));
 
       return { items, nextToken: paginator.nextToken };
+    },
+    async suspend(id, signal) {
+      await lifecyclePost(`/sandboxes/${encodeURIComponent(id)}/pause`, { memory: true }, signal);
+    },
+    async resume(id, seconds, signal) {
+      await lifecyclePost(
+        `/v2/sandboxes/${encodeURIComponent(id)}/connect`,
+        { timeout: seconds },
+        signal,
+      );
     },
     async renew(id, seconds, signal) {
       const response = await fetcher(

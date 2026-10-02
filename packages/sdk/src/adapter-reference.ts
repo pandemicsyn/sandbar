@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  LifecycleIntent,
   FileMutationIntent,
   ResourceReference,
   MountSpec,
@@ -24,6 +25,8 @@ export const ReferenceSchema = z.strictObject({
     "file_mkdir",
     "file_remove",
     "image_build",
+    "sandbox_suspend",
+    "sandbox_resume",
     "sandbox_renew",
     "snapshot_capture",
     "snapshot_restore",
@@ -40,6 +43,7 @@ export const ReferenceSchema = z.strictObject({
   invocationKey: z.string().min(1).max(128),
   sandboxId: z.string().min(1).max(512).optional(),
   sandboxReference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
+  lifecycle: LifecycleIntent.optional(),
   renewal: z.strictObject({ forSeconds: z.number().int().positive().safe() }).optional(),
   capture: CaptureExpectation.optional(),
   resource: ResourceReference.optional(),

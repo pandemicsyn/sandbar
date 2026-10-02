@@ -4,6 +4,14 @@ import { TestResources } from "./fixtures/resources";
 import { liveEnabled, featureSupported, setupLive, finishLive, reopenSnapshot } from "./providers";
 import { boundedRead } from "../provider-qualification/bounds";
 
+import {
+  processAbsent,
+  memoryProgram,
+  memoryRead,
+  quote,
+  memorySample,
+} from "./fixtures/memory-probe";
+
 export async function lifecycle(t: TestResources, box: AdapterSandbox, inventoryWaitMs = 30000) {
   expect((await box.inspect({ signal: t.signal })).state).toBe("running");
   const timeout = AbortSignal.timeout(inventoryWaitMs);
@@ -193,6 +201,7 @@ describe("Sandbar sandbox", () => {
           "files",
           "lifecycle-reopen",
           "lifecycle-renew",
+          "lifecycle-suspend-resume",
           ...(featureSupported("directories") ? ["file-directories" as const] : []),
         ],
         {
@@ -239,6 +248,67 @@ describe("Sandbar sandbox", () => {
   (liveEnabled ? test : test.skip)(
     "lifecycle-renew",
     async () => renewal(fixture!.resources, box),
+    241000,
+  );
+  (liveEnabled && featureSupported("suspension") ? test : test.skip)(
+    "lifecycle-suspend-resume",
+    async () => {
+      const configured = fixture!;
+      const t = configured.resources;
+      const path = `${configured.fileRoot}/sandbar-suspend-${t.ledger.runId}`;
+      const nonce = crypto.randomUUID();
+      const bytes = new TextEncoder().encode(nonce);
+      await box.writeFile(path, bytes, { overwrite: true, signal: t.signal });
+      // Reuse the snapshot suite's in-memory nonce/counter and bounded socket probe.
+      await t.exec(box, `nohup python3 -u -c ${quote(memoryProgram)} >/dev/null 2>&1 </dev/null &`);
+      let memoryBefore: ReturnType<typeof memorySample> | undefined;
+
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          memoryBefore = memorySample(await t.exec(box, memoryRead));
+        } catch {
+          /* Process may still be starting. */
+        }
+
+        if (memoryBefore) break;
+        await boundedRead(new Promise((resolve) => setTimeout(resolve, 100)), t.signal);
+      }
+
+      if (!memoryBefore) throw Error("Memory probe did not start");
+      const before = await box.inspect({ signal: t.signal });
+      t.at("sandbox/suspend");
+      const suspended = await box.suspend({ signal: t.signal });
+      expect(suspended.reference).toEqual(box.reference!);
+      expect(suspended.processes).toBe(
+        t.client.provider === "daytona" ? "terminated" : "preserved",
+      );
+      const reference = JSON.parse(JSON.stringify(box.reference));
+      await reopenSnapshot(configured, reference, {
+        path,
+        base64: Buffer.from(bytes).toString("base64"),
+        expires: suspended.observation.expires,
+        inactive: true,
+      });
+      await t.reconnect(t.signal);
+      box = await t.client.sandboxes.get(reference, { signal: t.signal });
+      expect(["stopped", "suspended"]).toContain((await box.inspect({ signal: t.signal })).state);
+      t.at("sandbox/resume");
+      const resumed = await box.resume({ signal: t.signal });
+      expect(resumed.reference).toEqual(reference);
+      expect(resumed.execution).toBe(t.client.provider === "daytona" ? "fresh" : "unknown");
+      expect(await t.read(box, path)).toEqual(bytes);
+
+      if (t.client.provider === "daytona") {
+        expect(await t.exec(box, processAbsent)).toBe("PROCESS_ABSENT\n");
+        expect(resumed.observation.expires).toEqual(before.expires);
+      } else {
+        const after = memorySample(await t.exec(box, memoryRead));
+        expect(after.nonce).toBe(memoryBefore.nonce);
+        expect(after.count).toBeGreaterThan(memoryBefore.count);
+        expect(resumed.observation.expires.status).toBe("known");
+      }
+      // Shared afterAll cleanup destroys the owned logical sandbox from any state.
+    },
     241000,
   );
   (liveEnabled ? test : test.skip)(

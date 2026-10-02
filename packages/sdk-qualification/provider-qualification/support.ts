@@ -21,6 +21,7 @@ export const features = {
       "close",
     ],
   },
+  suspension: { label: "Native sandbox suspend/resume", scenarios: ["lifecycle-suspend-resume"] },
   previewProtected: { label: "Protected HTTP preview", scenarios: ["preview-protected"] },
   previewPublic: { label: "Public HTTP preview", scenarios: ["preview-public"] },
   termination: { label: "Local-handle process termination", scenarios: ["execution-termination"] },
@@ -70,6 +71,10 @@ export const builtinSupport: SupportMetadata[] = [
     id: "daytona",
     name: "Daytona",
     features: {
+      suspension: {
+        support: "conditional",
+        note: "Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Bun lifecycle-suspend-resume passed at 6796b30 with confirmed owned cleanup.",
+      },
       termination: {
         support: "unsupported",
         note: "No process handles or verified session-command termination mapping. Session deletion is deferred; no sandbox-destruction fallback.",
@@ -132,6 +137,10 @@ export const builtinSupport: SupportMetadata[] = [
     id: "e2b",
     name: "E2B",
     features: {
+      suspension: {
+        support: "conditional",
+        note: "E2B memory pause preserves private filesystem/RAM under the same ID; known native mounts are unsupported, missing mount metadata stays unknown, and external-storage durability/consistency is excluded; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Live case failed before pause at cb39884 because native mount facts were unavailable; owned cleanup confirmed. Initial guest-routing failure at 6796b30 is retained; Revised private-state lifecycle case passed at 26f516d with confirmed owned cleanup, fresh-process inactive reopening, same files/identity and RAM nonce/counter continuity; prior failures remain recorded.",
+      },
       previewPublic: {
         support: "conditional",
         note: "E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. New live preview and changed inbound-default behavior not qualified.",

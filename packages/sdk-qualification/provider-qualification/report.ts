@@ -12,6 +12,7 @@ export const scenarios = [
   "sandbox-lifecycle",
   "lifecycle-reopen",
   "lifecycle-renew",
+  "lifecycle-suspend-resume",
   "preview-protected",
   "preview-public",
   "execution",

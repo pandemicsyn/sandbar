@@ -14,6 +14,8 @@ A continuation may return `ctx.reject()` to confirm a durable stage proven never
 
 E2B snapshot deletion requires a private containing template with exactly one native build. Application-retained history cannot authorize deleting unrelated generations in a multi-build template; delete such templates through the provider’s own management API when intended.
 
+The optional `suspend` and `resume` mutation hooks require an object with a read-only `prepare` method. It receives `LifecycleInput` and returns `ResolvedLifecycleInput`, preserving the sandbox reference and resolving the connection's native suspension profile or resume timeout into `intent`. The SDK saves that intent before dispatch and passes the resolved input to `submit`; callable hooks and objects without `prepare` are not supported for these operations.
+
 ## Optional directory operations
 
 Sessions may expose `files.list`, `files.exists`, `files.makeDirectory` and `files.remove` independently. Read ports receive `ReadContext`; mutation ports use the existing `Mutation<FileMutationInput, FileMutationValue>` contract with `{ acknowledged: true }` success, ordinary branded rejection/unknown results and optional observation. No guest daemon or generic emulation is required. Unsupported request variants must reject during prepare, before mutation.

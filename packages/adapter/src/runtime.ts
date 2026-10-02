@@ -18,7 +18,7 @@ import {
   VolumeCreateInput,
   VolumeInfo,
 } from "./resources";
-import { RenewInput, RenewResult } from "./lifecycle";
+import { LifecycleInput, SuspendResult, ResumeResult, RenewInput, RenewResult } from "./lifecycle";
 import { z } from "zod";
 import { CreateSandboxInput, ExecRequest, FilePath } from "./portable";
 import {
@@ -52,6 +52,8 @@ export type RuntimeSession = Omit<
   | "exec"
   | "files"
   | "imageBuild"
+  | "suspend"
+  | "resume"
   | "renew"
   | "snapshotCapture"
   | "snapshotRestore"
@@ -60,6 +62,8 @@ export type RuntimeSession = Omit<
   | "volumeDelete"
 > & {
   create: unknown;
+  suspend?: unknown;
+  resume?: unknown;
   renew?: unknown;
   snapshotCapture?: unknown;
   snapshotRestore?: unknown;
@@ -88,6 +92,8 @@ export type OperationKind =
   | "file_mkdir"
   | "file_remove"
   | "image_build"
+  | "sandbox_suspend"
+  | "sandbox_resume"
   | "sandbox_renew"
   | "snapshot_capture"
   | "snapshot_restore"
@@ -97,6 +103,7 @@ export type OperationKind =
 
 export type OperationInput =
   | import("./resources").DestroyInput
+  | import("./lifecycle").LifecycleInput
   | import("./lifecycle").RenewInput
   | CreateInput
   | ImageBuildInput
@@ -114,6 +121,8 @@ export type SpecialOutcome = Pending | Unknown | Rejected;
 export type OperationResult =
   | import("./files").FileMutationValue
   | import("./index").CreateValue
+  | import("./lifecycle").SuspendResult
+  | import("./lifecycle").ResumeResult
   | import("./lifecycle").RenewResult
   | DestroyValue
   | ExecValue
@@ -351,6 +360,10 @@ async function validateValue(
 
   if (kind === "create" || kind === "snapshot_restore") return CreateValueSchema.parse(value);
 
+  if (kind === "sandbox_suspend") return SuspendResult.parse(value);
+
+  if (kind === "sandbox_resume") return ResumeResult.parse(value);
+
   if (kind === "sandbox_renew") return RenewResult.parse(value);
 
   if (kind === "snapshot_capture") return SnapshotCaptureValue.parse(value);
@@ -454,6 +467,12 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
   let op: unknown;
 
   switch (kind) {
+    case "sandbox_suspend":
+      op = session.suspend;
+      break;
+    case "sandbox_resume":
+      op = session.resume;
+      break;
     case "sandbox_renew":
       op = session.renew;
       break;
@@ -506,8 +525,8 @@ function checkCapability(
   kind: OperationKind,
   input: OperationInput,
 ): OperationInput {
-  if (kind === "sandbox_renew") {
-    const value = RenewInput.parse(input);
+  if (["sandbox_renew", "sandbox_suspend", "sandbox_resume"].includes(kind)) {
+    const value = kind === "sandbox_renew" ? RenewInput.parse(input) : LifecycleInput.parse(input);
     assertResourceScope(value.sandbox.reference, {
       provider: value.sandbox.reference.provider,
       scope: session.scope,
@@ -870,6 +889,7 @@ export async function observeOperation(
     sandbox?: Sandbox;
     resource?: import("./state").ResourceReference;
     mounts?: import("./state").MountSpec[];
+    lifecycle?: import("./lifecycle").LifecycleIntent;
     renewal?: import("./lifecycle").RenewRequest;
     capture?: import("./state").SnapshotCaptureInput["expectation"];
     token?: Json;
