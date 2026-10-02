@@ -9,7 +9,10 @@ export function daytona(options: {
   environment?: ImageInput;
   ttlMinutes?: number;
   preview?: { access: "protected" | "public" };
-  lifecycle?: { lifetimeSeconds?: number };
+  lifecycle?: {
+    lifetimeSeconds?: number;
+    suspension?: { preserve: "filesystem" | "filesystem+memory" };
+  };
   snapshots?: { restartAfterCapture?: boolean };
   networkPolicy?: "blocked" | "daytona-default";
 }): BoundAdapter {

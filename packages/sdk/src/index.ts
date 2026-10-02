@@ -4,6 +4,7 @@ export type {
   StartProcessInput,
   ProcessOutput,
   ProcessExit,
+  ProcessTermination,
   ProcessHandle,
   ProcessFailure,
 } from "./processes";
@@ -77,6 +78,8 @@ export type {
   SnapshotProfile,
   SandboxState,
   SandboxReference,
+  SuspendResult,
+  ResumeResult,
   RenewRequest,
   RenewResult,
   SandboxInfo,

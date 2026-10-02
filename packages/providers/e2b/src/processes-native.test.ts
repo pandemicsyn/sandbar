@@ -28,7 +28,9 @@ function frame(value: ProcessFrame, flags = 0): Uint8Array {
   return result;
 }
 
-async function fixture(options: { early?: boolean; holdStart?: boolean } = {}) {
+async function fixture(
+  options: { early?: boolean; holdStart?: boolean; signalReply?: "not-found" | "lost" } = {},
+) {
   const calls: { method: string; path: string; body?: object; headers: Headers }[] = [];
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   let canceled = 0;
@@ -37,6 +39,8 @@ async function fixture(options: { early?: boolean; holdStart?: boolean } = {}) {
   let earlyCallbacks = 0;
   let startResolved = false;
   let deleted = false;
+  let target: "original" | "successor" = "original";
+  let signaled: "original" | "successor" | undefined;
 
   const detail = {
     sandboxID: "box_one",
@@ -117,6 +121,19 @@ async function fixture(options: { early?: boolean; holdStart?: boolean } = {}) {
         return new Response(body, { headers: { "Content-Type": "application/connect+json" } });
       }
 
+      if (url.pathname.endsWith("/SendSignal")) {
+        calls[calls.length - 1]!.body = await request.json();
+
+        if (options.signalReply === "lost") throw new Error("lost termination acknowledgement");
+
+        if (options.signalReply === "not-found")
+          return Response.json({ code: "not_found", message: "absent" }, { status: 404 });
+
+        signaled = target;
+
+        return Response.json({});
+      }
+
       if (url.pathname === "/health") return new Response(null, { status: 204 });
       throw new Error(`Unexpected guest call ${url.pathname}`);
     },
@@ -166,6 +183,12 @@ async function fixture(options: { early?: boolean; holdStart?: boolean } = {}) {
     detail,
     get canceled() {
       return canceled;
+    },
+    reusePid() {
+      target = "successor";
+    },
+    get signaled() {
+      return signaled;
     },
     get earlyCallbacks() {
       return earlyCallbacks;
@@ -332,5 +355,65 @@ test("native snapshot/suspend interruption cannot follow a changed guest generat
   await expect(p.wait()).rejects.toMatchObject({ code: "UNAVAILABLE" });
   expect(f.calls.slice(calls).every((c) => c.path === "/health")).toBe(true);
   expect(f.calls.filter((c) => c.path.endsWith("/Start"))).toHaveLength(1);
+  await f.client.close();
+});
+
+test.each(["ack", "not-found", "lost"])(
+  "pinned termination %s uses one PID SIGKILL and original connection",
+  async (mode) => {
+    const f = await fixture({ signalReply: mode === "ack" ? undefined : mode });
+    const p = await f.box.processes.start(input);
+    const before = f.calls.length;
+
+    if (mode === "lost") {
+      await expect(p.terminate()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+      await expect(p.terminate()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    } else {
+      expect(await p.terminate()).toEqual({ status: mode === "ack" ? "requested" : "not-found" });
+      expect(await p.terminate()).toEqual({ status: mode === "ack" ? "requested" : "not-found" });
+    }
+
+    const requests = f.calls.slice(before).filter((c) => c.path.endsWith("/SendSignal"));
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.body).toEqual({ process: { pid: 9 }, signal: "SIGNAL_SIGKILL" });
+    expect(
+      f.calls
+        .slice(before)
+        .some(
+          (c) => c.path.endsWith("/connect") || c.path.endsWith("/Start") || c.method === "DELETE",
+        ),
+    ).toBe(false);
+    expect(f.canceled).toBe(0);
+    f.end(-1);
+    expect(await p.wait()).toMatchObject({ exitCode: -1 });
+    expect(await p.terminate()).toEqual({ status: "exited" });
+    expect(f.calls.filter((c) => c.path.endsWith("/SendSignal"))).toHaveLength(1);
+    await f.client.close();
+  },
+);
+
+test("pinned active selector cannot distinguish an unobserved PID successor", async () => {
+  const f = await fixture();
+  const p = await f.box.processes.start(input);
+  // Simulate remote PID 9 now belonging to a successor, before its old end event arrives.
+  // The request has no execution token with which the native fixture could reject it.
+  f.reusePid();
+  expect(await p.terminate()).toEqual({ status: "requested" });
+  expect(f.signaled).toBe("successor");
+  const request = f.calls.find((c) => c.path.endsWith("/SendSignal"));
+  expect(request!.body).toEqual({ process: { pid: 9 }, signal: "SIGNAL_SIGKILL" });
+  await p.detach();
+  await f.client.close();
+});
+
+test("pinned lifecycle stream interruption prevents new termination without reattachment", async () => {
+  const f = await fixture();
+  const p = await f.box.processes.start(input);
+  f.interrupt();
+  await expect(p.wait()).rejects.toMatchObject({ code: "UNAVAILABLE" });
+  await expect(p.terminate()).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+  expect(f.calls.some((c) => c.path.endsWith("/SendSignal") || c.path.endsWith("/connect"))).toBe(
+    false,
+  );
   await f.client.close();
 });

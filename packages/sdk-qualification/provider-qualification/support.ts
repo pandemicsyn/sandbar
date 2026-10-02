@@ -21,8 +21,10 @@ export const features = {
       "close",
     ],
   },
+  suspension: { label: "Native sandbox suspend/resume", scenarios: ["lifecycle-suspend-resume"] },
   previewProtected: { label: "Protected HTTP preview", scenarios: ["preview-protected"] },
   previewPublic: { label: "Public HTTP preview", scenarios: ["preview-public"] },
+  termination: { label: "Local-handle process termination", scenarios: ["execution-termination"] },
   renewal: { label: "Configured lifetime renewal", scenarios: ["lifecycle-renew"] },
   reopening: { label: "Scoped sandbox reopening", scenarios: ["lifecycle-reopen"] },
   execution: {
@@ -70,6 +72,14 @@ export const builtinSupport: SupportMetadata[] = [
     id: "daytona",
     name: "Daytona",
     features: {
+      suspension: {
+        support: "conditional",
+        note: "Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Bun lifecycle-suspend-resume passed at 6796b30 with confirmed owned cleanup.",
+      },
+      termination: {
+        support: "unsupported",
+        note: "No process handles or verified session-command termination mapping. Session deletion is deferred; no sandbox-destruction fallback.",
+      },
       previewProtected: {
         support: "conditional",
         note: "Daytona protected header access only; standard token grants sandbox-wide command/file authority. Public setup unsupported. Native lookup can activate a route; no server start/resume or readiness claim. New live preview case not run.",
@@ -92,7 +102,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       lifecycle: {
         support: "supported",
-        note: "The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified. The current suite omits the create environment to exercise adapter defaults; historical passes do not qualify that newer path.",
+        note: "The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified. The current suite omits the create environment to exercise adapter defaults; historical baseline passes do not qualify that newer path.",
       },
       streaming: {
         support: "unsupported",
@@ -132,9 +142,17 @@ export const builtinSupport: SupportMetadata[] = [
     id: "e2b",
     name: "E2B",
     features: {
+      suspension: {
+        support: "conditional",
+        note: "E2B memory pause preserves private filesystem/RAM under the same ID; known native mounts are unsupported, missing mount metadata stays unknown, and external-storage durability/consistency is excluded; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Live case failed before pause at cb39884 because native mount facts were unavailable; owned cleanup confirmed. Initial guest-routing failure at 6796b30 is retained; Revised private-state lifecycle case passed at 26f516d with confirmed owned cleanup, fresh-process inactive reopening, same files/identity and RAM nonce/counter continuity; prior failures remain recorded.",
+      },
       previewPublic: {
         support: "conditional",
         note: "E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. New live preview and changed inbound-default behavior not qualified.",
+      },
+      termination: {
+        support: "conditional",
+        note: "Active local handles issue one native SIGKILL PID request. PID reuse can target a successor; no descendant cleanup guarantee. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. Bounded Bun live case passed at 131a8c6 with borrowed base on darwin-arm64/Bun 1.3.14 after the fixed-default routing correction: ready output, request acknowledgement/reuse, independently observed nonzero terminal result, owned cleanup and client close. The prior 4cc6a20 attachment failure remains recorded. Other images/platforms and signal delivery races are unqualified.",
       },
       previewProtected: {
         support: "unsupported",
@@ -154,11 +172,11 @@ export const builtinSupport: SupportMetadata[] = [
       },
       lifecycle: {
         support: "supported",
-        note: "The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed. The current suite omits the create environment to exercise the configured template default; historical passes do not qualify that newer path or private inbound defaults.",
+        note: "The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed. The current suite omits the create environment to exercise the configured template default; historical baseline passes do not qualify that newer path or private inbound defaults.",
       },
       streaming: {
         support: "conditional",
-        note: "Finite bounded text only, local process handles and auto-resume-off running guests. Pinned-client/packed fixtures cover start/output/wait/detach; execution-streaming live workflow not run. No binary streaming, durable reopen or remote process-control claim.",
+        note: "Finite bounded text only, local process handles and auto-resume-off running guests. Pinned-client/packed fixtures cover start/output/wait/detach; execution-streaming live workflow not run. No binary streaming or durable process reopening; termination evidence is reported separately.",
       },
       execution: {
         support: "supported",

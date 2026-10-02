@@ -4,7 +4,9 @@ No live calls are authorized. This proposal selects existing ordinary Bun cases,
 with no new runner, retry, build-image workflow, snapshots or volumes. Use the
 final reviewed clean commit of this PR, Bun 1.3.14 and its frozen lockfile. Record
 that exact commit and native versions from the preload; do not call historical
-passes current-head qualification. PR #57 suspend/resume acceptance is separate.
+passes current-head qualification. Reconciled against merged main `0a022a8`;
+suspend/resume and termination already have separate dated live evidence and
+are not selected by this plan.
 
 ## Prerequisites and configuration
 
@@ -136,13 +138,20 @@ exposure would add at most ten sandbox-minutes. Provider clarification or a
 verifiable changed native control is the prerequisite; another allocation with
 the unchanged mapping is not a repair.
 
-## Current E2B prerequisite
+## Merged dependencies and remaining gaps
 
-The separately owned PR #57 live run reported `UNAVAILABLE` at initial file
-write, before suspension, with compute cleanup confirmed. The merged-main guest
-attachment gate requires running state, explicit `autoResume: false`, envd
-version/token presence and the trusted `e2b.app` domain. That task owns the
-bounded native diagnosis. Do not allocate repeated E2B feature fixtures against
-the unchanged failed gate; resolve its field-presence evidence first. This
-observation does not qualify or fail the feature cases listed above, which have
-not executed. Daytona feature cases remain independently selectable.
+Main `0a022a8` includes #65's fixed-default E2B guest routing, #66's process
+termination and #57's suspend/resume. The omitted/null-domain attachment blocker
+is resolved; missing mount metadata no longer blocks private E2B state capture,
+while known native mounts remain unsupported. Keep their separate source rows,
+actual passed/failed results and cleanup evidence unchanged. The earlier gate
+failures remain historical evidence, not outcomes of these unexecuted cases.
+
+This plan still selects only configured-environment creation, signal-bearing
+binary reads, renewal, scoped reopening, E2B directories, finite streaming and
+the supported preview modes. Do not add termination or suspend/resume reruns,
+network retries or retained storage. Fresh admission and intended routing must
+be verified at dispatch; the earlier read-only preflight is not a future lock
+or resource-readiness guarantee. Direct task authorization for paid dispatch
+and GitHub publication remains pending after automatic approval review rejected
+both actions. No compute was allocated by this audit task.

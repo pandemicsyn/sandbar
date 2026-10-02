@@ -61,6 +61,7 @@ Import from `sandbar-sdk`.
 | `ProcessFailure`            | type      |
 | `ProcessHandle`             | type      |
 | `ProcessOutput`             | type      |
+| `ProcessTermination`        | type      |
 | `ReadOptions`               | type      |
 | `RecoveredOperation`        | type      |
 | `RecoveryReference`         | type      |
@@ -70,6 +71,7 @@ Import from `sandbar-sdk`.
 | `ResourceReference`         | re-export |
 | `RestoreCapabilities`       | type      |
 | `RestoreRequest`            | re-export |
+| `ResumeResult`              | type      |
 | `Sandbar`                   | value     |
 | `SandbarClient`             | type      |
 | `SandbarError`              | re-export |
@@ -85,6 +87,7 @@ Import from `sandbar-sdk`.
 | `SnapshotResult`            | type      |
 | `StartProcessInput`         | type      |
 | `Support`                   | type      |
+| `SuspendResult`             | type      |
 | `UnsupportedFeatureError`   | re-export |
 | `validateResourceReference` | re-export |
 | `VolumeCapabilities`        | type      |

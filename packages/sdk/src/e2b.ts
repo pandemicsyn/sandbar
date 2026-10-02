@@ -12,7 +12,12 @@ const Configuration = z
       .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
       .default({ access: "protected" }),
     lifecycle: z
-      .strictObject({ lifetimeSeconds: z.number().int().positive().safe().max(3600).optional() })
+      .strictObject({
+        lifetimeSeconds: z.number().int().positive().safe().max(3600).optional(),
+        suspension: z
+          .strictObject({ preserve: z.enum(["filesystem", "filesystem+memory"]) })
+          .optional(),
+      })
       .optional(),
   })
   .superRefine((value, ctx) => {
@@ -107,6 +112,8 @@ export interface E2BTransport {
     }[];
     nextToken?: string;
   }>;
+  suspend?: (id: string, signal: AbortSignal) => Promise<void>;
+  resume?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   renew?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
@@ -138,7 +145,10 @@ export function e2b(options: {
   templateId?: string;
   timeoutSeconds?: number;
   preview?: { access: "protected" | "public" };
-  lifecycle?: { lifetimeSeconds?: number };
+  lifecycle?: {
+    lifetimeSeconds?: number;
+    suspension?: { preserve: "filesystem" | "filesystem+memory" };
+  };
 }): BoundAdapter {
   return bindAdapter(
     createE2BAdapter(),
