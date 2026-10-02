@@ -1,8 +1,8 @@
 # Preview access and useful process control
 
-Accepted priority · Preview slice implemented in this branch; process API sketches pending native evidence · October 2, 2026
+Accepted priority · Preview slice merged in #60; process API sketches pending native evidence · October 2, 2026
 
-Schedule after [default creation and everyday files](sandbox-basics-dx.md), before new adapters. Applications should be able to start a server, obtain usable access information and deliberately stop their command. Keep provider choices in setup and common calls short. This brief does not enlarge the shipped [finite streaming contract](interactive-execution-and-access.md) or claim new native support.
+Preview access and [default creation and everyday files](sandbox-basics-dx.md) are merged. Process termination is the next focused design/implementation, followed separately by stdin and sustained output, before storage coding and new adapters. Applications should be able to start a server, obtain usable access information and deliberately stop their command. Keep provider choices in setup and common calls short. This brief does not enlarge the shipped [finite streaming contract](interactive-execution-and-access.md) or claim new native support.
 
 ## Preview access
 
@@ -92,8 +92,8 @@ Before advertising long-running output, verify a bounded native transport or ups
 
 ## Scope and delivery
 
-1. **Preview access.** Resolve the native access evidence above, finalize the smallest return/config shape, then ship supported provider mappings, docs and tests. Include invalid ports, protected/public differences, missing readiness, expired access and no hidden lifecycle changes.
+1. **Preview access — merged in #60.** The settled return/config shape, supported provider mappings, docs and deterministic/packed tests are shipped. Live preview and changed E2B inbound-default qualification remain not-run; unsupported access choices above remain separate decisions.
 2. **Termination through existing handles.** Resolve native execution identity and exit representation, then ship one verified operation with fixtures covering exited commands, reused identifiers, lost acknowledgements and local cancellation. A provider that cannot prove targeting remains unsupported. Native feasibility is a prerequisite, not an invitation to add a process supervisor.
 3. **Input and sustained observation.** Scope separately after the first two decisions. Implement input only with delivery semantics documented; change streaming budgets only with evidence of bounded retention. No dependency on this slice for preview access.
 
-These are small delivery candidates, not one combined implementation PR. Update this brief with evidence and settled signatures before delegating dependent coding work. The main SDK contract owns results; adapters own native mechanics. Run deterministic tests, packed consumer examples and docs checks. Maintain ordinary provider acceptance scenarios, with live runs separately authorized and support claims tied to actual evidence. No new qualification framework or generic recovery journal.
+Preview is completed; the remaining process slices are small delivery candidates, not one combined implementation PR. Update this brief with evidence and settled signatures before delegating dependent coding work. The main SDK contract owns results; adapters own native mechanics. Run deterministic tests, packed consumer examples and docs checks. Maintain ordinary provider acceptance scenarios, with live runs separately authorized and support claims tied to actual evidence. No new qualification framework or generic recovery journal.
