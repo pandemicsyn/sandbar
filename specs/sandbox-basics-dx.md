@@ -1,8 +1,8 @@
 # Default creation and everyday files
 
-Accepted product direction · Creation defaults implemented pending merge; text helpers proposed; directory primitives implemented · October 2, 2026
+Accepted product direction · Implemented text helpers and directory APIs; creation defaults implemented pending merge · October 2, 2026
 
-Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. This is the next implementation work after [suspend/resume](sandbox-lifecycle.md). Creation defaults are implemented in this slice, pending merge; text signatures below remain proposals; directory behavior follows the implemented slice 3 contract. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
+Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. This is the next implementation work after [suspend/resume](sandbox-lifecycle.md). Creation defaults are implemented in this slice, pending merge. Text helpers and directory primitives are implemented. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
 ## Creation defaults belong in adapter setup
 
@@ -42,7 +42,9 @@ This slice does not change network defaults, lifetime policy, image resolution, 
 
 ## Text files without encoding boilerplate
 
-Add helpers alongside the existing byte methods, without overloading or changing those methods:
+Implementation status: implemented. Thin SDK wrappers and deterministic/packed Node/Bun coverage; no new native operation or live evidence.
+
+Helpers sit alongside the existing byte methods, without overloading or changing those methods:
 
 ```ts
 readTextFile(path: string, options?: ReadOptions): Promise<string>;
@@ -71,7 +73,7 @@ Reuse byte-operation limits, path validation, cancellation and errors. Limits co
 
 ## Directory operations for ordinary application work
 
-Slice 3 implements the following SDK signatures with optional adapter methods; the implementation is pending merge and live qualification. The verified built-in subset and unsupported mappings are documented below:
+Slice 3 implements the following SDK signatures with optional adapter methods; live qualification remains pending. The verified built-in subset and unsupported mappings are documented below:
 
 ```ts
 type FileEntry = {
