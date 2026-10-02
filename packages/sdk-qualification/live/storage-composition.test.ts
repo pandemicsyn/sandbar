@@ -73,6 +73,36 @@ export async function readPublishedReport(
   throw new Error("First-action report was not published within five seconds");
 }
 
+/** Daytona may report a snapshot name; resolve it without weakening exact-ID checks. */
+const nativeSnapshotIdentity = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  organizationId: z.string().min(1),
+  general: z.boolean(),
+});
+
+type NativeSnapshotIdentity = z.infer<typeof nativeSnapshotIdentity>;
+
+export async function resolveSnapshotId(
+  selector: string,
+  organizationId: string,
+  read: (selector: string) => Promise<NativeSnapshotIdentity>,
+) {
+  const detail = z
+    .object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      organizationId: z.literal(organizationId),
+      general: z.literal(false),
+    })
+    .parse(await read(selector));
+
+  if (detail.id !== selector && detail.name !== selector)
+    throw new Error("Native snapshot selector differs from resolved identity");
+
+  return detail.id;
+}
+
 const data = '{"total":7}';
 
 const dataHash = new Bun.CryptoHasher("sha256").update(data).digest("hex");
@@ -288,9 +318,10 @@ describe("Sandbar storage composition", () => {
 
         if (!response.ok) throw new Error("Native storage detail unavailable");
 
-        return z
+        const detail = z
           .object({
-            id: z.string(),
+            id: z.literal(id),
+            organizationId: z.literal(live!.resources.client.scope.authority.id),
             snapshot: z.string(),
             networkBlockAll: z.boolean(),
             public: z.boolean(),
@@ -303,6 +334,27 @@ describe("Sandbar storage composition", () => {
             ),
           })
           .parse(await response.json());
+
+        detail.snapshot = await resolveSnapshotId(
+          detail.snapshot,
+          live!.resources.client.scope.authority.id,
+          async (selector) => {
+            const snapshot = await fetch(
+              `https://app.daytona.io/api/snapshots/${encodeURIComponent(selector)}`,
+              {
+                headers: { Authorization: `Bearer ${process.env.SANDBAR_DAYTONA_API_KEY}` },
+                redirect: "error",
+                signal: live!.resources.signal,
+              },
+            );
+
+            if (!snapshot.ok) throw new Error("Native snapshot identity unavailable");
+
+            return nativeSnapshotIdentity.parse(await snapshot.json());
+          },
+        );
+
+        return detail;
       };
 
       await storageComposition(live!.resources, fixture, nativeRead);

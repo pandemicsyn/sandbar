@@ -5,6 +5,7 @@ import {
   startupReport,
   checkStartup,
   readPublishedReport,
+  resolveSnapshotId,
 } from "./storage-composition.test";
 
 const report = {
@@ -46,6 +47,25 @@ test("startup evidence cannot pass for stale compute, wrong selected profile", (
     { ...report, policy: "blocked" },
   ])
     expect(startupReport.safeParse(changed).success).toBe(false);
+});
+
+test("native snapshot names resolve to exact scoped IDs", async () => {
+  const native = {
+    id: "snapshot-id",
+    name: "snapshot-name",
+    organizationId: "org",
+    general: false,
+  };
+
+  for (const selector of [native.id, native.name])
+    expect(await resolveSnapshotId(selector, "org", async () => native)).toBe(native.id);
+
+  for (const changed of [
+    { ...native, organizationId: "foreign" },
+    { ...native, general: true },
+    { ...native, name: "other-name" },
+  ])
+    await expect(resolveSnapshotId(native.name, "org", async () => changed)).rejects.toThrow();
 });
 
 test("report publication can lag Toolbox without retrying its evidence", async () => {
