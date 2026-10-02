@@ -458,7 +458,7 @@ test("lost default creation recovers confirmed identity without replacement or r
 
   try {
     const recovered = await reopened.recover(operation.reference);
-    expect((await recovered.wait()).id).toBe("sb_1");
+    expect(await recovered.wait()).toMatchObject({ id: "sb_1" });
     expect(f.calls.create).toBe(1);
   } finally {
     await reopened.close();

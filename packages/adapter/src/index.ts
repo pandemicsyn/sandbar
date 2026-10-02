@@ -251,7 +251,9 @@ export type AdapterSession<
 > = {
   scope: Scope;
   /** Default for omitted SDK create environments; native create inputs remain required. */
-  defaultImage?: Image & { binding?: { provider: string; scope: Scope } };
+  defaultImage?:
+    | { kind: "prepared"; value: string; binding?: { provider: string; scope: Scope } }
+    | { kind: "oci"; value: string };
   /** Read-only evidence, scoped to the checked class or sandbox. Never allocate probe resources. */
   snapshotProfiles?: (
     target: { sandbox?: Sandbox; create?: CreateInput },
