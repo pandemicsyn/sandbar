@@ -154,6 +154,15 @@ async function flow() {
   await handle.inspect({ ...options, pollMs: 500 });
   await handle.readFile("/file", options);
   await handle.readFile("/file");
+  const text: string = await handle.readTextFile("/file", options);
+  await handle.readTextFile("/file");
+  await handle.writeTextFile("/text", text);
+  await handle.writeTextFile("/text", text, { overwrite: true, signal: options.signal });
+  const entries: import("sandbar-sdk").FileEntry[] = await handle.listFiles("/job", options);
+  const exists: boolean = await handle.fileExists("/job/file", options);
+  await handle.makeDirectory("/job/results", { recursive: true, signal: options.signal });
+  await handle.removeFile("/job", { recursive: true, signal: options.signal });
+  void entries; void exists;
   await box.destroy();
   await client.close();
 }
@@ -208,10 +217,13 @@ void flow;
 import { Sandbar, Image } from "sandbar-sdk";
 import { daytona } from "sandbar-sdk/daytona";
 async function flow() {
-  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15 }));
+  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15, environment: Image.prepared("snap-1") }));
   const built = await client.images.build({ source: Image.oci("alpine:3.21") });
   await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
-  const box = await client.sandboxes.create({ environment: Image.prepared("snap-1") });
+  await client.sandboxes.checkCreate();
+  const box = await client.sandboxes.create();
+  const tagged = await client.sandboxes.submitCreate({ labels: { job: "report" } });
+  void tagged;
   const result = await box.exec({ command: { kind: "shell", script: "printf ready" } });
   const text = result.stdoutText();
   await client.close();
@@ -229,7 +241,10 @@ async function flow() {
   const prepared = Image.prepared(built.prepared);
   const builtBox = await client.sandboxes.create({ environment: prepared, networkPolicy: "blocked" });
   await builtBox.destroy();
-  const box = await client.sandboxes.create({ environment: Image.prepared("template_1"), networkPolicy: "blocked" });
+  await client.sandboxes.checkCreate();
+  const box = await client.sandboxes.create();
+  const tagged = await client.sandboxes.submitCreate({ labels: { job: "report" } });
+  void tagged;
   const output = await box.exec({ command: { kind: "argv", argv: ["printf", "test"] } });
   const bytes: Uint8Array = await box.readFile("/tmp/file");
   await box.writeFile("/tmp/file", bytes, { overwrite: false });
@@ -237,7 +252,15 @@ async function flow() {
   return output;
 }
 void e2b({ apiKey: "fixture", templateId: "template_1" });
-void createE2BAdapter;
+async function configuredLifecycle() {
+  const client = await Sandbar.connect({
+    adapter: createE2BAdapter(),
+    config: { lifecycle: { lifetimeSeconds: 600, suspension: { preserve: "filesystem+memory" } }, preview: { access: "protected" } },
+    credentials: { apiKey: "fixture" },
+  });
+  await client.close();
+}
+void configuredLifecycle;
 void flow;
 `;
   else if (mode === "builtins")
@@ -346,6 +369,13 @@ try {
   await box.writeFile("/data/packed", bytes);
   const loaded = await box.readFile("/data/packed");
   if (loaded.length !== bytes.length || loaded.some((value, index) => value !== bytes[index])) throw new Error("Binary file changed");
+  const text = "Ada 🌊 café\\r\\n終";
+  await box.writeTextFile("/data/text", text);
+  if (await box.readTextFile("/data/text") !== text) throw new Error("Text roundtrip changed");
+  const encoded = await box.readFile("/data/text");
+  if (encoded.length !== new TextEncoder().encode(text).length) throw new Error("Text byte encoding changed");
+  await box.writeTextFile("/data/text", "", { overwrite: true });
+  if (await box.readTextFile("/data/text", { signal: new AbortController().signal }) !== "") throw new Error("Empty text changed");
   await box.destroy();
   process.stdout.write("packed direct flow passed\\n");
 } finally { await client.close(); }
@@ -520,7 +550,7 @@ const transport = {
   async create(input) {
     if (!["base", "template_1", "template_oci", "snapshot_packed:11111111-1111-4111-8111-111111111111"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
     creates++;
-    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",lifecycle:{onTimeout:"kill",autoResume:false},envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
+    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",allowPublicTraffic:input.allowPublicTraffic,lifecycle:{onTimeout:"kill",autoResume:false},envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
     return record.id;
   },
   async get(id) { return record?.id === id ? record : null; },
@@ -827,6 +857,14 @@ try {
     await readFile(join(root, "apps/docs/examples/sandbox-suspend-resume.ts"), "utf8"),
   );
   await writeFile(
+    join(custom, "sandbox-preview.ts"),
+    await readFile(join(root, "apps/docs/examples/sandbox-preview.ts"), "utf8"),
+  );
+  await writeFile(
+    join(custom, "directory-files.ts"),
+    await readFile(join(root, "apps/docs/examples/directory-files.ts"), "utf8"),
+  );
+  await writeFile(
     join(custom, "streaming-tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
@@ -837,7 +875,13 @@ try {
         skipLibCheck: false,
         types: [],
       },
-      include: ["text-streaming.ts", "sandbox-renew.ts", "sandbox-suspend-resume.ts"],
+      include: [
+        "text-streaming.ts",
+        "sandbox-renew.ts",
+        "sandbox-suspend-resume.ts",
+        "sandbox-preview.ts",
+        "directory-files.ts",
+      ],
     }),
   );
   run(join(root, "node_modules/.bin/tsc"), ["-p", "streaming-tsconfig.json"], custom);
@@ -848,6 +892,13 @@ try {
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["streaming.mjs"], custom)}`);
+  await writeFile(
+    join(custom, "directories.mjs"),
+    await readFile(join(root, "packages/sdk-qualification/directory-packed.mjs"), "utf8"),
+  );
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["directories.mjs"], custom)}`);
   inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
   inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);

@@ -11,10 +11,13 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | ----------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Sandbox lifecycle             | [Supported · passed at 8449def7](#daytona-lifecycle)     | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
 | Native sandbox suspend/resume | [Conditional · not-run](#daytona-suspension)             | [Conditional · not-run](#e2b-suspension)                                          |
+| Protected HTTP preview        | [Conditional · not-run](#daytona-previewProtected)       | [Unsupported · not-run](#e2b-previewProtected)                                    |
+| Public HTTP preview           | [Unsupported · not-run](#daytona-previewPublic)          | [Conditional · not-run](#e2b-previewPublic)                                       |
 | Configured lifetime renewal   | [Conditional · not-run](#daytona-renewal)                | [Conditional · not-run](#e2b-renewal)                                             |
 | Scoped sandbox reopening      | [Conditional · not-run](#daytona-reopening)              | [Conditional · not-run](#e2b-reopening)                                           |
 | Execution and captured output | [Supported · passed at 8449def7](#daytona-execution)     | [Supported · passed at 8449def7](#e2b-execution)                                  |
 | Binary files and overwrite    | [Conditional · passed at 8449def7](#daytona-files)       | [Conditional · passed at 8449def7](#e2b-files)                                    |
+| Directory primitives          | [Unsupported · not-run](#daytona-directories)            | [Conditional · not-run](#e2b-directories)                                         |
 | OCI image builds              | [Conditional · not-run](#daytona-oci)                    | [Conditional · not-run](#e2b-oci)                                                 |
 | Measured network controls     | [Conditional · not-run](#daytona-network)                | [Supported · failed](#e2b-network)                                                |
 | Snapshot roundtrip            | [Conditional · passed at 1505ee0d](#daytona-snapshots)   | [Conditional · passed at 8449def7](#e2b-snapshots)                                |
@@ -36,6 +39,18 @@ The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced nat
 ### Native sandbox suspend/resume
 
 Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Native/packed fixtures; lifecycle-suspend-resume live not run.
+
+<a id="daytona-previewProtected"></a>
+
+### Protected HTTP preview
+
+Daytona protected header access only; standard token grants sandbox-wide command/file authority. Public setup unsupported. Native lookup can activate a route; no server start/resume or readiness claim. New live preview case not run.
+
+<a id="daytona-previewPublic"></a>
+
+### Public HTTP preview
+
+Daytona sandbox-wide publication requires a separate product decision; preview never changes visibility.
 
 <a id="daytona-renewal"></a>
 
@@ -59,7 +74,13 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 
 ### Binary files and overwrite
 
-Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified.
+Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.
+
+<a id="daytona-directories"></a>
+
+### Directory primitives
+
+listFiles, makeDirectory, fileExists and removeFile reject before mutation. Inspected native listing/details lose link identity or entries; mkdir always recurses; delete does not cover dangling links or empty-directory semantics. No shell emulation.
 
 <a id="daytona-oci"></a>
 
@@ -105,6 +126,18 @@ The ordinary Bun base baseline passed at 8449def with API-key authority in the d
 
 Known unmounted E2B memory pause retains processes under the same ID; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Native/packed fixtures; lifecycle-suspend-resume live not run.
 
+<a id="e2b-previewProtected"></a>
+
+### Protected HTTP preview
+
+Fresh traffic-token retrieval is absent from the pinned read-only detail API. Native connect may resume compute; protected preview rejects without calling it. Newly created/restored compute is private by default.
+
+<a id="e2b-previewPublic"></a>
+
+### Public HTTP preview
+
+E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. New live preview and changed inbound-default behavior not qualified.
+
 <a id="e2b-renewal"></a>
 
 ### Configured lifetime renewal
@@ -127,7 +160,13 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 
 ### Binary files and overwrite
 
-Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths.
+Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.
+
+<a id="e2b-directories"></a>
+
+### Directory primitives
+
+fileExists uses native lstat-backed Stat, including dangling links. makeDirectory and removeFile require recursive: true; omitted/false rejects before mutation. listFiles is unsupported because e2b 2.51.0 filters unknown entry types. Intermediate parent links are followed; recursive removal does not walk link entries. Native/packed fixtures only; file-directories live case not run.
 
 <a id="e2b-oci"></a>
 

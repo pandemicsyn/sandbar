@@ -18,6 +18,7 @@ type NativeFixtureDetail = {
   envdVersion: string;
   envdAccessToken: string;
   domain: string;
+  network: { allowPublicTraffic: boolean };
   lifecycle?: { onTimeout?: string; autoResume?: boolean };
   endAt: string;
   volumeMounts?: { name: string; path: string }[];
@@ -53,6 +54,7 @@ function fixture() {
     envdVersion: "0.5.0",
     envdAccessToken: "guest-token",
     domain: "e2b.app",
+    network: { allowPublicTraffic: false },
     lifecycle: { onTimeout: "kill", autoResume: false },
     endAt: "2026-10-01T01:00:00Z",
     volumeMounts: [],

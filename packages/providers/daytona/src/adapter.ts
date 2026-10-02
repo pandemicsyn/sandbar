@@ -4,7 +4,10 @@ import {
   ResolvedLifecycleInput,
   SuspendResult,
   ResumeResult,
+  ResourceScope,
   RenewRequest,
+  PreviewPort,
+  PreviewResult,
   ResolvedRenewInput,
   sandboxReference,
   assertSandboxReference,
@@ -26,18 +29,36 @@ import {
   type ObserveContext,
 } from "sandbar-adapter";
 import type { DriverResult } from "@sandbar/provider-spi";
-import { daytonaProvider, daytonaRegistration, type DaytonaEndpointPair } from "./index";
+import {
+  boundedBytes,
+  daytonaProvider,
+  daytonaRegistration,
+  type DaytonaEndpointPair,
+} from "./index";
 
 const Configuration = z
   .strictObject({
     apiUrl: z.url().default("https://app.daytona.io/api"),
     toolboxOrigin: z.url().default("https://proxy.app.daytona.io"),
     target: z.string().min(1),
+    environment: z
+      .discriminatedUnion("kind", [
+        z.strictObject({
+          kind: z.literal("prepared"),
+          value: z.string().min(1),
+          binding: z.strictObject({ provider: z.string().min(1), scope: ResourceScope }).optional(),
+        }),
+        z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
+      ])
+      .optional(),
     networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
     snapshots: z
       .strictObject({ restartAfterCapture: z.boolean().default(true) })
       .default({ restartAfterCapture: true }),
     ttlMinutes: z.coerce.number().int().min(1).max(1440).optional(),
+    preview: z
+      .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
+      .default({ access: "protected" }),
     lifecycle: z
       .strictObject({
         lifetimeSeconds: z.number().int().positive().safe().max(86400).optional(),
@@ -356,6 +377,12 @@ export function createDaytonaAdapter(
           "Daytona container suspension preserves filesystem only",
         );
 
+      if (config.preview.access === "public")
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "Daytona public previews require sandbox-wide publication; this adapter supports preview.access protected only",
+        );
+
       const { driver, scope } = await daytonaProvider({
         apiKey: credentials.apiKey,
         apiUrl: config.apiUrl,
@@ -667,6 +694,7 @@ export function createDaytonaAdapter(
 
       return {
         ...resourceState.fields,
+        defaultImage: config.environment,
         snapshotRestore: createMutation,
         async snapshotInspect(ref: ResourceReference, ctx: import("sandbar-adapter").ReadContext) {
           const info = await resourceState.inspectSnapshot(ref, ctx);
@@ -1808,6 +1836,78 @@ export function createDaytonaAdapter(
 
             return value ?? ctx.unknown("Daytona execution receipt is incomplete");
           },
+        },
+        async preview(input, ctx) {
+          if (!PreviewPort.safeParse(input.port).success)
+            throw new AdapterError(
+              "INVALID_ARGUMENT",
+              "Preview port must be an integer from 1 through 65535",
+            );
+
+          if (!input.sandbox.reference)
+            throw new AdapterError(
+              "UNSUPPORTED",
+              "Daytona preview requires a verified sandbox reference; inspect and reopen using its reference first",
+            );
+          const info = await inspection(input.sandbox.id, input.sandbox.reference, ctx);
+
+          if (info.state === "destroyed")
+            throw new AdapterError(
+              "NOT_FOUND",
+              "Daytona sandbox is destroyed; preview access is unavailable",
+            );
+
+          if (info.state !== "running")
+            throw new AdapterError(
+              "UNAVAILABLE",
+              "Daytona preview requires running compute; resume explicitly before requesting access",
+            );
+
+          try {
+            const response = await (fetchImpl ?? fetch)(
+              `${config.apiUrl}/sandbox/${encodeURIComponent(input.sandbox.id)}/ports/${input.port}/preview-url`,
+              {
+                headers: { Authorization: `Bearer ${credentials.apiKey}` },
+                signal: ctx.signal,
+                redirect: "error",
+              },
+            );
+
+            if (!response.ok) {
+              void response.body?.cancel().catch(() => undefined);
+              throw new AdapterError(
+                response.status === 404
+                  ? "NOT_FOUND"
+                  : [401, 403].includes(response.status)
+                    ? "FORBIDDEN"
+                    : "UNAVAILABLE",
+                "Daytona preview access request failed",
+              );
+            }
+
+            // Native preview data includes credentials: bound parsing and never include its body in errors.
+            const bytes = await boundedBytes(response, 32768, ctx.signal);
+
+            const native = z
+              .object({
+                sandboxId: z.string(),
+                url: z.string(),
+                token: z.string().min(1).max(8192),
+              })
+              .parse(JSON.parse(new TextDecoder().decode(bytes)));
+
+            if (native.sandboxId !== input.sandbox.id)
+              throw new AdapterError("CONFLICT", "Daytona preview response identity differs");
+
+            return PreviewResult.parse({
+              access: "protected",
+              url: native.url,
+              headers: { "x-daytona-preview-token": native.token },
+            });
+          } catch (error) {
+            if (error instanceof AdapterError) throw error;
+            throw new AdapterError("UNAVAILABLE", "Daytona preview access response is unavailable");
+          }
         },
         files: {
           maxBytes: caps.maxFileBytes,

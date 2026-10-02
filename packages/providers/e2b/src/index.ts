@@ -7,6 +7,7 @@ import {
   SuspendResult,
   ResumeResult,
   RenewRequest,
+  PreviewPort,
   ResolvedRenewInput,
   sandboxReference,
   assertSandboxReference,
@@ -25,10 +26,12 @@ import {
   type OperationOutcome,
   defineAdapter,
   type ExecValue,
+  type Json,
 } from "sandbar-adapter";
 import {
   E2BLifecycleRejected,
   E2BRenewRejected,
+  E2BDirectoryRejected,
   createSdkTransport,
   E2B_ENDPOINT,
   MAX_BYTES,
@@ -38,6 +41,13 @@ import {
 } from "./transport";
 
 import { classifyWriteFailure, WriteFailure, writeFailureReason } from "./write-failure";
+
+const CreateToken = z.strictObject({
+  allowPublicTraffic: z.boolean(),
+  sandboxId: z.string().min(1).max(512).optional(),
+});
+
+const CreateRecoveryToken: z.ZodType<Json> = CreateToken;
 
 const Configuration = z
   .strictObject({
@@ -54,6 +64,9 @@ const Configuration = z
       .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
       .default("base"),
     timeoutSeconds: z.number().int().min(60).max(3600).optional(),
+    preview: z
+      .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
+      .default({ access: "protected" }),
     lifecycle: z
       .strictObject({
         lifetimeSeconds: z.number().int().positive().safe().max(3600).optional(),
@@ -489,14 +502,139 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         scopeMarker,
         timeoutSeconds: config.timeoutSeconds,
         apiKey: credentials.apiKey,
+        allowPublicTraffic: config.preview.access === "public",
         find,
       });
 
+      const entryExists = transport.exists;
+      const makeDirectory = transport.makeDirectory;
+      const removeEntry = transport.removeEntry;
+
+      const directoryOperations: Pick<
+        NonNullable<import("sandbar-adapter").AdapterSession["files"]>,
+        "exists" | "makeDirectory" | "remove"
+      > = {};
+
+      if (entryExists)
+        directoryOperations.exists = async (
+          input: { sandbox: import("sandbar-adapter").Sandbox; path: string },
+          ctx: import("sandbar-adapter").ReadContext,
+        ) => {
+          requirePath(input.path);
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+          ctx.signal.throwIfAborted();
+
+          return entryExists(input.sandbox.id, input.path, ctx.signal);
+        };
+
+      if (makeDirectory)
+        directoryOperations.makeDirectory = {
+          async prepare(input: import("sandbar-adapter").FileMutationInput) {
+            requirePath(input.path);
+
+            if (!input.recursive)
+              throw new AdapterError("UNSUPPORTED", "E2B makeDirectory requires recursive: true");
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+            return input;
+          },
+          async submit(
+            input: import("sandbar-adapter").FileMutationInput,
+            ctx: import("sandbar-adapter").AttemptContext,
+          ) {
+            try {
+              await requireRunning(input.sandbox.id, input.sandbox.reference);
+              ctx.signal.throwIfAborted();
+              await makeDirectory(input.sandbox.id, input.path, ctx.signal);
+
+              return { acknowledged: true as const };
+            } catch (error) {
+              if (error instanceof E2BDirectoryRejected)
+                return ctx.reject(error.code, error.message);
+
+              return ctx.unknown(
+                "E2B directory creation acknowledgement unavailable; not replayed",
+              );
+            }
+          },
+        };
+
+      if (removeEntry)
+        directoryOperations.remove = {
+          async prepare(input: import("sandbar-adapter").FileMutationInput) {
+            requirePath(input.path);
+
+            if (!input.recursive)
+              throw new AdapterError("UNSUPPORTED", "E2B removeFile requires recursive: true");
+
+            if (input.path === "/")
+              throw new AdapterError("INVALID_ARGUMENT", "Cannot remove sandbox root");
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+            return input;
+          },
+          async submit(
+            input: import("sandbar-adapter").FileMutationInput,
+            ctx: import("sandbar-adapter").AttemptContext,
+          ) {
+            try {
+              await requireRunning(input.sandbox.id, input.sandbox.reference);
+              ctx.signal.throwIfAborted();
+              await removeEntry(input.sandbox.id, input.path, ctx.signal);
+
+              return { acknowledged: true as const };
+            } catch {
+              return ctx.unknown("E2B removal acknowledgement unavailable; not replayed");
+            }
+          },
+        };
+
       return {
         ...resources.fields,
+        defaultImage: { kind: "prepared", value: config.templateId },
         scope: {
           authority,
           partition: { endpoint: E2B_ENDPOINT, template: config.templateId },
+        },
+        async preview(input, ctx) {
+          if (!PreviewPort.safeParse(input.port).success)
+            throw new AdapterError(
+              "INVALID_ARGUMENT",
+              "Preview port must be an integer from 1 through 65535",
+            );
+
+          if (config.preview.access !== "public")
+            throw new AdapterError(
+              "UNSUPPORTED",
+              "E2B protected preview credentials cannot be retrieved read-only after reopening; select preview.access public explicitly or use Daytona protected previews",
+            );
+          ctx.signal.throwIfAborted();
+          const record = await find(input.sandbox.id, input.sandbox.reference);
+
+          if (!record)
+            throw new AdapterError("NOT_FOUND", "E2B sandbox is outside the verified scope");
+
+          if (record.id !== input.sandbox.id)
+            throw new AdapterError("CONFLICT", "E2B preview response identity differs");
+
+          if (record.state !== "running")
+            throw new AdapterError(
+              "UNAVAILABLE",
+              "E2B preview requires running compute; resume explicitly before requesting access",
+            );
+          ctx.signal.throwIfAborted();
+
+          if (
+            record.allowPublicTraffic !== true ||
+            record.domain !== "e2b.app" ||
+            record.lifecycle?.autoResume !== false
+          )
+            throw new AdapterError(
+              "UNAVAILABLE",
+              "E2B public preview requires confirmed public traffic, e2b.app domain, and auto-resume off",
+            );
+
+          return { access: "public" as const, url: `https://${input.port}-${record.id}.e2b.app` };
         },
         supports: {
           images: ["prepared", "oci"],
@@ -578,6 +716,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           },
         },
         create: {
+          recovery: { version: 1, token: CreateRecoveryToken },
           async prepare(input) {
             if (input.mounts?.length)
               throw new AdapterError(
@@ -615,6 +754,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
             if (!nativeId.test(ctx.submissionId) || !nativeId.test(ctx.operationId))
               return ctx.reject("INVALID_ARGUMENT", "Invalid E2B correlation ID");
+
+            const token: z.infer<typeof CreateToken> = {
+              allowPublicTraffic: config.preview.access === "public",
+            };
+
+            await ctx.checkpoint(token);
 
             let templateId =
               input.image.kind === "prepared" ? input.image.value : config.templateId;
@@ -677,11 +822,14 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 templateId,
                 timeoutMs: config.timeoutSeconds * 1000,
                 allowInternetAccess: input.networkPolicy === "internet",
+                allowPublicTraffic: token.allowPublicTraffic,
                 metadata,
                 signal: ctx.signal,
               });
 
               if (!nativeId.test(id)) return ctx.unknown("E2B create returned an invalid ID");
+              token.sandboxId = id;
+              await ctx.checkpoint(token);
               const record = await transport.get(id);
 
               if (
@@ -693,6 +841,11 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               )
                 return ctx.unknown("E2B create identity could not be verified");
 
+              if (record.allowPublicTraffic !== token.allowPublicTraffic)
+                return ctx.unknown(
+                  "E2B create inbound visibility could not be verified; no replay",
+                );
+
               return {
                 id,
                 reference: sandboxReference("e2b", boundScope, id, {
@@ -702,53 +855,78 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 mounts: input.mounts,
                 state: record.state === "running" ? ("running" as const) : ("unknown" as const),
               };
-            } catch {
+            } catch (error) {
+              if (error instanceof AdapterCheckpointError) throw error;
+
               return ctx.unknown(
                 `E2B create response unavailable; observe without replay${name ? `; retained template ${templateId}` : ""}`,
               );
             }
           },
           async observe(attempt, ctx) {
+            // Pre-preview creates had no recovery metadata and used native-public traffic.
+            const legacy = attempt.token === undefined;
+
+            const token = CreateToken.safeParse(
+              legacy ? { allowPublicTraffic: true } : attempt.token,
+            );
+
+            if (!token.success)
+              return ctx.unknown(
+                "Original E2B create inbound visibility is unavailable; no replay",
+              );
             await verifyAuthority();
 
-            const page = await transport.list(
-              {
-                sandbar_scope: scopeMarker,
-                sandbar_submission: attempt.submissionId,
-                sandbar_operation: attempt.operationId,
-              },
-              2,
-            );
+            let id = token.data.sandboxId;
 
-            const matches = page.items.filter(
-              (record) =>
-                owned(record) &&
-                record.metadata.sandbar_submission === attempt.submissionId &&
-                record.metadata.sandbar_operation === attempt.operationId,
-            );
-
-            if (matches.length !== 1 || page.nextToken) {
-              const build = await transport.findBuild(
-                config.teamId,
-                buildName(attempt.submissionId),
+            if (!id) {
+              const page = await transport.list(
+                {
+                  sandbar_scope: scopeMarker,
+                  sandbar_submission: attempt.submissionId,
+                  sandbar_operation: attempt.operationId,
+                },
+                2,
               );
 
-              return build
-                ? ctx.unknown(
-                    `E2B image build ${build.templateId} is ${build.status}; no sandbox was confirmed`,
-                  )
-                : null;
+              const matches = page.items.filter(
+                (record) =>
+                  owned(record) &&
+                  record.metadata.sandbar_submission === attempt.submissionId &&
+                  record.metadata.sandbar_operation === attempt.operationId,
+              );
+
+              if (matches.length !== 1 || page.nextToken) {
+                const build = await transport.findBuild(
+                  config.teamId,
+                  buildName(attempt.submissionId),
+                );
+
+                return build
+                  ? ctx.unknown(
+                      `E2B image build ${build.templateId} is ${build.status}; no sandbox was confirmed`,
+                    )
+                  : null;
+              }
+
+              id = matches[0]!.id;
             }
 
-            const record = (await transport.get(matches[0]!.id)) ?? matches[0]!;
+            const record = await transport.get(id);
 
             if (
-              record.id !== matches[0]!.id ||
+              !record ||
+              record.id !== id ||
               !owned(record) ||
               record.metadata.sandbar_submission !== attempt.submissionId ||
               record.metadata.sandbar_operation !== attempt.operationId
             )
               return ctx.unknown("Recovered E2B create identity could not be verified");
+
+            if (record.allowPublicTraffic !== token.data.allowPublicTraffic)
+              return ctx.unknown(
+                "Recovered E2B create inbound visibility is unverified; no replay",
+              );
 
             if (attempt.mounts?.length)
               return ctx.unknown("Recovered native volume IDs cannot be confirmed; no replay");
@@ -1528,6 +1706,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         },
         files: {
           maxBytes: MAX_BYTES,
+          ...directoryOperations,
           async read(input, ctx) {
             requirePath(input.path);
             await requireRunning(input.sandbox.id, input.sandbox.reference);

@@ -22,6 +22,8 @@ export const features = {
     ],
   },
   suspension: { label: "Native sandbox suspend/resume", scenarios: ["lifecycle-suspend-resume"] },
+  previewProtected: { label: "Protected HTTP preview", scenarios: ["preview-protected"] },
+  previewPublic: { label: "Public HTTP preview", scenarios: ["preview-public"] },
   renewal: { label: "Configured lifetime renewal", scenarios: ["lifecycle-renew"] },
   reopening: { label: "Scoped sandbox reopening", scenarios: ["lifecycle-reopen"] },
   execution: {
@@ -34,6 +36,7 @@ export const features = {
     workflow: "files",
     scenarios: ["file-binary", "file-overwrite", "file-no-clobber"],
   },
+  directories: { label: "Directory primitives", scenarios: ["file-directories"] },
   oci: { label: "OCI image builds", scenarios: ["build-oci"] },
   network: {
     label: "Measured network controls",
@@ -71,6 +74,18 @@ export const builtinSupport: SupportMetadata[] = [
         support: "conditional",
         note: "Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Native/packed fixtures; lifecycle-suspend-resume live not run.",
       },
+      previewProtected: {
+        support: "conditional",
+        note: "Daytona protected header access only; standard token grants sandbox-wide command/file authority. Public setup unsupported. Native lookup can activate a route; no server start/resume or readiness claim. New live preview case not run.",
+      },
+      previewPublic: {
+        support: "unsupported",
+        note: "Daytona sandbox-wide publication requires a separate product decision; preview never changes visibility.",
+      },
+      directories: {
+        support: "unsupported",
+        note: "listFiles, makeDirectory, fileExists and removeFile reject before mutation. Inspected native listing/details lose link identity or entries; mkdir always recurses; delete does not cover dangling links or empty-directory semantics. No shell emulation.",
+      },
       renewal: {
         support: "conditional",
         note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.",
@@ -89,7 +104,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       files: {
         support: "conditional",
-        note: "Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified.",
+        note: "Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
       },
       oci: {
         support: "conditional",
@@ -121,6 +136,18 @@ export const builtinSupport: SupportMetadata[] = [
         support: "conditional",
         note: "Known unmounted E2B memory pause retains processes under the same ID; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Native/packed fixtures; lifecycle-suspend-resume live not run.",
       },
+      previewPublic: {
+        support: "conditional",
+        note: "E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. New live preview and changed inbound-default behavior not qualified.",
+      },
+      previewProtected: {
+        support: "unsupported",
+        note: "Fresh traffic-token retrieval is absent from the pinned read-only detail API. Native connect may resume compute; protected preview rejects without calling it. Newly created/restored compute is private by default.",
+      },
+      directories: {
+        support: "conditional",
+        note: "fileExists uses native lstat-backed Stat, including dangling links. makeDirectory and removeFile require recursive: true; omitted/false rejects before mutation. listFiles is unsupported because e2b 2.51.0 filters unknown entry types. Intermediate parent links are followed; recursive removal does not walk link entries. Native/packed fixtures only; file-directories live case not run.",
+      },
       renewal: {
         support: "conditional",
         note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.",
@@ -139,7 +166,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       files: {
         support: "conditional",
-        note: "Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths.",
+        note: "Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
       },
       oci: {
         support: "conditional",

@@ -13,9 +13,12 @@ export const scenarios = [
   "lifecycle-reopen",
   "lifecycle-renew",
   "lifecycle-suspend-resume",
+  "preview-protected",
+  "preview-public",
   "execution",
   "execution-streaming",
   "files",
+  "file-directories",
   "network-controls",
   "connect",
   "create-prepared",
@@ -142,6 +145,7 @@ export const reportSchema = z
           "execution",
           "execution-streaming",
           "files",
+          "file-directories",
           "network-controls",
         ].includes(record.scenario) &&
         !record.runner

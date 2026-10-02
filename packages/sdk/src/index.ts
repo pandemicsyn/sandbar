@@ -82,6 +82,7 @@ export type {
   RenewRequest,
   RenewResult,
   SandboxInfo,
+  Preview,
   Fact,
   Deadline,
   CreatePlan,
@@ -105,3 +106,5 @@ export type { MountCapabilities, VolumeCapabilities, RestoreCapabilities } from 
 export { diagnosticContext } from "./observability";
 
 export type { ObservabilityOptions, DiagnosticContext } from "./observability";
+
+export type { FileEntry } from "sandbar-adapter";

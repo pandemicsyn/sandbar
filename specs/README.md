@@ -16,6 +16,15 @@ New features target the SDK and public adapter API; see the [delivery rule](../p
 
 Use the [authoritative roadmap](../ROADMAP.md) for order and qualification gaps. Merged code is not live qualification; retain the actual tested revision/configuration. Vercel and Tensorlake adapters remain behind the SDK usability gate. Accounting is deferred; the service/management UI were removed in #39, and Rust is not planned.
 
+## Accepted upcoming DX work
+
+After the active suspend/resume slice:
+
+- [Default creation and everyday files](sandbox-basics-dx.md) — proposed adapter-owned creation defaults, UTF-8 helpers and a separate directory-operations slice, with concrete usage and failure behavior.
+- [Preview access and useful process control](preview-and-process-control.md) — next priority; concrete access/termination/input sketches and native-evidence decisions required before implementation. This does not change the shipped finite-streaming contract.
+
+Storage composition research continues; implementation follows these everyday workflow gaps. Provider-specific choices belong in setup, while ordinary application calls stay short. Keep confirmed outcomes and persisted resource identities available without making normal calls use recovery machinery.
+
 ## Current engineering contracts
 
 - [Architecture](design.md) — the implemented SDK and adapter boundaries.

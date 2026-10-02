@@ -1,3 +1,12 @@
+export {
+  MAX_DIRECTORY_ENTRIES,
+  MAX_DIRECTORY_NAME_BYTES,
+  FileMutationIntent,
+  FileMutationValue,
+} from "./files";
+
+export type { FileEntry, FileMutationInput } from "./files";
+
 import { AdapterError } from "./errors";
 import { OperationOutcome } from "./state";
 
@@ -38,6 +47,8 @@ export type ImageBuildValue = { preparedId: string; retainedResources: RetainedA
 export * from "./resources";
 
 export * from "./lifecycle";
+
+export * from "./preview";
 
 export type CreateInput = {
   image: Image;
@@ -262,6 +273,10 @@ export type AdapterSession<
   CT extends Json = Json,
 > = {
   scope: Scope;
+  /** Default for omitted SDK create environments; native create inputs remain required. */
+  defaultImage?:
+    | { kind: "prepared"; value: string; binding?: { provider: string; scope: Scope } }
+    | { kind: "oci"; value: string };
   /** Read-only evidence, scoped to the checked class or sandbox. Never allocate probe resources. */
   snapshotProfiles?: (
     target: { sandbox?: Sandbox; create?: CreateInput },
@@ -359,6 +374,10 @@ export type AdapterSession<
     | null
   >;
   exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox>;
+  preview?: (
+    input: { sandbox: Sandbox; port: number },
+    ctx: ReadContext,
+  ) => Promise<import("./preview").Preview>;
   processes?: { start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess> };
   files?: {
     maxBytes: number;
@@ -367,6 +386,18 @@ export type AdapterSession<
       ctx: ReadContext,
     ) => Promise<Uint8Array | ReadableStream<Uint8Array>>;
     write?: Mutation<FileWriteInput, FileWriteValue, WP, Json, Sandbox>;
+    /** Must include every immediate entry, including dangling symlinks and unknown types. */
+    list?: (
+      input: { sandbox: Sandbox; path: string },
+      ctx: ReadContext,
+    ) => Promise<import("./files").FileEntry[]>;
+    /** False only for confirmed entry absence; final dangling symlinks exist. */
+    exists?: (input: { sandbox: Sandbox; path: string }, ctx: ReadContext) => Promise<boolean>;
+    makeDirectory?: Mutation<
+      import("./files").FileMutationInput,
+      import("./files").FileMutationValue
+    >;
+    remove?: Mutation<import("./files").FileMutationInput, import("./files").FileMutationValue>;
   };
   inventory?: (
     input: { cursor?: string; limit: number },

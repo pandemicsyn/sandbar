@@ -8,17 +8,16 @@ Import `e2b` from `sandbar-sdk/e2b`. The built-in adapter uses the E2B API key a
 E2B also supports [finite text streaming](/docs/guides/text-streaming/) through `sandbox.processes.start()`. Separate stdout/stderr text, confirmed zero/nonzero exit and prompt local detach use bounded queues and a cumulative output budget. No process runtime deadline, binary streaming or remote process kill is provided. Live streaming validation remains unrun.
 
 ```ts
-import { Image, Sandbar } from "sandbar-sdk";
+import { Sandbar } from "sandbar-sdk";
 import { e2b } from "sandbar-sdk/e2b";
 
 // Provider setup: adapter credentials, region/template and prepared image.
 const client = await Sandbar.connect(
   e2b({ apiKey: process.env.E2B_API_KEY!, lifecycle: { lifetimeSeconds: 600 } }),
 );
-const preparedImage = "base";
 
 try {
-  const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
+  const box = await client.sandboxes.create();
   try {
     await box.exec(["/bin/sh", "-c", "printf ready"]);
     const renewed = await box.renew();
@@ -44,9 +43,11 @@ Set `E2B_API_KEY` before running this on the server. `E2B_API_ID` is not require
 | `timeoutSeconds`            | `300`    | Native sandbox lifetime, from 60 to 3,600 seconds.                                   |
 | `teamId`                    | Omitted  | Optional verified team scope.                                                        |
 
-For an owned template, configure its selector on the connection and pass it to `Image.prepared(...)`. Supported names are untagged or use `:default`; arbitrary named tags and public aliases are outside this integration's current scope.
+For an owned template, configure its selector once with `templateId`. Supported names are untagged or use `:default`; arbitrary named tags and public aliases are outside this integration's current scope.
 
 Without `teamId`, Sandbar verifies the API key with an authenticated read and binds recovery to that key's scope. Rotating the key changes scope. With `teamId`, Sandbar verifies the team; this allows same-team key rotation without changing authority. Switching scope modes requires a separate connection.
+
+`create()`, `create({ labels: { job: "report" } })`, `checkCreate()` and `submitCreate()` use `templateId`, including its existing `base` default. An explicit per-call `environment` wins for that call only. Invalid or unavailable overrides never fall back to `base`; scoped prepared images retain scope checks. Omitted networking stays blocked. Default-creation live acceptance remains unrun.
 
 ## Files and commands
 
@@ -65,7 +66,7 @@ Destroy each sandbox explicitly, then close the client. Native timeout is a fall
 The application workflow is the same for both built-in adapters:
 
 ```ts
-const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
+const box = await client.sandboxes.create();
 await box.exec(["/bin/sh", "-c", "printf ready"]);
 const renewed = await box.renew();
 await box.renew({ forSeconds: 61 });

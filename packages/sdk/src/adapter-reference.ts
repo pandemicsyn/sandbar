@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   LifecycleIntent,
+  FileMutationIntent,
   ResourceReference,
   MountSpec,
   SnapshotProfile,
@@ -21,6 +22,8 @@ export const ReferenceSchema = z.strictObject({
     "destroy",
     "exec",
     "file_write",
+    "file_mkdir",
+    "file_remove",
     "image_build",
     "sandbox_suspend",
     "sandbox_resume",
@@ -45,6 +48,7 @@ export const ReferenceSchema = z.strictObject({
   capture: CaptureExpectation.optional(),
   resource: ResourceReference.optional(),
   mounts: z.array(MountSpec).max(32).optional(),
+  fileMutation: FileMutationIntent.optional(),
   file: z
     .strictObject({
       path: z.string().min(1).max(4096),

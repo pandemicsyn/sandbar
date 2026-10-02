@@ -14,13 +14,13 @@ const client = await Sandbar.connect(
   daytona({
     apiKey: process.env.DAYTONA_API_KEY!,
     target: "us",
+    environment: Image.prepared("daytona-small"),
     lifecycle: { lifetimeSeconds: 600 },
   }),
 );
-const preparedImage = "daytona-small";
 
 try {
-  const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
+  const box = await client.sandboxes.create();
   try {
     await box.exec(["/bin/sh", "-c", "printf ready"]);
     const renewed = await box.renew();
@@ -41,6 +41,7 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 | Option                          | Default   | Purpose                                                                          |
 | ------------------------------- | --------- | -------------------------------------------------------------------------------- |
 | `apiKey`                        | Required  | Daytona API key.                                                                 |
+| `environment`                   | Omitted   | Default prepared or OCI environment for creation; per-call environment wins.     |
 | `target`                        | Required  | Available native region ID, such as `us`.                                        |
 | `lifecycle.lifetimeSeconds`     | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `ttlMinutes`. |
 | `ttlMinutes`                    | `60`      | Native sandbox lifetime, from 1 to 1,440 minutes.                                |
@@ -48,6 +49,8 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 | `networkPolicy`                 | `blocked` | `blocked` or explicit `daytona-default`.                                         |
 
 `Sandbar.connect` verifies native organization and region with authenticated reads. Scope includes the organization, target, endpoint, and selected network policy. Use the same scope to recover a prior operation.
+
+`create()`, `create({ labels: { job: "report" } })`, `checkCreate()` and `submitCreate()` use the configured environment. Without one, pass `create({ environment: Image.prepared("your-snapshot") })`; missing both rejects with `INVALID_ARGUMENT` before creation. Scoped prepared images retain scope checks. An invalid override never falls back or triggers an unrequested build. Default-creation live acceptance remains unrun.
 
 ## Choose the policy deliberately
 
@@ -66,7 +69,7 @@ The live baseline uses the prepared `daytona-small` workflow in `us`; it does no
 The application workflow is the same for both built-in adapters:
 
 ```ts
-const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
+const box = await client.sandboxes.create();
 await box.exec(["/bin/sh", "-c", "printf ready"]);
 const renewed = await box.renew();
 await box.renew({ forSeconds: 61 });

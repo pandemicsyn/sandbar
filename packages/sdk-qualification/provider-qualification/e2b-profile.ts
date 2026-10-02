@@ -13,6 +13,7 @@ export const e2bConfiguration = z.strictObject({
     .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
     .default("base"),
   timeoutSeconds: z.literal(300).default(300),
+  preview: z.strictObject({ access: z.enum(["protected", "public"]) }).optional(),
 });
 
 export type E2BConfiguration = z.infer<typeof e2bConfiguration>;

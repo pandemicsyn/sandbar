@@ -1,3 +1,5 @@
+import { FileMutationIntent, type FileEntry } from "sandbar-adapter";
+import { directoryEntries, directoryRead } from "./directory-read";
 import { readFileBytes } from "./file-read";
 import { freezeReference } from "./freeze-reference";
 import { startProcess, type StartProcessInput, type ProcessHandle } from "./processes";
@@ -24,6 +26,9 @@ import {
   SuspendResult,
   ResumeResult,
   type LifecycleIntent,
+  PreviewResult,
+  PreviewPort,
+  type Preview,
   RenewRequest,
   RenewResult,
   ResolvedRenewInput,
@@ -107,6 +112,12 @@ export { Image, outputText } from "./resource";
 
 export type { AdapterRecoveryReference } from "./adapter-reference";
 
+function directoryPath(path: string): string {
+  validateFilePath(path);
+
+  return "/" + path.split("/").filter(Boolean).join("/");
+}
+
 function canonicalScope(scope: Scope): string {
   return JSON.stringify({
     authority: scope.authority,
@@ -160,6 +171,7 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
     boundCapture &&
     boundLifecycle &&
     boundRenewal &&
+    ["file_mkdir", "file_remove"].includes(copy.kind) === !!copy.fileMutation &&
     (copy.kind === "file_write") === !!copy.file
     ? certifyRecoveryReference(copy)
     : copy;
@@ -319,7 +331,7 @@ export type RecoveredOperation =
   | AdapterOperation<ImageBuildResult, "image_build">
   | AdapterOperation<ExecOutput, "exec">
   | AdapterOperation<DestroyValue, "destroy">
-  | AdapterOperation<void, "file_write">;
+  | AdapterOperation<void, "file_write" | "file_mkdir" | "file_remove">;
 
 function decodeSuspend(result: RuntimeResult, ref: AdapterRecoveryReference): SuspendResult {
   if (result.kind !== "completed" || !ref.sandboxReference || ref.lifecycle?.action !== "suspend")
@@ -769,9 +781,16 @@ export class AdapterSandbox {
     this.#reference = reference ? freezeReference(reference) : null;
     instrument(this, "capabilities", client.telemetry, "sandbar.capabilities");
     instrument(this, "checkSnapshot", client.telemetry, "sandbar.snapshot.check");
+    instrument(this, "preview", client.telemetry, "sandbar.sandbox.preview");
     instrument(this, "inspect", client.telemetry, "sandbar.sandbox.inspect");
     instrument(this, "submitExec", client.telemetry, "sandbar.exec.submit", { effect: "possible" });
     instrument(this, "exec", client.telemetry, "sandbar.exec", { effect: "applied" });
+    instrument(this, "listFiles", client.telemetry, "sandbar.file.list");
+    instrument(this, "fileExists", client.telemetry, "sandbar.file.exists");
+    instrument(this, "makeDirectory", client.telemetry, "sandbar.file.mkdir", {
+      effect: "applied",
+    });
+    instrument(this, "removeFile", client.telemetry, "sandbar.file.remove", { effect: "applied" });
     instrument(this, "readFile", client.telemetry, "sandbar.file.read");
     instrument(this, "writeFile", client.telemetry, "sandbar.file.write", { effect: "applied" });
     instrument(this, "destroy", client.telemetry, "sandbar.sandbox.destroy", { effect: "applied" });
@@ -920,7 +939,18 @@ export class AdapterSandbox {
 
     return resolveSnapshot(caps.snapshots.capture, request, state);
   }
-  supports(feature: "inspect" | "exec" | "readFile" | "writeFile" | "destroy"): boolean {
+  supports(
+    feature:
+      | "inspect"
+      | "exec"
+      | "readFile"
+      | "writeFile"
+      | "destroy"
+      | "listFiles"
+      | "fileExists"
+      | "makeDirectory"
+      | "removeFile",
+  ): boolean {
     if (feature === "inspect") return !!this.client.session.inspect;
 
     if (feature === "exec")
@@ -929,6 +959,14 @@ export class AdapterSandbox {
     if (feature === "readFile") return !!this.client.session.files?.read;
 
     if (feature === "writeFile") return !!this.client.session.files?.write;
+
+    if (feature === "listFiles") return !!this.client.session.files?.list;
+
+    if (feature === "fileExists") return !!this.client.session.files?.exists;
+
+    if (feature === "makeDirectory") return !!this.client.session.files?.makeDirectory;
+
+    if (feature === "removeFile") return !!this.client.session.files?.remove;
 
     return true;
   }
@@ -998,6 +1036,55 @@ export class AdapterSandbox {
       throw error;
     }
   }
+  /** Resolve access to an existing running sandbox; URL availability is not readiness. */
+  async preview(port: number, options: { signal?: AbortSignal } = {}): Promise<Preview> {
+    this.client.ensureOpen();
+
+    if (!PreviewPort.safeParse(port).success)
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Preview port must be an integer from 1 through 65535",
+      );
+
+    if (!this.client.session.preview) unsupported("preview");
+    assertSignal(options.signal);
+    const timeout = AbortSignal.timeout(30000);
+
+    const signal = AbortSignal.any([
+      this.client.signal,
+      ...(options.signal ? [options.signal] : []),
+      timeout,
+    ]);
+
+    try {
+      const result = await readWhileOpen(
+        this.client,
+        raceAbort(
+          this.client.session.preview(
+            { sandbox: sandboxInput(this.id, this.reference), port },
+            { signal, deadline: Date.now() + 30000 },
+          ),
+          signal,
+        ),
+      );
+
+      const parsed = PreviewResult.safeParse(result);
+
+      if (!parsed.success)
+        throw new SandbarError("INVALID_RESPONSE", "Invalid preview access response");
+
+      return parsed.data;
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (timeout.aborted) throw new SandbarError("TIMEOUT", "Preview access timed out");
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+
+      if (error instanceof SandbarError) throw error;
+      throw new SandbarError("UNAVAILABLE", "Preview access is unavailable");
+    }
+  }
   async submitExec(
     input: ExecInput | readonly string[],
     options: { signal?: AbortSignal } = {},
@@ -1046,6 +1133,107 @@ export class AdapterSandbox {
       await internalMethod(this.submitExec)(input, options),
       options,
     );
+  }
+  /** Decode the complete bounded file as UTF-8, replacing malformed sequences and consuming its BOM. */
+  async readTextFile(path: string, options: ReadOptions = {}): Promise<string> {
+    return new TextDecoder().decode(await this.readFile(path, options));
+  }
+  /** Encode UTF-8 using the byte write's limits, cancellation and no-clobber default. */
+  async writeTextFile(
+    path: string,
+    text: string,
+    options: { overwrite?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JavaScript callers must not silently coerce non-text input during UTF-8 encoding.
+    if (typeof text !== "string")
+      throw new SandbarError("INVALID_ARGUMENT", "Expected text string");
+
+    await this.writeFile(path, new TextEncoder().encode(text), options);
+  }
+  async listFiles(path: string, options: ReadOptions = {}): Promise<FileEntry[]> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.list) unsupported("listFiles");
+    const list = files.list.bind(files);
+
+    return directoryEntries(
+      await directoryRead(
+        (ctx) => list({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+        this.client.signal,
+        options,
+      ),
+    );
+  }
+  async fileExists(path: string, options: ReadOptions = {}): Promise<boolean> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.exists) unsupported("fileExists");
+    const exists = files.exists.bind(files);
+
+    const value = await directoryRead(
+      (ctx) => exists({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+      this.client.signal,
+      options,
+    );
+
+    if (value !== true && value !== false)
+      throw new SandbarError("INVALID_RESPONSE", "Invalid entry existence result");
+
+    return value;
+  }
+  async makeDirectory(
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.fileMutation("file_mkdir", path, options);
+  }
+  async removeFile(
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.fileMutation("file_remove", path, options);
+  }
+  private async fileMutation(
+    kind: "file_mkdir" | "file_remove",
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal },
+  ): Promise<void> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+
+    if (kind === "file_remove" && path === "/")
+      throw new SandbarError("INVALID_ARGUMENT", "Cannot remove sandbox root");
+
+    const intent = validateResourceInput(
+      FileMutationIntent,
+      { path, recursive: options.recursive ?? false },
+      "Invalid filesystem request",
+    );
+
+    const op = await this.client.submit(
+      kind,
+      { sandbox: sandboxInput(this.id, this.reference), ...intent },
+      (result, ref) => {
+        if (
+          result.kind !== "completed" ||
+          !("acknowledged" in result.value) ||
+          result.value.acknowledged !== true
+        )
+          throw asUnknown(ref);
+      },
+      {
+        signal: options.signal,
+        sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
+        fileMutation: intent,
+      },
+    );
+
+    await waitFor(this.client.telemetry, op, options);
   }
   async readFile(path: string, options: ReadOptions = {}): Promise<Uint8Array> {
     this.client.ensureOpen();
@@ -1342,10 +1530,10 @@ export class AdapterDirectClient {
   readonly signal: AbortSignal;
   readonly sandboxes: {
     get: (reference: SandboxReference, options?: WaitOptions) => Promise<AdapterSandbox>;
-    checkCreate: (input: CreateInput) => Promise<Support<CreatePlan>>;
-    create: (input: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
+    checkCreate: (input?: CreateInput) => Promise<Support<CreatePlan>>;
+    create: (input?: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
     submitCreate: (
-      input: CreateInput,
+      input?: CreateInput,
       options?: { signal?: AbortSignal },
     ) => Promise<AdapterOperation<AdapterSandbox>>;
   };
@@ -1485,6 +1673,8 @@ export class AdapterDirectClient {
               "destroy",
               "exec",
               "file_write",
+              "file_mkdir",
+              "file_remove",
               "image_build",
               "sandbox_suspend",
               "sandbox_resume",
@@ -1554,6 +1744,8 @@ export class AdapterDirectClient {
             "destroy",
             "exec",
             "file_write",
+            "file_mkdir",
+            "file_remove",
             "snapshot_capture",
             "sandbox_suspend",
             "sandbox_resume",
@@ -1698,15 +1890,15 @@ export class AdapterDirectClient {
       maxFileBytes: this.session.files ? fileReadLimit(this.session.files.maxBytes) : 0,
     });
   }
-  async checkCreate(input: CreateInput): Promise<Support<CreatePlan>> {
+  async checkCreate(input?: CreateInput): Promise<Support<CreatePlan>> {
     return this.checkCreateWithSignal(input, this.signal);
   }
   private async checkCreateWithSignal(
-    input: CreateInput,
+    input: CreateInput | undefined,
     signal: AbortSignal,
   ): Promise<Support<CreatePlan>> {
     this.ensureOpen();
-    const request = validateCreate(input);
+    const request = validateCreate(input, this.session.defaultImage);
     this.checkImageBinding(request);
 
     for (const mount of request.mounts ?? [])
@@ -1739,7 +1931,9 @@ export class AdapterDirectClient {
       ),
     );
   }
-  private checkImageBinding(request: CreateInput): void {
+  private checkImageBinding(
+    request: CreateInput & { environment: import("./resource").ImageInput },
+  ): void {
     if (
       request.environment.kind === "prepared" &&
       request.environment.binding &&
@@ -1749,10 +1943,10 @@ export class AdapterDirectClient {
       throw new SandbarError("FORBIDDEN", "Prepared image scope differs from this connection");
   }
   async submitCreate(
-    input: CreateInput,
+    input?: CreateInput,
     options: { signal?: AbortSignal } = {},
   ): Promise<AdapterOperation<AdapterSandbox>> {
-    const request = validateCreate(input);
+    const request = validateCreate(input, this.session.defaultImage);
     this.checkImageBinding(request);
 
     for (const mount of request.mounts ?? [])
@@ -1895,6 +2089,7 @@ export class AdapterDirectClient {
       capture?: z.infer<typeof CaptureExpectation>;
       mounts?: import("sandbar-adapter").MountSpec[];
       file?: { path: string; bytes: number };
+      fileMutation?: AdapterRecoveryReference["fileMutation"];
       maxOutputBytes?: number;
     } = {},
   ): Promise<AdapterOperation<T, K>> {
@@ -1920,6 +2115,7 @@ export class AdapterDirectClient {
       capture: options.capture,
       mounts: options.mounts,
       file: options.file,
+      fileMutation: options.fileMutation,
       maxOutputBytes: options.maxOutputBytes,
     });
 
@@ -2135,6 +2331,10 @@ export class AdapterDirectClient {
         "INVALID_ARGUMENT",
         "Lifecycle recovery requires saved intent and identity",
       );
+
+    if (["file_mkdir", "file_remove"].includes(reference.kind) && !reference.fileMutation)
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery filesystem intent is missing");
+
     this.assertRecoverySandbox(reference);
     assertRecoveryResourceKind(reference.kind, reference.resource);
 
@@ -2162,6 +2362,8 @@ export class AdapterDirectClient {
         "destroy",
         "exec",
         "file_write",
+        "file_mkdir",
+        "file_remove",
         "snapshot_capture",
         "sandbox_suspend",
         "sandbox_resume",
@@ -2307,6 +2509,19 @@ export class AdapterDirectClient {
           },
           undefined,
           "destroy",
+        );
+      case "file_mkdir":
+      case "file_remove":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
+
+            if (!("acknowledged" in value) || value.acknowledged !== true) throw asUnknown(ref);
+          },
+          undefined,
+          reference.kind,
         );
       case "file_write":
         return new AdapterOperation(

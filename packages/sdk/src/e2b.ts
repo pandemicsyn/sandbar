@@ -8,8 +8,16 @@ const Configuration = z
     teamId: z.string().min(1).optional(),
     templateId: z.string().min(1).default("base"),
     timeoutSeconds: z.number().int().min(60).max(3600).optional(),
+    preview: z
+      .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
+      .default({ access: "protected" }),
     lifecycle: z
-      .strictObject({ lifetimeSeconds: z.number().int().positive().safe().max(3600).optional() })
+      .strictObject({
+        lifetimeSeconds: z.number().int().positive().safe().max(3600).optional(),
+        suspension: z
+          .strictObject({ preserve: z.enum(["filesystem", "filesystem+memory"]) })
+          .optional(),
+      })
       .optional(),
   })
   .superRefine((value, ctx) => {
@@ -71,6 +79,7 @@ export interface E2BTransport {
     metadata: Record<string, string>;
     timeoutMs: number;
     allowInternetAccess: boolean;
+    allowPublicTraffic?: boolean;
     volumeMounts?: Record<string, string>;
     signal?: AbortSignal;
   }): Promise<string>;
@@ -81,6 +90,8 @@ export interface E2BTransport {
     state: "running" | "paused";
     lifecycle?: { onTimeout?: string; autoResume?: boolean };
     envdVersion?: string;
+    domain?: string;
+    allowPublicTraffic?: boolean;
     volumeMounts?: { name: string; path: string }[];
   } | null>;
   list(
@@ -95,6 +106,8 @@ export interface E2BTransport {
       state: "running" | "paused";
       lifecycle?: { onTimeout?: string; autoResume?: boolean };
       envdVersion?: string;
+      domain?: string;
+      allowPublicTraffic?: boolean;
       volumeMounts?: { name: string; path: string }[];
     }[];
     nextToken?: string;
@@ -131,6 +144,7 @@ export function e2b(options: {
   teamId?: string;
   templateId?: string;
   timeoutSeconds?: number;
+  preview?: { access: "protected" | "public" };
   lifecycle?: {
     lifetimeSeconds?: number;
     suspension?: { preserve: "filesystem" | "filesystem+memory" };
@@ -143,6 +157,7 @@ export function e2b(options: {
       templateId: options.templateId,
       timeoutSeconds: options.timeoutSeconds,
       lifecycle: options.lifecycle,
+      preview: options.preview,
     },
     { apiKey: options.apiKey },
   );
