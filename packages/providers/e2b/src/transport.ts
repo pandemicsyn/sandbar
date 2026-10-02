@@ -790,6 +790,14 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
             return confirmedExit();
           },
           wait: () => wait,
+          async terminate(ctx) {
+            const killed = await sandbox.commands.kill(handle.pid, {
+              signal: ctx.signal,
+              requestTimeoutMs: Math.max(1, ctx.deadline - Date.now()),
+            });
+
+            return { status: killed ? "requested" : "not-found" };
+          },
           detach: disconnect,
         };
       } finally {
