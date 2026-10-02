@@ -848,6 +848,7 @@ export class AdapterSandbox {
     assertSignal(options.signal);
 
     if (!this.reference) unsupported("Suspension without a verified sandbox reference");
+    this.invalidateProcessControl();
 
     return this.client.submit(
       "sandbox_suspend",
@@ -866,6 +867,7 @@ export class AdapterSandbox {
     assertSignal(options.signal);
 
     if (!this.reference) unsupported("Resumption without a verified sandbox reference");
+    this.invalidateProcessControl();
 
     return this.client.submit(
       "sandbox_resume",

@@ -754,3 +754,46 @@ test("same-client verified aliases share lifecycle fences without invalidating o
   expect(calls).toBe(3);
   await f.client.close();
 });
+
+test.each(["submitSuspend", "submitResume"] as const)(
+  "%s fences same-client aliases before rejected submission and preserves observations/results",
+  async (action) => {
+    const f = await fixture({ verified: true });
+    let calls = 0;
+    f.native.terminate = async () => {
+      calls++;
+
+      return { status: "requested" };
+    };
+
+    try {
+      const alias = await f.client.sandboxes.get(f.box.reference!);
+      const other = await f.client.sandboxes.create({ environment: Image.prepared("two") });
+      const old = await f.box.processes.start(input);
+      const oldContext = f.ctx;
+      const cached = await f.box.processes.start(input);
+      const unrelated = await other.processes.start(input);
+      const output = old.output()[Symbol.asyncIterator]();
+
+      await expect(alias[action]({ signal: AbortSignal.abort() })).rejects.toBeInstanceOf(Error);
+      expect(await cached.terminate()).toEqual({ status: "requested" });
+      // This fixture has no lifecycle hook; submission still withdraws old local authority.
+      await expect(alias[action]()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+      await expect(old.terminate()).rejects.toMatchObject({ code: "UNAVAILABLE", effect: "none" });
+      expect(await cached.terminate()).toEqual({ status: "requested" });
+      expect(await unrelated.terminate()).toEqual({ status: "requested" });
+      oldContext.onOutput({ stream: "stdout", text: "still observing" });
+      expect(await output.next()).toMatchObject({ value: { text: "still observing" } });
+      expect(f.detaches).toBe(0);
+      const fresh = await f.box.processes.start(input);
+      expect(await fresh.terminate()).toEqual({ status: "requested" });
+      f.confirm(-1);
+      expect(await old.terminate()).toEqual({ status: "exited" });
+      expect(await old.wait()).toMatchObject({ exitCode: -1 });
+      await output.return?.();
+      expect(calls).toBe(3);
+    } finally {
+      await f.client.close();
+    }
+  },
+);
