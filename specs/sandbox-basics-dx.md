@@ -1,8 +1,8 @@
 # Default creation and everyday files
 
-Accepted product direction · Proposed API · October 2, 2026
+Accepted product direction · Implemented text helpers; proposed creation and directory APIs · October 2, 2026
 
-Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. This is the next implementation work after [suspend/resume](sandbox-lifecycle.md). Creation defaults and directory signatures below remain proposals. The text-helper slice is implemented in the pending implementation PR; it is not merged yet. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
+Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. This is the next implementation work after [suspend/resume](sandbox-lifecycle.md). Creation defaults and directory signatures below remain proposals. The text-helper slice is implemented. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
 ## Creation defaults belong in adapter setup
 
@@ -42,9 +42,9 @@ This slice does not change network defaults, lifetime policy, image resolution, 
 
 ## Text files without encoding boilerplate
 
-Implementation status: pending merge. Thin SDK wrappers and deterministic/packed Node/Bun coverage; no new native operation or live evidence.
+Implementation status: implemented. Thin SDK wrappers and deterministic/packed Node/Bun coverage; no new native operation or live evidence.
 
-Add helpers alongside the existing byte methods, without overloading or changing those methods:
+Helpers sit alongside the existing byte methods, without overloading or changing those methods:
 
 ```ts
 readTextFile(path: string, options?: ReadOptions): Promise<string>;
