@@ -285,7 +285,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     state: z.string(),
     envdVersion: z.string().optional(),
     envdAccessToken: z.string().min(1).max(8192).optional(),
-    domain: z.string().optional(),
+    domain: z.string().nullish(),
     network: z.object({ allowPublicTraffic: z.boolean().optional() }).optional(),
     lifecycle: z
       .object({ onTimeout: z.string().optional(), autoResume: z.boolean().optional() })
@@ -325,14 +325,23 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
     if (detail.sandboxID !== id) throw new AdapterError("CONFLICT", "E2B identity differs");
 
-    if (
-      detail.state !== "running" ||
-      detail.lifecycle?.autoResume !== false ||
-      !detail.envdAccessToken ||
-      !detail.envdVersion ||
-      detail.domain !== "e2b.app"
-    )
-      throw new AdapterError("UNAVAILABLE", "E2B read-only guest attachment is unavailable");
+    if (detail.state !== "running")
+      throw new AdapterError("UNAVAILABLE", "E2B guest attachment requires running compute");
+
+    if (detail.lifecycle?.autoResume !== false)
+      throw new AdapterError(
+        "UNAVAILABLE",
+        "E2B guest attachment auto-resume policy is unverified",
+      );
+
+    if (!detail.envdAccessToken)
+      throw new AdapterError("UNAVAILABLE", "E2B guest attachment token is unavailable");
+
+    if (!detail.envdVersion)
+      throw new AdapterError("UNAVAILABLE", "E2B guest attachment version is unavailable");
+
+    if ((detail.domain ?? opts.domain) !== opts.domain)
+      throw new AdapterError("UNAVAILABLE", "E2B guest attachment routing is unsupported");
 
     return new Sandbox({
       ...opts,
@@ -340,7 +349,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       sandboxId: id,
       envdVersion: detail.envdVersion,
       envdAccessToken: detail.envdAccessToken,
-      sandboxDomain: detail.domain,
+      sandboxDomain: detail.domain ?? opts.domain,
     });
   }
 
@@ -362,9 +371,9 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
           info.lifecycle?.autoResume === false &&
           !!info.envdAccessToken &&
           !!info.envdVersion &&
-          info.domain === "e2b.app",
+          (info.domain ?? opts.domain) === opts.domain,
         endAt: info.endAt,
-        domain: info.domain,
+        domain: info.domain ?? opts.domain,
         allowPublicTraffic: info.network?.allowPublicTraffic,
         lifecycle: info.lifecycle,
         volumeMounts: info.volumeMounts,
