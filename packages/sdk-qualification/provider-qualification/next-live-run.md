@@ -1,10 +1,10 @@
-# Proposed feature acceptance run — awaiting authorization
+# Completed approved feature acceptance run
 
-No live calls are authorized. This proposal selects existing ordinary Bun cases,
-with no new runner, retry, build-image workflow, snapshots or volumes. Use the
-final reviewed clean commit of this PR, Bun 1.3.14 and its frozen lockfile. Record
-that exact commit and native versions from the preload; do not call historical
-passes current-head qualification. Reconciled against merged main `0a022a8`;
+This records the user-approved five-fixture run and its original bounds, using
+existing ordinary Bun cases with no new runner, retries, builds, snapshots or
+volumes. Completion grants no additional live runs. The tested clean revision
+and native versions are recorded below; historical passes retain their source
+provenance. Reconciled against merged main `0a022a8`;
 suspend/resume and termination already have separate dated live evidence and
 are not selected by this plan.
 
@@ -145,7 +145,7 @@ termination and #57's suspend/resume. The omitted/null-domain attachment blocker
 is resolved; missing mount metadata no longer blocks private E2B state capture,
 while known native mounts remain unsupported. Keep their separate source rows,
 actual passed/failed results and cleanup evidence unchanged. The earlier gate
-failures remain historical evidence, not outcomes of these unexecuted cases.
+failures remain historical evidence, not outcomes of these selected cases.
 
 This plan still selects only configured-environment creation, signal-bearing
 binary reads, renewal, scoped reopening, E2B directories, finite streaming and
@@ -159,3 +159,23 @@ dispatch. Acknowledged deletion still requires an absence observation; renewal
 resets the deadline relative to the request. Known saved Daytona routing with
 10-minute TTL and `restartAfterCapture` remains readable without changing this
 plan's 15-minute TTL or weakening unresolved-custody admission.
+
+## Completed approved run
+
+On 2026-10-02, clean source `3188e33327325d4eec22e39f4b627d7f900c8838`
+ran the five ordinary Bun invocations above sequentially. All ten selected
+workflow cases passed: Daytona files/renew/reopen/protected preview; E2B
+files/directories/renew/reopen/finite streaming/public preview. Each invocation
+exited zero with confirmed owned compute cleanup and successful client close.
+Five compute creations, peak one, no retries, snapshots, volumes or builds.
+The three original unresolved E2B volume receipts remain byte-for-byte unchanged.
+Private JUnit/context and persistent recovery receipts remain in the existing
+owner-only storage; only reviewed selected records were appended to results.
+Skipped lifecycle/execution/suspend cases did not acquire new pass claims.
+
+This is bounded by allocation counts and setup/exercise/cleanup deadlines;
+provider TTL is an additional fallback. The earlier admission refusals created
+no resources. Known saved-routing compatibility fixes receipt reading only;
+pending legacy TTL10 cleanup still requires its compatible owning configuration.
+The API review found no selected-path mismatch; deployed guest behavior is
+qualified only by these recorded source/configuration-specific observations.
