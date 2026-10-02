@@ -1,6 +1,6 @@
 # Implementation sequence
 
-Updated October 1, 2026. SDK completeness and qualified provider integrations come first.
+Updated October 2, 2026. SDK completeness and qualified provider integrations come first.
 
 ## Delivery rule
 
@@ -14,7 +14,7 @@ The foundation and latest DX implementations are merged: snapshots/volumes (#25)
 
 The [acceptance tooling](../packages/sdk-qualification/provider-qualification/README.md) uses ordinary Bun suites and an offline generated support table. New reopening, renewal, streaming and cancellation behavior still needs its own authorized live evidence. Historical passes do not qualify new code; blocked access and failed probes remain visible.
 
-The next implementation is no-argument suspend/resume with provider choices concentrated in adapter setup, as accepted in the [lifecycle spec](../specs/sandbox-lifecycle.md). Reopen/inspect and renewal prerequisites are merged. Keep storage composition and advanced process work separate.
+The next implementation is no-argument suspend/resume with provider choices concentrated in adapter setup, as accepted in the [lifecycle spec](../specs/sandbox-lifecycle.md). Reopen/inspect and renewal prerequisites are merged. After this active slice, deliver [default creation and everyday files](../specs/sandbox-basics-dx.md): creation defaults and text helpers, then separately scoped directory primitives. Next deliver [preview access and useful process control](../specs/preview-and-process-control.md), resolving the brief's native access/identity decisions before coding. Preview, termination and subsequent stdin/output work should not become one large PR. Continue storage composition research, but schedule its implementation after these everyday workflow gaps.
 
 [Recovery direction](../specs/sdk-recovery-dx.md) keeps ordinary calls and application-owned persistence central. Expanded persistence callbacks, normalized recovery-facts envelopes, application-backed dispatch barriers and generic continuation/workflow machinery are deferred. Shipped compatibility paths and no-replay/deletion safeguards remain supported.
 
@@ -22,7 +22,7 @@ The next implementation is no-argument suspend/resume with provider choices conc
 
 - Evolve volume metadata to separate backing from filesystem semantics and durability boundaries. Add capacity/placement only when needed by an actual provider/use case.
 - Implement capability-driven share/replace/omit mounted restore with enforcement before restored execution, alongside an adapter that can prove it.
-- Complete suspend/resume; configured lifetime renewal is already implemented. Optional volume versions and native forks follow demonstrated need under the [state contract](../specs/provider-state-portability.md).
+- Optional volume versions and native forks follow demonstrated need under the [state contract](../specs/provider-state-portability.md).
 
 Keep these scoped separately from the merged recovery work. Current limitations remain explicit until implementations and appropriate qualification exist.
 
@@ -32,7 +32,7 @@ The direct tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes fr
 
 ## Broaden the SDK and provider coverage
 
-- Extend [interactive execution and access](../specs/interactive-execution-and-access.md) beyond shipped finite E2B text streaming only through separately scoped work: other providers, process control, terminals, endpoints and tunnels.
+- The scheduled [preview/process brief](../specs/preview-and-process-control.md) extends the shipped [finite streaming contract](../specs/interactive-execution-and-access.md) through small independently reviewed slices. Other provider streams, terminals and tunnels remain separate later work.
 - Close remaining SDK gaps in images, resource configuration, files, and networking as focused contracts with demonstrated use cases.
 - Establish several usable, qualified provider integrations. Vercel and Tensorlake specs will be written when scheduled; provider distribution and ordering remain in [package conventions](../specs/package-conventions.md).
 

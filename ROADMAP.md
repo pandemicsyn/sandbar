@@ -28,13 +28,19 @@ Contracts and evidence: [execution](specs/interactive-execution-and-access.md), 
 
 Cleanup policy precedence remains per-call choice, `cleanup.storage`, then `require-durable`. `allow-unconfirmed` permits compute destruction without promising flushed writes or deleting retained volumes. See the [state contract](specs/provider-state-portability.md#3-persistent-volumes-and-mount-sessions).
 
-## Next: lifecycle controls, then storage composition
+## Next: lifecycle, everyday workflows, then preview and process control
 
 **Suspend/resume is the next implementation slice.** Reopening and configured renewal are merged. The accepted [lifecycle contract](specs/sandbox-lifecycle.md#accepted-direction-and-implementation-documentation) calls for no-argument `suspend()` / `resume()`, native defaults, and meaningful preservation requirements configured once in the adapter. Filesystem preservation is a minimum; report memory/process behavior and actual execution evidence honestly.
 
 Keep this one bounded slice: Daytona containers and E2B memory pause, same logical resource, explicit unsupported behavior and no hidden replacement. Mounted suspension, snapshot emulation, filesystem-only E2B mode and a generic lifecycle engine remain out of scope. Update adapter options, provider docs, deterministic/packed tests and maintained live scenarios together; implementation does not authorize paid runs.
 
-After that, scope mounted snapshot/restore composition and stronger volume visibility/durability/locking/rename semantics against concrete provider requirements. Current unsupported combinations remain explicit. Capacity/placement, attach/detach, volume versions and native forks are optional extensions driven by demonstrated need. See [storage follow-ups](specs/sdk-recovery-dx.md#later-volume-guarantees-and-mounted-restore). Expanded persistence hooks, normalized recovery-facts envelopes and generic continuation/workflow machinery remain deferred.
+After this active slice, prioritize the ordinary application workflow:
+
+1. **[Default creation and everyday files](specs/sandbox-basics-dx.md).** Configure an environment once and call `sandboxes.create()`; add UTF-8 text helpers, then focused directory primitives. Preserve explicit overrides, byte APIs, blocked networking defaults and clear unsupported behavior. Deliver in small PRs.
+2. **[Preview access and useful process control](specs/preview-and-process-control.md).** Obtain access to a sandbox port, deliberately terminate a started command, then scope stdin and sustained output. First settle native access protection and execution identity; the brief's signatures are proposals. Preview and termination can ship independently. PTYs, tunnels and a generic process platform are not prerequisites.
+3. **Storage composition.** Continue the current design research, then schedule coding against concrete mounted snapshot/restore requirements after these everyday DX gaps. Research completion alone does not move storage ahead of the queue.
+
+For storage, current unsupported combinations remain explicit. Capacity/placement, attach/detach, volume versions, stronger visibility/durability/locking/rename semantics and native forks follow demonstrated need. See [storage follow-ups](specs/sdk-recovery-dx.md#later-volume-guarantees-and-mounted-restore). Expanded persistence hooks, normalized recovery-facts envelopes and generic continuation/workflow machinery remain deferred.
 
 ## Qualification gaps
 
@@ -55,4 +61,4 @@ This milestone does not require universal provider parity. Reassess material DX 
 
 ## Later
 
-Advanced process/access features and storage extensions follow demonstrated needs. Additional observability metrics/events and accounting remain deferred. The removed service and management UI are not on the delivery queue. Rust is not planned. [Detailed plans](plans/implementation-plan.md) do not override this queue.
+Beyond the scheduled preview/process basics, advanced terminals, tunnels and storage extensions follow demonstrated needs. Additional observability metrics/events and accounting remain deferred. The removed service and management UI are not on the delivery queue. Rust is not planned. [Detailed plans](plans/implementation-plan.md) do not override this queue.
