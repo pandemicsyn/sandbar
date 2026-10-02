@@ -24,21 +24,28 @@ The latest SDK DX work is also merged:
 | Bounded-exec timeout clarity | [PR #54](https://github.com/pandemicsyn/sandbar/pull/54): provider docs and native-boundary fixtures                        | Existing execution behavior is unchanged; E2B RPC timeout does not prove termination, and deployed descendant termination remains unverified for Daytona/Modal |
 | Configured lifetime renewal  | [PR #55](https://github.com/pandemicsyn/sandbar/pull/55): `renew()` / `renew({ forSeconds })` for Daytona and E2B           | Adapter-owned defaults, units and rounding; live renewal scenarios not run                                                                                     |
 
+Everyday workflow and preview slices are now merged:
+
+- [PR #58](https://github.com/pandemicsyn/sandbar/pull/58): adapter-owned creation defaults, including omitted-input creation and explicit override precedence. Maintained configured-creation scenarios have not been run live.
+- [PR #61](https://github.com/pandemicsyn/sandbar/pull/61): UTF-8 `readTextFile` / `writeTextFile` wrappers over byte operations; local encoding needs no separate live qualification.
+- [PR #59](https://github.com/pandemicsyn/sandbar/pull/59): exported directory APIs with optional adapter hooks. Daytona supports none of the four primitives; E2B supports `fileExists` and requires `recursive: true` for `makeDirectory` / `removeFile`. E2B `listFiles` is unsupported. New directory live cases remain not-run.
+- [PR #60](https://github.com/pandemicsyn/sandbar/pull/60): HTTP preview access for Daytona protected headers and E2B explicitly public setup. E2B default creation/restore is private, but protected preview is unavailable. Preview and changed inbound-default behavior remain unqualified live.
+
 Contracts and evidence: [execution](specs/interactive-execution-and-access.md), [output and timeouts](specs/output-and-timeouts.md), and [lifecycle](specs/sandbox-lifecycle.md). These slices are merged, not an outstanding coding queue.
 
 Cleanup policy precedence remains per-call choice, `cleanup.storage`, then `require-durable`. `allow-unconfirmed` permits compute destruction without promising flushed writes or deleting retained volumes. See the [state contract](specs/provider-state-portability.md#3-persistent-volumes-and-mount-sessions).
 
-## Next: lifecycle, everyday workflows, then preview and process control
+## Next: complete lifecycle, then process control
 
-**Suspend/resume is the next implementation slice.** Reopening and configured renewal are merged. The accepted [lifecycle contract](specs/sandbox-lifecycle.md#accepted-direction-and-implementation-documentation) calls for no-argument `suspend()` / `resume()`, native defaults, and meaningful preservation requirements configured once in the adapter. Filesystem preservation is a minimum; report memory/process behavior and actual execution evidence honestly.
+**Suspend/resume remains the active lifecycle slice.** [PR #57](https://github.com/pandemicsyn/sandbar/pull/57) remains open and unmerged; it is being updated separately and is not exported on main. Reopening and configured renewal are merged. The accepted [lifecycle contract](specs/sandbox-lifecycle.md#accepted-direction-and-implementation-documentation) calls for no-argument `suspend()` / `resume()`, native defaults, and meaningful preservation requirements configured once in the adapter. Filesystem preservation is a minimum; report memory/process behavior and actual execution evidence honestly.
 
 Keep this one bounded slice: Daytona containers and E2B memory pause, same logical resource, explicit unsupported behavior and no hidden replacement. Mounted suspension, snapshot emulation, filesystem-only E2B mode and a generic lifecycle engine remain out of scope. Update adapter options, provider docs, deterministic/packed tests and maintained live scenarios together; implementation does not authorize paid runs.
 
-After this active slice, prioritize the ordinary application workflow:
+[Default creation and everyday files](specs/sandbox-basics-dx.md) and the preview slice of [preview access and useful process control](specs/preview-and-process-control.md) are merged with the provider boundaries above. They are no longer pending implementation. The remaining queue is:
 
-1. **[Default creation and everyday files](specs/sandbox-basics-dx.md).** Configure an environment once and call `sandboxes.create()`; add UTF-8 text helpers, then focused directory primitives. Preserve explicit overrides, byte APIs, blocked networking defaults and clear unsupported behavior. Deliver in small PRs.
-2. **[Preview access and useful process control](specs/preview-and-process-control.md).** Obtain access to a sandbox port, deliberately terminate a started command, then scope stdin and sustained output. First settle native access protection and execution identity; the brief's signatures are proposals. Preview and termination can ship independently. PTYs, tunnels and a generic process platform are not prerequisites.
-3. **Storage composition.** Continue the current design research, then schedule coding against concrete mounted snapshot/restore requirements after these everyday DX gaps. Research completion alone does not move storage ahead of the queue.
+1. **Process termination through existing handles.** Next focused design/implementation: establish native execution identity, termination semantics and exit representation before coding one verified operation. The brief's process signatures remain proposals; unsupported targeting stays explicit.
+2. **Stdin and sustained output.** Scope separately after termination. Today's finite E2B stream is not an indefinite server-log solution. PTYs, tunnels and a generic process platform are not prerequisites.
+3. **Storage composition.** [PR #56](https://github.com/pandemicsyn/sandbar/pull/56) remains an open proposal. Continue design research, then schedule coding against concrete mounted snapshot/restore requirements after these basics. Research completion alone does not move storage ahead of the queue.
 
 For storage, current unsupported combinations remain explicit. Capacity/placement, attach/detach, volume versions, stronger visibility/durability/locking/rename semantics and native forks follow demonstrated need. See [storage follow-ups](specs/sdk-recovery-dx.md#later-volume-guarantees-and-mounted-restore). Expanded persistence hooks, normalized recovery-facts envelopes and generic continuation/workflow machinery remain deferred.
 
@@ -48,6 +55,7 @@ The generated [support table](apps/docs/src/content/docs/docs/providers/support.
 
 - Run the maintained scoped-reopening and lifetime-renewal scenarios for Daytona and E2B after explicit paid-run authorization; both workflows are currently marked not-run.
 - Qualify the new E2B streaming scenario and signal-bearing file-read cases. Earlier execution/file passes do not establish these new behaviors. Streaming is implemented even though the generated feature table does not yet have a separate streaming row; include that reporting follow-up when recording evidence.
+- Qualify configured creation, directory operations and preview access with their maintained scenarios, including E2B private default creation/restore. The exported directory API does not establish unsupported native mappings; earlier file/lifecycle passes do not qualify these changes.
 - Investigate and disposition the recorded failed E2B network probe. Fix an integration defect if found, or document the demonstrated provider/configuration limitation; do not promote the result to a pass without evidence.
 - Preserve the distinction between E2B volume account access blocked by HTTP 403 and Sandbar E2B mounts being unsupported. Resolve the historical volume-creation uncertainty only with sufficient evidence; newer successful cleanup does not erase it.
 
@@ -61,4 +69,4 @@ This milestone does not require universal provider parity. Reassess material DX 
 
 ## Later
 
-Beyond the scheduled preview/process basics, advanced terminals, tunnels and storage extensions follow demonstrated needs. Additional observability metrics/events and accounting remain deferred. The removed service and management UI are not on the delivery queue. Rust is not planned. [Detailed plans](plans/implementation-plan.md) do not override this queue.
+Beyond the remaining process basics, advanced terminals, tunnels and storage extensions follow demonstrated needs. Additional observability metrics/events and accounting remain deferred. The removed service and management UI are not on the delivery queue. Rust is not planned. [Detailed plans](plans/implementation-plan.md) do not override this queue.
