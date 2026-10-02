@@ -112,3 +112,7 @@ Set `lifecycle: { lifetimeSeconds: 600 }` at adapter setup, then use `await box.
 ## Preview access
 
 `box.preview(port, { signal? })` resolves ephemeral HTTP access to existing running compute, without server start, implicit resume, readiness polling or outbound policy changes. See the [preview guide](https://sandbarsdk.dev/docs/guides/preview-access/) for setup, token authority/lifetime and unsupported modes. Daytona implements protected sandbox-wide header access; E2B implements explicitly public access and creates/restores private compute by default while protected token lookup remains unsupported. This slice has deterministic native/packed coverage; maintained live preview scenarios have not run. Earlier qualification does not prove these new access or E2B inbound-default behaviors.
+
+## Directory primitives
+
+`listFiles`, `fileExists`, `makeDirectory` and `removeFile` are unsupported and reject before mutation. The inspected public server listing skips failed detail lookups and follows target types; file details use `Stat`, so 404 cannot identify a dangling entry as present. Native folder creation always creates ancestors. The inspected delete implementation follows `Stat` before deletion, leaving dangling links and rejecting empty-directory removal without recursion. Public server revision v0.190 is negative evidence, not proof about this adapter's v0.218 deployment. No shell emulation is added. See the [pinned mapping contract](../../../specs/sandbox-basics-dx.md#slice-3-implementation-contract-and-native-evidence).

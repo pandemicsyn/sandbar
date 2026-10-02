@@ -16,6 +16,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Scoped sandbox reopening      | [Conditional · not-run](#daytona-reopening)              | [Conditional · not-run](#e2b-reopening)                                           |
 | Execution and captured output | [Supported · passed at 8449def7](#daytona-execution)     | [Supported · passed at 8449def7](#e2b-execution)                                  |
 | Binary files and overwrite    | [Conditional · passed at 8449def7](#daytona-files)       | [Conditional · passed at 8449def7](#e2b-files)                                    |
+| Directory primitives          | [Unsupported · not-run](#daytona-directories)            | [Conditional · not-run](#e2b-directories)                                         |
 | OCI image builds              | [Conditional · not-run](#daytona-oci)                    | [Conditional · not-run](#e2b-oci)                                                 |
 | Measured network controls     | [Conditional · not-run](#daytona-network)                | [Supported · failed](#e2b-network)                                                |
 | Snapshot roundtrip            | [Conditional · passed at 1505ee0d](#daytona-snapshots)   | [Conditional · passed at 8449def7](#e2b-snapshots)                                |
@@ -67,6 +68,12 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 ### Binary files and overwrite
 
 Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified.
+
+<a id="daytona-directories"></a>
+
+### Directory primitives
+
+listFiles, makeDirectory, fileExists and removeFile reject before mutation. Inspected native listing/details lose link identity or entries; mkdir always recurses; delete does not cover dangling links or empty-directory semantics. No shell emulation.
 
 <a id="daytona-oci"></a>
 
@@ -141,6 +148,12 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 ### Binary files and overwrite
 
 Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths.
+
+<a id="e2b-directories"></a>
+
+### Directory primitives
+
+fileExists uses native lstat-backed Stat, including dangling links. makeDirectory and removeFile require recursive: true; omitted/false rejects before mutation. listFiles is unsupported because e2b 2.51.0 filters unknown entry types. Intermediate parent links are followed; recursive removal does not walk link entries. Native/packed fixtures only; file-directories live case not run.
 
 <a id="e2b-oci"></a>
 

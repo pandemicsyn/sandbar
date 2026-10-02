@@ -25,6 +25,7 @@ import {
 } from "sandbar-adapter";
 import {
   E2BRenewRejected,
+  E2BDirectoryRejected,
   createSdkTransport,
   E2B_ENDPOINT,
   MAX_BYTES,
@@ -400,6 +401,89 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         allowPublicTraffic: config.preview.access === "public",
         find,
       });
+
+      const entryExists = transport.exists;
+      const makeDirectory = transport.makeDirectory;
+      const removeEntry = transport.removeEntry;
+
+      const directoryOperations: Pick<
+        NonNullable<import("sandbar-adapter").AdapterSession["files"]>,
+        "exists" | "makeDirectory" | "remove"
+      > = {};
+
+      if (entryExists)
+        directoryOperations.exists = async (
+          input: { sandbox: import("sandbar-adapter").Sandbox; path: string },
+          ctx: import("sandbar-adapter").ReadContext,
+        ) => {
+          requirePath(input.path);
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+          ctx.signal.throwIfAborted();
+
+          return entryExists(input.sandbox.id, input.path, ctx.signal);
+        };
+
+      if (makeDirectory)
+        directoryOperations.makeDirectory = {
+          async prepare(input: import("sandbar-adapter").FileMutationInput) {
+            requirePath(input.path);
+
+            if (!input.recursive)
+              throw new AdapterError("UNSUPPORTED", "E2B makeDirectory requires recursive: true");
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+            return input;
+          },
+          async submit(
+            input: import("sandbar-adapter").FileMutationInput,
+            ctx: import("sandbar-adapter").AttemptContext,
+          ) {
+            try {
+              await requireRunning(input.sandbox.id, input.sandbox.reference);
+              ctx.signal.throwIfAborted();
+              await makeDirectory(input.sandbox.id, input.path, ctx.signal);
+
+              return { acknowledged: true as const };
+            } catch (error) {
+              if (error instanceof E2BDirectoryRejected)
+                return ctx.reject(error.code, error.message);
+
+              return ctx.unknown(
+                "E2B directory creation acknowledgement unavailable; not replayed",
+              );
+            }
+          },
+        };
+
+      if (removeEntry)
+        directoryOperations.remove = {
+          async prepare(input: import("sandbar-adapter").FileMutationInput) {
+            requirePath(input.path);
+
+            if (!input.recursive)
+              throw new AdapterError("UNSUPPORTED", "E2B removeFile requires recursive: true");
+
+            if (input.path === "/")
+              throw new AdapterError("INVALID_ARGUMENT", "Cannot remove sandbox root");
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+            return input;
+          },
+          async submit(
+            input: import("sandbar-adapter").FileMutationInput,
+            ctx: import("sandbar-adapter").AttemptContext,
+          ) {
+            try {
+              await requireRunning(input.sandbox.id, input.sandbox.reference);
+              ctx.signal.throwIfAborted();
+              await removeEntry(input.sandbox.id, input.path, ctx.signal);
+
+              return { acknowledged: true as const };
+            } catch {
+              return ctx.unknown("E2B removal acknowledgement unavailable; not replayed");
+            }
+          },
+        };
 
       return {
         ...resources.fields,
@@ -1137,6 +1221,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         },
         files: {
           maxBytes: MAX_BYTES,
+          ...directoryOperations,
           async read(input, ctx) {
             requirePath(input.path);
             await requireRunning(input.sandbox.id, input.sandbox.reference);

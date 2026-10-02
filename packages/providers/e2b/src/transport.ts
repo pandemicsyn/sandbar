@@ -1,6 +1,8 @@
 import {
   Sandbox,
   SandboxNotFoundError,
+  AuthenticationError,
+  InvalidArgumentError,
   Template,
   Volume,
   CommandExitError,
@@ -18,6 +20,13 @@ import { classifyWriteFailure, E2BWriteFailure } from "./write-failure";
 export const E2B_ENDPOINT = "https://api.e2b.app";
 
 export const MAX_BYTES = 1_048_576;
+
+/** A positive guest rejection, never inferred from error text. */
+export class E2BDirectoryRejected extends AdapterError {
+  constructor() {
+    super("INVALID_ARGUMENT", "E2B path is not a directory");
+  }
+}
 
 class NativeReadError extends AdapterError {
   constructor(readonly statusCode: number) {
@@ -161,6 +170,9 @@ export type E2BTransport = {
     signal?: AbortSignal,
   ): Promise<{ bytes: Uint8Array; truncated: boolean }>;
   write(id: string, path: string, bytes: Uint8Array): Promise<void>;
+  exists?: (id: string, path: string, signal: AbortSignal) => Promise<boolean>;
+  makeDirectory?: (id: string, path: string, signal: AbortSignal) => Promise<void>;
+  removeEntry?: (id: string, path: string, signal: AbortSignal) => Promise<void>;
   remove(id: string, path: string): Promise<void>;
   close(): void;
 };
@@ -824,6 +836,36 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       } catch (error) {
         throw new E2BWriteFailure(classifyWriteFailure(error, stage, httpStatus));
       }
+    },
+    async exists(id, path, signal) {
+      // Attachment absence is a sandbox error, never a missing guest entry.
+      const sandbox = await attach(id, undefined, signal);
+      signal.throwIfAborted();
+
+      try {
+        return await sandbox.files.exists(path, { requestTimeoutMs: 30_000, signal });
+      } catch (error) {
+        if (error instanceof AuthenticationError)
+          throw new AdapterError("FORBIDDEN", "E2B filesystem access rejected");
+        throw new AdapterError("UNAVAILABLE", "E2B entry existence read failed");
+      }
+    },
+    async makeDirectory(id, path, signal) {
+      const sandbox = await attach(id, undefined, signal);
+      signal.throwIfAborted();
+
+      try {
+        // The native call always creates ancestors; adapter preflight requires recursive:true.
+        await sandbox.files.makeDir(path, { requestTimeoutMs: 30_000, signal });
+      } catch (error) {
+        if (error instanceof InvalidArgumentError) throw new E2BDirectoryRejected();
+        throw error;
+      }
+    },
+    async removeEntry(id, path, signal) {
+      const sandbox = await attach(id, undefined, signal);
+      signal.throwIfAborted();
+      await sandbox.files.remove(path, { requestTimeoutMs: 30_000, signal });
     },
     async remove(id, path) {
       const sandbox = await attach(id);

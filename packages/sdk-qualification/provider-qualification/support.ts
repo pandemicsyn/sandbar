@@ -35,6 +35,7 @@ export const features = {
     workflow: "files",
     scenarios: ["file-binary", "file-overwrite", "file-no-clobber"],
   },
+  directories: { label: "Directory primitives", scenarios: ["file-directories"] },
   oci: { label: "OCI image builds", scenarios: ["build-oci"] },
   network: {
     label: "Measured network controls",
@@ -75,6 +76,10 @@ export const builtinSupport: SupportMetadata[] = [
       previewPublic: {
         support: "unsupported",
         note: "Daytona sandbox-wide publication requires a separate product decision; preview never changes visibility.",
+      },
+      directories: {
+        support: "unsupported",
+        note: "listFiles, makeDirectory, fileExists and removeFile reject before mutation. Inspected native listing/details lose link identity or entries; mkdir always recurses; delete does not cover dangling links or empty-directory semantics. No shell emulation.",
       },
       renewal: {
         support: "conditional",
@@ -129,6 +134,10 @@ export const builtinSupport: SupportMetadata[] = [
       previewProtected: {
         support: "unsupported",
         note: "Fresh traffic-token retrieval is absent from the pinned read-only detail API. Native connect may resume compute; protected preview rejects without calling it. Newly created/restored compute is private by default.",
+      },
+      directories: {
+        support: "conditional",
+        note: "fileExists uses native lstat-backed Stat, including dangling links. makeDirectory and removeFile require recursive: true; omitted/false rejects before mutation. listFiles is unsupported because e2b 2.51.0 filters unknown entry types. Intermediate parent links are followed; recursive removal does not walk link entries. Native/packed fixtures only; file-directories live case not run.",
       },
       renewal: {
         support: "conditional",
