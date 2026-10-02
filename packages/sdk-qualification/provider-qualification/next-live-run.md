@@ -152,6 +152,10 @@ binary reads, renewal, scoped reopening, E2B directories, finite streaming and
 the supported preview modes. Do not add termination or suspend/resume reruns,
 network retries or retained storage. Fresh admission and intended routing must
 be verified at dispatch; the earlier read-only preflight is not a future lock
-or resource-readiness guarantee. Paid dispatch remains pending direct
-authorization. PR publication is authorized; no compute was allocated by this
-audit task.
+or resource-readiness guarantee. The user authorized PR publication and these
+five sequential fixtures, requiring cleanup on failure. API review checked the
+pinned E2B 2.51.0 client and official Daytona control/toolbox schemas before
+dispatch. Acknowledged deletion still requires an absence observation; renewal
+resets the deadline relative to the request. Known saved Daytona routing with
+10-minute TTL and `restartAfterCapture` remains readable without changing this
+plan's 15-minute TTL or weakening unresolved-custody admission.
