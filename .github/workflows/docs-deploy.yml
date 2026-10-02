@@ -17,11 +17,24 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Holds CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; pull requests never receive them.
+    # Configure both deployment secrets in production; pull requests never receive them.
     environment:
       name: production
       url: https://sandbarsdk.dev
     steps:
+      - name: Check deployment credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing $name. Configure this Actions secret in the production environment (Settings > Environments > production)."
+              missing=1
+            fi
+          done
+          exit "$missing"
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:

@@ -20,7 +20,14 @@ bun run --cwd apps/docs dev
 
 The `sandbar-docs` Worker serves `sandbarsdk.dev` and `www.sandbarsdk.dev`; both are bound as custom domains in `wrangler.jsonc`, so a deploy keeps them attached. Pages canonicalize to `https://sandbarsdk.dev/`.
 
-`.github/workflows/docs-deploy.yml` deploys on pushes to `main` that change `apps/docs/**`, `bun.lock` or the workflow itself, and can be run manually. It reruns `bun run docs:check` before `wrangler deploy`. It reads `CLOUDFLARE_API_TOKEN` (Workers Scripts edit and Workers Custom Domains/Zone edit for `sandbarsdk.dev`) and `CLOUDFLARE_ACCOUNT_ID` from the protected `production` GitHub environment. Pull request checks only build and test; they receive no deployment credentials. Preview deployments, if introduced, should use `noindex` and must not publish an unmerged stack to the canonical domain. Every page keeps `noindex` until public launch is decided.
+`.github/workflows/docs-deploy.yml` deploys on pushes to `main` that change `apps/docs/**`, `bun.lock` or the workflow itself, and can be run manually. It checks that deployment credentials are present, then reruns `bun run docs:check` before `wrangler deploy`. Pull request checks only build and test; they receive no deployment credentials. Preview deployments, if introduced, should use `noindex` and must not publish an unmerged stack to the canonical domain. Every page keeps `noindex` until public launch is decided.
+
+Configure these **Actions secrets** in this repository's **Settings > Environments > production**:
+
+- `CLOUDFLARE_API_TOKEN`: a deployment API token restricted to the existing production Cloudflare account. Grant Workers edit access for `sandbar-docs` and Workers Routes Write for the `sandbarsdk.dev` zone, as required to manage the configured custom domains. See [Cloudflare's deployment permissions](https://developers.cloudflare.com/workers/authorization/). Do not use a Global API key or an all-accounts token.
+- `CLOUDFLARE_ACCOUNT_ID`: the ID of that same existing account, which owns `sandbar-docs` and the production domains. Keep the current Worker name and custom domains in `wrangler.jsonc`.
+
+The workflow reads both names through `secrets`, so setting an Actions variable does not supply them. A missing secret fails the credential check with its name and setup location; values are never printed. This checks presence only, not token validity or permissions. Environment protection rules are configured separately in GitHub; declaring `environment: production` does not itself restrict branches or require approval. Review those rules before enabling deployment credentials. Provisioning credentials and running a deployment require explicit authorization; do not rerun the workflow as a credential test.
 
 ## Content structure
 
