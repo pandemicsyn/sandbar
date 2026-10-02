@@ -57,7 +57,7 @@ export const Image = {
 };
 
 export type CreateInput = {
-  environment: ImageInput;
+  environment?: ImageInput;
   requirements?: { snapshot: SnapshotRequest };
   mounts?: MountSpec[];
   networkPolicy?: string;
@@ -286,37 +286,54 @@ export function checkExec(result: ExecOutput): ExecOutput {
   return result;
 }
 
-export function validateCreate(input: CreateInput): CreateInput {
+export function validateCreate(
+  input: CreateInput | undefined,
+  defaultEnvironment?: ImageInput,
+): CreateInput & { environment: ImageInput } {
   const parsed = z
     .strictObject({
-      environment: z.discriminatedUnion("kind", [
-        z.strictObject({
-          kind: z.literal("prepared"),
-          value: z.string().min(1),
-          binding: z
-            .strictObject({
-              provider: z.string().min(1).max(128),
-              scope: z.strictObject({
-                authority: z.strictObject({
-                  kind: z.string().min(1).max(64),
-                  id: z.string().min(1).max(512),
+      environment: z
+        .discriminatedUnion("kind", [
+          z.strictObject({
+            kind: z.literal("prepared"),
+            value: z.string().min(1),
+            binding: z
+              .strictObject({
+                provider: z.string().min(1).max(128),
+                scope: z.strictObject({
+                  authority: z.strictObject({
+                    kind: z.string().min(1).max(64),
+                    id: z.string().min(1).max(512),
+                  }),
+                  partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
                 }),
-                partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
-              }),
-            })
-            .optional(),
-        }),
-        z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
-      ]),
+              })
+              .optional(),
+          }),
+          z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
+        ])
+        .optional(),
       requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
       mounts: z.array(MountSpec).max(32).optional(),
       networkPolicy: z.string().min(1).max(128).optional(),
       region: z.string().min(1).max(128).optional(),
       labels: z.record(z.string(), z.string()).optional(),
     })
-    .safeParse(input);
+    .safeParse(input === undefined ? {} : input);
 
-  if (!parsed.success || !parsed.data.environment.value.trim())
+  if (!parsed.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid create request");
+
+  if (parsed.data.environment === undefined) {
+    if (defaultEnvironment === undefined)
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Configure an adapter environment (daytona({ environment: ... })) or pass create({ environment: ... })",
+      );
+
+    return validateCreate({ ...parsed.data, environment: defaultEnvironment });
+  }
+
+  if (!parsed.data.environment.value.trim())
     throw new SandbarError("INVALID_ARGUMENT", "A prepared or OCI image is required");
 
   const contract = CreateSandboxInput.safeParse({
@@ -332,7 +349,11 @@ export function validateCreate(input: CreateInput): CreateInput {
 
   if (!contract.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid create request");
 
-  return { ...parsed.data, networkPolicy: parsed.data.networkPolicy ?? "blocked" };
+  return {
+    ...parsed.data,
+    environment: parsed.data.environment,
+    networkPolicy: parsed.data.networkPolicy ?? "blocked",
+  };
 }
 
 function isArgumentArray(input: ExecInput | readonly string[]): input is readonly string[] {

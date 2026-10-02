@@ -1,4 +1,4 @@
-import { Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
+import { Image, Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
 import { daytona } from "sandbar-sdk/daytona";
 import { z } from "zod";
 
@@ -32,6 +32,7 @@ export function daytonaConnection(configuration: DaytonaConfiguration, apiKey: s
       adapter: daytona({
         apiKey,
         target: config.target,
+        environment: Image.prepared(config.snapshotId),
         ttlMinutes: config.ttlMinutes,
         networkPolicy: config.networkPolicy,
       }),

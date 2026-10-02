@@ -1,5 +1,31 @@
 import { z } from "zod";
-import { AdapterError, defineAdapter, type CreateValue, type ExecValue } from "./index";
+import {
+  AdapterError,
+  defineAdapter,
+  type AdapterSession,
+  type CreateValue,
+  type ExecValue,
+} from "./index";
+
+const defaultBinding = {
+  provider: "example.acme",
+  scope: { authority: { kind: "account", id: "one" }, partition: {} },
+};
+
+({
+  kind: "prepared",
+  value: "image-1",
+  binding: defaultBinding,
+}) satisfies AdapterSession["defaultImage"];
+
+({ kind: "oci", value: "alpine:3.21" }) satisfies AdapterSession["defaultImage"];
+
+({
+  kind: "oci",
+  value: "alpine:3.21",
+  // @ts-expect-error OCI defaults cannot carry prepared-image bindings.
+  binding: defaultBinding,
+}) satisfies AdapterSession["defaultImage"];
 
 const native = {
   async whoami() {

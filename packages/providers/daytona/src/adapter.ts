@@ -1,4 +1,5 @@
 import {
+  ResourceScope,
   RenewRequest,
   ResolvedRenewInput,
   sandboxReference,
@@ -28,6 +29,16 @@ const Configuration = z
     apiUrl: z.url().default("https://app.daytona.io/api"),
     toolboxOrigin: z.url().default("https://proxy.app.daytona.io"),
     target: z.string().min(1),
+    environment: z
+      .discriminatedUnion("kind", [
+        z.strictObject({
+          kind: z.literal("prepared"),
+          value: z.string().min(1),
+          binding: z.strictObject({ provider: z.string().min(1), scope: ResourceScope }).optional(),
+        }),
+        z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
+      ])
+      .optional(),
     networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
     snapshots: z
       .strictObject({ restartAfterCapture: z.boolean().default(true) })
@@ -556,6 +567,7 @@ export function createDaytonaAdapter(
 
       return {
         ...resourceState.fields,
+        defaultImage: config.environment,
         snapshotRestore: createMutation,
         async snapshotInspect(ref: ResourceReference, ctx: import("sandbar-adapter").ReadContext) {
           const info = await resourceState.inspectSnapshot(ref, ctx);

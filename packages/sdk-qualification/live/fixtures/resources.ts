@@ -262,12 +262,21 @@ export class TestResources {
     this.role = role;
   }
 
-  async create(role: string, mounts?: MountSpec[], network = this.network) {
+  async create(
+    role: string,
+    mounts?: MountSpec[],
+    network = this.network,
+    configuredEnvironment = false,
+  ) {
     this.at(role);
 
     return this.wait(
       await this.client.sandboxes.submitCreate(
-        { environment: Image.prepared(this.imageId), networkPolicy: network, mounts },
+        {
+          environment: configuredEnvironment ? undefined : Image.prepared(this.imageId),
+          networkPolicy: network,
+          mounts,
+        },
         { signal: this.signal },
       ),
     );

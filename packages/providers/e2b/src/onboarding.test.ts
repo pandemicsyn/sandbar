@@ -108,7 +108,8 @@ test("API-key-only defaults reopen the same scope and bind canonical base resour
   expect(JSON.stringify(client.scope)).not.toContain("first-key");
   expect(f.calls.template).toBe(0);
   expect(f.calls.create).toBe(0);
-  const creation = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+  expect((await client.sandboxes.checkCreate()).status).toBe("supported");
+  const creation = await client.sandboxes.submitCreate();
   const box = await creation.wait();
   expect(f.records.get(box.id)?.templateId).toBe("canonical_base");
   const reference = creation.reference;
@@ -419,3 +420,47 @@ for (const kind of ["exec", "file_write", "destroy"] as const) {
     }
   });
 }
+
+test("configured E2B defaults reach one native create; explicit invalid templates never fall back", async () => {
+  const f = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: f.adapter,
+    config: { templateId: "my-template" },
+    credentials: { apiKey: "fixture" },
+  });
+
+  try {
+    expect((await client.sandboxes.checkCreate()).status).toBe("supported");
+    expect(f.calls.create).toBe(0);
+    const box = await client.sandboxes.create({ labels: { job: "report" } });
+    expect(f.calls.create).toBe(1);
+    expect(f.records.get(box.id)?.templateId).toBe("template_one");
+    const override = await client.sandboxes.create({ environment: Image.prepared("base") });
+    expect(f.records.get(override.id)?.templateId).toBe("canonical_base");
+    await expect(
+      client.sandboxes.create({ environment: Image.prepared("missing") }),
+    ).rejects.toThrow();
+    expect(f.calls.create).toBe(2);
+  } finally {
+    await client.close();
+  }
+});
+
+test("lost default creation recovers confirmed identity without replacement or replay", async () => {
+  const f = fixture();
+  f.loseNextResponse();
+  const options = { adapter: f.adapter, config: {}, credentials: { apiKey: "fixture" } };
+  const client = await Sandbar.connect(options);
+  const operation = await client.sandboxes.submitCreate();
+  await client.close();
+  const reopened = await Sandbar.connect(options);
+
+  try {
+    const recovered = await reopened.recover(operation.reference);
+    expect(await recovered.wait()).toMatchObject({ id: "sb_1" });
+    expect(f.calls.create).toBe(1);
+  } finally {
+    await reopened.close();
+  }
+});
