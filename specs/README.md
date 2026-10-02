@@ -6,7 +6,7 @@ New features target the SDK and public adapter API; see the [delivery rule](../p
 
 ## Implemented contracts and remaining slices
 
-- [Provider state portability](provider-state-portability.md) — snapshots/volumes merged in #25; cleanup configuration in #34. The [storage composition proposal](storage-composition.md) recommends explicit Daytona cold-restore attachments first; mounted capture and richer guarantees remain deferred.
+- [Provider state portability](provider-state-portability.md) — snapshots/volumes merged in #25; cleanup configuration in #34. The [storage composition proposal](storage-composition.md) recommends consistent create/restore mounts and a bounded Daytona cold-restore slice after the earlier DX priorities; mounted capture and richer guarantees remain deferred.
 - [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) — ordinary results, direct partial outcomes and provider-identifying handles merged in #33. Expanded persistence callbacks and workflow machinery remain deferred.
 - Provider acceptance merged in #32; use the [maintained Bun suites](../packages/sdk-qualification/provider-qualification/README.md) and generated evidence. Public direct resource types and caller input errors merged in #35.
 - [Sandbox lifecycle](sandbox-lifecycle.md) — reopen/inspect merged in #38 and adapter-configured `renew()` in #55. No-argument suspend/resume is the next accepted implementation slice; it is not exported yet.
@@ -15,6 +15,15 @@ New features target the SDK and public adapter API; see the [delivery rule](../p
 - [SDK observability and diagnostics](sdk-observability.md) — SDK tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes merged in #24. Metrics/events remain later work.
 
 Use the [authoritative roadmap](../ROADMAP.md) for order and qualification gaps. Merged code is not live qualification; retain the actual tested revision/configuration. Vercel and Tensorlake adapters remain behind the SDK usability gate. Accounting is deferred; the service/management UI were removed in #39, and Rust is not planned.
+
+## Accepted upcoming DX work
+
+After the active suspend/resume slice:
+
+- [Default creation and everyday files](sandbox-basics-dx.md) — proposed adapter-owned creation defaults, UTF-8 helpers and a separate directory-operations slice, with concrete usage and failure behavior.
+- [Preview access and useful process control](preview-and-process-control.md) — next priority; concrete access/termination/input sketches and native-evidence decisions required before implementation. This does not change the shipped finite-streaming contract.
+
+Storage composition research continues; implementation follows these everyday workflow gaps. Provider-specific choices belong in setup, while ordinary application calls stay short. Keep confirmed outcomes and persisted resource identities available without making normal calls use recovery machinery.
 
 ## Current engineering contracts
 
