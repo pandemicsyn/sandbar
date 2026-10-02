@@ -17,6 +17,7 @@ export async function previewResponse(
 
   return request(preview.url, {
     headers: preview.access === "protected" ? preview.headers : undefined,
+    redirect: "error",
   });
 }
 

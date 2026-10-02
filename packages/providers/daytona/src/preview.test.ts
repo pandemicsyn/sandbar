@@ -150,6 +150,20 @@ test("Daytona protected preview verifies private running identity, gets fresh he
   }
 });
 
+test("Daytona destroyed tombstones reject preview before requesting access", async () => {
+  const f = fixture();
+  const { client, box } = await create(f);
+
+  try {
+    f.native.state = "destroyed";
+    f.calls.length = 0;
+    await expect(box.preview(3000)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(f.calls.some((call) => call.endsWith("preview-url"))).toBe(false);
+  } finally {
+    await client.close();
+  }
+});
+
 test("Daytona malformed credential URLs, lost token and expired sandbox errors contain no credentials", async () => {
   const f = fixture();
   const { client, box } = await create(f);

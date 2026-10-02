@@ -53,6 +53,7 @@ try {
   const response = await previewResponse(box, 3000, async (url, init) => {
     assert.equal(url, "https://preview.example.test");
     assert.deepEqual(init.headers, { "x-fixture-token": "private" });
+    assert.equal(init.redirect, "error");
 
     return new Response("ready");
   });

@@ -1316,6 +1316,12 @@ export function createDaytonaAdapter(
             );
           const info = await inspection(input.sandbox.id, input.sandbox.reference, ctx);
 
+          if (info.state === "destroyed")
+            throw new AdapterError(
+              "NOT_FOUND",
+              "Daytona sandbox is destroyed; preview access is unavailable",
+            );
+
           if (info.state !== "running")
             throw new AdapterError(
               "UNAVAILABLE",

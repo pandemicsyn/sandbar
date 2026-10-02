@@ -474,7 +474,7 @@ const transport = {
   async create(input) {
     if (!["base", "template_1", "template_oci", "snapshot_packed:11111111-1111-4111-8111-111111111111"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
     creates++;
-    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",lifecycle:{onTimeout:"kill",autoResume:false},envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
+    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",allowPublicTraffic:input.allowPublicTraffic,lifecycle:{onTimeout:"kill",autoResume:false},envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
     return record.id;
   },
   async get(id) { return record?.id === id ? record : null; },

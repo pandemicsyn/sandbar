@@ -21,6 +21,7 @@ import {
   type OperationOutcome,
   defineAdapter,
   type ExecValue,
+  type Json,
 } from "sandbar-adapter";
 import {
   E2BRenewRejected,
@@ -33,6 +34,13 @@ import {
 } from "./transport";
 
 import { classifyWriteFailure, WriteFailure, writeFailureReason } from "./write-failure";
+
+const CreateToken = z.strictObject({
+  allowPublicTraffic: z.boolean(),
+  sandboxId: z.string().min(1).max(512).optional(),
+});
+
+const CreateRecoveryToken: z.ZodType<Json> = CreateToken;
 
 const Configuration = z
   .strictObject({
@@ -519,6 +527,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           },
         },
         create: {
+          recovery: { version: 1, token: CreateRecoveryToken },
           async prepare(input) {
             if (input.mounts?.length)
               throw new AdapterError(
@@ -556,6 +565,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
             if (!nativeId.test(ctx.submissionId) || !nativeId.test(ctx.operationId))
               return ctx.reject("INVALID_ARGUMENT", "Invalid E2B correlation ID");
+
+            const token: z.infer<typeof CreateToken> = {
+              allowPublicTraffic: config.preview.access === "public",
+            };
+
+            await ctx.checkpoint(token);
 
             let templateId =
               input.image.kind === "prepared" ? input.image.value : config.templateId;
@@ -618,12 +633,14 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 templateId,
                 timeoutMs: config.timeoutSeconds * 1000,
                 allowInternetAccess: input.networkPolicy === "internet",
-                allowPublicTraffic: config.preview.access === "public",
+                allowPublicTraffic: token.allowPublicTraffic,
                 metadata,
                 signal: ctx.signal,
               });
 
               if (!nativeId.test(id)) return ctx.unknown("E2B create returned an invalid ID");
+              token.sandboxId = id;
+              await ctx.checkpoint(token);
               const record = await transport.get(id);
 
               if (
@@ -635,6 +652,11 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               )
                 return ctx.unknown("E2B create identity could not be verified");
 
+              if (record.allowPublicTraffic !== token.allowPublicTraffic)
+                return ctx.unknown(
+                  "E2B create inbound visibility could not be verified; no replay",
+                );
+
               return {
                 id,
                 reference: sandboxReference("e2b", boundScope, id, {
@@ -644,53 +666,73 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 mounts: input.mounts,
                 state: record.state === "running" ? ("running" as const) : ("unknown" as const),
               };
-            } catch {
+            } catch (error) {
+              if (error instanceof AdapterCheckpointError) throw error;
+
               return ctx.unknown(
                 `E2B create response unavailable; observe without replay${name ? `; retained template ${templateId}` : ""}`,
               );
             }
           },
           async observe(attempt, ctx) {
+            const token = CreateToken.safeParse(attempt.token);
+
+            if (!token.success)
+              return ctx.unknown(
+                "Original E2B create inbound visibility is unavailable; no replay",
+              );
             await verifyAuthority();
 
-            const page = await transport.list(
-              {
-                sandbar_scope: scopeMarker,
-                sandbar_submission: attempt.submissionId,
-                sandbar_operation: attempt.operationId,
-              },
-              2,
-            );
+            let id = token.data.sandboxId;
 
-            const matches = page.items.filter(
-              (record) =>
-                owned(record) &&
-                record.metadata.sandbar_submission === attempt.submissionId &&
-                record.metadata.sandbar_operation === attempt.operationId,
-            );
-
-            if (matches.length !== 1 || page.nextToken) {
-              const build = await transport.findBuild(
-                config.teamId,
-                buildName(attempt.submissionId),
+            if (!id) {
+              const page = await transport.list(
+                {
+                  sandbar_scope: scopeMarker,
+                  sandbar_submission: attempt.submissionId,
+                  sandbar_operation: attempt.operationId,
+                },
+                2,
               );
 
-              return build
-                ? ctx.unknown(
-                    `E2B image build ${build.templateId} is ${build.status}; no sandbox was confirmed`,
-                  )
-                : null;
+              const matches = page.items.filter(
+                (record) =>
+                  owned(record) &&
+                  record.metadata.sandbar_submission === attempt.submissionId &&
+                  record.metadata.sandbar_operation === attempt.operationId,
+              );
+
+              if (matches.length !== 1 || page.nextToken) {
+                const build = await transport.findBuild(
+                  config.teamId,
+                  buildName(attempt.submissionId),
+                );
+
+                return build
+                  ? ctx.unknown(
+                      `E2B image build ${build.templateId} is ${build.status}; no sandbox was confirmed`,
+                    )
+                  : null;
+              }
+
+              id = matches[0]!.id;
             }
 
-            const record = (await transport.get(matches[0]!.id)) ?? matches[0]!;
+            const record = await transport.get(id);
 
             if (
-              record.id !== matches[0]!.id ||
+              !record ||
+              record.id !== id ||
               !owned(record) ||
               record.metadata.sandbar_submission !== attempt.submissionId ||
               record.metadata.sandbar_operation !== attempt.operationId
             )
               return ctx.unknown("Recovered E2B create identity could not be verified");
+
+            if (record.allowPublicTraffic !== token.data.allowPublicTraffic)
+              return ctx.unknown(
+                "Recovered E2B create inbound visibility is unverified; no replay",
+              );
 
             if (attempt.mounts?.length)
               return ctx.unknown("Recovered native volume IDs cannot be confirmed; no replay");

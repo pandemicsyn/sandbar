@@ -19,12 +19,13 @@ const preview = await box.preview(3000);
 const preview = await box.preview(3000);
 const response = await fetch(preview.url, {
   headers: preview.access === "protected" ? preview.headers : undefined,
+  redirect: "error",
 });
 ```
 
 A protected result is for an HTTP client that can supply the required headers; it is not automatically a browser-openable link. Public results may be opened in a browser, but expose the service to whoever can reach that URL. If native protection instead requires a browser sign-in or URL credential, settle that representation explicitly before implementing that provider; do not disguise it as header authentication.
 
-Adapter setup is `preview: { access: "protected" | "public" }`, defaulting to protected. The implemented mappings are Daytona protected and E2B explicit public. Unsupported choices fail clearly: Daytona public setup rejects before connection IO; E2B protected `preview()` rejects without native lookup. Newly created/restored E2B sandboxes nevertheless set `allowPublicTraffic: false` by default, independently of outbound network policy. Existing sandboxes are not privatized by connecting; E2B public lookup requires current native public visibility and auto-resume off.
+Adapter setup is `preview: { access: "protected" | "public" }`, defaulting to protected. The implemented mappings are Daytona protected and E2B explicit public. Unsupported choices fail clearly: Daytona public setup rejects before connection IO; E2B protected `preview()` rejects without native lookup. Newly created/restored E2B sandboxes nevertheless set `allowPublicTraffic: false` by default, independently of outbound network policy, and verify observed visibility before confirming creation or restore. Missing or mismatched visibility leaves an uncertain outcome while retaining confirmed resource identity. Existing sandboxes are not privatized by connecting; E2B public lookup requires current native public visibility and auto-resume off.
 
 `preview(port, { signal? })` validates an integer port from 1 through 65535 and resolves access to existing running compute. It does not start a server, resume compute, change outbound policy, extend lifetime or replace compute. Daytona's native GET may activate the requested preview route. Producing access information does not prove a listener is ready; connection refusal or proxy errors remain possible. Local cancellation stops waiting, not compute; native reads may finish afterward. The result is not stored in sandbox references, operation recovery or diagnostics.
 
@@ -43,7 +44,7 @@ Evidence: [Daytona preview authentication and lifetime](https://www.daytona.io/d
 
 **P2 — Daytona public access (product decision):** the pinned visibility setting publishes sandbox ports globally, while the existing adapter verifies private visibility across creation/reopening/state operations. Supporting public mode requires accepting that sandbox-wide exposure and reconciling those guarantees, not toggling visibility from `preview(port)`. It remains explicitly unsupported in this slice. Signed credential URLs, per-port share grants and revocation APIs are deferred.
 
-The standard Daytona credential is for the caller's own HTTP client, never an end-user share link. Both return branches carry ephemeral access information, not durable identity or readiness. Credentials and URLs are excluded from telemetry; response validation failures use fixed messages. Reopening uses the ordinary reference and asks for access again. No grant inventory, gateway, tunnel or implicit server management is introduced. See the compiled [preview recipe](../apps/docs/examples/sandbox-preview.ts) and [provider guide](../apps/docs/src/content/docs/docs/guides/preview-access.md).
+The standard Daytona credential is for the caller's own HTTP client, never an end-user share link. Requests carrying its custom header must reject redirects, as the compiled recipe does, to prevent a cross-origin redirect from disclosing sandbox-wide authority. Both return branches carry ephemeral access information, not durable identity or readiness. Credentials and URLs are excluded from telemetry; response validation failures use fixed messages. Reopening uses the ordinary reference and asks for access again. No grant inventory, gateway, tunnel or implicit server management is introduced. See the compiled [preview recipe](../apps/docs/examples/sandbox-preview.ts) and [provider guide](../apps/docs/src/content/docs/docs/guides/preview-access.md).
 
 ## Process control that means what it says
 

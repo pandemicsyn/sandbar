@@ -59,6 +59,7 @@ const restoreToken = z.strictObject({
   selector: z.string().min(1).max(256),
   state: z.enum(["uncertain", "accepted", "rejected"]),
   sandboxId: z.string().min(1).max(512).optional(),
+  allowPublicTraffic: z.boolean().optional(),
 });
 
 export function e2bState(input: {
@@ -882,7 +883,13 @@ export function e2bState(input: {
         if (ctx.signal.aborted)
           return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
         const selector = `${value.snapshot.nativeId}:${value.snapshot.generation}`;
-        const token: z.infer<typeof restoreToken> = { selector, state: "uncertain" };
+
+        const token: z.infer<typeof restoreToken> = {
+          selector,
+          state: "uncertain",
+          allowPublicTraffic: input.allowPublicTraffic ?? false,
+        };
+
         await ctx.checkpoint(token);
 
         if (ctx.signal.aborted) {
@@ -903,7 +910,7 @@ export function e2bState(input: {
           },
           timeoutMs: input.timeoutSeconds * 1000,
           allowInternetAccess: value.request.networkPolicy === "internet",
-          allowPublicTraffic: input.allowPublicTraffic ?? false,
+          allowPublicTraffic: token.allowPublicTraffic,
           signal: ctx.signal,
         });
 
@@ -931,9 +938,12 @@ export function e2bState(input: {
         if (
           !reference ||
           !token.success ||
+          token.data.allowPublicTraffic === undefined ||
           token.data.selector !== `${reference.nativeId}:${reference.generation}`
         )
-          return ctx.unknown("Original restore selector is unavailable; no replay");
+          return ctx.unknown(
+            "Original restore selector or inbound visibility is unavailable; no replay",
+          );
         const info = await snapshotInspect(reference);
 
         if (info.state !== "ready") return ctx.unknown("Original captured build is not ready");
@@ -967,6 +977,9 @@ export function e2bState(input: {
           !Object.entries(metadata).every(([key, value]) => current.metadata[key] === value)
         )
           return ctx.unknown("Restored sandbox identity is unverified");
+
+        if (current.allowPublicTraffic !== token.data.allowPublicTraffic)
+          return ctx.unknown("Restored sandbox inbound visibility is unverified; no replay");
 
         return {
           id: current.id,
