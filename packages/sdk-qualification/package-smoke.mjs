@@ -187,10 +187,13 @@ void flow;
 import { Sandbar, Image } from "sandbar-sdk";
 import { daytona } from "sandbar-sdk/daytona";
 async function flow() {
-  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15 }));
+  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15, environment: Image.prepared("snap-1") }));
   const built = await client.images.build({ source: Image.oci("alpine:3.21") });
   await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
-  const box = await client.sandboxes.create({ environment: Image.prepared("snap-1") });
+  await client.sandboxes.checkCreate();
+  const box = await client.sandboxes.create();
+  const tagged = await client.sandboxes.submitCreate({ labels: { job: "report" } });
+  void tagged;
   const result = await box.exec({ command: { kind: "shell", script: "printf ready" } });
   const text = result.stdoutText();
   await client.close();
@@ -208,7 +211,10 @@ async function flow() {
   const prepared = Image.prepared(built.prepared);
   const builtBox = await client.sandboxes.create({ environment: prepared, networkPolicy: "blocked" });
   await builtBox.destroy();
-  const box = await client.sandboxes.create({ environment: Image.prepared("template_1"), networkPolicy: "blocked" });
+  await client.sandboxes.checkCreate();
+  const box = await client.sandboxes.create();
+  const tagged = await client.sandboxes.submitCreate({ labels: { job: "report" } });
+  void tagged;
   const output = await box.exec({ command: { kind: "argv", argv: ["printf", "test"] } });
   const bytes: Uint8Array = await box.readFile("/tmp/file");
   await box.writeFile("/tmp/file", bytes, { overwrite: false });

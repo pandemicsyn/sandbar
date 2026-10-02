@@ -9,6 +9,7 @@ const sandbar = await Sandbar.connect(
   daytona({
     apiKey,
     target: "us",
+    environment: Image.prepared("daytona-small"),
     ttlMinutes: 15,
     networkPolicy: "daytona-default",
   }),
@@ -16,7 +17,6 @@ const sandbar = await Sandbar.connect(
 
 try {
   const box = await sandbar.sandboxes.create({
-    environment: Image.prepared("daytona-small"),
     networkPolicy: "daytona-default",
   });
 
