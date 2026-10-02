@@ -100,11 +100,11 @@ The remaining active-handle race is an explicit native limitation, not a guarant
 
 ### Request, cancellation and error behavior
 
-Use a fixed 30-second local request deadline and the caller/client-close signals, independent of the command stream. Pre-abort rejects `WAIT_ABORTED` with effect `none`; unsupported native method and locally invalidated authority reject before dispatch. Once native mutation may have been submitted, cancellation, deadline, malformed acknowledgement or transport failure rejects `OUTCOME_UNKNOWN` with effect `possible` and existing minimal provider/sandbox context. A native false/NotFound maps to `not-found`, never an invented exit. Only an adapter rejection that proves no effect may claim effect `none`. Abort attempts to stop request IO; it cannot undo a dispatched signal, and must not detach the process output stream. Late response handling must release local resources without changing the settled caller result. Cache separately observed terminal evidence even if termination's acknowledgement is lost.
+Use a fixed 30-second shared request deadline and client-close signal, independent of the command stream. Each caller signal bounds only that caller’s local wait; it must not abort the shared native request or another waiter. Pre-abort rejects `WAIT_ABORTED` with effect `none`; unsupported native method and locally invalidated authority reject before dispatch. Once native mutation may have been submitted, cancellation, deadline, malformed acknowledgement or transport failure rejects `OUTCOME_UNKNOWN` with effect `possible` and existing minimal provider/sandbox context. A native false/NotFound maps to `not-found`, never an invented exit. Only an adapter rejection that proves no effect may claim effect `none`. Request deadline/client close attempt to stop request IO; caller abort stops only its wait. Neither can undo a dispatched signal. Termination cancellation must not detach the process output stream (client close retains its existing local-detach behavior). Late response handling must release local resources without changing the settled caller result. Cache separately observed terminal evidence even if termination's acknowledgement is lost.
 
-Allow at most one native termination attempt per local handle. Concurrent/repeated calls reject `INVALID_ARGUMENT` before another dispatch, unless a terminal result is already confirmed (`exited`). Do not cache an unknown request as success or retry it after timeout. This small guard avoids repeated signals against a stale PID; it is not durable idempotency. Independent `wait()` calls remain repeatable and caller-cancellable. No stream lock should make output delivery wait for termination IO.
+Allow at most one native termination attempt per local handle. Concurrent callers share the request promise with independently cancelled local waits. Subsequent calls reuse a known `requested`/`not-found` acknowledgement; refresh terminal evidence first so a known exit returns `exited`. If the shared request itself settles `OUTCOME_UNKNOWN`, cache that uncertainty without redispatch. A caller-only abort does not poison a still-pending request: later callers may obtain its eventual acknowledgement. Pre-aborted calls reject without allocating or consuming the attempt. Do not label valid duplicate calls `INVALID_ARGUMENT`. Cache one promise/result rather than introducing a waiter registry or durable idempotency framework. Once dispatched, local detach or observation failure does not erase the cached request outcome; no new dispatch is permitted from an inactive handle. Independent `wait()` calls remain repeatable and caller-cancellable. No stream lock should make output delivery wait for termination IO.
 
-The adapter addition is an optional native `terminate(ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>` on `NativeProcess`; reuse the context's cancellation/deadline machinery for local waiting only. The SDK supplies `exited`, validates results, serializes the one request attempt and rejects unsupported adapters without dispatch. The method name describes a mutation even though its context reuses local IO bounds; do not assign read-only error/effect semantics to it. No durable operation reference is introduced.
+The adapter addition is an optional native `terminate(ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>` on `NativeProcess`; reuse the context's cancellation/deadline machinery for local waiting only. The SDK supplies `exited`, validates results, shares and caches the one request attempt and rejects unsupported adapters without dispatch. The method name describes a mutation even though its context reuses local IO bounds; do not assign read-only error/effect semantics to it. No durable operation reference is introduced.
 
 ### Concrete workflow (proposed API, finite output)
 
@@ -114,9 +114,11 @@ import { SandbarError } from "sandbar-sdk";
 const job = await box.processes.start({
   command: { kind: "argv", argv: ["node", "job.js"] },
 });
+// One budget bounds termination, exit observation and output draining.
+const observation = AbortSignal.timeout(10_000);
 // Handle output failure immediately so it cannot become an unhandled rejection.
 const drain = (async () => {
-  for await (const chunk of job.output()) {
+  for await (const chunk of job.output({ signal: observation })) {
     (chunk.stream === "stdout" ? console.log : console.error)(chunk.text);
   }
 })().then(
@@ -126,14 +128,14 @@ const drain = (async () => {
 try {
   // Application decides to stop its job. SIGKILL on E2B; PID race applies.
   try {
-    const request = await job.terminate({ signal: AbortSignal.timeout(5000) });
+    const request = await job.terminate({ signal: observation });
     console.log(request.status); // requested / not-found / exited; not an exit code
   } catch (error) {
     if (!(error instanceof SandbarError) || error.code !== "OUTCOME_UNKNOWN") throw error;
     console.error("Termination acknowledgement is unknown", error);
     // Observe independently below; never repeat the termination request.
   }
-  const exit = await job.wait({ signal: AbortSignal.timeout(5000) });
+  const exit = await job.wait({ signal: observation });
   console.log(exit.exitCode, exit.outputComplete); // native -1 is possible
   const output = await drain;
   if (!output.ok) console.error(output.error);
@@ -142,7 +144,7 @@ try {
 }
 ```
 
-If `terminate()` rejects `OUTCOME_UNKNOWN`, handle that error in application code and try `job.wait({ signal: ... })` to observe independently; never automatically call terminate again. A confirmed terminal result remains readable even after output failure. A `wait()` abort only ends that waiter. Termination need not produce a terminal event before the wait deadline; `not-found` also cannot supply one. An output failure may invalidate termination before the application calls it, so cleanup must report that limitation rather than fall back to sandbox destruction. This example is a design sketch; the first implementation PR must add a compiled public-package recipe.
+If `terminate()` rejects `OUTCOME_UNKNOWN`, handle that error in application code and try `job.wait({ signal: ... })` to observe independently. Repeated terminate calls reuse the existing attempt and never send another signal. A confirmed terminal result remains readable even after output failure. A `wait()` abort only ends that waiter. The output abort releases observation when the shared example budget ends, including when exit is already confirmed but the stream never closes. Native requests may finish after local cleanup; detach never kills remotely. Termination need not produce a terminal event before the wait deadline; `not-found` also cannot supply one. An output failure may invalidate termination before the application calls it, so cleanup must report that limitation rather than fall back to sandbox destruction. This example is a design sketch; the first implementation PR must add a compiled public-package recipe.
 
 ### Separate future input work
 
@@ -162,6 +164,6 @@ Keep the existing roadmap ordering and shipped preview design. This proposal con
 2. **Optional, independently gated stdin PR.** Settle delivery/EOF state, pin native acknowledgements and cancellation, then implement explicit UTF-8 pipe input only. It must not depend on removing output caps or adding persisted handles.
 3. **Separately researched sustained-output PR.** Establish bounded native transport/retention and initial-log completeness before changing streaming limits or enabling Daytona sessions. Session deletion requires the additional evidence above and its own reviewed termination contract; defer it if it cannot preserve usable wait behavior. Do not bundle that investigation into the first PR.
 
-First-PR acceptance: zero native signal calls for pre-abort, known exit (including a flush failure), detached/lost-stream/closed-client handles and unsupported mappings; exactly one PID + SIGKILL RPC for active E2B; true acknowledgement, NotFound, RPC rejection, malformed result, lost acknowledgement, 30-second timeout and caller abort; exit-before-dispatch and exit-during-request; concurrent/repeated calls; negative native terminal integer and adapter-level signal-only/missing terminal evidence (do not claim the pinned decoder detects an omitted proto3 scalar); output continues during request; known lifecycle invalidation with no connect/resume; successor PID fixture explicitly demonstrates that an unobserved remote reuse cannot be detected by this selector. Assert no retries, start replay, supervisor, reconnect, sandbox kill or fabricated exit. Preserve existing `outputComplete` behavior under native output cancellation.
+First-PR acceptance: zero native signal calls for pre-abort, known exit (including a flush failure), detached/lost-stream/closed-client handles and unsupported mappings; exactly one PID + SIGKILL RPC for active E2B; true acknowledgement, NotFound, RPC rejection, malformed result, lost acknowledgement, 30-second timeout and caller abort; exit-before-dispatch and exit-during-request; concurrent callers with independent aborts, cached acknowledgement/absence/unknown outcome, pre-abort not consuming the attempt; exit-confirmed while stream never closes with bounded drain and local cleanup; negative native terminal integer and adapter-level signal-only/missing terminal evidence (do not claim the pinned decoder detects an omitted proto3 scalar); output continues during request; known lifecycle invalidation with no connect/resume; successor PID fixture explicitly demonstrates that an unobserved remote reuse cannot be detected by this selector. Assert no retries, start replay, supervisor, reconnect, sandbox kill or fabricated exit. Preserve existing `outputComplete` behavior under native output cancellation.
 
 Run Bun 1.3.14 frozen install, sequential package builds/checks, offline tests, lint/format, packed consumer checks for the API change and docs checks. Maintain existing live acceptance scenarios; any live kill/exit behavior remains separately authorized and unqualified until run. Independent native-correctness and DevEx/complexity reviews must clear the final proposal before opening its PR, and the implementation must receive the same focused reviews before merge. User owns final proposal review and merge; no direct push to main.
