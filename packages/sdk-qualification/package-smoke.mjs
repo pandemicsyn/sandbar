@@ -149,6 +149,10 @@ async function flow() {
   await handle.inspect({ ...options, pollMs: 500 });
   await handle.readFile("/file", options);
   await handle.readFile("/file");
+  const text: string = await handle.readTextFile("/file", options);
+  await handle.readTextFile("/file");
+  await handle.writeTextFile("/text", text);
+  await handle.writeTextFile("/text", text, { overwrite: true, signal: options.signal });
   await box.destroy();
   await client.close();
 }
@@ -316,6 +320,13 @@ try {
   await box.writeFile("/data/packed", bytes);
   const loaded = await box.readFile("/data/packed");
   if (loaded.length !== bytes.length || loaded.some((value, index) => value !== bytes[index])) throw new Error("Binary file changed");
+  const text = "Ada 🌊 café\\r\\n終";
+  await box.writeTextFile("/data/text", text);
+  if (await box.readTextFile("/data/text") !== text) throw new Error("Text roundtrip changed");
+  const encoded = await box.readFile("/data/text");
+  if (encoded.length !== new TextEncoder().encode(text).length) throw new Error("Text byte encoding changed");
+  await box.writeTextFile("/data/text", "", { overwrite: true });
+  if (await box.readTextFile("/data/text", { signal: new AbortController().signal }) !== "") throw new Error("Empty text changed");
   await box.destroy();
   process.stdout.write("packed direct flow passed\\n");
 } finally { await client.close(); }

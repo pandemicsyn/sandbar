@@ -2,7 +2,7 @@
 
 Accepted product direction · Proposed API · October 2, 2026
 
-Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. This is the next implementation work after [suspend/resume](sandbox-lifecycle.md). Signatures below are proposals, not current exports. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
+Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. This is the next implementation work after [suspend/resume](sandbox-lifecycle.md). Creation defaults and directory signatures below remain proposals. The text-helper slice is implemented in the pending implementation PR; it is not merged yet. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
 ## Creation defaults belong in adapter setup
 
@@ -41,6 +41,8 @@ Defaults are explicit values, not a fallback search. Validate overrides normally
 This slice does not change network defaults, lifetime policy, image resolution, snapshot restore, mounts or permissions. In particular, an omitted network policy stays blocked under the existing contract. Daytona's explicit provider-managed egress configuration still requires its current per-call selection; simplifying that is a separately reviewed networking decision. Do not bundle CPU/memory sizing or create-time environment variables into this change.
 
 ## Text files without encoding boilerplate
+
+Implementation status: pending merge. Thin SDK wrappers and deterministic/packed Node/Bun coverage; no new native operation or live evidence.
 
 Add helpers alongside the existing byte methods, without overloading or changing those methods:
 

@@ -41,18 +41,20 @@ Build results contain `prepared` and `retainedResources`. A prepared handle is b
 
 ## Sandboxes
 
-| API                                                                                        | Behavior                                              |
-| ------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
-| `sandbar.sandboxes.create({ environment, networkPolicy?, region?, labels? }, { signal? })` | Submit creation and wait for a sandbox handle.        |
-| `sandbar.sandboxes.submitCreate(input, options?)`                                          | Submit creation and return an operation handle.       |
-| `box.id`                                                                                   | Sandbox identifier.                                   |
-| `box.inspect({ signal? })`                                                                 | Read current state where supported.                   |
-| `box.exec(input, { signal? })`                                                             | Run a command and return bounded binary output.       |
-| `box.submitExec(input, options?)`                                                          | Submit execution and return an operation handle.      |
-| `box.readFile(path, { signal? })`                                                          | Read up to 1 MiB as a `Uint8Array`.                   |
-| `box.writeFile(path, bytes, { overwrite?, signal? })`                                      | Write up to 1 MiB; overwrite defaults to false.       |
-| `box.destroy({ signal? })`                                                                 | Wait for confirmed compute termination.               |
-| `sandbar.close()`                                                                          | Release client resources; does not destroy sandboxes. |
+| API                                                                                        | Behavior                                                     |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `sandbar.sandboxes.create({ environment, networkPolicy?, region?, labels? }, { signal? })` | Submit creation and wait for a sandbox handle.               |
+| `sandbar.sandboxes.submitCreate(input, options?)`                                          | Submit creation and return an operation handle.              |
+| `box.id`                                                                                   | Sandbox identifier.                                          |
+| `box.inspect({ signal? })`                                                                 | Read current state where supported.                          |
+| `box.exec(input, { signal? })`                                                             | Run a command and return bounded binary output.              |
+| `box.submitExec(input, options?)`                                                          | Submit execution and return an operation handle.             |
+| `box.readTextFile(path, { signal? })`                                                      | Read the complete bounded file as UTF-8.                     |
+| `box.writeTextFile(path, text, { overwrite?, signal? })`                                   | Write UTF-8; byte limits apply; overwrite defaults to false. |
+| `box.readFile(path, { signal? })`                                                          | Read up to 1 MiB as a `Uint8Array`.                          |
+| `box.writeFile(path, bytes, { overwrite?, signal? })`                                      | Write up to 1 MiB; overwrite defaults to false.              |
+| `box.destroy({ signal? })`                                                                 | Wait for confirmed compute termination.                      |
+| `sandbar.close()`                                                                          | Release client resources; does not destroy sandboxes.        |
 
 Optional operations fail locally when the adapter does not implement them.
 

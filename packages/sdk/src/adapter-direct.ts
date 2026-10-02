@@ -915,6 +915,22 @@ export class AdapterSandbox {
       options,
     );
   }
+  /** Decode the complete bounded file as UTF-8, replacing malformed sequences and consuming its BOM. */
+  async readTextFile(path: string, options: ReadOptions = {}): Promise<string> {
+    return new TextDecoder().decode(await this.readFile(path, options));
+  }
+  /** Encode UTF-8 using the byte write's limits, cancellation and no-clobber default. */
+  async writeTextFile(
+    path: string,
+    text: string,
+    options: { overwrite?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JavaScript callers must not silently coerce non-text input during UTF-8 encoding.
+    if (typeof text !== "string")
+      throw new SandbarError("INVALID_ARGUMENT", "Expected text string");
+
+    await this.writeFile(path, new TextEncoder().encode(text), options);
+  }
   async readFile(path: string, options: ReadOptions = {}): Promise<Uint8Array> {
     this.client.ensureOpen();
 
