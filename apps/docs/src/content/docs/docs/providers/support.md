@@ -7,24 +7,24 @@ description: Declared adapter support and dated live acceptance, with provider c
 
 Adapter support and live validation are separate facts. **Supported** means implemented; **conditional** requires the configuration in the linked note; **unsupported** means the adapter does not expose the workflow. Live results are **passed**, **failed**, **blocked**, or **not-run**. Each pass applies to its recorded source/configuration, not the current head or every provider account. Fixture and packed tests never produce live passes.
 
-| Feature                             | Daytona                                                  | E2B                                                                               |
-| ----------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Sandbox lifecycle                   | [Supported · passed at 8449def7](#daytona-lifecycle)     | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
-| Native sandbox suspend/resume       | [Conditional · passed at 6796b30b](#daytona-suspension)  | [Conditional · passed at 26f516d1](#e2b-suspension)                               |
-| Protected HTTP preview              | [Conditional · not-run](#daytona-previewProtected)       | [Unsupported · not-run](#e2b-previewProtected)                                    |
-| Public HTTP preview                 | [Unsupported · not-run](#daytona-previewPublic)          | [Conditional · not-run](#e2b-previewPublic)                                       |
-| Local-handle process termination    | [Unsupported · not-run](#daytona-termination)            | [Conditional · passed at 131a8c6f](#e2b-termination)                              |
-| Configured lifetime renewal         | [Conditional · not-run](#daytona-renewal)                | [Conditional · not-run](#e2b-renewal)                                             |
-| Scoped sandbox reopening            | [Conditional · not-run](#daytona-reopening)              | [Conditional · not-run](#e2b-reopening)                                           |
-| Execution and captured output       | [Supported · passed at 8449def7](#daytona-execution)     | [Supported · passed at 8449def7](#e2b-execution)                                  |
-| Binary files and overwrite          | [Conditional · passed at 8449def7](#daytona-files)       | [Conditional · passed at 8449def7](#e2b-files)                                    |
-| Directory primitives                | [Unsupported · not-run](#daytona-directories)            | [Conditional · not-run](#e2b-directories)                                         |
-| OCI image builds                    | [Conditional · not-run](#daytona-oci)                    | [Conditional · not-run](#e2b-oci)                                                 |
-| Measured network controls           | [Conditional · not-run](#daytona-network)                | [Supported · failed](#e2b-network)                                                |
-| Cold snapshot with selected storage | [Conditional · failed](#daytona-storageComposition)      | [Unsupported · not-run](#e2b-storageComposition)                                  |
-| Snapshot roundtrip                  | [Conditional · passed at 1505ee0d](#daytona-snapshots)   | [Conditional · passed at 8449def7](#e2b-snapshots)                                |
-| Volume CRUD                         | [Supported · passed at 1505ee0d](#daytona-volumes)       | [Unsupported · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
-| Mounted persistence                 | [Conditional · passed at 1505ee0d](#daytona-persistence) | [Unsupported · not-run](#e2b-persistence)                                         |
+| Feature                             | Daytona                                                         | E2B                                                                               |
+| ----------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Sandbox lifecycle                   | [Supported · passed at 8449def7](#daytona-lifecycle)            | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
+| Native sandbox suspend/resume       | [Conditional · passed at 6796b30b](#daytona-suspension)         | [Conditional · passed at 26f516d1](#e2b-suspension)                               |
+| Protected HTTP preview              | [Conditional · not-run](#daytona-previewProtected)              | [Unsupported · not-run](#e2b-previewProtected)                                    |
+| Public HTTP preview                 | [Unsupported · not-run](#daytona-previewPublic)                 | [Conditional · not-run](#e2b-previewPublic)                                       |
+| Local-handle process termination    | [Unsupported · not-run](#daytona-termination)                   | [Conditional · passed at 131a8c6f](#e2b-termination)                              |
+| Configured lifetime renewal         | [Conditional · not-run](#daytona-renewal)                       | [Conditional · not-run](#e2b-renewal)                                             |
+| Scoped sandbox reopening            | [Conditional · not-run](#daytona-reopening)                     | [Conditional · not-run](#e2b-reopening)                                           |
+| Execution and captured output       | [Supported · passed at 8449def7](#daytona-execution)            | [Supported · passed at 8449def7](#e2b-execution)                                  |
+| Binary files and overwrite          | [Conditional · passed at 8449def7](#daytona-files)              | [Conditional · passed at 8449def7](#e2b-files)                                    |
+| Directory primitives                | [Unsupported · not-run](#daytona-directories)                   | [Conditional · not-run](#e2b-directories)                                         |
+| OCI image builds                    | [Conditional · not-run](#daytona-oci)                           | [Conditional · not-run](#e2b-oci)                                                 |
+| Measured network controls           | [Conditional · not-run](#daytona-network)                       | [Supported · failed](#e2b-network)                                                |
+| Cold snapshot with selected storage | [Conditional · passed at 5911cccd](#daytona-storageComposition) | [Unsupported · not-run](#e2b-storageComposition)                                  |
+| Snapshot roundtrip                  | [Conditional · passed at 1505ee0d](#daytona-snapshots)          | [Conditional · passed at 8449def7](#e2b-snapshots)                                |
+| Volume CRUD                         | [Supported · passed at 1505ee0d](#daytona-volumes)              | [Unsupported · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
+| Mounted persistence                 | [Conditional · passed at 1505ee0d](#daytona-persistence)        | [Unsupported · not-run](#e2b-persistence)                                         |
 
 The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. Daytona baseline passed at 8449def after allowing bounded inventory convergence; the original 1505ee0 failure remains recorded. Snapshot roundtrip, volume CRUD and mounted persistence retain their 1505ee0 passes. E2B baseline and RAM snapshot roundtrip passed at 8449def; its measured network probe failed at 431cdaa. All newly owned compute and retained artifacts have confirmed cleanup, while the original E2B volume uncertainty remains unresolved. Other operation/configuration claims retain their own recorded revisions and limitations below.
 
@@ -106,7 +106,7 @@ daytona-default permits essential services and is not strict blocked egress. Tie
 
 ### Cold snapshot with selected storage
 
-Implemented exact-volume-ID mounts on known mount-free filesystem/fresh restore with explicit daytona-default. Blocked mounted restore, mounted capture and memory composition unsupported. Native fixtures/packed compatibility are separate from first-action acceptance. The bounded case at 824946d passed A startup evidence, then failed a harness snapshot-name/ID assertion before B; native selector resolution is corrected offline. No full live workflow pass yet.
+Implemented exact-volume-ID mounts on known mount-free filesystem/fresh restore with explicit daytona-default. Blocked mounted restore, mounted capture and memory composition unsupported. Native fixtures/packed compatibility are separate from first-action acceptance. The bounded case at 824946d passed A startup evidence, then failed a harness snapshot-name/ID assertion before B; native selector resolution was corrected. The full workflow passed at 5911ccc on Bun 1.3.14, us, daytona-default with the pinned first-action image: selected A data, empty B, captured private state, exact native identities and fresh-client reopening. All owned compute, volumes, capture and temporary import were cleaned up.
 
 <a id="daytona-snapshots"></a>
 
