@@ -27,9 +27,11 @@ passes current-head qualification. PR #57 suspend/resume acceptance is separate.
   `SANDBAR_E2B_PREVIEW_ACCESS` for sandbox/streaming; set it to `public` only for
   preview. This exposes all guest HTTP ports, including image-owned listeners.
 - Borrowed images must contain `/bin/sh`, GNU no-clobber utilities and Python 3;
-  E2B streaming needs `/bin/bash`; directories additionally need `ln`. File roots are Daytona `/tmp` and
-  E2B `/home/user`. Confirm default image resource sizes and account billing
-  rates before assigning a dollar ceiling. No image build is included.
+  E2B streaming needs `/bin/bash`; directories additionally need `ln`. File
+  roots are Daytona `/tmp` and E2B `/home/user`. No image build is included.
+  Read-only preflight on October 2 verified the borrowed Daytona image is
+  active in `us` with 1 vCPU, 1 GiB RAM and 3 GiB disk. Zero-storage admission
+  cleared for both providers; admission is rechecked before every run.
 
 ## Selected invocations and budget
 
@@ -55,10 +57,14 @@ is at most 30 sandbox-minutes for Daytona and 15.6 for E2B: renewal can reset th
 E2B sandbox deadline to 61 seconds near the end of the 270-second setup/exercise
 window (331 seconds), while its other two sessions expire at 300 seconds.
 Daytona renewal to 120 seconds does not exceed the initial 900-second fallback.
-Actual cost depends on the borrowed image shape, provider rounding/minimums and
-account rates; dollar cost is not yet estimable from repository evidence. Obtain
-an explicit dollar cap using those rates before approval. Successful cleanup
-should substantially reduce this fallback exposure.
+At October 2 published usage rates, the verified Daytona shape costs about
+$0.0333 for that fallback exposure. E2B advertises default 2 vCPU / 4 GiB at
+$0.000046/second, giving about $0.0429 for 931 seconds: about $0.077 combined.
+These are marginal usage estimates, excluding existing plan fees, account-specific
+rates and tax. Verify the E2B template shape before treating this as a hard dollar
+ceiling. Successful cleanup should reduce this fallback exposure. Sources:
+[Daytona pricing](https://www.daytona.io/pricing) and
+[E2B pricing](https://e2b.dev/pricing).
 
 ## Executable selection after approval
 
@@ -129,3 +135,14 @@ before/blocked/after controls and use the same bounds/custody. Native fallback
 exposure would add at most ten sandbox-minutes. Provider clarification or a
 verifiable changed native control is the prerequisite; another allocation with
 the unchanged mapping is not a repair.
+
+## Current E2B prerequisite
+
+The separately owned PR #57 live run reported `UNAVAILABLE` at initial file
+write, before suspension, with compute cleanup confirmed. The merged-main guest
+attachment gate requires running state, explicit `autoResume: false`, envd
+version/token presence and the trusted `e2b.app` domain. That task owns the
+bounded native diagnosis. Do not allocate repeated E2B feature fixtures against
+the unchanged failed gate; resolve its field-presence evidence first. This
+observation does not qualify or fail the feature cases listed above, which have
+not executed. Daytona feature cases remain independently selectable.
