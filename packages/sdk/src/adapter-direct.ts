@@ -664,12 +664,34 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
   }
 }
 
+// Shared only within one client/scope, never native execution-generation proof.
+const processControls = new WeakMap<AdapterDirectClient, Map<string, { active: boolean }>>();
+
+function processControl(client: AdapterDirectClient, sandboxId: string): { active: boolean } {
+  let controls = processControls.get(client);
+
+  if (!controls) {
+    controls = new Map();
+    processControls.set(client, controls);
+  }
+
+  let control = controls.get(sandboxId);
+
+  if (!control) {
+    control = { active: true };
+    controls.set(sandboxId, control);
+  }
+
+  return control;
+}
+
 export class AdapterSandbox {
-  // A local submission fence only, never native execution-generation proof.
-  private processControl = { active: true };
   private invalidateProcessControl(): void {
-    this.processControl.active = false;
-    this.processControl = { active: true };
+    const controls = processControls.get(this.client);
+    const control = controls?.get(this.id);
+
+    if (control) control.active = false;
+    controls?.delete(this.id);
   }
   #reference: SandboxReference | null;
   get reference(): SandboxReference | null {
@@ -712,7 +734,7 @@ export class AdapterSandbox {
     start: (input: StartProcessInput, options: WaitOptions = {}): Promise<ProcessHandle> => {
       this.client.ensureOpen();
 
-      const control = this.processControl;
+      const control = processControl(this.client, this.id);
 
       return startProcess(
         this.client,
@@ -2352,6 +2374,7 @@ export class AdapterDirectClient {
   close(): Promise<void> {
     if (!this.closePromise) {
       this.closed = true;
+      processControls.delete(this);
       this.closePromise = this.connection.close();
     }
 

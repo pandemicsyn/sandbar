@@ -356,7 +356,10 @@ class TextProcess implements ProcessHandle {
       if (this.signal.aborted) throw this.terminationFailure("CLIENT_CLOSED", "Client is closed");
 
       if (this.stopped || !this.controlActive())
-        throw this.terminationFailure("UNAVAILABLE", "Process observation is no longer active");
+        throw this.terminationFailure(
+          "UNAVAILABLE",
+          "Process termination authority is no longer active",
+        );
       const native = this.native;
 
       if (!native?.terminate)
