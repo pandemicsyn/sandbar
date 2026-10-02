@@ -665,6 +665,12 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
 }
 
 export class AdapterSandbox {
+  // A local submission fence only, never native execution-generation proof.
+  private processControl = { active: true };
+  private invalidateProcessControl(): void {
+    this.processControl.active = false;
+    this.processControl = { active: true };
+  }
   #reference: SandboxReference | null;
   get reference(): SandboxReference | null {
     return this.#reference;
@@ -706,7 +712,15 @@ export class AdapterSandbox {
     start: (input: StartProcessInput, options: WaitOptions = {}): Promise<ProcessHandle> => {
       this.client.ensureOpen();
 
-      return startProcess(this.client, sandboxInput(this.id, this.reference), input, options);
+      const control = this.processControl;
+
+      return startProcess(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        input,
+        options,
+        () => control.active,
+      );
     },
   };
   async submitRenew(
@@ -751,6 +765,9 @@ export class AdapterSandbox {
     if (plan.status === "unsupported") throw new UnsupportedFeatureError("snapshot", [plan.reason]);
 
     if (plan.status !== "supported") throw new SandbarError("UNAVAILABLE", plan.reason, "none");
+
+    assertSignal(signal);
+    this.invalidateProcessControl();
 
     return this.client.submit(
       "snapshot_capture",
@@ -1160,6 +1177,10 @@ export class AdapterSandbox {
   async submitDestroy(
     options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
   ): Promise<AdapterOperation<import("sandbar-adapter").DestroyValue>> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+    this.invalidateProcessControl();
+
     const op = await this.client.submit<import("sandbar-adapter").DestroyValue>(
       "destroy",
       {

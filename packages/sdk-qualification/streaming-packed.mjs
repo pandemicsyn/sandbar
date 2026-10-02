@@ -3,11 +3,13 @@ import { Sandbar, Image, diagnosticContext } from "sandbar-sdk";
 import { defineAdapter } from "sandbar-adapter";
 import { z } from "zod";
 import { previewResponse } from "./sandbox-preview.js";
-import { textStreaming } from "./text-streaming.js";
+import { textStreaming, terminateJob } from "./text-streaming.js";
 
 let starts = 0;
 
 let detaches = 0;
+
+let terminations = 0;
 
 const adapter = defineAdapter({
   name: "packed.streaming",
@@ -32,8 +34,23 @@ const adapter = defineAdapter({
           ctx.onOutput({ stream: "stdout", text: "hello" });
           ctx.onOutput({ stream: "stderr", text: "err" });
 
+          let finish;
+
+          const exit =
+            starts === 1
+              ? Promise.resolve({ exitCode: 7 })
+              : new Promise((resolve) => {
+                  finish = resolve;
+                });
+
           return {
-            wait: async () => ({ exitCode: 7 }),
+            wait: () => exit,
+            terminate: async () => {
+              terminations++;
+              finish({ exitCode: -1 });
+
+              return { status: "requested" };
+            },
             detach: async () => {
               detaches++;
             },
@@ -50,6 +67,9 @@ try {
   const box = await client.sandboxes.create({ environment: Image.prepared("one") });
   assert.deepEqual(await textStreaming(box), { exitCode: 7, outputComplete: true });
 
+  assert.deepEqual(await terminateJob(box), { exitCode: -1, outputComplete: true });
+  assert.equal(terminations, 1);
+
   const response = await previewResponse(box, 3000, async (url, init) => {
     assert.equal(url, "https://preview.example.test");
     assert.deepEqual(init.headers, { "x-fixture-token": "private" });
@@ -59,8 +79,8 @@ try {
   });
 
   assert.equal(await response.text(), "ready");
-  assert.equal(starts, 1);
-  assert.equal(detaches, 1);
+  assert.equal(starts, 2);
+  assert.equal(detaches, 2);
   assert.equal(
     diagnosticContext(new Error("private command/output/token")).recoveryAvailable,
     false,
