@@ -7,23 +7,24 @@ description: Declared adapter support and dated live acceptance, with provider c
 
 Adapter support and live validation are separate facts. **Supported** means implemented; **conditional** requires the configuration in the linked note; **unsupported** means the adapter does not expose the workflow. Live results are **passed**, **failed**, **blocked**, or **not-run**. Each pass applies to its recorded source/configuration, not the current head or every provider account. Fixture and packed tests never produce live passes.
 
-| Feature                          | Daytona                                                  | E2B                                                                               |
-| -------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Sandbox lifecycle                | [Supported · passed at 8449def7](#daytona-lifecycle)     | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
-| Native sandbox suspend/resume    | [Conditional · passed at 6796b30b](#daytona-suspension)  | [Conditional · passed at 26f516d1](#e2b-suspension)                               |
-| Protected HTTP preview           | [Conditional · not-run](#daytona-previewProtected)       | [Unsupported · not-run](#e2b-previewProtected)                                    |
-| Public HTTP preview              | [Unsupported · not-run](#daytona-previewPublic)          | [Conditional · not-run](#e2b-previewPublic)                                       |
-| Local-handle process termination | [Unsupported · not-run](#daytona-termination)            | [Conditional · passed at 131a8c6f](#e2b-termination)                              |
-| Configured lifetime renewal      | [Conditional · not-run](#daytona-renewal)                | [Conditional · not-run](#e2b-renewal)                                             |
-| Scoped sandbox reopening         | [Conditional · not-run](#daytona-reopening)              | [Conditional · not-run](#e2b-reopening)                                           |
-| Execution and captured output    | [Supported · passed at 8449def7](#daytona-execution)     | [Supported · passed at 8449def7](#e2b-execution)                                  |
-| Binary files and overwrite       | [Conditional · passed at 8449def7](#daytona-files)       | [Conditional · passed at 8449def7](#e2b-files)                                    |
-| Directory primitives             | [Unsupported · not-run](#daytona-directories)            | [Conditional · not-run](#e2b-directories)                                         |
-| OCI image builds                 | [Conditional · not-run](#daytona-oci)                    | [Conditional · not-run](#e2b-oci)                                                 |
-| Measured network controls        | [Conditional · not-run](#daytona-network)                | [Supported · failed](#e2b-network)                                                |
-| Snapshot roundtrip               | [Conditional · passed at 1505ee0d](#daytona-snapshots)   | [Conditional · passed at 8449def7](#e2b-snapshots)                                |
-| Volume CRUD                      | [Supported · passed at 1505ee0d](#daytona-volumes)       | [Unsupported · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
-| Mounted persistence              | [Conditional · passed at 1505ee0d](#daytona-persistence) | [Unsupported · not-run](#e2b-persistence)                                         |
+| Feature                          | Daytona                                                       | E2B                                                                               |
+| -------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Sandbox lifecycle                | [Supported · passed at 8449def7](#daytona-lifecycle)          | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |
+| Native sandbox suspend/resume    | [Conditional · passed at 6796b30b](#daytona-suspension)       | [Conditional · passed at 26f516d1](#e2b-suspension)                               |
+| Protected HTTP preview           | [Conditional · passed at 3188e333](#daytona-previewProtected) | [Unsupported · not-run](#e2b-previewProtected)                                    |
+| Public HTTP preview              | [Unsupported · not-run](#daytona-previewPublic)               | [Conditional · passed at 3188e333](#e2b-previewPublic)                            |
+| Local-handle process termination | [Unsupported · not-run](#daytona-termination)                 | [Conditional · passed at 131a8c6f](#e2b-termination)                              |
+| Configured lifetime renewal      | [Conditional · passed at 3188e333](#daytona-renewal)          | [Conditional · passed at 3188e333](#e2b-renewal)                                  |
+| Scoped sandbox reopening         | [Conditional · passed at 3188e333](#daytona-reopening)        | [Conditional · passed at 3188e333](#e2b-reopening)                                |
+| Execution and captured output    | [Supported · passed at 8449def7](#daytona-execution)          | [Supported · passed at 8449def7](#e2b-execution)                                  |
+| Finite text streaming            | [Unsupported · not-run](#daytona-streaming)                   | [Conditional · passed at 3188e333](#e2b-streaming)                                |
+| Binary files and overwrite       | [Conditional · passed at 3188e333](#daytona-files)            | [Conditional · passed at 3188e333](#e2b-files)                                    |
+| Directory primitives             | [Unsupported · not-run](#daytona-directories)                 | [Conditional · passed at 3188e333](#e2b-directories)                              |
+| OCI image builds                 | [Conditional · not-run](#daytona-oci)                         | [Conditional · not-run](#e2b-oci)                                                 |
+| Measured network controls        | [Conditional · not-run](#daytona-network)                     | [Supported · failed](#e2b-network)                                                |
+| Snapshot roundtrip               | [Conditional · passed at 1505ee0d](#daytona-snapshots)        | [Conditional · passed at 8449def7](#e2b-snapshots)                                |
+| Volume CRUD                      | [Supported · passed at 1505ee0d](#daytona-volumes)            | [Unsupported · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
+| Mounted persistence              | [Conditional · passed at 1505ee0d](#daytona-persistence)      | [Unsupported · not-run](#e2b-persistence)                                         |
 
 The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. Daytona baseline passed at 8449def after allowing bounded inventory convergence; the original 1505ee0 failure remains recorded. Snapshot roundtrip, volume CRUD and mounted persistence retain their 1505ee0 passes. E2B baseline and RAM snapshot roundtrip passed at 8449def; its measured network probe failed at 431cdaa. All newly owned compute and retained artifacts have confirmed cleanup, while the original E2B volume uncertainty remains unresolved. Other operation/configuration claims retain their own recorded revisions and limitations below.
 
@@ -33,7 +34,7 @@ The [live evidence detail](/docs/providers/live-qualification/) retains exact av
 
 ### Sandbox lifecycle
 
-The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified.
+The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified. The current suite omits the create environment to exercise adapter defaults; historical baseline passes do not qualify that newer path.
 
 <a id="daytona-suspension"></a>
 
@@ -45,7 +46,7 @@ Known unmounted Daytona containers retain files and end processes with auto-dele
 
 ### Protected HTTP preview
 
-Daytona protected header access only; standard token grants sandbox-wide command/file authority. Public setup unsupported. Native lookup can activate a route; no server start/resume or readiness claim. New live preview case not run.
+Daytona protected header access only; standard token grants sandbox-wide command/file authority. Public setup unsupported. Native lookup can activate a route; no server start/resume or readiness claim. Bun preview-protected passed at 3188e33 in us with authenticated HTTP and denied missing/invalid headers; owned cleanup confirmed.
 
 <a id="daytona-previewPublic"></a>
 
@@ -63,13 +64,13 @@ No process handles or verified session-command termination mapping. Session dele
 
 ### Configured lifetime renewal
 
-Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.
+Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Bun lifecycle-renew passed at 3188e33 with deadline observation and confirmed owned cleanup; other configurations remain unqualified.
 
 <a id="daytona-reopening"></a>
 
 ### Scoped sandbox reopening
 
-Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Deterministic native/packed coverage; new live workflow not run.
+Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Bun lifecycle-reopen passed at 3188e33 with fresh-process scoped attachment, guest exec/files and confirmed owned cleanup; other configurations remain unqualified.
 
 <a id="daytona-execution"></a>
 
@@ -77,11 +78,17 @@ Scoped Sandbar-created compute only; fresh connection/process reopen, state/dead
 
 Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration.
 
+<a id="daytona-streaming"></a>
+
+### Finite text streaming
+
+Daytona does not expose processes.start/output/wait; captured exec output is a separate workflow.
+
 <a id="daytona-files"></a>
 
 ### Binary files and overwrite
 
-Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.
+Bun files passed at 3188e33 in /tmp with signal-bearing binary reads, overwrite/no-clobber and confirmed owned cleanup; required GNU shell utilities remain a prerequisite. Custom image filesystem behavior is unverified. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.
 
 <a id="daytona-directories"></a>
 
@@ -125,7 +132,7 @@ Writable create-time mounts/subpaths; read-only unsupported. The Bun producer wr
 
 ### Sandbox lifecycle
 
-The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed.
+The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed. The current suite omits the create environment to exercise the configured template default; historical baseline passes do not qualify that newer path or private inbound defaults.
 
 <a id="e2b-suspension"></a>
 
@@ -143,7 +150,7 @@ Fresh traffic-token retrieval is absent from the pinned read-only detail API. Na
 
 ### Public HTTP preview
 
-E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. New live preview and changed inbound-default behavior not qualified.
+E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. Bun preview-public passed at 3188e33 with observed public visibility, HTTP content and confirmed owned cleanup. Private-default ingress denial remains unqualified.
 
 <a id="e2b-termination"></a>
 
@@ -155,31 +162,37 @@ Active local handles issue one native SIGKILL PID request. PID reuse can target 
 
 ### Configured lifetime renewal
 
-Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.
+Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Bun lifecycle-renew passed at 3188e33 with deadline observation and confirmed owned cleanup; other configurations remain unqualified.
 
 <a id="e2b-reopening"></a>
 
 ### Scoped sandbox reopening
 
-Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Deterministic native/packed coverage; new live workflow not run.
+Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Bun lifecycle-reopen passed at 3188e33 with fresh-process scoped attachment, guest exec/files and confirmed owned cleanup; other configurations remain unqualified.
 
 <a id="e2b-execution"></a>
 
 ### Execution and captured output
 
-Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Finite bounded text streaming is implemented with local-only handles; deterministic pinned-client/packed coverage, live streaming scenario not run.
+Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Streaming is reported separately and is not qualified by this captured-output pass.
+
+<a id="e2b-streaming"></a>
+
+### Finite text streaming
+
+Finite bounded text only, local process handles and auto-resume-off running guests. Bun execution-streaming passed at 3188e33 on borrowed base: early stdout before exit, stderr, nonzero wait/repeated wait and detach; owned cleanup confirmed. No binary streaming or durable process reopening; termination evidence is reported separately.
 
 <a id="e2b-files"></a>
 
 ### Binary files and overwrite
 
-Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.
+Bun files passed at 3188e33 in /home/user with signal-bearing binary reads, overwrite/no-clobber and confirmed owned cleanup. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.
 
 <a id="e2b-directories"></a>
 
 ### Directory primitives
 
-fileExists uses native lstat-backed Stat, including dangling links. makeDirectory and removeFile require recursive: true; omitted/false rejects before mutation. listFiles is unsupported because e2b 2.51.0 filters unknown entry types. Intermediate parent links are followed; recursive removal does not walk link entries. Native/packed fixtures only; file-directories live case not run.
+fileExists uses native lstat-backed Stat, including dangling links. makeDirectory and removeFile require recursive: true; omitted/false rejects before mutation. listFiles is unsupported because e2b 2.51.0 filters unknown entry types. Intermediate parent links are followed; recursive removal does not walk link entries. Bun file-directories passed at 3188e33 on borrowed base, including dangling links and recursive removal behavior; owned cleanup confirmed. Other templates/guest versions remain unqualified.
 
 <a id="e2b-oci"></a>
 

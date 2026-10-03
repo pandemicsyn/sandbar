@@ -50,6 +50,40 @@ test("private ledger retains nonsecret connection routing for crash cleanup", as
   });
 });
 
+test("admission preserves known saved Daytona routing and still rejects unresolved or malformed custody", async () => {
+  const previous = await ledger();
+
+  const connection = {
+    target: "us",
+    snapshotId: "fixture-snapshot",
+    ttlMinutes: 10 as const,
+    restartAfterCapture: false,
+  };
+
+  await previous.update((value) => ({ ...value, connection, cleanup: "confirmed" }));
+  const saved = await readFile(previous.path, "utf8");
+  const next = new LedgerStore(join(previous.path, ".."), crypto.randomUUID());
+  expect((await previous.read()).connection).toEqual(connection);
+  await next.requirePreviousCleanup("daytona");
+  expect(await readFile(previous.path, "utf8")).toBe(saved);
+
+  await previous.update((value) => ({
+    ...value,
+    createIntent: true,
+    createReference: reference,
+    cleanup: "unresolved",
+  }));
+  await expect(next.requirePreviousCleanup("daytona")).rejects.toThrow("unresolved resources");
+
+  for (const malformed of [
+    { ...connection, ttlMinutes: 11 },
+    { ...connection, unknown: true },
+  ]) {
+    await writeFile(previous.path, JSON.stringify({ ...JSON.parse(saved), connection: malformed }));
+    await expect(next.requirePreviousCleanup("daytona")).rejects.toThrow();
+  }
+});
+
 test("only latest live evidence is rendered; fixtures cannot make green cells", () => {
   const base = {
     schemaVersion: 1,
