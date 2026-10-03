@@ -315,7 +315,10 @@ export type AdapterSession<
     import("./resources").SnapshotCaptureInput,
     import("./resources").SnapshotCaptureValue
   >;
-  snapshotRestore?: Mutation<import("./resources").SnapshotRestoreInput, CreateValue>;
+  snapshotRestore?: Mutation<import("./resources").SnapshotRestoreInput, CreateValue> & {
+    /** Opt into the coordinated array input; absent hooks receive mount-free requests only. */
+    mountInput?: "specs";
+  };
   snapshotDelete?: Mutation<ResourceReference, import("./resources").ArtifactDeletionResult>;
   snapshotInspect?: (
     ref: ResourceReference,

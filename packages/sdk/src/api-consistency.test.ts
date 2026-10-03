@@ -166,18 +166,19 @@ test("restore reports every unmet guarantee and rejects compatibility mount choi
         f.snapshot.restore({
           networkPolicy: "blocked",
           requireIndependentLifecycle: false,
-          mounts: { "/mnt/data": choice },
+          mounts: JSON.parse(JSON.stringify({ "/mnt/data": choice })),
         }),
-      ).rejects.toBeInstanceOf(UnsupportedFeatureError);
+      ).rejects.toBeInstanceOf(SandbarError);
       await expect(
         f.snapshot.restore({
           networkPolicy: "blocked",
           requireIndependentLifecycle: false,
-          mounts: { "/mnt/data": choice },
+          mounts: JSON.parse(JSON.stringify({ "/mnt/data": choice })),
         }),
       ).rejects.toMatchObject({
         effect: "none",
-        unmetRequirements: [expect.stringContaining("Snapshot mount restore is not implemented")],
+        code: "INVALID_ARGUMENT",
+        message: expect.stringContaining("Restore mounts now use MountSpec[]"),
       });
     }
 
@@ -187,7 +188,7 @@ test("restore reports every unmet guarantee and rejects compatibility mount choi
         f.snapshot.restore({
           networkPolicy: "blocked",
           requireIndependentLifecycle: false,
-          mounts: {},
+          mounts: JSON.parse("{}"),
         }),
       ).rejects.toMatchObject({
         unmetRequirements: [expect.stringContaining("capture mount provenance is")],

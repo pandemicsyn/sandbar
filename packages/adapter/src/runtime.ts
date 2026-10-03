@@ -66,7 +66,7 @@ export type RuntimeSession = Omit<
   resume?: unknown;
   renew?: unknown;
   snapshotCapture?: unknown;
-  snapshotRestore?: unknown;
+  snapshotRestore?: { mountInput?: "specs" };
   snapshotDelete?: unknown;
   volumeCreate?: unknown;
   volumeDelete?: unknown;
@@ -546,6 +546,18 @@ function checkCapability(
       provider: value.snapshot.provider,
       scope: session.scope,
     });
+
+    if (value.request.mounts?.length && session.snapshotRestore?.mountInput !== "specs")
+      throw new AdapterError("UNSUPPORTED", "Upgrade adapter for restore MountSpec[] input");
+
+    for (const mount of value.request.mounts ?? [])
+      assertResourceScope(mount.volume, {
+        provider: value.snapshot.provider,
+        scope: session.scope,
+      });
+
+    if (!value.request.mounts?.length && session.snapshotRestore?.mountInput !== "specs")
+      delete value.request.mounts;
 
     return value;
   }

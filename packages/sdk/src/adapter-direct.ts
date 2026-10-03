@@ -35,6 +35,7 @@ import {
   unknownSandboxFacts,
   validateResourceReference,
   assertSandboxReference,
+  sandboxReference,
   type SandboxReference,
   type SandboxInfo,
   stateCapabilities,
@@ -2278,6 +2279,25 @@ export class AdapterDirectClient {
 
       if (checked.observation?.reference)
         assertSandboxReference(checked.observation.reference, reference.sandboxReference);
+
+      return checked;
+    }
+
+    if (checked.kind === "snapshot_restore") {
+      if (JSON.stringify(checked.mounts) !== JSON.stringify(reference.mounts ?? []))
+        throw asUnknown(reference, "Provider partial restore selections differ");
+
+      if (checked.sandbox)
+        assertSandboxReference(
+          checked.sandbox,
+          sandboxReference(this.provider, this.scope, checked.sandbox.nativeId, {
+            operation: reference.operationId,
+            submission: reference.submissionId,
+          }),
+        );
+
+      for (const mount of checked.mounts)
+        assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
 
       return checked;
     }

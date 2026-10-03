@@ -45,6 +45,10 @@ export const features = {
     workflow: "network-controls",
     scenarios: ["network-internet", "network-blocked"],
   },
+  storageComposition: {
+    label: "Cold snapshot with selected storage",
+    scenarios: ["storage-composition"],
+  },
   snapshots: { label: "Snapshot roundtrip", scenarios: ["snapshot-roundtrip"] },
   volumes: { label: "Volume CRUD", scenarios: ["volume-crud"] },
   persistence: { label: "Mounted persistence", scenarios: ["volume-persistence"] },
@@ -72,6 +76,10 @@ export const builtinSupport: SupportMetadata[] = [
     id: "daytona",
     name: "Daytona",
     features: {
+      storageComposition: {
+        support: "conditional",
+        note: "Implemented exact-volume-ID mounts on known mount-free filesystem/fresh restore with explicit daytona-default. Blocked mounted restore, mounted capture and memory composition unsupported. Native fixtures/packed compatibility are separate from first-action acceptance. The bounded case at 824946d passed A startup evidence, then failed a harness snapshot-name/ID assertion before B; native selector resolution was corrected. The full workflow passed at 5911ccc on Bun 1.3.14, us, daytona-default with the pinned first-action image: selected A data, empty B, captured private state, exact native identities and fresh-client reopening. All owned compute, volumes, capture and temporary import were cleaned up.",
+      },
       suspension: {
         support: "conditional",
         note: "Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Bun lifecycle-suspend-resume passed at 6796b30 with confirmed owned cleanup.",
@@ -142,6 +150,10 @@ export const builtinSupport: SupportMetadata[] = [
     id: "e2b",
     name: "E2B",
     features: {
+      storageComposition: {
+        support: "unsupported",
+        note: "The Sandbar adapter does not qualify filesystem/fresh restore with selected native volume IDs; memory composition and name-only mount selection remain unsupported.",
+      },
       suspension: {
         support: "conditional",
         note: "E2B memory pause preserves private filesystem/RAM under the same ID; known native mounts are unsupported, missing mount metadata stays unknown, and external-storage durability/consistency is excluded; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Live case failed before pause at cb39884 because native mount facts were unavailable; owned cleanup confirmed. Initial guest-routing failure at 6796b30 is retained; Revised private-state lifecycle case passed at 26f516d with confirmed owned cleanup, fresh-process inactive reopening, same files/identity and RAM nonce/counter continuity; prior failures remain recorded.",

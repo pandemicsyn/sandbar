@@ -1516,6 +1516,64 @@
         "testName": "preview-protected"
       },
       "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/68"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "824946d1c91157910f45d80ea2c1d4541bf13972",
+      "harnessCommit": "824946d1c91157910f45d80ea2c1d4541bf13972",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-10-02T19:54:25.850Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "storage-composition",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "storage-composition"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/69"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "5911cccddd3a25e8af1c0082ac5699875c831655",
+      "harnessCommit": "5911cccddd3a25e8af1c0082ac5699875c831655",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-10-02T22:56:13.277Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "storage-composition",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "storage-composition"
+      },
+      "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/69"
     }
   ],
   "historicalEvidence": [

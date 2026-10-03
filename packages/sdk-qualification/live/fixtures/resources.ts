@@ -11,7 +11,7 @@ import {
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
 import { z } from "zod";
-import type { MountSpec } from "sandbar-adapter";
+import type { OperationOutcome, MountSpec } from "sandbar-adapter";
 import type { ConnectionFactory } from "../../provider-qualification/connection";
 import { LedgerStore } from "../../provider-qualification/ledger";
 import { boundedRead } from "../../provider-qualification/bounds";
@@ -206,8 +206,13 @@ export class TestResources {
     this.client = await boundedRead(opening, signal);
   }
 
-  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- SDK generic results are narrowed to public resource handles before retaining custody.
-  private async save(reference: AdapterRecoveryReference, value?: unknown, noEffect = false) {
+  private async save(
+    reference: AdapterRecoveryReference,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- SDK generic results are narrowed to public resource handles before retaining custody.
+    value?: unknown,
+    noEffect = false,
+    outcome?: OperationOutcome,
+  ) {
     const capture = z.object({ snapshot: z.instanceof(AdapterSnapshot) }).safeParse(value);
 
     const resource =
@@ -219,6 +224,9 @@ export class TestResources {
 
     await this.ledger.update((state) => ({
       ...state,
+      stateObservations: outcome
+        ? { ...state.stateObservations, [reference.submissionId]: outcome }
+        : state.stateObservations,
       stateMutations: state.stateMutations?.map((entry) => {
         if (
           z.object({ submissionId: z.string() }).parse(entry.reference).submissionId !==
@@ -227,6 +235,9 @@ export class TestResources {
           return entry;
 
         if (value instanceof AdapterSandbox) return { ...entry, reference, sandboxId: value.id };
+
+        if (outcome?.kind === "snapshot_restore" && outcome.sandbox)
+          return { ...entry, reference, sandboxId: outcome.sandbox.nativeId };
 
         if (resource) return { ...entry, reference, resource };
 
@@ -252,6 +263,7 @@ export class TestResources {
           : operation.reference,
         undefined,
         error instanceof SandbarError && error.effect === "none",
+        error instanceof SandbarError ? error.outcome : undefined,
       );
       throw error;
     }
@@ -282,12 +294,12 @@ export class TestResources {
     );
   }
 
-  async volume() {
-    this.at("volume/create");
+  async volume(suffix?: "a" | "b") {
+    this.at(suffix ? `volume/${suffix}/create` : "volume/create");
 
     return this.wait(
       await this.client.volumes.submitCreate(
-        { name: `sandbar-${this.ledger.runId.replaceAll("-", "")}` },
+        { name: `sandbar-${this.ledger.runId.replaceAll("-", "")}${suffix ? `-${suffix}` : ""}` },
         { signal: this.signal },
       ),
     );

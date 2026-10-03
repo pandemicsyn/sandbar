@@ -313,7 +313,9 @@ async function flow() {
   const mounted=await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});
   const captured=await box.snapshot();
   const snapshot=await client.snapshots.get(captured.snapshot.reference);
-  const restored=await snapshot.restore({networkPolicy:"blocked"});
+  const restored=await snapshot.restore({networkPolicy:"blocked", mounts:[volume.at("/mnt/data")]});
+  // @ts-expect-error legacy maps are absent from new public types
+  void snapshot.restore({networkPolicy:"blocked", mounts:{}});
   if(!restored.reference)throw Error("Restored sandbox reference missing");
   const reopenedBox=await client.sandboxes.get(JSON.parse(JSON.stringify(restored.reference)));
   if(reopenedBox.id!==restored.id||(await reopenedBox.inspect()).state!=="running")throw Error("Restored sandbox reopen failed");
@@ -656,7 +658,7 @@ try {
 
 const externalAdapterSource = `
 import { z } from "zod";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter, type SnapshotRestoreInput } from "sandbar-adapter";
 export const metrics = { creates: 0, destroys: 0, closes: 0, observes: 0, builds: 0 };
 export const acme = defineAdapter({
   name: "example.acme",
@@ -682,11 +684,39 @@ export const acme = defineAdapter({
   },
 });
 
+export const restoreMetrics = { prepares: 0, submits: 0 };
+export const storageAdapter = defineAdapter({
+  name: "example.storage", config: z.strictObject({specs: z.boolean()}), credentials: z.strictObject({}),
+  async connect({config}) {
+    const scope = {authority: {kind: "account", id: "fixture"}, partition: {}};
+    return {
+      scope, supports: {images: ["prepared"], network: ["blocked"]},
+      async create() { return {id: "unused", state: "running"}; },
+      async destroy() { return {computeStopped: true, retainedResources: []}; },
+      async snapshotInspect(reference) {
+        return {reference, preserve: "filesystem", restoreExecution: "fresh", consistency: "unknown", source: null,
+          state: "ready", createdAt: null, expiration: "unknown", excludedPaths: null, mounts: [], mountHandling: "none",
+          restore: {networkPolicies: ["blocked"], resources: false, mounts: true, independentLifecycle: true},
+          dependencies: [], nativeDependencies: null};
+      },
+      snapshotRestore: {
+        mountInput: config.specs ? "specs" as const : undefined,
+        async prepare(input: SnapshotRestoreInput) {
+          restoreMetrics.prepares++;
+          if (!config.specs && "mounts" in input.request) throw Error("Old hook received mounts");
+          return input;
+        },
+        async submit(input: SnapshotRestoreInput) { restoreMetrics.submits++; return {id: "restored", state: "running", mounts: input.request.mounts}; },
+      },
+    };
+  },
+});
+
 `;
 
 const customSource = `
-import { Sandbar, Image, ResourceReference, assertResourceScope } from "sandbar-sdk";
-import { acme, metrics } from "@acme/sandbar-adapter";
+import { Sandbar, Image, ResourceReference, assertResourceScope, AdapterSnapshot, AdapterVolume } from "sandbar-sdk";
+import { acme, metrics, storageAdapter, restoreMetrics } from "@acme/sandbar-adapter";
 const client = await Sandbar.connect({
   adapter: acme,
   config: { region: "us" },
@@ -708,6 +738,24 @@ try {
   await box.destroy();
 } finally { await client.close(); }
 if (metrics.creates !== 1 || metrics.destroys !== 1 || metrics.closes !== 1) throw Error("Mutation or release count mismatch");
+for (const specs of [false, true]) {
+  const storage = await Sandbar.connect({adapter: storageAdapter, config: {specs}, credentials: {}});
+  try {
+    const ref = {version: 1, kind: "snapshot", provider: "example.storage", scope: storage.scope, nativeId: "snap", ownership: "unknown"};
+    const snapshot = new AdapterSnapshot(storage, ref);
+    const volume = new AdapterVolume(storage, {...ref, kind: "volume", nativeId: "data"});
+    for (const mounts of [undefined, [], {}]) await snapshot.restore({networkPolicy: "blocked", mounts});
+    const before = {...restoreMetrics};
+    if (specs) await snapshot.restore({networkPolicy: "blocked", mounts: [volume.at("/data")]});
+    else {
+      try { await snapshot.restore({networkPolicy: "blocked", mounts: [volume.at("/data")]}); throw Error("Old hook accepted new mounts"); }
+      catch(error) { if(error.code !== "UNSUPPORTED" || error.effect !== "none") throw error; }
+      if (restoreMetrics.prepares !== before.prepares || restoreMetrics.submits !== before.submits) throw Error("Old hook invoked for array");
+    }
+    try { await snapshot.restore({networkPolicy: "blocked", mounts: {"/data": {action: "share"}}}); throw Error("Legacy map accepted"); }
+    catch(error) { if(error.code !== "INVALID_ARGUMENT" || error.effect !== "none") throw error; }
+  } finally { await storage.close(); }
+}
 process.stdout.write("packed external adapter flow passed\\n");
 `;
 

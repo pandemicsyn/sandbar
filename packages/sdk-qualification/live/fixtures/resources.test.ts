@@ -478,3 +478,30 @@ test("teardown during admission persistence leaves no pending cleanup or connect
     mock.mockRestore();
   }
 });
+
+test("uncertain restored compute is retained immediately and cleanup does not need successful restore observation", async () => {
+  const f = await fixture({ unknownRestore: true });
+  const t = await resources(f);
+  const source = await t.create("snapshot/source");
+  t.at("snapshot/capture");
+  const captured = await t.wait(await source.submitSnapshot());
+  t.at("storage/restore");
+  const operation = await captured.snapshot.submitRestore({ networkPolicy: "blocked" });
+  await expect(t.wait(operation)).rejects.toMatchObject({
+    code: "OUTCOME_UNKNOWN",
+    outcome: { sandbox: { nativeId: "box_2" } },
+  });
+  const before = await f.ledger.read();
+  expect(before.stateMutations?.find((entry) => entry.role === "storage/restore")?.sandboxId).toBe(
+    "box_2",
+  );
+  expect(before.stateObservations?.[operation.reference.submissionId]).toMatchObject({
+    kind: "snapshot_restore",
+    sandbox: { nativeId: "box_2" },
+  });
+  await t.close();
+  expect(f.boxes.size).toBe(0);
+  expect(f.snapshots.size).toBe(0);
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+  expect(f.calls.restore).toBe(1);
+});

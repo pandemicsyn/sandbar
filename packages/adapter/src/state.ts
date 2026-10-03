@@ -270,16 +270,7 @@ export const RestoreRequest = z.strictObject({
       diskMiB: z.number().int().positive().optional(),
     })
     .optional(),
-  mounts: z
-    .record(
-      z.string(),
-      z.discriminatedUnion("action", [
-        z.strictObject({ action: z.literal("omit") }),
-        z.strictObject({ action: z.literal("share") }),
-        z.strictObject({ action: z.literal("replace"), mount: MountSpec }),
-      ]),
-    )
-    .optional(),
+  mounts: z.array(MountSpec).max(32).optional(),
 });
 
 export type RestoreRequest = z.infer<typeof RestoreRequest>;
@@ -343,6 +334,12 @@ export type SnapshotCaptureValue = z.infer<typeof SnapshotCaptureValue>;
 
 /** Known native results accompanying an incomplete operation; never dispatch authority. */
 export const OperationOutcome = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("snapshot_restore"),
+    status: z.literal("unknown"),
+    sandbox: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
+    mounts: z.array(MountSpec).max(32),
+  }),
   z
     .strictObject({
       kind: z.literal("sandbox_suspend"),

@@ -122,13 +122,36 @@ export class AdapterSnapshot {
 
     return info;
   }
-  /** Mount choices remain accepted for compatibility, but nonempty choices and mounted/unknown-provenance snapshots are unsupported. */
+  /** Restore private captured state with explicitly selected current volume data. */
   async submitRestore(
     request: RestoreRequest,
     options: WaitOptions = {},
   ): Promise<AdapterOperation<AdapterSandbox>> {
     const ref = checkedResource(this.client, this.reference, "snapshot");
-    const input = validateResourceInput(RestoreRequest, request, "Invalid restore request");
+    // SDK-only deprecated empty-object alias for release R and R+1.
+    const legacy = z.record(z.string(), z.unknown()).safeParse(request?.mounts);
+    let normalized = request;
+
+    if (legacy.success) {
+      if (Object.keys(legacy.data).length)
+        throw new SandbarError(
+          "INVALID_ARGUMENT",
+          "Restore mounts now use MountSpec[]; replace legacy share/replace/omit maps with volume.at(path) descriptors",
+        );
+      normalized = { ...request, mounts: undefined };
+    }
+
+    const input = validateResourceInput(RestoreRequest, normalized, "Invalid restore request");
+
+    for (const mount of input.mounts ?? []) checkedResource(this.client, mount.volume, "volume");
+
+    if (input.mounts?.length && this.client.session.snapshotRestore?.mountInput !== "specs")
+      throw new UnsupportedFeatureError("snapshot restore", [
+        "Upgrade this adapter: restore with mounts requires snapshotRestore.mountInput: specs",
+      ]);
+
+    if (!input.mounts?.length && this.client.session.snapshotRestore?.mountInput !== "specs")
+      delete input.mounts;
     const info = await this.inspect(options);
 
     if (info.state !== "ready" || info.preserve === null)
@@ -145,10 +168,12 @@ export class AdapterSnapshot {
     if (input.requireIndependentLifecycle !== false && !info.restore.independentLifecycle)
       unmet.push("Independent lifecycle is required but unsupported");
 
-    if (Object.keys(input.mounts ?? {}).length)
-      unmet.push(
-        "Snapshot mount restore is not implemented: share, replace and omit choices are unsupported",
-      );
+    if (input.mounts?.length) {
+      if (!info.restore.mounts) unmet.push("This adapter does not support restore with mounts");
+
+      if (info.preserve !== "filesystem" || info.restoreExecution !== "fresh")
+        unmet.push("Restore with mounts requires filesystem preservation and fresh execution");
+    }
 
     if (info.mountHandling !== "none")
       unmet.push(
@@ -171,12 +196,18 @@ export class AdapterSnapshot {
         )
           throw new OutcomeUnknownError(recovery);
 
+        if (
+          input.mounts?.length &&
+          JSON.stringify(result.value.mounts) !== JSON.stringify(input.mounts)
+        )
+          throw new OutcomeUnknownError(recovery);
+
         return new AdapterSandbox(this.client, result.value.id, result.value.reference ?? null);
       },
-      { ...options, resource: ref },
+      { ...options, resource: ref, mounts: input.mounts },
     );
   }
-  /** Restore requires no recorded mounts, confirmed mountHandling: "none", and absent or empty mount choices. */
+  /** Restore requires no recorded native mounts and confirmed mountHandling: "none". */
   async restore(input: RestoreRequest, options: WaitOptions = {}): Promise<AdapterSandbox> {
     return (await this.submitRestore(input, options)).wait(options);
   }

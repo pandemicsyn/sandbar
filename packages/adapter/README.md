@@ -24,3 +24,9 @@ Sessions may expose `files.list`, `files.exists`, `files.makeDirectory` and `fil
 
 
 Native streaming handles may implement `terminate(ctx)` returning `{ status: "requested" | "not-found" }`. This is request acknowledgement/selector absence, never confirmed exit; the SDK obtains exit independently through `wait`/`confirmedExit`. The context bounds shared request IO locally and does not authorize lifecycle changes. The SDK shares/caches one attempt per local handle with independent caller waits. Native implementations must document their target identity, abrupt/graceful and descendant limits; E2B uses native PID-selected SIGKILL. Omit the method where a mapping is unavailable. Do not implement sandbox destruction as process termination.
+
+## Restore mount migration
+
+`RestoreRequest.mounts` is now `MountSpec[]`, matching create. Opt a qualified hook into nonempty arrays with `snapshotRestore.mountInput: "specs"`. Missing markers reject before preparation/submission even if restore capability metadata advertises mounts. Older hooks continue mount-free operation without a mounts field. Adapters validate exact scoped ready volume identities and the requested preservation/execution/policy combination, revalidate at submission and verify complete native mounts; never drop selections or weaken policy.
+
+Only the SDK normalizes legacy empty mount objects for coordinated release R and the next published release R+1. Adapter schemas accept arrays; nonempty legacy maps reject with SDK migration guidance. Record actual R when versioning consumes the coordinated breaking changeset. Existing operation references retain observation-only recovery without replay. `snapshot_restore` unknown outcomes may carry acknowledged sandbox identity and selected descriptors independently of identity-only sandbox references.
