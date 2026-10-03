@@ -32,6 +32,7 @@ export const features = {
     workflow: "execution",
     scenarios: ["exec-argv", "exec-shell", "exec-nonzero"],
   },
+  streaming: { label: "Finite text streaming", scenarios: ["execution-streaming"] },
   files: {
     label: "Binary files and overwrite",
     workflow: "files",
@@ -89,7 +90,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       previewProtected: {
         support: "conditional",
-        note: "Daytona protected header access only; standard token grants sandbox-wide command/file authority. Public setup unsupported. Native lookup can activate a route; no server start/resume or readiness claim. New live preview case not run.",
+        note: "Daytona protected header access only; standard token grants sandbox-wide command/file authority. Public setup unsupported. Native lookup can activate a route; no server start/resume or readiness claim. Bun preview-protected passed at 3188e33 in us with authenticated HTTP and denied missing/invalid headers; owned cleanup confirmed.",
       },
       previewPublic: {
         support: "unsupported",
@@ -101,15 +102,19 @@ export const builtinSupport: SupportMetadata[] = [
       },
       renewal: {
         support: "conditional",
-        note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.",
+        note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Bun lifecycle-renew passed at 3188e33 with deadline observation and confirmed owned cleanup; other configurations remain unqualified.",
       },
       reopening: {
         support: "conditional",
-        note: "Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Deterministic native/packed coverage; new live workflow not run.",
+        note: "Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Bun lifecycle-reopen passed at 3188e33 with fresh-process scoped attachment, guest exec/files and confirmed owned cleanup; other configurations remain unqualified.",
       },
       lifecycle: {
         support: "supported",
-        note: "The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified.",
+        note: "The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified. The current suite omits the create environment to exercise adapter defaults; historical baseline passes do not qualify that newer path.",
+      },
+      streaming: {
+        support: "unsupported",
+        note: "Daytona does not expose processes.start/output/wait; captured exec output is a separate workflow.",
       },
       execution: {
         support: "supported",
@@ -117,7 +122,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       files: {
         support: "conditional",
-        note: "Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
+        note: "Bun files passed at 3188e33 in /tmp with signal-bearing binary reads, overwrite/no-clobber and confirmed owned cleanup; required GNU shell utilities remain a prerequisite. Custom image filesystem behavior is unverified. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
       },
       oci: {
         support: "conditional",
@@ -155,7 +160,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       previewPublic: {
         support: "conditional",
-        note: "E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. New live preview and changed inbound-default behavior not qualified.",
+        note: "E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. Bun preview-public passed at 3188e33 with observed public visibility, HTTP content and confirmed owned cleanup. Private-default ingress denial remains unqualified.",
       },
       termination: {
         support: "conditional",
@@ -167,27 +172,31 @@ export const builtinSupport: SupportMetadata[] = [
       },
       directories: {
         support: "conditional",
-        note: "fileExists uses native lstat-backed Stat, including dangling links. makeDirectory and removeFile require recursive: true; omitted/false rejects before mutation. listFiles is unsupported because e2b 2.51.0 filters unknown entry types. Intermediate parent links are followed; recursive removal does not walk link entries. Native/packed fixtures only; file-directories live case not run.",
+        note: "fileExists uses native lstat-backed Stat, including dangling links. makeDirectory and removeFile require recursive: true; omitted/false rejects before mutation. listFiles is unsupported because e2b 2.51.0 filters unknown entry types. Intermediate parent links are followed; recursive removal does not walk link entries. Bun file-directories passed at 3188e33 on borrowed base, including dangling links and recursive removal behavior; owned cleanup confirmed. Other templates/guest versions remain unqualified.",
       },
       renewal: {
         support: "conditional",
-        note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Deterministic native/packed coverage; lifecycle-renew live workflow not run.",
+        note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Bun lifecycle-renew passed at 3188e33 with deadline observation and confirmed owned cleanup; other configurations remain unqualified.",
       },
       reopening: {
         support: "conditional",
-        note: "Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Deterministic native/packed coverage; new live workflow not run.",
+        note: "Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Bun lifecycle-reopen passed at 3188e33 with fresh-process scoped attachment, guest exec/files and confirmed owned cleanup; other configurations remain unqualified.",
       },
       lifecycle: {
         support: "supported",
-        note: "The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed.",
+        note: "The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed. The current suite omits the create environment to exercise the configured template default; historical baseline passes do not qualify that newer path or private inbound defaults.",
+      },
+      streaming: {
+        support: "conditional",
+        note: "Finite bounded text only, local process handles and auto-resume-off running guests. Bun execution-streaming passed at 3188e33 on borrowed base: early stdout before exit, stderr, nonzero wait/repeated wait and detach; owned cleanup confirmed. No binary streaming or durable process reopening; termination evidence is reported separately.",
       },
       execution: {
         support: "supported",
-        note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Finite bounded text streaming is implemented with local-only handles; deterministic pinned-client/packed coverage, live streaming scenario not run.",
+        note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Streaming is reported separately and is not qualified by this captured-output pass.",
       },
       files: {
         support: "conditional",
-        note: "Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
+        note: "Bun files passed at 3188e33 in /home/user with signal-bearing binary reads, overwrite/no-clobber and confirmed owned cleanup. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
       },
       oci: {
         support: "conditional",

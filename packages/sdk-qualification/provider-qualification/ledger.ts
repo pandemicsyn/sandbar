@@ -36,6 +36,7 @@ const ledgerSchema = z.strictObject({
           .min(1)
           .max(128)
           .regex(/^[A-Za-z0-9_-]+$/),
+        // Read known saved routing without changing the current fixture's creation budget.
         ttlMinutes: z.union([z.literal(10), z.literal(15)]),
         restartAfterCapture: z.boolean().optional(),
         networkPolicy: z.enum(["blocked", "daytona-default"]).optional(),

@@ -219,3 +219,38 @@ for (const [workflow, feature, operations] of [
     ).toThrow("Grouped workflow outcomes require a Bun testcase");
   });
 }
+
+test("captured execution never qualifies streaming, and streaming evidence has its own cell", () => {
+  const captured: QualificationRecord = {
+    ...record("passed"),
+    provider: "e2b",
+    configuration: {
+      ...record("passed").configuration,
+      templateClass: "borrowed-template",
+      authorityClass: "api-key",
+    },
+    scenario: "execution",
+    runner: { name: "bun:test", format: "junit", testName: "execution" },
+  };
+
+  expect(render([captured])).toContain("Supported · passed at aaaaaaaa](#e2b-execution)");
+  expect(render([captured])).toContain("Conditional · not-run](#e2b-streaming)");
+  expect(render([captured])).toContain("Unsupported · not-run](#daytona-streaming)");
+
+  const streaming: QualificationRecord = {
+    ...captured,
+    scenario: "execution-streaming",
+    runner: { name: "bun:test", format: "junit", testName: "execution-streaming" },
+  };
+
+  expect(render([streaming])).toContain("Conditional · passed at aaaaaaaa](#e2b-streaming)");
+  expect(render([{ ...streaming, mode: "packed" }])).toContain(
+    "Conditional · not-run](#e2b-streaming)",
+  );
+  expect(render([{ ...streaming, status: "failed" }])).toContain(
+    "Conditional · failed](#e2b-streaming)",
+  );
+  expect(() => render([{ ...streaming, runCleanup: "incomplete" }])).toThrow(
+    "Bun passes require confirmed test-owned cleanup",
+  );
+});
