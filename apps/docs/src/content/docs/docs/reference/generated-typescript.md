@@ -167,6 +167,7 @@ Import from `sandbar-adapter`.
 | `Json`                         | type      |
 | `MAX_DIRECTORY_ENTRIES`        | re-export |
 | `MAX_DIRECTORY_NAME_BYTES`     | re-export |
+| `MAX_EXEC_STDIN_BYTES`         | re-export |
 | `Mutation`                     | type      |
 | `NativeProcess`                | interface |
 | `NativeProcessExit`            | type      |

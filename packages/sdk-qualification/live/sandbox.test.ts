@@ -3,6 +3,7 @@ import type { AdapterSandbox } from "sandbar-sdk";
 import { TestResources } from "./fixtures/resources";
 import { liveEnabled, featureSupported, setupLive, finishLive, reopenSnapshot } from "./providers";
 import { boundedRead } from "../provider-qualification/bounds";
+import { assertFiniteStdinWorkflow } from "../finite-stdin";
 
 import {
   processAbsent,
@@ -136,6 +137,29 @@ export async function files(t: TestResources, box: AdapterSandbox, root = "/tmp"
   expect(await t.read(box, path)).toEqual(second);
 }
 
+export async function finiteStdin(t: TestResources, box: AdapterSandbox) {
+  t.at("sandbox/finite-stdin");
+  await assertFiniteStdinWorkflow({ exec: (input) => box.exec(input, { signal: t.signal }) });
+
+  for (const stdin of [Uint8Array.of(0, 255, 129, 13, 10), "", new Uint8Array(), undefined]) {
+    const result = await box.exec(
+      {
+        command: { kind: "argv", argv: ["/bin/sh", "-c", "cat; printf eof >&2"] },
+        stdin,
+        cwd: "/tmp",
+        deadlineSeconds: 20,
+        maxOutputBytes: 32,
+      },
+      { signal: t.signal },
+    );
+
+    expect(result.stdout).toEqual(stdin instanceof Uint8Array ? stdin : new Uint8Array());
+    expect(result.stderrText()).toBe("eof");
+    expect(result.exitCode).toBe(0);
+    expect(result.truncated).toBe(false);
+  }
+}
+
 export async function directories(t: TestResources, box: AdapterSandbox, fileRoot: string) {
   const root = `${fileRoot}/sandbar-directories-${t.ledger.runId}`;
   const options = { recursive: true, signal: t.signal };
@@ -198,6 +222,7 @@ describe("Sandbar sandbox", () => {
         [
           "sandbox-lifecycle",
           "execution",
+          ...(featureSupported("finiteStdin") ? ["execution-stdin" as const] : []),
           "files",
           "lifecycle-reopen",
           "lifecycle-renew",
@@ -233,6 +258,11 @@ describe("Sandbar sandbox", () => {
   (liveEnabled ? test : test.skip)(
     "execution",
     async () => execution(fixture!.resources, box),
+    241000,
+  );
+  (liveEnabled && featureSupported("finiteStdin") ? test : test.skip)(
+    "execution-stdin",
+    async () => finiteStdin(fixture!.resources, box),
     241000,
   );
   (liveEnabled ? test : test.skip)(

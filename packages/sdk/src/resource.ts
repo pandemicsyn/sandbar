@@ -11,6 +11,7 @@ import {
   CreateSandboxInput,
   ExecCommand,
   ExecRequest,
+  MAX_EXEC_STDIN_BYTES,
   FilePath,
   type SafeError,
 } from "sandbar-adapter/portable";
@@ -69,10 +70,28 @@ export type ExecInput = {
   command: ExecCommand;
   cwd?: string;
   env?: Record<string, string>;
+  /** Finite stdin bytes; strings encode as UTF-8 and supplied input ends with guest EOF. */
+  stdin?: string | Uint8Array;
   /** Provider-specific execution/observation limit (default 300), not a total wait budget. Use the call signal to bound local waiting. */
   deadlineSeconds?: number;
   maxOutputBytes?: number;
 };
+
+export type ValidatedExecInput = Required<
+  Pick<ExecInput, "command" | "deadlineSeconds" | "maxOutputBytes">
+> &
+  Omit<ExecInput, "stdin"> & { stdin?: Uint8Array };
+
+const ExecStdinInput = z.union([
+  z
+    .string()
+    .max(MAX_EXEC_STDIN_BYTES)
+    .transform((value) => ({ kind: "text" as const, value })),
+  z
+    .instanceof(Uint8Array)
+    .refine((value) => value.byteLength <= MAX_EXEC_STDIN_BYTES)
+    .transform((value) => ({ kind: "bytes" as const, value })),
+]);
 
 export type OutputPreview = { text: string; shortened: boolean };
 
@@ -362,16 +381,38 @@ function isArgumentArray(input: ExecInput | readonly string[]): input is readonl
 
 export function validateExec(
   input: ExecInput | readonly string[],
-): Required<Pick<ExecInput, "command" | "deadlineSeconds" | "maxOutputBytes">> & ExecInput {
+  options: { allowStdin?: boolean } = {},
+): ValidatedExecInput {
   const request = isArgumentArray(input)
     ? { command: { kind: "argv" as const, argv: [...input] } }
     : input;
+
+  if (options.allowStdin === false && !isArgumentArray(input) && request?.stdin !== undefined)
+    throw new SandbarError("INVALID_ARGUMENT", "stdin is available only for finite exec input");
+
+  let stdin: Uint8Array | undefined;
+
+  if (request?.stdin !== undefined) {
+    const parsedInput = ExecStdinInput.safeParse(request.stdin);
+
+    if (!parsedInput.success)
+      throw new SandbarError("INVALID_ARGUMENT", "Invalid or oversized execution stdin");
+
+    stdin =
+      parsedInput.data.kind === "text"
+        ? new TextEncoder().encode(parsedInput.data.value)
+        : new Uint8Array(parsedInput.data.value);
+
+    if (stdin.byteLength > MAX_EXEC_STDIN_BYTES)
+      throw new SandbarError("INVALID_ARGUMENT", "Execution stdin exceeds the byte bound");
+  }
 
   const parsed = ExecRequest.safeParse({
     command: request?.command,
     cwd: request?.cwd,
     env: request?.env,
     deadlineSeconds: request?.deadlineSeconds,
+    stdin,
     output: { capture: "bounded", maxBytes: request?.maxOutputBytes ?? 1_048_576 },
   });
 
@@ -381,6 +422,7 @@ export function validateExec(
     command: parsed.data.command,
     cwd: parsed.data.cwd,
     env: parsed.data.env,
+    stdin,
     deadlineSeconds: parsed.data.deadlineSeconds ?? 300,
     maxOutputBytes: parsed.data.output?.maxBytes ?? 1_048_576,
   };

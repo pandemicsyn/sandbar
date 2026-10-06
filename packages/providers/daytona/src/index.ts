@@ -10,7 +10,7 @@ import {
   type SandboxRef,
   type ProviderDriver,
 } from "@sandbar/provider-spi";
-import { ExecRequest, type ExecCommand } from "sandbar-adapter/portable";
+import { ExecRequest, MAX_EXEC_STDIN_BYTES, type ExecCommand } from "sandbar-adapter/portable";
 import type { ImageBuildValue } from "sandbar-adapter";
 
 type ImageBuildObservation =
@@ -227,6 +227,15 @@ async function receiptPath(kind: "exec" | "write", submissionId: string): Promis
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(submissionId));
 
   return `/tmp/.sandbar-${kind}-${Buffer.from(digest).toString("hex")}/receipt`;
+}
+
+async function execStdinPaths(submissionId: string) {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(submissionId))
+    throw new Error("Invalid Daytona execution submission ID");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(submissionId));
+  const directory = `/tmp/.sandbar-exec-stdin-${Buffer.from(digest).toString("hex")}`;
+
+  return { directory, payload: `${directory}/payload` };
 }
 
 function validPath(path: string): void {
@@ -1193,6 +1202,7 @@ export class DaytonaDriver implements ProviderDriver {
     command: ExecCommand;
     cwd?: string;
     env?: Record<string, string>;
+    stdin?: Uint8Array;
     deadlineSeconds: number;
     maxOutputBytes: number;
     signal?: AbortSignal;
@@ -1220,6 +1230,18 @@ export class DaytonaDriver implements ProviderDriver {
 
     const requestedEnv = ExecRequest.shape.env.parse(input.env) ?? {};
 
+    if (input.stdin && input.stdin.byteLength > MAX_EXEC_STDIN_BYTES)
+      return {
+        status: "rejected",
+        effect: "none",
+        error: {
+          code: "capacity",
+          message: "Daytona execution stdin bound exceeded",
+          effect: "none",
+          retry: "never",
+        },
+      };
+
     if (Object.values(requestedEnv).some((value) => value.includes("\0")))
       return {
         status: "rejected",
@@ -1242,13 +1264,129 @@ export class DaytonaDriver implements ProviderDriver {
         : `exec ${input.command.argv.map(quote).join(" ")}`;
 
     const max = Math.min(input.maxOutputBytes, 1_048_576);
-    const capture = `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PATH; d=$(mktemp -d) || exit 125; trap 'rm -rf "$d"' EXIT; mkfifo "$d/fo" "$d/fe" || exit 125; (exec 3<"$d/fo"; head -c ${max + 1} <&3 >"$d/o"; cat <&3 >/dev/null) & p1=$!; (exec 3<"$d/fe"; head -c ${max + 1} <&3 >"$d/e"; cat <&3 >/dev/null) & p2=$!; (${exports} ${command}) >"$d/fo" 2>"$d/fe"; rc=$?; wait "$p1"; wait "$p2"; o=$(wc -c <"$d/o"); e=$(wc -c <"$d/e"); o=$((o)); e=$((e)); a=$((o<${max}?o:${max})); b=$((e<${max}-a?e:${max}-a)); printf 'SANDBAR-EXEC-V1\\n%s\\n%s\\n%s\\n' "$rc" "$o" "$e"; if [ "$a" -gt 0 ]; then head -c "$a" "$d/o" | od -An -tx1 -v; fi; printf 'SANDBAR-STDERR\\n'; if [ "$b" -gt 0 ]; then head -c "$b" "$d/e" | od -An -tx1 -v; fi; printf 'SANDBAR-END\\n'`;
+    let stdinPaths: Awaited<ReturnType<typeof execStdinPaths>> | undefined;
+    let ownsStdinDirectory = false;
+
+    const cleanupOwnedStdin = async () => {
+      if (!ownsStdinDirectory || !stdinPaths) return;
+
+      await this.json(
+        "POST",
+        "/process/execute",
+        CommandResponse,
+        { command: `rm -rf -- ${quote(stdinPaths.directory)}`, timeout: 30 },
+        native,
+      ).catch(() => undefined);
+      ownsStdinDirectory = false;
+    };
+
+    if (input.stdin !== undefined) {
+      try {
+        stdinPaths = await execStdinPaths(input.identity.submissionId);
+
+        if (volumeContains(native, stdinPaths.directory))
+          return {
+            status: "rejected",
+            effect: "none",
+            error: {
+              code: "unsupported",
+              message: "Daytona private stdin staging is covered by a mounted volume",
+              effect: "none",
+              retry: "never",
+            },
+          };
+
+        if (input.signal?.aborted)
+          return unknown(input.identity.submissionId, "Daytona stdin staging was aborted");
+
+        const reserved = await this.json(
+          "POST",
+          "/process/execute",
+          CommandResponse,
+          { command: `mkdir -m 700 -- ${quote(stdinPaths.directory)}`, timeout: 30 },
+          native,
+        );
+
+        if (reserved.exitCode !== 0)
+          return {
+            status: "rejected",
+            effect: "none",
+            error: {
+              code: "conflict",
+              message: "Daytona stdin staging path could not be reserved",
+              effect: "none",
+              retry: "never",
+            },
+          };
+
+        ownsStdinDirectory = true;
+        const form = new FormData();
+        form.append("file", new Blob([new Uint8Array(input.stdin)]), "stdin");
+        let upload: Response | null = null;
+
+        try {
+          upload = await this.request(
+            "POST",
+            `/files/upload-v2?path=${encodeURIComponent(stdinPaths.payload)}`,
+            form,
+            undefined,
+            native,
+          );
+        } catch {
+          // A lost response is resolved only by reading the exact staged bytes.
+        }
+
+        if (upload && !upload.ok)
+          throw new Error("Daytona stdin upload response was not successful");
+
+        if (upload) {
+          const receipt = await boundedJson(upload, UploadResponse, 16_384);
+
+          if (receipt.path !== stdinPaths.payload)
+            throw new Error("Daytona stdin upload path did not match");
+        }
+
+        const staged = await this.readFile({ sandbox: input.sandbox, path: stdinPaths.payload });
+
+        if (
+          staged.length !== input.stdin.length ||
+          !staged.every((byte, index) => byte === input.stdin![index])
+        )
+          throw new Error("Daytona stdin upload could not be verified");
+      } catch {
+        await cleanupOwnedStdin();
+
+        return unknown(
+          input.identity.submissionId,
+          "Daytona stdin staging outcome is unknown; do not replay",
+        );
+      }
+    }
+
+    if (input.signal?.aborted) {
+      await cleanupOwnedStdin();
+
+      return unknown(
+        input.identity.submissionId,
+        "Daytona exec was stopped before command dispatch",
+      );
+    }
+
+    const stdinCleanup = stdinPaths
+      ? `stdin_dir=${quote(stdinPaths.directory)}; trap 'rm -rf "$d" "$stdin_dir"' EXIT; `
+      : `trap 'rm -rf "$d"' EXIT; `;
+
+    const stdinRedirect = stdinPaths ? `< ${quote(stdinPaths.payload)}` : "< /dev/null";
+    const capture = `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PATH; d=$(mktemp -d) || exit 125; ${stdinCleanup}mkfifo "$d/fo" "$d/fe" || exit 125; (exec 3<"$d/fo"; head -c ${max + 1} <&3 >"$d/o"; cat <&3 >/dev/null) & p1=$!; (exec 3<"$d/fe"; head -c ${max + 1} <&3 >"$d/e"; cat <&3 >/dev/null) & p2=$!; (${exports} ${command}) ${stdinRedirect} >"$d/fo" 2>"$d/fe"; rc=$?; wait "$p1"; wait "$p2"; o=$(wc -c <"$d/o"); e=$(wc -c <"$d/e"); o=$((o)); e=$((e)); a=$((o<${max}?o:${max})); b=$((e<${max}-a?e:${max}-a)); printf 'SANDBAR-EXEC-V1\\n%s\\n%s\\n%s\\n' "$rc" "$o" "$e"; if [ "$a" -gt 0 ]; then head -c "$a" "$d/o" | od -An -tx1 -v; fi; printf 'SANDBAR-STDERR\\n'; if [ "$b" -gt 0 ]; then head -c "$b" "$d/e" | od -An -tx1 -v; fi; printf 'SANDBAR-END\\n'`;
     const framePath = await receiptPath("exec", input.identity.submissionId);
     const receiptDirectory = framePath.slice(0, framePath.lastIndexOf("/"));
     const script = `mkdir -m 700 -- ${quote(receiptDirectory)} || exit 126; { ${capture}; } > ${quote(framePath)}; cat ${quote(framePath)}`;
 
-    if (input.signal?.aborted)
+    if (input.signal?.aborted) {
+      await cleanupOwnedStdin();
+
       return unknown(input.identity.submissionId, "Daytona execution wait was aborted");
+    }
 
     try {
       input.onSubmit?.();
@@ -1262,7 +1400,9 @@ export class DaytonaDriver implements ProviderDriver {
         (input.deadlineSeconds + 10) * 1000,
       );
 
-      if (response.exitCode === 126)
+      if (response.exitCode === 126) {
+        await cleanupOwnedStdin();
+
         return {
           status: "rejected",
           effect: "none",
@@ -1273,6 +1413,7 @@ export class DaytonaDriver implements ProviderDriver {
             retry: "never",
           },
         };
+      }
 
       if (response.exitCode !== 0)
         return unknown(input.identity.submissionId, "Daytona capture wrapper failed");

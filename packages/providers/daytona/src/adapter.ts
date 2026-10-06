@@ -1917,6 +1917,7 @@ export function createDaytonaAdapter(
           };
         },
         exec: {
+          finiteStdin: "bytes",
           recovery: { version: 1, token: ExecToken },
           async prepare(input, ctx) {
             if (input.sandbox.reference)
@@ -1938,6 +1939,7 @@ export function createDaytonaAdapter(
               command: input.command,
               cwd: input.cwd,
               env: input.env,
+              stdin: input.stdin,
               deadlineSeconds: input.deadlineSeconds,
               maxOutputBytes: input.maxOutputBytes,
               signal: ctx.signal,

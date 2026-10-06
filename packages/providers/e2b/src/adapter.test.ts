@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import {
   mkdtemp,
@@ -24,6 +25,10 @@ import {
   type Json,
 } from "sandbar-adapter";
 import { createE2BAdapter } from "./index";
+import {
+  assertFiniteStdinWorkflow,
+  finiteStdinInput,
+} from "../../../sdk-qualification/finite-stdin";
 import {
   collectBounded,
   createSdkTransport,
@@ -233,6 +238,258 @@ test("E2B public adapter passes managed compute conformance at its native bounda
 
   expect(report.scenarios).toContain("lost response unknown and observation without replay");
   expect(creates).toBe(3);
+});
+
+test("public finite stdin preserves UTF-8 bytes, output streams, cwd, env and exit", async () => {
+  const files = new Map<string, Uint8Array>();
+  const scripts: string[] = [];
+  const stagedInputs: Uint8Array[] = [];
+  const finalScripts: string[] = [];
+  const finalRunOptions: { cwd?: string; env?: Record<string, string>; timeoutMs: number }[] = [];
+  let stagedInput: Uint8Array | undefined;
+  let stagedPath = "";
+  let finalScript = "";
+  let stagingBehavior: "ok" | "reserve-fail" | "write-lost" | "read-mismatch" = "ok";
+  let stageWrites = 0;
+  let finalRuns = 0;
+  let cleanupRuns = 0;
+
+  const record: E2BRecord = {
+    id: "sandbox_finite_stdin",
+    templateId: "template_1",
+    metadata: {},
+    state: "running",
+  };
+
+  const transport: E2BTransport = {
+    async verifyAuth() {},
+    async verifyTeam() {},
+    async verifyTemplate(_team, id) {
+      return id;
+    },
+    async buildImage() {
+      return { templateId: "template_1", buildId: "build_1" };
+    },
+    async findBuild() {
+      return null;
+    },
+    async create(input) {
+      record.metadata = input.metadata;
+      record.allowPublicTraffic = input.allowPublicTraffic;
+
+      return record.id;
+    },
+    async get(id) {
+      return id === record.id ? record : null;
+    },
+    async list(metadata) {
+      const matches = Object.entries(metadata).every(
+        ([key, value]) => record.metadata[key] === value,
+      );
+
+      return { items: matches ? [record] : [] };
+    },
+    async kill() {
+      return true;
+    },
+    async run(_id, script, options) {
+      scripts.push(script);
+
+      if (script.startsWith("rm -rf -- ")) {
+        cleanupRuns++;
+
+        return "";
+      }
+
+      if (script.startsWith("mkdir -m 700 -- ")) {
+        const match = /mkdir -m 700 -- '([^']+)'/.exec(script);
+
+        if (!match) throw new Error("Stdin staging directory path is missing");
+        stagedPath = `${match[1]}/payload`;
+
+        if (stagingBehavior === "reserve-fail") throw new Error("Staging reservation failed");
+
+        return "";
+      }
+
+      if (script.includes(".status")) {
+        finalScript = script;
+        finalRuns++;
+        finalScripts.push(script);
+        finalRunOptions.push(options);
+        const stdoutPath = script.match(/\/tmp\/\.sandbar-[A-Za-z0-9_-]+\.stdout/)?.[0];
+        const stderrPath = script.match(/\/tmp\/\.sandbar-[A-Za-z0-9_-]+\.stderr/)?.[0];
+        const statusPath = script.match(/\/tmp\/\.sandbar-[A-Za-z0-9_-]+\.status/)?.[0];
+
+        if (!stdoutPath || !stderrPath || !statusPath)
+          throw new Error("Exec receipt paths missing");
+        const inputBytes = stagedInput ?? new Uint8Array();
+        const stdoutBytes = new Uint8Array(inputBytes.length + (finalScripts.length === 1 ? 3 : 0));
+        stdoutBytes.set(inputBytes);
+
+        if (finalScripts.length === 1)
+          stdoutBytes.set(new TextEncoder().encode("out"), inputBytes.length);
+        files.set(stdoutPath, stdoutBytes);
+        files.set(
+          stderrPath,
+          finalScripts.length === 1 ? new TextEncoder().encode("err") : new Uint8Array(),
+        );
+        files.set(statusPath, new TextEncoder().encode(finalScripts.length === 1 ? "7" : "0"));
+      }
+
+      return "";
+    },
+    async read(_id, path, maxBytes) {
+      if (path === stagedPath && stagingBehavior === "read-mismatch")
+        return { bytes: Uint8Array.of(1), truncated: false };
+      const bytes = files.get(path);
+
+      if (!bytes) throw new Error("Missing fixture file");
+
+      return { bytes: bytes.slice(0, maxBytes), truncated: bytes.length > maxBytes };
+    },
+    async write(_id, path, bytes) {
+      stageWrites++;
+      stagedInput = bytes.slice();
+      stagedInputs.push(stagedInput.slice());
+      files.set(path, bytes.slice());
+
+      if (stagingBehavior === "write-lost") throw new Error("Staging write acknowledgement lost");
+    },
+    async remove(_id, path) {
+      files.delete(path);
+    },
+    close() {},
+  };
+
+  const client = await Sandbar.connect({
+    adapter: createE2BAdapter(() => transport),
+    config: { teamId: "team_one", templateId: "template_1" },
+    credentials: { apiKey: "private-key" },
+  });
+
+  try {
+    const box = await client.sandboxes.create({
+      environment: Image.prepared("template_1"),
+      networkPolicy: "blocked",
+    });
+
+    await assertFiniteStdinWorkflow(box, () => stagedInput);
+    expect(stagedInput).toEqual(new TextEncoder().encode(finiteStdinInput));
+    expect(stagedPath).toMatch(/^\/tmp\/.sandbar-[A-Za-z0-9_-]+\.stdin\/payload$/);
+    expect(scripts[0]).toStartWith("mkdir -m 700 -- ");
+    expect(finalScript).toContain(` < '${stagedPath}'`);
+    expect(finalScript).toContain("trap 'rm -rf -- \"$stdin_dir\"' EXIT");
+    expect(finalRunOptions[0]).toMatchObject({
+      cwd: "/tmp",
+      env: { FINITE_STDIN_FIXTURE: "selected" },
+    });
+
+    const empty = await box.exec({
+      command: { kind: "shell", script: "cat >/dev/null; exit 0" },
+      stdin: "",
+      maxOutputBytes: 16,
+    });
+
+    expect(empty.exitCode).toBe(0);
+    expect(stagedInputs.at(-1)).toEqual(new Uint8Array());
+    expect(finalScripts.at(-1)).toContain(` < '${stagedPath}'`);
+
+    const uploadsBeforeOmitted = stagedInputs.length;
+
+    const omitted = await box.exec({
+      command: { kind: "shell", script: "cat >/dev/null; exit 0" },
+      maxOutputBytes: 16,
+    });
+
+    expect(omitted.exitCode).toBe(0);
+    expect(stagedInputs).toHaveLength(uploadsBeforeOmitted);
+    expect(finalScripts.at(-1)).toContain("< /dev/null");
+
+    for (const [index, expectedStatus] of [7, 0, 0].entries()) {
+      const localRoot = await mkdtemp(join(tmpdir(), "sandbar-e2b-stdin-local-"));
+
+      try {
+        let localScript = finalScripts[index]!;
+        const remoteStage = /stdin_dir='([^']+)'/.exec(localScript)?.[1];
+        let localStage: string | undefined;
+
+        if (remoteStage) {
+          localStage = join(localRoot, "stdin");
+          await mkdir(localStage);
+          await writeFile(join(localStage, "payload"), stagedInputs[index]!);
+          localScript = localScript.replaceAll(remoteStage, localStage);
+        }
+
+        const receiptPaths: Record<string, string> = {};
+
+        for (const extension of ["stdout", "stderr", "status"]) {
+          const remote = localScript.match(
+            new RegExp(`/tmp/\\.sandbar-[A-Za-z0-9_-]+\\.${extension}`),
+          )?.[0];
+
+          if (!remote) throw new Error(`Missing local ${extension} receipt path`);
+          const local = join(localRoot, extension);
+          receiptPaths[extension] = local;
+          localScript = localScript.replaceAll(remote, local);
+        }
+
+        const execution = spawnSync("/bin/bash", ["-c", localScript], {
+          cwd: localRoot,
+          timeout: 5_000,
+        });
+
+        expect(execution.error).toBeUndefined();
+        expect(execution.status).toBe(0);
+        expect(await readFile(receiptPaths.stdout!)).toEqual(
+          index === 0
+            ? Buffer.from([
+                ...new TextEncoder().encode(finiteStdinInput),
+                ...new TextEncoder().encode("out"),
+              ])
+            : Buffer.alloc(0),
+        );
+        expect(await readFile(receiptPaths.stderr!)).toEqual(
+          index === 0 ? Buffer.from("err") : Buffer.alloc(0),
+        );
+        expect((await readFile(receiptPaths.status!, "utf8")).toString()).toBe(
+          String(expectedStatus),
+        );
+
+        if (localStage) expect(await readdir(localRoot)).not.toContain("stdin");
+      } finally {
+        await rm(localRoot, { recursive: true, force: true });
+      }
+    }
+
+    const failedInput = {
+      command: { kind: "argv" as const, argv: ["cat"] },
+      stdin: "failure",
+      maxOutputBytes: 16,
+    };
+
+    const priorFinalRuns = finalRuns;
+    const priorStageWrites = stageWrites;
+    stagingBehavior = "reserve-fail";
+    await expect(box.exec(failedInput)).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(finalRuns).toBe(priorFinalRuns);
+    expect(stageWrites).toBe(priorStageWrites);
+    expect(cleanupRuns).toBe(0);
+
+    stagingBehavior = "write-lost";
+    await expect(box.exec(failedInput)).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(finalRuns).toBe(priorFinalRuns);
+    expect(stageWrites).toBe(priorStageWrites + 1);
+    expect(cleanupRuns).toBe(1);
+
+    stagingBehavior = "read-mismatch";
+    await expect(box.exec(failedInput)).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(finalRuns).toBe(priorFinalRuns);
+    expect(stageWrites).toBe(priorStageWrites + 2);
+    expect(cleanupRuns).toBe(2);
+  } finally {
+    await client.close();
+  }
 });
 
 test("shell quoting and bounded streams preserve binary bytes", async () => {

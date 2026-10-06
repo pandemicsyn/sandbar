@@ -2,7 +2,7 @@
 
 Implementation contract · Creation defaults (#58), text helpers (#61) and directory APIs (#59) merged · October 2, 2026
 
-Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. Creation defaults, text helpers and directory APIs are merged. Exported directory methods retain the unsupported native mappings below; configured creation and directory live cases remain not-run. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
+Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. Creation defaults, text helpers and directory APIs are merged. Exported directory methods retain the unsupported native mappings below; configured creation remains not-run, while supported E2B directory cases passed at `3188e33` in #68. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
 ## Creation defaults belong in adapter setup
 
@@ -111,7 +111,7 @@ Behavior requirements:
 2. **Text helpers.** Thin wrappers, focused UTF-8/empty/multibyte/limit/overwrite/cancellation tests and packed Node/Bun examples. Reuse existing instrumentation without duplicate provider-call spans. No new native operation or live run is needed to establish encoding behavior.
 3. **Directory primitives.** First record pinned Daytona/E2B native mappings, error codes, symlink behavior and result bounds in this spec. Implement only demonstrated mappings, with native-boundary fixtures and maintained live acceptance cases. Unsupported mappings stay documented; do not hold all primitives for universal parity.
 
-Creation defaults merged in #58, text helpers in #61 and directory primitives in #59. These acceptance boundaries describe the shipped slices, not a pending coding queue. Live evidence remains not-run until separately authorized and recorded. Run the repository checks appropriate to public API/package changes, including packed examples and docs.
+Creation defaults merged in #58, text helpers in #61 and directory primitives in #59. These acceptance boundaries describe the shipped slices, not a pending coding queue. Configured-creation live evidence remains not-run; supported E2B directory cases passed at `3188e33` in #68. Local text encoding needs no separate live qualification. Run the repository checks appropriate to public API/package changes, including packed examples and docs.
 
 ## Slice 1 implementation status
 
@@ -119,7 +119,7 @@ Creation defaults have deterministic SDK/native-boundary fixtures, compiled prov
 
 ## Slice 3 implementation contract and native evidence
 
-Slice 3 merged in #59 with optional adapter operations; live qualification remains not-run. Creation defaults and text helpers retain their own status above.
+Slice 3 merged in #59 with optional adapter operations; supported E2B directory cases passed at `3188e33` in #68 with confirmed owned cleanup. Creation defaults and text helpers retain their own status above.
 
 Listings have a fixed ceiling of 1,024 entries and 65,536 UTF-8 bytes in child names (summed, excluding metadata). The SDK validates names/types, rejects duplicate names and invalid child names, sorts in code-unit order and raises `OUTPUT_CAPACITY` on overflow. Adapters must return a complete immediate listing or reject; a native API that silently filters entries cannot implement this contract. These are result bounds, not a claim that a provider's unpaginated server bounds its allocation. No built-in listing is enabled in this slice.
 
@@ -130,7 +130,7 @@ Listings have a fixed ceiling of 1,024 entries and 65,536 UTF-8 bytes in child n
 | `makeDirectory` | Native `files.makeDir` / `Filesystem.MakeDir`, only with `recursive: true`; already-directory succeeds, non-directory rejects. Default/nonrecursive request rejects before mutation. | Unsupported in this slice: `POST /files/folder` uses `MkdirAll`; no demonstrated nonrecursive mapping or deployed-version fixture. |
 | `removeFile` | Native `files.remove` / `Filesystem.Remove`, only with `recursive: true`; `os.RemoveAll` removes missing paths successfully and does not walk symlink entries. Default/nonrecursive request rejects before mutation. | Unsupported: inspected DELETE checks target-following `Stat` first, rejects even empty directories without recursion and leaves dangling links untouched on 404. |
 
-Pinned E2B client evidence is the installed `e2b@2.51.0` filesystem source. Server evidence is [infra revision 16f749ccf64db084561ffec6eb9040b98eaf11a9](https://github.com/e2b-dev/infra/tree/16f749ccf64db084561ffec6eb9040b98eaf11a9/packages/envd/internal/services/filesystem): `stat.go`, `dir.go`, `remove.go`, `utils.go`, plus `packages/shared/pkg/filesystem/entry.go`. Stat starts with `Lstat`; link target resolution is best effort, so dangling links remain existing entries. Listing follows its directory operand but not child links; unknown entries are filtered by the pinned JS SDK. MakeDir uses recursive ancestor creation and reports AlreadyExists only for a directory (including a link to a directory). Remove uses `os.RemoveAll`. Native SDK request deadlines and caller signals are forwarded. This source review and deterministic fixtures do not establish the deployed guest version; maintained live cases remain unrun.
+Pinned E2B client evidence is the installed `e2b@2.51.0` filesystem source. Server evidence is [infra revision 16f749ccf64db084561ffec6eb9040b98eaf11a9](https://github.com/e2b-dev/infra/tree/16f749ccf64db084561ffec6eb9040b98eaf11a9/packages/envd/internal/services/filesystem): `stat.go`, `dir.go`, `remove.go`, `utils.go`, plus `packages/shared/pkg/filesystem/entry.go`. Stat starts with `Lstat`; link target resolution is best effort, so dangling links remain existing entries. Listing follows its directory operand but not child links; unknown entries are filtered by the pinned JS SDK. MakeDir uses recursive ancestor creation and reports AlreadyExists only for a directory (including a link to a directory). Remove uses `os.RemoveAll`. Native SDK request deadlines and caller signals are forwarded. This source review and deterministic fixtures do not establish the deployed guest version; the supported E2B directory case passed at `3188e33` in #68, for its recorded template/configuration; other deployed guest versions remain unqualified.
 
 Daytona's existing adapter targets REST/toolbox v0.218, but the currently served [toolbox schema](https://www.daytona.io/docs/toolbox-openapi.json) reports `v0.0.0-dev` and does not specify lstat or absence semantics. The pinned public [server revision 01c502bb1f1ff8f2885d0cd490e043736083dca8](https://github.com/daytonaio/daytona/tree/01c502bb1f1ff8f2885d0cd490e043736083dca8/apps/daemon/pkg/toolbox/fs) (v0.190) supplies negative evidence, not a guarantee about v0.218 deployment. All four methods therefore remain explicitly unsupported for Daytona until a suitable native boundary is demonstrated.
 

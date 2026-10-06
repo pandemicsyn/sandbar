@@ -16,6 +16,7 @@ export const scenarios = [
   "preview-protected",
   "preview-public",
   "execution",
+  "execution-stdin",
   "execution-streaming",
   "execution-termination",
   "files",
@@ -145,6 +146,7 @@ export const reportSchema = z
         [
           "sandbox-lifecycle",
           "execution",
+          "execution-stdin",
           "execution-streaming",
           "execution-termination",
           "files",

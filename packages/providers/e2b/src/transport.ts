@@ -861,6 +861,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         envs: options.env,
         timeoutMs: options.timeoutMs,
         requestTimeoutMs: options.timeoutMs,
+        stdin: false,
       });
 
       return result.stdout;

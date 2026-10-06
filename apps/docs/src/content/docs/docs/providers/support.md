@@ -18,6 +18,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Scoped sandbox reopening            | [Conditional · passed at 3188e333](#daytona-reopening)          | [Conditional · passed at 3188e333](#e2b-reopening)                                |
 | Execution and captured output       | [Supported · passed at 8449def7](#daytona-execution)            | [Supported · passed at 8449def7](#e2b-execution)                                  |
 | Finite text streaming               | [Unsupported · not-run](#daytona-streaming)                     | [Conditional · passed at 3188e333](#e2b-streaming)                                |
+| Finite execution input              | [Conditional · not-run](#daytona-finiteStdin)                   | [Conditional · not-run](#e2b-finiteStdin)                                         |
 | Binary files and overwrite          | [Conditional · passed at 3188e333](#daytona-files)              | [Conditional · passed at 3188e333](#e2b-files)                                    |
 | Directory primitives                | [Unsupported · not-run](#daytona-directories)                   | [Conditional · passed at 3188e333](#e2b-directories)                              |
 | OCI image builds                    | [Conditional · not-run](#daytona-oci)                           | [Conditional · not-run](#e2b-oci)                                                 |
@@ -84,6 +85,12 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 ### Finite text streaming
 
 Daytona does not expose processes.start/output/wait; captured exec output is a separate workflow.
+
+<a id="daytona-finiteStdin"></a>
+
+### Finite execution input
+
+Finite exec accepts up to 1 MiB of UTF-8 text or exact bytes followed by EOF. The adapter reserves a private directory, uploads and verifies the payload, then redirects command input from that regular file; omitted input reads /dev/null. Requires writable unmounted /tmp and the existing capture utilities. Input is seekable; no pipe, PTY or incremental-write guarantee. Uncertain staging/dispatch is never replayed; temporary input may remain after interruption until owned sandbox cleanup. Deterministic native-boundary and local wrapper tests are separate from live acceptance. The maintained execution-stdin case has not run live; older captured-output passes do not qualify finite input.
 
 <a id="daytona-files"></a>
 
@@ -188,6 +195,12 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 ### Finite text streaming
 
 Finite bounded text only, local process handles and auto-resume-off running guests. Bun execution-streaming passed at 3188e33 on borrowed base: early stdout before exit, stderr, nonzero wait/repeated wait and detach; owned cleanup confirmed. No binary streaming or durable process reopening; termination evidence is reported separately.
+
+<a id="e2b-finiteStdin"></a>
+
+### Finite execution input
+
+Finite exec accepts up to 1 MiB of UTF-8 text or exact bytes followed by EOF. The adapter reserves a private directory, writes and verifies the payload, then redirects the existing foreground command from that regular file; omitted input reads /dev/null. Requires writable /tmp and existing Bash/file receipt utilities. Input is seekable; no pipe, PTY or incremental-write guarantee and no native stdin-close version requirement. Uncertain staging/dispatch is never replayed; temporary input may remain after interruption until owned sandbox cleanup. Deterministic native-boundary and local wrapper tests are separate from live acceptance. The maintained execution-stdin case has not run live; older captured-output passes do not qualify finite input.
 
 <a id="e2b-files"></a>
 

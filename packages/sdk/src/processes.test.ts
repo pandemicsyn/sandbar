@@ -125,6 +125,17 @@ async function fixture(
 
 const input = { command: { kind: "argv" as const, argv: ["job"] } };
 
+test("runtime-cast process start input rejects finite stdin before native process start", async () => {
+  const f = await fixture();
+
+  // SAFETY: Deliberately bypass the public type to verify runtime rejection before native start.
+  await expect(
+    f.box.processes.start({ ...input, stdin: Uint8Array.of(1) } as never),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(f.starts).toBe(0);
+  await f.client.close();
+});
+
 test("early text, separate streams, live delivery, ordinary nonzero and historical completeness", async () => {
   const f = await fixture({ early: "early" });
   const p = await f.box.processes.start(input);

@@ -33,6 +33,7 @@ export const features = {
     scenarios: ["exec-argv", "exec-shell", "exec-nonzero"],
   },
   streaming: { label: "Finite text streaming", scenarios: ["execution-streaming"] },
+  finiteStdin: { label: "Finite execution input", scenarios: ["execution-stdin"] },
   files: {
     label: "Binary files and overwrite",
     workflow: "files",
@@ -120,6 +121,10 @@ export const builtinSupport: SupportMetadata[] = [
         support: "supported",
         note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration.",
       },
+      finiteStdin: {
+        support: "conditional",
+        note: "Finite exec accepts up to 1 MiB of UTF-8 text or exact bytes followed by EOF. The adapter reserves a private directory, uploads and verifies the payload, then redirects command input from that regular file; omitted input reads /dev/null. Requires writable unmounted /tmp and the existing capture utilities. Input is seekable; no pipe, PTY or incremental-write guarantee. Uncertain staging/dispatch is never replayed; temporary input may remain after interruption until owned sandbox cleanup. Deterministic native-boundary and local wrapper tests are separate from live acceptance. The maintained execution-stdin case has not run live; older captured-output passes do not qualify finite input.",
+      },
       files: {
         support: "conditional",
         note: "Bun files passed at 3188e33 in /tmp with signal-bearing binary reads, overwrite/no-clobber and confirmed owned cleanup; required GNU shell utilities remain a prerequisite. Custom image filesystem behavior is unverified. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
@@ -193,6 +198,10 @@ export const builtinSupport: SupportMetadata[] = [
       execution: {
         support: "supported",
         note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Streaming is reported separately and is not qualified by this captured-output pass.",
+      },
+      finiteStdin: {
+        support: "conditional",
+        note: "Finite exec accepts up to 1 MiB of UTF-8 text or exact bytes followed by EOF. The adapter reserves a private directory, writes and verifies the payload, then redirects the existing foreground command from that regular file; omitted input reads /dev/null. Requires writable /tmp and existing Bash/file receipt utilities. Input is seekable; no pipe, PTY or incremental-write guarantee and no native stdin-close version requirement. Uncertain staging/dispatch is never replayed; temporary input may remain after interruption until owned sandbox cleanup. Deterministic native-boundary and local wrapper tests are separate from live acceptance. The maintained execution-stdin case has not run live; older captured-output passes do not qualify finite input.",
       },
       files: {
         support: "conditional",

@@ -1,6 +1,6 @@
 # First streaming execution slice
 
-Implementation contract · Updated October 2, 2026 · E2B streaming (#52), read cancellation (#51) and E2B termination (#66) merged; full streaming/read live workflows remain not-run
+Implementation contract · Updated October 5, 2026 · E2B streaming (#52), read cancellation (#51) and E2B termination (#66) merged; scoped streaming/file-read workflows passed at `3188e33` in #68
 
 Research baseline: freshly fetched `origin/main` at `d186cea` (PRs #32 and #33 merged). This replaces the broad interactive-execution draft with one delivery decision. Preserve [ordinary results and minimal identities](sdk-recovery-dx.md); its older PR-status sentence is historical. No new persistence callbacks, completion-facts envelopes, continuation framework is required.
 
@@ -19,7 +19,7 @@ The table records the original research candidates, not live qualification. No p
 | Runtime deadline | `timeoutMs` is passed to streaming RPC, not a process-runtime field | Async session request has no native runtime-deadline field; SDK timeout limits HTTP request | Reject requested runtime deadlines before start |
 | Reattachment | `commands.connect(pid)` and `list()` exist; no immutable process generation in public selector | Session ID + command ID permit status/log reads; no proven retained cursor or restart-generation contract | No reopening, cursors or reconnect in slice 1 |
 | Binary streams | Native protocol carries bytes; public handle decodes UTF-8 | Log demux decodes UTF-8 and scans sentinel prefixes | Deferred; preserve binary bounded exec |
-| Stdin | `sendStdin` / `closeStdin`; acknowledgements do not prove consumption | Session command input endpoint accepts text | Closed stdin only; no input delivery contract |
+| Process stdin | `sendStdin` / `closeStdin`; acknowledgements do not prove consumption | Session command input endpoint accepts text | `processes.start` has closed stdin; finite `exec` input is a separate contract |
 
 Primary sources, inspected September 30, 2026:
 
@@ -150,8 +150,8 @@ This is for finite text commands whose output fits the budget. Long-running/high
 
 The delivery slices are merged:
 
-1. **E2B text streaming — PR #52.** Uses the non-resuming guest attachment from #38 and provides local output/wait/detach with bounded admission, explicit unsupported runtime deadlines, deterministic native fixtures and packed Node/Bun examples. The maintained live scenario remains not-run.
-2. **Read cancellation — PR #51.** `readFile(path, { signal? })` and exported `ReadOptions` preserve inspection's existing `WaitOptions` compatibility. One fixed 30-second local deadline covers provider results and streamed chunks, including noncooperative reads. Late streams are disposed and local readers released without waiting indefinitely. Read-only errors use `WAIT_ABORTED`, `TIMEOUT` and `CLIENT_CLOSED` with effect `none`; native failures retain their code. Native download cancellation is best effort. The updated live file scenario has not been qualified.
+1. **E2B text streaming — PR #52.** Uses the non-resuming guest attachment from #38 and provides local output/wait/detach with bounded admission, explicit unsupported runtime deadlines, deterministic native fixtures and packed Node/Bun examples. The maintained finite-streaming scenario passed at `3188e33` in #68 on borrowed E2B base with confirmed owned cleanup; other configurations remain unqualified.
+2. **Read cancellation — PR #51.** `readFile(path, { signal? })` and exported `ReadOptions` preserve inspection's existing `WaitOptions` compatibility. One fixed 30-second local deadline covers provider results and streamed chunks, including noncooperative reads. Late streams are disposed and local readers released without waiting indefinitely. Read-only errors use `WAIT_ABORTED`, `TIMEOUT` and `CLIENT_CLOSED` with effect `none`; native failures retain their code. Native download cancellation is best effort. The signal-bearing file scenario passed for Daytona and E2B at `3188e33` in #68 with confirmed owned cleanup; this does not establish universal native cancellation.
 3. **[Output helpers and timeout clarity](output-and-timeouts.md#delivery-and-acceptance) — PRs #53 and #54.** Full decode/structured previews, provider timeout documentation and deterministic wiring tests are implemented. Native runtime enforcement and raw binary transport remain separate proposals.
 
 The shipped streaming scope is finite E2B text with local-only handles. Binary streaming and reattachment need their own design and provider evidence; they are not implicit follow-ups required to finish #52.
@@ -170,6 +170,6 @@ Use deterministic native-boundary fixtures; paid live qualification remains sepa
 - Native E2B connection uses retries 0, stdin false, disabled RPC timeout and separate setup cancellation; paused sandbox is rejected without automatic resume. Exercise the actual pinned client against fake HTTP with a pause between running preflight and attachment: no POST connect, resume, timeout extension or command replay. Auto-resume true/missing and missing detail token fail before guest I/O. Snapshot/suspend/destroy interruption cannot attach to a different execution.
 - Compile the concise workflow against exported types and execute it using packed public SDK/adapter consumers on Node and Bun.
 
-Run focused SDK/adapter/E2B tests first, then sequential shared builds and required CI gates (`check:built`, lint, format, offline tests, packed consumers, observability and docs/examples). The coding slice adds public process exports, deterministic pinned-client fixtures and compiled/packed Node/Bun examples. Live acceptance remains not-run pending separate paid-call authorization; offline results do not qualify live behavior.
+Run focused SDK/adapter/E2B tests first, then sequential shared builds and required CI gates (`check:built`, lint, format, offline tests, packed consumers, observability and docs/examples). The coding slice adds public process exports, deterministic pinned-client fixtures and compiled/packed Node/Bun examples. Scoped live streaming and signal-bearing file acceptance passed at `3188e33` in #68. New configurations and reruns require separate paid-call authorization; offline results do not qualify live behavior.
 
-PTYs, terminals, stdin, arbitrary signals, process inventory/reopening, retained replay/cursors, endpoints/tunnels, broad filesystem APIs, sandbox reopen, cleanup configuration, and generic workflows are explicit scope cuts. Use ROADMAP.md for the delivery queue; this contract does not schedule those extensions.
+PTYs, terminals, incremental process stdin, arbitrary signals, process inventory/reopening, retained replay/cursors, endpoints/tunnels, broad filesystem APIs, sandbox reopen, cleanup configuration, and generic workflows are explicit scope cuts. Use ROADMAP.md for the delivery queue; this contract does not schedule those extensions.

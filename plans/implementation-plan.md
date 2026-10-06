@@ -1,6 +1,6 @@
 # Implementation sequence
 
-Updated October 3, 2026. SDK completeness and qualified provider integrations come first.
+Updated October 5, 2026. SDK completeness and qualified provider integrations come first.
 
 ## Delivery rule
 
@@ -16,7 +16,7 @@ The [acceptance tooling](../packages/sdk-qualification/provider-qualification/RE
 
 Native suspend/resume merged in #57 for eligible Daytona containers and E2B private-state memory pause; mounted suspension remains unsupported. Reopen/inspect and renewal prerequisites are merged. [Default creation and everyday files](../specs/sandbox-basics-dx.md) and the preview slice of [preview access and useful process control](../specs/preview-and-process-control.md) are merged. Daytona directory primitives and E2B listing remain unsupported; E2B mkdir/remove require `recursive: true`. Preview supports Daytona protected headers and E2B explicit public access; E2B default creation/restore is private but protected preview is unavailable.
 
-E2B local-handle termination merged in #66: one cached native SIGKILL PID request with explicit reuse races, no descendant guarantee and independently observed exit. Daytona termination remains unsupported. Stdin and sustained output are separate next slices. The [storage composition contract](../specs/storage-composition.md) was implemented in #69: selected-volume Daytona cold restore under daytona-default, with the complete first-action workflow passing at `5911ccc`.
+E2B local-handle termination merged in #66: one cached native SIGKILL PID request with explicit reuse races, no descendant guarantee and independently observed exit. Daytona termination remains unsupported. [Finite stdin for ordinary exec](../specs/process-stdin.md) is implemented in PR #71 and awaiting review/merge: one optional text/byte input across Daytona, E2B and experimental Modal, with deterministic and packed coverage but no live qualification. Incremental process input and sustained output remain separate future work. The [storage composition contract](../specs/storage-composition.md) was implemented in #69: selected-volume Daytona cold restore under daytona-default, with the complete first-action workflow passing at `5911ccc`.
 
 Generated evidence records Daytona suspension at `6796b30`, E2B suspension at `26f516d`, and bounded E2B termination at `131a8c6`. Each pass retains its configuration and prior failures, not a current-head or universal claim. The E2B lifecycle case's fresh-process inactive reopening and RAM continuity do not qualify the separate full reopen, renew, streaming or signal-bearing read workflows. #68 separately qualified reopening, renewal, signal-bearing reads, E2B streaming/directories and supported previews. Configured creation and private-default ingress denial retain their qualification gaps.
 
