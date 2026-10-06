@@ -2,7 +2,7 @@
 
 Accepted SDK experience · Updated October 2, 2026 · Reopen/inspect merged in PR #38; renewal merged in PR #55; suspend/resume merged in PR #57; Daytona live case passed at `6796b30`, E2B private-state case passed at `26f516d`
 
-Follow [ROADMAP.md](../ROADMAP.md#next-stdin-and-sustained-output-then-storage-composition) for remaining work. This refines [state portability §4](provider-state-portability.md#4-suspension-resumption-and-expiry), using its reference, scope and no-replay rules. Reopen/inspect and renewal are merged; suspend/resume is merged in #57. Do not introduce a generic lifecycle engine.
+Follow [ROADMAP.md](../ROADMAP.md#current-finite-input-review-and-process-research) for remaining work. This refines [state portability §4](provider-state-portability.md#4-suspension-resumption-and-expiry), using its reference, scope and no-replay rules. Reopen/inspect and renewal are merged; suspend/resume is merged in #57. Do not introduce a generic lifecycle engine.
 
 ## Selected contract
 
@@ -248,7 +248,7 @@ Public research checked September 29, 2026; renewal mappings rechecked September
 
 ## Delivery and acceptance
 
-All three slices below are merged in PRs #38, #55 and #57. The separate reopen/renew live workflows remain not-run; suspend/resume passes retain their recorded revisions/configurations. The table preserves delivery and acceptance context, not an open implementation queue.
+All three slices below are merged in PRs #38, #55 and #57. Separate Daytona/E2B reopen and renewal workflows passed at `3188e33` in #68 with confirmed owned cleanup; suspend/resume passes retain their own recorded revisions/configurations. The table preserves delivery and acceptance context, not an open implementation queue or a current-head qualification claim.
 
 Estimates include API, adapters, deterministic tests and docs; they are review-complexity estimates, not line-count commitments. Each implementation PR should remain roughly a few hundred production lines plus focused fixtures/examples, with PR1/PR3 potentially approaching a low-thousands total diff because of native-boundary tests. If either needs another broad state framework or many thousands of production lines, cut scope as indicated instead of growing a foundation PR.
 

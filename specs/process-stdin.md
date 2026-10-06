@@ -1,8 +1,8 @@
 # Finite stdin for ordinary execution
 
-Implementation contract · October 5, 2026
+Implementation contract · PR #71 awaiting review/merge · October 5, 2026
 
-## Shipped surface
+## Implemented surface in PR #71
 
 Ordinary `box.exec` accepts an optional finite input payload:
 

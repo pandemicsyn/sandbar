@@ -29,11 +29,11 @@ The cumulative combined UTF-8 text budget defaults to 1 MiB and accepts integers
 
 Start setup is bounded to 30 seconds independently of stream lifetime. Pre-dispatch abort reports `WAIT_ABORTED`; abandoned/lost acknowledgement after dispatch reports `OUTCOME_UNKNOWN`. Early overflow reports `OUTPUT_CAPACITY` with effect possible. These errors include `provider` and `sandboxId` as local context, which cannot reopen a command. Start is never replayed; do not blindly resubmit uncertain work.
 
-Requested `deadlineSeconds` rejects before dispatch: no native command runtime bound is provided. Sandbox TTL still applies. No stdin, PTY, arbitrary signal selection, process reopening, replay/cursors or binary streaming. Commands that buffer stdout may emit no timely chunks. Long-running/high-volume workloads are outside this slice.
+Requested `deadlineSeconds` rejects before dispatch: no native command runtime bound is provided. Sandbox TTL still applies. `processes.start` has closed stdin; use [finite input to ordinary exec](/docs/guides/files-and-output/#supply-finite-command-input) for a complete text or byte payload. PTY, arbitrary signal selection, process reopening, replay/cursors and binary streaming remain unsupported. Commands that buffer stdout may emit no timely chunks. Long-running/high-volume workloads are outside this slice.
 
 E2B reuses non-resuming guest attachment: authenticated detail GET, verified scope, running state, explicit `autoResume: false`, guest token/version and trusted routing, then local construction. It never POSTs connect, resumes compute or extends TTL. External lifecycle/policy changes after verification remain a native race; failure never reconnects to another generation.
 
-The public example in `apps/docs/examples/text-streaming.ts` compiles and runs against packed Node/Bun fixture consumers. Deterministic pinned-client fixtures cover transport/decoding. The maintained E2B live scenario remains unrun pending paid-call authorization.
+The public example in `apps/docs/examples/text-streaming.ts` compiles and runs against packed Node/Bun fixture consumers. Deterministic pinned-client fixtures cover transport/decoding. The maintained finite-streaming case passed at `3188e33` on borrowed base with Bun 1.3.14/darwin-arm64 and confirmed owned cleanup. This covers that recorded configuration; further live runs require separate authorization.
 
 ## Terminating an active E2B command
 

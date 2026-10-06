@@ -4,7 +4,7 @@ SDK usability comes before more adapters. This is the authoritative queue; specs
 
 ## Merged foundation
 
-Snapshot/volume support (#25), tracing/diagnostics (#24), CI cleanup (#29), provider acceptance (#32), and ordinary recovery results/resource identities (#33) are implemented. See [CI validation](CI.md), the [acceptance plan](plans/provider-acceptance.md) and [recovery direction](specs/sdk-recovery-dx.md).
+Snapshot/volume support (#25), tracing/diagnostics (#24), CI cleanup (#29), provider acceptance (#32), and ordinary recovery results/resource identities (#33) are implemented. See [CI validation](CI.md), the [maintained provider integration guidance](packages/sdk-qualification/provider-qualification/README.md) and [recovery direction](specs/sdk-recovery-dx.md).
 
 The latest SDK DX work is also merged:
 
@@ -35,7 +35,7 @@ Contracts and evidence: [execution](specs/interactive-execution-and-access.md), 
 
 Cleanup policy precedence remains per-call choice, `cleanup.storage`, then `require-durable`. `allow-unconfirmed` permits compute destruction without promising flushed writes or deleting retained volumes. See the [state contract](specs/provider-state-portability.md#3-persistent-volumes-and-mount-sessions).
 
-## Next: stdin scoping and sustained-output research
+## Current: finite input review and process research
 
 [Suspend/resume](specs/sandbox-lifecycle.md) merged in [PR #57](https://github.com/pandemicsyn/sandbar/pull/57). Known unmounted Daytona containers retain files and end processes; resume preserves UUID with fresh execution, and hard TTL keeps ticking. E2B memory pause preserves private filesystem/RAM under the same ID; resume reports execution identity unknown. Known mounts are unsupported, missing mount facts remain unknown, and external-storage durability is excluded. Mounted suspension, snapshot emulation and filesystem-only E2B mode remain out of scope.
 
@@ -43,10 +43,10 @@ Cleanup policy precedence remains per-call choice, `cleanup.storage`, then `requ
 
 [Default creation and everyday files](specs/sandbox-basics-dx.md), preview, suspension and E2B termination are shipped with their documented provider boundaries. The remaining queue is:
 
-1. **Stdin.** A separate next slice: settle explicit UTF-8 pipe input, acknowledgement and EOF behavior before implementation.
+1. **Finite command input — review pending in [PR #71](https://github.com/pandemicsyn/sandbar/pull/71).** The [finite stdin contract](specs/process-stdin.md) adds optional UTF-8 text or exact bytes to ordinary `box.exec`, bounded to 1 MiB with EOF, separate output and existing execution recovery. Daytona, E2B and experimental Modal implement the same API through their own mechanics. Deterministic, packed Node/Bun and docs checks passed; live finite-input qualification has not run. This replaces the E2B-only incremental-input proposal in #70; neither proposal is a merged release guarantee.
 2. **Sustained output.** Research bounded native retention and completeness separately before changing output budgets. Today's finite E2B stream is not an indefinite server-log solution. PTYs, tunnels and a generic process platform are not prerequisites.
 
-These are parallel design tasks, not permission to implement a broad process framework. Stdin should produce a concrete public/adapter contract and a small implementation slice. Sustained output should establish native retention and completeness before proposing any change to current limits.
+Incremental input to `processes.start` remains future design work: establish concurrent output, backpressure, delivery acknowledgements, cancellation and EOF across providers before adding a stream or interactive handle. The finite-input PR does not implement that surface. Sustained output must establish native retention and completeness before proposing changes to current limits; neither effort requires a broad process framework.
 
 ## Completed: selected-volume restore
 
@@ -60,6 +60,7 @@ The generated [support table](apps/docs/src/content/docs/docs/providers/support.
 
 Current follow-ups are:
 
+- Review and merge the finite-input slice separately from its maintained `execution-stdin` live qualification. Historical execution/streaming passes do not qualify the new input guarantee; paid runs require separate authorization.
 - Qualify configured creation with its maintained scenario and E2B private-default ingress denial, including restore where claimed. The #68 selected workflows do not establish those guarantees.
 - Investigate and disposition the recorded failed E2B network probe. Fix an integration defect if found, or document the demonstrated provider/configuration limitation; do not promote the result to a pass without evidence.
 - Preserve the distinction between E2B volume account access blocked by HTTP 403 and Sandbar E2B mounts being unsupported. Resolve historical volume-creation uncertainty only with sufficient evidence; newer successful cleanup does not erase it.
