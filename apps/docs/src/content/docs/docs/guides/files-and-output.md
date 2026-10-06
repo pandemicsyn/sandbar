@@ -120,6 +120,22 @@ All helpers use standard UTF-8 replacement decoding and consume an initial UTF-8
 
 The same helpers are available on recovered execution results and on `NonzeroExitError.result` and `NoExitCodeError.result`. Code manually constructing `ExecOutput` must now implement the two preview methods and full overloads; adapter authors still return `ExecValue` byte arrays. Streaming file APIs are not implemented.
 
+## Supply finite command input
+
+`box.exec` accepts a finite UTF-8 string or exact byte array, then closes guest stdin with EOF:
+
+```ts
+const payload = "Ada 🌊\0";
+const result = await box.exec({
+  command: { kind: "argv", argv: ["cat"] },
+  stdin: payload,
+});
+
+console.log(result.stdoutText({ full: true }));
+```
+
+String input is encoded as UTF-8. `Uint8Array` input preserves its bytes, including NUL and binary values. The payload limit is **1 MiB**; an oversized value rejects before provider dispatch. Explicit empty input still sends EOF, and omitted input is closed. The result keeps stdout, stderr and exit status separate under the ordinary capture limit. Adapters may implement this with a seekable staging file; the contract promises bytes and EOF, not a pipe descriptor. `processes.start` still has closed stdin and does not expose incremental or interactive input. See the [compiled finite-input example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/finite-stdin.ts) and [provider support](/docs/providers/support/); deterministic and packed coverage does not establish live provider qualification.
+
 ## Recover an uncertain write
 
 A timeout after upload does not establish that a file was unchanged. Save the reference from an uncertain-outcome error and [observe the write](/docs/guides/recovery/) before deciding what to do next. Do not blindly retry it.

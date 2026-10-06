@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { AdapterError, createAttemptContext, defineAdapter } from "sandbar-adapter";
+import {
+  AdapterError,
+  createAttemptContext,
+  defineAdapter,
+  type ExecInput,
+  type ExecValue,
+} from "sandbar-adapter";
 import { Image } from "./resource";
 import { Sandbar } from "./index";
 
@@ -66,6 +72,225 @@ test("plain create/destroy, unsupported local calls, and close once", async () =
   await expect(
     client.sandboxes.create({ environment: Image.prepared("image-1") }),
   ).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+});
+
+test("finite exec stdin snapshots subarray bytes before dispatch and rejects unsupported inputs", async () => {
+  let submitted: Uint8Array | undefined;
+  let dispatch!: () => void;
+  let began!: () => void;
+  const dispatchGate = new Promise<void>((resolve) => (dispatch = resolve));
+  const dispatchStarted = new Promise<void>((resolve) => (began = resolve));
+  let execCalls = 0;
+
+  const adapter = defineAdapter({
+    name: "example.finite-stdin",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: {
+          images: ["prepared"],
+          network: ["blocked"],
+          exec: { commands: ["argv"], maxOutputBytes: 16 },
+        },
+        async create() {
+          return { id: "box", state: "running" as const };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        exec: {
+          finiteStdin: "bytes" as const,
+          async submit(input) {
+            execCalls++;
+            submitted = input.stdin?.slice();
+            began();
+            await dispatchGate;
+
+            return {
+              exitCode: 0,
+              stdout: new Uint8Array(),
+              stderr: new Uint8Array(),
+              truncated: false,
+            };
+          },
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+  try {
+    const box = await client.sandboxes.create({ environment: Image.prepared("image") });
+    const backing = Buffer.from([42, 0, 255, 129, 43]);
+    const view = backing.subarray(1, 4);
+    const original = Uint8Array.from([0, 255, 129]);
+
+    const operation = box.exec({
+      command: { kind: "argv", argv: ["cat"] },
+      stdin: view,
+      maxOutputBytes: 16,
+    });
+
+    view.fill(7);
+    backing.fill(8);
+    await dispatchStarted;
+    dispatch();
+    await operation;
+    expect(submitted).toEqual(original);
+    expect(execCalls).toBe(1);
+
+    for (const invalid of [
+      new ReadableStream<Uint8Array>(),
+      { type: "bytes", value: Uint8Array.of(1) },
+    ]) {
+      // SAFETY: The test intentionally passes runtime values excluded from the public type.
+      await expect(
+        box.exec({
+          command: { kind: "argv", argv: ["cat"] },
+          stdin: invalid as never,
+          maxOutputBytes: 16,
+        }),
+      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    }
+
+    await expect(
+      box.exec({
+        command: { kind: "argv", argv: ["cat"] },
+        stdin: new Uint8Array(1_048_577),
+        maxOutputBytes: 16,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(
+      box.exec({
+        command: { kind: "argv", argv: ["cat"] },
+        stdin: "x".repeat(1_048_577),
+        maxOutputBytes: 16,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+
+    expect(execCalls).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("legacy adapters reject finite stdin before adapter effects", async () => {
+  let preparations = 0;
+  let submissions = 0;
+
+  const adapter = defineAdapter({
+    name: "example.legacy-exec",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: {
+          images: ["prepared"],
+          network: ["blocked"],
+          exec: { commands: ["argv"], maxOutputBytes: 16 },
+        },
+        async create() {
+          return { id: "box", state: "running" as const };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        exec: {
+          async prepare(input) {
+            preparations++;
+
+            return input;
+          },
+          async submit() {
+            submissions++;
+
+            return {
+              exitCode: 0,
+              stdout: new Uint8Array(),
+              stderr: new Uint8Array(),
+              truncated: false,
+            };
+          },
+        },
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+  try {
+    const box = await client.sandboxes.create({ environment: Image.prepared("image") });
+    await expect(
+      box.exec({
+        command: { kind: "argv", argv: ["cat"] },
+        stdin: "input",
+        maxOutputBytes: 16,
+      }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect(preparations).toBe(0);
+    expect(submissions).toBe(0);
+  } finally {
+    await client.close();
+  }
+});
+
+test("function-form exec hooks can declare finite stdin support", async () => {
+  let received: Uint8Array | undefined;
+
+  const exec = Object.assign(
+    async (input: ExecInput): Promise<ExecValue> => {
+      received = input.stdin?.slice();
+
+      return {
+        exitCode: 0,
+        stdout: new Uint8Array(),
+        stderr: new Uint8Array(),
+        truncated: false,
+      };
+    },
+    { finiteStdin: "bytes" as const },
+  );
+
+  const adapter = defineAdapter({
+    name: "example.function-finite-stdin",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect() {
+      return {
+        scope: { authority: { kind: "account", id: "one" }, partition: {} },
+        supports: {
+          images: ["prepared"],
+          network: ["blocked"],
+          exec: { commands: ["argv"], maxOutputBytes: 16 },
+        },
+        async create() {
+          return { id: "box", state: "running" as const };
+        },
+        async destroy() {
+          return { computeStopped: true, retainedResources: [] };
+        },
+        exec,
+      };
+    },
+  });
+
+  const client = await Sandbar.connect({ adapter, config: {}, credentials: {} });
+
+  try {
+    const box = await client.sandboxes.create({ environment: Image.prepared("image") });
+    await box.exec({
+      command: { kind: "argv", argv: ["cat"] },
+      stdin: Uint8Array.of(0, 255),
+      maxOutputBytes: 16,
+    });
+    expect(received).toEqual(Uint8Array.of(0, 255));
+  } finally {
+    await client.close();
+  }
 });
 
 test("lost response is unknown with reference and recovery never resubmits", async () => {

@@ -204,6 +204,8 @@ async function flow() {
   const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked" });
   const bytes: Uint8Array = await box.readFile("/file");
   const exec = await box.exec({ command: { kind: "argv", argv: ["printf", "ready"] }, cwd: "/tmp", env: { KEY: "value" }, maxOutputBytes: 16 });
+  await box.exec({ command: { kind: "argv", argv: ["cat"] }, stdin: "λ\\0💜" });
+  await box.exec({ command: { kind: "argv", argv: ["cat"] }, stdin: Uint8Array.of(0, 255, 129) });
   const code: number | null = exec.exitCode;
   await box.writeFile("/file", new Uint8Array([0, 255]), { overwrite: false });
   const image = Image.oci("python:3.12-slim");
@@ -485,6 +487,7 @@ let creates = 0, terminates = 0, closed = 0;
 const records = new Map();
 const files = new Map();
 const executions = new Map();
+const execCommands = new Map();
 let writePath = "";
 const transport = {
   async lookupApp(name, environment) { if (name !== "existing" || environment !== "main") throw Error("Wrong App"); return "ap-fixture"; },
@@ -500,15 +503,33 @@ const transport = {
   async readBytes(id, path, maxBytes) { if (!id.startsWith("sb-") || maxBytes !== 1048576) throw Error("Wrong read"); return files.get(path) ?? Uint8Array.from([0, 255, 128]); },
   async fileExists(_id, path) { return files.has(path); },
   async start(input) {
+    execCommands.set(input.execId, input.command);
     if (input.command[0] === "/bin/sh" && input.command[2]?.includes("cat >")) {
       writePath = input.command.at(-1);
       executions.set(input.execId, { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false });
-    } else {
-      if (input.command.join(" ") !== "printf ready" || input.cwd !== "/tmp" || input.env?.KEY !== "value") throw Error("Wrong exec input");
+    } else if (input.command.join(" ") === "printf ready") {
+      if (input.cwd !== "/tmp" || input.env?.KEY !== "value") throw Error("Wrong exec input");
       executions.set(input.execId, { exitCode: 0, stdout: Uint8Array.from([0, 255]), stderr: new Uint8Array(), truncated: false });
+    } else if (input.command.join(" ") === "cat") {
+      executions.set(input.execId, { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false });
+    } else {
+      throw Error("Wrong exec input");
     }
   },
-  async stdin(_id, execId, bytes) { files.set(writePath, bytes.slice()); executions.set(execId, { exitCode: 0, stdout: new TextEncoder().encode(String(bytes.length) + "\\n"), stderr: new Uint8Array(), truncated: false }); },
+  async stdin(_id, execId, bytes) {
+    const command = execCommands.get(execId);
+    if (command?.[0] === "/bin/sh" && command[2]?.includes("cat >")) {
+      files.set(writePath, bytes.slice());
+      executions.set(execId, { exitCode: 0, stdout: new TextEncoder().encode(String(bytes.length) + "\\n"), stderr: new Uint8Array(), truncated: false });
+    } else if (command?.length === 1 && command[0] === "cat") {
+      executions.set(execId, {
+        exitCode: 0,
+        stdout: Uint8Array.from([...bytes, ...new TextEncoder().encode("out")]),
+        stderr: new TextEncoder().encode("err"),
+        truncated: false,
+      });
+    }
+  },
   async result(_id, execId) { return executions.get(execId); },
   async terminate() { terminates++; for (const record of records.values()) record.running = false; return true; },
   async poll() { return "stopped"; },
@@ -521,6 +542,13 @@ try {
   if (bytes.length !== 3 || bytes[0] !== 0 || bytes[1] !== 255 || bytes[2] !== 128) throw Error("Binary read mismatch");
   const result = await box.exec({ command: { kind: "argv", argv: ["printf", "ready"] }, cwd: "/tmp", env: { KEY: "value" }, maxOutputBytes: 16 });
   if (result.exitCode !== 0 || result.stdout[0] !== 0 || result.stdout[1] !== 255) throw Error("Binary exec mismatch");
+  const textInput = "λ\\0💜";
+  const textBytes = new TextEncoder().encode(textInput);
+  const textResult = await box.exec({ command: { kind: "argv", argv: ["cat"] }, stdin: textInput, maxOutputBytes: 32 });
+  if (textResult.exitCode !== 0 || textResult.stdout.length !== textBytes.length + 3 || textBytes.some((byte, index) => textResult.stdout[index] !== byte) || new TextDecoder().decode(textResult.stdout.slice(textBytes.length)) !== "out" || new TextDecoder().decode(textResult.stderr) !== "err") throw Error("Finite UTF-8 stdin changed");
+  const binaryInput = Uint8Array.of(0, 255, 129);
+  const binaryResult = await box.exec({ command: { kind: "argv", argv: ["cat"] }, stdin: binaryInput, maxOutputBytes: 32 });
+  if (binaryResult.exitCode !== 0 || binaryInput.some((byte, index) => binaryResult.stdout[index] !== byte) || new TextDecoder().decode(binaryResult.stdout.slice(binaryInput.length)) !== "out") throw Error("Finite binary stdin changed");
   await box.writeFile("/file", Uint8Array.from([0, 255, 129]), { overwrite: true });
   const roundtrip = await box.readFile("/file");
   if (roundtrip[2] !== 129) throw Error("Binary write mismatch");

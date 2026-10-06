@@ -7,6 +7,10 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
+import {
+  assertFiniteStdinWorkflow,
+  finiteStdinInput,
+} from "../../../sdk-qualification/finite-stdin";
 
 test("Modal public adapter passes required managed-compute scenarios", async () => {
   const effects = { create: 0, destroy: 0, release: 0 };
@@ -285,8 +289,7 @@ test("Modal direct exec and write recover by execution ID after one uncertain su
   client = await open();
   // SAFETY: The SDK produced this reference during the fixture's original execution submission.
   await expect((await client.recover(execReference as never)).observe()).rejects.toMatchObject({
-    code: "NONZERO_EXIT",
-    result: { exitCode: 23, stdout: Uint8Array.from([0, 255]), stderr: Uint8Array.from([129]) },
+    code: "OUTCOME_UNKNOWN",
   });
   expect(starts).toHaveLength(1);
   expect(starts[0]).toMatchObject({
@@ -354,6 +357,261 @@ test("Modal direct exec and write recover by execution ID after one uncertain su
   expect(shell).toMatchObject({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() });
   expect(starts[4]?.command).toEqual(["/bin/sh", "-c", "printf shell"]);
   await client.close();
+});
+
+test.each(["lost-start", "lost-input", "lost-result"] as const)(
+  "Modal finite stdin never infers delivery from result evidence after %s",
+  async (lostAt) => {
+    const records = new Map<
+      string,
+      { id: string; tags: Record<string, string>; running: boolean }
+    >();
+
+    const results = new Map<
+      string,
+      { exitCode: number; stdout: Uint8Array; stderr: Uint8Array; truncated: boolean }
+    >();
+
+    const bytes = Uint8Array.from([0, 255, 129]);
+    const acknowledged: Uint8Array[] = [];
+    let starts = 0;
+    let stdinCalls = 0;
+    let resultCalls = 0;
+
+    const transport: ModalTransport = {
+      async lookupApp() {
+        return "ap-fixture";
+      },
+      async imageExists() {
+        return true;
+      },
+      async create(input) {
+        records.set(input.name, { id: "sb-stdin", tags: input.tags, running: true });
+
+        return "sb-stdin";
+      },
+      async findByName(_app, _env, name) {
+        return records.get(name) ?? null;
+      },
+      async *list() {
+        yield* records.values();
+      },
+      async terminate() {
+        return true;
+      },
+      async poll() {
+        return "stopped";
+      },
+      async readBytes() {
+        return new Uint8Array();
+      },
+      async fileExists() {
+        return false;
+      },
+      async start(input) {
+        starts++;
+
+        if (lostAt === "lost-start") {
+          results.set(input.execId, {
+            exitCode: 0,
+            stdout: Uint8Array.of(69),
+            stderr: Uint8Array.of(33),
+            truncated: false,
+          });
+          throw new Error("start acknowledgement lost");
+        }
+      },
+      async stdin(_id, execId, input) {
+        stdinCalls++;
+        acknowledged.push(input.slice());
+        results.set(execId, {
+          exitCode: 0,
+          stdout: Uint8Array.of(69),
+          stderr: Uint8Array.of(33),
+          truncated: false,
+        });
+
+        if (lostAt === "lost-input") throw new Error("stdin or EOF acknowledgement lost");
+      },
+      async result(_id, execId) {
+        resultCalls++;
+
+        if (lostAt === "lost-result" && resultCalls === 1)
+          throw new Error("result response lost after input acknowledgement");
+
+        const result = results.get(execId);
+
+        if (!result) throw new Error("result unavailable");
+
+        return result;
+      },
+      close() {},
+    };
+
+    const adapter = createModalAdapter(() => transport);
+
+    const open = () =>
+      Sandbar.connect({
+        adapter,
+        config: { appName: "existing", environment: "main" },
+        credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+      });
+
+    let client = await open();
+
+    try {
+      const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture") });
+
+      const operation = await box.submitExec({
+        command: { kind: "shell", script: "cat >/dev/null; printf eof" },
+        stdin: bytes,
+        cwd: "/tmp",
+        env: { FIXTURE: "yes" },
+        maxOutputBytes: 16,
+      });
+
+      const reference = operation.reference;
+      expect(operation.reference.token).toMatchObject({
+        maxBytes: 16,
+        inputComplete: lostAt === "lost-result",
+      });
+      expect(JSON.stringify(operation.reference.token)).not.toContain("255");
+      expect(await operation.observe()).toBeNull();
+
+      await client.close();
+      client = await open();
+      // SAFETY: The saved operation reference is the value under test after a fresh connection.
+      const recovered = await client.recover(reference as never);
+
+      if (lostAt === "lost-result") {
+        expect(await recovered.observe()).toMatchObject({
+          exitCode: 0,
+          stdout: Uint8Array.of(69),
+          stderr: Uint8Array.of(33),
+        });
+      } else {
+        await expect(recovered.observe()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+      }
+
+      expect(starts).toBe(1);
+      expect(stdinCalls).toBe(lostAt === "lost-start" ? 0 : 1);
+
+      if (stdinCalls) expect(acknowledged).toEqual([bytes]);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test("public finite stdin preserves UTF-8 bytes, output streams, cwd, env and exit", async () => {
+  const records = new Map<string, { id: string; tags: Record<string, string>; running: boolean }>();
+
+  const starts: Array<{
+    execId: string;
+    command: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+  }> = [];
+
+  const received: Uint8Array[] = [];
+  let resultCalls = 0;
+
+  const transport: ModalTransport = {
+    async lookupApp() {
+      return "ap-fixture";
+    },
+    async imageExists() {
+      return true;
+    },
+    async create(input) {
+      records.set(input.name, { id: "sb-finite-stdin", tags: input.tags, running: true });
+
+      return "sb-finite-stdin";
+    },
+    async findByName(_app, _environment, name) {
+      return records.get(name) ?? null;
+    },
+    async *list() {
+      yield* records.values();
+    },
+    async terminate() {
+      return true;
+    },
+    async poll() {
+      return "stopped";
+    },
+    async readBytes() {
+      return new Uint8Array();
+    },
+    async fileExists() {
+      return false;
+    },
+    async start(input) {
+      starts.push(input);
+    },
+    async stdin(_sandboxId, _execId, bytes) {
+      received.push(bytes.slice());
+    },
+    async result() {
+      resultCalls++;
+      const payload = received.at(-1) ?? new Uint8Array();
+      const stdout = new Uint8Array(payload.length + 3);
+      stdout.set(payload);
+      stdout.set(new TextEncoder().encode("out"), payload.length);
+
+      return {
+        exitCode: resultCalls === 1 ? 7 : 0,
+        stdout: resultCalls === 1 ? stdout : new Uint8Array(),
+        stderr: resultCalls === 1 ? new TextEncoder().encode("err") : new Uint8Array(),
+        truncated: false,
+      };
+    },
+    close() {},
+  };
+
+  const client = await Sandbar.connect({
+    adapter: createModalAdapter(() => transport),
+    config: { appName: "existing", environment: "main" },
+    credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+  });
+
+  try {
+    const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture") });
+    await assertFiniteStdinWorkflow(box, () => received.at(-1));
+    expect(received[0]).toEqual(new TextEncoder().encode(finiteStdinInput));
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatchObject({
+      command: ["/bin/sh", "-c", "cat; printf out; printf err >&2; exit 7"],
+      cwd: "/tmp",
+      env: { FINITE_STDIN_FIXTURE: "selected" },
+    });
+
+    expect(
+      (
+        await box.exec({
+          command: { kind: "shell", script: "cat >/dev/null; exit 0" },
+          stdin: "",
+          maxOutputBytes: 16,
+        })
+      ).exitCode,
+    ).toBe(0);
+    expect(
+      (
+        await box.exec({
+          command: { kind: "shell", script: "cat >/dev/null; exit 0" },
+          maxOutputBytes: 16,
+        })
+      ).exitCode,
+    ).toBe(0);
+    expect(received).toEqual([
+      new TextEncoder().encode(finiteStdinInput),
+      new Uint8Array(),
+      new Uint8Array(),
+    ]);
+    expect(starts).toHaveLength(3);
+  } finally {
+    await client.close();
+  }
 });
 
 test("file writes require decimal byte-count evidence in submit and reopened observation", async () => {

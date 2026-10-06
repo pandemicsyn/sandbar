@@ -224,6 +224,30 @@ test("binary stdin uses exact offsets and bounded output truncates", async () =>
   }
 });
 
+test("empty finite stdin sends one EOF request at offset zero", async () => {
+  starts = 0;
+  stdinWrites = 0;
+  seen.length = 0;
+  const wire = router();
+
+  try {
+    await wire.start({
+      sandboxId: "sb-fixture",
+      execId: "submission-1",
+      command: ["cat"],
+      timeoutSeconds: 5,
+    });
+    await wire.stdin("sb-fixture", "submission-1", new Uint8Array());
+    expect(stdinWrites).toBe(1);
+    expect(parse(seen[1]!).get(3)).toBe(0);
+    expect(parse(seen[1]!).get(5)).toBe(1);
+    expect(parse(seen[1]!).get(4)).toBeUndefined();
+    expect(starts).toBe(1);
+  } finally {
+    wire.close();
+  }
+});
+
 test("optional native exit code accepts explicit zero and rejects missing status without replay", async () => {
   starts = 0;
   const wire = router();

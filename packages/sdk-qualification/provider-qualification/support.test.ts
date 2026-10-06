@@ -235,6 +235,8 @@ test("captured execution never qualifies streaming, and streaming evidence has i
 
   expect(render([captured])).toContain("Supported · passed at aaaaaaaa](#e2b-execution)");
   expect(render([captured])).toContain("Conditional · not-run](#e2b-streaming)");
+  expect(render([captured])).toContain("Conditional · not-run](#e2b-finiteStdin)");
+  expect(render([captured])).toContain("Conditional · not-run](#daytona-finiteStdin)");
   expect(render([captured])).toContain("Unsupported · not-run](#daytona-streaming)");
 
   const streaming: QualificationRecord = {
@@ -252,5 +254,16 @@ test("captured execution never qualifies streaming, and streaming evidence has i
   );
   expect(() => render([{ ...streaming, runCleanup: "incomplete" }])).toThrow(
     "Bun passes require confirmed test-owned cleanup",
+  );
+
+  const stdin: QualificationRecord = {
+    ...captured,
+    scenario: "execution-stdin",
+    runner: { name: "bun:test", format: "junit", testName: "execution-stdin" },
+  };
+
+  expect(render([stdin])).toContain("Conditional · passed at aaaaaaaa](#e2b-finiteStdin)");
+  expect(render([{ ...stdin, mode: "packed" }])).toContain(
+    "Conditional · not-run](#e2b-finiteStdin)",
   );
 });

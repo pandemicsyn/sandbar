@@ -24,7 +24,10 @@ const RecordSchema = z.strictObject({
   running: z.boolean(),
 });
 
-const ExecToken = z.strictObject({ maxBytes: z.number().int().min(0).max(MAX_BYTES) });
+const ExecToken = z.strictObject({
+  maxBytes: z.number().int().min(0).max(MAX_BYTES),
+  inputComplete: z.boolean().optional(),
+});
 
 const WriteToken = z.strictObject({ expectedBytes: z.number().int().min(0).max(MAX_BYTES) });
 
@@ -291,6 +294,7 @@ export function createModalAdapter(
           };
         },
         exec: {
+          finiteStdin: "bytes",
           recovery: { version: 1, token: ExecToken },
           async prepare(input) {
             if (!(await find(input.sandbox.id)))
@@ -312,6 +316,11 @@ export function createModalAdapter(
               AbortSignal.timeout((input.deadlineSeconds + 5) * 1000),
             ]);
 
+            const token: z.infer<typeof ExecToken> = {
+              maxBytes: input.maxOutputBytes,
+              inputComplete: false,
+            };
+
             try {
               await transport.start(
                 {
@@ -325,7 +334,19 @@ export function createModalAdapter(
                 signal,
               );
             } catch {
-              return ctx.pending({ maxBytes: input.maxOutputBytes });
+              return ctx.pending(token);
+            }
+
+            try {
+              await transport.stdin(
+                input.sandbox.id,
+                modalExecId(ctx.submissionId),
+                input.stdin ?? new Uint8Array(),
+                signal,
+              );
+              token.inputComplete = true;
+            } catch {
+              return ctx.pending(token);
             }
 
             try {
@@ -336,7 +357,7 @@ export function createModalAdapter(
                 signal,
               );
             } catch {
-              return ctx.pending({ maxBytes: input.maxOutputBytes });
+              return ctx.pending(token);
             }
           },
           async observe(attempt, ctx) {
@@ -354,12 +375,19 @@ export function createModalAdapter(
               if (!token.success)
                 return ctx.unknown("Modal command output limit is unavailable; do not replay");
 
-              return await transport.result(
+              const result = await transport.result(
                 attempt.sandbox.id,
                 modalExecId(attempt.submissionId),
                 token.data.maxBytes,
                 signal,
               );
+
+              if (token.data.inputComplete === false)
+                return ctx.unknown(
+                  "Modal command input or EOF was not confirmed; do not report success or replay",
+                );
+
+              return result;
             } catch {
               return ctx.unknown("Modal command evidence is unavailable; do not replay");
             }

@@ -441,7 +441,7 @@ export async function startProcess(
 
   if (input?.deadlineSeconds !== undefined)
     throw new SandbarError("UNSUPPORTED", "Process runtime deadlines are unsupported");
-  const request = validateExec(input);
+  const request = validateExec(input, { allowStdin: false });
 
   if (request.maxOutputBytes < 1)
     throw new SandbarError("INVALID_ARGUMENT", "Process output limit must be positive");

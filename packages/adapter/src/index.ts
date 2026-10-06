@@ -81,6 +81,8 @@ export type ExecInput<C extends Command["kind"] = Command["kind"]> = {
   env?: Record<string, string>;
   deadlineSeconds: number;
   maxOutputBytes: number;
+  /** Finite input bytes; adapters advertising finiteStdin close guest stdin after these bytes. */
+  stdin?: Uint8Array;
 };
 
 export type ExecValue = {
@@ -378,7 +380,10 @@ export type AdapterSession<
       >)
     | null
   >;
-  exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox>;
+  exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox> & {
+    /** Declares support for the SDK's bounded, byte-preserving input followed by EOF. */
+    finiteStdin?: "bytes";
+  };
   preview?: (
     input: { sandbox: Sandbox; port: number },
     ctx: ReadContext,
@@ -803,6 +808,12 @@ export function validateAdapterConfiguration<C extends z.ZodType, K extends z.Zo
   };
 }
 
-export { ExecCommand, ExecRequest, CreateSandboxInput, SafeError } from "./portable";
+export {
+  ExecCommand,
+  ExecRequest,
+  CreateSandboxInput,
+  SafeError,
+  MAX_EXEC_STDIN_BYTES,
+} from "./portable";
 
 export * from "./state";

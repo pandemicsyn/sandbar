@@ -20,7 +20,7 @@ import {
 } from "./resources";
 import { LifecycleInput, SuspendResult, ResumeResult, RenewInput, RenewResult } from "./lifecycle";
 import { z } from "zod";
-import { CreateSandboxInput, ExecRequest, FilePath } from "./portable";
+import { CreateSandboxInput, ExecRequest, FilePath, MAX_EXEC_STDIN_BYTES } from "./portable";
 import {
   AdapterError,
   createAttemptContext,
@@ -72,7 +72,7 @@ export type RuntimeSession = Omit<
   volumeDelete?: unknown;
   imageBuild?: unknown;
   destroy: unknown;
-  exec?: unknown;
+  exec?: object & { finiteStdin?: "bytes" };
   files?: {
     maxBytes: number;
     read?: NonNullable<AdapterSession["files"]>["read"];
@@ -184,6 +184,10 @@ const ExecInputSchema = z.strictObject({
   env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(8192)).optional(),
   deadlineSeconds: z.number().int().min(1).max(3600),
   maxOutputBytes: z.number().int().nonnegative().max(1_048_576),
+  stdin: z
+    .instanceof(Uint8Array)
+    .refine((bytes) => bytes.byteLength <= MAX_EXEC_STDIN_BYTES)
+    .optional(),
 });
 
 const FileWriteInputSchema = z.strictObject({
@@ -606,6 +610,7 @@ function checkCapability(
       cwd: request.cwd,
       env: request.env,
       deadlineSeconds: request.deadlineSeconds,
+      stdin: request.stdin,
       output: { capture: "bounded", maxBytes: request.maxOutputBytes },
     });
     const support = session.supports.exec;
@@ -616,6 +621,9 @@ function checkCapability(
       request.maxOutputBytes > support.maxOutputBytes
     )
       throw new AdapterError("UNSUPPORTED", "Requested command or output limit is unsupported");
+
+    if (request.stdin !== undefined && session.exec?.finiteStdin !== "bytes")
+      throw new AdapterError("UNSUPPORTED", "Finite stdin is unsupported by this adapter");
 
     return request;
   }

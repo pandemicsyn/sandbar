@@ -28,6 +28,7 @@ import {
   type ExecValue,
   type Json,
 } from "sandbar-adapter";
+import { MAX_EXEC_STDIN_BYTES } from "sandbar-adapter/portable";
 import {
   E2BLifecycleRejected,
   E2BRenewRejected,
@@ -1626,6 +1627,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             }
           : undefined,
         exec: {
+          finiteStdin: "bytes",
           recovery: {
             version: 1,
             token: ExecToken,
@@ -1652,16 +1654,73 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           async submit(input, ctx) {
             await requireRunning(input.sandbox.id, input.sandbox.reference);
             const paths = executionPaths(ctx.submissionId);
+            const stdinDirectory = `/tmp/.sandbar-${ctx.submissionId}.stdin`;
+            const stdinPath = `${stdinDirectory}/payload`;
 
             if (ctx.signal.aborted)
               return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+
+            let ownsStdinDirectory = false;
+
+            if (input.stdin !== undefined) {
+              try {
+                await transport.run(
+                  input.sandbox.id,
+                  `mkdir -m 700 -- ${shellQuote(stdinDirectory)}`,
+                  { timeoutMs: 30_000 },
+                );
+                ownsStdinDirectory = true;
+                await transport.write(input.sandbox.id, stdinPath, input.stdin);
+
+                const staged = await transport.read(
+                  input.sandbox.id,
+                  stdinPath,
+                  MAX_EXEC_STDIN_BYTES,
+                );
+
+                if (
+                  staged.truncated ||
+                  staged.bytes.length !== input.stdin.length ||
+                  !staged.bytes.every((byte, index) => byte === input.stdin![index])
+                )
+                  throw new Error("E2B stdin staging could not be verified");
+              } catch {
+                if (ownsStdinDirectory)
+                  await transport
+                    .run(input.sandbox.id, `rm -rf -- ${shellQuote(stdinDirectory)}`, {
+                      timeoutMs: 30_000,
+                    })
+                    .catch(() => undefined);
+
+                return ctx.unknown("E2B stdin staging outcome is unknown; do not replay");
+              }
+            }
+
+            if (ctx.signal.aborted) {
+              if (ownsStdinDirectory)
+                await transport
+                  .run(input.sandbox.id, `rm -rf -- ${shellQuote(stdinDirectory)}`, {
+                    timeoutMs: 30_000,
+                  })
+                  .catch(() => undefined);
+
+              return ctx.unknown("E2B exec was stopped before command dispatch; do not replay");
+            }
 
             const command =
               input.command.kind === "argv"
                 ? `/bin/bash -c 'exec "$@"' sandbar ${input.command.argv.map(shellQuote).join(" ")}`
                 : `/bin/bash -c ${shellQuote(input.command.script)}`;
 
-            const script = `${command} >${shellQuote(paths.stdout)} 2>${shellQuote(paths.stderr)}; printf '%s' "$?" >${shellQuote(paths.status)}`;
+            const setup =
+              input.stdin === undefined
+                ? ""
+                : `stdin_dir=${shellQuote(stdinDirectory)}; trap 'rm -rf -- "$stdin_dir"' EXIT; `;
+
+            const inputRedirect =
+              input.stdin === undefined ? "< /dev/null" : `< ${shellQuote(stdinPath)}`;
+
+            const script = `${setup}${command} ${inputRedirect} >${shellQuote(paths.stdout)} 2>${shellQuote(paths.stderr)}; printf '%s' "$?" >${shellQuote(paths.status)}`;
 
             try {
               await transport.run(input.sandbox.id, script, {

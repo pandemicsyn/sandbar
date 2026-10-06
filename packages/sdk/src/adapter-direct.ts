@@ -1144,6 +1144,7 @@ export class AdapterSandbox {
         command: request.command,
         cwd: request.cwd,
         env: request.env,
+        stdin: request.stdin,
         deadlineSeconds: request.deadlineSeconds,
         maxOutputBytes: request.maxOutputBytes,
       },
