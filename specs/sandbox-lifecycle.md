@@ -2,7 +2,7 @@
 
 Accepted SDK experience · Updated October 2, 2026 · Reopen/inspect merged in PR #38; renewal merged in PR #55; suspend/resume merged in PR #57; Daytona live case passed at `6796b30`, E2B private-state case passed at `26f516d`
 
-Follow [ROADMAP.md](../ROADMAP.md#current-finite-input-review-and-process-research) for remaining work. This refines [state portability §4](provider-state-portability.md#4-suspension-resumption-and-expiry), using its reference, scope and no-replay rules. Reopen/inspect and renewal are merged; suspend/resume is merged in #57. Do not introduce a generic lifecycle engine.
+Follow [ROADMAP.md](../ROADMAP.md#current-process-research) for remaining work. This refines [state portability §4](provider-state-portability.md#4-suspension-resumption-and-expiry), using its reference, scope and no-replay rules. Reopen/inspect and renewal are merged; suspend/resume is merged in #57. Do not introduce a generic lifecycle engine.
 
 ## Selected contract
 
