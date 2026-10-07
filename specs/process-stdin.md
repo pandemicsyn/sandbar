@@ -1,6 +1,6 @@
 # Finite stdin for ordinary execution
 
-Implementation contract · PR #71 awaiting review/merge · October 5, 2026
+Implementation contract · Merged in PR #71 · October 6, 2026
 
 ## Implemented surface in PR #71
 
