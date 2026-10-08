@@ -1,6 +1,6 @@
 # Storage composition
 
-Accepted design · revised October 2, 2026 against Sandbar `0a022a8` · implementation brief, no runtime changes
+Implemented contract · PR #69 merged; complete scoped live workflow passed at `5911ccc` · Status reviewed October 8, 2026
 
 ## Scope
 
@@ -8,15 +8,15 @@ Use **`mounts: MountSpec[]` on both create and restore**, with the existing `vol
 
 For a mount-free snapshot, omitted `mounts` means no mounts. Supplying the same volume deliberately shares its current mutable data; selecting a separately created volume gives separate data. Neither choice pins captured-time bytes or copies data. Never create storage implicitly, substitute a missing volume or silently discard recorded mounts. Existing mounted-source and memory-plus-storage restore remain unsupported in the first slice.
 
-The next coordinated SDK/adapter API release replaces the inactive restore action-map with this array. Keep the SDK-only empty-object mount-free alias through that release and one subsequent published release; remove it in the following API release. Nonempty legacy maps reject with a migration message. The [migration contract](#compatibility-and-migration) below is settled.
+PR #69 replaces the inactive restore action-map with this array in the next coordinated SDK/adapter release. Keep the SDK-only empty-object mount-free alias through that release and one subsequent published release; remove it in the following API release. Nonempty legacy maps reject with a migration message. The [migration contract](#compatibility-and-migration) below is settled.
 
 Daytona's native create path accepts snapshot identity, volume IDs and network policy together. Implement the scoped mapping with the [startup acceptance gate](#startup-evidence-and-bounded-live-acceptance). The read-only check found useful mount ordering evidence but contrary evidence for early `networkBlockAll` enforcement in an older public runner. Keep `daytona-default` explicit; do not advertise blocked-before-entrypoint behavior without applicable ordering evidence and the live check.
 
-Creation defaults, text helpers, lifecycle operations and process termination are merged on this baseline. Follow the [roadmap](../ROADMAP.md) for scheduling; this brief does not reorder work. It supplements [state portability](provider-state-portability.md) and [ordinary recovery DX](sdk-recovery-dx.md). Runtime implementation and the bounded live run will be delegated separately after this spec review.
+Creation defaults, text helpers, lifecycle operations and process termination are merged on this baseline. Follow the [roadmap](../ROADMAP.md) for scheduling; this brief does not reorder work. It supplements [state portability](provider-state-portability.md) and [ordinary recovery DX](sdk-recovery-dx.md). PR #69 implemented the slice and qualified the first-action workflow under `daytona-default`; the earlier `824946d` harness failure remains recorded.
 
 ## Mocked application walkthrough
 
-These are **proposed, uncompiled examples with deterministic mock responses**, not live-provider instructions or a new exported mock API. Restore currently rejects nonempty mounts and exposes the legacy action-map shape. Creation defaults and text helpers are shipped; the array restore input is proposed. See [everyday files](sandbox-basics-dx.md) for those existing helpers. Implementation must turn these scenarios into compiled public examples backed by native-boundary fixtures.
+These illustrative scenarios use deterministic mock responses, not real resource IDs or a new mock API. Array restore input is implemented. Use the [compiled storage example](../apps/docs/examples/storage-composition.ts) and [its tests](../apps/docs/examples/storage-composition.test.ts) for current executable usage. The examples do not extend the native support boundaries below.
 
 The mock represents a qualified filesystem/fresh-execution adapter. It supplies a caller-provisioned `report-worker-v1` image, a ready mount-free snapshot, ready ID-addressable volumes and support for the requested network policy. Its simulated startup installs mounts and policy before the image entrypoint. These fixture assumptions do not establish Daytona's native startup order, capture exclusions or shutdown durability; those remain the release gates below. IDs such as `snapshot-001` and `volume-001` are mock responses, never IDs applications construct.
 
@@ -248,10 +248,10 @@ Before passing nonempty arrays, the SDK requires `snapshotRestore.mountInput: "s
 
 Saved snapshot, volume and sandbox identity formats remain unchanged. Existing operation references must still parse and support read-only observation; normalization cannot replay mutations or unlock unsupported legacy requests. Preserve existing capture-history validation and observation-free sandbox references. Packed old-hook fixtures cover both nonempty rejection before invocation and continued mount-free operation.
 
-## First implementation PR brief
+## Completed implementation and regression boundary
 
-**Deliver:** the common array migration, scoped SDK validation, Daytona native-ID cold restore mounts, direct partial outcomes, accurate public docs and compiled mock examples in one bounded SDK/adapter PR. Reuse current create/restore drivers and qualification suites. The default supported mounted-restore policy is explicitly configured `daytona-default`; add `blocked` only if the documented gate above is satisfied. Unsupported combinations reject without allocation. The approved design is ready for delegation; this spec review itself changes no runtime code and allocates no resources.
+PR #69 delivered the array migration, scoped validation, native-ID Daytona cold restore mounts, direct partial outcomes, provider docs and compiled examples. The complete first-action workflow passed at `5911ccc` with selected A-data/B-empty profiles, captured private state, fresh-client reopening and confirmed cleanup. The earlier `824946d` harness failure remains historical evidence. Generated provider records own exact configuration and provenance.
 
-**Offline acceptance:** omitted/empty mount-free behavior and the migration window; matching/wrong/missing hook marker; full-reference fresh-client restore after source deletion using existing history; exact volume/subpath mapping; wrong scope/provider/access/overlap rejection before POST; unknown or conflicting provenance; unchanged sandbox references with current mounts from native inspection; complete-set mismatch/read failure retaining acknowledged compute/volumes; lost acknowledgement without replay; and cleanup that retains application volumes. Keep the known-native-mount versus arbitrary guest-mount distinction explicit. Mock fixtures assert native requests, identities and mutation counts, not only display strings.
+Retain deterministic/packed coverage for mount-free compatibility and the release alias window, hook-marker gating, scope/provider/access/path validation, exact native mapping, provenance checks, acknowledged compute/volume preservation after metadata failures, lost acknowledgement without replay, and compute cleanup retaining application volumes. Native request serialization alone is not first-action startup evidence.
 
-**Ready to merge the implementation:** relevant repository/packed/docs gates pass; compiled examples exercise the exported API; independent correctness/DX review is clear; the bounded live scenario above has a recorded result for the supported policy, exact image/configuration/revision and confirmed cleanup. A failed or not-run startup check does not become a support claim. Report any remaining stricter-policy gate as unsupported rather than silently changing the requested policy. No optional mounted capture, universal storage guarantees or additional provider work is required to complete this first PR.
+No additional implementation is required to finish this slice. Mounted capture, memory composition, blocked-policy mounted restore and stronger storage guarantees need separate designs and evidence. The bounded live protocol above documents how its claim was tested; it does not authorize another run.

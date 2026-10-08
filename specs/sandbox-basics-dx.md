@@ -73,7 +73,7 @@ Reuse byte-operation limits, path validation, cancellation and errors. Limits co
 
 ## Directory operations for ordinary application work
 
-Slice 3 implements the following SDK signatures with optional adapter methods; live qualification remains pending. The verified built-in subset and unsupported mappings are documented below:
+Slice 3 implements the following SDK signatures with optional adapter methods; supported E2B directory cases passed at `3188e33` in #68. The verified built-in subset and unsupported mappings are documented below:
 
 ```ts
 type FileEntry = {

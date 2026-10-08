@@ -1,10 +1,10 @@
 # SDK observability and diagnostics
 
-Accepted direction · September 28, 2026 · Direct tracing/diagnostics and recipes implemented in this branch; metrics/events deferred
+Implemented contract · Tracing/diagnostics and recipes merged in PR #24; metrics/events deferred
 
-Make Sandbar operations understandable inside the application's existing observability tools. This is a fresh SDK design, independent of the removed observability/accounting proposal. It adds no billing or Effect requirement. This document specifies future behavior; current exports remain the authority for implemented APIs.
+Make Sandbar operations understandable inside the application's existing observability tools. This is a fresh SDK design, independent of the removed observability/accounting proposal. It adds no billing or Effect requirement. Sections 1–6 record the tracing contract; section 7 is deferred design. Current exports and tested recipes are authoritative for implemented APIs.
 
-Delivery priority: SDK tracing/diagnostics and SDK vendor recipes.
+Tracing and vendor recipes are implemented; no new observability work is on deck ahead of SDK usability.
 
 ## Developer outcomes
 
@@ -133,13 +133,13 @@ Structured diagnostic events should reuse the same sanitized schema and carry tr
 
 ## 8. Implementation units and acceptance
 
-State-portability foundations are merged. This SDK workstream proceeds alongside native state features, reusing the foundation operation/capability identities without coupling tracing metadata to capability support or resource ownership.
+Tracing/diagnostics and vendor recipes (units 1–2) merged in #24. The acceptance list below protects that contract; it is not an unfinished delivery plan. Metrics/events (unit 3) remain deferred.
 
 1. **Direct SDK tracing and error diagnostics.** Finalize the operation/outcome vocabulary, packaging and connection options, public/phase boundaries, safe diagnostic helper, and disabled/global/injected-provider behavior. Cover current direct operations and an independent adapter. Add an in-memory tracing example and establish overhead measurements.
 2. **Sentry and Datadog DevEx.** Deliver the three recipes above, pinned integration fixtures, runtime-specific evidence, exporter shutdown guidance, and debugging guidance for missing or disconnected spans. Mark vendor UI validation separately from local export evidence.
 3. **Metrics and structured events.** Specify and implement bounded measurements, logger integration, and their separate backend/runtime coverage after the tracing contract is stable.
 
-The first usable deliverable is unit 1; the direct SDK Sentry/Datadog integration promise is complete only after unit 2 and its published qualification. Trace names, attributes, outcomes, diagnostic-helper fields, and privacy guarantees become supported public contracts and need release notes when changed. Changes do not authorize native state operations, accounting, a telemetry database, new provider adapters, or guest instrumentation.
+Local Sentry/Datadog export and runtime fixtures are separate from live vendor-UI qualification; consult the maintained observability recipes for the exact coverage. Trace names, attributes, outcomes, diagnostic-helper fields, and privacy guarantees become supported public contracts and need release notes when changed. Changes do not authorize native state operations, accounting, a telemetry database, new provider adapters, or guest instrumentation.
 
 Required deterministic acceptance cases:
 
@@ -155,7 +155,3 @@ Required deterministic acceptance cases:
 - Local Sentry/Datadog qualification verifies span relationships and explicitly captured error correlation without live services. Documentation distinguishes fixture/export checks from real vendor UI evidence.
 
 Run affected package tests, root checks, packed consumer qualification, and docs/example checks. No live provider calls, vendor account changes, paid resources, publication, or deployment are authorized by this spec.
-
-## Current documentation gap
-
-The landing page currently says every operation emits OpenTelemetry spans and logs. That claim is ahead of the implementation. Correct or qualify it before promoting the observability feature, and only advertise signals/runtimes that pass the acceptance matrix. This spec does not make that existing copy true.

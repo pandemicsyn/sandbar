@@ -62,7 +62,7 @@ There is no public catch-all contracts package. Portable definitions belong to t
 
 Apply the names consistently to manifests, exports, dependency ranges, documentation, generated references, examples, tarball tests and Changesets release configuration. Remove superseded unpublished aliases rather than maintaining compatibility layers. Workspace directory names may remain stable; users depend on package names and export paths.
 
-Release the actual distributable graph. Do not include planned providers as releasable packages or phantom exports. Current implementation sequencing lives in [plans](../plans/implementation-plan.md).
+Release the actual distributable graph. Do not include planned providers as releasable packages or phantom exports. Current implementation sequencing lives in [the roadmap](../ROADMAP.md).
 
 Qualify actual packed artifacts with strict external TypeScript consumers and Node/Bun execution: SDK root plus built-in subpaths; an independently authored adapter. Release qualification additionally exercises npm, pnpm and Bun installation without workspace aliases or extra root dependencies masking missing transitive packages.
 

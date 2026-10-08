@@ -16,9 +16,7 @@ Ordinary CI skips live cases. Deterministic fixtures exercise the same assertion
 
 ## Explicitly authorized live runs
 
-The [completed approved feature acceptance plan](next-live-run.md) records the
-five-fixture run, configuration, compute/time bounds and confirmed owned cleanup.
-It grants no additional live budget.
+Completed run plans are retained in Git history. Keep reviewed outcomes and provenance in [results](results/README.md), generated support pages and private custody records. No completed run grants additional live budget; remaining work is tracked in [the roadmap](../../../ROADMAP.md#qualification-gaps).
 
 Prepare a concrete budget and obtain explicit user authorization before running live tests. Credentials or `SANDBAR_LIVE=1` do not grant permission. The preload refuses ordinary CI and missing authorization, then rebuilds packages before SDK imports. Debug runs may use a dirty checkout, but the docs importer rejects dirty-source evidence. Record the exact tested revision; branch and merged revisions use the same command.
 

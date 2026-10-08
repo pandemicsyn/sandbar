@@ -114,12 +114,12 @@ This checklist records the merged PR #33 scope; it does not reopen that PR or ma
 
 ## Later: volume guarantees and mounted restore
 
-See the focused [storage composition proposal](storage-composition.md) for concrete workflows, native limits and bounded delivery slices.
+See the focused [storage composition contract](storage-composition.md) for concrete workflows, native limits and bounded delivery slices.
 
-Schedule these with a concrete provider implementation after this DX unit, rather than making them prerequisites for PR #25:
+The recovery DX slice is complete. Selected-volume Daytona cold restore also merged in #69; schedule only the following remaining extensions against a concrete provider/use case:
 
 - Separate backing technology from observable visibility, rename, locking, concurrent-writer behavior, and durability boundaries. Unknown is valid, but shared schemas must allow verified stronger guarantees. Do not equate object-backed storage with one filesystem contract or reduce durability to an unexplained boolean.
 - Add capacity/placement requirements only when a provider/use case demonstrates the need. Keep real provider defaults in typed adapter configuration; do not introduce a generic provider-options bag.
-- Replace central mounted-restore rejection only when an adapter can implement and verify it. The storage composition proposal recommends the same `MountSpec[]` descriptors for creation and restore, with explicit selection for every recorded mount path. Capabilities describe supported combinations; omission, memory composition and volume copy/version operations remain deferred. Enforce choices before restored processes execute, particularly for memory snapshots. Unknown provenance cannot silently authorize omission or sharing.
+- Extend beyond #69's selected-volume cold restore only with verified native semantics. The implemented API uses `MountSpec[]` for create and restore; mounted-source capture, recorded-mount omission, memory composition and volume copy/version operations remain deferred. Enforce storage choices before restored execution; unknown provenance cannot authorize omission or sharing.
 
 Write the concrete request/result details and qualification cases when that provider work is scheduled. Until then, document the current limitations without advertising inactive extension points as implemented support.
