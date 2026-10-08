@@ -31,11 +31,25 @@ const adapter = defineAdapter({
           return { bytesWritten: input.bytes.length };
         },
         exists: async (input) => bytes.has(input.path),
-        readDirectory: async () => ({
-          entries: [{ name: "report.json", type: "file" }],
-          completeness: "complete",
-          observedAt: new Date().toISOString(),
-        }),
+        readDirectory: async (input) => {
+          const children = new Map();
+
+          for (const path of bytes.keys()) {
+            if (!path.startsWith(`${input.path}/`)) continue;
+            const relative = path.slice(input.path.length + 1);
+            const slash = relative.indexOf("/");
+            children.set(
+              slash < 0 ? relative : relative.slice(0, slash),
+              slash < 0 ? "file" : "directory",
+            );
+          }
+
+          return {
+            entries: Array.from(children, ([name, type]) => ({ name, type })),
+            completeness: "complete",
+            observedAt: new Date().toISOString(),
+          };
+        },
         stat: async (input) => ({ type: "file", sizeBytes: bytes.get(input.path).length }),
         copy: async (input) => {
           bytes.set(input.destination, bytes.get(input.source).slice());
@@ -72,7 +86,7 @@ const adapter = defineAdapter({
         readStream: async (input) =>
           new ReadableStream({
             start(controller) {
-              controller.enqueue(bytes.get(input.path));
+              for (const byte of bytes.get(input.path)) controller.enqueue(Uint8Array.of(byte));
               controller.close();
             },
           }),
@@ -127,6 +141,11 @@ try {
 
   assert.deepEqual(downloaded, [0, 255, 129]);
   assert.equal(artifact.uploaded, 3);
+  assert.deepEqual(artifact.lines, ["ready ✓", "complete"]);
+  assert.deepEqual(
+    artifact.entries.map((entry) => entry.relativePath),
+    ["archive.bin", "final.json", "results", "results/events.txt", "results/report.json"],
+  );
   assert.equal(artifact.directory.completeness, "complete");
   assert.equal(artifact.info.type, "file");
   assert.equal(bytes.size, 0);

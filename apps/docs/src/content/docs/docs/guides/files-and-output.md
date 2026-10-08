@@ -108,6 +108,33 @@ Writes and copies reserve same-directory staging before publication. No-clobber 
 
 See the compiled [artifact recipe](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/directory-files.ts). Deterministic fixtures and packed consumers verify these additions separately from dated live evidence in [provider support](/docs/providers/support/).
 
+## Traversal and text lines
+
+`walkFiles` composes directory reads into deterministic depth-first traversal. It yields `{ name, type, path, relativePath, depth }` entries; the root itself is omitted and immediate children have depth 1. Directory entries are yielded before their descendants. Symlinks and unknown types are yielded without descent. Each directory must have complete enumeration; unreadable subtrees, unknown completeness and entry-budget overflow reject rather than silently skipping data.
+
+```ts
+for await (const entry of box.walkFiles("/home/user/job", {
+  maxDepth: 4,
+  maxEntries: 1000,
+  exclude: ["cache", "results/private.txt"],
+  signal,
+})) {
+  console.log(entry.relativePath, entry.type);
+}
+for await (const line of box.readTextLines("/home/user/job/results/events.txt", {
+  maxLineBytes: 1024,
+  signal,
+})) {
+  console.log(line);
+}
+```
+
+Traversal defaults to depth **32** and **10,000 observed entries**. `maxDepth` is an intentional descent boundary. Exclusions are exact canonical root-relative paths, with directory exclusions pruning whole subtrees; they are not glob patterns. Excluded entries still count against the observed-entry budget. This observes a changing namespace and does not promise a snapshot or confinement against intermediate symlinks.
+
+`readTextLines` incrementally decodes UTF-8 over `readFileStream`, including code points and CRLF split across chunks. It strips LF and CRLF delimiters, preserves lone CR, and yields a final unterminated line without adding an empty line after a final delimiter. Malformed UTF-8 uses replacement characters, matching the text helpers. The default maximum line is **1 MiB of source bytes**, excluding the delimiter; oversized lines reject with `OUTPUT_CAPACITY`. All byte-transfer options, including `maxBytes`, cancellation and timeout overrides, also apply. These SDK helpers need existing directory/stream adapter hooks, with no new provider endpoint. Range reads, batches, glob/search and tree copy remain deferred.
+
+The compiled artifact recipe exercises both helpers through deterministic fixtures and packed consumers. Historical live artifact passes at `2f6afe8` predate these helpers and do not qualify them; current live qualification is recorded separately in provider support.
+
 ## Read command output
 
 ```ts

@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { FILESYSTEM_HELPER, filesystemResult, type FilesystemInput } from "./filesystem";
 import { daytonaProvider, createDaytonaAdapter } from "./index";
 import { Sandbar, AdapterSandbox } from "sandbar-sdk";
+import { artifactFiles } from "../../../../apps/docs/examples/directory-files";
 
 function run(input: FilesystemInput) {
   const result = spawnSync(
@@ -27,6 +28,22 @@ function run(input: FilesystemInput) {
 
   return filesystemResult(result.stdout);
 }
+
+test("recursive mkdir reports possible effects when a parent is created before the leaf fails", () => {
+  const root = mkdtempSync(join(tmpdir(), "sandbar-daytona-mkdir-"));
+  const parent = join(root, "created-parent");
+
+  try {
+    expect(() =>
+      run({ op: "mkdir", path: join(parent, "x".repeat(300)), recursive: true }),
+    ).toThrow(
+      expect.objectContaining({ details: expect.objectContaining({ effect: "possible" }) }),
+    );
+    expect(existsSync(parent)).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("guest filesystem preserves unusual names, dangling links, directory protection and staged copy", () => {
   const root = mkdtempSync(join(tmpdir(), "sandbar-daytona-fs-"));
@@ -372,6 +389,39 @@ test("Daytona public SDK preserves definitive filesystem rejections and artifact
     await box.moveFile(copy, final, { overwrite: true });
     expect(await box.fileExists(copy)).toBe(false);
     expect(await box.readFile(final, { maxBytes: payload.byteLength })).toEqual(payload);
+
+    if (process.platform === "linux") {
+      const chunks: Uint8Array[] = [];
+      const artifactRoot = join(root, "artifacts");
+
+      const artifact = await artifactFiles(
+        box,
+        (async function* () {
+          yield payload.subarray(0, 65536);
+          yield payload.subarray(65536, 131072);
+        })(),
+        {
+          async write(chunk) {
+            chunks.push(chunk);
+          },
+        },
+        artifactRoot,
+      );
+
+      expect(Buffer.concat(chunks)).toEqual(Buffer.from(payload.subarray(0, 131072)));
+      expect(artifact.uploaded).toBe(131072);
+      expect(artifact.directory.completeness).toBe("complete");
+      expect(artifact.lines).toEqual(["ready ✓", "complete"]);
+      expect(artifact.entries.map((entry) => entry.relativePath)).toEqual([
+        "archive.bin",
+        "final.json",
+        "results",
+        "results/events.txt",
+        "results/report.json",
+      ]);
+      expect(existsSync(artifactRoot)).toBe(false);
+    }
+
     await box.removeFile(root, { recursive: true });
     expect(existsSync(root)).toBe(false);
   } finally {

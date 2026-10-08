@@ -1,4 +1,4 @@
-import type { FileEntry, SandboxHandle } from "sandbar-sdk";
+import type { FileEntry, SandboxHandle, WalkFileEntry } from "sandbar-sdk";
 
 /** The same private-filesystem workflow works with Daytona, E2B and custom adapters. */
 export async function directoryFiles(box: SandboxHandle, root = "/home/user/sandbar-job") {
@@ -41,7 +41,23 @@ export async function artifactFiles(
       await destination.write(chunk);
     }
 
-    return { directory, info, uploaded };
+    await box.writeTextFile(`${root}/results/events.txt`, "ready ✓\r\ncomplete\n", { signal });
+    const entries: WalkFileEntry[] = [];
+
+    for await (const entry of box.walkFiles(root, { signal, maxDepth: 2, maxEntries: 32 })) {
+      entries.push(entry);
+    }
+
+    const lines: string[] = [];
+
+    for await (const line of box.readTextLines(`${root}/results/events.txt`, {
+      signal,
+      maxLineBytes: 1024,
+    })) {
+      lines.push(line);
+    }
+
+    return { directory, info, uploaded, entries, lines };
   } finally {
     await box.removeFile(root, { recursive: true });
   }

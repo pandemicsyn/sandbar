@@ -40,6 +40,7 @@ def run():
  if op=='mkdir':
   if os.path.lexists(p) and not os.path.isdir(p): raise OSError(errno.EINVAL,'existing non-directory')
   if x['recursive']:
+   possible=True
    try: os.makedirs(p,exist_ok=True)
    except FileExistsError: raise OSError(errno.EINVAL,'existing entry is not a directory')
   else:

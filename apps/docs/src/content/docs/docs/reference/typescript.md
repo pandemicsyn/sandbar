@@ -64,6 +64,8 @@ Build results contain `prepared` and `retainedResources`. A prepared handle is b
 | `box.moveFile(source, destination, { overwrite?, signal? })`                                 | Same-filesystem native rename; no-clobber by default.                |
 | `box.readFileStream(path, options?)`                                                         | Incremental `AsyncIterable<Uint8Array>` with transfer timeouts.      |
 | `box.writeFileStream(path, chunks, options?)`                                                | Incremental upload; return confirmed byte count.                     |
+| `box.walkFiles(path, { maxDepth?, maxEntries?, exclude?, signal? })`                         | Bounded depth-first traversal with exact subtree exclusions.         |
+| `box.readTextLines(path, { maxLineBytes?, ...transferOptions })`                             | Incremental UTF-8 lines; delimiters removed and line bytes bounded.  |
 | `box.destroy({ signal? })`                                                                   | Wait for confirmed compute termination.                              |
 | `sandbar.close()`                                                                            | Release client resources; does not destroy sandboxes.                |
 

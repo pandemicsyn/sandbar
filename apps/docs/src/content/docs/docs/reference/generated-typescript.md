@@ -70,6 +70,7 @@ Import from `sandbar-sdk`.
 | `ProcessOutput`             | type      |
 | `ProcessTermination`        | type      |
 | `ReadOptions`               | type      |
+| `ReadTextLinesOptions`      | type      |
 | `RecoveredOperation`        | type      |
 | `RecoveryReference`         | type      |
 | `RenewRequest`              | type      |
@@ -103,6 +104,8 @@ Import from `sandbar-sdk`.
 | `VolumeInfo`                | re-export |
 | `WaitAbortedError`          | re-export |
 | `WaitOptions`               | type      |
+| `WalkFileEntry`             | type      |
+| `WalkFilesOptions`          | type      |
 
 ## Daytona adapter
 

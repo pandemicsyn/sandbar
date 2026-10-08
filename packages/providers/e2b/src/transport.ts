@@ -971,12 +971,19 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     async writeStream(id, path, bytes, overwrite, signal, retain) {
       const sandbox = await attach(id, undefined, signal);
       // The pinned SDK otherwise falls back to a whole-file Blob on older envd.
-      const version = attachmentVersions.get(sandbox)?.split(".").map(Number);
+      const rawVersion = attachmentVersions.get(sandbox);
+
+      const version =
+        rawVersion && /^\d+(?:\.\d+){0,2}$/.test(rawVersion)
+          ? rawVersion.split(".").map(Number)
+          : undefined;
+
+      const [major, minor = 0, patch = 0] = version ?? [];
 
       if (
         !version ||
-        version.some((part) => !Number.isInteger(part)) ||
-        (version[0] === 0 && (version[1]! < 5 || (version[1] === 5 && version[2]! < 7)))
+        version.some((part) => !Number.isSafeInteger(part)) ||
+        (major === 0 && (minor < 5 || (minor === 5 && patch < 7)))
       )
         throw new AdapterError("UNSUPPORTED", "E2B streaming writes require envd 0.5.7 or later");
       const parent = path.slice(0, path.lastIndexOf("/")) || "/";

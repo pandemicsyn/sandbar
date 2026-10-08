@@ -18,6 +18,13 @@ import {
   directoryResult,
 } from "./directory-read";
 import { readFileBytes } from "./file-read";
+import {
+  walkFiles,
+  readTextLines,
+  type WalkFilesOptions,
+  type WalkFileEntry,
+  type ReadTextLinesOptions,
+} from "./filesystem-extensions";
 import { freezeReference } from "./freeze-reference";
 import { startProcess, type StartProcessInput, type ProcessHandle } from "./processes";
 import { certifyRecoveryReference, certifyOperationReference } from "./recovery-diagnostics";
@@ -1028,6 +1035,8 @@ export class AdapterSandbox {
       | "writeFile"
       | "destroy"
       | "readDirectory"
+      | "walkFiles"
+      | "readTextLines"
       | "statFile"
       | "readFileStream"
       | "writeFileStream"
@@ -1048,6 +1057,10 @@ export class AdapterSandbox {
     if (feature === "writeFile") return !!this.client.session.files?.write;
 
     if (feature === "readDirectory") return !!this.client.session.files?.readDirectory;
+
+    if (feature === "walkFiles") return !!this.client.session.files?.readDirectory;
+
+    if (feature === "readTextLines") return !!this.client.session.files?.readStream;
 
     if (feature === "statFile") return !!this.client.session.files?.stat;
 
@@ -1264,6 +1277,35 @@ export class AdapterSandbox {
     );
 
     return directoryResult(result);
+  }
+  /** Depth-first traversal, with complete listings and no descent into links or unknown entries. */
+  walkFiles(path: string, options: WalkFilesOptions = {}): AsyncIterable<WalkFileEntry> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    path = directoryPath(path);
+
+    return walkFiles(
+      path,
+      (child) => this.readDirectory(child, options),
+      () => {
+        this.client.ensureOpen();
+
+        if (options.signal?.aborted) throw new SandbarError("WAIT_ABORTED", "Traversal cancelled");
+      },
+      options,
+    );
+  }
+  /** Incrementally decode UTF-8 lines, removing LF/CRLF delimiters and bounding each line. */
+  readTextLines(path: string, options: ReadTextLinesOptions = {}): AsyncIterable<string> {
+    return readTextLines(
+      this.readFileStream(path, options),
+      () => {
+        this.client.ensureOpen();
+
+        if (options.signal?.aborted) throw new SandbarError("WAIT_ABORTED", "Text read cancelled");
+      },
+      options,
+    );
   }
   async statFile(
     path: string,

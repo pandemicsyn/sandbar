@@ -119,3 +119,9 @@ export type {
 } from "./file-transfer";
 
 export type { FileEntry, DirectoryResult, FileStat } from "sandbar-adapter";
+
+export type {
+  WalkFilesOptions,
+  WalkFileEntry,
+  ReadTextLinesOptions,
+} from "./filesystem-extensions";

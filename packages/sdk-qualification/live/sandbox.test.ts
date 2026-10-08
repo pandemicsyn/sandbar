@@ -242,6 +242,14 @@ export async function directories(t: TestResources, box: AdapterSandbox, fileRoo
   expect(artifact.uploaded).toBe(size);
   expect(artifact.directory.completeness).toBe("complete");
   expect(artifact.info.type).toBe("file");
+  expect(artifact.entries.map((entry) => entry.relativePath)).toEqual([
+    "archive.bin",
+    "final.json",
+    "results",
+    "results/events.txt",
+    "results/report.json",
+  ]);
+  expect(artifact.lines).toEqual(["ready ✓", "complete"]);
   expect(downloaded).toBe(size);
   expect(actual.digest("hex")).toBe(expected.digest("hex"));
   expect(await box.fileExists(`${root}/artifacts`, { signal: t.signal })).toBe(false);

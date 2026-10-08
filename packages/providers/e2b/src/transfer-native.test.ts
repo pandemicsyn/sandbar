@@ -1,6 +1,21 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import {
+  appendFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
+import { AdapterSandbox, Sandbar } from "sandbar-sdk";
+import { artifactFiles } from "../../../../apps/docs/examples/directory-files";
+import { createE2BAdapter } from "./index";
 import { createSdkTransport } from "./transport";
 
 const originalFetch = globalThis.fetch;
@@ -23,7 +38,7 @@ function frame(value: ProcessFrame, flags = 0) {
   return result;
 }
 
-function fixture(version = "0.5.7", shortUpload = false) {
+function fixture(version = "0.5.7", shortUpload = false, nativeFilesystem = false) {
   let uploaded = 0;
   let pulled = 0;
   let canceled = 0;
@@ -50,15 +65,25 @@ function fixture(version = "0.5.7", shortUpload = false) {
 
       if (url.pathname.endsWith("/Start")) {
         commands++;
+        let stdout = '{"ok":true,"value":{}}';
+        let exitCode = 0;
+
+        if (nativeFilesystem) {
+          const body = z
+            .object({ process: z.object({ cmd: z.string(), args: z.array(z.string()) }) })
+            .parse(await request.json());
+
+          const execution = spawnSync(body.process.cmd, body.process.args, { encoding: "utf8" });
+          stdout = execution.stdout;
+          exitCode = execution.status ?? 1;
+        }
 
         return new Response(
           new ReadableStream({
             start(controller) {
               controller.enqueue(frame({ event: { start: { pid: commands } } }));
-              controller.enqueue(
-                frame({ event: { data: { stdout: btoa('{"ok":true,"value":{}}') } } }),
-              );
-              controller.enqueue(frame({ event: { end: { exitCode: 0 } } }));
+              controller.enqueue(frame({ event: { data: { stdout: btoa(stdout) } } }));
+              controller.enqueue(frame({ event: { end: { exitCode } } }));
               controller.enqueue(frame({}, 2));
               controller.close();
             },
@@ -75,12 +100,28 @@ function fixture(version = "0.5.7", shortUpload = false) {
             name: "stage",
             path: body.path,
             type: "FILE_TYPE_FILE",
-            size: String(shortUpload ? uploaded - 1 : uploaded),
+            size: String(
+              nativeFilesystem ? statSync(body.path).size : shortUpload ? uploaded - 1 : uploaded,
+            ),
           },
         });
       }
 
       if (url.pathname === "/files" && request.method === "POST") {
+        const path = url.searchParams.get("path")!;
+
+        if (
+          nativeFilesystem &&
+          request.headers.get("Content-Type")?.startsWith("multipart/form-data")
+        ) {
+          const file = (await request.formData()).get("file");
+
+          if (!(file instanceof Blob)) throw new Error("Expected native multipart file");
+          writeFileSync(path, new Uint8Array(await file.arrayBuffer()));
+
+          return Response.json([{ name: "stage", path, type: "file" }]);
+        }
+
         expect(request.headers.get("Content-Type")).toBe("application/octet-stream");
         const reader = request.body!.getReader();
 
@@ -91,6 +132,8 @@ function fixture(version = "0.5.7", shortUpload = false) {
           expect(part.value.byteLength).toBeLessThanOrEqual(65536);
           uploaded += part.value.byteLength;
           hash.update(part.value);
+
+          if (nativeFilesystem) appendFileSync(path, part.value);
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
 
@@ -98,6 +141,7 @@ function fixture(version = "0.5.7", shortUpload = false) {
       }
 
       if (url.pathname === "/files") {
+        if (nativeFilesystem) return new Response(readFileSync(url.searchParams.get("path")!));
         let delivered = 0;
 
         return new Response(
@@ -137,6 +181,55 @@ function fixture(version = "0.5.7", shortUpload = false) {
     digest: () => hash.digest("hex"),
   };
 }
+
+test.skipIf(process.platform !== "linux")(
+  "E2B public SDK runs the shared artifact recipe through native guest transport",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "sandbar-e2b-artifacts-"));
+    const f = fixture("0.5.7", false, true);
+
+    const client = await Sandbar.connect({
+      adapter: createE2BAdapter(() => f.transport),
+      config: { teamId: "team" },
+      credentials: { apiKey: "fixture" },
+    });
+
+    const chunks: Uint8Array[] = [];
+    const payload = new Uint8Array(131072).fill(239);
+
+    try {
+      const artifact = await artifactFiles(
+        new AdapterSandbox(client, "box"),
+        (async function* () {
+          yield payload.subarray(0, 65536);
+          yield payload.subarray(65536);
+        })(),
+        {
+          async write(chunk) {
+            chunks.push(chunk);
+          },
+        },
+        root,
+      );
+
+      expect(Buffer.concat(chunks)).toEqual(Buffer.from(payload));
+      expect(artifact.uploaded).toBe(payload.byteLength);
+      expect(artifact.directory.completeness).toBe("complete");
+      expect(artifact.lines).toEqual(["ready ✓", "complete"]);
+      expect(artifact.entries.map((entry) => entry.relativePath)).toEqual([
+        "archive.bin",
+        "final.json",
+        "results",
+        "results/events.txt",
+        "results/report.json",
+      ]);
+      expect(existsSync(root)).toBe(false);
+    } finally {
+      await client.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("E2B native streams transfer 32 MiB with incremental octet-stream upload and cancellation", async () => {
   const f = fixture();
@@ -197,21 +290,30 @@ test("E2B native streams transfer 32 MiB with incremental octet-stream upload an
   expect(f.canceled()).toBeGreaterThan(0);
 });
 
-test("E2B rejects old envd before staging or consuming a stream", async () => {
-  const f = fixture("0.5.6");
-  let pulled = false;
+test.each(["0.5.6", "0.5", "0", "-1.0.0", ".6.0", "1..0", "1.0.0.0"])(
+  "E2B rejects envd %s before staging or consuming a stream",
+  async (version) => {
+    const f = fixture(version);
+    let pulled = false;
 
-  async function* input() {
-    pulled = true;
-    yield new Uint8Array(1);
-  }
+    async function* input() {
+      pulled = true;
+      yield new Uint8Array(1);
+    }
 
-  await expect(
-    f.transport.writeStream!("box", "/home/user/out", input(), false, new AbortController().signal),
-  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
-  expect(pulled).toBe(false);
-  expect(f.commands()).toBe(0);
-});
+    await expect(
+      f.transport.writeStream!(
+        "box",
+        "/home/user/out",
+        input(),
+        false,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect(pulled).toBe(false);
+    expect(f.commands()).toBe(0);
+  },
+);
 
 test("E2B short acknowledged upload never publishes the staging artifact", async () => {
   const f = fixture("0.5.7", true);

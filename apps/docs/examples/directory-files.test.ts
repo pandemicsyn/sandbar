@@ -35,11 +35,25 @@ test("public directory example preserves bytes and requests recursion deliberate
             { name: "z", type: "unknown" as const },
             { name: "a", type: "symlink" as const },
           ],
-          readDirectory: async () => ({
-            entries: [{ name: "report.json", type: "file" as const }],
-            completeness: "complete" as const,
-            observedAt: new Date().toISOString(),
-          }),
+          readDirectory: async (input) => {
+            const children = new Map<string, "file" | "directory">();
+
+            for (const path of files.keys()) {
+              if (!path.startsWith(`${input.path}/`)) continue;
+              const relative = path.slice(input.path.length + 1);
+              const slash = relative.indexOf("/");
+              children.set(
+                slash < 0 ? relative : relative.slice(0, slash),
+                slash < 0 ? "file" : "directory",
+              );
+            }
+
+            return {
+              entries: Array.from(children, ([name, type]) => ({ name, type })),
+              completeness: "complete" as const,
+              observedAt: new Date().toISOString(),
+            };
+          },
           stat: async (input) => ({
             type: "file" as const,
             sizeBytes: files.get(input.path)!.length,
@@ -79,7 +93,7 @@ test("public directory example preserves bytes and requests recursion deliberate
           readStream: async (input) =>
             new ReadableStream<Uint8Array>({
               start(controller) {
-                controller.enqueue(files.get(input.path)!);
+                for (const byte of files.get(input.path)!) controller.enqueue(Uint8Array.of(byte));
                 controller.close();
               },
             }),
@@ -131,6 +145,14 @@ test("public directory example preserves bytes and requests recursion deliberate
     expect(result.directory.completeness).toBe("complete");
     expect(result.info.type).toBe("file");
     expect(result.uploaded).toBe(3);
+    expect(result.lines).toEqual(["ready ✓", "complete"]);
+    expect(result.entries.map((entry) => entry.relativePath)).toEqual([
+      "archive.bin",
+      "final.json",
+      "results",
+      "results/events.txt",
+      "results/report.json",
+    ]);
     expect(files.size).toBe(0);
     await box.destroy();
   } finally {
