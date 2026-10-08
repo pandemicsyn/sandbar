@@ -2,6 +2,8 @@
 
 Implementation contract · Creation defaults (#58), text helpers (#61) and directory APIs (#59) merged · October 2, 2026
 
+The [filesystem DX plan](filesystem-dx.md) owns upcoming extensions and explicit contract migrations. This document records the shipped baseline.
+
 Make the ordinary workflow short: configure a provider once, create a sandbox, write an input, run a command, read its output and clean up. Creation defaults, text helpers and directory APIs are merged. Exported directory methods retain the unsupported native mappings below; configured creation remains not-run, while supported E2B directory cases passed at `3188e33` in #68. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
 ## Creation defaults belong in adapter setup

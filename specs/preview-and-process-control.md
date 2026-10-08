@@ -2,6 +2,8 @@
 
 Implementation contract · Preview merged in #60; E2B termination merged in #66; finite exec stdin merged in PR #71 · October 6, 2026
 
+The [process IO plan](process-io-dx.md) owns upcoming extensions and explicit contract migrations. This document records the shipped baseline.
+
 Preview access and [default creation and everyday files](sandbox-basics-dx.md) are merged. E2B local-handle termination and finite stdin for ordinary `exec` are implemented; incremental process input and sustained output remain separate future work. Applications should be able to start a server, obtain usable access information and deliberately stop their command. Keep provider choices in setup and common calls short. This brief does not enlarge the shipped [finite streaming contract](interactive-execution-and-access.md).
 
 ## Preview access

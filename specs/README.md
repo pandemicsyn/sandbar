@@ -2,6 +2,13 @@
 
 This directory holds current contracts and focused future design. [ROADMAP.md](../ROADMAP.md) is the only delivery queue. New work targets the SDK and public adapter API; preserve scope/identity validation, unknown-effect handling and no automatic mutation replay. Public usage belongs in [the docs](../apps/docs/README.md), and qualification rules/results belong [with the maintained suites](../packages/sdk-qualification/README.md).
 
+## Active delivery plans
+
+- [Filesystem DX](filesystem-dx.md) — directory browsing and metadata, large transfers, copy/move, and selected traversal/text/range extensions. First slice: F1.
+- [Streaming and interactive processes](process-io-dx.md) — sustained output, status, incremental input, process control and complete application workflows. First slice: P0 transport decision, parallel with F1.
+
+These plans describe proposed changes. The contracts below retain current behavior until each documented migration lands. The roadmap owns sequencing; do not create duplicate implementation queues.
+
 ## Current contracts
 
 | Contract | Implemented scope | Remaining boundary |

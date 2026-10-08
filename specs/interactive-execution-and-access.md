@@ -2,6 +2,8 @@
 
 Implementation contract · Updated October 5, 2026 · E2B streaming (#52), read cancellation (#51) and E2B termination (#66) merged; scoped streaming/file-read workflows passed at `3188e33` in #68
 
+The [process IO plan](process-io-dx.md) owns upcoming extensions and explicit contract migrations. This document records the shipped baseline.
+
 Research baseline: freshly fetched `origin/main` at `d186cea` (PRs #32 and #33 merged). This replaces the broad interactive-execution draft with one delivery decision. Preserve [ordinary results and minimal identities](sdk-recovery-dx.md); its older PR-status sentence is historical. No new persistence callbacks, completion-facts envelopes, continuation framework is required.
 
 Deliver one command start, timely separate stdout/stderr **text**, and confirmed exit through a local handle. Keep bounded `exec()` for binary capture and short commands. First provider: E2B. A text-only first slice is deliberate: neither pinned high-level SDK supplies binary-faithful streaming callbacks. Do not label UTF-8 re-encoded native text as original bytes.
