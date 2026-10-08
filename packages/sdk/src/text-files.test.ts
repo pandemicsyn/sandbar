@@ -70,7 +70,7 @@ async function fixture(
 }
 
 test("text roundtrips empty and multibyte content without changing newlines or byte APIs", async () => {
-  const f = await fixture();
+  const f = await fixture({ maxBytes: 16_777_216 });
 
   try {
     for (const text of ["", "Ada 🌊 café\r\n終\n", "\uFEFFBOM"]) {
@@ -82,6 +82,14 @@ test("text roundtrips empty and multibyte content without changing newlines or b
     await f.box.writeFile("/binary", Uint8Array.of(0, 255, 128));
     expect(await f.box.readFile("/binary")).toEqual(Uint8Array.of(0, 255, 128));
     expect(await f.box.readTextFile("/binary")).toBe("\0��");
+    const large = new Uint8Array(2_097_152).fill(255);
+
+    await expect(f.box.writeFile("/large", large)).rejects.toMatchObject({ code: "CAPACITY" });
+    await f.box.writeFile("/large", large, { maxBytes: large.length });
+    await expect(
+      f.box.writeFile("/large", large, { maxBytes: large.length }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await f.box.readFile("/large", { maxBytes: large.length })).toEqual(large);
   } finally {
     await f.client.close();
   }

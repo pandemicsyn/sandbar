@@ -1559,6 +1559,19 @@ export class AdapterSandbox {
     const limit = bufferedLimit(options.maxBytes, this.client.session.files!.maxBytes);
 
     if (bytes.length > limit) throw new SandbarError("CAPACITY", "File exceeds byte limit");
+
+    if (bytes.length > 1_048_576 && this.client.session.files?.writeStream) {
+      const payload = Uint8Array.from(bytes);
+
+      async function* chunks() {
+        yield payload;
+      }
+
+      await internalMethod(this.writeFileStream)(path, chunks(), options);
+
+      return;
+    }
+
     const payload = Uint8Array.from(bytes);
 
     const op = await this.client.submit(

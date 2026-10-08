@@ -101,7 +101,7 @@ const WriteReceipt = z.strictObject({
   submissionId: z.string().min(1).max(128),
   path: z.string().min(1).max(4096),
   digest: z.string().regex(/^[0-9a-f]{64}$/),
-  bytesWritten: z.number().int().nonnegative().max(1_048_576),
+  bytesWritten: z.number().int().nonnegative().max(16_777_216),
 });
 
 const Input = z.strictObject({
@@ -2128,7 +2128,12 @@ export class DaytonaDriver implements ProviderDriver {
       (input.digest && receipt.digest !== input.digest)
     )
       return null;
-    const actual = await this.readFile({ sandbox: input.sandbox, path: receipt.path });
+
+    const actual = await this.readFile({
+      sandbox: input.sandbox,
+      path: receipt.path,
+      maxBytes: receipt.bytesWritten,
+    });
 
     const digest = Buffer.from(
       await crypto.subtle.digest("SHA-256", new Uint8Array(actual)),

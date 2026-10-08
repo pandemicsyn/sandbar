@@ -200,6 +200,12 @@ for (const method of ["makeDirectory", "removeFile"] as const) {
     });
 
     try {
+      f.code("permission_denied");
+      await expect(box[method]("/home/user/partial", { recursive: true })).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        effect: "possible",
+      });
+      f.code();
       f.lost();
       await expect(box[method]("/home/user/job", { recursive: true })).rejects.toMatchObject({
         code: "OUTCOME_UNKNOWN",
@@ -213,7 +219,7 @@ for (const method of ["makeDirectory", "removeFile"] as const) {
       const recovered = await client.recover(JSON.parse(JSON.stringify(reference)));
       await expect(recovered.observe()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
       await expect(recovered.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
-      expect(f.rpcCalls()).toHaveLength(1);
+      expect(f.rpcCalls()).toHaveLength(2);
     } finally {
       await client.close();
     }

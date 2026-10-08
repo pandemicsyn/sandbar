@@ -231,7 +231,7 @@ const DestroyValueSchema = z.strictObject({
 });
 
 const WriteValueSchema = z.strictObject({
-  bytesWritten: z.number().int().nonnegative().max(1_048_576),
+  bytesWritten: z.number().int().nonnegative().max(16_777_216),
 });
 
 const ExecValueSchema = z.strictObject({

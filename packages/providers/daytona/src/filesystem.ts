@@ -6,6 +6,7 @@ export const FILESYSTEM_HELPER = String.raw`
 import os,sys,json,stat,errno,shutil,ctypes,datetime,tempfile
 x=json.loads(__import__('base64').b64decode(sys.argv[1]))
 applied=False
+possible=False
 stage_directory=None
 def kind(s):
  return 'symlink' if stat.S_ISLNK(s.st_mode) else 'directory' if stat.S_ISDIR(s.st_mode) else 'file' if stat.S_ISREG(s.st_mode) else 'unknown'
@@ -18,7 +19,7 @@ def rename(a,b,overwrite):
  if fn(-100,os.fsencode(a),-100,os.fsencode(b),1)!=0:
   e=ctypes.get_errno(); raise OSError(e,os.strerror(e))
 def run():
- global applied,stage_directory
+ global applied,possible,stage_directory
  op=x['op']; p=x.get('path')
  if op=='list':
   out=[]; names=0
@@ -37,6 +38,7 @@ def run():
   try: os.lstat(p); return True
   except FileNotFoundError: return False
  if op=='mkdir':
+  if os.path.lexists(p) and not os.path.isdir(p): raise OSError(errno.EINVAL,'existing non-directory')
   if x['recursive']:
    try: os.makedirs(p,exist_ok=True)
    except FileExistsError: raise OSError(errno.EINVAL,'existing entry is not a directory')
@@ -49,7 +51,8 @@ def run():
   try: s=os.lstat(p)
   except FileNotFoundError: return True
   if stat.S_ISDIR(s.st_mode):
-   if x['recursive']: shutil.rmtree(p)
+   if x['recursive']:
+    possible=True; shutil.rmtree(p)
    else: os.rmdir(p)
   else: os.unlink(p)
   return True
@@ -80,7 +83,7 @@ def run():
   return True
  raise OSError(errno.EINVAL,'unknown operation')
 try: print(json.dumps({'ok':True,'value':run()},ensure_ascii=True))
-except OSError as e: print(json.dumps({'ok':False,'errno':e.errno,'errorName':errno.errorcode.get(e.errno,'EUNKNOWN'),'applied':applied,'temporaryPaths':[stage_directory] if stage_directory and os.path.lexists(stage_directory) else []}))
+except OSError as e: print(json.dumps({'ok':False,'errno':e.errno,'errorName':errno.errorcode.get(e.errno,'EUNKNOWN'),'applied':applied,'possible':possible,'temporaryPaths':[stage_directory] if stage_directory and os.path.lexists(stage_directory) else []}))
 `;
 
 export function filesystemCommand(input: FilesystemInput): string {
@@ -122,6 +125,7 @@ const GuestResult = z.object({
   errno: z.number().optional(),
   errorName: z.string().optional(),
   applied: z.boolean().optional(),
+  possible: z.boolean().optional(),
   temporaryPaths: z.array(z.string()).optional(),
 });
 
@@ -135,7 +139,9 @@ export function filesystemResult(text: string, input?: FilesystemInput): Filesys
       ? "NOT_FOUND"
       : result.errno === 13 || result.errno === 1
         ? "FORBIDDEN"
-        : result.errno === 17 || result.errno === 39
+        : ["EEXIST", "ENOTEMPTY"].includes(result.errorName ?? "") ||
+            result.errno === 17 ||
+            result.errno === 39
           ? "CONFLICT"
           : result.errno === 27 || result.errno === 28
             ? "CAPACITY"
@@ -146,9 +152,9 @@ export function filesystemResult(text: string, input?: FilesystemInput): Filesys
               ? "UNSUPPORTED"
               : "INVALID_ARGUMENT";
 
-  if (result.applied || result.temporaryPaths?.length)
-    throw new AdapterFilesystemError(code, "Daytona copy cleanup incomplete", {
-      effect: result.applied ? "applied" : "none",
+  if (result.applied || result.possible || result.temporaryPaths?.length)
+    throw new AdapterFilesystemError(code, "Daytona filesystem effects incomplete", {
+      effect: result.applied ? "applied" : result.possible ? "possible" : "none",
       source: input?.source,
       destination: input?.destination,
       temporaryPaths: result.temporaryPaths,

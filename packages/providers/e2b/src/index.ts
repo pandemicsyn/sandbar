@@ -33,6 +33,7 @@ import { MAX_EXEC_STDIN_BYTES } from "sandbar-adapter/portable";
 import {
   E2BLifecycleRejected,
   E2BRenewRejected,
+  E2BDirectoryRejected,
   createSdkTransport,
   E2B_ENDPOINT,
   MAX_BYTES,
@@ -542,18 +543,22 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             input: import("sandbar-adapter").FileMutationInput,
             ctx: import("sandbar-adapter").AttemptContext,
           ) {
+            let recursiveDispatched = false;
+
             try {
               await requireRunning(input.sandbox.id, input.sandbox.reference);
               ctx.signal.throwIfAborted();
 
-              if (input.recursive && makeDirectory)
+              if (input.recursive && makeDirectory) {
+                recursiveDispatched = true;
                 await makeDirectory(input.sandbox.id, input.path, ctx.signal);
-              else await mkdir!(input.sandbox.id, input.path, input.recursive, ctx.signal);
+              } else await mkdir!(input.sandbox.id, input.path, input.recursive, ctx.signal);
 
               return { acknowledged: true as const };
             } catch (error) {
               if (
                 error instanceof AdapterError &&
+                (!recursiveDispatched || error instanceof E2BDirectoryRejected) &&
                 !(error instanceof AdapterFilesystemError && error.details.effect !== "none")
               )
                 return ctx.reject(error.code, error.message);
@@ -583,18 +588,22 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             input: import("sandbar-adapter").FileMutationInput,
             ctx: import("sandbar-adapter").AttemptContext,
           ) {
+            let recursiveDispatched = false;
+
             try {
               await requireRunning(input.sandbox.id, input.sandbox.reference);
               ctx.signal.throwIfAborted();
 
-              if (input.recursive && removeEntry)
+              if (input.recursive && removeEntry) {
+                recursiveDispatched = true;
                 await removeEntry(input.sandbox.id, input.path, ctx.signal);
-              else await unlink!(input.sandbox.id, input.path, input.recursive, ctx.signal);
+              } else await unlink!(input.sandbox.id, input.path, input.recursive, ctx.signal);
 
               return { acknowledged: true as const };
             } catch (error) {
               if (
                 error instanceof AdapterError &&
+                !recursiveDispatched &&
                 !(error instanceof AdapterFilesystemError && error.details.effect !== "none")
               )
                 return ctx.reject(error.code, error.message);

@@ -2125,7 +2125,12 @@ export function createDaytonaAdapter(
 
                 return { acknowledged: true as const };
               } catch (error) {
-                if (error instanceof AdapterError && error.code !== "UNAVAILABLE") throw error;
+                if (
+                  error instanceof AdapterError &&
+                  !(error instanceof AdapterFilesystemError) &&
+                  error.code !== "UNAVAILABLE"
+                )
+                  return ctx.reject(error.code, error.message);
 
                 return ctx.unknown("Daytona mkdir outcome unknown; do not replay");
               }
@@ -2142,7 +2147,12 @@ export function createDaytonaAdapter(
 
                 return { acknowledged: true as const };
               } catch (error) {
-                if (error instanceof AdapterError && error.code !== "UNAVAILABLE") throw error;
+                if (
+                  error instanceof AdapterError &&
+                  !(error instanceof AdapterFilesystemError) &&
+                  error.code !== "UNAVAILABLE"
+                )
+                  return ctx.reject(error.code, error.message);
 
                 return ctx.unknown("Daytona remove outcome unknown; do not replay");
               }
@@ -2258,15 +2268,25 @@ export function createDaytonaAdapter(
                 });
 
               if (input.bytes.byteLength > 1_048_576) {
-                return driver.writeFileStream({
-                  sandbox: native(input.sandbox.id),
-                  path: input.path,
-                  bytes: (async function* () {
-                    yield input.bytes;
-                  })(),
-                  overwrite: input.overwrite,
-                  signal: ctx.signal,
-                });
+                try {
+                  return await driver.writeFileStream({
+                    sandbox: native(input.sandbox.id),
+                    path: input.path,
+                    bytes: (async function* () {
+                      yield input.bytes;
+                    })(),
+                    overwrite: input.overwrite,
+                    signal: ctx.signal,
+                  });
+                } catch (error) {
+                  if (
+                    error instanceof AdapterError &&
+                    !(error instanceof AdapterFilesystemError) &&
+                    error.code !== "UNAVAILABLE"
+                  )
+                    return ctx.reject(error.code, error.message);
+                  throw error;
+                }
               }
 
               const result = await driver.writeFile({

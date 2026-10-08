@@ -52,7 +52,7 @@ export const ReferenceSchema = z.strictObject({
   file: z
     .strictObject({
       path: z.string().min(1).max(4096),
-      bytes: z.number().int().nonnegative().max(1_048_576),
+      bytes: z.number().int().nonnegative().max(16_777_216),
     })
     .optional(),
   maxOutputBytes: z.number().int().nonnegative().max(1_048_576).optional(),
