@@ -130,3 +130,5 @@ Copy opens the source without following its final link, checks the opened descri
 
 
 `walkFiles` and `readTextLines` are SDK compositions over this adapter's directory and byte-stream hooks, with bounded traversal/line lengths and shared artifact-recipe fixture/packed coverage. They add no provider transport or image prerequisite. Historical `2f6afe8` live artifact evidence predates these helpers and does not qualify F4; consult current provider support for separate live evidence. Range reads and batch transfers remain deferred.
+
+The expanded F4 artifact recipe passed live at `e91f2d5`, including nested traversal, UTF-8/CRLF text lines and the 32 MiB SHA-256 roundtrip. The one owned sandbox was destroyed and the client closed. This covers the same borrowed-image configuration as the dated baseline; other images remain unqualified.

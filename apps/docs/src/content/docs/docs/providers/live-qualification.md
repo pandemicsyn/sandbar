@@ -19,10 +19,10 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
-- SDK: 0.0.0, commit `2f6afe851a3b62968f066e912cc897c70b10ea67`.
+- SDK: 0.0.0, commit `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
 - Fresh-process reopen: not recorded.
-- Harness commit: `2f6afe851a3b62968f066e912cc897c70b10ea67`.
-- Evidence: [reviewed record](filesystem-artifacts-daytona-2f6afe85).
+- Harness commit: `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
+- Evidence: [reviewed record](filesystem-f4-daytona-e91f2d5).
 
 | Scenario                | Latest live result | Date       |
 | ----------------------- | ------------------ | ---------- |
@@ -212,10 +212,10 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-template / api-key.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
-- SDK: 0.0.0, commit `2f6afe851a3b62968f066e912cc897c70b10ea67`.
+- SDK: 0.0.0, commit `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
 - Fresh-process reopen: not recorded.
-- Harness commit: `2f6afe851a3b62968f066e912cc897c70b10ea67`.
-- Evidence: [reviewed record](filesystem-artifacts-e2b-2f6afe85).
+- Harness commit: `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
+- Evidence: [reviewed record](filesystem-f4-e2b-e91f2d5).
 
 | Scenario                      | Latest live result | Date       |
 | ----------------------------- | ------------------ | ---------- |

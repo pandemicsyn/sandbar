@@ -173,3 +173,5 @@ Both providers passed at `2f6afe8` on October 8, 2026 (Bun 1.3.14/darwin-arm64),
 
 
 The current shared artifact recipe also walks its nested outputs and reads UTF-8 text lines. Deterministic and packed fixtures split the UTF-8 code point and CRLF across byte chunks. Historical `2f6afe8` passes used the earlier recipe and do not qualify the F4 additions; a fresh authorized run must verify traversal/line results and owned cleanup before recording F4 live evidence.
+
+F4 qualification at `e91f2d5` ran that same compiled recipe once per provider, adding nested `walkFiles` results and Unicode/CRLF `readTextLines` assertions while retaining the 32 MiB SHA-256 transfer. Daytona borrowed Linux/us/daytona-default and E2B borrowed base passed on Bun 1.3.14/darwin-arm64. Two total compute allocations, peak one, zero snapshots/volumes/builds; both sandbox destructions and client closes were confirmed. Prior evidence remains unchanged; other configurations are unqualified.

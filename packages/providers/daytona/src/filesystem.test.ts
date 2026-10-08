@@ -303,69 +303,69 @@ test("Daytona transfer transport streams 32 MiB with incremental multipart input
 
 test("Daytona public SDK preserves definitive filesystem rejections and artifact workflow outcomes", async () => {
   const root = mkdtempSync(join(tmpdir(), "sandbar-daytona-public-files-"));
-
-  const transport: typeof fetch = Object.assign(
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = new URL(String(input));
-
-      if (url.pathname.endsWith("/api-keys/current"))
-        return Response.json({ organizationId: "org" });
-
-      if (url.pathname.endsWith("/regions"))
-        return Response.json([{ id: "us", name: "us", regionType: "shared" }]);
-
-      if (url.pathname.endsWith("/organizations/org"))
-        return Response.json({ id: "org", sandboxLimitedNetworkEgress: false });
-
-      if (url.pathname === "/api/sandbox/box")
-        return Response.json({
-          id: "box",
-          name: "box",
-          organizationId: "org",
-          target: "us",
-          state: "started",
-          networkBlockAll: true,
-          public: false,
-          toolboxProxyUrl: "https://proxy.app.daytona.io/toolbox",
-        });
-
-      if (url.pathname.endsWith("/process/execute")) {
-        const request = z.object({ command: z.string() }).parse(JSON.parse(String(init?.body)));
-        const execution = spawnSync("sh", ["-c", request.command], { encoding: "utf8" });
-
-        return Response.json({ result: execution.stdout, exitCode: execution.status });
-      }
-
-      if (url.pathname.endsWith("/files/upload-v2")) {
-        const form = await new Response(init?.body, {
-          headers: { "content-type": new Headers(init?.headers).get("content-type")! },
-        }).formData();
-
-        const file = form.get("file");
-
-        if (!(file instanceof Blob)) throw new Error("Expected multipart upload file");
-        const path = url.searchParams.get("path")!;
-        writeFileSync(path, new Uint8Array(await file.arrayBuffer()));
-
-        return Response.json({ path, name: "payload", type: "file" });
-      }
-
-      if (url.pathname.endsWith("/files/download"))
-        return new Response(readFileSync(url.searchParams.get("path")!));
-      throw new Error(`Unexpected public filesystem fixture route ${url.pathname}`);
-    },
-    { preconnect: fetch.preconnect },
-  );
-
-  const client = await Sandbar.connect({
-    adapter: createDaytonaAdapter(transport),
-    config: { target: "us" },
-    credentials: { apiKey: "fixture" },
-  });
-
-  const box = new AdapterSandbox(client, "box");
+  let client: Awaited<ReturnType<typeof Sandbar.connect>> | undefined;
 
   try {
+    const transport: typeof fetch = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+
+        if (url.pathname.endsWith("/api-keys/current"))
+          return Response.json({ organizationId: "org" });
+
+        if (url.pathname.endsWith("/regions"))
+          return Response.json([{ id: "us", name: "us", regionType: "shared" }]);
+
+        if (url.pathname.endsWith("/organizations/org"))
+          return Response.json({ id: "org", sandboxLimitedNetworkEgress: false });
+
+        if (url.pathname === "/api/sandbox/box")
+          return Response.json({
+            id: "box",
+            name: "box",
+            organizationId: "org",
+            target: "us",
+            state: "started",
+            networkBlockAll: true,
+            public: false,
+            toolboxProxyUrl: "https://proxy.app.daytona.io/toolbox",
+          });
+
+        if (url.pathname.endsWith("/process/execute")) {
+          const request = z.object({ command: z.string() }).parse(JSON.parse(String(init?.body)));
+          const execution = spawnSync("sh", ["-c", request.command], { encoding: "utf8" });
+
+          return Response.json({ result: execution.stdout, exitCode: execution.status });
+        }
+
+        if (url.pathname.endsWith("/files/upload-v2")) {
+          const form = await new Response(init?.body, {
+            headers: { "content-type": new Headers(init?.headers).get("content-type")! },
+          }).formData();
+
+          const file = form.get("file");
+
+          if (!(file instanceof Blob)) throw new Error("Expected multipart upload file");
+          const path = url.searchParams.get("path")!;
+          writeFileSync(path, new Uint8Array(await file.arrayBuffer()));
+
+          return Response.json({ path, name: "payload", type: "file" });
+        }
+
+        if (url.pathname.endsWith("/files/download"))
+          return new Response(readFileSync(url.searchParams.get("path")!));
+        throw new Error(`Unexpected public filesystem fixture route ${url.pathname}`);
+      },
+      { preconnect: fetch.preconnect },
+    );
+
+    client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(transport),
+      config: { target: "us" },
+      credentials: { apiKey: "fixture" },
+    });
+
+    const box = new AdapterSandbox(client, "box");
     await box.makeDirectory(join(root, "results"), { recursive: true });
     const source = join(root, "results", "source.bin");
     const payload = new Uint8Array(2 * 1024 * 1024).fill(239);
@@ -425,7 +425,10 @@ test("Daytona public SDK preserves definitive filesystem rejections and artifact
     await box.removeFile(root, { recursive: true });
     expect(existsSync(root)).toBe(false);
   } finally {
-    await client.close();
-    rmSync(root, { recursive: true, force: true });
+    try {
+      await client?.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });

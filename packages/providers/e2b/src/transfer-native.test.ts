@@ -186,18 +186,20 @@ test.skipIf(process.platform !== "linux")(
   "E2B public SDK runs the shared artifact recipe through native guest transport",
   async () => {
     const root = mkdtempSync(join(tmpdir(), "sandbar-e2b-artifacts-"));
-    const f = fixture("0.5.7", false, true);
-
-    const client = await Sandbar.connect({
-      adapter: createE2BAdapter(() => f.transport),
-      config: { teamId: "team" },
-      credentials: { apiKey: "fixture" },
-    });
-
-    const chunks: Uint8Array[] = [];
-    const payload = new Uint8Array(131072).fill(239);
+    let client: Awaited<ReturnType<typeof Sandbar.connect>> | undefined;
 
     try {
+      const f = fixture("0.5.7", false, true);
+
+      client = await Sandbar.connect({
+        adapter: createE2BAdapter(() => f.transport),
+        config: { teamId: "team" },
+        credentials: { apiKey: "fixture" },
+      });
+
+      const chunks: Uint8Array[] = [];
+      const payload = new Uint8Array(131072).fill(239);
+
       const artifact = await artifactFiles(
         new AdapterSandbox(client, "box"),
         (async function* () {
@@ -225,8 +227,11 @@ test.skipIf(process.platform !== "linux")(
       ]);
       expect(existsSync(root)).toBe(false);
     } finally {
-      await client.close();
-      rmSync(root, { recursive: true, force: true });
+      try {
+        await client?.close();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     }
   },
 );

@@ -133,7 +133,7 @@ Traversal defaults to depth **32** and **10,000 observed entries**. `maxDepth` i
 
 `readTextLines` incrementally decodes UTF-8 over `readFileStream`, including code points and CRLF split across chunks. It strips LF and CRLF delimiters, preserves lone CR, and yields a final unterminated line without adding an empty line after a final delimiter. Malformed UTF-8 uses replacement characters, matching the text helpers. The default maximum line is **1 MiB of source bytes**, excluding the delimiter; oversized lines reject with `OUTPUT_CAPACITY`. All byte-transfer options, including `maxBytes`, cancellation and timeout overrides, also apply. These SDK helpers need existing directory/stream adapter hooks, with no new provider endpoint. Range reads, batches, glob/search and tree copy remain deferred.
 
-The compiled artifact recipe exercises both helpers through deterministic fixtures and packed consumers. Historical live artifact passes at `2f6afe8` predate these helpers and do not qualify them; current live qualification is recorded separately in provider support.
+The compiled artifact recipe exercises both helpers through deterministic fixtures and packed consumers. Historical live artifact passes at `2f6afe8` predate these helpers and do not qualify them; the expanded recipe passed at `e91f2d5` on both borrowed provider images with confirmed cleanup. Exact scope is recorded in provider support.
 
 ## Read command output
 
