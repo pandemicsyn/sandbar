@@ -99,7 +99,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       directories: {
         support: "conditional",
-        note: "Complete listFiles/readDirectory, statFile, existence and recursive-opt-in mkdir/remove use a bounded Python3 helper on private Linux filesystems. Dangling links remain entries; nonrecursive remove uses rmdir/unlink. Copy and move use native race-safe publication; no-clobber rename needs Linux renameat2. Mounted destinations are unsupported for staged transfer mutations. These additions have native-boundary fixtures; historical files passes do not qualify the new directory/transfer/artifact workflow. Expanded file-directories includes one 32 MiB hash-checked stream roundtrip; no live pass for that expanded body yet.",
+        note: "Complete listFiles/readDirectory, statFile, existence and recursive-opt-in mkdir/remove use a bounded Python3 helper on private Linux filesystems. Dangling links remain entries; nonrecursive remove uses rmdir/unlink. Copy and move use native race-safe publication; no-clobber rename needs Linux renameat2. Mounted destinations are unsupported for staged transfer mutations. Expanded file-directories passed at 2f6afe8 on borrowed Linux container/us/daytona-default: complete browsing/metadata, recursive-opt-in mutation, copy/move and the shared compiled artifact recipe with a 32 MiB hash-checked stream roundtrip. Sandbox destruction/client close confirmed. Earlier mkdir rejection failures at cd89f31 and 6d7ddc7 remain recorded with confirmed cleanup. Other images/mounts are unqualified.",
       },
       renewal: {
         support: "conditional",
@@ -177,7 +177,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       directories: {
         support: "conditional",
-        note: "Complete listFiles/readDirectory and statFile use a bounded Python3 helper; native lstat existence preserves dangling links. Recursive native primitives and race-safe helper nonrecursive mkdir/remove preserve opt-in. Parent links follow; recursive removal does not walk links. Copy/file stream publication uses same-directory staging and hardlinks; move no-clobber needs Linux renameat2. Stream upload requires envd >=0.5.7 to prevent native whole-file buffering. Original recursive-directory case passed at 3188e33 with owned cleanup; it does not qualify the expanded directory/32 MiB transfer/artifact workflow. New methods have native-boundary fixtures; other templates/guest versions remain unqualified.",
+        note: "Complete listFiles/readDirectory and statFile use a bounded Python3 helper; native lstat existence preserves dangling links. Recursive native primitives and race-safe helper nonrecursive mkdir/remove preserve opt-in. Parent links follow; recursive removal does not walk links. Copy/file stream publication uses same-directory staging and hardlinks; move no-clobber needs Linux renameat2. Stream upload requires envd >=0.5.7 to prevent native whole-file buffering. Original recursive-directory case passed at 3188e33 with owned cleanup; it does not qualify the expanded directory/32 MiB transfer/artifact workflow. Expanded file-directories passed at 2f6afe8 on borrowed base/Bun 1.3.14: complete browsing/metadata, recursive-opt-in mutations, copy/move and the shared compiled recipe with 32 MiB hash-checked byte streams. Owned sandbox destruction/client close confirmed. Other templates/guest versions remain unqualified.",
       },
       renewal: {
         support: "conditional",

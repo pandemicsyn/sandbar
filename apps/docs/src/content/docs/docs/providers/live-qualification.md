@@ -19,6 +19,19 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `2f6afe851a3b62968f066e912cc897c70b10ea67`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `2f6afe851a3b62968f066e912cc897c70b10ea67`.
+- Evidence: [reviewed record](filesystem-artifacts-daytona-2f6afe85).
+
+| Scenario                | Latest live result | Date       |
+| ----------------------- | ------------------ | ---------- |
+| file-directories (/tmp) | passed             | 2026-10-08 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
 - SDK: 0.0.0, commit `5911cccddd3a25e8af1c0082ac5699875c831655`.
 - Fresh-process reopen: not recorded.
 - Harness commit: `5911cccddd3a25e8af1c0082ac5699875c831655`.
@@ -199,19 +212,31 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-template / api-key.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `2f6afe851a3b62968f066e912cc897c70b10ea67`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `2f6afe851a3b62968f066e912cc897c70b10ea67`.
+- Evidence: [reviewed record](filesystem-artifacts-e2b-2f6afe85).
+
+| Scenario                      | Latest live result | Date       |
+| ----------------------------- | ------------------ | ---------- |
+| file-directories (/home/user) | passed             | 2026-10-08 |
+
+### blocked-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
 - SDK: 0.0.0, commit `3188e33327325d4eec22e39f4b627d7f900c8838`.
 - Fresh-process reopen: not recorded.
 - Harness commit: `3188e33327325d4eec22e39f4b627d7f900c8838`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/68).
 
-| Scenario                      | Latest live result | Date       |
-| ----------------------------- | ------------------ | ---------- |
-| execution-streaming           | passed             | 2026-10-02 |
-| file-directories (/home/user) | passed             | 2026-10-02 |
-| files (/home/user)            | passed             | 2026-10-02 |
-| lifecycle-renew               | passed             | 2026-10-02 |
-| lifecycle-reopen              | passed             | 2026-10-02 |
-| preview-public                | passed             | 2026-10-02 |
+| Scenario            | Latest live result | Date       |
+| ------------------- | ------------------ | ---------- |
+| execution-streaming | passed             | 2026-10-02 |
+| files (/home/user)  | passed             | 2026-10-02 |
+| lifecycle-renew     | passed             | 2026-10-02 |
+| lifecycle-reopen    | passed             | 2026-10-02 |
+| preview-public      | passed             | 2026-10-02 |
 
 ### blocked-requested · native-default · /home/user
 

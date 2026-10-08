@@ -67,7 +67,7 @@ Destroy each sandbox explicitly, then close the client. Native timeout is a fall
 
 The pinned `e2b@2.51.0` client downloads through a streaming response and uploads an octet-stream body incrementally. Stream upload requires a compatible envd version, checked before staging. Writes reserve a correlated same-directory staging file and publish once with native rename collision handling. Copy stages regular-file bytes with bounded guest IO. Move uses native same-filesystem rename without copy/delete. Guest detail still verifies running, auto-resume-off routing before IO. Request abort is best effort, and uncertain publish or cleanup retains known paths without replay.
 
-The expanded ordinary Bun `file-directories` case includes the artifact workflow and one 32 MiB streaming roundtrip with a complete SHA-256 comparison. Historical directory/file passes cover their original methods and source revisions; they do not qualify these additions. Native-boundary fixtures, packed consumers and new live results are reported separately in [provider support](/docs/providers/support/).
+The expanded ordinary Bun `file-directories` case passed at `2f6afe8` on October 8, 2026, using the shared compiled artifact recipe and one 32 MiB streaming roundtrip with a complete SHA-256 comparison. Owned sandbox destruction and client close were confirmed. This qualifies the recorded borrowed image/configuration; other images and mounted storage remain outside that pass. Native-boundary fixtures, packed consumers and exact live provenance are reported separately in [provider support](/docs/providers/support/).
 
 ## Configured lifetime renewal
 

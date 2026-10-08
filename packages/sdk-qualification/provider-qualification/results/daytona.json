@@ -1574,6 +1574,93 @@
         "testName": "storage-composition"
       },
       "evidenceRef": "https://github.com/pandemicsyn/sandbar/pull/69"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "cd89f3192a4abe3f67614f362117050603ecac91",
+      "harnessCommit": "cd89f3192a4abe3f67614f362117050603ecac91",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-10-08T14:22:20.715Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "file-directories",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "file-directories"
+      },
+      "evidenceRef": "filesystem-artifacts-daytona-cd89f319"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "6d7ddc72a52f9659159fa4bfd4a201cc39c033a7",
+      "harnessCommit": "6d7ddc72a52f9659159fa4bfd4a201cc39c033a7",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-10-08T14:24:55.860Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "file-directories",
+      "status": "failed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "file-directories"
+      },
+      "evidenceRef": "filesystem-artifacts-daytona-6d7ddc72"
+    },
+    {
+      "provider": "daytona",
+      "sdkCommit": "2f6afe851a3b62968f066e912cc897c70b10ea67",
+      "harnessCommit": "2f6afe851a3b62968f066e912cc897c70b10ea67",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "Daytona REST 0.218",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-10-08T14:35:20.723Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/tmp",
+        "templateClass": "borrowed-snapshot",
+        "authorityClass": "verified-organization",
+        "network": "daytona-default-requested",
+        "regionClass": "us"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "file-directories",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "file-directories"
+      },
+      "evidenceRef": "filesystem-artifacts-daytona-2f6afe85"
     }
   ],
   "historicalEvidence": [

@@ -70,7 +70,7 @@ The live baseline uses the prepared `daytona-small` workflow in `us`; it does no
 
 Transfers use the existing authenticated `/files/download` response body and incremental multipart `/files/upload-v2` request body. Writes reserve a private same-directory staging directory, then publish once with native rename collision handling. Copy stages regular-file bytes with bounded guest IO. Move uses native same-filesystem rename and never falls back to copy/delete. Object-backed mounted destinations cannot provide the staging/publication guarantee and reject these mutations before effects; private-filesystem guarantees do not qualify mounted storage. Request abort is best effort, and uncertain publish or cleanup retains known paths without replay.
 
-The expanded ordinary Bun `file-directories` case includes the artifact workflow and one 32 MiB streaming roundtrip with a complete SHA-256 comparison. Historical directory/file passes cover their original methods and source revisions; they do not qualify these additions. Native-boundary fixtures, packed consumers and new live results are reported separately in [provider support](/docs/providers/support/).
+The expanded ordinary Bun `file-directories` case passed at `2f6afe8` on October 8, 2026, using the shared compiled artifact recipe and one 32 MiB streaming roundtrip with a complete SHA-256 comparison. Owned sandbox destruction and client close were confirmed. This qualifies the recorded borrowed image/configuration; other images and mounted storage remain outside that pass. Native-boundary fixtures, packed consumers and exact live provenance are reported separately in [provider support](/docs/providers/support/).
 
 ## Configured lifetime renewal
 
