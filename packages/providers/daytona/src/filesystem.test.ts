@@ -339,9 +339,12 @@ test("Daytona public SDK preserves definitive filesystem rejections and artifact
         }
 
         if (url.pathname.endsWith("/files/upload-v2")) {
-          const form = await new Response(init?.body, {
-            headers: { "content-type": new Headers(init?.headers).get("content-type")! },
-          }).formData();
+          const form =
+            init?.body instanceof FormData
+              ? init.body
+              : await new Response(init?.body, {
+                  headers: { "content-type": new Headers(init?.headers).get("content-type")! },
+                }).formData();
 
           const file = form.get("file");
 

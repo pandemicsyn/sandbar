@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -50,18 +51,43 @@ function fixture(version = "0.5.7", shortUpload = false, nativeFilesystem = fals
       const request = input instanceof Request ? input : new Request(input, init);
       const url = new URL(request.url);
 
+      if (url.origin === "https://api.e2b.app" && url.pathname.startsWith("/teams/"))
+        return Response.json({});
+
       if (url.origin === "https://api.e2b.app")
         return Response.json({
           sandboxID: "box",
           templateID: "base",
           state: "running",
-          metadata: {},
+          metadata: nativeFilesystem
+            ? {
+                sandbar_scope: "team:base",
+                sandbar_template: "base",
+                sandbar_operation: "op_seed",
+                sandbar_submission: "sub_seed",
+              }
+            : {},
           envdVersion: version,
           envdAccessToken: "token",
           domain: "e2b.app",
           lifecycle: { autoResume: false },
+          network: { allowPublicTraffic: false },
         });
       expect(request.headers.get("X-Access-Token")).toBe("token");
+
+      if (nativeFilesystem && url.pathname.endsWith("/MakeDir")) {
+        const body = z.object({ path: z.string() }).parse(await request.json());
+        mkdirSync(body.path, { recursive: true });
+
+        return Response.json({});
+      }
+
+      if (nativeFilesystem && url.pathname.endsWith("/Remove")) {
+        const body = z.object({ path: z.string() }).parse(await request.json());
+        rmSync(body.path, { recursive: true, force: true });
+
+        return Response.json({});
+      }
 
       if (url.pathname.endsWith("/Start")) {
         commands++;
@@ -69,9 +95,11 @@ function fixture(version = "0.5.7", shortUpload = false, nativeFilesystem = fals
         let exitCode = 0;
 
         if (nativeFilesystem) {
+          const requestBytes = new Uint8Array(await request.arrayBuffer());
+
           const body = z
             .object({ process: z.object({ cmd: z.string(), args: z.array(z.string()) }) })
-            .parse(await request.json());
+            .parse(JSON.parse(new TextDecoder().decode(requestBytes.subarray(5))));
 
           const execution = spawnSync(body.process.cmd, body.process.args, { encoding: "utf8" });
           stdout = execution.stdout;
