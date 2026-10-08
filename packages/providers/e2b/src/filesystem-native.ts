@@ -54,7 +54,7 @@ try:
    if overwrite: os.makedirs(p,exist_ok=True)
    else: os.mkdir(p)
   except FileExistsError:
-   if not os.path.isdir(p): raise
+   if not os.path.isdir(p): raise OSError(errno.EINVAL,'existing entry is not a directory')
  elif op=='remove':
   try:
    s=os.lstat(p)

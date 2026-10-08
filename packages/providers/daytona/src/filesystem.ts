@@ -37,11 +37,13 @@ def run():
   try: os.lstat(p); return True
   except FileNotFoundError: return False
  if op=='mkdir':
-  if x['recursive']: os.makedirs(p,exist_ok=True)
+  if x['recursive']:
+   try: os.makedirs(p,exist_ok=True)
+   except FileExistsError: raise OSError(errno.EINVAL,'existing entry is not a directory')
   else:
    try: os.mkdir(p)
    except FileExistsError:
-    if not os.path.isdir(p): raise
+    if not os.path.isdir(p): raise OSError(errno.EINVAL,'existing entry is not a directory')
   return True
  if op=='remove':
   try: s=os.lstat(p)

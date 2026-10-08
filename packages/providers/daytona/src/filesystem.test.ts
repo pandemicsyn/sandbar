@@ -43,6 +43,12 @@ test("guest filesystem preserves unusual names, dangling links, directory protec
       { name: "quote'\n雪.bin", type: "file" },
     ]);
     expect(run({ op: "exists", path: join(root, "dangling") })).toBe(true);
+    expect(() => run({ op: "mkdir", path: source, recursive: true })).toThrow(
+      expect.objectContaining({ code: "INVALID_ARGUMENT" }),
+    );
+    expect(() => run({ op: "mkdir", path: source, recursive: false })).toThrow(
+      expect.objectContaining({ code: "INVALID_ARGUMENT" }),
+    );
     symlinkSync(join(root, "empty"), join(root, "directory-link"));
     expect(run({ op: "mkdir", path: join(root, "directory-link"), recursive: false })).toBe(true);
     writeFileSync(join(root, "empty", "child"), "intermediate-link");

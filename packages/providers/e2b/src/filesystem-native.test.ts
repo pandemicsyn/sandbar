@@ -38,6 +38,10 @@ test("E2B guest helper preserves unusual names, dangling links and nonrecursive 
     expect(await helper("remove", join(root, "directory-link"))).toMatchObject({ ok: true });
     expect(await readFile(join(root, "directory", "child"), "utf8")).toBe("retained");
     expect((await helper("stat", join(root, "dangling"))).value.type).toBe("symlink");
+    expect(await helper("mkdir", join(root, name))).toMatchObject({
+      ok: false,
+      code: "INVALID_ARGUMENT",
+    });
     expect(await helper("stat", join(root, "dangling"), "", true)).toMatchObject({
       ok: false,
       code: "NOT_FOUND",
