@@ -52,9 +52,13 @@ jobs:
               echo 'packed=false' >> "$GITHUB_OUTPUT"
             fi
           fi
-      - run: bun run lint && bun run format:check
-      - name: Build shared packages once, in dependency order
-        run: bun run build:packages
+      - parallel:
+          - name: Lint
+            run: bun run lint
+          - name: Check formatting
+            run: bun run format:check
+          - name: Build shared packages once, in dependency order
+            run: bun run build:packages
       - run: bun run check:built
       - name: Archive fresh outputs for this commit and run
         run: |
@@ -108,10 +112,11 @@ jobs:
           path: ${{ runner.temp }}
       - name: Restore this run's build outputs
         run: tar -xzf "$RUNNER_TEMP/sandbar-build.tar.gz"
-      - name: Packed Node and Bun consumers
-        run: bun run package:smoke:built
-      - name: Local OpenTelemetry, Sentry and Datadog fixtures
-        run: bun run observability:check
+      - parallel:
+          - name: Packed Node and Bun consumers
+            run: bun run package:smoke:built
+          - name: Local OpenTelemetry, Sentry and Datadog fixtures
+            run: bun run observability:check
   docs:
     needs: build
     runs-on: ubuntu-latest
