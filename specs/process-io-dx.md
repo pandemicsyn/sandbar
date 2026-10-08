@@ -10,6 +10,18 @@ The minimum target is sustained separate stdout/stderr text, incremental byte/te
 
 Today E2B streams through a local handle with a cumulative 1 MiB cap because its pinned native client retains output. Daytona has no public process-stream mapping. Process stdin is closed, handles cannot reopen, and termination is E2B-only with documented PID races. These are implementation gaps to address, not desired permanent ergonomics.
 
+## Portable abstraction acceptance rule
+
+Design the public SDK and public adapter hooks for Daytona, E2B and future providers such as Tensorlake. The initial built-ins are implementation targets, not the definition of the interface. Future provider support is a design requirement, not a claim that its native behavior has already been researched or qualified.
+
+Application methods express intent and observable results. Adapters own native endpoints, SDK clients, sessions, transport selection, staging, helper commands and cleanup of their implementation resources. A provider needing several native calls for one SDK operation is adapter work, not a reason to make the application orchestrate those calls. Keep provider-name branching out of the portable runtime and application examples.
+
+Options belong in the public method only when the caller has a meaningful choice about behavior. Provider configuration may expose genuine deployment prerequisites or policy choices; it must not require selecting native RPCs, session protocols or unavoidable internal steps. Resolve those mechanics automatically. Low-level adapter hooks normalize outcomes and errors without leaking native response shapes, credentials or transport tokens into ordinary application code.
+
+Missing a native convenience endpoint does not by itself mean the SDK operation is unsupported. Implement a faithful adapter workflow where feasible. Report unsupported before effects when the required behavior truly cannot be delivered; never silently weaken a requested guarantee. Express unavoidable differences as useful facts such as unknown metadata, incomplete output or unsupported signals, rather than provider-specific control flow.
+
+Acceptance includes the same compiled application workflow against both built-in fixtures, plus an independently authored fake adapter with different mechanics. Substituting adapter setup must not require changing method names, supplying native options, or importing a provider SDK. New adapters implementing existing behavior must not require changes to the portable runtime. Add a generic capability only when a new observable behavior genuinely needs one. Review the ordinary example before accepting the internal implementation.
+
 ## Target application API
 
 Reuse `box.processes.start`, the command union, `output`, `wait`, `terminate` and `detach`; do not add a competing `runCommand` or process framework. The following additions are proposed, not exported:
