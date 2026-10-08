@@ -156,17 +156,8 @@ test("E2B native mkdir/remove require explicit recursion, issue one RPC and pres
   const { client, box } = await create(f);
 
   try {
-    expect(box.supports("listFiles")).toBe(false);
+    expect(box.supports("listFiles")).toBe(true);
     expect(box.supports("fileExists")).toBe(true);
-    await expect(box.listFiles("/home/user")).rejects.toMatchObject({ code: "UNSUPPORTED" });
-    await expect(box.makeDirectory("/home/user/a/b")).rejects.toMatchObject({
-      code: "UNSUPPORTED",
-      effect: "none",
-    });
-    await expect(box.removeFile("/home/user/nonempty")).rejects.toMatchObject({
-      code: "UNSUPPORTED",
-      effect: "none",
-    });
     await expect(box.removeFile("///", { recursive: true })).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
       effect: "none",

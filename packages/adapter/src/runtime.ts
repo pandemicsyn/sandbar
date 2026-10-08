@@ -77,6 +77,12 @@ export type RuntimeSession = Omit<
     maxBytes: number;
     read?: NonNullable<AdapterSession["files"]>["read"];
     write?: unknown;
+    readDirectory?: NonNullable<AdapterSession["files"]>["readDirectory"];
+    stat?: NonNullable<AdapterSession["files"]>["stat"];
+    readStream?: NonNullable<AdapterSession["files"]>["readStream"];
+    writeStream?: NonNullable<AdapterSession["files"]>["writeStream"];
+    copy?: NonNullable<AdapterSession["files"]>["copy"];
+    move?: NonNullable<AdapterSession["files"]>["move"];
     list?: NonNullable<AdapterSession["files"]>["list"];
     exists?: NonNullable<AdapterSession["files"]>["exists"];
     makeDirectory?: unknown;

@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import {
   MountDurability as importMountDurability,
   AdapterError,
+  AdapterFilesystemError,
   AdapterCheckpointError,
   ResourceReference,
   type OperationOutcome,
@@ -32,7 +33,6 @@ import { MAX_EXEC_STDIN_BYTES } from "sandbar-adapter/portable";
 import {
   E2BLifecycleRejected,
   E2BRenewRejected,
-  E2BDirectoryRejected,
   createSdkTransport,
   E2B_ENDPOINT,
   MAX_BYTES,
@@ -507,11 +507,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
       const entryExists = transport.exists;
       const makeDirectory = transport.makeDirectory;
+      const mkdir = transport.mkdir;
+      const unlink = transport.unlink;
       const removeEntry = transport.removeEntry;
 
-      const directoryOperations: Pick<
-        NonNullable<import("sandbar-adapter").AdapterSession["files"]>,
-        "exists" | "makeDirectory" | "remove"
+      const directoryOperations: Partial<
+        NonNullable<import("sandbar-adapter").AdapterSession["files"]>
       > = {};
 
       if (entryExists)
@@ -526,12 +527,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           return entryExists(input.sandbox.id, input.path, ctx.signal);
         };
 
-      if (makeDirectory)
+      if (makeDirectory || mkdir)
         directoryOperations.makeDirectory = {
           async prepare(input: import("sandbar-adapter").FileMutationInput) {
             requirePath(input.path);
 
-            if (!input.recursive)
+            if (!input.recursive && !mkdir)
               throw new AdapterError("UNSUPPORTED", "E2B makeDirectory requires recursive: true");
             await requireRunning(input.sandbox.id, input.sandbox.reference);
 
@@ -544,11 +545,17 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             try {
               await requireRunning(input.sandbox.id, input.sandbox.reference);
               ctx.signal.throwIfAborted();
-              await makeDirectory(input.sandbox.id, input.path, ctx.signal);
+
+              if (input.recursive && makeDirectory)
+                await makeDirectory(input.sandbox.id, input.path, ctx.signal);
+              else await mkdir!(input.sandbox.id, input.path, input.recursive, ctx.signal);
 
               return { acknowledged: true as const };
             } catch (error) {
-              if (error instanceof E2BDirectoryRejected)
+              if (
+                error instanceof AdapterError &&
+                !(error instanceof AdapterFilesystemError && error.details.effect !== "none")
+              )
                 return ctx.reject(error.code, error.message);
 
               return ctx.unknown(
@@ -558,12 +565,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           },
         };
 
-      if (removeEntry)
+      if (removeEntry || unlink)
         directoryOperations.remove = {
           async prepare(input: import("sandbar-adapter").FileMutationInput) {
             requirePath(input.path);
 
-            if (!input.recursive)
+            if (!input.recursive && !unlink)
               throw new AdapterError("UNSUPPORTED", "E2B removeFile requires recursive: true");
 
             if (input.path === "/")
@@ -579,14 +586,97 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             try {
               await requireRunning(input.sandbox.id, input.sandbox.reference);
               ctx.signal.throwIfAborted();
-              await removeEntry(input.sandbox.id, input.path, ctx.signal);
+
+              if (input.recursive && removeEntry)
+                await removeEntry(input.sandbox.id, input.path, ctx.signal);
+              else await unlink!(input.sandbox.id, input.path, input.recursive, ctx.signal);
 
               return { acknowledged: true as const };
-            } catch {
+            } catch (error) {
+              if (
+                error instanceof AdapterError &&
+                !(error instanceof AdapterFilesystemError && error.details.effect !== "none")
+              )
+                return ctx.reject(error.code, error.message);
+
               return ctx.unknown("E2B removal acknowledgement unavailable; not replayed");
             }
           },
         };
+
+      if (transport.directory) {
+        directoryOperations.readDirectory = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+          return transport.directory!(input.sandbox.id, input.path, ctx.signal);
+        };
+
+        directoryOperations.list = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+          return (await transport.directory!(input.sandbox.id, input.path, ctx.signal)).entries;
+        };
+      }
+
+      if (transport.stat)
+        directoryOperations.stat = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+          return transport.stat!(input.sandbox.id, input.path, input.followSymlinks, ctx.signal);
+        };
+
+      if (transport.readStream)
+        directoryOperations.readStream = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+          return transport.readStream!(input.sandbox.id, input.path, ctx.signal);
+        };
+
+      if (transport.writeStream)
+        directoryOperations.writeStream = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+          return transport.writeStream!(
+            input.sandbox.id,
+            input.path,
+            input.bytes,
+            input.overwrite,
+            ctx.signal,
+            ctx.retain,
+          );
+        };
+
+      if (transport.transfer) {
+        directoryOperations.copy = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+          await transport.transfer!(
+            input.sandbox.id,
+            input.source,
+            input.destination,
+            input.overwrite,
+            false,
+            ctx.signal,
+            ctx.retain,
+          );
+
+          return { acknowledged: true as const };
+        };
+
+        directoryOperations.move = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+          await transport.transfer!(
+            input.sandbox.id,
+            input.source,
+            input.destination,
+            input.overwrite,
+            true,
+            ctx.signal,
+            ctx.retain,
+          );
+
+          return { acknowledged: true as const };
+        };
+      }
 
       return {
         ...resources.fields,
@@ -1760,7 +1850,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           },
         },
         files: {
-          maxBytes: MAX_BYTES,
+          maxBytes: 16 * MAX_BYTES,
           ...directoryOperations,
           async read(input, ctx) {
             requirePath(input.path);
@@ -1770,7 +1860,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             const result = await transport.read(
               input.sandbox.id,
               input.path,
-              MAX_BYTES,
+              input.maxBytes ?? MAX_BYTES,
               ctx.signal,
             );
 
@@ -1785,7 +1875,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               requirePath(input.path);
               await requireRunning(input.sandbox.id, input.sandbox.reference);
 
-              if (input.bytes.length > MAX_BYTES)
+              if (input.bytes.length > 16 * MAX_BYTES)
                 throw new AdapterError("CAPACITY", "E2B file write exceeds the byte bound");
 
               return input;

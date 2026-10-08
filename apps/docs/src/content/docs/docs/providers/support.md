@@ -20,7 +20,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Finite text streaming               | [Unsupported · not-run](#daytona-streaming)                     | [Conditional · passed at 3188e333](#e2b-streaming)                                |
 | Finite execution input              | [Conditional · not-run](#daytona-finiteStdin)                   | [Conditional · not-run](#e2b-finiteStdin)                                         |
 | Binary files and overwrite          | [Conditional · passed at 3188e333](#daytona-files)              | [Conditional · passed at 3188e333](#e2b-files)                                    |
-| Directory primitives                | [Unsupported · not-run](#daytona-directories)                   | [Conditional · passed at 3188e333](#e2b-directories)                              |
+| Directory primitives                | [Conditional · not-run](#daytona-directories)                   | [Conditional · passed at 3188e333](#e2b-directories)                              |
 | OCI image builds                    | [Conditional · not-run](#daytona-oci)                           | [Conditional · not-run](#e2b-oci)                                                 |
 | Measured network controls           | [Conditional · not-run](#daytona-network)                       | [Supported · failed](#e2b-network)                                                |
 | Cold snapshot with selected storage | [Conditional · passed at 5911cccd](#daytona-storageComposition) | [Unsupported · not-run](#e2b-storageComposition)                                  |
@@ -102,7 +102,7 @@ Bun files passed at 3188e33 in /tmp with signal-bearing binary reads, overwrite/
 
 ### Directory primitives
 
-listFiles, makeDirectory, fileExists and removeFile reject before mutation. Inspected native listing/details lose link identity or entries; mkdir always recurses; delete does not cover dangling links or empty-directory semantics. No shell emulation.
+Complete listFiles/readDirectory, statFile, existence and recursive-opt-in mkdir/remove use a bounded Python3 helper on private Linux filesystems. Dangling links remain entries; nonrecursive remove uses rmdir/unlink. Copy and move use native race-safe publication; no-clobber rename needs Linux renameat2. Mounted destinations are unsupported for staged transfer mutations. These additions have native-boundary fixtures; historical files passes do not qualify the new directory/transfer/artifact workflow. Expanded file-directories includes one 32 MiB hash-checked stream roundtrip; no live pass for that expanded body yet.
 
 <a id="daytona-oci"></a>
 
@@ -212,7 +212,7 @@ Bun files passed at 3188e33 in /home/user with signal-bearing binary reads, over
 
 ### Directory primitives
 
-fileExists uses native lstat-backed Stat, including dangling links. makeDirectory and removeFile require recursive: true; omitted/false rejects before mutation. listFiles is unsupported because e2b 2.51.0 filters unknown entry types. Intermediate parent links are followed; recursive removal does not walk link entries. Bun file-directories passed at 3188e33 on borrowed base, including dangling links and recursive removal behavior; owned cleanup confirmed. Other templates/guest versions remain unqualified.
+Complete listFiles/readDirectory and statFile use a bounded Python3 helper; native lstat existence preserves dangling links. Recursive native primitives and race-safe helper nonrecursive mkdir/remove preserve opt-in. Parent links follow; recursive removal does not walk links. Copy/file stream publication uses same-directory staging and hardlinks; move no-clobber needs Linux renameat2. Stream upload requires envd >=0.5.7 to prevent native whole-file buffering. Original recursive-directory case passed at 3188e33 with owned cleanup; it does not qualify the expanded directory/32 MiB transfer/artifact workflow. New methods have native-boundary fixtures; other templates/guest versions remain unqualified.
 
 <a id="e2b-oci"></a>
 

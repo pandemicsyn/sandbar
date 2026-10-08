@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { artifactFiles } from "../../../apps/docs/examples/directory-files";
 import type { AdapterSandbox } from "sandbar-sdk";
 import { TestResources } from "./fixtures/resources";
 import { liveEnabled, featureSupported, setupLive, finishLive, reopenSnapshot } from "./providers";
@@ -189,18 +191,60 @@ export async function directories(t: TestResources, box: AdapterSandbox, fileRoo
     code: "INVALID_ARGUMENT",
     effect: "none",
   });
+  const listing = await box.readDirectory(root, { signal: t.signal });
+  expect(listing.completeness).toBe("complete");
+  expect(listing.entries).toEqual(await box.listFiles(root, { signal: t.signal }));
+  expect(listing.entries.find((entry) => entry.name === "dangling")?.type).toBe("symlink");
+  expect((await box.statFile(`${root}/dangling`, { signal: t.signal })).type).toBe("symlink");
   await expect(box.removeFile(root, { signal: t.signal })).rejects.toMatchObject({
-    code: "UNSUPPORTED",
-    effect: "none",
+    code: "CONFLICT",
   });
+  await box.makeDirectory(`${root}/empty`, { signal: t.signal });
+  await box.removeFile(`${root}/empty`, { signal: t.signal });
+  await box.copyFile(sentinel, `${root}/copy.bin`, { signal: t.signal });
   await expect(
-    box.makeDirectory(`${root}/unexpected/child`, { signal: t.signal }),
-  ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
-  expect(await box.fileExists(`${root}/unexpected`, { signal: t.signal })).toBe(false);
-  await expect(box.listFiles(root, { signal: t.signal })).rejects.toMatchObject({
-    code: "UNSUPPORTED",
-    effect: "none",
-  });
+    box.copyFile(sentinel, `${root}/copy.bin`, { signal: t.signal }),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  await box.moveFile(`${root}/copy.bin`, `${root}/moved.bin`, { signal: t.signal });
+  expect(await box.fileExists(`${root}/copy.bin`, { signal: t.signal })).toBe(false);
+  expect(await box.readFile(`${root}/moved.bin`, { signal: t.signal })).toEqual(bytes);
+
+  // One 32 MiB transfer, with full content verification and constant-sized chunks.
+  const expected = createHash("sha256");
+  const size = 32 * 1024 * 1024;
+  const chunk = new Uint8Array(64 * 1024);
+
+  for (let index = 0; index < chunk.length; index++) chunk[index] = index % 251;
+
+  async function* input() {
+    for (let sent = 0; sent < size; sent += chunk.length) {
+      expected.update(chunk);
+      yield chunk;
+    }
+  }
+
+  const actual = createHash("sha256");
+  let downloaded = 0;
+
+  const artifact = await artifactFiles(
+    box,
+    input(),
+    {
+      async write(data) {
+        actual.update(data);
+        downloaded += data.length;
+      },
+    },
+    `${root}/artifacts`,
+    t.signal,
+  );
+
+  expect(artifact.uploaded).toBe(size);
+  expect(artifact.directory.completeness).toBe("complete");
+  expect(artifact.info.type).toBe("file");
+  expect(downloaded).toBe(size);
+  expect(actual.digest("hex")).toBe(expected.digest("hex"));
+  expect(await box.fileExists(`${root}/artifacts`, { signal: t.signal })).toBe(false);
   await box.removeFile(`${root}/child/`, options);
   expect(await box.readFile(sentinel, { signal: t.signal })).toEqual(bytes);
   await box.removeFile(`${root}/parent/sentinel.bin`, options);

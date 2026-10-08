@@ -1,6 +1,6 @@
 # Everyday filesystem and large transfers
 
-Proposed delivery plan · October 8, 2026 · Baseline `af316b2`; no runtime implementation in this change
+Delivery contract · October 8, 2026 · F1–F3 implemented; fixture/packed checks and dated live evidence remain separate.
 
 ## Outcome and scope
 
@@ -22,7 +22,7 @@ Missing a native convenience endpoint does not by itself mean the SDK operation 
 
 Acceptance includes the same compiled application workflow against both built-in fixtures, plus an independently authored fake adapter with different mechanics. Substituting adapter setup must not require changing method names, supplying native options, or importing a provider SDK. New adapters implementing existing behavior must not require changes to the portable runtime. Add a generic capability only when a new observable behavior genuinely needs one. Review the ordinary example before accepting the internal implementation.
 
-## Current gaps
+## Original implementation gaps
 
 - `readFile`/`writeFile` and text helpers buffer at most 1 MiB. There is no large-transfer path.
 - `listFiles` promises a complete bounded listing with link/unknown types; neither built-in implements it. Native filtering and incomplete entry metadata have prevented useful directory browsing.
@@ -33,7 +33,7 @@ Unknown entry metadata should not prevent returning known names. Missing informa
 
 ## Proposed interface and ordinary workflow
 
-Signatures below describe planned additions, not current exports. Reuse existing signal/options types where their semantics match.
+F1–F3 are available through the public SDK and optional public adapter hooks. Current exports own exact signatures. The optional F4 extensions below remain separately scoped follow-ups.
 
 ```ts
 await box.makeDirectory('/workspace/results', { recursive: true });
@@ -112,4 +112,4 @@ Keep contracts shared and provider changes independently reviewable. Split eithe
 
 Use existing Bun integration suites and native-boundary fixtures. Each slice updates adapter conformance tests, public examples, provider docs and generated support inputs; offline checks and live evidence remain distinct. Bounded, separately authorized Daytona/E2B runs must exercise the public methods and verify artifact cleanup before claiming live support. Reuse one owned sandbox per provider where practical; no builds, volumes or snapshots are required for ordinary private-filesystem qualification. Test mounted storage separately when claiming its behavior.
 
-Implementation PRs need independent correctness and DX review before opening the PR, plus the relevant package, packed-consumer and docs gates. The user owns final review/merge. This plan itself authorizes no live resources. F1 is the first implementation brief; its initial work is a focused mapping check, with unresolved guarantees reported rather than hidden in unsupported defaults.
+Implementation PRs need independent correctness and DX review before opening the PR, plus the relevant package, packed-consumer and docs gates. The user owns final review/merge. This plan itself authorizes no live resources. F1–F3 now have shared public methods, Daytona/E2B mappings, native-boundary fixtures and a compiled artifact recipe. F4 remains optional. The expanded live directory case invokes that same recipe and verifies a 32 MiB stream by SHA-256; support records retain its exact source and cleanup outcome separately from historical file/directory passes.

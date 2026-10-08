@@ -247,3 +247,95 @@ export async function adapterSuite<
 
   return { scenarios, counters: after };
 }
+
+/** Qualify an owned filesystem fixture; callers supply cleanup appropriate to their native boundary. */
+export async function filesystemSuite(options: {
+  session: import("./index").AdapterSession;
+  sandbox: import("./index").Sandbox;
+  directory: string;
+  cleanup: (paths: readonly string[]) => Promise<void>;
+}): Promise<{ bytes: number; scenarios: readonly string[] }> {
+  const files = options.session.files;
+  requireCondition(
+    files?.readDirectory &&
+      files.stat &&
+      files.readStream &&
+      files.writeStream &&
+      files.copy &&
+      files.move,
+    "Filesystem hooks are required",
+  );
+  const base = options.directory.replace(/\/$/, "");
+  const source = `${base}/conformance-${crypto.randomUUID()}`;
+  const copy = `${source}-copy`;
+  const destination = `${source}-moved`;
+  const context = { signal: new AbortController().signal, deadline: Date.now() + 30_000 };
+  const sandbox = options.sandbox;
+  const expected = Uint8Array.of(0, 255, 128, 10);
+
+  async function* chunks() {
+    yield expected.subarray(0, 2);
+    yield expected.subarray(2);
+  }
+
+  try {
+    const written = await files.writeStream(
+      { sandbox, path: source, bytes: chunks(), overwrite: false },
+      context,
+    );
+
+    requireCondition(
+      written.bytesWritten === expected.length,
+      "Stream write must confirm exact bytes",
+    );
+    const listing = await files.readDirectory({ sandbox, path: options.directory }, context);
+    requireCondition(
+      listing.entries.some((entry) => entry.name === source.slice(base.length + 1)),
+      "Directory must include written file",
+    );
+    requireCondition(
+      listing.completeness === "complete" || listing.completeness === "unknown",
+      "Directory completeness must be explicit",
+    );
+    const stat = await files.stat({ sandbox, path: source, followSymlinks: false }, context);
+    requireCondition(stat.type === "file", "File metadata must identify regular file");
+    await files.copy({ sandbox, source, destination: copy, overwrite: false }, context);
+    let refused = false;
+
+    try {
+      await files.copy({ sandbox, source, destination: copy, overwrite: false }, context);
+    } catch (error) {
+      refused = error instanceof AdapterError && error.code === "CONFLICT";
+    }
+
+    requireCondition(refused, "Copy must refuse existing destination");
+    await files.move({ sandbox, source: copy, destination, overwrite: false }, context);
+    const reader = (await files.readStream({ sandbox, path: destination }, context)).getReader();
+    let offset = 0;
+
+    try {
+      for (;;) {
+        const part = await reader.read();
+
+        if (part.done) break;
+
+        for (const byte of part.value) {
+          requireCondition(byte === expected[offset], "Stream bytes must match");
+          offset++;
+        }
+      }
+    } finally {
+      await reader.cancel();
+      reader.releaseLock();
+    }
+
+    requireCondition(offset === expected.length, "Stream must deliver complete bytes");
+
+    return {
+      bytes: offset,
+      scenarios: ["stream binary bytes", "directory metadata", "no-clobber copy", "native move"],
+    };
+  } finally {
+    await options.cleanup([source, copy, destination]);
+  }
+}

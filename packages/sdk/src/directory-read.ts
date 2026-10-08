@@ -6,6 +6,7 @@ import {
   type FileEntry,
   type ReadContext,
 } from "sandbar-adapter";
+import { filesystemError } from "./file-transfer";
 import { SandbarError, raceAbort, type ReadOptions } from "./resource";
 
 const Entry = z.strictObject({
@@ -16,6 +17,22 @@ const Entry = z.strictObject({
     .refine((name) => name !== "." && name !== ".." && !name.includes("/") && !name.includes("\0")),
   type: z.enum(["file", "directory", "symlink", "unknown"]),
 });
+
+export function directoryResult(
+  result: import("sandbar-adapter").DirectoryResult,
+): import("sandbar-adapter").DirectoryResult {
+  const parsed = z
+    .strictObject({
+      entries: z.custom<FileEntry[]>(Array.isArray),
+      completeness: z.enum(["complete", "unknown"]),
+      observedAt: z.iso.datetime({ offset: true }),
+    })
+    .safeParse(result);
+
+  if (!parsed.success) throw new SandbarError("INVALID_RESPONSE", "Invalid directory result");
+
+  return { ...parsed.data, entries: directoryEntries(parsed.data.entries) };
+}
 
 export function directoryEntries(entries: FileEntry[]): FileEntry[] {
   if (!Array.isArray(entries))
@@ -77,11 +94,26 @@ export async function directoryRead<T>(
   } catch (error) {
     if (controller.signal.aborted) throw controller.signal.reason;
 
-    if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+    if (error instanceof AdapterError) throw filesystemError(error);
     throw error;
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", cancel);
     closed.removeEventListener("abort", close);
+  }
+}
+
+/** Native enumeration capacity is the same output-bound failure as a local listing limit. */
+export async function directoryListingRead<T>(
+  read: (context: ReadContext) => Promise<T>,
+  closed: AbortSignal,
+  options: ReadOptions,
+): Promise<T> {
+  try {
+    return await directoryRead(read, closed, options);
+  } catch (error) {
+    if (error instanceof SandbarError && error.code === "CAPACITY")
+      throw new SandbarError("OUTPUT_CAPACITY", error.message, error.effect);
+    throw error;
   }
 }

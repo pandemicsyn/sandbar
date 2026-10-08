@@ -270,3 +270,53 @@ test("pre-aborted mutation and advanced root removal do not call adapter", async
     await f.client.close();
   }
 });
+
+test("native listing capacity maps to output capacity without changing other filesystem errors", async () => {
+  const capacity = async (): Promise<never> => {
+    throw new AdapterError("CAPACITY", "Native enumeration bound exceeded");
+  };
+
+  let malformed: string | undefined;
+
+  const f = await directoryFixture({
+    maxBytes: 1024,
+    list: capacity,
+    readDirectory: async () => (malformed === undefined ? capacity() : JSON.parse(malformed)),
+    exists: capacity,
+  });
+
+  try {
+    for (const method of ["listFiles", "readDirectory"] as const)
+      await expect(f.box[method]("/job")).rejects.toMatchObject({
+        code: "OUTPUT_CAPACITY",
+        effect: "none",
+      });
+    await expect(f.box.fileExists("/job")).rejects.toMatchObject({ code: "CAPACITY" });
+
+    for (const value of ["null", '{"entries":[],"completeness":"complete","observedAt":123}']) {
+      malformed = value;
+      await expect(f.box.readDirectory("/job")).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    }
+
+    const options = JSON.parse('{"overwrite":"false","followSymlinks":"false"}');
+    await expect(f.box.statFile("/job", options)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    await expect(f.box.copyFile("/source", "/destination", options)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    await expect(f.box.moveFile("/source", "/destination", options)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+
+    async function* bytes() {
+      yield Uint8Array.of(1);
+    }
+
+    await expect(f.box.writeFileStream("/destination", bytes(), options)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+  } finally {
+    await f.client.close();
+  }
+});

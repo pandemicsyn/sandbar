@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Sandbar, Image } from "sandbar-sdk";
 import { defineAdapter } from "sandbar-adapter";
 import { z } from "zod";
-import { directoryFiles, listChildren } from "./directory-files.js";
+import { artifactFiles, directoryFiles, listChildren } from "./directory-files.js";
 
 const bytes = new Map();
 
@@ -31,6 +31,51 @@ const adapter = defineAdapter({
           return { bytesWritten: input.bytes.length };
         },
         exists: async (input) => bytes.has(input.path),
+        readDirectory: async () => ({
+          entries: [{ name: "report.json", type: "file" }],
+          completeness: "complete",
+          observedAt: new Date().toISOString(),
+        }),
+        stat: async (input) => ({ type: "file", sizeBytes: bytes.get(input.path).length }),
+        copy: async (input) => {
+          bytes.set(input.destination, bytes.get(input.source).slice());
+
+          return { acknowledged: true };
+        },
+        move: async (input) => {
+          bytes.set(input.destination, bytes.get(input.source));
+          bytes.delete(input.source);
+
+          return { acknowledged: true };
+        },
+        writeStream: async (input) => {
+          let bytesWritten = 0;
+          const chunks = [];
+
+          for await (const chunk of input.bytes) {
+            chunks.push(chunk);
+            bytesWritten += chunk.length;
+          }
+
+          const value = new Uint8Array(bytesWritten);
+          let offset = 0;
+
+          for (const chunk of chunks) {
+            value.set(chunk, offset);
+            offset += chunk.length;
+          }
+
+          bytes.set(input.path, value);
+
+          return { bytesWritten };
+        },
+        readStream: async (input) =>
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(bytes.get(input.path));
+              controller.close();
+            },
+          }),
         list: async () => [
           { name: "z", type: "unknown" },
           { name: "a", type: "symlink" },
@@ -65,6 +110,26 @@ try {
     { name: "z", type: "unknown" },
   ]);
   assert.equal(await box.fileExists("/missing"), false);
+  const downloaded = [];
+
+  const artifact = await artifactFiles(
+    box,
+    (async function* () {
+      yield Uint8Array.of(0, 255);
+      yield Uint8Array.of(129);
+    })(),
+    {
+      async write(chunk) {
+        downloaded.push(...chunk);
+      },
+    },
+  );
+
+  assert.deepEqual(downloaded, [0, 255, 129]);
+  assert.equal(artifact.uploaded, 3);
+  assert.equal(artifact.directory.completeness, "complete");
+  assert.equal(artifact.info.type, "file");
+  assert.equal(bytes.size, 0);
   await box.destroy();
 } finally {
   await client.close();

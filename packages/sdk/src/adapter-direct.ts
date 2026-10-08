@@ -1,5 +1,22 @@
+import {
+  bufferedLimit,
+  streamFile,
+  writeStream,
+  filesystemError,
+  FilesystemError,
+  type FileReadOptions,
+  type FileWriteOptions,
+  type FileStreamOptions,
+  type FileStreamWriteOptions,
+  type TransferPolicy,
+} from "./file-transfer";
 import { FileMutationIntent, type FileEntry } from "sandbar-adapter";
-import { directoryEntries, directoryRead } from "./directory-read";
+import {
+  directoryEntries,
+  directoryRead,
+  directoryListingRead,
+  directoryResult,
+} from "./directory-read";
 import { readFileBytes } from "./file-read";
 import { freezeReference } from "./freeze-reference";
 import { startProcess, type StartProcessInput, type ProcessHandle } from "./processes";
@@ -255,6 +272,21 @@ function acknowledgedLifecycleOutcome(
 
 function unsupported(feature: string): never {
   throw new SandbarError("UNSUPPORTED", `${feature} is unsupported`);
+}
+
+function fileOptions(options: {
+  signal?: AbortSignal;
+  overwrite?: boolean;
+  followSymlinks?: boolean;
+}): void {
+  assertSignal(options.signal);
+
+  if (
+    !z
+      .object({ overwrite: z.boolean().optional(), followSymlinks: z.boolean().optional() })
+      .safeParse(options).success
+  )
+    throw new SandbarError("INVALID_ARGUMENT", "Invalid filesystem options");
 }
 
 function fileReadLimit(maxBytes: number): number {
@@ -820,6 +852,13 @@ export class AdapterSandbox {
       effect: "applied",
     });
     instrument(this, "removeFile", client.telemetry, "sandbar.file.remove", { effect: "applied" });
+    instrument(this, "readDirectory", client.telemetry, "sandbar.file.read_directory");
+    instrument(this, "statFile", client.telemetry, "sandbar.file.stat");
+    instrument(this, "copyFile", client.telemetry, "sandbar.file.copy", { effect: "applied" });
+    instrument(this, "moveFile", client.telemetry, "sandbar.file.move", { effect: "applied" });
+    instrument(this, "writeFileStream", client.telemetry, "sandbar.file.write_stream", {
+      effect: "applied",
+    });
     instrument(this, "readFile", client.telemetry, "sandbar.file.read");
     instrument(this, "writeFile", client.telemetry, "sandbar.file.write", { effect: "applied" });
     instrument(this, "destroy", client.telemetry, "sandbar.sandbox.destroy", { effect: "applied" });
@@ -988,6 +1027,12 @@ export class AdapterSandbox {
       | "readFile"
       | "writeFile"
       | "destroy"
+      | "readDirectory"
+      | "statFile"
+      | "readFileStream"
+      | "writeFileStream"
+      | "copyFile"
+      | "moveFile"
       | "listFiles"
       | "fileExists"
       | "makeDirectory"
@@ -1001,6 +1046,18 @@ export class AdapterSandbox {
     if (feature === "readFile") return !!this.client.session.files?.read;
 
     if (feature === "writeFile") return !!this.client.session.files?.write;
+
+    if (feature === "readDirectory") return !!this.client.session.files?.readDirectory;
+
+    if (feature === "statFile") return !!this.client.session.files?.stat;
+
+    if (feature === "readFileStream") return !!this.client.session.files?.readStream;
+
+    if (feature === "writeFileStream") return !!this.client.session.files?.writeStream;
+
+    if (feature === "copyFile") return !!this.client.session.files?.copy;
+
+    if (feature === "moveFile") return !!this.client.session.files?.move;
 
     if (feature === "listFiles") return !!this.client.session.files?.list;
 
@@ -1178,20 +1235,218 @@ export class AdapterSandbox {
     );
   }
   /** Decode the complete bounded file as UTF-8, replacing malformed sequences and consuming its BOM. */
-  async readTextFile(path: string, options: ReadOptions = {}): Promise<string> {
+  async readTextFile(path: string, options: FileReadOptions = {}): Promise<string> {
     return new TextDecoder().decode(await this.readFile(path, options));
   }
   /** Encode UTF-8 using the byte write's limits, cancellation and no-clobber default. */
-  async writeTextFile(
-    path: string,
-    text: string,
-    options: { overwrite?: boolean; signal?: AbortSignal } = {},
-  ): Promise<void> {
+  async writeTextFile(path: string, text: string, options: FileWriteOptions = {}): Promise<void> {
     // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JavaScript callers must not silently coerce non-text input during UTF-8 encoding.
     if (typeof text !== "string")
       throw new SandbarError("INVALID_ARGUMENT", "Expected text string");
 
     await this.writeFile(path, new TextEncoder().encode(text), options);
+  }
+  async readDirectory(
+    path: string,
+    options: ReadOptions = {},
+  ): Promise<import("sandbar-adapter").DirectoryResult> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.readDirectory) unsupported("readDirectory");
+
+    const result = await directoryListingRead(
+      (ctx) => files.readDirectory!({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+      this.client.signal,
+      options,
+    );
+
+    return directoryResult(result);
+  }
+  async statFile(
+    path: string,
+    options: ReadOptions & { followSymlinks?: boolean } = {},
+  ): Promise<import("sandbar-adapter").FileStat> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.stat) unsupported("statFile");
+
+    const result = await directoryRead(
+      (ctx) =>
+        files.stat!(
+          {
+            sandbox: sandboxInput(this.id, this.reference),
+            path,
+            followSymlinks: options.followSymlinks ?? false,
+          },
+          ctx,
+        ),
+      this.client.signal,
+      options,
+    );
+
+    const parsed = z
+      .strictObject({
+        type: z.enum(["file", "directory", "symlink", "unknown"]),
+        sizeBytes: z.number().int().nonnegative().safe().optional(),
+        modifiedAt: z.iso.datetime({ offset: true }).optional(),
+        mode: z.number().int().nonnegative().optional(),
+      })
+      .safeParse(result);
+
+    if (!parsed.success) throw new SandbarError("INVALID_RESPONSE", "Invalid file metadata");
+
+    return parsed.data;
+  }
+  readFileStream(path: string, options: FileStreamOptions = {}): AsyncIterable<Uint8Array> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    validateFilePath(path);
+    const files = this.client.session.files;
+
+    if (!files?.readStream) unsupported("readFileStream");
+
+    return this.client.telemetry.iterate(
+      "sandbar.file.read_stream",
+      streamFile(
+        (ctx) => files.readStream!({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+        this.client.signal,
+        options,
+        this.client.transferPolicy,
+      ),
+      options.signal ? AbortSignal.any([options.signal, this.client.signal]) : this.client.signal,
+    );
+  }
+  async writeFileStream(
+    path: string,
+    bytes: AsyncIterable<Uint8Array>,
+    options: FileStreamWriteOptions = {},
+  ): Promise<number> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    validateFilePath(path);
+    const files = this.client.session.files;
+
+    if (!files?.writeStream) unsupported("writeFileStream");
+
+    if (options.signal?.aborted) throw new SandbarError("WAIT_ABORTED", "File transfer cancelled");
+
+    const retained: Parameters<
+      NonNullable<import("sandbar-adapter").FileTransferContext["retain"]>
+    >[0] = {};
+
+    try {
+      return await writeStream(
+        (input, ctx) =>
+          files.writeStream!(
+            {
+              sandbox: sandboxInput(this.id, this.reference),
+              path,
+              bytes: input,
+              overwrite: options.overwrite ?? false,
+            },
+            ctx,
+          ),
+        bytes,
+        this.client.signal,
+        options,
+        this.client.transferPolicy,
+        (details) => Object.assign(retained, details),
+      );
+    } catch (error) {
+      if (
+        error instanceof SandbarError &&
+        !(error instanceof FilesystemError) &&
+        ["WAIT_ABORTED", "CLIENT_CLOSED", "TIMEOUT", "INVALID_RESPONSE"].includes(error.code)
+      )
+        throw new FilesystemError(error.code, error.message, {
+          effect: options.signal?.aborted && !this.client.signal.aborted ? "possible" : "unknown",
+          destination: path,
+          ...retained,
+        });
+      throw error;
+    }
+  }
+  async copyFile(
+    source: string,
+    destination: string,
+    options: { overwrite?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    return this.transferFile("copy", source, destination, options);
+  }
+  async moveFile(
+    source: string,
+    destination: string,
+    options: { overwrite?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    return this.transferFile("move", source, destination, options);
+  }
+  private async transferFile(
+    kind: "copy" | "move",
+    source: string,
+    destination: string,
+    options: { overwrite?: boolean; signal?: AbortSignal },
+  ): Promise<void> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    source = directoryPath(source);
+    destination = directoryPath(destination);
+
+    if (source === destination || source === "/" || destination === "/")
+      throw new SandbarError("INVALID_ARGUMENT", "Invalid filesystem source or destination");
+    const files = this.client.session.files;
+    const operation = files?.[kind]?.bind(files);
+
+    if (!operation) unsupported(kind + "File");
+
+    if (options.signal?.aborted)
+      throw new SandbarError("WAIT_ABORTED", "Filesystem operation cancelled");
+
+    const retained: Parameters<
+      NonNullable<import("sandbar-adapter").FileTransferContext["retain"]>
+    >[0] = {};
+
+    try {
+      const result = await directoryRead(
+        (ctx) =>
+          operation(
+            {
+              sandbox: sandboxInput(this.id, this.reference),
+              source,
+              destination,
+              overwrite: options.overwrite ?? false,
+            },
+            { ...ctx, retain: (details) => Object.assign(retained, details) },
+          ),
+        this.client.signal,
+        options,
+      );
+
+      if (result.acknowledged !== true)
+        throw new SandbarError(
+          "INVALID_RESPONSE",
+          "Filesystem completion was not confirmed",
+          "unknown",
+        );
+    } catch (error) {
+      if (
+        error instanceof SandbarError &&
+        !(error instanceof FilesystemError) &&
+        ["WAIT_ABORTED", "CLIENT_CLOSED", "TIMEOUT", "INVALID_RESPONSE"].includes(error.code)
+      )
+        throw new FilesystemError(error.code, error.message, {
+          effect: "possible",
+          source,
+          destination,
+          ...retained,
+        });
+      throw filesystemError(error);
+    }
   }
   async listFiles(path: string, options: ReadOptions = {}): Promise<FileEntry[]> {
     this.client.ensureOpen();
@@ -1202,7 +1457,7 @@ export class AdapterSandbox {
     const list = files.list.bind(files);
 
     return directoryEntries(
-      await directoryRead(
+      await directoryListingRead(
         (ctx) => list({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
         this.client.signal,
         options,
@@ -1278,32 +1533,32 @@ export class AdapterSandbox {
 
     await waitFor(this.client.telemetry, op, options);
   }
-  async readFile(path: string, options: ReadOptions = {}): Promise<Uint8Array> {
+  async readFile(path: string, options: FileReadOptions = {}): Promise<Uint8Array> {
     this.client.ensureOpen();
 
     if (!this.client.session.files?.read) unsupported("readFile");
     validateFilePath(path);
-    const maxBytes = fileReadLimit(this.client.session.files.maxBytes);
+    const maxBytes = bufferedLimit(options.maxBytes, this.client.session.files.maxBytes);
 
     const read = this.client.session.files.read.bind(this.client.session.files);
 
     return readFileBytes(
-      (context) => read({ sandbox: sandboxInput(this.id, this.reference), path }, context),
+      (context) =>
+        read({ sandbox: sandboxInput(this.id, this.reference), path, maxBytes }, context),
       maxBytes,
       this.client.signal,
       options,
     );
   }
-  async writeFile(
-    path: string,
-    bytes: Uint8Array,
-    options: { overwrite?: boolean; signal?: AbortSignal } = {},
-  ): Promise<void> {
+  async writeFile(path: string, bytes: Uint8Array, options: FileWriteOptions = {}): Promise<void> {
     if (!this.supports("writeFile")) unsupported("writeFile");
     validateFilePath(path);
 
     if (!(bytes instanceof Uint8Array))
       throw new SandbarError("INVALID_ARGUMENT", "Expected byte buffer");
+    const limit = bufferedLimit(options.maxBytes, this.client.session.files!.maxBytes);
+
+    if (bytes.length > limit) throw new SandbarError("CAPACITY", "File exceeds byte limit");
     const payload = Uint8Array.from(bytes);
 
     const op = await this.client.submit(
@@ -1602,6 +1857,7 @@ export class AdapterDirectClient {
     private readonly onReference?: (reference: AdapterRecoveryReference) => void | Promise<void>,
     observability: ObservabilityOptions = {},
     readonly cleanupStorage: "require-durable" | "allow-unconfirmed" = "require-durable",
+    readonly transferPolicy: TransferPolicy = {},
   ) {
     this.telemetry = new Telemetry(observability, "direct", provider);
     const managers = resourceManagers(this);
@@ -2619,6 +2875,7 @@ export class AdapterDirectClient {
 /** Default storage requirement for new compute cleanup submissions. */
 export type DirectConnectOptions = ObservabilityOptions & {
   cleanup?: { storage?: "require-durable" | "allow-unconfirmed" };
+  transfers?: TransferPolicy;
 };
 
 export type AdapterConnectOptions<
@@ -2672,7 +2929,14 @@ export async function connectDirect<
     if ("bound" in options) {
       const connection = await connectAdapter(options, { config: {}, credentials: {} });
 
-      return new AdapterDirectClient(options.name, connection, undefined, observability, storage);
+      return new AdapterDirectClient(
+        options.name,
+        connection,
+        undefined,
+        observability,
+        storage,
+        observability.transfers,
+      );
     }
 
     const connection = await connectAdapter(options.adapter, {
@@ -2687,6 +2951,7 @@ export async function connectDirect<
       options.onReference,
       options,
       storage,
+      options.transfers,
     );
   });
 }
