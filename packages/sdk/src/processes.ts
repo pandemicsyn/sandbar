@@ -963,24 +963,45 @@ export async function callbackExec(
 
   void capture.catch(() => undefined);
 
+  // Record the initiating failure before aborting sibling work, whose cancellation can
+  // otherwise replace a callback failure with an uncertain input acknowledgement.
+  let initiatingFailure: { error: unknown } | undefined;
+
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Concurrent callback and transport rejections are untrusted failure evidence, never serialized.
+  const stop = (error: unknown): never => {
+    initiatingFailure ??= { error };
+    observation.abort();
+    throw error;
+  };
+
   const output = (async () => {
-    for await (const chunk of process.output({ signal }))
-      await raceAbort(
-        Promise.resolve().then(() => callback(chunk)),
-        signal,
-      );
-  })();
+    for await (const chunk of process.output({ signal })) {
+      const invoke = () => {
+        try {
+          return Promise.resolve(callback(chunk)).catch(stop);
+        } catch (error) {
+          return stop(error);
+        }
+      };
 
-  void output.catch(() => undefined);
+      await raceAbort(Promise.resolve().then(invoke), signal);
+    }
+  })().catch(stop);
 
-  try {
+  const delivery = (async () => {
     if (request.stdin !== undefined) {
-      for (let offset = 0; offset < request.stdin.length; offset += 65_536)
+      for (let offset = 0; offset < request.stdin.length; offset += 65_536) {
+        if (signal.aborted) throw signal.reason;
         await process.write(request.stdin.subarray(offset, offset + 65_536), { signal });
+      }
+
+      if (signal.aborted) throw signal.reason;
       await process.closeStdin({ signal });
     }
+  })().catch(stop);
 
-    await Promise.all([output, waiting, raceAbort(capture, signal)]);
+  try {
+    await Promise.all([delivery, output, waiting, raceAbort(capture, signal)]);
 
     if (captured!.exitCode !== exit!.exitCode)
       throw new SandbarError(
@@ -990,7 +1011,12 @@ export async function callbackExec(
       );
 
     return checkExec(captured!);
-  } catch (error) {
+  } catch (observedFailure) {
+    const nativeExit = Exit.safeParse(process.native?.confirmedExit);
+
+    if (!exit && nativeExit.success)
+      exit = { exitCode: nativeExit.data.exitCode, outputComplete: false };
+    const error = initiatingFailure?.error ?? observedFailure;
     observation.abort();
 
     if (

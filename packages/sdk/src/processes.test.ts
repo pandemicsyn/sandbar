@@ -1250,3 +1250,121 @@ test("callback exec preserves uncertain input delivery code and effect without c
   expect(f.detaches).toBe(1);
   await f.client.close();
 });
+
+test("callback failure interrupts a stalled stdin write promptly without further chunks or EOF", async () => {
+  const f = await fixture({ interactive: true, capture: true });
+  const writeStarted = deferred<void>();
+  const gate = deferred<void>();
+  let inputSignal: AbortSignal | undefined;
+  f.native.write = async (bytes, context) => {
+    f.writes.push(bytes);
+    inputSignal = context.signal;
+    writeStarted.resolve();
+    await gate.promise;
+  };
+
+  const running = f.box.exec(
+    { ...input, stdin: new Uint8Array(131_073) },
+    {
+      onOutput() {
+        throw new Error("private callback failure");
+      },
+    },
+  );
+
+  const outcome = running.catch((error) => error);
+  await writeStarted.promise;
+  f.exit.resolve({ exitCode: 0 });
+  f.capture.resolve({
+    exitCode: 0,
+    stdout: Uint8Array.of(1),
+    stderr: new Uint8Array(),
+    truncated: false,
+  });
+  await Bun.sleep(0);
+  f.ctx.onOutput({ stream: "stdout", text: "progress" });
+  const error = await outcome;
+  expect(error).toMatchObject({
+    code: "UNAVAILABLE",
+    effect: "possible",
+    confirmedExit: { exitCode: 0 },
+    output: { exitCode: 0 },
+  });
+  expect(inputSignal?.aborted).toBe(true);
+  expect(f.writes).toHaveLength(1);
+  expect(f.closes).toBe(0);
+  expect(f.detaches).toBe(1);
+  expect(f.starts).toBe(1);
+  gate.resolve();
+  await Bun.sleep(0);
+  expect(f.writes).toHaveLength(1);
+  expect(f.closes).toBe(0);
+  await f.client.close();
+});
+
+test("callback failure winning the stdin ACK race prevents later writes and EOF", async () => {
+  const f = await fixture({ interactive: true, capture: true });
+  const writeStarted = deferred<void>();
+  const gate = deferred<void>();
+  f.native.write = async (bytes) => {
+    f.writes.push(bytes);
+    writeStarted.resolve();
+    await gate.promise;
+  };
+
+  const running = f.box.exec(
+    { ...input, stdin: new Uint8Array(131_073) },
+    {
+      onOutput() {
+        gate.resolve();
+        throw new Error("private callback race");
+      },
+    },
+  );
+
+  const outcome = running.catch((error) => error);
+  await writeStarted.promise;
+  f.ctx.onOutput({ stream: "stdout", text: "progress" });
+  expect(await outcome).toMatchObject({ code: "UNAVAILABLE", effect: "possible" });
+  await Bun.sleep(0);
+  expect(f.writes).toHaveLength(1);
+  expect(f.closes).toBe(0);
+  expect(f.starts).toBe(1);
+  expect(f.detaches).toBe(1);
+  await f.client.close();
+});
+
+test("callback exec preserves initiating EOF uncertainty and stops output observation", async () => {
+  const f = await fixture({ interactive: true, capture: true });
+  f.native.closeStdin = async () => {
+    throw new Error("private EOF acknowledgement");
+  };
+
+  const running = f.box.exec({ ...input, stdin: "payload" }, { onOutput() {} });
+  await expect(running).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+  expect(f.writes).toHaveLength(1);
+  expect(f.starts).toBe(1);
+  expect(f.detaches).toBe(1);
+  await f.client.close();
+});
+
+test("callback failure retains synchronous native exit evidence before wait settles", async () => {
+  const f = await fixture({ interactive: true, capture: true });
+
+  const running = f.box.exec(input, {
+    onOutput() {
+      f.confirm(17);
+      throw new Error("private callback contents");
+    },
+  });
+
+  const outcome = running.catch((error) => error);
+  await Bun.sleep(0);
+  f.ctx.onOutput({ stream: "stdout", text: "last" });
+  expect(await outcome).toMatchObject({
+    code: "UNAVAILABLE",
+    confirmedExit: { exitCode: 17, outputComplete: false },
+  });
+  expect(f.starts).toBe(1);
+  await f.client.close();
+});
