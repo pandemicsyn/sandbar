@@ -19,6 +19,20 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `ecc73de02c38d9820169c8989e782ee9e9259749`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `ecc73de02c38d9820169c8989e782ee9e9259749`.
+- Evidence: [reviewed record](process-io-daytona-pr76).
+
+| Scenario              | Latest live result | Date       |
+| --------------------- | ------------------ | ---------- |
+| execution-streaming   | passed             | 2026-10-09 |
+| execution-termination | passed             | 2026-10-09 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
 - SDK: 0.0.0, commit `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
 - Fresh-process reopen: not recorded.
 - Harness commit: `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
@@ -212,6 +226,20 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-template / api-key.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `ecc73de02c38d9820169c8989e782ee9e9259749`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `ecc73de02c38d9820169c8989e782ee9e9259749`.
+- Evidence: [reviewed record](process-io-e2b-pr76).
+
+| Scenario              | Latest live result | Date       |
+| --------------------- | ------------------ | ---------- |
+| execution-streaming   | passed             | 2026-10-09 |
+| execution-termination | passed             | 2026-10-09 |
+
+### blocked-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
 - SDK: 0.0.0, commit `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
 - Fresh-process reopen: not recorded.
 - Harness commit: `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
@@ -230,13 +258,12 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 - Harness commit: `3188e33327325d4eec22e39f4b627d7f900c8838`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/68).
 
-| Scenario            | Latest live result | Date       |
-| ------------------- | ------------------ | ---------- |
-| execution-streaming | passed             | 2026-10-02 |
-| files (/home/user)  | passed             | 2026-10-02 |
-| lifecycle-renew     | passed             | 2026-10-02 |
-| lifecycle-reopen    | passed             | 2026-10-02 |
-| preview-public      | passed             | 2026-10-02 |
+| Scenario           | Latest live result | Date       |
+| ------------------ | ------------------ | ---------- |
+| files (/home/user) | passed             | 2026-10-02 |
+| lifecycle-renew    | passed             | 2026-10-02 |
+| lifecycle-reopen   | passed             | 2026-10-02 |
+| preview-public     | passed             | 2026-10-02 |
 
 ### blocked-requested · native-default · /home/user
 
@@ -250,19 +277,6 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 | Scenario                 | Latest live result | Date       |
 | ------------------------ | ------------------ | ---------- |
 | lifecycle-suspend-resume | passed             | 2026-10-02 |
-
-### blocked-requested · native-default · /home/user
-
-- Image / authority: prepared; borrowed-template / api-key.
-- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
-- SDK: 0.0.0, commit `131a8c6f57cf2eb9e3b22029dbc1991f8314b9d0`.
-- Fresh-process reopen: not recorded.
-- Harness commit: `131a8c6f57cf2eb9e3b22029dbc1991f8314b9d0`.
-- Evidence: [reviewed record](native-termination-default-routing-20261002).
-
-| Scenario              | Latest live result | Date       |
-| --------------------- | ------------------ | ---------- |
-| execution-termination | passed             | 2026-10-02 |
 
 ### paired-internet-blocked-requested · native-default · /home/user
 

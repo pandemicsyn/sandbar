@@ -87,7 +87,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       termination: {
         support: "conditional",
-        note: "Process-scoped Python 3 supervisor retains child identity and requests abrupt child termination; no descendant cleanup or sandbox-destruction fallback. Independent wait/status preserve confirmed exit. Deterministic helper/native-boundary coverage is separate from deployed-provider qualification; the new process workflow has not run live.",
+        note: "Process-scoped Python 3 supervisor retains child identity and requests abrupt child termination; no descendant cleanup or sandbox-destruction fallback. Independent wait/status preserve confirmed exit. The maintained execution-termination workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed owned destruction and client close; this does not qualify descendant cleanup or other images.",
       },
       previewProtected: {
         support: "conditional",
@@ -115,7 +115,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       streaming: {
         support: "conditional",
-        note: "Finite and explicit sustained text streaming, exact-byte incremental stdin/EOF and status use a private Python 3 supervisor and Unix socket on writable /tmp. Queue 64 KiB/256 chunks, frames 16 KiB; no cumulative transcript. Pipe reads pause while full. Detach closes stdin and discards output; helper removal follows child exit or owned sandbox destruction. Deterministic >32 MiB and packed workflows do not establish live qualification; the new maintained workflow has not run live.",
+        note: "Finite and explicit sustained text streaming, exact-byte incremental stdin/EOF and status use a private Python 3 supervisor and Unix socket on writable /tmp. Queue 64 KiB/256 chunks, frames 16 KiB; no cumulative transcript. Pipe reads pause while full. Detach closes stdin and discards output; helper removal follows child exit or owned sandbox destruction. The maintained compiled >32 MiB build and incremental text/binary input/EOF workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed sandbox destruction and client close; other images are unqualified.",
       },
       execution: {
         support: "supported",
@@ -193,7 +193,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       streaming: {
         support: "conditional",
-        note: "Finite legacy streaming plus explicit sustained public envd RPC text streaming, exact-byte incremental stdin/EOF (envd >=0.5.2), status and bounded byte capture for exec callbacks. No cumulative transcript in sustained mode. PID presence proves running; absence without EndEvent is unknown. RPC loss may lose exit observation. Deterministic >32 MiB and packed workflows are separate from live qualification. Historical finite execution-streaming passed at 3188e33 with owned cleanup; it does not qualify new sustained/input/status behavior. No binary output streaming or durable process reopening.",
+        note: "Finite legacy streaming plus explicit sustained public envd RPC text streaming, exact-byte incremental stdin/EOF (envd >=0.5.2), status and bounded byte capture for exec callbacks. No cumulative transcript in sustained mode. PID presence proves running; absence without EndEvent is unknown. RPC loss may lose exit observation. Initial sustained streaming failed at 37dd9c2 on coalesced-frame queue overflow; termination passed and cleanup was confirmed. After bounded fair delivery, >32 MiB build and exact text/binary input/EOF plus status/termination passed at ecc73de on borrowed base with confirmed sandbox destruction and client close. Historical finite evidence remains separate. No binary output streaming or durable process reopening.",
       },
       execution: {
         support: "supported",
