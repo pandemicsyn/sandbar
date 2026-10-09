@@ -13,11 +13,11 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Native sandbox suspend/resume       | [Conditional · passed at 6796b30b](#daytona-suspension)         | [Conditional · passed at 26f516d1](#e2b-suspension)                               |
 | Protected HTTP preview              | [Conditional · passed at 3188e333](#daytona-previewProtected)   | [Unsupported · not-run](#e2b-previewProtected)                                    |
 | Public HTTP preview                 | [Unsupported · not-run](#daytona-previewPublic)                 | [Conditional · passed at 3188e333](#e2b-previewPublic)                            |
-| Local-handle process termination    | [Conditional · passed at 5f2bd138](#daytona-termination)        | [Conditional · passed at 5f2bd138](#e2b-termination)                              |
+| Local-handle process termination    | [Conditional · passed at aaba981e](#daytona-termination)        | [Conditional · passed at aaba981e](#e2b-termination)                              |
 | Configured lifetime renewal         | [Conditional · passed at 3188e333](#daytona-renewal)            | [Conditional · passed at 3188e333](#e2b-renewal)                                  |
 | Scoped sandbox reopening            | [Conditional · passed at 3188e333](#daytona-reopening)          | [Conditional · passed at 3188e333](#e2b-reopening)                                |
 | Execution and captured output       | [Supported · passed at 8449def7](#daytona-execution)            | [Supported · passed at 8449def7](#e2b-execution)                                  |
-| Process streams and terminals       | [Conditional · passed at 5f2bd138](#daytona-streaming)          | [Conditional · passed at 5f2bd138](#e2b-streaming)                                |
+| Process streams and terminals       | [Conditional · passed at aaba981e](#daytona-streaming)          | [Conditional · passed at aaba981e](#e2b-streaming)                                |
 | Finite execution input              | [Conditional · not-run](#daytona-finiteStdin)                   | [Conditional · not-run](#e2b-finiteStdin)                                         |
 | Binary files and overwrite          | [Conditional · passed at 3188e333](#daytona-files)              | [Conditional · passed at 3188e333](#e2b-files)                                    |
 | Directory primitives                | [Conditional · passed at e91f2d5f](#daytona-directories)        | [Conditional · passed at e91f2d5f](#e2b-directories)                              |
