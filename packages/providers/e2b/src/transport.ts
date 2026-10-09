@@ -10,11 +10,16 @@ import {
 } from "e2b";
 import {
   AdapterError,
+  AdapterFilesystemError,
+  type DirectoryResult,
+  type FileStat,
   type NativeProcess,
   type ProcessStartContext,
   type ProcessObservationFailure,
 } from "sandbar-adapter";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import { guestFilesystem, directoryValue, statValue } from "./filesystem-native";
 import { classifyWriteFailure, E2BWriteFailure } from "./write-failure";
 
 export const E2B_ENDPOINT = "https://api.e2b.app";
@@ -187,6 +192,32 @@ export type E2BTransport = {
     signal?: AbortSignal,
   ): Promise<{ bytes: Uint8Array; truncated: boolean }>;
   write(id: string, path: string, bytes: Uint8Array): Promise<void>;
+  directory?: (id: string, path: string, signal: AbortSignal) => Promise<DirectoryResult>;
+  stat?: (id: string, path: string, follow: boolean, signal: AbortSignal) => Promise<FileStat>;
+  readStream?: (
+    id: string,
+    path: string,
+    signal: AbortSignal,
+  ) => Promise<ReadableStream<Uint8Array>>;
+  writeStream?: (
+    id: string,
+    path: string,
+    bytes: AsyncIterable<Uint8Array>,
+    overwrite: boolean,
+    signal: AbortSignal,
+    retain?: (details: { temporaryPaths?: string[]; bytesTransferred?: number }) => void,
+  ) => Promise<{ bytesWritten: number }>;
+  transfer?: (
+    id: string,
+    source: string,
+    destination: string,
+    overwrite: boolean,
+    move: boolean,
+    signal: AbortSignal,
+    retain?: (details: { temporaryPaths?: string[]; bytesTransferred?: number }) => void,
+  ) => Promise<void>;
+  mkdir?: (id: string, path: string, recursive: boolean, signal: AbortSignal) => Promise<void>;
+  unlink?: (id: string, path: string, recursive: boolean, signal: AbortSignal) => Promise<void>;
   exists?: (id: string, path: string, signal: AbortSignal) => Promise<boolean>;
   makeDirectory?: (id: string, path: string, signal: AbortSignal) => Promise<void>;
   removeEntry?: (id: string, path: string, signal: AbortSignal) => Promise<void>;
@@ -278,6 +309,8 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     requestTimeoutMs: 30_000,
   } as const;
 
+  const attachmentVersions = new WeakMap<Sandbox, string>();
+
   const Detail = z.object({
     sandboxID: z.string(),
     templateID: z.string(),
@@ -343,7 +376,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     if ((detail.domain ?? opts.domain) !== opts.domain)
       throw new AdapterError("UNAVAILABLE", "E2B guest attachment routing is unsupported");
 
-    return new Sandbox({
+    const sandbox = new Sandbox({
       ...opts,
       logger,
       sandboxId: id,
@@ -351,6 +384,10 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       envdAccessToken: detail.envdAccessToken,
       sandboxDomain: detail.domain ?? opts.domain,
     });
+
+    attachmentVersions.set(sandbox, detail.envdVersion);
+
+    return sandbox;
   }
 
   async function get(id: string): Promise<E2BRecord | null> {
@@ -901,6 +938,196 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         });
       } catch (error) {
         throw new E2BWriteFailure(classifyWriteFailure(error, stage, httpStatus));
+      }
+    },
+    async directory(id, path, signal) {
+      const sandbox = await attach(id, undefined, signal);
+
+      return directoryValue(await guestFilesystem(sandbox, "list", path, "", false, signal));
+    },
+    async stat(id, path, follow, signal) {
+      const sandbox = await attach(id, undefined, signal);
+
+      return statValue(await guestFilesystem(sandbox, "stat", path, "", follow, signal));
+    },
+    async mkdir(id, path, recursive, signal) {
+      const sandbox = await attach(id, undefined, signal);
+      await guestFilesystem(sandbox, "mkdir", path, "", recursive, signal);
+    },
+    async unlink(id, path, recursive, signal) {
+      const sandbox = await attach(id, undefined, signal);
+      await guestFilesystem(sandbox, "remove", path, "", recursive, signal);
+    },
+    async readStream(id, path, signal) {
+      const sandbox = await attach(id, undefined, signal);
+
+      return sandbox.files.read(path, {
+        format: "stream",
+        requestTimeoutMs: 30_000,
+        streamIdleTimeoutMs: 0,
+        signal,
+      });
+    },
+    async writeStream(id, path, bytes, overwrite, signal, retain) {
+      const sandbox = await attach(id, undefined, signal);
+      // The pinned SDK otherwise falls back to a whole-file Blob on older envd.
+      const rawVersion = attachmentVersions.get(sandbox);
+
+      const version =
+        rawVersion && /^\d+(?:\.\d+){0,2}$/.test(rawVersion)
+          ? rawVersion.split(".").map(Number)
+          : undefined;
+
+      const [major, minor = 0, patch = 0] = version ?? [];
+
+      if (
+        !version ||
+        version.some((part) => !Number.isSafeInteger(part)) ||
+        (major === 0 && (minor < 5 || (minor === 5 && patch < 7)))
+      )
+        throw new AdapterError("UNSUPPORTED", "E2B streaming writes require envd 0.5.7 or later");
+      const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+      const stage = `${parent}/.sandbar-stream-${randomUUID()}`;
+      let reserved = false;
+      let dispatched = false;
+      let published = false;
+      let bytesWritten = 0;
+      let sourceEnded = false;
+      let failure: AdapterFilesystemError | undefined;
+      const iterator = bytes[Symbol.asyncIterator]();
+
+      const body = new ReadableStream<Uint8Array>(
+        {
+          async pull(controller) {
+            try {
+              signal.throwIfAborted();
+              const part = await iterator.next();
+
+              if (part.done) {
+                sourceEnded = true;
+                controller.close();
+              } else {
+                bytesWritten += part.value.byteLength;
+                retain?.({ bytesTransferred: bytesWritten });
+                controller.enqueue(part.value);
+              }
+            } catch (error) {
+              controller.error(error);
+            }
+          },
+          async cancel() {
+            await iterator.return?.();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+
+      try {
+        signal.throwIfAborted();
+        retain?.({ temporaryPaths: [stage] });
+        dispatched = true;
+        await guestFilesystem(sandbox, "reserve", stage, "", false, signal);
+        reserved = true;
+
+        const receipt = await sandbox.files.write(stage, body, {
+          useOctetStream: true,
+          requestTimeoutMs: 0,
+          signal,
+        });
+
+        signal.throwIfAborted();
+
+        if (!sourceEnded || receipt.path !== stage)
+          throw new AdapterFilesystemError(
+            "UNAVAILABLE",
+            "E2B upload acknowledgement does not match the staged transfer",
+            {
+              effect: "none",
+              destination: path,
+              temporaryPaths: [stage],
+              bytesTransferred: bytesWritten,
+            },
+          );
+        const stagedInfo = await sandbox.files.getInfo(stage, { requestTimeoutMs: 30_000, signal });
+
+        if (
+          stagedInfo.path !== stage ||
+          stagedInfo.type !== "file" ||
+          stagedInfo.symlinkTarget ||
+          stagedInfo.size !== bytesWritten
+        )
+          throw new AdapterFilesystemError(
+            "UNAVAILABLE",
+            "E2B staged upload size could not be confirmed",
+            {
+              effect: "none",
+              destination: path,
+              temporaryPaths: [stage],
+              bytesTransferred: bytesWritten,
+            },
+          );
+        await guestFilesystem(sandbox, "publish", stage, path, overwrite, signal);
+        published = true;
+        retain?.({ temporaryPaths: [], bytesTransferred: bytesWritten });
+
+        return { bytesWritten };
+      } catch (error) {
+        failure =
+          error instanceof AdapterFilesystemError
+            ? error
+            : new AdapterFilesystemError(
+                "UNAVAILABLE",
+                "E2B stream completion could not be confirmed",
+                {
+                  effect: dispatched ? "possible" : "none",
+                  destination: path,
+                  temporaryPaths: dispatched && !published ? [stage] : [],
+                  bytesTransferred: bytesWritten,
+                },
+              );
+        throw failure;
+      } finally {
+        void iterator.return?.().catch(() => undefined);
+
+        if (reserved && !published) {
+          // Only the correlated reserved staging artifact is eligible for cleanup.
+          await guestFilesystem(sandbox, "remove", stage).then(
+            () => {
+              retain?.({ temporaryPaths: [] });
+
+              if (failure) failure.details.temporaryPaths = [];
+            },
+            () => undefined,
+          );
+        }
+      }
+    },
+    async transfer(id, source, destination, overwrite, move, signal, retain) {
+      const sandbox = await attach(id, undefined, signal);
+      const parent = destination.slice(0, destination.lastIndexOf("/")) || "/";
+      const stage = move ? "" : `${parent}/.sandbar-copy-${randomUUID()}`;
+
+      try {
+        signal.throwIfAborted();
+
+        if (stage) retain?.({ temporaryPaths: [stage] });
+        await guestFilesystem(
+          sandbox,
+          move ? "move" : "copy",
+          source,
+          destination,
+          overwrite,
+          signal,
+          stage,
+        );
+        retain?.({ temporaryPaths: [] });
+      } catch (error) {
+        if (error instanceof AdapterFilesystemError) throw error;
+        throw new AdapterFilesystemError(
+          "UNAVAILABLE",
+          "E2B filesystem mutation acknowledgement unavailable",
+          { effect: "possible", source, destination, temporaryPaths: stage ? [stage] : [] },
+        );
       }
     },
     async exists(id, path, signal) {

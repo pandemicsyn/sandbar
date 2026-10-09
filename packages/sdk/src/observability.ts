@@ -313,6 +313,53 @@ export class Telemetry {
       else call.dropped++;
     });
   }
+  async *iterate(
+    name: string,
+    source: AsyncIterable<Uint8Array>,
+    signal?: AbortSignal,
+  ): AsyncIterable<Uint8Array> {
+    let complete!: (bytes: number) => void;
+    let failed!: (error: unknown) => void;
+
+    const completion = new Promise<number>((resolve, reject) => {
+      complete = resolve;
+      failed = reject;
+    });
+
+    const span = this.run(name, () => completion, { signal });
+    const cancelled = () => failed(new SandbarError("WAIT_ABORTED", "File stream cancelled"));
+
+    signal?.addEventListener("abort", cancelled, { once: true });
+
+    if (signal?.aborted) cancelled();
+    // The iterator owns the error; observing the promise here prevents unhandled rejections while paused.
+    void span.catch(() => undefined);
+    let bytes = 0;
+    let ended = false;
+
+    try {
+      for await (const chunk of source) {
+        bytes += chunk.length;
+        yield chunk;
+      }
+
+      ended = true;
+      complete(bytes);
+      await span;
+    } catch (error) {
+      ended = true;
+      failed(error);
+      await span;
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", cancelled);
+
+      if (!ended) {
+        failed(new SandbarError("WAIT_ABORTED", "File stream consumption ended"));
+        await span.catch(() => undefined);
+      }
+    }
+  }
   async run<T>(
     name: string,
     work: () => Promise<T>,
@@ -418,6 +465,13 @@ export class Telemetry {
             "sandbar.effect": options.effect ?? "none",
             ...diagnosticAttributes(result),
           });
+
+          if (
+            name.startsWith("sandbar.file.") &&
+            typeof result === "number" &&
+            Number.isSafeInteger(result)
+          )
+            span.setAttribute("sandbar.file.bytes", result);
 
           if (name === "sandbar.wait" || name === "sandbar.operation.wait")
             span.setAttributes({

@@ -11,7 +11,14 @@ import {
   type ProviderDriver,
 } from "@sandbar/provider-spi";
 import { ExecRequest, MAX_EXEC_STDIN_BYTES, type ExecCommand } from "sandbar-adapter/portable";
-import type { ImageBuildValue } from "sandbar-adapter";
+import { AdapterError, AdapterFilesystemError, type ImageBuildValue } from "sandbar-adapter";
+import {
+  filesystemCommand,
+  filesystemResult,
+  GuestStat,
+  type FilesystemInput,
+  type FilesystemValue,
+} from "./filesystem";
 
 type ImageBuildObservation =
   | { status: "completed"; value: ImageBuildValue }
@@ -94,7 +101,7 @@ const WriteReceipt = z.strictObject({
   submissionId: z.string().min(1).max(128),
   path: z.string().min(1).max(4096),
   digest: z.string().regex(/^[0-9a-f]{64}$/),
-  bytesWritten: z.number().int().nonnegative().max(1_048_576),
+  bytesWritten: z.number().int().nonnegative().max(16_777_216),
 });
 
 const Input = z.strictObject({
@@ -405,15 +412,22 @@ export class DaytonaDriver implements ProviderDriver {
 
     if (contentType) headers.set("Content-Type", contentType);
 
-    return this.fetchImpl(url, {
+    const requestOptions: RequestInit & { duplex?: "half" } = {
       method,
       headers,
       body,
       redirect: "error",
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
-        : AbortSignal.timeout(timeoutMs),
-    });
+      signal:
+        timeoutMs === 0
+          ? signal
+          : signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+            : AbortSignal.timeout(timeoutMs),
+    };
+
+    if (body instanceof ReadableStream) requestOptions.duplex = "half";
+
+    return this.fetchImpl(url, requestOptions);
   }
   private async json<T extends z.ZodType>(
     method: string,
@@ -1540,10 +1554,265 @@ export class DaytonaDriver implements ProviderDriver {
       return null;
     }
   }
+  async filesystem(
+    sandbox: SandboxRef,
+    input: FilesystemInput,
+    signal?: AbortSignal,
+  ): Promise<FilesystemValue> {
+    const native = await this.toolbox(sandbox, true);
+
+    for (const path of [input.path, input.source, input.destination, input.stagingDirectory])
+      if (path !== undefined) validPath(path);
+
+    if (
+      ["copy", "move", "publish"].includes(String(input.op)) &&
+      input.destination !== undefined &&
+      volumeContains(native, input.destination)
+    )
+      throw new AdapterError(
+        "UNSUPPORTED",
+        "Daytona file publication requires private same-filesystem storage",
+      );
+    signal?.throwIfAborted();
+
+    const response = await this.request(
+      "POST",
+      "/process/execute",
+      JSON.stringify({ command: filesystemCommand(input), timeout: 30 }),
+      "application/json",
+      native,
+      30_000,
+      signal,
+    );
+
+    if (!response.ok)
+      throw new AdapterError("UNAVAILABLE", "Daytona filesystem helper unavailable");
+    const result = await boundedJson(response, CommandResponse, 1_048_576);
+
+    if (result.exitCode !== 0)
+      throw new AdapterError(
+        "UNSUPPORTED",
+        "Daytona filesystem operations require Python 3 and Linux renameat2",
+      );
+
+    try {
+      return filesystemResult(result.result, input);
+    } catch (error) {
+      if (error instanceof AdapterError) throw error;
+      throw new AdapterError("UNAVAILABLE", "Daytona filesystem helper response malformed");
+    }
+  }
+  async readFileStream(input: {
+    sandbox: SandboxRef;
+    path: string;
+    signal?: AbortSignal;
+  }): Promise<ReadableStream<Uint8Array>> {
+    validPath(input.path);
+    const native = await this.toolbox(input.sandbox, true);
+    input.signal?.throwIfAborted();
+
+    const response = await this.request(
+      "GET",
+      `/files/download?path=${encodeURIComponent(input.path)}`,
+      undefined,
+      undefined,
+      native,
+      0,
+      input.signal,
+    );
+
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new AdapterError(
+        response.status === 404
+          ? "NOT_FOUND"
+          : response.status === 401
+            ? "UNAUTHENTICATED"
+            : response.status === 403
+              ? "FORBIDDEN"
+              : "UNAVAILABLE",
+        "Daytona streaming download failed",
+      );
+    }
+
+    return (
+      response.body ??
+      new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      })
+    );
+  }
+  async writeFileStream(input: {
+    sandbox: SandboxRef;
+    path: string;
+    bytes: AsyncIterable<Uint8Array>;
+    overwrite: boolean;
+    signal?: AbortSignal;
+    retain?: (details: { temporaryPaths?: string[]; bytesTransferred?: number }) => void;
+  }): Promise<{ bytesWritten: number }> {
+    validPath(input.path);
+    const native = await this.toolbox(input.sandbox, true);
+
+    if (volumeContains(native, input.path))
+      throw new AdapterError(
+        "UNSUPPORTED",
+        "Daytona stream writes require private same-filesystem staging",
+      );
+    input.signal?.throwIfAborted();
+    const directory = `${input.path.slice(0, input.path.lastIndexOf("/") + 1)}.sandbar-stream-${crypto.randomUUID()}`;
+
+    input.retain?.({ temporaryPaths: [directory] });
+
+    try {
+      await this.filesystem(input.sandbox, { op: "reserve", path: directory }, input.signal);
+    } catch (error) {
+      if (error instanceof AdapterError && error.code !== "UNAVAILABLE") {
+        input.retain?.({ temporaryPaths: [] });
+        throw error;
+      }
+
+      throw new AdapterFilesystemError(
+        "UNAVAILABLE",
+        "Daytona stream staging reservation unknown",
+        { effect: "possible", destination: input.path, temporaryPaths: [directory] },
+      );
+    }
+
+    const stage = `${directory}/payload`;
+    const boundary = `sandbar-${crypto.randomUUID()}`;
+    const encoder = new TextEncoder();
+
+    const iterator = (async function* () {
+      for await (const chunk of input.bytes)
+        for (let offset = 0; offset < chunk.byteLength; offset += 65_536)
+          yield chunk.subarray(offset, offset + 65_536);
+    })()[Symbol.asyncIterator]();
+
+    let bytesWritten = 0;
+    let phase = 0;
+    let published = false;
+
+    const body = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          try {
+            input.signal?.throwIfAborted();
+
+            if (phase === 0) {
+              phase = 1;
+              controller.enqueue(
+                encoder.encode(
+                  `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="blob"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+                ),
+              );
+
+              return;
+            }
+
+            const next = await iterator.next();
+
+            if (next.done) {
+              phase = 2;
+              controller.enqueue(encoder.encode(`\r\n--${boundary}--\r\n`));
+              controller.close();
+
+              return;
+            }
+
+            bytesWritten += next.value.byteLength;
+            controller.enqueue(next.value);
+          } catch (error) {
+            controller.error(error);
+          }
+        },
+        async cancel() {
+          await iterator.return?.();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+
+    try {
+      const response = await this.request(
+        "POST",
+        `/files/upload-v2?path=${encodeURIComponent(stage)}`,
+        body,
+        `multipart/form-data; boundary=${boundary}`,
+        native,
+        0,
+        input.signal,
+      );
+
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new AdapterError("UNAVAILABLE", "Daytona streaming upload failed");
+      }
+
+      const receipt = await boundedJson(response, UploadResponse, 16_384);
+
+      if (phase !== 2 || receipt.path !== stage)
+        throw new AdapterError("UNAVAILABLE", "Daytona streaming upload identity mismatch");
+      input.signal?.throwIfAborted();
+
+      const size = GuestStat.parse(
+        await this.filesystem(input.sandbox, { op: "stat", path: stage }, input.signal),
+      );
+
+      if (size.sizeBytes !== bytesWritten)
+        throw new AdapterError("UNAVAILABLE", "Daytona streaming upload is incomplete");
+
+      try {
+        await this.filesystem(
+          input.sandbox,
+          { op: "publish", path: stage, destination: input.path, overwrite: input.overwrite },
+          input.signal,
+        );
+      } catch (error) {
+        if (error instanceof AdapterError && error.code !== "UNAVAILABLE") throw error;
+        throw new AdapterFilesystemError(
+          "UNAVAILABLE",
+          "Daytona publish outcome unknown; do not replay",
+          {
+            effect: "possible",
+            destination: input.path,
+            temporaryPaths: [directory],
+            bytesTransferred: bytesWritten,
+          },
+        );
+      }
+
+      published = true;
+
+      return { bytesWritten };
+    } finally {
+      void iterator.return?.().catch(() => undefined);
+
+      try {
+        await this.filesystem(input.sandbox, { op: "cleanup", path: directory });
+        input.retain?.({ temporaryPaths: [] });
+      } catch {
+        // Cleanup failure must surface owned artifacts even when it follows confirmed publication.
+        // eslint-disable-next-line no-unsafe-finally
+        throw new AdapterFilesystemError(
+          "UNAVAILABLE",
+          "Daytona stream staging cleanup unavailable",
+          {
+            effect: published ? "applied" : "possible",
+            destination: input.path,
+            temporaryPaths: [directory],
+            bytesTransferred: bytesWritten,
+          },
+        );
+      }
+    }
+  }
   async readFile(input: {
     sandbox: SandboxRef;
     path: string;
     signal?: AbortSignal;
+    maxBytes?: number;
   }): Promise<Uint8Array> {
     validPath(input.path);
     const native = await this.toolbox(input.sandbox);
@@ -1566,7 +1835,7 @@ export class DaytonaDriver implements ProviderDriver {
       throw new ProviderReadError("INVALID_RESPONSE", "Daytona file download failed");
 
     try {
-      return await boundedBytes(response, 1_048_576, input.signal);
+      return await boundedBytes(response, input.maxBytes ?? 1_048_576, input.signal);
     } catch {
       throw new ProviderReadError(
         "INVALID_RESPONSE",
@@ -1859,7 +2128,12 @@ export class DaytonaDriver implements ProviderDriver {
       (input.digest && receipt.digest !== input.digest)
     )
       return null;
-    const actual = await this.readFile({ sandbox: input.sandbox, path: receipt.path });
+
+    const actual = await this.readFile({
+      sandbox: input.sandbox,
+      path: receipt.path,
+      maxBytes: receipt.bytesWritten,
+    });
 
     const digest = Buffer.from(
       await crypto.subtle.digest("SHA-256", new Uint8Array(actual)),

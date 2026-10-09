@@ -4,7 +4,7 @@ This directory holds current contracts and focused future design. [ROADMAP.md](.
 
 ## Active delivery plans
 
-- [Filesystem DX](filesystem-dx.md) — directory browsing and metadata, large transfers, copy/move, and selected traversal/text/range extensions. First slice: F1.
+- [Filesystem DX](filesystem-dx.md) — directory browsing and metadata, large transfers, copy/move, and selected traversal/text/range extensions. F1–F4 traversal and text lines implemented; ranges and other extensions remain separately deferred.
 - [Streaming and interactive processes](process-io-dx.md) — sustained output, status, incremental input, process control and complete application workflows. First slice: P0 transport decision, parallel with F1.
 
 These plans describe proposed changes. The contracts below retain current behavior until each documented migration lands. The roadmap owns sequencing; do not create duplicate implementation queues.

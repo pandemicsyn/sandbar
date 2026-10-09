@@ -108,4 +108,20 @@ export { diagnosticContext } from "./observability";
 
 export type { ObservabilityOptions, DiagnosticContext } from "./observability";
 
-export type { FileEntry } from "sandbar-adapter";
+export { FilesystemError } from "./file-transfer";
+
+export type {
+  FileReadOptions,
+  FileWriteOptions,
+  FileStreamOptions,
+  FileStreamWriteOptions,
+  TransferPolicy,
+} from "./file-transfer";
+
+export type { FileEntry, DirectoryResult, FileStat } from "sandbar-adapter";
+
+export type {
+  WalkFilesOptions,
+  WalkFileEntry,
+  ReadTextLinesOptions,
+} from "./filesystem-extensions";

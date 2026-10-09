@@ -22,3 +22,30 @@ export const FileMutationIntent = z.strictObject({ path: FilePath, recursive: z.
 export const FileMutationValue = z.strictObject({ acknowledged: z.literal(true) });
 
 export type FileMutationValue = z.infer<typeof FileMutationValue>;
+
+/** An immediate directory enumeration observed on a changing filesystem. */
+export type DirectoryResult = {
+  entries: FileEntry[];
+  completeness: "complete" | "unknown";
+  observedAt: string;
+};
+
+/** Omitted metadata is unavailable, never a fabricated default. */
+export type FileStat = {
+  type: FileEntry["type"];
+  sizeBytes?: number;
+  modifiedAt?: string;
+  mode?: number;
+};
+
+export type FileTransferInput = {
+  sandbox: import("./index").Sandbox;
+  source: string;
+  destination: string;
+  overwrite: boolean;
+};
+
+/** Report only correlated implementation artifacts; never caller-owned files. */
+export type FileTransferContext = import("./index").ReadContext & {
+  retain?: (details: { temporaryPaths?: string[]; bytesTransferred?: number }) => void;
+};

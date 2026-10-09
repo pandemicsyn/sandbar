@@ -156,17 +156,8 @@ test("E2B native mkdir/remove require explicit recursion, issue one RPC and pres
   const { client, box } = await create(f);
 
   try {
-    expect(box.supports("listFiles")).toBe(false);
+    expect(box.supports("listFiles")).toBe(true);
     expect(box.supports("fileExists")).toBe(true);
-    await expect(box.listFiles("/home/user")).rejects.toMatchObject({ code: "UNSUPPORTED" });
-    await expect(box.makeDirectory("/home/user/a/b")).rejects.toMatchObject({
-      code: "UNSUPPORTED",
-      effect: "none",
-    });
-    await expect(box.removeFile("/home/user/nonempty")).rejects.toMatchObject({
-      code: "UNSUPPORTED",
-      effect: "none",
-    });
     await expect(box.removeFile("///", { recursive: true })).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
       effect: "none",
@@ -209,6 +200,12 @@ for (const method of ["makeDirectory", "removeFile"] as const) {
     });
 
     try {
+      f.code("permission_denied");
+      await expect(box[method]("/home/user/partial", { recursive: true })).rejects.toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        effect: "possible",
+      });
+      f.code();
       f.lost();
       await expect(box[method]("/home/user/job", { recursive: true })).rejects.toMatchObject({
         code: "OUTCOME_UNKNOWN",
@@ -222,7 +219,7 @@ for (const method of ["makeDirectory", "removeFile"] as const) {
       const recovered = await client.recover(JSON.parse(JSON.stringify(reference)));
       await expect(recovered.observe()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
       await expect(recovered.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
-      expect(f.rpcCalls()).toHaveLength(1);
+      expect(f.rpcCalls()).toHaveLength(2);
     } finally {
       await client.close();
     }

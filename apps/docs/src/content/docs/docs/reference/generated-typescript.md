@@ -35,12 +35,19 @@ Import from `sandbar-sdk`.
 | `DiagnosticContext`         | type      |
 | `DirectCapabilities`        | type      |
 | `DirectConnectOptions`      | type      |
+| `DirectoryResult`           | type      |
 | `DirectSandbarClient`       | type      |
 | `DirectSandboxHandle`       | type      |
 | `ExecInput`                 | type      |
 | `ExecOutput`                | type      |
 | `Fact`                      | type      |
 | `FileEntry`                 | type      |
+| `FileReadOptions`           | type      |
+| `FileStat`                  | type      |
+| `FileStreamOptions`         | type      |
+| `FileStreamWriteOptions`    | type      |
+| `FilesystemError`           | re-export |
+| `FileWriteOptions`          | type      |
 | `Image`                     | re-export |
 | `ImageBuildResult`          | type      |
 | `ImageInput`                | type      |
@@ -63,6 +70,7 @@ Import from `sandbar-sdk`.
 | `ProcessOutput`             | type      |
 | `ProcessTermination`        | type      |
 | `ReadOptions`               | type      |
+| `ReadTextLinesOptions`      | type      |
 | `RecoveredOperation`        | type      |
 | `RecoveryReference`         | type      |
 | `RenewRequest`              | type      |
@@ -88,6 +96,7 @@ Import from `sandbar-sdk`.
 | `StartProcessInput`         | type      |
 | `Support`                   | type      |
 | `SuspendResult`             | type      |
+| `TransferPolicy`            | type      |
 | `UnsupportedFeatureError`   | re-export |
 | `validateResourceReference` | re-export |
 | `VolumeCapabilities`        | type      |
@@ -95,6 +104,8 @@ Import from `sandbar-sdk`.
 | `VolumeInfo`                | re-export |
 | `WaitAbortedError`          | re-export |
 | `WaitOptions`               | type      |
+| `WalkFileEntry`             | type      |
+| `WalkFilesOptions`          | type      |
 
 ## Daytona adapter
 
@@ -136,6 +147,7 @@ Import from `sandbar-adapter`.
 | `AdapterDefinition`            | type      |
 | `AdapterError`                 | re-export |
 | `AdapterErrorCode`             | type      |
+| `AdapterFilesystemError`       | re-export |
 | `AdapterSession`               | type      |
 | `AttemptContext`               | type      |
 | `Command`                      | type      |
@@ -148,6 +160,7 @@ Import from `sandbar-adapter`.
 | `CreateValue`                  | type      |
 | `defineAdapter`                | function  |
 | `DestroyValue`                 | type      |
+| `DirectoryResult`              | type      |
 | `ExecCommand`                  | re-export |
 | `ExecInput`                    | type      |
 | `ExecRequest`                  | re-export |
@@ -156,6 +169,9 @@ Import from `sandbar-adapter`.
 | `FileMutationInput`            | type      |
 | `FileMutationIntent`           | re-export |
 | `FileMutationValue`            | re-export |
+| `FileStat`                     | type      |
+| `FileTransferContext`          | type      |
+| `FileTransferInput`            | type      |
 | `FileWriteInput`               | type      |
 | `FileWriteValue`               | type      |
 | `Guarantees`                   | type      |
@@ -210,3 +226,4 @@ Import from `sandbar-adapter/testing`.
 | `adapterSuite`        | function |
 | `AdapterSuiteFixture` | type     |
 | `AdapterSuiteReport`  | type     |
+| `filesystemSuite`     | function |

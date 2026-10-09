@@ -18,10 +18,12 @@ import {
   type SandboxReference,
 } from "sandbar-adapter";
 import { z } from "zod";
+import { directoryEntries, GuestStat } from "./filesystem";
 import { daytonaState } from "./state-native";
 import { MountDurability as importMountDurability, type ResourceReference } from "sandbar-adapter";
 import {
   AdapterError,
+  AdapterFilesystemError,
   AdapterCheckpointError,
   type OperationOutcome,
   defineAdapter,
@@ -2069,7 +2071,171 @@ export function createDaytonaAdapter(
           }
         },
         files: {
-          maxBytes: caps.maxFileBytes,
+          maxBytes: 16_777_216,
+          async list(input, ctx) {
+            return directoryEntries(
+              await driver.filesystem(
+                native(input.sandbox.id),
+                { op: "list", path: input.path },
+                ctx.signal,
+              ),
+            );
+          },
+          async readDirectory(input, ctx) {
+            return {
+              entries: directoryEntries(
+                await driver.filesystem(
+                  native(input.sandbox.id),
+                  { op: "list", path: input.path },
+                  ctx.signal,
+                ),
+              ),
+              completeness: "complete" as const,
+              observedAt: new Date().toISOString(),
+            };
+          },
+          async stat(input, ctx) {
+            return GuestStat.parse(
+              await driver.filesystem(
+                native(input.sandbox.id),
+                { op: "stat", path: input.path, follow: input.followSymlinks },
+                ctx.signal,
+              ),
+            );
+          },
+          async exists(input, ctx) {
+            return z
+              .boolean()
+              .parse(
+                await driver.filesystem(
+                  native(input.sandbox.id),
+                  { op: "exists", path: input.path },
+                  ctx.signal,
+                ),
+              );
+          },
+          makeDirectory: {
+            async submit(input, ctx) {
+              try {
+                await driver.filesystem(
+                  native(input.sandbox.id),
+                  { op: "mkdir", path: input.path, recursive: input.recursive },
+                  ctx.signal,
+                );
+
+                return { acknowledged: true as const };
+              } catch (error) {
+                if (
+                  error instanceof AdapterError &&
+                  !(error instanceof AdapterFilesystemError) &&
+                  error.code !== "UNAVAILABLE"
+                )
+                  return ctx.reject(error.code, error.message);
+
+                return ctx.unknown("Daytona mkdir outcome unknown; do not replay");
+              }
+            },
+          },
+          remove: {
+            async submit(input, ctx) {
+              try {
+                await driver.filesystem(
+                  native(input.sandbox.id),
+                  { op: "remove", path: input.path, recursive: input.recursive },
+                  ctx.signal,
+                );
+
+                return { acknowledged: true as const };
+              } catch (error) {
+                if (
+                  error instanceof AdapterError &&
+                  !(error instanceof AdapterFilesystemError) &&
+                  error.code !== "UNAVAILABLE"
+                )
+                  return ctx.reject(error.code, error.message);
+
+                return ctx.unknown("Daytona remove outcome unknown; do not replay");
+              }
+            },
+          },
+          async readStream(input, ctx) {
+            return driver.readFileStream({
+              sandbox: native(input.sandbox.id),
+              path: input.path,
+              signal: ctx.signal,
+            });
+          },
+          async writeStream(input, ctx) {
+            return driver.writeFileStream({
+              ...input,
+              retain: ctx.retain,
+              sandbox: native(input.sandbox.id),
+              signal: ctx.signal,
+            });
+          },
+          async copy(input, ctx) {
+            const stagingDirectory = `${input.destination.slice(0, input.destination.lastIndexOf("/") + 1)}.sandbar-copy-${crypto.randomUUID()}`;
+            ctx.retain?.({ temporaryPaths: [stagingDirectory] });
+
+            try {
+              await driver.filesystem(
+                native(input.sandbox.id),
+                {
+                  op: "copy",
+                  stagingDirectory,
+                  source: input.source,
+                  destination: input.destination,
+                  overwrite: input.overwrite,
+                },
+                ctx.signal,
+              );
+
+              ctx.retain?.({ temporaryPaths: [] });
+
+              return { acknowledged: true as const };
+            } catch (error) {
+              if (error instanceof AdapterFilesystemError) throw error;
+
+              if (error instanceof AdapterError && error.code !== "UNAVAILABLE") {
+                ctx.retain?.({ temporaryPaths: [] });
+                throw error;
+              }
+
+              throw new AdapterFilesystemError(
+                "UNAVAILABLE",
+                "Daytona copy outcome unknown; do not replay",
+                {
+                  effect: "possible",
+                  source: input.source,
+                  destination: input.destination,
+                  temporaryPaths: [stagingDirectory],
+                },
+              );
+            }
+          },
+          async move(input, ctx) {
+            try {
+              await driver.filesystem(
+                native(input.sandbox.id),
+                {
+                  op: "move",
+                  source: input.source,
+                  destination: input.destination,
+                  overwrite: input.overwrite,
+                },
+                ctx.signal,
+              );
+
+              return { acknowledged: true as const };
+            } catch (error) {
+              if (error instanceof AdapterError && error.code !== "UNAVAILABLE") throw error;
+              throw new AdapterFilesystemError(
+                "UNAVAILABLE",
+                "Daytona move outcome unknown; do not replay",
+                { effect: "possible", source: input.source, destination: input.destination },
+              );
+            }
+          },
           async read(input, ctx) {
             if (input.sandbox.reference)
               await inspection(input.sandbox.id, input.sandbox.reference, {
@@ -2082,6 +2248,7 @@ export function createDaytonaAdapter(
             return driver.readFile({
               sandbox: native(input.sandbox.id),
               path: input.path,
+              maxBytes: input.maxBytes,
               signal: ctx.signal,
             });
           },
@@ -2099,6 +2266,28 @@ export function createDaytonaAdapter(
                   signal: ctx.signal,
                   deadline: Date.now() + 30000,
                 });
+
+              if (input.bytes.byteLength > 1_048_576) {
+                try {
+                  return await driver.writeFileStream({
+                    sandbox: native(input.sandbox.id),
+                    path: input.path,
+                    bytes: (async function* () {
+                      yield input.bytes;
+                    })(),
+                    overwrite: input.overwrite,
+                    signal: ctx.signal,
+                  });
+                } catch (error) {
+                  if (
+                    error instanceof AdapterError &&
+                    !(error instanceof AdapterFilesystemError) &&
+                    error.code !== "UNAVAILABLE"
+                  )
+                    return ctx.reject(error.code, error.message);
+                  throw error;
+                }
+              }
 
               const result = await driver.writeFile({
                 sandbox: native(input.sandbox.id),

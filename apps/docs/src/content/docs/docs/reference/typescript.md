@@ -50,10 +50,22 @@ Build results contain `prepared` and `retainedResources`. A prepared handle is b
 | `box.inspect({ signal? })`                                                                   | Read current state where supported.                                  |
 | `box.exec(input, { signal? })`                                                               | Run a command and return bounded binary output.                      |
 | `box.submitExec(input, options?)`                                                            | Submit execution and return an operation handle.                     |
-| `box.readTextFile(path, { signal? })`                                                        | Read the complete bounded file as UTF-8.                             |
-| `box.writeTextFile(path, text, { overwrite?, signal? })`                                     | Write UTF-8; byte limits apply; overwrite defaults to false.         |
-| `box.readFile(path, { signal? })`                                                            | Read up to 1 MiB as a `Uint8Array`.                                  |
-| `box.writeFile(path, bytes, { overwrite?, signal? })`                                        | Write up to 1 MiB; overwrite defaults to false.                      |
+| `box.readTextFile(path, { maxBytes?, signal? })`                                             | Read the complete bounded file as UTF-8.                             |
+| `box.writeTextFile(path, text, { overwrite?, maxBytes?, signal? })`                          | Write UTF-8; byte limits apply; overwrite defaults to false.         |
+| `box.readFile(path, { maxBytes?, signal? })`                                                 | Read bounded bytes (1 MiB default, explicit max 16 MiB).             |
+| `box.writeFile(path, bytes, { overwrite?, maxBytes?, signal? })`                             | Write bounded bytes (1 MiB default, explicit max 16 MiB).            |
+| `box.readDirectory(path, { signal? })`                                                       | Bounded immediate entries, completeness and observation timestamp.   |
+| `box.listFiles(path, { signal? })`                                                           | Complete bounded immediate entries, or reject.                       |
+| `box.statFile(path, { followSymlinks?, signal? })`                                           | Type and available metadata; final link unfollowed by default.       |
+| `box.fileExists(path, { signal? })`                                                          | False only for confirmed entry absence.                              |
+| `box.makeDirectory(path, { recursive?, signal? })`                                           | Create a directory, recursion opt-in.                                |
+| `box.removeFile(path, { recursive?, signal? })`                                              | Remove an entry; missing succeeds, recursion opt-in.                 |
+| `box.copyFile(source, destination, { overwrite?, signal? })`                                 | Copy regular-file bytes; no-clobber by default.                      |
+| `box.moveFile(source, destination, { overwrite?, signal? })`                                 | Same-filesystem native rename; no-clobber by default.                |
+| `box.readFileStream(path, options?)`                                                         | Incremental `AsyncIterable<Uint8Array>` with transfer timeouts.      |
+| `box.writeFileStream(path, chunks, options?)`                                                | Incremental upload; return confirmed byte count.                     |
+| `box.walkFiles(path, { maxDepth?, maxEntries?, exclude?, signal? })`                         | Bounded depth-first traversal with exact subtree exclusions.         |
+| `box.readTextLines(path, { maxLineBytes?, ...transferOptions })`                             | Incremental UTF-8 lines; delimiters removed and line bytes bounded.  |
 | `box.destroy({ signal? })`                                                                   | Wait for confirmed compute termination.                              |
 | `sandbar.close()`                                                                            | Release client resources; does not destroy sandboxes.                |
 

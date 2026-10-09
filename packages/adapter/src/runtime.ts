@@ -77,6 +77,12 @@ export type RuntimeSession = Omit<
     maxBytes: number;
     read?: NonNullable<AdapterSession["files"]>["read"];
     write?: unknown;
+    readDirectory?: NonNullable<AdapterSession["files"]>["readDirectory"];
+    stat?: NonNullable<AdapterSession["files"]>["stat"];
+    readStream?: NonNullable<AdapterSession["files"]>["readStream"];
+    writeStream?: NonNullable<AdapterSession["files"]>["writeStream"];
+    copy?: NonNullable<AdapterSession["files"]>["copy"];
+    move?: NonNullable<AdapterSession["files"]>["move"];
     list?: NonNullable<AdapterSession["files"]>["list"];
     exists?: NonNullable<AdapterSession["files"]>["exists"];
     makeDirectory?: unknown;
@@ -225,7 +231,7 @@ const DestroyValueSchema = z.strictObject({
 });
 
 const WriteValueSchema = z.strictObject({
-  bytesWritten: z.number().int().nonnegative().max(1_048_576),
+  bytesWritten: z.number().int().nonnegative().max(16_777_216),
 });
 
 const ExecValueSchema = z.strictObject({

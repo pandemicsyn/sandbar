@@ -164,3 +164,14 @@ bun test --preload ./packages/sdk-qualification/live/preload.ts \
 ```
 
 The test seeds two explicit volumes, captures a separate mount-free source, saves full references, destroys source/seeder, reconnects, restores A then B, reads their first-action reports, checks exact native mounts/snapshot/policy and fresh-client sandbox reopen, then performs known owned cleanup through the existing ledger. Reports remain private; wrong/missing/stale observations and cleanup failure remain failed evidence. Prior uncertainty never triggers replacement allocations. `blocked` remains unsupported for mounted restore; this `daytona-default` acceptance tests selected storage and current-start correlation, not strict network isolation.
+
+### Filesystem artifact acceptance
+
+The expanded `file-directories` case runs the same compiled `artifactFiles` recipe for Daytona and E2B: recursive-opt-in mkdir/remove, complete directory/link browsing, metadata, regular-file copy, same-filesystem move, no-clobber refusal and one 32 MiB byte stream verified by SHA-256. It reuses one owned private-filesystem sandbox and creates no snapshots, volumes or builds. The existing 30-second setup, 240-second exercise and 60-second cleanup budgets apply. Compatible Linux/Python 3 images are required; E2B stream upload additionally needs envd >=0.5.7, and no-clobber native move needs Linux renameat2.
+
+Both providers passed at `2f6afe8` on October 8, 2026 (Bun 1.3.14/darwin-arm64), with confirmed owned sandbox destruction and client close: Daytona borrowed container in us with daytona-default, and E2B borrowed base. Earlier Daytona mkdir rejection failures at `cd89f31` and `6d7ddc7` retain failed workflow results and confirmed cleanup; a stale borrowed-image attempt failed before allocation and has no passed evidence. Three Daytona compute allocations and one E2B allocation were destroyed; no retained resources were allocated. The original E2B volume custody was unchanged. These completed runs authorize no future paid reruns.
+
+
+The current shared artifact recipe also walks its nested outputs and reads UTF-8 text lines. Deterministic and packed fixtures split the UTF-8 code point and CRLF across byte chunks. Historical `2f6afe8` passes used the earlier recipe and do not qualify the F4 additions; a fresh authorized run must verify traversal/line results and owned cleanup before recording F4 live evidence.
+
+F4 qualification at `e91f2d5` ran that same compiled recipe once per provider, adding nested `walkFiles` results and Unicode/CRLF `readTextLines` assertions while retaining the 32 MiB SHA-256 transfer. Daytona borrowed Linux/us/daytona-default and E2B borrowed base passed on Bun 1.3.14/darwin-arm64. Two total compute allocations, peak one, zero snapshots/volumes/builds; both sandbox destructions and client closes were confirmed. Prior evidence remains unchanged; other configurations are unqualified.

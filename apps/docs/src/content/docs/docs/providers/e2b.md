@@ -53,13 +53,21 @@ Without `teamId`, Sandbar verifies the API key with an authenticated read and bi
 
 Use `/home/user` for file workflows on `base`. The live baseline covers binary transfer, overwrite, and no-clobber in that directory. An earlier overwrite attempt directly in sticky `/tmp` failed; custom paths, users, and images need their own validation.
 
-The adapter supports argument arrays and Bash shell scripts, working directory and environment options, and bounded binary stdout/stderr. No-clobber writes require GNU `ln -T` and hard-link support. Files and captured output are capped at 1 MiB.
+The adapter supports argument arrays and Bash shell scripts, working directory and environment options, and bounded binary stdout/stderr. No-clobber writes require GNU `ln -T` and hard-link support. Captured output remains capped at 1 MiB. Buffered file IO defaults to 1 MiB with an explicit `maxBytes` override up to 16 MiB; larger files use incremental byte streams.
 
 ## Images, networking, and cleanup
 
 Prepared templates and explicit OCI builds are implemented. Builds can retain a template after sandbox destruction; see [Images and networking](/docs/guides/images-and-networking/). The adapter maps `blocked` and `internet` to E2B's native internet-access setting. The maintained paired probe failed at `431cdaa`: requested blocking still allowed direct IPv4 TCP, while hostname resolution failed. There is no passing outbound-isolation claim; see the [generated network evidence](/docs/providers/support/). Region selection is not supported.
 
 Destroy each sandbox explicitly, then close the client. Native timeout is a fallback, not a cleanup confirmation. The [support matrix](/docs/providers/support/) distinguishes live baseline coverage from image-build and network tests.
+
+## Everyday filesystem and transfers
+
+`readDirectory`, strict `listFiles`, `statFile`, `fileExists`, mkdir/remove, copy/move and byte streams share the [portable file API](/docs/guides/files-and-output/). Complete enumeration, link identity and race-safe nonrecursive removal use a bounded adapter-owned Python 3 subprocess. Paths travel as exact arguments; no human-formatted listing is parsed and no dependencies are installed. The image must supply Python 3 and Linux; no-clobber rename additionally needs Linux libc `renameat2`. Intermediate links follow the guest namespace, while final links remain entries. Directory observations do not stat each child through a remote request.
+
+The pinned `e2b@2.51.0` client downloads through a streaming response and uploads an octet-stream body incrementally. Stream upload requires a compatible envd version, checked before staging. Writes reserve a correlated same-directory staging file and publish once with native rename collision handling. Copy stages regular-file bytes with bounded guest IO. Move uses native same-filesystem rename without copy/delete. Guest detail still verifies running, auto-resume-off routing before IO. Request abort is best effort, and uncertain publish or cleanup retains known paths without replay.
+
+The expanded ordinary Bun `file-directories` case passed at `2f6afe8` on October 8, 2026, using the shared compiled artifact recipe and one 32 MiB streaming roundtrip with a complete SHA-256 comparison. Owned sandbox destruction and client close were confirmed. This qualifies the recorded borrowed image/configuration; other images and mounted storage remain outside that pass. Native-boundary fixtures, packed consumers and exact live provenance are reported separately in [provider support](/docs/providers/support/).
 
 ## Configured lifetime renewal
 

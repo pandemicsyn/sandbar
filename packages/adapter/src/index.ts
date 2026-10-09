@@ -5,12 +5,19 @@ export {
   FileMutationValue,
 } from "./files";
 
-export type { FileEntry, FileMutationInput } from "./files";
+export type {
+  FileEntry,
+  FileMutationInput,
+  DirectoryResult,
+  FileStat,
+  FileTransferInput,
+  FileTransferContext,
+} from "./files";
 
 import { AdapterError } from "./errors";
 import { OperationOutcome } from "./state";
 
-export { AdapterError } from "./errors";
+export { AdapterError, AdapterFilesystemError } from "./errors";
 
 export { OperationOutcome } from "./state";
 
@@ -392,10 +399,42 @@ export type AdapterSession<
   files?: {
     maxBytes: number;
     read?: (
-      input: { sandbox: Sandbox; path: string },
+      input: { sandbox: Sandbox; path: string; maxBytes?: number },
       ctx: ReadContext,
     ) => Promise<Uint8Array | ReadableStream<Uint8Array>>;
     write?: Mutation<FileWriteInput, FileWriteValue, WP, Json, Sandbox>;
+    readDirectory?: (
+      input: { sandbox: Sandbox; path: string },
+      ctx: ReadContext,
+    ) => Promise<import("./files").DirectoryResult>;
+    stat?: (
+      input: { sandbox: Sandbox; path: string; followSymlinks: boolean },
+      ctx: ReadContext,
+    ) => Promise<import("./files").FileStat>;
+    /** Incremental transport; must not buffer the entire file. */
+    readStream?: (
+      input: { sandbox: Sandbox; path: string },
+      ctx: ReadContext,
+    ) => Promise<ReadableStream<Uint8Array>>;
+    /** Consume input with backpressure, stage and publish with race-safe collision handling. */
+    writeStream?: (
+      input: {
+        sandbox: Sandbox;
+        path: string;
+        bytes: AsyncIterable<Uint8Array>;
+        overwrite: boolean;
+      },
+      ctx: import("./files").FileTransferContext,
+    ) => Promise<{ bytesWritten: number }>;
+    copy?: (
+      input: import("./files").FileTransferInput,
+      ctx: import("./files").FileTransferContext,
+    ) => Promise<{ acknowledged: true }>;
+    move?: (
+      input: import("./files").FileTransferInput,
+      ctx: import("./files").FileTransferContext,
+    ) => Promise<{ acknowledged: true }>;
+
     /** Must include every immediate entry, including dangling symlinks and unknown types. */
     list?: (
       input: { sandbox: Sandbox; path: string },
