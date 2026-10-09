@@ -1707,6 +1707,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           ? {
               supports: {
                 sustainedOutput: true,
+                binaryOutput: true,
                 stdin: "bytes",
                 status: true,
                 execCapture: "bytes",
@@ -1730,6 +1731,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                     env: input.env,
                     stdin: input.stdin,
                     sustained: input.output?.mode === "stream",
+                    format: input.output?.format,
                     capture: input.capture,
                   },
                   ctx,

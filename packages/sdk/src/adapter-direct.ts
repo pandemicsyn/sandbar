@@ -32,6 +32,7 @@ import {
   type ExecOptions,
   type StartProcessInput,
   type ProcessHandle,
+  type ProcessOutputFormat,
 } from "./processes";
 import { certifyRecoveryReference, certifyOperationReference } from "./recovery-diagnostics";
 import {
@@ -880,7 +881,10 @@ export class AdapterSandbox {
     });
   }
   readonly processes = {
-    start: (input: StartProcessInput, options: WaitOptions = {}): Promise<ProcessHandle> => {
+    start: <F extends ProcessOutputFormat = "text">(
+      input: StartProcessInput<F>,
+      options: WaitOptions = {},
+    ): Promise<ProcessHandle<F>> => {
       this.client.ensureOpen();
 
       const control = processControl(this.client, this.id);

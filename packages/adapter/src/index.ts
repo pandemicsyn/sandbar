@@ -102,6 +102,11 @@ export type ExecValue = {
 /** Decoded text observation; detach never terminates compute. */
 export type ProcessOutput = { stream: "stdout" | "stderr"; text: string };
 
+/** Original native bytes, with independent stdout/stderr ordering and no decoding. */
+export type ProcessOutputBytes = { stream: "stdout" | "stderr"; bytes: Uint8Array };
+
+export type ProcessOutputFormat = "text" | "bytes";
+
 export type NativeProcessExit = { exitCode: number };
 
 export type NativeProcessStatus = {
@@ -114,6 +119,7 @@ export type ProcessObservationFailure = AdapterError & { confirmedExit?: NativeP
 
 export type ProcessStartContext = ReadContext & {
   onOutput(chunk: ProcessOutput): void;
+  onOutputBytes?(chunk: ProcessOutputBytes): void;
 };
 
 export interface NativeProcess {
@@ -137,7 +143,7 @@ export interface NativeProcess {
 export type ProcessStartInput = {
   capture?: { maxBytes: number };
   stdin?: "closed" | "pipe";
-  output?: { mode: "stream" };
+  output?: { mode: "stream"; format?: ProcessOutputFormat };
   sandbox: Sandbox;
   command: Command;
   cwd?: string;
@@ -415,7 +421,13 @@ export type AdapterSession<
   ) => Promise<import("./preview").Preview>;
   processes?: {
     /** Additive behavior declarations; absence retains the finite, closed-input contract. */
-    supports?: { sustainedOutput?: true; stdin?: "bytes"; status?: true; execCapture?: "bytes" };
+    supports?: {
+      sustainedOutput?: true;
+      binaryOutput?: true;
+      stdin?: "bytes";
+      status?: true;
+      execCapture?: "bytes";
+    };
     start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess>;
   };
   files?: {

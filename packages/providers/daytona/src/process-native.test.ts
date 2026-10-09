@@ -3,8 +3,8 @@ import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { processSupervisor, processRpc, pythonCommand } from "./process-helper";
 import { startDaytonaProcess, type ProcessExecute } from "./process-native";
-import type { NativeProcess, ProcessOutput } from "sandbar-adapter";
-import { Sandbar, AdapterSandbox } from "sandbar-sdk";
+import type { NativeProcess, ProcessOutput, ProcessOutputBytes } from "sandbar-adapter";
+import { Sandbar, AdapterSandbox, type ProcessHandle } from "sandbar-sdk";
 import { createDaytonaAdapter } from "./adapter";
 
 function fixture() {
@@ -267,7 +267,7 @@ test("Daytona bounds final output drain when a descendant retains a pipe", async
 test("Daytona public adapter maps interactive process HTTP workflow without native application options", async () => {
   const native = fixture();
   let client: Awaited<ReturnType<typeof Sandbar.connect>> | undefined;
-  let child: Awaited<ReturnType<AdapterSandbox["processes"]["start"]>> | undefined;
+  let child: ProcessHandle | undefined;
 
   const transport: typeof fetch = Object.assign(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -518,4 +518,84 @@ test("Daytona cancellation between directory creation and socket bind shuts down
     await rm(root, { recursive: true, force: true });
     await rm(sentinel, { force: true });
   }
+});
+
+test("Daytona byte output preserves invalid UTF-8, NUL and stream attribution across bounded native frames", async () => {
+  const native = fixture();
+  let child: NativeProcess | undefined;
+
+  const stdout = Buffer.concat([
+    Buffer.alloc(16_383, 120),
+    Buffer.from("雪"),
+    Buffer.from([0, 255, 192, 128, 233]),
+  ]);
+
+  const stderr = Buffer.from([255, 0, 128, 226, 130]);
+  const delivered: ProcessOutputBytes[] = [];
+
+  try {
+    child = await startDaytonaProcess(
+      native.execute,
+      {
+        sandbox,
+        maxOutputBytes: 0,
+        output: { mode: "stream", format: "bytes" },
+        command: {
+          kind: "argv",
+          argv: [
+            "python3",
+            "-c",
+            "import os,base64,sys; os.write(1,base64.b64decode(sys.argv[1])); os.write(2,base64.b64decode(sys.argv[2]))",
+            stdout.toString("base64"),
+            stderr.toString("base64"),
+          ],
+        },
+      },
+      {
+        ...read(),
+        onOutput() {
+          throw new Error("Byte profile must not emit text");
+        },
+        onOutputBytes(chunk) {
+          delivered.push(chunk);
+        },
+      },
+    );
+    expect((await child.wait()).exitCode).toBe(0);
+    await child.outputDone;
+    expect(
+      Buffer.concat(delivered.flatMap((chunk) => (chunk.stream === "stdout" ? [chunk.bytes] : []))),
+    ).toEqual(stdout);
+    expect(
+      Buffer.concat(delivered.flatMap((chunk) => (chunk.stream === "stderr" ? [chunk.bytes] : []))),
+    ).toEqual(stderr);
+    expect(delivered.every((chunk) => chunk.bytes.byteLength <= 16_384)).toBe(true);
+    expect(delivered.filter((chunk) => chunk.stream === "stdout").length).toBeGreaterThan(1);
+  } finally {
+    await cleanup(child, native.root);
+  }
+});
+
+test("Daytona byte profile rejects a missing byte consumer before launching a child", async () => {
+  let calls = 0;
+
+  const execute: ProcessExecute = async () => {
+    calls++;
+
+    return "{}";
+  };
+
+  await expect(
+    startDaytonaProcess(
+      execute,
+      {
+        sandbox,
+        maxOutputBytes: 0,
+        output: { mode: "stream", format: "bytes" },
+        command: { kind: "argv", argv: ["true"] },
+      },
+      { ...read(), onOutput() {} },
+    ),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(calls).toBe(0);
 });

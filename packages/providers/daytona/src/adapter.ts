@@ -851,7 +851,13 @@ export function createDaytonaAdapter(
       return {
         ...resourceState.fields,
         processes: {
-          supports: { sustainedOutput: true, stdin: "bytes", status: true, execCapture: "bytes" },
+          supports: {
+            sustainedOutput: true,
+            stdin: "bytes",
+            status: true,
+            execCapture: "bytes",
+            binaryOutput: true,
+          },
           async start(input, ctx) {
             await inspection(input.sandbox.id, input.sandbox.reference, ctx);
             const execute = await driver.processTransport(native(input.sandbox.id), ctx.signal);

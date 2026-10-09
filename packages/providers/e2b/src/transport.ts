@@ -188,6 +188,7 @@ export type E2BTransport = {
       env?: Record<string, string>;
       stdin?: "closed" | "pipe";
       sustained?: boolean;
+      format?: "text" | "bytes";
       capture?: { maxBytes: number };
     },
     ctx: ProcessStartContext,

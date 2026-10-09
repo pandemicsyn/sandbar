@@ -3,7 +3,7 @@ title: Streaming and interactive processes
 description: Stream sustained stdout/stderr, write incremental input, observe status and explicitly terminate a process.
 ---
 
-Use `sandbox.processes.start()` for builds, interactive workers and servers. Daytona and E2B expose the same application interface. Sustained mode retains a bounded pending queue rather than a full transcript; stream logs to your own sink if you need to keep them. Output is decoded UTF-8 text with separate stdout/stderr. It is not byte-faithful output or a terminal.
+Use `sandbox.processes.start()` for builds, interactive workers and servers. Daytona and E2B expose the same application interface. Sustained mode retains a bounded pending queue rather than a full transcript; stream logs to your own sink if you need to keep them. Output defaults to decoded UTF-8 text with separate stdout/stderr. Select original bytes explicitly when decoding would lose information. Ordinary process pipes do not have terminal semantics.
 
 ```ts
 const child = await sandbox.processes.start({
@@ -48,6 +48,27 @@ Output has one consumer. In sustained mode, breaking out of its loop stops only 
 
 The same recipes compile against packed SDK declarations and execute in Node and Bun with an independently authored adapter. Deterministic provider fixtures and the ordinary maintained live suite are separate evidence; adding a suite does not claim a deployed-provider pass.
 
+## Original output bytes
+
+Select `output: { mode: "stream", format: "bytes" }` before starting the process. `child.output()` then yields `{ stream, bytes: Uint8Array }`, preserving NUL and invalid UTF-8. Bytes come directly from the native pipe transport. Each chunk owns its bytes; chunk boundaries can split characters or application records. Consume incrementally or decode with your own streaming decoder.
+
+```ts
+const child = await sandbox.processes.start({
+  command: { kind: "argv", argv: ["cat", "/workspace/archive.bin"] },
+  output: { mode: "stream", format: "bytes" },
+});
+try {
+  for await (const chunk of child.output()) {
+    await storeBytes(chunk.stream, chunk.bytes);
+  }
+  console.log(await child.wait());
+} finally {
+  await child.detach();
+}
+```
+
+The same single-consumer, queue, overflow and completion rules apply. Each byte chunk is at most 16 KiB, with at most 64 KiB pending. The default format is `"text"`; adapters without binary output support reject the byte profile before dispatch. Exec callbacks continue to receive text. Byte output is covered by deterministic fixtures; live byte-output qualification is separate from existing sustained-text evidence.
+
 ## Provider transport facts
 
 E2B sustained mode uses the public envd process RPC rather than the pinned native client's cumulative text buffers. Start/SendInput/CloseStdin/List/SendSignal provide the mapping. EOF requires a compatible envd version. Exit comes from the native end event; PID presence supplies running status and absence without an end event is unknown. Termination is native PID-selected SIGKILL and may race PID reuse; descendants and application cleanup are not guaranteed. A stream disconnect may lose exit observation. End notification and final output drain are separate; final-drain expiry marks output incomplete. Attachment verifies running scope and disables auto-resume without renewing sandbox TTL.
@@ -60,7 +81,7 @@ Without `output: { mode: "stream" }`, the existing cumulative UTF-8 budget remai
 
 Start setup is bounded to 30 seconds. Pre-dispatch abort reports `WAIT_ABORTED`; abandoned/lost acknowledgement after dispatch reports `OUTCOME_UNKNOWN`. Start is never replayed. `deadlineSeconds` still rejects before start because no portable remote-runtime deadline is guaranteed. Sandbox TTL remains separate. Commands may buffer their own output.
 
-Reconnection, historical replay/cursors, binary output, PTYs and explicit signal selection require separate contracts and are not exposed by ordinary pipe handles. A local process handle cannot be serialized into a safe reopening reference.
+Reconnection, historical replay/cursors, PTYs and explicit signal selection require separate contracts and are not exposed by ordinary pipe handles. A local process handle cannot be serialized into a safe reopening reference.
 
 ## Live callbacks on bounded exec
 
