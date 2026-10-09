@@ -8,6 +8,7 @@ import {
 } from "sandbar-adapter";
 import type { Sandbox } from "e2b";
 import { z } from "zod";
+import { setImmediate as yieldOutput } from "node:timers/promises";
 
 /** Connect JSON envelopes are bounded before allocating their payload. No native CommandHandle transcript. */
 export const PROCESS_FRAME_BYTES = 1_048_576;
@@ -243,7 +244,18 @@ export async function startProcess(
                 if (take < data.length) truncated = true;
               }
 
-              deliver(stream, decoders[stream].decode(data, { stream: true }));
+              // A fetch read may contain many envelopes, and an envelope may exceed
+              // the SDK queue. Yield after each bounded delivery so a ready consumer
+              // can drain without accumulating callback promises or another queue.
+              for (let index = 0; index < data.length; index += 16_384) {
+                deliver(
+                  stream,
+                  decoders[stream].decode(data.subarray(index, index + 16_384), { stream: true }),
+                );
+                await yieldOutput();
+
+                if (controller.signal.aborted) throw fail();
+              }
             }
           }
         }

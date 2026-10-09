@@ -42,6 +42,7 @@ async function fixture(
   let details = 0;
   let pauseAtAttach = false;
   let earlyCallbacks = 0;
+  let outputAttempts = 0;
   let startResolved = false;
   let deleted = false;
   let target: "original" | "successor" = "original";
@@ -166,6 +167,8 @@ async function fixture(
         const handle = await transport.startText!(id, command, startOptions, {
           ...ctx,
           onOutput(chunk) {
+            outputAttempts++;
+
             if (!startResolved) earlyCallbacks++;
             ctx.onOutput(chunk);
           },
@@ -205,6 +208,9 @@ async function fixture(
     },
     get signaled() {
       return signaled;
+    },
+    get outputAttempts() {
+      return outputAttempts;
     },
     get earlyCallbacks() {
       return earlyCallbacks;
@@ -495,9 +501,14 @@ test("sustained overflow retains independent exit observation and control", asyn
   const f = await fixture({ modern: true });
   const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });
   f.data("stdout", new Uint8Array(70_000).fill(97));
-  await expect(p.output()[Symbol.asyncIterator]().next()).rejects.toMatchObject({
-    code: "OUTPUT_CAPACITY",
-  });
+
+  while (f.outputAttempts < 5) await Bun.sleep(0);
+  const out = p.output()[Symbol.asyncIterator]();
+  let admitted = 0;
+
+  for (let index = 0; index < 4; index++) admitted += (await out.next()).value!.text.length;
+  expect(admitted).toBe(65_536);
+  await expect(out.next()).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
   expect(f.canceled).toBe(0);
   expect(await p.status()).toMatchObject({ state: "running" });
   expect(await p.terminate()).toEqual({ status: "requested" });
@@ -606,3 +617,44 @@ test("exec callback captures original bytes on a single command dispatch", async
   expect(f.calls.filter((call) => call.path.endsWith("/Start"))).toHaveLength(1);
   await f.client.close();
 });
+
+test.each(["coalesced", "large-event"])(
+  "sustained fast consumer drains %s native output without queue starvation",
+  async (mode) => {
+    const f = await fixture({ modern: true });
+    const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });
+    const lengths = { stdout: 0, stderr: 0 };
+    let largestChunk = 0;
+
+    const consuming = (async () => {
+      for await (const chunk of p.output()) {
+        lengths[chunk.stream] += chunk.text.length;
+        largestChunk = Math.max(largestChunk, Buffer.byteLength(chunk.text));
+      }
+    })();
+
+    if (mode === "coalesced") {
+      const frames = Array.from({ length: 64 }, (_, index) =>
+        frame({
+          event: {
+            data: {
+              [index % 2 ? "stdout" : "stderr"]: Buffer.alloc(8192, 97).toString("base64"),
+            },
+          },
+        }),
+      );
+
+      f.raw(Buffer.concat(frames));
+    } else {
+      f.data("stdout", new Uint8Array(262_144).fill(97));
+      f.data("stderr", new Uint8Array(262_144).fill(98));
+    }
+
+    f.end(0);
+    await consuming;
+    expect(lengths).toEqual({ stdout: 262_144, stderr: 262_144 });
+    expect(largestChunk).toBeLessThanOrEqual(16_384);
+    expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: true });
+    await f.client.close();
+  },
+);
