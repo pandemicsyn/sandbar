@@ -13,11 +13,11 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Native sandbox suspend/resume       | [Conditional · passed at 6796b30b](#daytona-suspension)         | [Conditional · passed at 26f516d1](#e2b-suspension)                               |
 | Protected HTTP preview              | [Conditional · passed at 3188e333](#daytona-previewProtected)   | [Unsupported · not-run](#e2b-previewProtected)                                    |
 | Public HTTP preview                 | [Unsupported · not-run](#daytona-previewPublic)                 | [Conditional · passed at 3188e333](#e2b-previewPublic)                            |
-| Local-handle process termination    | [Unsupported · not-run](#daytona-termination)                   | [Conditional · passed at 131a8c6f](#e2b-termination)                              |
+| Local-handle process termination    | [Conditional · passed at ecc73de0](#daytona-termination)        | [Conditional · passed at ecc73de0](#e2b-termination)                              |
 | Configured lifetime renewal         | [Conditional · passed at 3188e333](#daytona-renewal)            | [Conditional · passed at 3188e333](#e2b-renewal)                                  |
 | Scoped sandbox reopening            | [Conditional · passed at 3188e333](#daytona-reopening)          | [Conditional · passed at 3188e333](#e2b-reopening)                                |
 | Execution and captured output       | [Supported · passed at 8449def7](#daytona-execution)            | [Supported · passed at 8449def7](#e2b-execution)                                  |
-| Finite text streaming               | [Unsupported · not-run](#daytona-streaming)                     | [Conditional · passed at 3188e333](#e2b-streaming)                                |
+| Text process streaming              | [Conditional · passed at ecc73de0](#daytona-streaming)          | [Conditional · passed at ecc73de0](#e2b-streaming)                                |
 | Finite execution input              | [Conditional · not-run](#daytona-finiteStdin)                   | [Conditional · not-run](#e2b-finiteStdin)                                         |
 | Binary files and overwrite          | [Conditional · passed at 3188e333](#daytona-files)              | [Conditional · passed at 3188e333](#e2b-files)                                    |
 | Directory primitives                | [Conditional · passed at e91f2d5f](#daytona-directories)        | [Conditional · passed at e91f2d5f](#e2b-directories)                              |
@@ -60,7 +60,7 @@ Daytona sandbox-wide publication requires a separate product decision; preview n
 
 ### Local-handle process termination
 
-No process handles or verified session-command termination mapping. Session deletion is deferred; no sandbox-destruction fallback.
+Process-scoped Python 3 supervisor retains child identity and requests abrupt child termination; no descendant cleanup or sandbox-destruction fallback. Independent wait/status preserve confirmed exit. The maintained execution-termination workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed owned destruction and client close; this does not qualify descendant cleanup or other images.
 
 <a id="daytona-renewal"></a>
 
@@ -82,9 +82,9 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 
 <a id="daytona-streaming"></a>
 
-### Finite text streaming
+### Text process streaming
 
-Daytona does not expose processes.start/output/wait; captured exec output is a separate workflow.
+Finite and explicit sustained text streaming, exact-byte incremental stdin/EOF and status use a private Python 3 supervisor and Unix socket on writable /tmp. Queue 64 KiB/256 chunks, frames 16 KiB; no cumulative transcript. Pipe reads pause while full. Detach closes stdin and discards output; helper removal follows child exit or owned sandbox destruction. The maintained compiled >32 MiB build and incremental text/binary input/EOF workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed sandbox destruction and client close; other images are unqualified.
 
 <a id="daytona-finiteStdin"></a>
 
@@ -192,9 +192,9 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 
 <a id="e2b-streaming"></a>
 
-### Finite text streaming
+### Text process streaming
 
-Finite bounded text only, local process handles and auto-resume-off running guests. Bun execution-streaming passed at 3188e33 on borrowed base: early stdout before exit, stderr, nonzero wait/repeated wait and detach; owned cleanup confirmed. No binary streaming or durable process reopening; termination evidence is reported separately.
+Finite legacy streaming plus explicit sustained public envd RPC text streaming, exact-byte incremental stdin/EOF (envd >=0.5.2), status and bounded byte capture for exec callbacks. No cumulative transcript in sustained mode. PID presence proves running; absence without EndEvent is unknown. RPC loss may lose exit observation. Initial sustained streaming failed at 37dd9c2 on coalesced-frame queue overflow; termination passed and cleanup was confirmed. After bounded fair delivery, >32 MiB build and exact text/binary input/EOF plus status/termination passed at ecc73de on borrowed base with confirmed sandbox destruction and client close. Historical finite evidence remains separate. No binary output streaming or durable process reopening.
 
 <a id="e2b-finiteStdin"></a>
 

@@ -1215,6 +1215,44 @@ export class DaytonaDriver implements ProviderDriver {
       nativeSandbox: detail,
     };
   }
+  async processTransport(sandbox: SandboxRef, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const native = await this.toolbox(sandbox, true);
+
+    return async (command: string, ctx: import("sandbar-adapter").ReadContext): Promise<string> => {
+      ctx.signal.throwIfAborted();
+      const remaining = Math.max(1, Math.min(30_000, ctx.deadline - Date.now()));
+
+      const response = await this.request(
+        "POST",
+        "/process/execute",
+        JSON.stringify({ command, timeout: 30 }),
+        "application/json",
+        native,
+        remaining,
+        ctx.signal,
+      );
+
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new AdapterError("UNAVAILABLE", "Daytona process control transport unavailable");
+      }
+
+      const result = CommandResponse.parse(
+        JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(
+            await boundedBytes(response, 262_144, ctx.signal),
+          ),
+        ),
+      );
+
+      if (result.exitCode !== 0)
+        throw new AdapterError("UNAVAILABLE", "Daytona process helper command failed");
+
+      return result.result;
+    };
+  }
+
   async exec(input: {
     sandbox: SandboxRef;
     identity: InvocationIdentity;

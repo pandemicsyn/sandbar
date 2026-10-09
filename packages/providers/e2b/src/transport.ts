@@ -19,6 +19,7 @@ import {
 } from "sandbar-adapter";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
+import { startProcess } from "./process-native";
 import { guestFilesystem, directoryValue, statValue } from "./filesystem-native";
 import { classifyWriteFailure, E2BWriteFailure } from "./write-failure";
 
@@ -182,7 +183,13 @@ export type E2BTransport = {
   startText?: (
     id: string,
     script: string,
-    options: { cwd?: string; env?: Record<string, string> },
+    options: {
+      cwd?: string;
+      env?: Record<string, string>;
+      stdin?: "closed" | "pipe";
+      sustained?: boolean;
+      capture?: { maxBytes: number };
+    },
     ctx: ProcessStartContext,
   ) => Promise<NativeProcess>;
   read(
@@ -310,6 +317,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
   } as const;
 
   const attachmentVersions = new WeakMap<Sandbox, string>();
+  const processCredentials = new WeakMap<Sandbox, { id: string; token: string; version: string }>();
 
   const Detail = z.object({
     sandboxID: z.string(),
@@ -386,6 +394,11 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     });
 
     attachmentVersions.set(sandbox, detail.envdVersion);
+    processCredentials.set(sandbox, {
+      id,
+      token: detail.envdAccessToken,
+      version: detail.envdVersion,
+    });
 
     return sandbox;
   }
@@ -798,6 +811,16 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       const sandbox = await attach(id, undefined, ctx.signal);
 
       if (ctx.signal.aborted) throw new AdapterError("UNAVAILABLE", "Process setup stopped");
+
+      if (options.sustained || options.stdin === "pipe" || options.capture)
+        return startProcess(
+          sandbox,
+          processCredentials.get(sandbox)!,
+          script,
+          options,
+          ctx,
+          fetcher,
+        );
       const stream = new AbortController();
       let native: CommandHandle | undefined;
       let abandoned = false;
@@ -875,6 +898,23 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
             return confirmedExit();
           },
           wait: () => wait,
+          async status(context) {
+            const exit = confirmedExit();
+
+            if (exit) return { state: "exited", exit, observedAt: new Date().toISOString() };
+
+            const processes = await sandbox.commands.list({
+              signal: context.signal,
+              requestTimeoutMs: Math.max(1, context.deadline - Date.now()),
+            });
+
+            return {
+              state: processes.some((process) => process.pid === handle.pid)
+                ? "running"
+                : "unknown",
+              observedAt: new Date().toISOString(),
+            };
+          },
           async terminate(ctx) {
             const killed = await sandbox.commands.kill(handle.pid, {
               signal: ctx.signal,

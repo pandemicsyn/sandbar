@@ -237,7 +237,7 @@ test("captured execution never qualifies streaming, and streaming evidence has i
   expect(render([captured])).toContain("Conditional · not-run](#e2b-streaming)");
   expect(render([captured])).toContain("Conditional · not-run](#e2b-finiteStdin)");
   expect(render([captured])).toContain("Conditional · not-run](#daytona-finiteStdin)");
-  expect(render([captured])).toContain("Unsupported · not-run](#daytona-streaming)");
+  expect(render([captured])).toContain("Conditional · not-run](#daytona-streaming)");
 
   const streaming: QualificationRecord = {
     ...captured,

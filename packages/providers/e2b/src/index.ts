@@ -1705,6 +1705,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         },
         processes: transport.startText
           ? {
+              supports: {
+                sustainedOutput: true,
+                stdin: "bytes",
+                status: true,
+                execCapture: "bytes",
+              },
               async start(input, ctx) {
                 await requireRunning(input.sandbox.id, input.sandbox.reference);
 
@@ -1719,7 +1725,13 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 return transport.startText!(
                   input.sandbox.id,
                   command,
-                  { cwd: input.cwd, env: input.env },
+                  {
+                    cwd: input.cwd,
+                    env: input.env,
+                    stdin: input.stdin,
+                    sustained: input.output?.mode === "stream",
+                    capture: input.capture,
+                  },
                   ctx,
                 );
               },

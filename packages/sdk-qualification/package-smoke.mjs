@@ -921,6 +921,10 @@ try {
   await checkTypes(e2b, "e2b");
   await checkTypes(builtins, "builtins");
   await writeFile(
+    join(custom, "interactive-processes.ts"),
+    await readFile(join(root, "apps/docs/examples/interactive-processes.ts"), "utf8"),
+  );
+  await writeFile(
     join(custom, "text-streaming.ts"),
     await readFile(join(root, "apps/docs/examples/text-streaming.ts"), "utf8"),
   );
@@ -953,6 +957,7 @@ try {
       },
       include: [
         "text-streaming.ts",
+        "interactive-processes.ts",
         "sandbox-renew.ts",
         "sandbox-suspend-resume.ts",
         "sandbox-preview.ts",
@@ -968,6 +973,16 @@ try {
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["streaming.mjs"], custom)}`);
+  await writeFile(
+    join(custom, "interactive-processes.mjs"),
+    await readFile(
+      join(root, "packages/sdk-qualification/interactive-processes-packed.mjs"),
+      "utf8",
+    ),
+  );
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["interactive-processes.mjs"], custom)}`);
   await writeFile(
     join(custom, "directories.mjs"),
     await readFile(join(root, "packages/sdk-qualification/directory-packed.mjs"), "utf8"),

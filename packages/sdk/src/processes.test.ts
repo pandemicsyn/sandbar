@@ -31,9 +31,18 @@ async function fixture(
     unsupported?: boolean;
     noncooperative?: boolean;
     verified?: boolean;
+    interactive?: boolean;
+    capture?: boolean;
   } = {},
 ) {
   const exit = deferred<{ exitCode: number }>();
+  const outputEnd = deferred<void>();
+  const capture = deferred<import("sandbar-adapter").ExecValue>();
+  const writes: Uint8Array[] = [];
+  let writeGate: Promise<void> | undefined;
+  let closeGate: Promise<void> | undefined;
+  let outputDetaches = 0;
+  let closes = 0;
   const start = deferred<NativeProcess>();
   let ctx!: ProcessStartContext;
   let starts = 0;
@@ -57,6 +66,25 @@ async function fixture(
       if (options.noncooperative) await new Promise(() => {});
     },
   };
+
+  if (options.interactive)
+    Object.assign(native, {
+      outputDone: outputEnd.promise,
+      capture: options.capture ? capture.promise : undefined,
+      detachOutput: async () => {
+        outputDetaches++;
+      },
+      write: async (bytes: Uint8Array) => {
+        writes.push(bytes);
+        await writeGate;
+      },
+      closeStdin: async () => {
+        closes++;
+        await closeGate;
+      },
+      status: async () => ({ state: "running" as const, observedAt: new Date().toISOString() }),
+      terminate: async () => ({ status: "requested" as const }),
+    });
 
   const adapter = defineAdapter({
     name: "stream.fixture",
@@ -86,6 +114,14 @@ async function fixture(
         processes: options.unsupported
           ? undefined
           : {
+              supports: options.interactive
+                ? {
+                    sustainedOutput: true as const,
+                    stdin: "bytes" as const,
+                    status: true as const,
+                    execCapture: options.capture ? ("bytes" as const) : undefined,
+                  }
+                : undefined,
               async start(_input, context) {
                 starts++;
                 ctx = context;
@@ -106,6 +142,21 @@ async function fixture(
     client,
     box,
     exit,
+    outputEnd,
+    capture,
+    writes,
+    setWriteGate(gate?: Promise<void>) {
+      writeGate = gate;
+    },
+    setCloseGate(gate?: Promise<void>) {
+      closeGate = gate;
+    },
+    get outputDetaches() {
+      return outputDetaches;
+    },
+    get closes() {
+      return closes;
+    },
     start,
     native,
     get ctx() {
@@ -808,3 +859,394 @@ test.each(["submitSuspend", "submitResume"] as const)(
     }
   },
 );
+
+test("sustained output exceeds 32 MiB with bounded queue, independent final output and status", async () => {
+  const f = await fixture({ interactive: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });
+  const out = p.output()[Symbol.asyncIterator]();
+  let bytes = 0;
+
+  for (let i = 0; i < 2049; i++) {
+    f.ctx.onOutput({ stream: i % 2 ? "stderr" : "stdout", text: "x".repeat(16_384) });
+    bytes += (await out.next()).value!.text.length;
+  }
+
+  expect(bytes).toBeGreaterThan(32 * 1024 * 1024);
+  expect(await p.status()).toMatchObject({ state: "running" });
+  f.exit.resolve({ exitCode: 3 });
+  expect(await p.wait()).toMatchObject({ exitCode: 3, outputComplete: false });
+  f.ctx.onOutput({ stream: "stderr", text: "final" });
+  expect((await out.next()).value!.text).toBe("final");
+  f.outputEnd.resolve();
+  expect((await out.next()).done).toBe(true);
+  expect(await p.status()).toMatchObject({
+    state: "exited",
+    exit: { exitCode: 3, outputComplete: true },
+  });
+  await p.detach();
+  await f.client.close();
+});
+
+test("sustained overflow preserves wait, stdin, status and termination", async () => {
+  const f = await fixture({ interactive: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  const out = p.output()[Symbol.asyncIterator]();
+  expect(() => f.ctx.onOutput({ stream: "stdout", text: "x".repeat(65_537) })).toThrow();
+  await expect(out.next()).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
+  expect(f.outputDetaches).toBe(1);
+  expect(f.detaches).toBe(0);
+  const waiting = p.wait();
+  await p.write(Uint8Array.of(0, 255));
+  expect(await p.status()).toMatchObject({ state: "running" });
+  expect(await p.terminate()).toEqual({ status: "requested" });
+  f.exit.resolve({ exitCode: 9 });
+  expect(await waiting).toEqual({ exitCode: 9, outputComplete: false });
+  await p.detach();
+  expect(f.detaches).toBe(1);
+  await f.client.close();
+});
+
+test("input is bounded, snapshotted and ordered; EOF waits for admitted writes", async () => {
+  const f = await fixture({ interactive: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe" });
+  const gate = deferred<void>();
+  f.setWriteGate(gate.promise);
+  const first = p.write("hello");
+  const bytes = Uint8Array.of(0, 255, 128);
+  const second = p.write(bytes);
+  bytes.fill(42);
+  const eof = p.closeStdin();
+  await expect(p.write("late")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  await Bun.sleep(0);
+  expect(f.writes).toHaveLength(1);
+  expect(f.closes).toBe(0);
+  gate.resolve();
+  await Promise.all([first, second, eof]);
+  expect([...f.writes[1]!]).toEqual([0, 255, 128]);
+  expect(f.closes).toBe(1);
+  await p.closeStdin();
+  expect(f.closes).toBe(1);
+  await p.detach();
+  await f.client.close();
+});
+
+test("input rejects capacity locally and queued abort is effect-free", async () => {
+  const f = await fixture({ interactive: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe" });
+  await expect(p.write(new Uint8Array(65_537))).rejects.toMatchObject({ code: "INPUT_CAPACITY" });
+  const gate = deferred<void>();
+  f.setWriteGate(gate.promise);
+  const writes = Array.from({ length: 4 }, () => p.write(new Uint8Array(65_536)));
+  await expect(p.write("x")).rejects.toMatchObject({ code: "INPUT_CAPACITY" });
+  gate.resolve();
+  await Promise.all(writes);
+  const gate2 = deferred<void>();
+  f.setWriteGate(gate2.promise);
+  const first = p.write("one");
+  const cancel = new AbortController();
+  const queued = p.write("two", { signal: cancel.signal });
+  cancel.abort();
+  await expect(queued).rejects.toMatchObject({ code: "WAIT_ABORTED", effect: "none" });
+  gate2.resolve();
+  await first;
+  await p.closeStdin();
+  expect(f.writes.map((b) => new TextDecoder().decode(b))).not.toContain("two");
+  await p.detach();
+  await f.client.close();
+});
+
+test("in-flight input abort poisons only input and never retries", async () => {
+  const f = await fixture({ interactive: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  f.setWriteGate(new Promise(() => {}));
+  const cancel = new AbortController();
+  const pending = p.write("request", { signal: cancel.signal });
+  await Bun.sleep(0);
+  cancel.abort();
+  await expect(pending).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+  await expect(p.write("retry")).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  await expect(p.closeStdin()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  expect(f.writes).toHaveLength(1);
+  expect(await p.status()).toMatchObject({ state: "running" });
+  await p.detach();
+  await f.client.close();
+});
+
+test("new modes fail before start on legacy adapters and incompatible output options", async () => {
+  const f = await fixture();
+  await expect(f.box.processes.start({ ...input, stdin: "pipe" })).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+  });
+  await expect(
+    f.box.processes.start({ ...input, output: { mode: "stream" } }),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  await expect(
+    f.box.processes.start({ ...input, output: { mode: "stream" }, maxOutputBytes: 1 }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(f.starts).toBe(0);
+  const p = await f.box.processes.start(input);
+  expect(await p.status()).toMatchObject({ state: "unknown" });
+  await p.detach();
+  await f.client.close();
+});
+
+test("callback exec dispatches once, awaits callbacks and returns original bounded bytes", async () => {
+  const f = await fixture({ interactive: true, capture: true, early: "initial" });
+  const chunks: string[] = [];
+  const callbackGate = deferred<void>();
+
+  const running = f.box.exec(input, {
+    onOutput: async (chunk) => {
+      chunks.push(chunk.text);
+      await callbackGate.promise;
+    },
+  });
+
+  await Bun.sleep(0);
+  expect(chunks).toEqual(["initial"]);
+  f.ctx.onOutput({ stream: "stderr", text: "replacement �" });
+  f.capture.resolve({
+    exitCode: 0,
+    stdout: Uint8Array.of(0, 255),
+    stderr: Uint8Array.of(128),
+    truncated: true,
+  });
+  f.exit.resolve({ exitCode: 0 });
+  f.outputEnd.resolve();
+  callbackGate.resolve();
+  const result = await running;
+  expect([...result.stdout]).toEqual([0, 255]);
+  expect([...result.stderr]).toEqual([128]);
+  expect(result.truncated).toBe(true);
+  expect(chunks).toEqual(["initial", "replacement �"]);
+  expect(f.starts).toBe(1);
+  expect(f.detaches).toBe(1);
+  await f.client.close();
+});
+
+test("callback exec splits finite input and closes EOF without starting finite exec", async () => {
+  const f = await fixture({ interactive: true, capture: true });
+  const bytes = new Uint8Array(131_073).fill(255);
+  const running = f.box.exec({ ...input, stdin: bytes }, { onOutput() {} });
+  await Bun.sleep(0);
+  expect(f.writes.map((b) => b.byteLength)).toEqual([65_536, 65_536, 1]);
+  expect(f.closes).toBe(1);
+  f.capture.resolve({
+    exitCode: 0,
+    stdout: new Uint8Array(),
+    stderr: new Uint8Array(),
+    truncated: false,
+  });
+  f.exit.resolve({ exitCode: 0 });
+  f.outputEnd.resolve();
+  expect((await running).exitCode).toBe(0);
+  expect(f.starts).toBe(1);
+  await f.client.close();
+});
+
+test("callback failures preserve independently confirmed exit/capture and never replay", async () => {
+  const f = await fixture({ interactive: true, capture: true });
+  const gate = deferred<void>();
+
+  const running = f.box.exec(input, {
+    onOutput: async () => {
+      await gate.promise;
+      throw new Error("private output contents");
+    },
+  });
+
+  await Bun.sleep(0);
+  f.ctx.onOutput({ stream: "stdout", text: "one" });
+  f.exit.resolve({ exitCode: 7 });
+  f.capture.resolve({
+    exitCode: 7,
+    stdout: Uint8Array.of(1),
+    stderr: new Uint8Array(),
+    truncated: false,
+  });
+  await Bun.sleep(0);
+  gate.resolve();
+  await expect(running).rejects.toMatchObject({
+    code: "UNAVAILABLE",
+    confirmedExit: { exitCode: 7 },
+    output: { exitCode: 7, stdout: Uint8Array.of(1) },
+  });
+  expect(f.starts).toBe(1);
+  expect(f.detaches).toBe(1);
+  await f.client.close();
+});
+
+test("callback exec preserves ordinary nonzero results and unsupported validation has no effects", async () => {
+  const f = await fixture({ interactive: true, capture: true });
+  const running = f.box.exec(input, { onOutput() {} });
+  await Bun.sleep(0);
+  f.capture.resolve({
+    exitCode: 4,
+    stdout: new Uint8Array(),
+    stderr: new Uint8Array(),
+    truncated: false,
+  });
+  f.exit.resolve({ exitCode: 4 });
+  f.outputEnd.resolve();
+  await expect(running).rejects.toMatchObject({ code: "NONZERO_EXIT", result: { exitCode: 4 } });
+  await expect(
+    f.box.exec({ ...input, deadlineSeconds: 3 }, { onOutput() {} }),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  expect(f.starts).toBe(1);
+  await f.client.close();
+  const legacy = await fixture();
+  await expect(legacy.box.exec(input, { onOutput() {} })).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+  });
+  expect(legacy.starts).toBe(0);
+  await legacy.client.close();
+});
+
+test.each(["closed", "pipe"] as const)(
+  "finite %s output honors separate native output completion after exit",
+  async (stdin) => {
+    const f = await fixture({ interactive: true });
+    const p = await f.box.processes.start({ ...input, stdin });
+    const out = p.output()[Symbol.asyncIterator]();
+    f.exit.resolve({ exitCode: 0 });
+    expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: false });
+    const next = out.next();
+    await Bun.sleep(0);
+    f.ctx.onOutput({ stream: "stderr", text: "final after exit" });
+    expect(await next).toMatchObject({ value: { text: "final after exit" } });
+    expect(await p.wait()).toMatchObject({ outputComplete: false });
+    f.outputEnd.resolve();
+    expect(await out.next()).toMatchObject({ done: true });
+    expect(await p.wait()).toMatchObject({ outputComplete: true });
+    await p.detach();
+    await f.client.close();
+  },
+);
+
+test("client close releases stalled callback after independently confirmed capture and exit", async () => {
+  const f = await fixture({ interactive: true, capture: true });
+  const entered = deferred<void>();
+
+  const running = f.box.exec(input, {
+    onOutput: async () => {
+      entered.resolve();
+      await new Promise(() => {});
+    },
+  });
+
+  await Bun.sleep(0);
+  f.ctx.onOutput({ stream: "stdout", text: "one" });
+  await entered.promise;
+  f.exit.resolve({ exitCode: 0 });
+  f.capture.resolve({
+    exitCode: 0,
+    stdout: Uint8Array.of(1),
+    stderr: new Uint8Array(),
+    truncated: false,
+  });
+  f.outputEnd.resolve();
+  await Bun.sleep(0);
+  const result = running.catch((error) => error);
+  await f.client.close();
+  expect(await result).toMatchObject({
+    code: "UNAVAILABLE",
+    confirmedExit: { exitCode: 0 },
+    output: { exitCode: 0 },
+  });
+  expect(f.detaches).toBe(1);
+});
+
+test("concurrent EOF caller abort cancels only its wait and does not replay shared close", async () => {
+  const f = await fixture({ interactive: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe" });
+  const gate = deferred<void>();
+  f.setCloseGate(gate.promise);
+  const first = p.closeStdin();
+  await Bun.sleep(0);
+  const cancel = new AbortController();
+  const second = p.closeStdin({ signal: cancel.signal });
+  cancel.abort();
+  await expect(second).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+  expect(f.closes).toBe(1);
+  gate.resolve();
+  await first;
+  await p.closeStdin();
+  expect(f.closes).toBe(1);
+  await expect(p.write("late")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  await p.detach();
+  await f.client.close();
+});
+
+test("detach cancels in-flight local input, queued input and native controls promptly without redispatch", async () => {
+  const f = await fixture({ interactive: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  f.setWriteGate(new Promise(() => {}));
+  const first = p.write("first").catch((error) => error);
+  const second = p.write("second").catch((error) => error);
+  const eof = p.closeStdin().catch((error) => error);
+  let statusSignal: AbortSignal | undefined;
+  let terminationSignal: AbortSignal | undefined;
+  f.native.status = async (context) => {
+    statusSignal = context.signal;
+
+    return new Promise(() => {});
+  };
+
+  f.native.terminate = async (context) => {
+    terminationSignal = context.signal;
+
+    return new Promise(() => {});
+  };
+
+  const status = p.status().catch((error) => error);
+  const termination = p.terminate().catch((error) => error);
+  await Bun.sleep(0);
+  expect(f.writes).toHaveLength(1);
+  await p.detach();
+  expect(await first).toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+  expect(await second).toMatchObject({ code: "WAIT_ABORTED", effect: "none" });
+  expect(await eof).toMatchObject({ code: "WAIT_ABORTED", effect: "none" });
+  expect(await status).toMatchObject({ code: "UNAVAILABLE" });
+  expect(await termination).toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  expect(statusSignal?.aborted).toBe(true);
+  expect(terminationSignal?.aborted).toBe(true);
+  expect(f.writes).toHaveLength(1);
+  expect(f.closes).toBe(0);
+  expect(f.detaches).toBe(1);
+  await f.client.close();
+});
+
+test("returning sustained output releases only output and preserves interactive control", async () => {
+  const f = await fixture({ interactive: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  const out = p.output()[Symbol.asyncIterator]();
+  f.ctx.onOutput({ stream: "stdout", text: "one" });
+  expect((await out.next()).value?.text).toBe("one");
+  await out.return!();
+  expect(f.outputDetaches).toBe(1);
+  expect(f.detaches).toBe(0);
+  await p.write("still usable");
+  await p.closeStdin();
+  expect(await p.status()).toMatchObject({ state: "running" });
+  expect(await p.terminate()).toEqual({ status: "requested" });
+  const waiting = p.wait();
+  f.exit.resolve({ exitCode: 2 });
+  expect(await waiting).toEqual({ exitCode: 2, outputComplete: false });
+  await p.detach();
+  expect(f.detaches).toBe(1);
+  await f.client.close();
+});
+
+test("callback exec preserves uncertain input delivery code and effect without command replay", async () => {
+  const f = await fixture({ interactive: true, capture: true });
+  f.native.write = async () => {
+    throw new Error("private transport input");
+  };
+
+  const running = f.box.exec({ ...input, stdin: "payload" }, { onOutput() {} });
+  await expect(running).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+  expect(f.starts).toBe(1);
+  expect(f.closes).toBe(0);
+  expect(f.detaches).toBe(1);
+  await f.client.close();
+});

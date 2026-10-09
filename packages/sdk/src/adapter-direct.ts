@@ -26,7 +26,13 @@ import {
   type ReadTextLinesOptions,
 } from "./filesystem-extensions";
 import { freezeReference } from "./freeze-reference";
-import { startProcess, type StartProcessInput, type ProcessHandle } from "./processes";
+import {
+  startProcess,
+  callbackExec,
+  type ExecOptions,
+  type StartProcessInput,
+  type ProcessHandle,
+} from "./processes";
 import { certifyRecoveryReference, certifyOperationReference } from "./recovery-diagnostics";
 import {
   ReferenceSchema,
@@ -1237,10 +1243,20 @@ export class AdapterSandbox {
       },
     );
   }
-  async exec(
-    input: ExecInput | readonly string[],
-    options: { signal?: AbortSignal } = {},
-  ): Promise<ExecOutput> {
+  async exec(input: ExecInput | readonly string[], options: ExecOptions = {}): Promise<ExecOutput> {
+    if (options.onOutput !== undefined) {
+      this.client.ensureOpen();
+      const control = processControl(this.client, this.id);
+
+      return callbackExec(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        () => control.active,
+        input,
+        options,
+      );
+    }
+
     return waitFor(
       this.client.telemetry,
       await internalMethod(this.submitExec)(input, options),

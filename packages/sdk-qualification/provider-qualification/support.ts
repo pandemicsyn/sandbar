@@ -32,7 +32,7 @@ export const features = {
     workflow: "execution",
     scenarios: ["exec-argv", "exec-shell", "exec-nonzero"],
   },
-  streaming: { label: "Finite text streaming", scenarios: ["execution-streaming"] },
+  streaming: { label: "Text process streaming", scenarios: ["execution-streaming"] },
   finiteStdin: { label: "Finite execution input", scenarios: ["execution-stdin"] },
   files: {
     label: "Binary files and overwrite",
@@ -86,8 +86,8 @@ export const builtinSupport: SupportMetadata[] = [
         note: "Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Bun lifecycle-suspend-resume passed at 6796b30 with confirmed owned cleanup.",
       },
       termination: {
-        support: "unsupported",
-        note: "No process handles or verified session-command termination mapping. Session deletion is deferred; no sandbox-destruction fallback.",
+        support: "conditional",
+        note: "Process-scoped Python 3 supervisor retains child identity and requests abrupt child termination; no descendant cleanup or sandbox-destruction fallback. Independent wait/status preserve confirmed exit. The maintained execution-termination workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed owned destruction and client close; this does not qualify descendant cleanup or other images.",
       },
       previewProtected: {
         support: "conditional",
@@ -114,8 +114,8 @@ export const builtinSupport: SupportMetadata[] = [
         note: "The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified. The current suite omits the create environment to exercise adapter defaults; historical baseline passes do not qualify that newer path.",
       },
       streaming: {
-        support: "unsupported",
-        note: "Daytona does not expose processes.start/output/wait; captured exec output is a separate workflow.",
+        support: "conditional",
+        note: "Finite and explicit sustained text streaming, exact-byte incremental stdin/EOF and status use a private Python 3 supervisor and Unix socket on writable /tmp. Queue 64 KiB/256 chunks, frames 16 KiB; no cumulative transcript. Pipe reads pause while full. Detach closes stdin and discards output; helper removal follows child exit or owned sandbox destruction. The maintained compiled >32 MiB build and incremental text/binary input/EOF workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed sandbox destruction and client close; other images are unqualified.",
       },
       execution: {
         support: "supported",
@@ -193,7 +193,7 @@ export const builtinSupport: SupportMetadata[] = [
       },
       streaming: {
         support: "conditional",
-        note: "Finite bounded text only, local process handles and auto-resume-off running guests. Bun execution-streaming passed at 3188e33 on borrowed base: early stdout before exit, stderr, nonzero wait/repeated wait and detach; owned cleanup confirmed. No binary streaming or durable process reopening; termination evidence is reported separately.",
+        note: "Finite legacy streaming plus explicit sustained public envd RPC text streaming, exact-byte incremental stdin/EOF (envd >=0.5.2), status and bounded byte capture for exec callbacks. No cumulative transcript in sustained mode. PID presence proves running; absence without EndEvent is unknown. RPC loss may lose exit observation. Initial sustained streaming failed at 37dd9c2 on coalesced-frame queue overflow; termination passed and cleanup was confirmed. After bounded fair delivery, >32 MiB build and exact text/binary input/EOF plus status/termination passed at ecc73de on borrowed base with confirmed sandbox destruction and client close. Historical finite evidence remains separate. No binary output streaming or durable process reopening.",
       },
       execution: {
         support: "supported",

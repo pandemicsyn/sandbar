@@ -39,6 +39,7 @@ Import from `sandbar-sdk`.
 | `DirectSandbarClient`       | type      |
 | `DirectSandboxHandle`       | type      |
 | `ExecInput`                 | type      |
+| `ExecOptions`               | type      |
 | `ExecOutput`                | type      |
 | `Fact`                      | type      |
 | `FileEntry`                 | type      |
@@ -68,6 +69,7 @@ Import from `sandbar-sdk`.
 | `ProcessFailure`            | type      |
 | `ProcessHandle`             | type      |
 | `ProcessOutput`             | type      |
+| `ProcessStatus`             | type      |
 | `ProcessTermination`        | type      |
 | `ReadOptions`               | type      |
 | `ReadTextLinesOptions`      | type      |
@@ -187,6 +189,7 @@ Import from `sandbar-adapter`.
 | `Mutation`                     | type      |
 | `NativeProcess`                | interface |
 | `NativeProcessExit`            | type      |
+| `NativeProcessStatus`          | type      |
 | `ObserveContext`               | type      |
 | `observeOperation`             | re-export |
 | `OperationInput`               | type      |
