@@ -4,9 +4,11 @@ export type {
   StartProcessInput,
   ProcessOutput,
   ProcessExit,
+  ProcessStatus,
   ProcessTermination,
   ProcessHandle,
   ProcessFailure,
+  ExecOptions,
 } from "./processes";
 
 export {

@@ -99,10 +99,16 @@ export type ExecValue = {
   truncated: boolean;
 };
 
-/** Finite decoded text observation; detach never terminates compute. */
+/** Decoded text observation; detach never terminates compute. */
 export type ProcessOutput = { stream: "stdout" | "stderr"; text: string };
 
 export type NativeProcessExit = { exitCode: number };
+
+export type NativeProcessStatus = {
+  state: "running" | "exited" | "unknown";
+  exit?: NativeProcessExit;
+  observedAt: string;
+};
 
 export type ProcessObservationFailure = AdapterError & { confirmedExit?: NativeProcessExit };
 
@@ -114,12 +120,24 @@ export interface NativeProcess {
   /** Synchronous confirmed evidence, including during final decoder callbacks. */
   readonly confirmedExit?: NativeProcessExit;
   wait(): Promise<NativeProcessExit>;
+  /** Sustained transports report output end separately from confirmed exit. */
+  readonly outputDone?: Promise<void>;
+  /** Original bounded bytes for callback exec; never reconstructed from decoded text. */
+  readonly capture?: Promise<ExecValue>;
+  /** Release only output observation, preserving independent input/status/control. */
+  detachOutput?(): Promise<void>;
+  write?(bytes: Uint8Array, ctx: ReadContext): Promise<void>;
+  closeStdin?(ctx: ReadContext): Promise<void>;
+  status?(ctx: ReadContext): Promise<NativeProcessStatus>;
   /** One native termination request, not confirmed exit. Local IO bounds only. */
   terminate?(ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>;
   detach(): Promise<void>;
 }
 
 export type ProcessStartInput = {
+  capture?: { maxBytes: number };
+  stdin?: "closed" | "pipe";
+  output?: { mode: "stream" };
   sandbox: Sandbox;
   command: Command;
   cwd?: string;
@@ -395,7 +413,11 @@ export type AdapterSession<
     input: { sandbox: Sandbox; port: number },
     ctx: ReadContext,
   ) => Promise<import("./preview").Preview>;
-  processes?: { start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess> };
+  processes?: {
+    /** Additive behavior declarations; absence retains the finite, closed-input contract. */
+    supports?: { sustainedOutput?: true; stdin?: "bytes"; status?: true; execCapture?: "bytes" };
+    start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess>;
+  };
   files?: {
     maxBytes: number;
     read?: (

@@ -1,6 +1,6 @@
 # Sustained output and interactive processes
 
-Proposed delivery plan · October 8, 2026 · Baseline `af316b2`; no runtime implementation in this change
+Implementation brief · Updated October 9, 2026 · Original proposal baseline `af316b2`
 
 ## Outcome and baseline
 
@@ -92,6 +92,26 @@ If a guest helper is necessary, propose its precise footprint, interpreter/binar
 
 Ordinary provider differences must be handled by the adapter. Optional method absence alone is insufficient for output mode/input choices: add only the capability fields the delivered features need, validate before start and explain unsupported combinations. Avoid a speculative feature schema for all future process operations.
 
+## P0 transport decision — October 9 implementation
+
+Installed source and public protocol inspection select these additive transports. No deployed-provider qualification is implied by this decision or deterministic probes. The legacy finite E2B client path remains available; no dependency upgrade or private client buffer patch is needed.
+
+| Boundary | E2B | Daytona |
+| --- | --- | --- |
+| Version/endpoint | Pinned `e2b@2.51.0`; public envd Connect JSON `process.Process/Start`, with existing authenticated, running, auto-resume-off guest attachment | Existing single-attempt toolbox `/process/execute`; reference native session API lacks exact byte input, EOF and child-specific termination |
+| Initial output | Consume Start RPC from its first frame, before resolving start event | Supervisor launches child with private stdout/stderr pipes before first output read; no session-log attachment gap |
+| Frame/admission bounds | Connect envelope capped at 1 MiB before payload allocation; fetch can supply an already allocated incoming chunk; SDK 64 KiB/256 chunks | Python pipe reads at most 16 KiB, queue at most 64 KiB, read replies at most three frames/48 KiB raw and bounded JSON/native response |
+| Retention | No native `CommandHandle`, cumulative `_stdout` or `_stderr`; only parser, decoder and SDK queue | No session log transcript; private bounded queue and OS pipes; pipe reading pauses when full |
+| Input/ACK/EOF | Native exact-byte SendInput and CloseStdin, envd >=0.5.2; unary ACK means acceptance, not application consumption | Base64-framed bytes over private Unix socket; `os.write` acceptance followed by ACK; explicit pipe close provides EOF |
+| Status/exit | List proves PID presence; absence is unknown; EndEvent confirms exit separately from stream end | Retained child `Popen.poll()` supplies running or confirmed exit independently of output RPC |
+| Termination | Native PID-selected SIGKILL; PID-reuse and descendant limitations remain explicit | Supervisor retains child generation and calls child kill; no session delete or sandbox fallback |
+| Cleanup | Output detach stops delivery while RPC continues observing exit; full detach cancels local stream; no implicit remote termination | Local detach discards output, closes stdin; supervisor removes its private directory after child exit; owned sandbox destruction cleans interrupted helpers |
+| Runtime deadline | Raw Start omits a transport total timeout; no idle/60-second process deadline is added; requested runtime guarantees remain unsupported | Native request/setup limits bound RPC only; helper/child lifetime remains separate and sandbox TTL applies |
+
+The Daytona helper footprint was proposed before implementation: one Python 3 standard-library supervisor per process, one private mode-0700 `/tmp` directory, one mode-0600 Unix socket, ordinary child pipes and short bounded Python RPC invocations. It performs no downloads, background service installation, TCP binding, preview exposure or network-policy changes. Python 3 and writable private `/tmp` are prerequisites. A detached running child retains its supervisor until exit or owned sandbox destruction. This is adapter work, not an application orchestration requirement.
+
+The [E2B background documentation](https://docs.e2b.dev/commands/background) currently describes timeout and reconnect behavior beyond the older pinned-client analysis. This implementation does not infer runtime-deadline or immutable identity guarantees from those examples. The [Daytona process documentation](https://www.daytona.io/docs/en/process-code-execution/) distinguishes native sessions from terminals; text session input cannot supply this byte-pipe contract. Reconnection, byte-faithful streaming output and PTYs remain separately scoped P4 extensions as specified below; no unsafe PID persistence or terminal reinterpretation is introduced.
+
 ## Compatibility and improvements
 
 - Introduce explicit `output: { mode: 'stream' }` for sustained operation while retaining legacy `maxOutputBytes` finite semantics. Supplying both is invalid. After both built-ins qualify, consider making sustained streaming the default in a coordinated documented API release; do not silently change old limits or third-party adapter behavior in the initial slice.
@@ -123,3 +143,5 @@ These extensions are planned opportunities, not prerequisites for the initial en
 F1 from the [filesystem plan](filesystem-dx.md) can proceed alongside P0; large-file streaming and process streaming may reuse small cancellation utilities but must not block on a shared IO framework. Finite exec input qualification can proceed independently.
 
 Reuse Bun integration suites, native-boundary fixtures, packed Node/Bun consumers and compiled documentation examples. Add separately authorized bounded live workflows on Daytona/E2B covering output beyond the old cap, incremental input/EOF, status, termination and cleanup. Record exact configuration/revision and unsupported or unqualified features honestly. No new custom live harness. Independent correctness and DX reviews must be clear before opening implementation PRs; the user manages final review/merge. Paid resources require their own explicit authorization.
+
+Abandoned Daytona setup writes a private cancellation marker before releasing its local transport. A bootstrap delayed beyond the lost HTTP acknowledgement checks that marker before launching a child. If no bootstrap arrives, the small cancellation directory remains until owned sandbox destruction; it is not a running service or a retained provider artifact.

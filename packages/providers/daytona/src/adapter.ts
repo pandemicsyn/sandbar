@@ -20,6 +20,7 @@ import {
 import { z } from "zod";
 import { directoryEntries, GuestStat } from "./filesystem";
 import { daytonaState } from "./state-native";
+import { startDaytonaProcess } from "./process-native";
 import { MountDurability as importMountDurability, type ResourceReference } from "sandbar-adapter";
 import {
   AdapterError,
@@ -849,6 +850,15 @@ export function createDaytonaAdapter(
 
       return {
         ...resourceState.fields,
+        processes: {
+          supports: { sustainedOutput: true, stdin: "bytes", status: true, execCapture: "bytes" },
+          async start(input, ctx) {
+            await inspection(input.sandbox.id, input.sandbox.reference, ctx);
+            const execute = await driver.processTransport(native(input.sandbox.id), ctx.signal);
+
+            return startDaytonaProcess(execute, input, ctx);
+          },
+        },
         defaultImage: config.environment,
         snapshotRestore: createMutation,
         async snapshotInspect(ref: ResourceReference, ctx: import("sandbar-adapter").ReadContext) {
