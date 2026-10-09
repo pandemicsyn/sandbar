@@ -90,7 +90,13 @@ Sustained text has no cumulative lifetime cap. The SDK retains at most its 64 Ki
 
 `box.exec(input, { onOutput })` uses the same single-dispatch transport when requested and captures original stdout/stderr bytes within the finite aggregate output budget. Callback text is decoded separately; captured bytes are never reconstructed from text. This convenience requires the adapter byte-capture hook.
 
-Deterministic native-boundary tests cover more than 32 MiB with a fast consumer, exact NUL/non-UTF-8 input, EOF, status, final output after exit, overflow, framing limits and cleanup. Sustained behavior has not yet been qualified live. Binary output, PTYs and reconnection remain separate extensions.
+Deterministic native-boundary tests cover more than 32 MiB with a fast consumer, exact NUL/non-UTF-8 input, EOF, status, final output after exit, overflow, framing limits and cleanup. Sustained behavior has not yet been qualified live. PTYs and reconnection remain separate extensions.
+
+## Byte output
+
+`box.processes.start({ command, output: { mode: "stream", format: "bytes" } })` returns a handle whose `output()` yields `{ stream, bytes }`. E2B delivers original decoded native base64 bytes, including NUL, invalid UTF-8 and multi-byte sequences split across frames. No text decoding or re-encoding occurs in this profile. Stdout/stderr stay separate, with ordering within each stream. Chunk boundaries are transport boundaries, not lines or characters.
+
+Byte chunks are copied and bounded to 16 KiB, with the same fair scheduling, bounded SDK queue, explicit slow-consumer failure and independent exit observation as sustained text. The 1 MiB native envelope limit applies to both profiles. Default and `format: "text"` starts preserve the existing incremental UTF-8 replacement behavior. This binary extension has deterministic native-boundary coverage and a live pass at `5f2bd13`; owned sandbox destruction and client closure were confirmed.
 
 ## Finite text streaming
 

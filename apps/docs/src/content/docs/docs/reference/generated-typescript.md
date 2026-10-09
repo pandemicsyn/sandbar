@@ -65,10 +65,13 @@ Import from `sandbar-sdk`.
 | `PreparedAdapterAttempt`    | re-export |
 | `PreparedImage`             | type      |
 | `Preview`                   | type      |
+| `ProcessChunk`              | type      |
 | `ProcessExit`               | type      |
 | `ProcessFailure`            | type      |
 | `ProcessHandle`             | type      |
 | `ProcessOutput`             | type      |
+| `ProcessOutputBytes`        | type      |
+| `ProcessOutputFormat`       | type      |
 | `ProcessStatus`             | type      |
 | `ProcessTermination`        | type      |
 | `ReadOptions`               | type      |
@@ -204,6 +207,8 @@ Import from `sandbar-adapter`.
 | `prepareOperation`             | re-export |
 | `ProcessObservationFailure`    | type      |
 | `ProcessOutput`                | type      |
+| `ProcessOutputBytes`           | type      |
+| `ProcessOutputFormat`          | type      |
 | `ProcessStartContext`          | type      |
 | `ProcessStartInput`            | type      |
 | `ReadContext`                  | type      |
