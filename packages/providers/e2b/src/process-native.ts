@@ -68,6 +68,7 @@ export async function startProcess(
     cwd?: string;
     env?: Record<string, string>;
     stdin?: "closed" | "pipe";
+    format?: "text" | "bytes";
     capture?: { maxBytes: number };
   },
   ctx: ProcessStartContext,
@@ -80,6 +81,9 @@ export async function startProcess(
       options.capture.maxBytes > 1_048_576)
   )
     throw new AdapterError("CAPACITY", "E2B process capture exceeds its byte bound");
+
+  if (options.format === "bytes" && !ctx.onOutputBytes)
+    throw new AdapterError("UNSUPPORTED", "E2B binary output requires a byte consumer hook");
   // CloseStdin was added in envd 0.5.2. Reject pipe mode before the Start RPC.
   const parts = credentials.version.split(".").map(Number);
 
@@ -119,6 +123,17 @@ export async function startProcess(
 
     try {
       ctx.onOutput({ stream, text });
+    } catch (error) {
+      outputDetached = true;
+      output.reject(error instanceof Error ? error : fail());
+    }
+  };
+
+  const deliverBytes = (stream: "stdout" | "stderr", bytes: Uint8Array) => {
+    if (!bytes.length || outputDetached || detached) return;
+
+    try {
+      ctx.onOutputBytes!({ stream, bytes: new Uint8Array(bytes) });
     } catch (error) {
       outputDetached = true;
       output.reject(error instanceof Error ? error : fail());
@@ -248,10 +263,10 @@ export async function startProcess(
               // the SDK queue. Yield after each bounded delivery so a ready consumer
               // can drain without accumulating callback promises or another queue.
               for (let index = 0; index < data.length; index += 16_384) {
-                deliver(
-                  stream,
-                  decoders[stream].decode(data.subarray(index, index + 16_384), { stream: true }),
-                );
+                const segment = data.subarray(index, index + 16_384);
+
+                if (options.format === "bytes") deliverBytes(stream, segment);
+                else deliver(stream, decoders[stream].decode(segment, { stream: true }));
                 await yieldOutput();
 
                 if (controller.signal.aborted) throw fail();
@@ -272,7 +287,9 @@ export async function startProcess(
 
     if (!ended || headerUsed || payload) throw fail();
 
-    for (const stream of ["stdout", "stderr"] as const) deliver(stream, decoders[stream].decode());
+    if (options.format !== "bytes")
+      for (const stream of ["stdout", "stderr"] as const)
+        deliver(stream, decoders[stream].decode());
     capture?.resolve({
       exitCode: confirmedExit!.exitCode,
       stdout: captured.stdout.slice(0, capturedSize.stdout),

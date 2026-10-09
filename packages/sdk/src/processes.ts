@@ -3,6 +3,8 @@ import {
   type NativeProcess,
   type Sandbox,
   type ProcessOutput,
+  type ProcessOutputBytes,
+  type ProcessOutputFormat,
   type NativeProcessStatus,
 } from "sandbar-adapter";
 import { z } from "zod";
@@ -19,12 +21,18 @@ import {
 import type { AdapterDirectClient } from "./adapter-direct";
 import { noteOperation } from "./observability";
 
-export type { ProcessOutput } from "sandbar-adapter";
+export type { ProcessOutput, ProcessOutputBytes, ProcessOutputFormat } from "sandbar-adapter";
 
-export type StartProcessInput = Pick<
+export type ProcessChunk<F extends ProcessOutputFormat> = F extends "bytes"
+  ? ProcessOutputBytes
+  : ProcessOutput;
+
+export type StartProcessInput<F extends ProcessOutputFormat = ProcessOutputFormat> = Pick<
   ExecInput,
   "command" | "cwd" | "env" | "maxOutputBytes" | "deadlineSeconds"
-> & { stdin?: "closed" | "pipe"; output?: { mode: "stream" } };
+> & { stdin?: "closed" | "pipe"; output?: { mode: "stream"; format?: F } } & (F extends "bytes"
+    ? { output: { mode: "stream"; format: "bytes" } }
+    : object);
 
 export type ProcessTermination = { status: "requested" | "not-found" | "exited" };
 
@@ -39,10 +47,10 @@ export type ProcessFailure = SandbarError & {
   confirmedExit?: ProcessExit;
 };
 
-export interface ProcessHandle {
+export interface ProcessHandle<F extends ProcessOutputFormat = "text"> {
   readonly provider: string;
   /** Returning a sustained iterator releases output only; finite legacy iterators detach the handle. */
-  output(options?: { signal?: AbortSignal }): AsyncIterable<ProcessOutput>;
+  output(options?: { signal?: AbortSignal }): AsyncIterable<ProcessChunk<F>>;
   wait(options?: { signal?: AbortSignal }): Promise<ProcessExit>;
   write(input: string | Uint8Array, options?: { signal?: AbortSignal }): Promise<void>;
   closeStdin(options?: { signal?: AbortSignal }): Promise<void>;
@@ -71,9 +79,9 @@ function release(native: NativeProcess): void {
   }
 }
 
-class TextProcess implements ProcessHandle {
+class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
   native?: NativeProcess;
-  private queue: { chunk: ProcessOutput; bytes: number }[] = [];
+  private queue: { chunk: ProcessOutput | ProcessOutputBytes; bytes: number }[] = [];
   private queuedBytes = 0;
   private total = 0;
   private used = false;
@@ -106,6 +114,7 @@ class TextProcess implements ProcessHandle {
     private readonly controlActive: () => boolean,
     private readonly sustained: boolean,
     private readonly piped: boolean,
+    private readonly format: F,
   ) {
     signal.addEventListener("abort", this.closed, { once: true });
   }
@@ -175,6 +184,18 @@ class TextProcess implements ProcessHandle {
   }
   onOutput = (value: ProcessOutput): void => {
     if (this.stopped) return;
+
+    if (this.format !== "text") {
+      const error = new SandbarError(
+        "INVALID_RESPONSE",
+        "Text delivered to a byte output process",
+        "possible",
+      );
+
+      this.fail(error);
+      throw error;
+    }
+
     const checked = Chunk.safeParse(value);
 
     if (!checked.success) {
@@ -236,6 +257,45 @@ class TextProcess implements ProcessHandle {
     if (!this.sustained) this.total += bytes;
     this.queuedBytes += bytes;
     this.queue.push(...parts);
+    this.notify();
+  };
+  onOutputBytes = (value: ProcessOutputBytes): void => {
+    if (this.stopped) return;
+
+    const checked = z
+      .object({ stream: z.enum(["stdout", "stderr"]), bytes: z.instanceof(Uint8Array) })
+      .safeParse(value);
+
+    if (this.format !== "bytes" || !checked.success) {
+      const error = new SandbarError("INVALID_RESPONSE", "Invalid process byte output", "possible");
+      this.fail(error);
+      throw error;
+    }
+
+    const { stream, bytes } = checked.data;
+
+    if (!bytes.byteLength) return;
+
+    if (
+      this.queuedBytes + bytes.byteLength > 65_536 ||
+      this.queue.length + Math.ceil(bytes.byteLength / 16_384) > 256
+    ) {
+      const error = new SandbarError(
+        "OUTPUT_CAPACITY",
+        "Process byte output queue exceeded",
+        "possible",
+      );
+
+      this.fail(error);
+      throw error;
+    }
+
+    for (let offset = 0; offset < bytes.byteLength; offset += 16_384) {
+      const part = new Uint8Array(bytes.subarray(offset, offset + 16_384));
+      this.queue.push({ chunk: { stream, bytes: part }, bytes: part.byteLength });
+    }
+
+    this.queuedBytes += bytes.byteLength;
     this.notify();
   };
   attach(native: NativeProcess): void {
@@ -306,7 +366,7 @@ class TextProcess implements ProcessHandle {
     if (this.detached || (this.stopped && !this.sustained)) release(native);
     else if (this.failure && this.sustained) this.releaseOutput();
   }
-  output(options: { signal?: AbortSignal } = {}): AsyncIterable<ProcessOutput> {
+  output(options: { signal?: AbortSignal } = {}): AsyncIterable<ProcessChunk<F>> {
     if (this.used) throw new SandbarError("INVALID_ARGUMENT", "Process output has one consumer");
     this.used = true;
     const signal = options.signal;
@@ -328,7 +388,7 @@ class TextProcess implements ProcessHandle {
 
     if (signal?.aborted) stop();
 
-    const next = async (): Promise<IteratorResult<ProcessOutput>> => {
+    const next = async (): Promise<IteratorResult<ProcessChunk<F>>> => {
       while (true) {
         if (signal?.aborted && !this.complete) {
           stop();
@@ -340,7 +400,8 @@ class TextProcess implements ProcessHandle {
         if (part) {
           this.queuedBytes -= part.bytes;
 
-          return { done: false, value: part.chunk };
+          // SAFETY: Admission rejects callbacks whose profile differs from the validated start format.
+          return { done: false, value: part.chunk as ProcessChunk<F> };
         }
 
         if (this.failure) {
@@ -363,7 +424,7 @@ class TextProcess implements ProcessHandle {
       }
     };
 
-    const iterator: AsyncIterableIterator<ProcessOutput> = {
+    const iterator: AsyncIterableIterator<ProcessChunk<F>> = {
       next,
       return: async () => {
         signal?.removeEventListener("abort", stop);
@@ -744,14 +805,14 @@ class TextProcess implements ProcessHandle {
   }
 }
 
-export async function startProcess(
+export async function startProcess<F extends ProcessOutputFormat = "text">(
   client: AdapterDirectClient,
   sandbox: Sandbox,
-  input: StartProcessInput,
+  input: StartProcessInput<F>,
   options: { signal?: AbortSignal },
   controlActive: () => boolean,
   capture?: { maxBytes: number },
-): Promise<TextProcess> {
+): Promise<LocalProcess<F>> {
   if (options.signal?.aborted)
     throw new SandbarError("WAIT_ABORTED", "Process start aborted before dispatch");
 
@@ -764,19 +825,25 @@ export async function startProcess(
   const extra = z
     .object({
       stdin: z.enum(["closed", "pipe"]).optional(),
-      output: z.strictObject({ mode: z.literal("stream") }).optional(),
+      output: z
+        .strictObject({ mode: z.literal("stream"), format: z.enum(["text", "bytes"]).optional() })
+        .optional(),
     })
     .safeParse(input);
 
   if (!extra.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid process IO options");
   const sustained = extra.data.output?.mode === "stream";
   const piped = extra.data.stdin === "pipe";
+  const format = extra.data.output?.format ?? "text";
 
   if (sustained && input.maxOutputBytes !== undefined)
     throw new SandbarError("INVALID_ARGUMENT", "Stream output cannot specify maxOutputBytes");
 
   if (sustained && !client.session.processes.supports?.sustainedOutput)
     throw new SandbarError("UNSUPPORTED", "Sustained process output is unsupported");
+
+  if (format === "bytes" && !client.session.processes.supports?.binaryOutput)
+    throw new SandbarError("UNSUPPORTED", "Byte process output is unsupported");
 
   if (piped && client.session.processes.supports?.stdin !== "bytes")
     throw new SandbarError("UNSUPPORTED", "Incremental process stdin is unsupported");
@@ -803,7 +870,7 @@ export async function startProcess(
 
   const timer = setTimeout(() => controller.abort(), 30_000);
 
-  const process = new TextProcess(
+  const process = new LocalProcess<F>(
     client.provider,
     sandbox.id,
     request.maxOutputBytes,
@@ -811,6 +878,8 @@ export async function startProcess(
     controlActive,
     sustained,
     piped,
+    // SAFETY: The typed input requires an explicit byte profile for byte handles; runtime validation agrees.
+    format as F,
   );
 
   let established = false;
@@ -838,6 +907,14 @@ export async function startProcess(
         onOutput: (chunk) => {
           try {
             process.onOutput(chunk);
+          } catch (error) {
+            if (!established) controller.abort();
+            throw error;
+          }
+        },
+        onOutputBytes: (chunk) => {
+          try {
+            process.onOutputBytes(chunk);
           } catch (error) {
             if (!established) controller.abort();
             throw error;

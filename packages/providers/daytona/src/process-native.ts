@@ -41,6 +41,12 @@ export async function startDaytonaProcess(
   input: ProcessStartInput,
   ctx: ProcessStartContext,
 ): Promise<NativeProcess> {
+  const binaryOutput = input.output?.format === "bytes";
+  const onOutputBytes = ctx.onOutputBytes;
+
+  if (binaryOutput && !onOutputBytes)
+    throw new AdapterError("INVALID_ARGUMENT", "Byte process output requires a byte consumer");
+
   const root = `/tmp/sandbar-process-${crypto.randomUUID()}`;
 
   const argv =
@@ -144,6 +150,12 @@ export async function startDaytonaProcess(
             truncated ||= keep < bytes.byteLength;
           }
 
+          if (binaryOutput && onOutputBytes) {
+            onOutputBytes({ stream: frame.stream, bytes: Uint8Array.from(bytes) });
+
+            continue;
+          }
+
           const text = decoders[frame.stream].decode(bytes, { stream: true });
 
           if (text) ctx.onOutput({ stream: frame.stream, text });
@@ -156,11 +168,12 @@ export async function startDaytonaProcess(
             observe(await rpc({ op: "read" }, context(local.signal)));
           }
 
-          for (const stream of ["stdout", "stderr"] as const) {
-            const text = decoders[stream].decode();
+          if (!binaryOutput)
+            for (const stream of ["stdout", "stderr"] as const) {
+              const text = decoders[stream].decode();
 
-            if (text) ctx.onOutput({ stream, text });
-          }
+              if (text) ctx.onOutput({ stream, text });
+            }
 
           outputComplete = true;
 

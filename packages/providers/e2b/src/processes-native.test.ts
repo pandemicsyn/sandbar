@@ -167,6 +167,10 @@ async function fixture(
       async startText(id, command, startOptions, ctx) {
         const handle = await transport.startText!(id, command, startOptions, {
           ...ctx,
+          onOutputBytes(chunk) {
+            outputAttempts++;
+            ctx.onOutputBytes!(chunk);
+          },
           onOutput(chunk) {
             outputAttempts++;
 
@@ -201,6 +205,7 @@ async function fixture(
   return {
     client,
     box,
+    transport,
     calls,
     detail,
     get canceled() {
@@ -702,5 +707,90 @@ test("output-only detach preserves native stdin while process observation remain
   expect(f.canceled).toBe(0);
   f.end(0);
   expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: false });
+  await f.client.close();
+});
+
+test("binary native output preserves invalid UTF-8, NUL and split multi-byte frames independently", async () => {
+  const f = await fixture({ modern: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream", format: "bytes" } });
+  const out = p.output()[Symbol.asyncIterator]();
+  f.data("stdout", new Uint8Array([0xf0, 0x9f]));
+  expect((await out.next()).value).toEqual({
+    stream: "stdout",
+    bytes: new Uint8Array([0xf0, 0x9f]),
+  });
+  f.data("stderr", new Uint8Array([0, 255, 128, 10]));
+  expect((await out.next()).value).toEqual({
+    stream: "stderr",
+    bytes: new Uint8Array([0, 255, 128, 10]),
+  });
+  f.data("stdout", new Uint8Array([0x98, 0x80, 0xff, 0]));
+  expect((await out.next()).value).toEqual({
+    stream: "stdout",
+    bytes: new Uint8Array([0x98, 0x80, 0xff, 0]),
+  });
+  f.end(0);
+  expect((await out.next()).done).toBe(true);
+  expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: true });
+  await f.client.close();
+});
+
+test("binary native output splits large events fairly with exact original bytes", async () => {
+  const f = await fixture({ modern: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream", format: "bytes" } });
+  const original = Uint8Array.from({ length: 262_144 }, (_, index) => index % 256);
+  const chunks: Record<"stdout" | "stderr", Uint8Array[]> = { stdout: [], stderr: [] };
+
+  const consuming = (async () => {
+    for await (const chunk of p.output()) {
+      expect(chunk.bytes.length).toBeLessThanOrEqual(16_384);
+      chunks[chunk.stream].push(chunk.bytes);
+    }
+  })();
+
+  f.data("stdout", original);
+  f.data("stderr", original);
+  f.end(0);
+  await consuming;
+  expect(Buffer.concat(chunks.stdout)).toEqual(Buffer.from(original));
+  expect(Buffer.concat(chunks.stderr)).toEqual(Buffer.from(original));
+  expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: true });
+  await f.client.close();
+});
+
+test("binary slow consumer fails explicitly while retaining native exit observation", async () => {
+  const f = await fixture({ modern: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream", format: "bytes" } });
+  f.data("stdout", new Uint8Array(70_000).fill(255));
+
+  while (f.outputAttempts < 5) await Bun.sleep(0);
+  const out = p.output()[Symbol.asyncIterator]();
+
+  for (let index = 0; index < 4; index++)
+    expect((await out.next()).value!.bytes.length).toBe(16_384);
+  await expect(out.next()).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
+  expect(f.canceled).toBe(0);
+  f.end(0);
+  expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: false });
+  await f.client.close();
+});
+
+test("native byte profile rejects a missing byte callback before Start dispatch", async () => {
+  const f = await fixture({ modern: true });
+  await expect(
+    f.transport.startText!(
+      "box_one",
+      "printf hello",
+      { sustained: true, format: "bytes" },
+      {
+        signal: new AbortController().signal,
+        deadline: Date.now() + 30_000,
+        onOutput() {
+          throw new Error("text output cannot satisfy a byte request");
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  expect(f.calls.some((call) => call.path.endsWith("/Start"))).toBe(false);
   await f.client.close();
 });

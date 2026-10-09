@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import type { AdapterSandbox } from "sandbar-sdk";
 import {
   interactiveWorker,
@@ -71,6 +72,49 @@ describe("Sandbar sustained and interactive processes", () => {
 
       expect(echoed.trim()).toBe("cebb00ff800a");
       expect(worker).toEqual({ exitCode: 0, outputComplete: true });
+
+      const binary = await box.processes.start(
+        {
+          command: {
+            kind: "argv",
+            argv: [
+              "python3",
+              "-u",
+              "-c",
+              "import os; os.write(1,bytes(range(256))*1024); os.write(2,b'\\x00\\xff\\x80')",
+            ],
+          },
+          output: { mode: "stream", format: "bytes" },
+        },
+        { signal: t.signal },
+      );
+
+      const hash = createHash("sha256");
+      let binaryBytes = 0;
+      const errorBytes: number[] = [];
+
+      try {
+        for await (const chunk of binary.output({ signal: t.signal })) {
+          if (chunk.stream === "stdout") {
+            hash.update(chunk.bytes);
+            binaryBytes += chunk.bytes.length;
+          } else errorBytes.push(...chunk.bytes);
+        }
+
+        const expected = createHash("sha256");
+        const pattern = Uint8Array.from({ length: 256 }, (_, i) => i);
+
+        for (let i = 0; i < 1024; i++) expected.update(pattern);
+        expect(binaryBytes).toBe(256 * 1024);
+        expect(hash.digest("hex")).toBe(expected.digest("hex"));
+        expect(errorBytes).toEqual([0, 255, 128]);
+        expect(await binary.wait({ signal: t.signal })).toEqual({
+          exitCode: 0,
+          outputComplete: true,
+        });
+      } finally {
+        await binary.detach();
+      }
     },
     241_000,
   );

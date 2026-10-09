@@ -32,6 +32,7 @@ async function fixture(
     noncooperative?: boolean;
     verified?: boolean;
     interactive?: boolean;
+    binary?: boolean;
     capture?: boolean;
   } = {},
 ) {
@@ -117,6 +118,7 @@ async function fixture(
               supports: options.interactive
                 ? {
                     sustainedOutput: true as const,
+                    binaryOutput: options.binary ? (true as const) : undefined,
                     stdin: "bytes" as const,
                     status: true as const,
                     execCapture: options.capture ? ("bytes" as const) : undefined,
@@ -1367,4 +1369,124 @@ test("callback failure retains synchronous native exit evidence before wait sett
   });
   expect(f.starts).toBe(1);
   await f.client.close();
+});
+
+test("byte output snapshots exact native bytes, separates stderr and splits frames within queue bounds", async () => {
+  const f = await fixture({ interactive: true, binary: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream", format: "bytes" } });
+  const out = p.output()[Symbol.asyncIterator]();
+  const bytes = new Uint8Array(32_769).fill(255);
+  bytes.set([0, 128, 192, 226], 0);
+  f.ctx.onOutputBytes!({ stream: "stdout", bytes });
+  bytes.fill(42);
+  const first = (await out.next()).value!;
+  const second = (await out.next()).value!;
+  const third = (await out.next()).value!;
+  expect(first.stream).toBe("stdout");
+  expect(first.bytes.length).toBe(16_384);
+  expect([...first.bytes.subarray(0, 4)]).toEqual([0, 128, 192, 226]);
+  expect(second.bytes.length).toBe(16_384);
+  expect(second.bytes[0]).toBe(255);
+  expect([...third.bytes]).toEqual([255]);
+  f.ctx.onOutputBytes!({ stream: "stderr", bytes: Uint8Array.of(0, 240) });
+  expect((await out.next()).value).toEqual({ stream: "stderr", bytes: Uint8Array.of(0, 240) });
+  f.exit.resolve({ exitCode: 0 });
+  expect(await p.wait()).toMatchObject({ outputComplete: false });
+  f.outputEnd.resolve();
+  expect(await out.next()).toMatchObject({ done: true });
+  expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: true });
+  await p.detach();
+  await f.client.close();
+});
+
+test("byte output streams beyond 32 MiB without lifetime retention", async () => {
+  const f = await fixture({ interactive: true, binary: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream", format: "bytes" } });
+  const out = p.output()[Symbol.asyncIterator]();
+  const frame = new Uint8Array(16_384).fill(255);
+  let count = 0;
+
+  for (let i = 0; i < 2049; i++) {
+    f.ctx.onOutputBytes!({ stream: "stdout", bytes: frame });
+    const bytes = (await out.next()).value!.bytes;
+    count += bytes.length;
+    expect(bytes[0]).toBe(255);
+  }
+
+  expect(count).toBeGreaterThan(32 * 1024 * 1024);
+  f.exit.resolve({ exitCode: 0 });
+  f.outputEnd.resolve();
+  expect(await out.next()).toMatchObject({ done: true });
+  await p.detach();
+  await f.client.close();
+});
+
+test.each(["bytes", "chunks"] as const)(
+  "byte output rejects queue %s overflow but preserves process control",
+  async (mode) => {
+    const f = await fixture({ interactive: true, binary: true });
+
+    const p = await f.box.processes.start({
+      ...input,
+      stdin: "pipe",
+      output: { mode: "stream", format: "bytes" },
+    });
+
+    const out = p.output()[Symbol.asyncIterator]();
+
+    if (mode === "chunks")
+      for (let i = 0; i < 256; i++)
+        f.ctx.onOutputBytes!({ stream: "stdout", bytes: Uint8Array.of(255) });
+    expect(() =>
+      f.ctx.onOutputBytes!({
+        stream: "stdout",
+        bytes: new Uint8Array(mode === "bytes" ? 65_537 : 1),
+      }),
+    ).toThrow();
+
+    const reading = (async () => {
+      for await (const _chunk of out) {
+        /* Drain admitted prefix. */
+      }
+    })();
+
+    await expect(reading).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
+    await p.write(Uint8Array.of(255));
+    expect(await p.status()).toMatchObject({ state: "running" });
+    expect(await p.terminate()).toEqual({ status: "requested" });
+    f.exit.resolve({ exitCode: 3 });
+    expect(await p.wait()).toEqual({ exitCode: 3, outputComplete: false });
+    expect(f.outputDetaches).toBe(1);
+    expect(f.detaches).toBe(0);
+    await p.detach();
+    await f.client.close();
+  },
+);
+
+test("byte output rejects incompatible native callback profiles and unsupported starts", async () => {
+  const f = await fixture({ interactive: true, binary: true });
+
+  const bytes = await f.box.processes.start({
+    ...input,
+    output: { mode: "stream", format: "bytes" },
+  });
+
+  expect(() => f.ctx.onOutput({ stream: "stdout", text: "cannot reconstruct bytes" })).toThrow();
+  await expect(bytes.output()[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+    code: "INVALID_RESPONSE",
+  });
+  await bytes.detach();
+  const text = await f.box.processes.start(input);
+  expect(() => f.ctx.onOutputBytes!({ stream: "stdout", bytes: Uint8Array.of(255) })).toThrow();
+  await expect(text.output()[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+    code: "INVALID_RESPONSE",
+  });
+  await text.detach();
+  await f.client.close();
+  const old = await fixture({ interactive: true });
+  await expect(
+    old.box.processes.start({ ...input, output: { mode: "stream", format: "bytes" } }),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+  expect(old.starts).toBe(0);
+  await old.client.close();
 });

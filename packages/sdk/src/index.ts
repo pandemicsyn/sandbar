@@ -3,6 +3,9 @@ import { connectDirect } from "./adapter-direct";
 export type {
   StartProcessInput,
   ProcessOutput,
+  ProcessOutputBytes,
+  ProcessOutputFormat,
+  ProcessChunk,
   ProcessExit,
   ProcessStatus,
   ProcessTermination,
