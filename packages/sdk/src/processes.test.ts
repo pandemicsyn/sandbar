@@ -1347,3 +1347,24 @@ test("callback exec preserves initiating EOF uncertainty and stops output observ
   expect(f.detaches).toBe(1);
   await f.client.close();
 });
+
+test("callback failure retains synchronous native exit evidence before wait settles", async () => {
+  const f = await fixture({ interactive: true, capture: true });
+
+  const running = f.box.exec(input, {
+    onOutput() {
+      f.confirm(17);
+      throw new Error("private callback contents");
+    },
+  });
+
+  const outcome = running.catch((error) => error);
+  await Bun.sleep(0);
+  f.ctx.onOutput({ stream: "stdout", text: "last" });
+  expect(await outcome).toMatchObject({
+    code: "UNAVAILABLE",
+    confirmedExit: { exitCode: 17, outputComplete: false },
+  });
+  expect(f.starts).toBe(1);
+  await f.client.close();
+});

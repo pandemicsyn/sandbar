@@ -1012,6 +1012,10 @@ export async function callbackExec(
 
     return checkExec(captured!);
   } catch (observedFailure) {
+    const nativeExit = Exit.safeParse(process.native?.confirmedExit);
+
+    if (!exit && nativeExit.success)
+      exit = { exitCode: nativeExit.data.exitCode, outputComplete: false };
     const error = initiatingFailure?.error ?? observedFailure;
     observation.abort();
 
