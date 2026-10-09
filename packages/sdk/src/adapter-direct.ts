@@ -1398,7 +1398,12 @@ export class AdapterSandbox {
         this.client.signal,
         options,
         this.client.transferPolicy,
-        (details) => Object.assign(retained, details),
+        (details) =>
+          Object.assign(
+            retained,
+            details,
+            retained.effect === "applied" ? { effect: "applied" } : {},
+          ),
       );
     } catch (error) {
       if (
@@ -1407,9 +1412,11 @@ export class AdapterSandbox {
         ["WAIT_ABORTED", "CLIENT_CLOSED", "TIMEOUT", "INVALID_RESPONSE"].includes(error.code)
       )
         throw new FilesystemError(error.code, error.message, {
-          effect: options.signal?.aborted && !this.client.signal.aborted ? "possible" : "unknown",
           destination: path,
           ...retained,
+          effect:
+            retained.effect ??
+            (options.signal?.aborted && !this.client.signal.aborted ? "possible" : "unknown"),
         });
       throw error;
     }
@@ -1463,7 +1470,15 @@ export class AdapterSandbox {
               destination,
               overwrite: options.overwrite ?? false,
             },
-            { ...ctx, retain: (details) => Object.assign(retained, details) },
+            {
+              ...ctx,
+              retain: (details) =>
+                Object.assign(
+                  retained,
+                  details,
+                  retained.effect === "applied" ? { effect: "applied" } : {},
+                ),
+            },
           ),
         this.client.signal,
         options,
@@ -1482,10 +1497,10 @@ export class AdapterSandbox {
         ["WAIT_ABORTED", "CLIENT_CLOSED", "TIMEOUT", "INVALID_RESPONSE"].includes(error.code)
       )
         throw new FilesystemError(error.code, error.message, {
-          effect: "possible",
           source,
           destination,
           ...retained,
+          effect: retained.effect ?? "possible",
         });
       throw filesystemError(error);
     }

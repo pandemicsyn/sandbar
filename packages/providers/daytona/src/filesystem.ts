@@ -120,20 +120,22 @@ const GuestValue = z.union([z.boolean(), z.string(), z.array(Entry), GuestStat])
 
 export type FilesystemValue = z.infer<typeof GuestValue>;
 
-const GuestResult = z.object({
-  ok: z.boolean(),
-  value: GuestValue.optional(),
-  errno: z.number().optional(),
-  errorName: z.string().optional(),
-  applied: z.boolean().optional(),
-  possible: z.boolean().optional(),
-  temporaryPaths: z.array(z.string()).optional(),
-});
+const GuestResult = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), value: GuestValue }),
+  z.object({
+    ok: z.literal(false),
+    errno: z.number().int().positive(),
+    errorName: z.string().optional(),
+    applied: z.boolean(),
+    possible: z.boolean(),
+    temporaryPaths: z.array(z.string()),
+  }),
+]);
 
 export function filesystemResult(text: string, input?: FilesystemInput): FilesystemValue {
   const result = GuestResult.parse(JSON.parse(text));
 
-  if (result.ok === true && result.value !== undefined) return result.value;
+  if (result.ok) return result.value;
 
   const code =
     result.errno === 2

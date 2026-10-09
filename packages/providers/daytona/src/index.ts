@@ -11,7 +11,12 @@ import {
   type ProviderDriver,
 } from "@sandbar/provider-spi";
 import { ExecRequest, MAX_EXEC_STDIN_BYTES, type ExecCommand } from "sandbar-adapter/portable";
-import { AdapterError, AdapterFilesystemError, type ImageBuildValue } from "sandbar-adapter";
+import {
+  AdapterError,
+  AdapterFilesystemError,
+  type FileTransferContext,
+  type ImageBuildValue,
+} from "sandbar-adapter";
 import {
   filesystemCommand,
   filesystemResult,
@@ -1575,31 +1580,47 @@ export class DaytonaDriver implements ProviderDriver {
       );
     signal?.throwIfAborted();
 
-    const response = await this.request(
-      "POST",
-      "/process/execute",
-      JSON.stringify({ command: filesystemCommand(input), timeout: 30 }),
-      "application/json",
-      native,
-      30_000,
-      signal,
-    );
+    const unavailable = (message: string) =>
+      ["list", "stat", "exists"].includes(input.op)
+        ? new AdapterError("UNAVAILABLE", message)
+        : new AdapterFilesystemError("UNAVAILABLE", message, {
+            effect: "possible",
+            source: input.source ?? (input.op === "publish" ? input.path : undefined),
+            destination: input.destination ?? input.path,
+            temporaryPaths: input.stagingDirectory
+              ? [input.stagingDirectory]
+              : ["reserve", "cleanup"].includes(input.op) && input.path
+                ? [input.path]
+                : undefined,
+          });
 
-    if (!response.ok)
-      throw new AdapterError("UNAVAILABLE", "Daytona filesystem helper unavailable");
-    const result = await boundedJson(response, CommandResponse, 1_048_576);
+    let result: z.infer<typeof CommandResponse>;
+
+    try {
+      const response = await this.request(
+        "POST",
+        "/process/execute",
+        JSON.stringify({ command: filesystemCommand(input), timeout: 30 }),
+        "application/json",
+        native,
+        30_000,
+        signal,
+      );
+
+      if (!response.ok) throw new Error("Daytona filesystem helper unavailable");
+      result = await boundedJson(response, CommandResponse, 1_048_576);
+    } catch {
+      throw unavailable("Daytona filesystem helper outcome unavailable");
+    }
 
     if (result.exitCode !== 0)
-      throw new AdapterError(
-        "UNSUPPORTED",
-        "Daytona filesystem operations require Python 3 and Linux renameat2",
-      );
+      throw unavailable("Daytona filesystem helper execution did not complete");
 
     try {
       return filesystemResult(result.result, input);
     } catch (error) {
       if (error instanceof AdapterError) throw error;
-      throw new AdapterError("UNAVAILABLE", "Daytona filesystem helper response malformed");
+      throw unavailable("Daytona filesystem helper response malformed");
     }
   }
   async readFileStream(input: {
@@ -1650,7 +1671,7 @@ export class DaytonaDriver implements ProviderDriver {
     bytes: AsyncIterable<Uint8Array>;
     overwrite: boolean;
     signal?: AbortSignal;
-    retain?: (details: { temporaryPaths?: string[]; bytesTransferred?: number }) => void;
+    retain?: FileTransferContext["retain"];
   }): Promise<{ bytesWritten: number }> {
     validPath(input.path);
     const native = await this.toolbox(input.sandbox, true);
@@ -1784,6 +1805,7 @@ export class DaytonaDriver implements ProviderDriver {
       }
 
       published = true;
+      input.retain?.({ effect: "applied", bytesTransferred: bytesWritten });
 
       return { bytesWritten };
     } finally {

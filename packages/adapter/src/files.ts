@@ -45,7 +45,15 @@ export type FileTransferInput = {
   overwrite: boolean;
 };
 
-/** Report only correlated implementation artifacts; never caller-owned files. */
+/**
+ * Report only correlated implementation artifacts; never caller-owned files.
+ * Retain applied only after a confirmed mutation receipt, before fallible cleanup.
+ * A retained applied effect cannot be revoked by later updates.
+ */
 export type FileTransferContext = import("./index").ReadContext & {
-  retain?: (details: { temporaryPaths?: string[]; bytesTransferred?: number }) => void;
+  retain?: (details: {
+    effect?: "applied";
+    temporaryPaths?: string[];
+    bytesTransferred?: number;
+  }) => void;
 };

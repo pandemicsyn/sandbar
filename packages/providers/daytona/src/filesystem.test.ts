@@ -304,6 +304,15 @@ test("Daytona transfer transport streams 32 MiB with incremental multipart input
 test("Daytona public SDK preserves definitive filesystem rejections and artifact workflow outcomes", async () => {
   const root = mkdtempSync(join(tmpdir(), "sandbar-daytona-public-files-"));
   let client: Awaited<ReturnType<typeof Sandbar.connect>> | undefined;
+  let delayCleanup = false;
+  let delayedStage = "";
+  let releaseCleanup: (() => void) | undefined;
+
+  const cleanupReleased = new Promise<void>((resolve) => {
+    releaseCleanup = resolve;
+  });
+
+  let cleanupFinished: Promise<void> | undefined;
 
   try {
     const transport: typeof fetch = Object.assign(
@@ -333,6 +342,29 @@ test("Daytona public SDK preserves definitive filesystem rejections and artifact
 
         if (url.pathname.endsWith("/process/execute")) {
           const request = z.object({ command: z.string() }).parse(JSON.parse(String(init?.body)));
+
+          if (delayCleanup) {
+            const argument = request.command.slice(request.command.lastIndexOf(" '") + 2, -1);
+
+            const operation = z
+              .object({ op: z.string(), path: z.string().optional() })
+              .parse(JSON.parse(Buffer.from(argument, "base64").toString()));
+
+            if (operation.op === "cleanup") {
+              delayedStage = operation.path!;
+              cleanupFinished = cleanupReleased.then(() => {
+                const execution = spawnSync("sh", ["-c", request.command], { encoding: "utf8" });
+                expect(execution.status).toBe(0);
+              });
+              await cleanupFinished;
+
+              return Response.json({
+                result: JSON.stringify({ ok: true, value: true }),
+                exitCode: 0,
+              });
+            }
+          }
+
           const execution = spawnSync("sh", ["-c", request.command], { encoding: "utf8" });
 
           return Response.json({ result: execution.stdout, exitCode: execution.status });
@@ -425,13 +457,155 @@ test("Daytona public SDK preserves definitive filesystem rejections and artifact
       expect(existsSync(artifactRoot)).toBe(false);
     }
 
+    delayCleanup = true;
+    const published = join(root, "confirmed-before-cleanup.bin");
+
+    const write = box.writeFileStream(
+      published,
+      (async function* () {
+        yield payload;
+      })(),
+      { overwrite: true, overallTimeoutMs: 2000 },
+    );
+
+    try {
+      await expect(write).rejects.toMatchObject({
+        code: "TIMEOUT",
+        effect: "applied",
+        details: {
+          effect: "applied",
+          destination: published,
+          bytesTransferred: payload.byteLength,
+          temporaryPaths: [expect.stringContaining(".sandbar-stream-")],
+        },
+      });
+      expect(readFileSync(published)).toEqual(Buffer.from(payload));
+      expect(existsSync(delayedStage)).toBe(true);
+    } finally {
+      releaseCleanup?.();
+    }
+
+    await cleanupFinished;
+    expect(existsSync(delayedStage)).toBe(false);
     await box.removeFile(root, { recursive: true });
     expect(existsSync(root)).toBe(false);
   } finally {
+    releaseCleanup?.();
+
     try {
-      await client?.close();
+      await cleanupFinished;
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      try {
+        await client?.close();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     }
+  }
+});
+
+test("Daytona interrupted and malformed helpers retain possible copy effects and staging custody", async () => {
+  const root = mkdtempSync(join(tmpdir(), "sandbar-daytona-interrupted-"));
+  const source = join(root, "source");
+  const destination = join(root, "destination");
+  const stagingDirectory = join(root, ".stage");
+  let failure = "exit";
+
+  const transport: typeof fetch = Object.assign(
+    async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+
+      if (url.pathname.endsWith("/api-keys/current"))
+        return Response.json({ organizationId: "org" });
+
+      if (url.pathname.endsWith("/regions"))
+        return Response.json([{ id: "us", name: "us", regionType: "shared" }]);
+
+      if (url.pathname === "/api/sandbox/box")
+        return Response.json({
+          id: "box",
+          name: "box",
+          organizationId: "org",
+          target: "us",
+          state: "started",
+          networkBlockAll: true,
+          public: false,
+          toolboxProxyUrl: "https://proxy.app.daytona.io/toolbox",
+        });
+
+      if (url.pathname.endsWith("/process/execute")) {
+        if (failure === "prerequisite")
+          return Response.json({
+            exitCode: 0,
+            result: JSON.stringify({
+              ok: false,
+              errno: 38,
+              errorName: "ENOSYS",
+              applied: false,
+              possible: false,
+              temporaryPaths: [],
+            }),
+          });
+
+        mkdirSync(stagingDirectory);
+        writeFileSync(join(stagingDirectory, "payload"), "partial copy");
+        writeFileSync(destination, "published before interruption");
+
+        if (failure === "transport") throw new Error("connection lost after mutation");
+
+        if (failure === "http") return new Response(null, { status: 503 });
+
+        if (failure === "envelope") return Response.json({ exitCode: 0 });
+
+        if (failure === "partial-rejection")
+          return Response.json({
+            exitCode: 0,
+            result: JSON.stringify({ ok: false, errno: 38, errorName: "ENOSYS" }),
+          });
+
+        return Response.json({
+          exitCode: failure === "exit" ? 137 : 0,
+          result: failure === "receipt" ? "{}" : JSON.stringify({ ok: false }),
+        });
+      }
+
+      throw new Error(`Unexpected interrupted helper fixture route ${url.pathname}`);
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  try {
+    const { driver, scope } = await daytonaProvider({
+      apiKey: "fixture",
+      target: "us",
+      fetch: transport,
+    });
+
+    const sandbox = { kind: "sandbox" as const, nativeId: "box", scope };
+    const input = { op: "copy", source, destination, stagingDirectory, overwrite: true };
+
+    for (failure of [
+      "exit",
+      "transport",
+      "http",
+      "envelope",
+      "receipt",
+      "incomplete",
+      "partial-rejection",
+    ]) {
+      await expect(driver.filesystem(sandbox, input)).rejects.toMatchObject({
+        code: "UNAVAILABLE",
+        details: { effect: "possible", source, destination, temporaryPaths: [stagingDirectory] },
+      });
+      expect(readFileSync(destination, "utf8")).toBe("published before interruption");
+      expect(existsSync(join(stagingDirectory, "payload"))).toBe(true);
+      rmSync(stagingDirectory, { recursive: true });
+    }
+
+    failure = "prerequisite";
+    await expect(driver.filesystem(sandbox, input)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect(existsSync(stagingDirectory)).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
