@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Sandbar } from "sandbar-sdk";
-import { sandboxReference } from "sandbar-adapter";
+import { sandboxReference, type NativeProcess } from "sandbar-adapter";
 import { createE2BAdapter } from "./index";
 import { createSdkTransport } from "./transport";
 
@@ -43,6 +43,7 @@ async function fixture(
   let pauseAtAttach = false;
   let earlyCallbacks = 0;
   let outputAttempts = 0;
+  let nativeProcess: NativeProcess | undefined;
   let startResolved = false;
   let deleted = false;
   let target: "original" | "successor" = "original";
@@ -174,6 +175,8 @@ async function fixture(
           },
         });
 
+        nativeProcess = handle;
+
         // Hold adapter acknowledgement while the real pinned handle receives early frames.
         if (options.early) await Bun.sleep(0);
         startResolved = true;
@@ -208,6 +211,9 @@ async function fixture(
     },
     get signaled() {
       return signaled;
+    },
+    get nativeProcess() {
+      return nativeProcess!;
     },
     get outputAttempts() {
       return outputAttempts;
@@ -658,3 +664,43 @@ test.each(["coalesced", "large-event"])(
     await f.client.close();
   },
 );
+
+test.each(["lost", "detach"])(
+  "native stdin rejects after %s without dispatching to the old PID",
+  async (mode) => {
+    const f = await fixture({ modern: true });
+    const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+    const native = f.nativeProcess;
+
+    if (mode === "lost") f.lost();
+    else await native.detach();
+    await expect(native.wait()).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    const before = f.calls.length;
+    const context = { signal: new AbortController().signal, deadline: Date.now() + 30_000 };
+    await expect(native.write!(new Uint8Array([0, 255]), context)).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+    });
+    await expect(native.closeStdin!(context)).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    expect(f.calls.slice(before).some((call) => /SendInput|CloseStdin/.test(call.path))).toBe(
+      false,
+    );
+    expect(f.calls.some((call) => /SendInput|CloseStdin/.test(call.path))).toBe(false);
+    await p.detach();
+    await f.client.close();
+  },
+);
+
+test("output-only detach preserves native stdin while process observation remains healthy", async () => {
+  const f = await fixture({ modern: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  const output = p.output()[Symbol.asyncIterator]();
+  await output.return!();
+  await p.write(new Uint8Array([0, 255]));
+  await p.closeStdin();
+  expect(f.calls.filter((call) => call.path.endsWith("/SendInput"))).toHaveLength(1);
+  expect(f.calls.filter((call) => call.path.endsWith("/CloseStdin"))).toHaveLength(1);
+  expect(f.canceled).toBe(0);
+  f.end(0);
+  expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: false });
+  await f.client.close();
+});

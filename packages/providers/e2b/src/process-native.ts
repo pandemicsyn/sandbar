@@ -331,9 +331,11 @@ export async function startProcess(
       };
     },
     async write(bytes, context) {
+      if (observationFailed || detached) throw fail();
       await sandbox.commands.sendStdin(pid!, bytes, requestOptions(context));
     },
     async closeStdin(context) {
+      if (observationFailed || detached) throw fail();
       await sandbox.commands.closeStdin(pid!, requestOptions(context));
     },
     async terminate(context) {
