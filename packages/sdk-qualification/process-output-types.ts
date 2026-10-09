@@ -3,6 +3,8 @@ import type {
   ProcessHandle,
   ProcessOutputBytes,
   StartProcessInput,
+  ProcessReference,
+  TerminalHandle,
 } from "sandbar-sdk";
 
 /** Compile the public byte/text inference independently of the implementation. */
@@ -42,4 +44,36 @@ export async function processOutputTypes(box: DirectSandboxHandle): Promise<void
   await box.processes.start<"bytes">({ command });
   // @ts-expect-error Byte mode must be streamed, never a finite legacy capture option.
   await box.processes.start({ command, output: { format: "bytes" } });
+}
+
+/** Persisted output profiles retain inference and terminal input has no pipe EOF API. */
+export async function processExtensionTypes(
+  box: DirectSandboxHandle,
+  saved: ProcessReference<"bytes">,
+): Promise<void> {
+  const process: ProcessHandle<"bytes"> = await box.processes.reopen(saved);
+  await process.signal("SIGTERM");
+  // @ts-expect-error Portable signal names are explicit.
+  await process.signal("SIGINT");
+  const reference: ProcessReference<"bytes"> = process.reference();
+  void reference;
+
+  const terminal: TerminalHandle = await box.terminals.start({
+    command: { kind: "argv", argv: ["shell"] },
+    columns: 80,
+    rows: 24,
+  });
+
+  await terminal.resize({ columns: 120, rows: 40 });
+
+  for await (const bytes of terminal.output()) {
+    const value: Uint8Array = bytes;
+    void value;
+  }
+
+  // @ts-expect-error Terminal input has no pipe EOF operation.
+  await terminal.closeStdin();
+  await terminal.disconnect();
+  const reopened: TerminalHandle = await box.terminals.reopen(terminal.reference());
+  void reopened;
 }

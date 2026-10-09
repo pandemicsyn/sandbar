@@ -17,7 +17,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Configured lifetime renewal         | [Conditional · passed at 3188e333](#daytona-renewal)            | [Conditional · passed at 3188e333](#e2b-renewal)                                  |
 | Scoped sandbox reopening            | [Conditional · passed at 3188e333](#daytona-reopening)          | [Conditional · passed at 3188e333](#e2b-reopening)                                |
 | Execution and captured output       | [Supported · passed at 8449def7](#daytona-execution)            | [Supported · passed at 8449def7](#e2b-execution)                                  |
-| Text process streaming              | [Conditional · passed at 5f2bd138](#daytona-streaming)          | [Conditional · passed at 5f2bd138](#e2b-streaming)                                |
+| Process streams and terminals       | [Conditional · passed at 5f2bd138](#daytona-streaming)          | [Conditional · passed at 5f2bd138](#e2b-streaming)                                |
 | Finite execution input              | [Conditional · not-run](#daytona-finiteStdin)                   | [Conditional · not-run](#e2b-finiteStdin)                                         |
 | Binary files and overwrite          | [Conditional · passed at 3188e333](#daytona-files)              | [Conditional · passed at 3188e333](#e2b-files)                                    |
 | Directory primitives                | [Conditional · passed at e91f2d5f](#daytona-directories)        | [Conditional · passed at e91f2d5f](#e2b-directories)                              |
@@ -60,7 +60,7 @@ Daytona sandbox-wide publication requires a separate product decision; preview n
 
 ### Local-handle process termination
 
-Process-scoped Python 3 supervisor retains child identity and requests abrupt child termination; no descendant cleanup or sandbox-destruction fallback. Independent wait/status preserve confirmed exit. The maintained execution-termination workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed owned destruction and client close; this does not qualify descendant cleanup or other images.
+Process-scoped Python 3 supervisor retains child identity and requests SIGTERM/SIGKILL for the retained child; no descendant cleanup or sandbox-destruction fallback. Independent wait/status preserve confirmed exit. The maintained execution-termination workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed owned destruction and client close; this does not qualify descendant cleanup or other images.
 
 <a id="daytona-renewal"></a>
 
@@ -82,9 +82,9 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 
 <a id="daytona-streaming"></a>
 
-### Text process streaming
+### Process streams and terminals
 
-Finite and explicit sustained text streaming, exact-byte incremental stdin/EOF and status use a private Python 3 supervisor and Unix socket on writable /tmp. Queue 64 KiB/256 chunks, frames 16 KiB; no cumulative transcript. Pipe reads pause while full. Detach closes stdin and discards output; helper removal follows child exit or owned sandbox destruction. The maintained compiled >32 MiB build and incremental text/binary input/EOF workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed sandbox destruction and client close; other images are unqualified.
+Finite and explicit sustained text streaming, exact-byte incremental stdin/EOF and status use a private Python 3 supervisor and Unix socket on writable /tmp. Queue 64 KiB/256 chunks, frames 16 KiB; no cumulative transcript. Pipe reads pause while full. Explicit PTYs combine bytes and support resize. Generation/lease-bound references reopen live output after disconnect (or 30s lease expiry), with an explicit gap and no replay. Disconnect preserves stdin; detach closes it. Helper removal follows child exit or owned sandbox destruction; abandonment markers remain until sandbox destruction. These P4 guarantees have deterministic coverage and separate live evidence. The maintained compiled >32 MiB build and incremental text/binary input/EOF workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed sandbox destruction and client close; other images are unqualified.
 
 <a id="daytona-finiteStdin"></a>
 
@@ -170,7 +170,7 @@ E2B explicit public access only, with observed native visibility and auto-resume
 
 ### Local-handle process termination
 
-Active local handles issue one native SIGKILL PID request. PID reuse can target a successor; no descendant cleanup guarantee. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. Bounded Bun live case passed at 131a8c6 with borrowed base on darwin-arm64/Bun 1.3.14 after the fixed-default routing correction: ready output, request acknowledgement/reuse, independently observed nonzero terminal result, owned cleanup and client close. The prior 4cc6a20 attachment failure remains recorded. Other images/platforms and signal delivery races are unqualified.
+Active handles now use random scoped tag selectors for SIGTERM/SIGKILL; tags are not immutable native generations and other native clients can reuse them. Lost observation disables controls; no descendant cleanup guarantee. Historical PID-selected evidence follows. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. Bounded Bun live case passed at 131a8c6 with borrowed base on darwin-arm64/Bun 1.3.14 after the fixed-default routing correction: ready output, request acknowledgement/reuse, independently observed nonzero terminal result, owned cleanup and client close. The prior 4cc6a20 attachment failure remains recorded. Other images/platforms and signal delivery races are unqualified.
 
 <a id="e2b-renewal"></a>
 
@@ -192,9 +192,9 @@ Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline co
 
 <a id="e2b-streaming"></a>
 
-### Text process streaming
+### Process streams and terminals
 
-Finite legacy streaming plus explicit sustained public envd RPC text streaming, exact-byte incremental stdin/EOF (envd >=0.5.2), status and bounded byte capture for exec callbacks. No cumulative transcript in sustained mode. PID presence proves running; absence without EndEvent is unknown. RPC loss may lose exit observation. Initial sustained streaming failed at 37dd9c2 on coalesced-frame queue overflow; termination passed and cleanup was confirmed. After bounded fair delivery, >32 MiB build and exact text/binary input/EOF plus status/termination passed at ecc73de on borrowed base with confirmed sandbox destruction and client close. Historical finite evidence remains separate. No binary output streaming or durable process reopening.
+Finite legacy streaming plus explicit sustained public envd RPC text streaming, exact-byte incremental stdin/EOF (envd >=0.5.2), status and bounded byte capture for exec callbacks. No cumulative transcript in sustained mode. PID presence proves running; absence without EndEvent is unknown. RPC loss may lose exit observation. Initial sustained streaming failed at 37dd9c2 on coalesced-frame queue overflow; termination passed and cleanup was confirmed. After bounded fair delivery, >32 MiB build and exact text/binary input/EOF plus status/termination passed at ecc73de on borrowed base with confirmed sandbox destruction and client close. Historical finite evidence remains separate. Original-byte streaming passed at 5f2bd13 with confirmed owned cleanup. Scoped live-only process reopening, explicit PTYs and resize have deterministic coverage; no transcript replay, native tag generation or exclusive attachment guarantee. P4 live qualification is recorded separately.
 
 <a id="e2b-finiteStdin"></a>
 

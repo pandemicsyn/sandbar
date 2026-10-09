@@ -34,6 +34,7 @@ async function fixture(
     interactive?: boolean;
     binary?: boolean;
     capture?: boolean;
+    extensions?: boolean;
   } = {},
 ) {
   const exit = deferred<{ exitCode: number }>();
@@ -48,6 +49,10 @@ async function fixture(
   let ctx!: ProcessStartContext;
   let starts = 0;
   let detaches = 0;
+  let parks = 0;
+  let reopens = 0;
+  let signals = 0;
+  const sizes: { columns: number; rows: number }[] = [];
   let confirmedExit: { exitCode: number } | undefined;
   let creates = 0;
 
@@ -87,6 +92,22 @@ async function fixture(
       terminate: async () => ({ status: "requested" as const }),
     });
 
+  if (options.extensions)
+    Object.assign(native, {
+      reference: { tag: "random-selector" },
+      disconnect: async () => {
+        parks++;
+      },
+      signal: async () => {
+        signals++;
+
+        return { status: "requested" as const };
+      },
+      resize: async (size: { columns: number; rows: number }) => {
+        sizes.push(size);
+      },
+    });
+
   const adapter = defineAdapter({
     name: "stream.fixture",
     config: z.object({}),
@@ -118,10 +139,22 @@ async function fixture(
               supports: options.interactive
                 ? {
                     sustainedOutput: true as const,
-                    binaryOutput: options.binary ? (true as const) : undefined,
+                    signals: options.extensions ? (["SIGTERM", "SIGKILL"] as const) : undefined,
+                    terminal: options.extensions ? (true as const) : undefined,
+                    reopen: options.extensions ? (true as const) : undefined,
+                    binaryOutput:
+                      options.binary || options.extensions ? (true as const) : undefined,
                     stdin: "bytes" as const,
                     status: true as const,
                     execCapture: options.capture ? ("bytes" as const) : undefined,
+                  }
+                : undefined,
+              reopen: options.extensions
+                ? async (_input, context) => {
+                    reopens++;
+                    ctx = context;
+
+                    return native;
                   }
                 : undefined,
               async start(_input, context) {
@@ -143,6 +176,16 @@ async function fixture(
   return {
     client,
     box,
+    get parks() {
+      return parks;
+    },
+    get reopens() {
+      return reopens;
+    },
+    get signals() {
+      return signals;
+    },
+    sizes,
     exit,
     outputEnd,
     capture,
@@ -1489,4 +1532,324 @@ test("byte output rejects incompatible native callback profiles and unsupported 
   ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
   expect(old.starts).toBe(0);
   await old.client.close();
+});
+
+test("named signals dispatch once per handle without implicit escalation", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });
+  expect(await p.signal("SIGTERM")).toEqual({ status: "requested" });
+  expect(await p.signal("SIGTERM")).toEqual({ status: "requested" });
+  expect(f.signals).toBe(1);
+  // SAFETY: Runtime callers can pass unsupported signal strings.
+  await expect(p.signal("SIGINT" as never)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(f.signals).toBe(1);
+  await f.client.close();
+});
+
+test("park preserves stdin and reference; reopening reports a permanent observation gap", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  const saved = JSON.parse(JSON.stringify(p.reference()));
+  expect(p.outputGap).toBe(false);
+  await p.disconnect();
+  await p.disconnect();
+  expect(f.parks).toBe(1);
+  expect(f.closes).toBe(0);
+  expect(f.detaches).toBe(0);
+  await expect(p.write("stale")).rejects.toMatchObject({ code: "UNAVAILABLE" });
+  const q = await f.box.processes.reopen(saved);
+  expect(q.outputGap).toBe(true);
+  expect(f.reopens).toBe(1);
+  expect(f.starts).toBe(1);
+  await q.write("fresh");
+  f.ctx.onOutput({ stream: "stdout", text: "fresh" });
+  f.exit.resolve({ exitCode: 0 });
+  f.outputEnd.resolve();
+  const chunks = [];
+
+  for await (const chunk of q.output()) chunks.push(chunk);
+  expect(chunks).toEqual([{ stream: "stdout", text: "fresh" }]);
+  expect(await q.wait()).toEqual({ exitCode: 0, outputComplete: false });
+  await f.client.close();
+});
+
+test("foreign, expired and malformed references reject before reopening", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });
+  const ref = p.reference();
+
+  for (const changed of [
+    { ...ref, sandboxId: "other" },
+    { ...ref, provider: "other" },
+    { ...ref, scope: { ...ref.scope, authority: { kind: "fixture", id: "other" } } },
+  ]) {
+    await expect(f.box.processes.reopen(changed)).rejects.toMatchObject({ code: "CONFLICT" });
+  }
+
+  await expect(
+    f.box.processes.reopen({ ...ref, expiresAt: "2000-01-01T00:00:00.000Z" }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  // SAFETY: Runtime reference validation must reject missing native selectors.
+  await expect(
+    f.box.processes.reopen({ ...ref, native: undefined } as never),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(f.reopens).toBe(0);
+  await f.client.close();
+});
+
+test("explicit terminal has combined bytes, dimensions and resize without EOF", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  const p = await f.box.terminals.start({ ...input, columns: 80, rows: 24 });
+  expect("closeStdin" in p).toBe(false);
+  expect(p.reference().profile).toBe("terminal");
+  const iterator = p.output()[Symbol.asyncIterator]();
+  f.ctx.onOutputBytes!({ stream: "stdout", bytes: Uint8Array.of(0, 255) });
+  expect((await iterator.next()).value).toEqual(Uint8Array.of(0, 255));
+  await p.resize({ columns: 120, rows: 40 });
+  expect(f.sizes).toEqual([{ columns: 120, rows: 40 }]);
+  await expect(p.resize({ columns: 0, rows: 24 })).rejects.toMatchObject({
+    code: "INVALID_ARGUMENT",
+  });
+  await p.disconnect();
+  const reopened = await f.box.terminals.reopen(p.reference());
+  expect(reopened.outputGap).toBe(true);
+  await f.client.close();
+});
+
+test("older adapters reject extensions without starting a terminal", async () => {
+  const f = await fixture({ interactive: true });
+  await expect(f.box.terminals.start({ ...input, columns: 80, rows: 24 })).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+  });
+  expect(f.starts).toBe(0);
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });
+  expect(() => p.reference()).toThrow();
+  await expect(p.signal("SIGTERM")).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  await expect(p.disconnect()).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  await f.client.close();
+});
+
+test("uncertain SIGKILL and terminate share one dispatch across both method names", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  let kills = 0;
+  f.native.terminate = async () => {
+    kills++;
+    throw new Error("lost ACK");
+  };
+
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });
+  await expect(p.signal("SIGKILL")).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  await expect(p.terminate()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  await expect(p.signal("SIGKILL")).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  expect(kills).toBe(1);
+  await f.client.close();
+});
+
+test("uncertain resize disables queued and later resize dispatch", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  let resizes = 0;
+  f.native.resize = async () => {
+    resizes++;
+    throw new Error("lost ACK");
+  };
+
+  const p = await f.box.terminals.start({ ...input, columns: 80, rows: 24 });
+  const first = p.resize({ columns: 100, rows: 30 });
+  const second = p.resize({ columns: 120, rows: 40 });
+  const results = await Promise.allSettled([first, second]);
+  expect(results).toMatchObject([
+    { status: "rejected", reason: { code: "OUTCOME_UNKNOWN" } },
+    { status: "rejected", reason: { code: "OUTCOME_UNKNOWN" } },
+  ]);
+  const later = await Promise.allSettled([p.resize({ columns: 100, rows: 30 })]);
+  expect(later).toMatchObject([{ status: "rejected", reason: { code: "OUTCOME_UNKNOWN" } }]);
+  expect(resizes).toBe(1);
+  await f.client.close();
+});
+
+test("lost park acknowledgement fences old input and detach cannot send EOF", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  f.native.disconnect = async () => {
+    throw new Error("lost park ACK");
+  };
+
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  await expect(p.disconnect()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  await expect(p.write("stale")).rejects.toMatchObject({ code: "UNAVAILABLE" });
+  await expect(p.signal("SIGTERM")).rejects.toMatchObject({ code: "UNAVAILABLE" });
+  await p.detach();
+  expect(f.detaches).toBe(0);
+  expect(f.closes).toBe(0);
+  expect(p.reference().stdin).toBe("pipe");
+  await f.client.close();
+});
+
+test("late reopened handles park without closing preserved stdin", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  const ref = p.reference();
+  await p.disconnect();
+  const late = deferred<NativeProcess>();
+  f.client.session.processes!.reopen = () => late.promise;
+  const controller = new AbortController();
+  const pending = f.box.processes.reopen(ref, { signal: controller.signal });
+  await Promise.resolve();
+  await Promise.resolve();
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  late.resolve(f.native);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(f.parks).toBe(2);
+  expect(f.detaches).toBe(0);
+  expect(f.closes).toBe(0);
+  await f.client.close();
+});
+
+test("references snapshot selectors and preserve known stdin EOF", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  const first = p.reference();
+  first.native = { tag: "changed" };
+  first.profile = "terminal";
+  expect(p.reference().native).toEqual({ tag: "random-selector" });
+  expect(p.reference().profile).toBe("process");
+  await p.closeStdin();
+  expect(p.reference().stdin).toBe("closed");
+  await f.client.close();
+});
+
+test("cyclic, huge and deeply nested native selectors cannot become persisted references", async () => {
+  for (const kind of ["cycle", "huge", "deep"] as const) {
+    const f = await fixture({ interactive: true, extensions: true });
+
+    type CyclicSelector = { self?: import("sandbar-adapter").Json };
+
+    const cyclic: CyclicSelector = {};
+    let native: import("sandbar-adapter").Json = cyclic;
+
+    if (kind === "cycle") cyclic.self = cyclic;
+
+    if (kind === "huge") native = { text: "x".repeat(4097) };
+
+    if (kind === "deep") for (let depth = 0; depth < 40; depth++) native = { inner: native };
+    Object.assign(f.native, { reference: native });
+    const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });
+    expect(() => p.reference()).toThrow();
+    await f.client.close();
+  }
+});
+
+test("malformed separate terminal stderr preserves independently confirmed exit evidence", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  const p = await f.box.terminals.start({ ...input, columns: 80, rows: 24 });
+  f.confirm(7);
+  expect(() => f.ctx.onOutputBytes!({ stream: "stderr", bytes: Uint8Array.of(1) })).toThrow();
+  await expect(p.output()[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+    code: "INVALID_RESPONSE",
+    confirmedExit: { exitCode: 7, outputComplete: false },
+  });
+  expect(await p.wait()).toEqual({ exitCode: 7, outputComplete: false });
+  await f.client.close();
+});
+
+test("reopen snapshots nested native selectors before its asynchronous dispatch", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  const selector = { tag: "original", generation: { id: "original-generation" } };
+  const saved = { ...p.reference(), native: selector };
+  let selected: import("sandbar-adapter").Json | undefined;
+  f.client.session.processes!.reopen = async (request) => {
+    selected = request.reference;
+
+    return f.native;
+  };
+
+  const pending = f.box.processes.reopen(saved);
+  selector.tag = "changed";
+  selector.generation.id = "changed-generation";
+  await pending;
+  expect(selected).toEqual({ tag: "original", generation: { id: "original-generation" } });
+  await f.client.close();
+});
+
+test.each(["write", "EOF"] as const)(
+  "reference preserves uncertain %s delivery instead of restoring healthy pipe input",
+  async (kind) => {
+    const f = await fixture({ interactive: true, extensions: true });
+    const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+
+    const lost = async () => {
+      throw new Error("lost input ACK");
+    };
+
+    if (kind === "write") f.native.write = lost;
+    else f.native.closeStdin = lost;
+
+    const result = await Promise.allSettled([
+      kind === "write" ? p.write("possibly accepted") : p.closeStdin(),
+    ]);
+
+    expect(result).toMatchObject([
+      { status: "rejected", reason: { code: "OUTCOME_UNKNOWN", effect: "possible" } },
+    ]);
+    let failure;
+
+    try {
+      p.reference();
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+
+    if (result[0].status === "rejected") expect(failure).toBe(result[0].reason);
+    expect(f.reopens).toBe(0);
+    await f.client.close();
+  },
+);
+
+test("SIGKILL aliases native terminate even when the adapter has no separate signal hook", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  let kills = 0;
+  f.native.signal = undefined;
+  f.native.terminate = async () => {
+    kills++;
+
+    return { status: "requested" };
+  };
+
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });
+  expect(await p.signal("SIGKILL")).toEqual({ status: "requested" });
+  expect(await p.terminate()).toEqual({ status: "requested" });
+  expect(kills).toBe(1);
+  await f.client.close();
+});
+
+test("reference rejects pending shared EOF acknowledgement until confirmed closed after another waiter aborts", async () => {
+  const f = await fixture({ interactive: true, extensions: true });
+  const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
+  const gate = deferred<void>();
+  f.setCloseGate(gate.promise);
+  const first = p.closeStdin();
+  await Bun.sleep(0);
+
+  const pendingReferenceFailure = () => {
+    try {
+      p.reference();
+    } catch (error) {
+      return error;
+    }
+  };
+
+  expect(pendingReferenceFailure()).toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+  const cancel = new AbortController();
+  const second = p.closeStdin({ signal: cancel.signal });
+  cancel.abort();
+  await expect(second).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+  expect(pendingReferenceFailure()).toMatchObject({ code: "OUTCOME_UNKNOWN", effect: "possible" });
+  expect(f.closes).toBe(1);
+  gate.resolve();
+  await first;
+  expect(p.reference().stdin).toBe("closed");
+  await f.client.close();
 });

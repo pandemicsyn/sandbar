@@ -8,6 +8,8 @@ import {
   type ProcessStartContext,
   type ProcessStartInput,
   type ReadContext,
+  type Json,
+  type ProcessReopenInput,
 } from "sandbar-adapter";
 import {
   processRpc,
@@ -20,8 +22,14 @@ export type ProcessExecute = (command: string, ctx: ReadContext) => Promise<stri
 
 type CapturedStreams = { stdout: Uint8Array[]; stderr: Uint8Array[] };
 
+const Dimensions = z.object({
+  columns: z.number().int().min(1).max(1000),
+  rows: z.number().int().min(1).max(1000),
+});
+
 const Reply = z.object({
   ok: z.boolean().optional(),
+  status: z.enum(["requested", "not-found"]).optional(),
   exitCode: z.number().int().nullable().optional(),
   error: z.string().nullable().optional(),
   done: z.boolean().optional(),
@@ -40,6 +48,7 @@ export async function startDaytonaProcess(
   execute: ProcessExecute,
   input: ProcessStartInput,
   ctx: ProcessStartContext,
+  reopening?: Json,
 ): Promise<NativeProcess> {
   const binaryOutput = input.output?.format === "bytes";
   const onOutputBytes = ctx.onOutputBytes;
@@ -47,13 +56,51 @@ export async function startDaytonaProcess(
   if (binaryOutput && !onOutputBytes)
     throw new AdapterError("INVALID_ARGUMENT", "Byte process output requires a byte consumer");
 
-  const root = `/tmp/sandbar-process-${crypto.randomUUID()}`;
+  if (input.terminal && !binaryOutput)
+    throw new AdapterError("INVALID_ARGUMENT", "Terminal processes require byte output");
+
+  if (input.terminal && !Dimensions.safeParse(input.terminal).success)
+    throw new AdapterError(
+      "INVALID_ARGUMENT",
+      "Terminal dimensions must be integers from 1 to 1000",
+    );
+
+  const profile = input.terminal ? "terminal" : "process";
+
+  const parsedReference = z
+    .object({
+      root: z.string().regex(/^\/tmp\/sandbar-process-[0-9a-f-]{36}$/),
+      generation: z.string().uuid(),
+      profile: z.enum(["process", "terminal"]),
+    })
+    .strict()
+    .safeParse(reopening);
+
+  if (reopening !== undefined && !parsedReference.success)
+    throw new AdapterError("INVALID_ARGUMENT", "Invalid process supervisor reference");
+
+  const reference =
+    reopening === undefined
+      ? {
+          root: `/tmp/sandbar-process-${crypto.randomUUID()}`,
+          generation: crypto.randomUUID(),
+          profile,
+        }
+      : parsedReference.data!;
+
+  if (reference.profile !== profile)
+    throw new AdapterError("INVALID_ARGUMENT", "Process reference profile does not match");
+  const { root, generation } = reference;
+  const lease = crypto.randomUUID();
 
   const argv =
     input.command.kind === "argv" ? input.command.argv : ["/bin/sh", "-c", input.command.script];
 
   const launch = pythonCommand(processSupervisor, {
     root,
+    generation,
+    lease,
+    terminal: input.terminal,
     argv,
     cwd: input.cwd,
     env: input.env,
@@ -66,7 +113,12 @@ export async function startDaytonaProcess(
     operation.signal.throwIfAborted();
 
     const result = Reply.parse(
-      JSON.parse(await execute(pythonCommand(processRpc, { root, request, wait }), operation)),
+      JSON.parse(
+        await execute(
+          pythonCommand(processRpc, { root, request: { ...request, generation, lease }, wait }),
+          operation,
+        ),
+      ),
     );
 
     if (result.error) throw new AdapterError("UNAVAILABLE", result.error);
@@ -78,10 +130,25 @@ export async function startDaytonaProcess(
   };
 
   try {
-    await execute(`(${launch} </dev/null >/dev/null 2>&1 &)`, ctx);
-    await rpc({ op: "status" }, ctx, Math.max(0, (ctx.deadline - Date.now()) / 1000));
+    if (reopening === undefined) {
+      await execute(`(${launch} </dev/null >/dev/null 2>&1 &)`, ctx);
+      await rpc({ op: "status" }, ctx, Math.max(0, (ctx.deadline - Date.now()) / 1000));
+    } else {
+      const reply = await rpc({ op: "hello", nextLease: lease }, ctx);
+
+      if (reply.ok !== true || reply.exitCode === undefined)
+        throw new AdapterError("UNAVAILABLE", "Process reattachment was not acknowledged");
+    }
   } catch (error) {
     // Lost setup does not authorize a remote kill. Independently dispose a late local transport.
+    if (reopening !== undefined) {
+      const cleanup = AbortSignal.timeout(5_000);
+      void rpc({ op: "disconnect" }, { signal: cleanup, deadline: Date.now() + 5_000 }).catch(
+        () => undefined,
+      );
+      throw error;
+    }
+
     const cleanup = AbortSignal.timeout(5_000);
     void rpc({ op: "abandon" }, { signal: cleanup, deadline: Date.now() + 5_000 }).catch(
       () => undefined,
@@ -248,7 +315,21 @@ export async function startDaytonaProcess(
       throw new AdapterError("UNAVAILABLE", "Invalid process control acknowledgement");
   };
 
+  const signalRequest = async (request: ProcessRequest, operation: ReadContext) => {
+    if (confirmedExit) return { status: "not-found" as const };
+
+    const reply = await rpc(request, operation);
+
+    if (reply.ok !== true || reply.status === undefined)
+      throw new AdapterError("UNAVAILABLE", "Invalid process signal acknowledgement");
+
+    observe(reply);
+
+    return { status: reply.status };
+  };
+
   return {
+    reference,
     get confirmedExit() {
       return confirmedExit;
     },
@@ -273,10 +354,30 @@ export async function startDaytonaProcess(
 
       return observation;
     },
-    async terminate(operation) {
-      await acknowledged({ op: "terminate" }, operation);
+    async signal(signal, operation) {
+      return signalRequest({ op: "signal", signal }, operation);
+    },
+    async resize(dimensions, operation) {
+      if (!Dimensions.safeParse(dimensions).success)
+        throw new AdapterError(
+          "INVALID_ARGUMENT",
+          "Terminal dimensions must be integers from 1 to 1000",
+        );
 
-      return { status: "requested" };
+      await acknowledged({ op: "resize", ...dimensions }, operation);
+    },
+    async disconnect() {
+      if (detached) return;
+      detached = true;
+
+      try {
+        await acknowledged({ op: "disconnect" }, context(new AbortController().signal));
+      } finally {
+        local.abort();
+      }
+    },
+    async terminate(operation) {
+      return signalRequest({ op: "terminate" }, operation);
     },
     async detachOutput() {
       if (outputDetached || outputComplete || detached) return;
@@ -303,4 +404,20 @@ export async function startDaytonaProcess(
       }
     },
   };
+}
+
+export function reopenDaytonaProcess(
+  execute: ProcessExecute,
+  input: ProcessReopenInput,
+  ctx: ProcessStartContext,
+): Promise<NativeProcess> {
+  const attachment: ProcessStartInput = {
+    ...input,
+    command: { kind: "argv", argv: ["true"] },
+    maxOutputBytes: 0,
+  };
+
+  if (input.profile === "terminal") attachment.terminal = { columns: 80, rows: 24 };
+
+  return startDaytonaProcess(execute, attachment, ctx, input.reference);
 }

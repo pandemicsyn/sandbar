@@ -10,6 +10,11 @@ export type {
   ProcessStatus,
   ProcessTermination,
   ProcessHandle,
+  ProcessReference,
+  ProcessSignal,
+  TerminalDimensions,
+  StartTerminalInput,
+  TerminalHandle,
   ProcessFailure,
   ExecOptions,
 } from "./processes";
@@ -130,3 +135,12 @@ export type {
   WalkFileEntry,
   ReadTextLinesOptions,
 } from "./filesystem-extensions";
+
+export { createProcessTail, readProcessLines } from "./process-output";
+
+export type {
+  ProcessTail,
+  ProcessTailOptions,
+  ProcessLine,
+  ProcessLineOptions,
+} from "./process-output";

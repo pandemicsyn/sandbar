@@ -30,6 +30,7 @@ Import from `sandbar-sdk`.
 | `Capabilities`              | type      |
 | `CreateInput`               | type      |
 | `CreatePlan`                | type      |
+| `createProcessTail`         | re-export |
 | `Deadline`                  | type      |
 | `diagnosticContext`         | re-export |
 | `DiagnosticContext`         | type      |
@@ -69,12 +70,19 @@ Import from `sandbar-sdk`.
 | `ProcessExit`               | type      |
 | `ProcessFailure`            | type      |
 | `ProcessHandle`             | type      |
+| `ProcessLine`               | type      |
+| `ProcessLineOptions`        | type      |
 | `ProcessOutput`             | type      |
 | `ProcessOutputBytes`        | type      |
 | `ProcessOutputFormat`       | type      |
+| `ProcessReference`          | type      |
+| `ProcessSignal`             | type      |
 | `ProcessStatus`             | type      |
+| `ProcessTail`               | type      |
+| `ProcessTailOptions`        | type      |
 | `ProcessTermination`        | type      |
 | `ReadOptions`               | type      |
+| `readProcessLines`          | re-export |
 | `ReadTextLinesOptions`      | type      |
 | `RecoveredOperation`        | type      |
 | `RecoveryReference`         | type      |
@@ -99,8 +107,11 @@ Import from `sandbar-sdk`.
 | `SnapshotRequirements`      | re-export |
 | `SnapshotResult`            | type      |
 | `StartProcessInput`         | type      |
+| `StartTerminalInput`        | type      |
 | `Support`                   | type      |
 | `SuspendResult`             | type      |
+| `TerminalDimensions`        | type      |
+| `TerminalHandle`            | type      |
 | `TransferPolicy`            | type      |
 | `UnsupportedFeatureError`   | re-export |
 | `validateResourceReference` | re-export |
@@ -209,6 +220,8 @@ Import from `sandbar-adapter`.
 | `ProcessOutput`                | type      |
 | `ProcessOutputBytes`           | type      |
 | `ProcessOutputFormat`          | type      |
+| `ProcessReopenInput`           | type      |
+| `ProcessSignal`                | type      |
 | `ProcessStartContext`          | type      |
 | `ProcessStartInput`            | type      |
 | `ReadContext`                  | type      |
@@ -222,6 +235,7 @@ Import from `sandbar-adapter`.
 | `Sandbox`                      | type      |
 | `Scope`                        | type      |
 | `submitOperation`              | re-export |
+| `TerminalDimensions`           | type      |
 | `Unknown`                      | type      |
 | `validateAdapterConfiguration` | function  |
 

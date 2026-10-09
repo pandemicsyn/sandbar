@@ -1,5 +1,9 @@
 import {
   AdapterError,
+  ResourceScope,
+  type Json,
+  type ProcessSignal,
+  type TerminalDimensions,
   type NativeProcess,
   type Sandbox,
   type ProcessOutput,
@@ -34,6 +38,95 @@ export type StartProcessInput<F extends ProcessOutputFormat = ProcessOutputForma
     ? { output: { mode: "stream"; format: "bytes" } }
     : object);
 
+export type { ProcessSignal, TerminalDimensions } from "sandbar-adapter";
+
+// oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters -- Native/reference JSON is untrusted and must be bounded without recursive parsing or invoking accessors.
+function boundedNative(value: unknown): boolean {
+  const pending = [{ value, depth: 0 }];
+  const seen = new Set<object>();
+  let nodes = 0;
+  let bytes = 0;
+
+  try {
+    while (pending.length) {
+      const item = pending.pop()!;
+
+      if (++nodes > 1024 || item.depth > 32) return false;
+      const current = item.value;
+
+      if (current === null || typeof current === "boolean") bytes += 5;
+      else if (typeof current === "number") {
+        if (!Number.isFinite(current)) return false;
+        bytes += 24;
+      } else if (typeof current === "string") {
+        if (current.length > 4096) return false;
+        bytes += encoder.encode(JSON.stringify(current)).length;
+      } else if (typeof current === "object") {
+        if (seen.has(current)) return false;
+        seen.add(current);
+
+        if (
+          !Array.isArray(current) &&
+          Object.getPrototypeOf(current) !== Object.prototype &&
+          Object.getPrototypeOf(current) !== null
+        )
+          return false;
+        const keys = Object.keys(current);
+
+        if (
+          Array.isArray(current) &&
+          (keys.length !== current.length || keys.some((key, index) => key !== String(index)))
+        )
+          return false;
+
+        if (keys.length > 1024 || pending.length + keys.length > 1024) return false;
+        bytes += 2 + keys.length;
+
+        for (const key of keys) {
+          if (key.length > 4096) return false;
+          const descriptor = Object.getOwnPropertyDescriptor(current, key);
+
+          if (!descriptor || !("value" in descriptor)) return false;
+
+          if (!Array.isArray(current)) bytes += encoder.encode(JSON.stringify(key)).length + 1;
+          pending.push({ value: descriptor.value, depth: item.depth + 1 });
+        }
+      } else return false;
+
+      if (bytes > 4096) return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+// oxlint-enable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters
+
+const Reference = z.strictObject({
+  version: z.literal(1),
+  provider: z.string().min(1).max(128),
+  sandboxId: z.string().min(1).max(512),
+  scope: ResourceScope,
+  profile: z.enum(["process", "terminal"]),
+  output: z.enum(["text", "bytes"]),
+  stdin: z.enum(["closed", "pipe"]),
+  expiresAt: z.iso.datetime(),
+  native: z.custom<Json>(boundedNative),
+});
+
+export type ProcessReference<F extends ProcessOutputFormat = ProcessOutputFormat> = Omit<
+  z.infer<typeof Reference>,
+  "output"
+> & { output: F };
+
+export type StartTerminalInput = Pick<ExecInput, "command" | "cwd" | "env"> & TerminalDimensions;
+
+export interface TerminalHandle extends Omit<ProcessHandle<"bytes">, "output" | "closeStdin"> {
+  output(options?: { signal?: AbortSignal }): AsyncIterable<Uint8Array>;
+  resize(dimensions: TerminalDimensions, options?: { signal?: AbortSignal }): Promise<void>;
+}
+
 export type ProcessTermination = { status: "requested" | "not-found" | "exited" };
 
 export type ProcessExit = { exitCode: number; outputComplete: boolean };
@@ -49,6 +142,10 @@ export type ProcessFailure = SandbarError & {
 
 export interface ProcessHandle<F extends ProcessOutputFormat = "text"> {
   readonly provider: string;
+  readonly outputGap: boolean;
+  reference(): ProcessReference<F>;
+  signal(signal: ProcessSignal, options?: { signal?: AbortSignal }): Promise<ProcessTermination>;
+  disconnect(): Promise<void>;
   /** Returning a sustained iterator releases output only; finite legacy iterators detach the handle. */
   output(options?: { signal?: AbortSignal }): AsyncIterable<ProcessChunk<F>>;
   wait(options?: { signal?: AbortSignal }): Promise<ProcessExit>;
@@ -59,6 +156,11 @@ export interface ProcessHandle<F extends ProcessOutputFormat = "text"> {
   /** Dispose local IO and cancel pending local controls; never terminate the remote process. */
   detach(): Promise<void>;
 }
+
+const Dimensions = z.strictObject({
+  columns: z.number().int().min(1).max(1000),
+  rows: z.number().int().min(1).max(1000),
+});
 
 const Exit = z.object({ exitCode: z.number().int().safe() });
 
@@ -71,9 +173,11 @@ const encoder = new TextEncoder();
 const aborted = () => new SandbarError("WAIT_ABORTED", "Local observation stopped", "possible");
 
 /** Best effort local release must never block a public wait or client close. */
-function release(native: NativeProcess): void {
+function release(native: NativeProcess, preserveInput = false): void {
   try {
-    void native.detach().catch(() => undefined);
+    void (preserveInput && native.disconnect ? native.disconnect() : native.detach()).catch(
+      () => undefined,
+    );
   } catch {
     /* Local cleanup is best effort. */
   }
@@ -101,6 +205,13 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
   private inputTail: Promise<void> = Promise.resolve();
   private closePromise?: Promise<void>;
   private termination?: Promise<ProcessTermination>;
+  private signalRequests = new Map<ProcessSignal, Promise<ProcessTermination>>();
+  private park?: Promise<void>;
+  private resizeTail: Promise<void> = Promise.resolve();
+  private pendingResizes = 0;
+  private resizeFailure?: SandbarError;
+  private cleanupPreservesInput = false;
+  private savedReference?: ProcessReference<F>;
   private listeners = new Set<() => void>();
   private removeOutputAbort?: () => void;
   private readonly closed = () => {
@@ -110,13 +221,20 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
     readonly provider: string,
     private readonly sandboxId: string,
     private readonly max: number,
-    private readonly signal: AbortSignal,
+    private readonly clientSignal: AbortSignal,
     private readonly controlActive: () => boolean,
     private readonly sustained: boolean,
     private readonly piped: boolean,
     private readonly format: F,
+    readonly outputGap = false,
+    private readonly referenceContext?: {
+      scope: z.infer<typeof ResourceScope>;
+      profile: "process" | "terminal";
+      expiresAt: string;
+    },
+    private readonly supportedSignals: readonly ProcessSignal[] = [],
   ) {
-    signal.addEventListener("abort", this.closed, { once: true });
+    clientSignal.addEventListener("abort", this.closed, { once: true });
   }
   get error(): SandbarError | undefined {
     return this.failure;
@@ -170,7 +288,7 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
 
     if (this.native) {
       if (this.sustained) this.releaseOutput();
-      else release(this.native);
+      else release(this.native, this.cleanupPreservesInput);
     }
 
     this.notify();
@@ -274,6 +392,17 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
 
     const { stream, bytes } = checked.data;
 
+    if (this.referenceContext?.profile === "terminal" && stream !== "stdout") {
+      const error = new SandbarError(
+        "INVALID_RESPONSE",
+        "Terminal output must be combined",
+        "possible",
+      );
+
+      this.fail(error);
+      throw error;
+    }
+
     if (!bytes.byteLength) return;
 
     if (
@@ -300,6 +429,23 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
   };
   attach(native: NativeProcess): void {
     this.native = native;
+
+    if (this.referenceContext && native.reference !== undefined) {
+      const parsed = Reference.safeParse({
+        version: 1,
+        provider: this.provider,
+        sandboxId: this.sandboxId,
+        ...this.referenceContext,
+        output: this.format,
+        stdin: this.piped ? "pipe" : "closed",
+        native: native.reference,
+      });
+
+      if (parsed.success) {
+        // SAFETY: The envelope output is the validated generic handle format.
+        this.savedReference = structuredClone(parsed.data) as ProcessReference<F>;
+      }
+    }
 
     if (this.sustained && (!native.outputDone || !native.detachOutput))
       this.fail(
@@ -363,7 +509,8 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
         this.notify();
       });
 
-    if (this.detached || (this.stopped && !this.sustained)) release(native);
+    if (this.detached || (this.stopped && !this.sustained))
+      release(native, this.cleanupPreservesInput);
     else if (this.failure && this.sustained) this.releaseOutput();
   }
   output(options: { signal?: AbortSignal } = {}): AsyncIterable<ProcessChunk<F>> {
@@ -378,7 +525,7 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
       this.queuedBytes = 0;
       this.removeOutputAbort?.();
 
-      if (!this.sustained) this.signal.removeEventListener("abort", this.closed);
+      if (!this.sustained) this.clientSignal.removeEventListener("abort", this.closed);
     };
 
     signal?.addEventListener("abort", stop, { once: true });
@@ -407,15 +554,15 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
         if (this.failure) {
           this.removeOutputAbort?.();
 
-          if (!this.sustained) this.signal.removeEventListener("abort", this.closed);
+          if (!this.sustained) this.clientSignal.removeEventListener("abort", this.closed);
           throw this.failure;
         }
 
         if (this.stopped || this.finished) {
-          if (this.finished && !this.stopped) this.complete = true;
+          if (this.finished && !this.stopped) this.complete = !this.outputGap;
           signal?.removeEventListener("abort", stop);
 
-          if (!this.sustained) this.signal.removeEventListener("abort", this.closed);
+          if (!this.sustained) this.clientSignal.removeEventListener("abort", this.closed);
 
           return { done: true, value: undefined };
         }
@@ -494,7 +641,8 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
   private checkInput(): void {
     this.rememberNativeExit();
 
-    if (this.signal.aborted) throw this.terminationFailure("CLIENT_CLOSED", "Client is closed");
+    if (this.clientSignal.aborted)
+      throw this.terminationFailure("CLIENT_CLOSED", "Client is closed");
 
     if (this.detached || !this.controlActive())
       throw this.terminationFailure("UNAVAILABLE", "Process input is detached");
@@ -594,7 +742,7 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
 
         const signal = AbortSignal.any([
           controller.signal,
-          this.signal,
+          this.clientSignal,
           this.local.signal,
           ...(caller ? [caller] : []),
         ]);
@@ -652,7 +800,8 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
         observedAt: new Date().toISOString(),
       };
 
-    if (this.signal.aborted) throw this.terminationFailure("CLIENT_CLOSED", "Client is closed");
+    if (this.clientSignal.aborted)
+      throw this.terminationFailure("CLIENT_CLOSED", "Client is closed");
 
     if (this.detached || !this.controlActive())
       throw this.terminationFailure("UNAVAILABLE", "Process observation is detached");
@@ -662,7 +811,7 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
 
     const signal = AbortSignal.any([
       controller.signal,
-      this.signal,
+      this.clientSignal,
       this.local.signal,
       ...(options.signal ? [options.signal] : []),
     ]);
@@ -728,7 +877,8 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
     if (this.exitCode !== undefined) return { status: "exited" };
 
     if (!this.termination) {
-      if (this.signal.aborted) throw this.terminationFailure("CLIENT_CLOSED", "Client is closed");
+      if (this.clientSignal.aborted)
+        throw this.terminationFailure("CLIENT_CLOSED", "Client is closed");
 
       if (this.detached || (this.stopped && !this.sustained) || !this.controlActive())
         throw this.terminationFailure(
@@ -737,7 +887,7 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
         );
       const native = this.native;
 
-      if (!native?.terminate)
+      if (!native?.terminate && !(native?.signal && this.supportedSignals.includes("SIGKILL")))
         throw this.terminationFailure("UNSUPPORTED", "Process termination is unsupported");
       // Dispatch once; caller signals only cancel their own waits on this promise.
       this.termination = this.requestTermination(native);
@@ -762,12 +912,14 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
   }
   private async requestTermination(native: NativeProcess): Promise<ProcessTermination> {
     const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, this.signal, this.local.signal]);
+    const signal = AbortSignal.any([controller.signal, this.clientSignal, this.local.signal]);
     const timer = setTimeout(() => controller.abort(), 30_000);
 
     try {
       const result = await raceAbort(
-        native.terminate!({ signal, deadline: Date.now() + 30_000 }),
+        native.terminate
+          ? native.terminate({ signal, deadline: Date.now() + 30_000 })
+          : native.signal!("SIGKILL", { signal, deadline: Date.now() + 30_000 }),
         signal,
       );
 
@@ -786,13 +938,212 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
       clearTimeout(timer);
     }
   }
+  reference(): ProcessReference<F> {
+    if (this.inputFailure) throw this.inputFailure;
+
+    if (this.inputClosing && !this.inputClosed)
+      throw this.terminationFailure(
+        "OUTCOME_UNKNOWN",
+        "Process EOF acknowledgement is pending; a writable reference cannot be saved",
+        "possible",
+      );
+
+    if (!this.savedReference)
+      throw this.terminationFailure("UNSUPPORTED", "Process reference is unavailable");
+
+    const reference = structuredClone(this.savedReference);
+
+    if (this.inputClosed || (this.detached && !this.park && !this.cleanupPreservesInput))
+      reference.stdin = "closed";
+
+    return reference;
+  }
+  async signal(
+    signal: ProcessSignal,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ProcessTermination> {
+    if (signal !== "SIGTERM" && signal !== "SIGKILL")
+      throw this.terminationFailure("INVALID_ARGUMENT", "Invalid process signal");
+
+    if (options.signal?.aborted) throw aborted();
+    this.rememberNativeExit();
+
+    if (this.exitCode !== undefined) return { status: "exited" };
+
+    if (!this.supportedSignals.includes(signal))
+      throw this.terminationFailure("UNSUPPORTED", "Process signal is unsupported");
+
+    if (signal === "SIGKILL") return this.terminate(options);
+
+    if (!this.native?.signal)
+      throw this.terminationFailure("UNSUPPORTED", "Process signal is unsupported");
+    this.checkControl();
+    let request = this.signalRequests.get(signal);
+
+    if (!request) {
+      request = this.control((ctx) => this.native!.signal!(signal, ctx)).then((value) => {
+        const parsed = Termination.safeParse(value);
+
+        if (!parsed.success)
+          throw this.terminationFailure(
+            "OUTCOME_UNKNOWN",
+            "Signal acknowledgement is invalid",
+            "possible",
+          );
+
+        return parsed.data;
+      });
+      this.signalRequests.set(signal, request);
+      void request.catch(() => undefined);
+    }
+
+    try {
+      return await (options.signal ? raceAbort(request, options.signal) : request);
+    } catch (error) {
+      if (options.signal?.aborted)
+        throw this.terminationFailure(
+          "OUTCOME_UNKNOWN",
+          "Signal wait stopped after dispatch",
+          "possible",
+        );
+      throw error;
+    }
+  }
+  private checkControl(): void {
+    if (this.clientSignal.aborted)
+      throw this.terminationFailure("CLIENT_CLOSED", "Client is closed");
+
+    if (this.detached || !this.controlActive())
+      throw this.terminationFailure("UNAVAILABLE", "Process control is detached");
+  }
+  private async control<T>(
+    invoke: (ctx: { signal: AbortSignal; deadline: number }) => Promise<T>,
+  ): Promise<T> {
+    const timeout = new AbortController();
+    const signal = AbortSignal.any([timeout.signal, this.clientSignal, this.local.signal]);
+    const timer = setTimeout(() => timeout.abort(), 30_000);
+
+    try {
+      return await raceAbort(invoke({ signal, deadline: Date.now() + 30_000 }), signal);
+    } catch {
+      throw this.terminationFailure(
+        "OUTCOME_UNKNOWN",
+        "Process control was not acknowledged; do not retry",
+        "possible",
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async resize(
+    dimensions: TerminalDimensions,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const parsed = Dimensions.safeParse(dimensions);
+
+    if (!parsed.success)
+      throw this.terminationFailure("INVALID_ARGUMENT", "Invalid terminal dimensions");
+
+    if (options.signal?.aborted) throw aborted();
+    this.checkControl();
+
+    if (!this.native?.resize)
+      throw this.terminationFailure("UNSUPPORTED", "Terminal resize is unsupported");
+
+    if (this.resizeFailure) throw this.resizeFailure;
+
+    if (this.pendingResizes >= 256)
+      throw this.terminationFailure("INPUT_CAPACITY", "Terminal resize queue is full");
+    this.pendingResizes++;
+    let dispatched = false;
+
+    const request = this.resizeTail
+      .then(async () => {
+        if (options.signal?.aborted) throw aborted();
+        this.checkControl();
+
+        if (this.resizeFailure) throw this.resizeFailure;
+        dispatched = true;
+
+        try {
+          await this.control((ctx) => this.native!.resize!(parsed.data, ctx));
+        } catch (error) {
+          this.resizeFailure =
+            error instanceof SandbarError
+              ? error
+              : this.terminationFailure(
+                  "OUTCOME_UNKNOWN",
+                  "Terminal resize was not acknowledged",
+                  "possible",
+                );
+          throw this.resizeFailure;
+        }
+      })
+      .finally(() => {
+        this.pendingResizes--;
+      });
+
+    this.resizeTail = request.catch(() => undefined);
+
+    try {
+      await (options.signal ? raceAbort(request, options.signal) : request);
+    } catch (error) {
+      if (options.signal?.aborted) {
+        if (!dispatched) throw aborted();
+        this.resizeFailure ??= this.terminationFailure(
+          "OUTCOME_UNKNOWN",
+          "Resize wait stopped after dispatch",
+          "possible",
+        );
+        throw this.resizeFailure;
+      }
+
+      throw error;
+    }
+  }
+  async disconnect(): Promise<void> {
+    if (this.park) return this.park;
+    this.checkControl();
+
+    if (!this.native?.disconnect)
+      throw this.terminationFailure("UNSUPPORTED", "Process disconnection is unsupported");
+    this.detached = true;
+    this.local.abort();
+    this.stopped = true;
+    this.complete = false;
+    this.queue = [];
+    this.queuedBytes = 0;
+    this.removeOutputAbort?.();
+    this.clientSignal.removeEventListener("abort", this.closed);
+    this.notify();
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(), 30_000);
+    this.park = raceAbort(
+      Promise.resolve().then(() => this.native!.disconnect!()),
+      timeout.signal,
+    )
+      .catch(() => {
+        throw this.terminationFailure(
+          "OUTCOME_UNKNOWN",
+          "Process park was not acknowledged; handle remains disconnected",
+          "possible",
+        );
+      })
+      .finally(() => clearTimeout(timer));
+
+    return this.park;
+  }
+  async abandonPreservingInput(): Promise<void> {
+    this.cleanupPreservesInput = true;
+    await this.detach();
+  }
   async detach(): Promise<void> {
-    this.signal.removeEventListener("abort", this.closed);
+    this.clientSignal.removeEventListener("abort", this.closed);
     this.queue = [];
     this.queuedBytes = 0;
     this.removeOutputAbort?.();
 
-    if (!this.sustained) this.signal.removeEventListener("abort", this.closed);
+    if (!this.sustained) this.clientSignal.removeEventListener("abort", this.closed);
 
     if (this.detached) return;
     this.detached = true;
@@ -800,7 +1151,7 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
     this.rememberNativeExit();
     this.stopped = true;
 
-    if (this.native) release(this.native);
+    if (this.native) release(this.native, this.cleanupPreservesInput);
     this.notify();
   }
 }
@@ -812,7 +1163,18 @@ export async function startProcess<F extends ProcessOutputFormat = "text">(
   options: { signal?: AbortSignal },
   controlActive: () => boolean,
   capture?: { maxBytes: number },
+  terminal?: TerminalDimensions,
+  reopening?: ProcessReference<F>,
 ): Promise<LocalProcess<F>> {
+  if (
+    terminal &&
+    (!Dimensions.safeParse(terminal).success || !client.session.processes?.supports?.terminal)
+  )
+    throw new SandbarError(
+      Dimensions.safeParse(terminal).success ? "UNSUPPORTED" : "INVALID_ARGUMENT",
+      "Terminal profile is unavailable",
+    );
+
   if (options.signal?.aborted)
     throw new SandbarError("WAIT_ABORTED", "Process start aborted before dispatch");
 
@@ -880,6 +1242,13 @@ export async function startProcess<F extends ProcessOutputFormat = "text">(
     piped,
     // SAFETY: The typed input requires an explicit byte profile for byte handles; runtime validation agrees.
     format as F,
+    !!reopening,
+    {
+      scope: client.scope,
+      profile: terminal || reopening?.profile === "terminal" ? "terminal" : "process",
+      expiresAt: reopening?.expiresAt ?? new Date(Date.now() + 86_400_000).toISOString(),
+    },
+    client.session.processes.supports?.signals,
   );
 
   let established = false;
@@ -890,8 +1259,42 @@ export async function startProcess<F extends ProcessOutputFormat = "text">(
       throw new SandbarError("WAIT_ABORTED", "Process start aborted before dispatch");
     dispatched = true;
 
+    const context = {
+      signal: setup,
+      deadline: Date.now() + 30_000,
+      onOutput: (chunk: ProcessOutput) => {
+        try {
+          process.onOutput(chunk);
+        } catch (error) {
+          if (!established) controller.abort();
+          throw error;
+        }
+      },
+      onOutputBytes: (chunk: ProcessOutputBytes) => {
+        try {
+          process.onOutputBytes(chunk);
+        } catch (error) {
+          if (!established) controller.abort();
+          throw error;
+        }
+      },
+    };
+
+    if (reopening)
+      return client.session.processes!.reopen!(
+        {
+          sandbox,
+          reference: reopening.native,
+          profile: reopening.profile,
+          output: { mode: "stream", format },
+          stdin: reopening.stdin,
+        },
+        context,
+      );
+
     return client.session.processes!.start(
       {
+        terminal,
         sandbox,
         capture,
         stdin: extra.data.stdin,
@@ -950,11 +1353,102 @@ export async function startProcess<F extends ProcessOutputFormat = "text">(
             ));
 
     process.fail(failure);
-    await process.detach();
+
+    if (reopening) await process.abandonPreservingInput();
+    else await process.detach();
     throw Object.assign(failure, { provider: client.provider, sandboxId: sandbox.id });
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function reopenProcess<F extends ProcessOutputFormat>(
+  client: AdapterDirectClient,
+  sandbox: Sandbox,
+  reference: ProcessReference<F>,
+  options: { signal?: AbortSignal },
+  active: () => boolean,
+): Promise<LocalProcess<F>> {
+  const parsed = Reference.safeParse(reference);
+
+  if (!parsed.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid process reference");
+  const ref = structuredClone(parsed.data);
+
+  const scope = (value: z.infer<typeof ResourceScope>) =>
+    JSON.stringify([
+      value.authority.kind,
+      value.authority.id,
+      Object.entries(value.partition).sort(([a], [b]) => a.localeCompare(b)),
+    ]);
+
+  if (
+    ref.provider !== client.provider ||
+    ref.sandboxId !== sandbox.id ||
+    scope(ref.scope) !== scope(client.scope)
+  )
+    throw new SandbarError(
+      "CONFLICT",
+      "Process reference belongs to a different sandbox or connection",
+    );
+
+  if (
+    Date.parse(ref.expiresAt) <= Date.now() ||
+    Date.parse(ref.expiresAt) > Date.now() + 86_400_000
+  )
+    throw new SandbarError(
+      "INVALID_ARGUMENT",
+      "Process reference has expired or exceeds its lifetime",
+    );
+
+  if (!client.session.processes?.supports?.reopen || !client.session.processes.reopen)
+    throw new SandbarError("UNSUPPORTED", "Process reopening is unsupported");
+
+  if (ref.profile === "terminal" && ref.output !== "bytes")
+    throw new SandbarError("INVALID_ARGUMENT", "Terminal reference requires byte output");
+
+  // SAFETY: Reference validation preserves the caller's generic output profile in the start input.
+  return startProcess(
+    client,
+    sandbox,
+    {
+      command: { kind: "argv", argv: ["reopen"] },
+      stdin: ref.stdin,
+      output: { mode: "stream", format: ref.output },
+    } as StartProcessInput<F>,
+    options,
+    active,
+    undefined,
+    undefined,
+    // SAFETY: Strict parsing preserves the validated reference output profile F.
+    ref as ProcessReference<F>,
+  );
+}
+
+export function terminalHandle(process: LocalProcess<"bytes">): TerminalHandle {
+  return {
+    provider: process.provider,
+    outputGap: process.outputGap,
+    reference: () => process.reference(),
+    wait: (options) => process.wait(options),
+    write: (input, options) => process.write(input, options),
+    status: (options) => process.status(options),
+    signal: (signal, options) => process.signal(signal, options),
+    terminate: (options) => process.terminate(options),
+    disconnect: () => process.disconnect(),
+    detach: () => process.detach(),
+    resize: (dimensions, options) => process.resize(dimensions, options),
+    output(options) {
+      const source = process.output(options);
+
+      return {
+        async *[Symbol.asyncIterator]() {
+          for await (const chunk of source) {
+            yield chunk.bytes;
+          }
+        },
+      };
+    },
+  };
 }
 
 export type ExecOptions = {

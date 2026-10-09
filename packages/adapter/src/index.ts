@@ -107,6 +107,18 @@ export type ProcessOutputBytes = { stream: "stdout" | "stderr"; bytes: Uint8Arra
 
 export type ProcessOutputFormat = "text" | "bytes";
 
+export type ProcessSignal = "SIGTERM" | "SIGKILL";
+
+export type TerminalDimensions = { columns: number; rows: number };
+
+export type ProcessReopenInput = {
+  sandbox: Sandbox;
+  reference: Json;
+  profile: "process" | "terminal";
+  output: { mode: "stream"; format: ProcessOutputFormat };
+  stdin: "closed" | "pipe";
+};
+
 export type NativeProcessExit = { exitCode: number };
 
 export type NativeProcessStatus = {
@@ -123,6 +135,11 @@ export type ProcessStartContext = ReadContext & {
 };
 
 export interface NativeProcess {
+  readonly reference?: Json;
+  signal?(signal: ProcessSignal, ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>;
+  resize?(dimensions: TerminalDimensions, ctx: ReadContext): Promise<void>;
+  /** Park local observation without closing guest stdin or terminating compute. */
+  disconnect?(): Promise<void>;
   /** Synchronous confirmed evidence, including during final decoder callbacks. */
   readonly confirmedExit?: NativeProcessExit;
   wait(): Promise<NativeProcessExit>;
@@ -141,6 +158,7 @@ export interface NativeProcess {
 }
 
 export type ProcessStartInput = {
+  terminal?: TerminalDimensions;
   capture?: { maxBytes: number };
   stdin?: "closed" | "pipe";
   output?: { mode: "stream"; format?: ProcessOutputFormat };
@@ -424,11 +442,15 @@ export type AdapterSession<
     supports?: {
       sustainedOutput?: true;
       binaryOutput?: true;
+      signals?: readonly ProcessSignal[];
+      terminal?: true;
+      reopen?: true;
       stdin?: "bytes";
       status?: true;
       execCapture?: "bytes";
     };
     start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess>;
+    reopen?(input: ProcessReopenInput, ctx: ProcessStartContext): Promise<NativeProcess>;
   };
   files?: {
     maxBytes: number;

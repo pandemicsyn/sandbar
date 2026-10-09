@@ -28,6 +28,11 @@ import {
 import { freezeReference } from "./freeze-reference";
 import {
   startProcess,
+  reopenProcess,
+  terminalHandle,
+  type ProcessReference,
+  type StartTerminalInput,
+  type TerminalHandle,
   callbackExec,
   type ExecOptions,
   type StartProcessInput,
@@ -876,11 +881,74 @@ export class AdapterSandbox {
     instrument(this, "readFile", client.telemetry, "sandbar.file.read");
     instrument(this, "writeFile", client.telemetry, "sandbar.file.write", { effect: "applied" });
     instrument(this, "destroy", client.telemetry, "sandbar.sandbox.destroy", { effect: "applied" });
+    instrument(this.processes, "reopen", client.telemetry, "sandbar.process.reopen");
+    instrument(this.terminals, "start", client.telemetry, "sandbar.terminal.start", {
+      effect: "possible",
+    });
+    instrument(this.terminals, "reopen", client.telemetry, "sandbar.terminal.reopen");
     instrument(this.processes, "start", client.telemetry, "sandbar.process.start", {
       effect: "possible",
     });
   }
+  readonly terminals = {
+    start: (input: StartTerminalInput, options: WaitOptions = {}): Promise<TerminalHandle> => {
+      this.client.ensureOpen();
+      const control = processControl(this.client, this.id);
+
+      return startProcess(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        {
+          command: input.command,
+          cwd: input.cwd,
+          env: input.env,
+          stdin: "pipe",
+          output: { mode: "stream", format: "bytes" },
+        },
+        options,
+        () => control.active,
+        undefined,
+        { columns: input.columns, rows: input.rows },
+      ).then(terminalHandle);
+    },
+    reopen: (
+      reference: ProcessReference<"bytes">,
+      options: WaitOptions = {},
+    ): Promise<TerminalHandle> => {
+      this.client.ensureOpen();
+
+      if (reference?.profile !== "terminal")
+        throw new SandbarError("INVALID_ARGUMENT", "Expected terminal reference");
+      const control = processControl(this.client, this.id);
+
+      return reopenProcess(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        reference,
+        options,
+        () => control.active,
+      ).then(terminalHandle);
+    },
+  };
   readonly processes = {
+    reopen: <F extends ProcessOutputFormat>(
+      reference: ProcessReference<F>,
+      options: WaitOptions = {},
+    ): Promise<ProcessHandle<F>> => {
+      this.client.ensureOpen();
+
+      if (reference?.profile !== "process")
+        throw new SandbarError("INVALID_ARGUMENT", "Expected process reference");
+      const control = processControl(this.client, this.id);
+
+      return reopenProcess(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        reference,
+        options,
+        () => control.active,
+      );
+    },
     start: <F extends ProcessOutputFormat = "text">(
       input: StartProcessInput<F>,
       options: WaitOptions = {},

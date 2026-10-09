@@ -81,7 +81,7 @@ Without `output: { mode: "stream" }`, the existing cumulative UTF-8 budget remai
 
 Start setup is bounded to 30 seconds. Pre-dispatch abort reports `WAIT_ABORTED`; abandoned/lost acknowledgement after dispatch reports `OUTCOME_UNKNOWN`. Start is never replayed. `deadlineSeconds` still rejects before start because no portable remote-runtime deadline is guaranteed. Sandbox TTL remains separate. Commands may buffer their own output.
 
-Reconnection, historical replay/cursors, PTYs and explicit signal selection require separate contracts and are not exposed by ordinary pipe handles. A local process handle cannot be serialized into a safe reopening reference.
+Historical replay and cursors remain unsupported. Use the scoped process reference and explicit terminal APIs below for the delivered P4 extensions.
 
 ## Live callbacks on bounded exec
 
@@ -90,3 +90,23 @@ Reconnection, historical replay/cursors, PTYs and explicit signal selection requ
 A slow or throwing callback can fail local observation. Any already confirmed exit and native byte capture remain attached to the failure as `confirmedExit` and `output`; neither the callback nor local cancellation terminates the remote process. The capture budget still limits retained bytes and reports truncation; it does not impose a cumulative limit on text delivered to the callback. Payloads, input and output are excluded from ordinary telemetry.
 
 Abandoned Daytona setup writes a private cancellation marker before releasing its local transport. A bootstrap delayed beyond the lost HTTP acknowledgement checks that marker before launching a child. If no bootstrap arrives, the small cancellation directory remains until owned sandbox destruction; it is not a running service or a retained provider artifact.
+
+## Signals and explicit terminals
+
+`await child.signal("SIGTERM")` requests graceful termination; `"SIGKILL"` is also supported. Request acknowledgement does not establish exit: await `child.wait()` separately. `terminate()` remains the SIGKILL convenience. There is no automatic escalation or sandbox destruction. A process can ignore SIGTERM, and descendants are not guaranteed to stop.
+
+Use `box.terminals.start({ command, columns: 80, rows: 24 })` when an application needs a terminal. Its single `output()` iterator yields combined `Uint8Array` chunks. It supports `write()`, `resize({ columns: 120, rows: 40 })`, status, wait, signals and termination. It has no `closeStdin()`: Ctrl+D is terminal input, not pipe EOF. PTYs can echo input, translate newlines and change program buffering. Ordinary process pipes retain their existing semantics.
+
+## Reopen a process after reconnecting
+
+Save both `sandbox.reference` and `child.reference()` as private JSON. A process reference snapshots its current profile; creating one rejects while EOF acknowledgement is pending or input delivery is uncertain. Call `await child.disconnect()` to park observation while preserving the child's stdin, then reconnect the client, obtain the same sandbox through `client.sandboxes.get(savedSandbox)`, and call `sandbox.processes.reopen(savedProcess)`. Terminals use `sandbox.terminals.reopen(savedTerminal)`. A disconnected handle rejects further input/control. `detach()` remains local disposal and may close guest stdin; use disconnect when you intend to reopen.
+
+References verify provider, sandbox, connection scope and profile; they expire after at most 24 hours and can become unavailable earlier. Reopening never starts a replacement process. Reopened handles have `outputGap: true`, and their exit results keep `outputComplete: false`. Only the newly attached live stream is available; there is no historical transcript replay. Native buffers may still deliver bytes emitted before attachment, so this is not an exact emission-time cutoff. Output during a connection gap can be lost. An active attachment may prevent reopening. Save references privately and do not treat them as immutable process identities across arbitrary native-provider operations.
+
+E2B uses random tags scoped to the sandbox and connection; native clients can reuse tags, so these are selectors rather than immutable generations. Its live streams can have concurrent subscribers. Daytona verifies a supervisor generation and rotates exclusive attachment leases; explicit disconnect releases the lease immediately, while a lost client's lease expires after 30 seconds without requests. Its supervisor discards output while disconnected. No application-level provider options are required for either mapping.
+
+## Bounded diagnostic lines and tails
+
+`readProcessLines(child.output(), { maxLineBytes: 16_384, signal })` yields `{ stream, text, partial, truncated }`. It decodes split UTF-8 separately for each stream, handles CRLF, clips oversized lines and discards their remainder until newline. A final unterminated line is partial. A quiet process waits until output or cancellation; cancellation releases only output observation.
+
+`createProcessTail({ maxBytes: 65_536, maxChunks: 256, maxLines: 200, maxLineBytes: 16_384 })` gives a rolling diagnostic window. Feed each output chunk to `tail.push(chunk)` while streaming it to your normal sink. `tail.snapshot()` returns `{ lines, truncated }` immediately, even for a quiet process. Snapshots are independent and include partial lines. Window eviction can start mid-character or mid-line; the truncation flag records that gap. These helpers never retain a full transcript, retrieve historical provider logs or own remote compute.
