@@ -1763,7 +1763,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
                 const command =
                   input.command.kind === "argv"
-                    ? `/bin/bash -c 'exec "$@"' sandbar ${input.command.argv.map(shellQuote).join(" ")}`
+                    ? `exec /bin/bash -c 'exec "$@"' sandbar ${input.command.argv.map(shellQuote).join(" ")}`
                     : `/bin/bash -c ${shellQuote(input.command.script)}`;
 
                 return transport.startText!(
