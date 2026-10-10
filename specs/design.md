@@ -1,6 +1,6 @@
 # Sandbar architecture
 
-Current implementation · September 30, 2026
+Current implementation · October 10, 2026
 
 Sandbar is a server-side TypeScript SDK. Callers connect an installed adapter in Node.js or Bun. Provider credentials and application-owned persistence remain in the caller’s process.
 
@@ -37,4 +37,4 @@ Local abort and client close stop waiting without confirming provider cancellati
 
 Use [package conventions](package-conventions.md) for public names and dependency rules, [validation](validation-and-contracts.md) for IO boundaries, and [qualification](../packages/sdk-qualification/README.md) for test coverage. Manifests and the lockfile own dependency versions.
 
-[State portability](provider-state-portability.md) describes the snapshot and volume contracts. [Sandbox lifecycle](sandbox-lifecycle.md), [finite streaming](interactive-execution-and-access.md), [finite stdin](process-stdin.md), [preview/process control](preview-and-process-control.md) and [storage composition](storage-composition.md) describe implemented slices and explicitly deferred extensions.
+[State portability](provider-state-portability.md) describes the snapshot and volume contracts. [Sandbox lifecycle](sandbox-lifecycle.md), [process IO](process-io-dx.md), [legacy finite streaming](interactive-execution-and-access.md), [finite stdin](process-stdin.md), [preview/process control](preview-and-process-control.md) and [storage composition](storage-composition.md) describe implemented slices and explicitly deferred extensions.

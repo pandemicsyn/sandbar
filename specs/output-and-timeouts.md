@@ -2,9 +2,9 @@
 
 Implementation contract · Updated October 1, 2026 · SDK helpers merged in PR #53; timeout documentation and offline fixtures merged in PR #54
 
-Audited freshly fetched main `28acc98413022db9933bb9085a9a50747e512952`. This extracts delivery slice 3 from the [execution brief](interactive-execution-and-access.md#usage-and-delivery). Streaming and read cancellation remain independently owned there. The streaming slice still rejects `deadlineSeconds` before dispatch; this audit does not relax that contract. Follow the [ordinary results/error direction](sdk-recovery-dx.md), without expanding recovery machinery.
+This contract distinguishes capture, display and timeout evidence. Exact signatures live in the [SDK exports](../packages/sdk/src/index.ts) and current usage in the [files/output guide](../apps/docs/src/content/docs/docs/guides/files-and-output.md). The [current process IO contract](process-io-dx.md) owns additive process profiles and exec callbacks; the [legacy finite E2B profile](interactive-execution-and-access.md) retains its separate limits. Requested streaming runtime deadlines remain unsupported. Follow the [ordinary result/error contract](sdk-recovery-dx.md).
 
-## Captured bytes and display today
+## Captured bytes and display
 
 The public [SDK implementation](../packages/sdk/src/resource.ts) returns `ExecOutput` with byte arrays, `exitCode`, `truncated`, and `stdoutText(maxBytes?)` / `stderrText(maxBytes?)`. Exported `outputText(bytes, maxBytes?)` implements both methods. Each defaults to **16,384 input bytes**, decodes that prefix with `new TextDecoder()`, and appends `…` when provided bytes exceed the prefix. Numeric limits are safe integers **0–1,048,576**; invalid limits throw `RangeError`. An intact 20 KiB stdout can therefore display an ellipsis while `truncated === false`.
 
@@ -51,20 +51,9 @@ Only `{ full: true }` is accepted for the new full mode. Reject `full: false`, m
 
 Why this surface: the full overload extends the three existing decoding entrypoints consistently, avoiding a second family of `*FullText` names. Structured previews solve the separate need to detect display loss without inspecting a literal ellipsis. Keep the two convenient result methods; do not also export a standalone `outputPreview` without an actual use case. Existing text methods remain supported bounded-display conveniences, with no formal deprecation or default migration.
 
-This is additive for ordinary consumers. It changes the structural `ExecOutput` type: code manually constructing it must implement the two new methods (including custom fixtures). Adapter authors continue returning `ExecValue` byte arrays, so their public contract does not change. Extend the central result constructor so recovered outputs and `NonzeroExitError.result` / `NoExitCodeError.result` receive the same methods. Existing functions accepting `ExecOutput` continue to work; preserve assignability of its old numeric methods.
+This is additive for ordinary consumers. It changes the structural `ExecOutput` type: code manually constructing it must implement the two new methods (including custom fixtures). Adapter authors continue returning `ExecValue` byte arrays, so their public contract does not change. The central result constructor gives recovered outputs and `NonzeroExitError.result` / `NoExitCodeError.result` the same methods. Existing functions accepting `ExecOutput` continue to work; preserve assignability of its old numeric methods.
 
-### Before and after
-
-Today, display shortening requires comparing lengths, and full parsing requires a decoder:
-
-```ts
-const result = await box.exec(["cat", "/home/user/report.json"]);
-console.log(result.stdoutText()); // 16 KiB display, may append …
-if (result.truncated) throw new Error("Captured report may be incomplete");
-const report = JSON.parse(new TextDecoder().decode(result.stdout));
-```
-
-With the helper slice:
+### Usage
 
 ```ts
 const result = await box.exec(["cat", "/home/user/report.json"]);
@@ -135,15 +124,12 @@ Keep existing `NonzeroExitError` (`NONZERO_EXIT`, result/effect applied), `NoExi
 
 Completion and output are separate evidence. An E2B command can exit 0 and write its status marker while a later stdout/stderr read fails. Today `readExecution` only returns a completed value after both reads; a failure can leave the public call pending/unknown despite actual success. Daytona can likewise complete while the HTTP response or receipt is unavailable/malformed; Modal can complete while a router output stream is unavailable. Conversely, receipt absence is not proof that a command never ran. Do not describe existing APIs as always exposing confirmed exit independently of output.
 
-The two slices below do not alter result/error semantics. Document their limitation honestly. If a later change exposes exit evidence independently, it must preserve a validated confirmed exit through output failure, reuse existing typed error conventions, and receive a separate narrow design review. Never downgrade an already returned/cached confirmed result because a subsequent display/helper call fails. Helper validation/parsing errors are local application errors and cannot revise the exec outcome. No automatic resubmission, supervisor, destroy-on-timeout workaround, journal, persistence hook or generic recovery system is proposed.
+The local output helpers do not alter result/error semantics. If a later change exposes exit evidence independently, it must preserve a validated confirmed exit through output failure, reuse existing typed error conventions, and receive a separate narrow design review. Never downgrade an already returned/cached confirmed result because a subsequent display/helper call fails. Helper validation/parsing errors are local application errors and cannot revise the exec outcome. No automatic resubmission, supervisor, destroy-on-timeout workaround, journal, persistence hook or generic recovery system is proposed.
 
-## Delivery and acceptance
+## Regression and qualification boundary
 
-The completed slices below retain their acceptance criteria for regression coverage.
+Output helpers (#53) are local and have deterministic/packed coverage: unchanged numeric/default behavior, full decoding, independent streams, empty/zero/exact bounds, malformed options, literal ellipsis, split/invalid UTF-8, BOM and capture/display independence. Ordinary, recovered and error-carried results share the constructor. Helpers cannot alter a confirmed execution outcome.
 
-1. **SDK helper PR (merged in PR #53).** Owner: SDK result construction/public types and focused output guide/examples; no provider/adapter runtime changes. Implement exactly the overloads and two preview methods above; export `OutputPreview`. Tests cover unchanged defaults/numeric overloads, full decode of >16 KiB, all limit edges/invalid objects, each stream independently, empty/zero/exact bounds, true literal ellipsis, split/invalid UTF-8 and BOM. Exercise complete capture with shortened display and truncated capture with unshortened display; helpers never mutate bytes, truncation or exit. Construct ordinary, recovered and nonzero/missing-exit error results through the central helper. Compile and execute public Node/Bun packed-consumer examples, including old numeric usage and full JSON parsing with a capture guard. Update files/output docs and generated public references. Add no live output-helper scenario: helpers are entirely local, and existing capture acceptance remains applicable.
-2. **Timeout documentation/fixture PR (merged in PR #54; live termination unverified).** Owner: bounded-exec provider docs, exec input documentation and maintained native-boundary tests. Keep signatures/defaults/errors unchanged; explain caller signal, per-provider mappings and lack of an established E2B runtime-termination guarantee. Deterministic tests assert exact timeout options/body and disabled retries, one dispatch after timeout/lost response, post-submission local abort without kill/destroy, delayed receipt success, and successful command status plus failed output retrieval remaining unconfirmed publicly. Inspect the actual pinned E2B client against fake transport when validating timer wiring; transport-interface mocks alone cannot prove it. Keep Daytona frame/receipt tests and preflight-relative receipt deadline tests. For Modal, assert the native field-6 process timeout and independent create-time sandbox lifetime, the local `(deadlineSeconds + 5)` start/result window (including lookup latency), and per-observation deadlines. Retain router lost-acknowledgement/original-ID and abort/close fixtures; cover a local deadline followed by later original-ID exit/output recovery without start replay or sandbox termination, and exit evidence plus failed output delivery remaining unconfirmed. No fixture timeout proves native process termination. Compile current caller-signal examples. No live behavior changes are promised; future enforcement changes must add scenarios to the maintained Bun acceptance suite, with paid runs separately authorized.
+Timeout documentation and fixtures (#54) establish exact request/native timeout fields, disabled retries, one dispatch through lost response, local abort without kill/destroy, delayed original-reference recovery and confirmed command status with failed output retrieval remaining publicly unconfirmed. Pinned-client fixtures distinguish start-handshake and RPC observation timers; Modal router fixtures distinguish native process timeout from sandbox lifetime. No fixture timeout proves deployed termination or descendant cleanup.
 
-Run focused tests first, then relevant sequential shared builds, CI checks, packed consumers and docs/examples for coding PRs. The helper slice merged in PR #53 with deterministic tests and packed public examples. The timeout slice changes no public API or runtime behavior; its caller-signal example compiles against current public packages. Offline fixtures qualify native wiring and observation behavior, not deployed termination.
-
-**Native enforcement is a later decision**, not a prerequisite or hidden third slice. Require exact deployed envd/server evidence for cancellation/kill and descendant scope, acknowledgement/exit certainty, and output loss before designing it. Select a product contract for explicit unsupported providers before changing the compatibility meaning of `deadlineSeconds`. The two slices above are merged; full/preview signatures, suffix behavior, bounds, defaults and local errors are implemented. Future enforcement work needs its own implementation handoff; no paid calls, publication, automatic merge or monitoring are authorized.
+Native enforcement requires separate deployed evidence and a deliberate compatibility contract before changing `deadlineSeconds`. Current process IO's independent exit/output behavior does not silently repair bounded exec's receipt/output limitation above. Live behavior, paid calls and enforcement changes require separately authorized qualification.

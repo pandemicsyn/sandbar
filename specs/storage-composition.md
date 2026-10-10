@@ -14,181 +14,21 @@ Daytona's native create path accepts snapshot identity, volume IDs and network p
 
 Creation defaults, text helpers, lifecycle operations and process termination are merged on this baseline. Follow the [roadmap](../ROADMAP.md) for scheduling; this brief does not reorder work. It supplements [state portability](provider-state-portability.md) and [ordinary recovery DX](sdk-recovery-dx.md). PR #69 implemented the slice and qualified the first-action workflow under `daytona-default`; the earlier `824946d` harness failure remains recorded.
 
-## Mocked application walkthrough
+## Current usage
 
-These illustrative scenarios use deterministic mock responses, not real resource IDs or a new mock API. Array restore input is implemented. Use the [compiled storage example](../apps/docs/examples/storage-composition.ts) and [its tests](../apps/docs/examples/storage-composition.test.ts) for current executable usage. The examples do not extend the native support boundaries below.
+The [snapshots and volumes guide](../apps/docs/src/content/docs/docs/guides/snapshots-and-volumes.md), [compiled storage example](../apps/docs/examples/storage-composition.ts) and [its tests](../apps/docs/examples/storage-composition.test.ts) demonstrate capture, reference persistence, fresh-connection reopening, selected-volume restore and cleanup. They do not extend native support boundaries.
 
-The mock represents a qualified filesystem/fresh-execution adapter. It supplies a caller-provisioned `report-worker-v1` image, a ready mount-free snapshot, ready ID-addressable volumes and support for the requested network policy. Its simulated startup installs mounts and policy before the image entrypoint. These fixture assumptions do not establish Daytona's native startup order, capture exclusions or shutdown durability; those remain the release gates below. IDs such as `snapshot-001` and `volume-001` are mock responses, never IDs applications construct.
+Selecting an existing volume shares current mutable data; selecting a separately created empty volume provides independent empty data, not a copy or fork. Attachment hides private snapshot bytes at the mountpoint without erasing them. Neither snapshot capture nor selecting a mount establishes concurrent-writer consistency, flush guarantees or captured-time storage bytes. Daytona mounted writes require the supported explicit overwrite choice.
 
-### 1. Configure once, create data and capture private state
-
-```ts
-import { Image, Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
-
-function openClient() {
-  return Sandbar.connect(daytona({
-    apiKey: process.env.DAYTONA_API_KEY!,
-    target: "us",
-    environment: Image.prepared("report-worker-v1"),
-    networkPolicy: "daytona-default",
-  }));
-}
-
-const client = await openClient();
-const data = await client.volumes.create({ name: "customer-data" });
-const writer = await client.sandboxes.create({
-  networkPolicy: "daytona-default",
-  mounts: [data.at("/data")],
-});
-await writer.writeTextFile("/data/report.json", '{"total":7}', {
-  overwrite: true, // Daytona mounted writes require this choice.
-});
-
-// Capture private application state from a separate, mount-free sandbox.
-const base = await client.sandboxes.create({ networkPolicy: "daytona-default" });
-await base.writeTextFile("/tmp/app-version.txt", "v1");
-const captured = await base.snapshot();
-```
-
-Mock observations: `data.id === "volume-001"`; capture returns `snapshot-001`, filesystem preservation and fresh restore execution. The snapshot contains `/tmp/app-version.txt`; it does not contain the writer's `/data/report.json`. `data.at("/data")` constructs a descriptor without a provider call. Snapshotting `writer` remains unsupported in slice 1.
-
-The same descriptor vocabulary works for both operations:
-
-```ts
-const mount = data.at("/data");
-const created = await client.sandboxes.create({
-  networkPolicy: "daytona-default",
-  mounts: [mount],
-});
-const restored = await captured.snapshot.restore({
-  networkPolicy: "daytona-default",
-  mounts: [mount],
-});
-console.log(await restored.readTextFile("/tmp/app-version.txt")); // "v1"
-console.log(await restored.readTextFile("/data/report.json"));    // '{"total":7}'
-```
-
-Mock observations: `created` starts from the configured image; `restored` starts from `snapshot-001`. Both select exactly `volume-001`. Selecting that volume deliberately shares its current mutable data with the writer and other users. A snapshot does not freeze those bytes. The mock establishes the expected mapping, not portable concurrent-writer or flush guarantees. This example explicitly accepts provider-managed egress through `daytona-default`; it makes no blocked-network promise. A stricter policy must be qualified under the startup gate and otherwise reject before creation, never fall back.
-
-### 2. Save full references and reopen through a fresh connection
-
-```ts
-// In-memory stand-in for the application's database, not SDK persistence.
-const records = new Map<string, string>();
-records.set("report-job", JSON.stringify({
-  snapshot: captured.snapshot.reference,
-  data: data.reference,
-}));
-await base.destroy(); // The snapshot remains independently addressable.
-
-const freshClient = await openClient(); // Current credentials, same verified scope.
-const saved = JSON.parse(records.get("report-job")!);
-const snapshot = await freshClient.snapshots.get(saved.snapshot);
-const selectedData = await freshClient.volumes.get(saved.data);
-const reopened = await snapshot.restore({
-  networkPolicy: "daytona-default",
-  mounts: [selectedData.at("/data")],
-});
-```
-
-Mock observations: reopening inspects the saved snapshot and volume identities in the configured scope; restoration selects `snapshot-001` and `volume-001` even though `base` was destroyed. It needs neither the original handles nor the old API key. Production applications replace `records` with durable storage and retain the returned handles/references if saving fails. The map only demonstrates the JSON boundary; it does not survive a process restart. No resource is discovered or recreated by name.
-
-### 3. Choose shared data, empty independent data or private state only
-
-```ts
-const experimentData = await freshClient.volumes.create({ name: "experiment-data" });
-const experiment = await snapshot.restore({
-  networkPolicy: "daytona-default",
-  mounts: [experimentData.at("/data")],
-});
-const privateOnly = await snapshot.restore({ networkPolicy: "daytona-default" });
-```
-
-| Mock restore input | Selected data | Expected observation |
-| --- | --- | --- |
-| `[selectedData.at("/data")]` | Existing `volume-001` | `/data/report.json` contains the current shared data |
-| `[experimentData.at("/data")]` | New empty `volume-002` | `/data/report.json` is absent; writes do not change `volume-001` |
-| Omitted `mounts` or `[]` | No external volume | Private captured state only; this fixture has no `/data/report.json` |
-
-All three restore `/tmp/app-version.txt` as `v1`. The experiment is an independent **empty** data workspace, not a copy of the original. Forking existing volume bytes needs a separately qualified native copy/version operation. There is no implicit volume creation, recursive copy or portable `fork()` here. Attachment hides any private snapshot directory at its mountpoint without erasing its underlying bytes; the mock's absent file is not a general promise of an empty underlying directory.
-
-### 4. Unsupported combinations fail at the ordinary call
-
-Callers make the same `snapshot.restore({ networkPolicy, mounts })` call and handle the result; no capability negotiation is required. A UI may inspect support to explain available choices. Each row below is a separate mock fixture, not an assertion that an unimplemented provider is usable today.
-
-| Fixture and requested operation | Expected result before provider mutation |
-| --- | --- |
-| Restore hook has no mount support, even though the provider supports volume CRUD | `UNSUPPORTED`, effect `none`; reason identifies restore-with-mounts; zero create calls and no dropped mount |
-| Selected volume belongs to another provider/account/partition | Reject under existing scope validation; zero create calls; no same-name substitute |
-| Cold-only mapping receives a filesystem+memory snapshot and new mounts | `UNSUPPORTED`, effect `none`; reason identifies the unsupported preservation/execution combination |
-| Snapshot mount provenance is unknown | Reject before restore dispatch; do not assume it was mount-free |
-| Older custom restore hook lacks the array-input marker | Reject before hook preparation/submission with adapter-upgrade guidance; mount-free work remains compatible |
-
-For the first row, the ordinary caller can explain the failure without losing the selected data:
-
-```ts
-import { UnsupportedFeatureError } from "sandbar-sdk";
-
-try {
-  await snapshot.restore({
-    networkPolicy: "daytona-default",
-    mounts: [selectedData.at("/data")],
-  });
-} catch (error) {
-  if (error instanceof UnsupportedFeatureError) {
-    console.error(error.unmetRequirements.join("\n"));
-    // Mock reason: this adapter does not support restore with mounts.
-    // selectedData.reference still identifies the retained data.
-  }
-  throw error;
-}
-```
-
-E2B's native volume support does not imply its Sandbar adapter qualifies this combination. Tensorlake's future adapter can use the same caller syntax for a qualified cold snapshot and supported filesystem selection; this is a mapping target, not current support. A provider must reject a requested combination it cannot guarantee rather than quietly ignore `mounts`, resume incompatible memory or select substitute storage. Native live-filesystem selection, immutable read-only versions and writable forks remain distinct.
-
-### 5. Clean up compute while retaining chosen data
-
-After successful work in the first three examples, the application can release its known compute and snapshot resources separately:
-
-```ts
-await writer.destroy({ storage: "allow-unconfirmed" });
-await created.destroy({ storage: "allow-unconfirmed" });
-await restored.destroy({ storage: "allow-unconfirmed" });
-await reopened.destroy({ storage: "allow-unconfirmed" });
-await experiment.destroy({ storage: "allow-unconfirmed" });
-await privateOnly.destroy();
-await snapshot.delete();
-
-// Keep customer data. Delete only the now-unused experiment data.
-await experimentData.delete();
-await freshClient.close();
-await client.close();
-```
-
-Mock observations: all acknowledged compute deletions are confirmed; the snapshot and `volume-002` are deleted; `volume-001` remains accessible through its saved reference. In an application, update/tombstone saved records only after the relevant artifact deletion is confirmed. This is a successful cleanup sequence, not an unconditional `finally`: if restore or cleanup has an uncertain outcome, preserve identities and reconcile the acknowledged compute before deleting dependent artifacts.
-
-The configured cleanup policy can supply the repeated compute choice. `allow-unconfirmed` accepts unconfirmed shutdown durability; it is not a flush promise. Retained resources remain the application's responsibility until separately deleted.
+Reject unsupported restore/mount combinations, foreign scope, memory composition, unknown capture provenance and older hooks without array support before mutation. Volume CRUD alone does not establish restore-with-mounts support. Retain selected volume identities after rejection or partial restore. Tombstone saved records only after confirmed deletion; uncertain compute cleanup requires reconciliation before deleting dependent artifacts. `allow-unconfirmed` accepts unconfirmed shutdown durability and never deletes retained application volumes.
 
 ## Public and adapter shape
 
-Keep `volume.at(path, { access, subpath })`, bound snapshot handles and the ordinary result/error model. The only workload-input change is:
-
-```ts
-interface RestoreRequest {
-  networkPolicy: string;
-  mounts?: MountSpec[];
-  resources?: { vcpu?: number; memoryMiB?: number; diskMiB?: number };
-  requireIndependentLifecycle?: boolean;
-}
-// Existing RestoreCapabilities / SnapshotInfo.restore.mounts: boolean
-// Optional adapter hook marker: snapshotRestore.mountInput?: "specs"
-// Existing snapshotRestore.prepare / submit / observe operations remain.
-```
+Keep `volume.at(path, { access, subpath })`, bound snapshot handles and the ordinary result/error model. Current `RestoreRequest.mounts` uses the same `MountSpec[]` as create. The optional adapter marker is `snapshotRestore.mountInput: "specs"`; existing prepare/submit/observe operations remain.
 
 The support boolean describes the qualified combination, not every snapshot/mount combination. Callers need no negotiation. Nonempty arrays require the hook marker before adapter preparation; see migration below.
 
-Slice 1 accepts a ready snapshot with `preserve: "filesystem"`, `restoreExecution: "fresh"`, no recorded native mounts and `mountHandling: "none"` under the existing capture-reference validation. Validate selected volume provider, authority, routing scope, exact native ID and readiness; reject unsupported read-only access, overlapping paths, subpaths/classes and policy combinations before dispatch. Revalidate at submission; preparation is not a reservation.
+The implemented mapping accepts a ready snapshot with `preserve: "filesystem"`, `restoreExecution: "fresh"`, no recorded native mounts and `mountHandling: "none"` under the existing capture-reference validation. Validate selected volume provider, authority, routing scope, exact native ID and readiness; reject unsupported read-only access, overlapping paths, subpaths/classes and policy combinations before dispatch. Revalidate at submission; preparation is not a reservation.
 
 Reuse Daytona `checkMounts` and the create driver: one `POST /sandbox` selects the exact snapshot ID, `volumes: [{ volumeId, mountPath, subpath }]` and the explicit supported network policy. Confirm actual snapshot identity and the complete expected mount set before returning success. No post-create attachment, name-based replacement or automatic retry.
 
@@ -199,7 +39,7 @@ Selected mounts belong in restore recovery input and direct outcomes, separate f
 Read-only inspection at `0a022a8` confirms this path already exists; no new provenance fields are needed:
 
 - [`observedCapture` / `inspectSnapshot`](../packages/providers/daytona/src/state-native.ts) issue existing snapshot `history` containing source ID/class, filesystem preservation, `mounts: "none"` and consistency. [`resourceHistory.read`](../packages/providers/daytona/src/resource-history.ts) validates its schema, kind, native ID and generation. Inspection separately verifies native snapshot ID, organization, source-sandbox ID, container class and regional readiness before reusing historical capture facts.
-- Reopening reads the retained snapshot, not the original source sandbox. Existing [native-boundary tests](../packages/providers/daytona/src/state-native.test.ts) serialize the full reference, use a fresh connection/key and make source reads return 404 while snapshot inspection still reports `mountHandling: "none"`. The first implementation extends that case through mounted restore. Native retention of the corroborating snapshot fields is part of live acceptance; if missing, provenance remains unavailable.
+- Reopening reads the retained snapshot, not the original source sandbox. Existing [native-boundary tests](../packages/providers/daytona/src/state-native.test.ts) serialize the full reference, use a fresh connection/key and make source reads return 404 while snapshot inspection still reports `mountHandling: "none"`. The compiled example and maintained qualification cover selected-volume restore. Native retention of the corroborating snapshot fields is part of live acceptance; if missing, provenance remains unavailable.
 - These are references in an application-owned trusted store, not signed attestations. Keep full returned history and the existing validation. Malformed history cannot supply provenance and native identity/source/class mismatches reject, but the validator does not independently authenticate historical mount absence; well-formed forged history is outside the trusted-store contract. `inspectSnapshot` restores the existing mount-free classification from matching source/class/preservation history, not a new mount attestation. Imported snapshots without usable provenance remain unknown. Snapshot history is distinct from the observation-free **sandbox** reference.
 
 Here, mount-free means the capture mapping records no native provider volume attachments. It does not enumerate every guest filesystem or certify absence of guest-created FUSE/network mounts. Source-local private filesystem state is the supported claim; external flush, atomicity and remote-storage consistency stay unknown. The merged E2B lifecycle likewise allows private filesystem/RAM preservation when native mount metadata is missing and rejects known attached volumes for its initial subset. That lifecycle rule does not enable E2B mounted snapshot restore or change this Daytona-only implementation slice.
@@ -234,7 +74,7 @@ The storage sentinel can reveal incorrect initial data; it does not qualify netw
 
 Extend the existing ordinary outcome union only enough to expose acknowledged restored compute and selected volumes directly. No composite manifest, persistence callback, generic recovery engine or compensation cascade. Applications own the allocation-to-save crash window. Do not turn missing optional metadata into “nothing created.” Existing scope/ownership and deletion checks remain in force.
 
-Mounted-source capture, mount omission, memory composition, resizing, post-create attachment, copy/version/fork and stronger flush/locking/rename guarantees are outside PR 1. A possible later mounted-capture slice requires specific production container/FUSE exclusion and retained-declaration evidence; filesystem capture alone does not establish exclusion. It would reuse the array to require a descriptor for every recorded path. Omitted/empty input must never silently discard recorded mounts. Guest mounts remain outside the native enumeration guarantee.
+Mounted-source capture, mount omission, memory composition, resizing, post-create attachment, copy/version/fork and stronger flush/locking/rename guarantees are outside this implemented slice. A possible later mounted-capture slice requires specific production container/FUSE exclusion and retained-declaration evidence; filesystem capture alone does not establish exclusion. It would reuse the array to require a descriptor for every recorded path. Omitted/empty input must never silently discard recorded mounts. Guest mounts remain outside the native enumeration guarantee.
 
 The common syntax is intentionally extensible beyond Daytona. E2B volume CRUD/account eligibility and native-ID mounting are separate questions; its name-based mounting is not inherently impossible, but its current Sandbar mapping does not qualify this cold-restore combination. [E2B mounting](https://docs.e2b.dev/volumes/mount) and [snapshot semantics](https://docs.e2b.dev/sandbox/snapshots) remain the native references. Tensorlake's [research #45](https://github.com/pandemicsyn/sandbar/issues/45), [snapshot docs](https://docs.tensorlake.ai/sandboxes/snapshots) and [filesystem mount docs](https://docs.tensorlake.ai/sandboxes/mount-filesystems) own its broader evidence. Its native snapshot ID plus filesystem mount shape fits this vocabulary; live filesystem selection, immutable read-only versions and writable forks remain different operations. Name reuse/generation binding and combined restore ordering must be qualified for that adapter; they are not Daytona prerequisites or authorization to implement another provider.
 
@@ -242,7 +82,7 @@ The common syntax is intentionally extensible beyond Daytona. E2B volume CRUD/ac
 
 The next coordinated SDK/adapter API release changes public `RestoreRequest.mounts` types/schema to `MountSpec[]`. Let that release be R: the SDK accepts legacy empty `{}` at runtime as a deprecated mount-free alias in R **and the next published release R+1**, then removes it in the next API release after R+1 with the appropriate semver boundary. New public types and examples teach only arrays. Nonempty legacy action maps reject before effects with a specific migration message; `share`, `replace` and `omit` are never reinterpreted. Once the empty alias is removed, it follows the existing `INVALID_ARGUMENT` convention.
 
-Repository facts checked at `0a022a8`: [`sandbar-sdk`](../packages/sdk/package.json) and [`sandbar-adapter`](../packages/adapter/package.json) both have manifest version `0.0.0`; [Changesets](../.changeset/config.json) fixes them into one version group and the [release manifest](../scripts/release-packages.json) contains exactly these two packages. There are no local version tags. This is repository state, not a registry publication claim. Use one coordinated changeset for the implementation, following the existing public-release process; record the actual R version in its changelog when versioning runs. If released stable types are affected, use the required breaking semver bump. This prose-only spec does not publish or version packages.
+Repository facts checked at `0a022a8`: [`sandbar-sdk`](../packages/sdk/package.json) and [`sandbar-adapter`](../packages/adapter/package.json) both have manifest version `0.0.0`; [Changesets](../.changeset/config.json) fixes them into one version group and the [release manifest](../scripts/release-packages.json) contains exactly these two packages. There are no local version tags. This is repository state, not a registry publication claim. Follow the coordinated public-release process; record the actual R version in its changelog when versioning runs. If released stable types are affected, use the required breaking semver bump. This prose-only spec does not publish or version packages.
 
 Before passing nonempty arrays, the SDK requires `snapshotRestore.mountInput: "specs"`. Missing marker rejects before adapter preparation/submission with upgrade guidance, even if the earlier capability boolean is true. Mount-free requests keep the old path and omit `mounts` at an older hook. The one optional marker is the complete compatibility mechanism; no top-level version negotiation or permanent second workload input.
 

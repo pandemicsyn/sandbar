@@ -1,21 +1,18 @@
 # Sandbar roadmap
 
-Updated October 8, 2026 against main `af316b2`. This is the authoritative work queue. Contracts live in [specs](specs/README.md); public usage lives in the docs. Merged implementation and live qualification are separate facts.
+Updated October 10, 2026 after #80. This is the authoritative work queue. Contracts live in [specs](specs/README.md); public usage lives in the docs. Merged implementation and live qualification are separate facts.
 
 ## Current baseline
 
-The SDK foundation and its planned everyday DX slices are merged: snapshots/volumes, partial outcomes and persisted identities, cleanup policy, creation defaults, reopen/inspect, lifetime renewal, native suspend/resume, file/text/directory APIs, HTTP preview access, finite E2B text streaming and termination, full-output helpers, and timeout clarification. [Finite stdin](specs/process-stdin.md) merged in #71 (release metadata/status corrected in #72); [selected-volume cold restore](specs/storage-composition.md) merged in #69. CI parallelization merged in #73; see [CI validation](CI.md).
+The SDK foundation and its planned everyday DX slices are merged: snapshots/volumes, partial outcomes and persisted identities, cleanup policy, creation defaults, reopen/inspect, lifetime renewal, native suspend/resume, file/text/directory APIs, HTTP preview access, sustained text/byte processes, incremental stdin/EOF, signals, terminals, scoped process reopening and diagnostics, full-output helpers, and timeout clarification. [Finite stdin](specs/process-stdin.md) merged in #71 (release metadata/status corrected in #72); [selected-volume cold restore](specs/storage-composition.md) merged in #69. CI parallelization merged in #73; see [CI validation](CI.md).
 
-These are completed slices, not outstanding implementation plans. Each retains documented provider limits: directory primitives are partial, previews have different protection modes, streaming/termination are E2B-only, and mounted restore is limited to eligible Daytona cold snapshots under `daytona-default`. The service and management UI were removed. Current exports and [provider support](apps/docs/src/content/docs/docs/providers/support.md) define the implemented surface.
+These are completed slices, not outstanding implementation plans. Each retains documented provider limits: filesystem and process operations retain documented native limits, previews have different protection modes, and mounted restore is limited to eligible Daytona cold snapshots under `daytona-default`. The service and management UI were removed. Current exports and [provider support](apps/docs/src/content/docs/docs/providers/support.md) define the implemented surface.
 
-## Current: SDK usability plans
+## Completed SDK usability slices
 
-Two focused plans own the next implementation work:
+[Filesystem DX](specs/filesystem-dx.md) F1–F4 directory, transfer, copy/move, traversal and text-line behavior is implemented. The expanded artifact recipe passed on both built-ins at `e91f2d5`, with confirmed owned cleanup. Range reads, batches, search/glob and tree copy remain deferred.
 
-1. **[Filesystem DX](specs/filesystem-dx.md):** useful directory browsing/metadata and mkdir/remove on both built-ins; bounded-memory large transfers; copy/move and a complete artifact workflow. F1–F3 implementation is complete in this change, with the compiled artifact recipe, native-boundary coverage and passing borrowed-image artifact qualification at `2f6afe8` for both built-ins; exact live scope is recorded separately. F4 traversal and text lines now compose the existing directory/stream hooks with shared compiled fixture and packed acceptance. Historical `2f6afe8` live passes predate F4; the expanded recipe passed at `e91f2d5` for both built-ins with confirmed owned cleanup. Ranges, batches, glob/search and tree copy remain separately deferred.
-2. **[Streaming and interactive processes](specs/process-io-dx.md):** bounded sustained output, status, incremental stdin/EOF, termination and build/server examples on Daytona and E2B. P0 first resolves the native transport; then deliver shared contracts and provider mappings in small PRs. P0 can run alongside F1. Preserve existing finite streaming until the new path is implemented and qualified.
-
-These are proposed changes, not shipped support. Ordinary methods should handle provider mechanics; do not preserve unusable abstractions solely to avoid revisiting an overly strict contract. Existing guarantees change only through explicit compatibility decisions. The closed incremental-input proposal (#70) is superseded; use the new process plan, while finite ordinary exec input remains shipped.
+[Streaming and interactive processes](specs/process-io-dx.md) P0–P4 are implemented, including original-byte output, SIGTERM/SIGKILL, explicit PTYs, scoped references/reopening and bounded diagnostics. Historical live evidence covers baseline at `ecc73de`, byte output at `5f2bd13`, and fresh-process pipe reopen plus PTY resize/SIGTERM at `aaba981`. Cancellation corrections merged in #80 with deterministic coverage. These are exact-revision passes, not current-head or universal qualification.
 
 ## Qualification gaps
 
@@ -33,8 +30,8 @@ Scoped evidence already exists: #68 passed files, renewal, fresh-process reopeni
 ## Follow-ups requiring a concrete use case
 
 - **Storage:** mounted capture, memory-plus-volume restore, mounted suspension, dynamic attachment, copying/versioning/forks and stronger durability/visibility/locking/rename guarantees. The useful cold-restore composition is already shipped; these are not leftovers blocking #69.
-- **Process/access beyond the active plan:** binary or reconnectable processes, PTYs and tunnels require separately selected slices. Sustained output, Daytona process support and incremental stdin are now in the active process plan. Native PID targeting limitations remain explicit; E2B termination is not process-tree termination.
-- **Bounded exec outcomes:** a confirmed native exit followed by failed output retrieval can still leave the public outcome unconfirmed. The [process plan](specs/process-io-dx.md) includes a separate narrow follow-up to preserve exit evidence through output failure; do not replay execution.
+- **Process/access:** durable remote transcript retention/replay, tunnels, verified remote runtime enforcement and descendant termination require separately selected contracts. Reopening reports explicit gaps; E2B native tags are scoped selectors, not immutable generations.
+- **Bounded exec outcomes:** a confirmed native exit followed by failed output retrieval can still leave the public outcome unconfirmed. The [output contract](specs/output-and-timeouts.md) retains this boundary separately from callback exec; any correction must preserve validated exit evidence without replay.
 - **Timeout enforcement:** documentation/fixtures are complete. Portable remote termination at an exec deadline needs stronger native evidence and a separate contract; current E2B RPC timeout does not prove termination.
 - **Observability:** metrics and structured events remain deferred; tracing/diagnostics and Sentry/Datadog recipes are implemented.
 - **Release compatibility:** track the deprecated empty-object restore-mount alias through its documented R/R+1 publication window before removing it. This is a release follow-up, not new storage implementation; see [migration rules](specs/storage-composition.md#compatibility-and-migration).
