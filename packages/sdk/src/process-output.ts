@@ -158,6 +158,17 @@ export async function* readProcessLines(
   const iterator = output[Symbol.asyncIterator]();
   const signal = options.signal ?? new AbortController().signal;
 
+  function* observe(source: Generator<ProcessLine>): Generator<ProcessLine> {
+    for (const line of source) {
+      if (signal.aborted)
+        throw new SandbarError("WAIT_ABORTED", "Process line observation stopped");
+      yield line;
+
+      if (signal.aborted)
+        throw new SandbarError("WAIT_ABORTED", "Process line observation stopped");
+    }
+  }
+
   try {
     while (true) {
       if (signal.aborted)
@@ -172,11 +183,11 @@ export async function* readProcessLines(
 
       const chunk = parseChunk(next.value);
 
-      if ("bytes" in chunk) yield* lines.feed(chunk.stream, chunk.bytes);
-      else for (const bytes of encoded(chunk.text)) yield* lines.feed(chunk.stream, bytes);
+      if ("bytes" in chunk) yield* observe(lines.feed(chunk.stream, chunk.bytes));
+      else for (const bytes of encoded(chunk.text)) yield* observe(lines.feed(chunk.stream, bytes));
     }
 
-    yield* lines.finish();
+    yield* observe(lines.finish());
   } catch (error) {
     if (signal.aborted) throw new SandbarError("WAIT_ABORTED", "Process line observation stopped");
 

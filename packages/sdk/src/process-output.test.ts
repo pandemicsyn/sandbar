@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import type { ProcessOutputBytes } from "sandbar-adapter";
+import type { ProcessOutput, ProcessOutputBytes } from "sandbar-adapter";
 import { createProcessTail, readProcessLines } from "./process-output";
 
 const encode = (text: string) => new TextEncoder().encode(text);
@@ -84,6 +84,86 @@ test("line abort promptly releases quiet output without awaiting a stalled itera
   await expect(aborted.next()).rejects.toMatchObject({ code: "WAIT_ABORTED" });
   expect(reads).toBe(1);
 });
+
+test.each(["text", "bytes"] as const)(
+  "line abort stops remaining lines in one %s frame and releases the source",
+  async (format) => {
+    const cancel = new AbortController();
+    let reads = 0;
+    let returns = 0;
+    const text = "first\nsecond\nlast";
+
+    const source: AsyncIterable<ProcessOutput | ProcessOutputBytes> = {
+      [Symbol.asyncIterator]() {
+        return {
+          async next() {
+            reads++;
+
+            return {
+              done: false,
+              value:
+                format === "bytes"
+                  ? { stream: "stdout", bytes: encode(text) }
+                  : { stream: "stdout", text },
+            };
+          },
+          async return() {
+            returns++;
+
+            return { done: true, value: undefined };
+          },
+        };
+      },
+    };
+
+    const lines = readProcessLines(source, { signal: cancel.signal });
+    expect(await lines.next()).toMatchObject({ value: { text: "first", partial: false } });
+    cancel.abort();
+    await expect(lines.next()).rejects.toMatchObject({ code: "WAIT_ABORTED" });
+    expect(reads).toBe(1);
+    expect(returns).toBe(1);
+  },
+);
+
+test.each(["text", "bytes"] as const)(
+  "line abort stops remaining final partial lines from %s output",
+  async (format) => {
+    const cancel = new AbortController();
+    let reads = 0;
+    let returns = 0;
+    const streams = ["stdout", "stderr"] as const;
+
+    const source: AsyncIterable<ProcessOutput | ProcessOutputBytes> = {
+      [Symbol.asyncIterator]() {
+        return {
+          async next() {
+            const stream = streams[reads++];
+
+            if (!stream) return { done: true, value: undefined };
+
+            return {
+              done: false,
+              value:
+                format === "bytes" ? { stream, bytes: encode(stream) } : { stream, text: stream },
+            };
+          },
+          async return() {
+            returns++;
+
+            return { done: true, value: undefined };
+          },
+        };
+      },
+    };
+
+    const lines = readProcessLines(source, { signal: cancel.signal });
+    expect(await lines.next()).toMatchObject({ value: { text: "stdout", partial: true } });
+    cancel.abort();
+    await expect(lines.next()).rejects.toMatchObject({ code: "WAIT_ABORTED" });
+    expect(reads).toBe(3);
+    expect(returns).toBe(1);
+  },
+);
 
 test("tail snapshots are bounded, independent and immediately available during quiet output", () => {
   const tail = createProcessTail({ maxBytes: 8, maxChunks: 2, maxLines: 2, maxLineBytes: 4 });
