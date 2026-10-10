@@ -1,6 +1,6 @@
 # Sandbar roadmap
 
-Updated October 10, 2026 after #80. This is the authoritative work queue. Contracts live in [specs](specs/README.md); public usage lives in the docs. Merged implementation and live qualification are separate facts.
+Updated October 10, 2026 after #81. This is the authoritative work queue. Contracts live in [specs](specs/README.md); public usage lives in the docs. Merged implementation and live qualification are separate facts.
 
 ## Current baseline
 
@@ -13,6 +13,12 @@ These are completed slices, not outstanding implementation plans. Each retains d
 [Filesystem DX](specs/filesystem-dx.md) F1–F4 directory, transfer, copy/move, traversal and text-line behavior is implemented. The expanded artifact recipe passed on both built-ins at `e91f2d5`, with confirmed owned cleanup. Range reads, batches, search/glob and tree copy remain deferred.
 
 [Streaming and interactive processes](specs/process-io-dx.md) P0–P4 are implemented, including original-byte output, SIGTERM/SIGKILL, explicit PTYs, scoped references/reopening and bounded diagnostics. Historical live evidence covers baseline at `ecc73de`, byte output at `5f2bd13`, and fresh-process pipe reopen plus PTY resize/SIGTERM at `aaba981`. Cancellation corrections merged in #80 with deterministic coverage. These are exact-revision passes, not current-head or universal qualification.
+
+## Runnable examples
+
+[Two OpenCode examples](examples/README.md) are implemented in a private root `examples/` workspace: capture the answer to “What is 2 + 2?”, or upload `message.txt`, ask the agent to replace `NAME` with `Sandbar`, then read and display the changed file. Both select Daytona or E2B through configuration and use the public SDK.
+
+Offline validation covers the entrypoints and deterministic fixtures. Local anonymous CLI checks passed for the pinned OpenCode version and model on both tasks. Daytona/E2B live qualification remains unrun and requires separate authorization; these checks do not imply broader provider qualification. See the [scope and acceptance reference](specs/runnable-agent-examples.md).
 
 ## Qualification gaps
 
