@@ -1534,6 +1534,36 @@ test("byte output rejects incompatible native callback profiles and unsupported 
   await old.client.close();
 });
 
+test.each(["SIGTERM", "SIGKILL"] as const)(
+  "pre-aborted %s rejects without dispatch or consuming the shared request",
+  async (signal) => {
+    const f = await fixture({ interactive: true, extensions: true });
+    let terminations = 0;
+
+    f.native.terminate = async () => {
+      terminations++;
+
+      return { status: "requested" };
+    };
+
+    const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });
+
+    await expect(p.signal(signal, { signal: AbortSignal.abort() })).rejects.toMatchObject({
+      code: "WAIT_ABORTED",
+      effect: "none",
+      provider: p.provider,
+      sandboxId: f.box.id,
+    });
+    expect(f.signals).toBe(0);
+    expect(terminations).toBe(0);
+    expect(await p.signal(signal)).toEqual({ status: "requested" });
+    expect(await p.signal(signal)).toEqual({ status: "requested" });
+    expect(f.signals).toBe(signal === "SIGTERM" ? 1 : 0);
+    expect(terminations).toBe(signal === "SIGKILL" ? 1 : 0);
+    await f.client.close();
+  },
+);
+
 test("named signals dispatch once per handle without implicit escalation", async () => {
   const f = await fixture({ interactive: true, extensions: true });
   const p = await f.box.processes.start({ ...input, output: { mode: "stream" } });

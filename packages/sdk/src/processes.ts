@@ -965,7 +965,8 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
     if (signal !== "SIGTERM" && signal !== "SIGKILL")
       throw this.terminationFailure("INVALID_ARGUMENT", "Invalid process signal");
 
-    if (options.signal?.aborted) throw aborted();
+    if (options.signal?.aborted)
+      throw this.terminationFailure("WAIT_ABORTED", "Signal wait aborted before dispatch");
     this.rememberNativeExit();
 
     if (this.exitCode !== undefined) return { status: "exited" };
