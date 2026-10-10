@@ -3,10 +3,18 @@ import { connectDirect } from "./adapter-direct";
 export type {
   StartProcessInput,
   ProcessOutput,
+  ProcessOutputBytes,
+  ProcessOutputFormat,
+  ProcessChunk,
   ProcessExit,
   ProcessStatus,
   ProcessTermination,
   ProcessHandle,
+  ProcessReference,
+  ProcessSignal,
+  TerminalDimensions,
+  StartTerminalInput,
+  TerminalHandle,
   ProcessFailure,
   ExecOptions,
 } from "./processes";
@@ -127,3 +135,12 @@ export type {
   WalkFileEntry,
   ReadTextLinesOptions,
 } from "./filesystem-extensions";
+
+export { createProcessTail, readProcessLines } from "./process-output";
+
+export type {
+  ProcessTail,
+  ProcessTailOptions,
+  ProcessLine,
+  ProcessLineOptions,
+} from "./process-output";

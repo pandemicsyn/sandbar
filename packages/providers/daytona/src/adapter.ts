@@ -20,7 +20,7 @@ import {
 import { z } from "zod";
 import { directoryEntries, GuestStat } from "./filesystem";
 import { daytonaState } from "./state-native";
-import { startDaytonaProcess } from "./process-native";
+import { reopenDaytonaProcess, startDaytonaProcess } from "./process-native";
 import { MountDurability as importMountDurability, type ResourceReference } from "sandbar-adapter";
 import {
   AdapterError,
@@ -851,12 +851,27 @@ export function createDaytonaAdapter(
       return {
         ...resourceState.fields,
         processes: {
-          supports: { sustainedOutput: true, stdin: "bytes", status: true, execCapture: "bytes" },
+          supports: {
+            sustainedOutput: true,
+            stdin: "bytes",
+            status: true,
+            execCapture: "bytes",
+            binaryOutput: true,
+            signals: ["SIGTERM", "SIGKILL"],
+            terminal: true,
+            reopen: true,
+          },
           async start(input, ctx) {
             await inspection(input.sandbox.id, input.sandbox.reference, ctx);
             const execute = await driver.processTransport(native(input.sandbox.id), ctx.signal);
 
             return startDaytonaProcess(execute, input, ctx);
+          },
+          async reopen(input, ctx) {
+            await inspection(input.sandbox.id, input.sandbox.reference, ctx);
+            const execute = await driver.processTransport(native(input.sandbox.id), ctx.signal);
+
+            return reopenDaytonaProcess(execute, input, ctx);
           },
         },
         defaultImage: config.environment,

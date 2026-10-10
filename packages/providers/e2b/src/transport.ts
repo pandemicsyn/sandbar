@@ -5,8 +5,6 @@ import {
   InvalidArgumentError,
   Template,
   Volume,
-  CommandExitError,
-  type CommandHandle,
 } from "e2b";
 import {
   AdapterError,
@@ -15,11 +13,10 @@ import {
   type FileStat,
   type NativeProcess,
   type ProcessStartContext,
-  type ProcessObservationFailure,
 } from "sandbar-adapter";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { startProcess } from "./process-native";
+import { startProcess, type E2BProcessOptions, type E2BProcessReference } from "./process-native";
 import { guestFilesystem, directoryValue, statValue } from "./filesystem-native";
 import { classifyWriteFailure, E2BWriteFailure } from "./write-failure";
 
@@ -183,13 +180,13 @@ export type E2BTransport = {
   startText?: (
     id: string,
     script: string,
-    options: {
-      cwd?: string;
-      env?: Record<string, string>;
-      stdin?: "closed" | "pipe";
-      sustained?: boolean;
-      capture?: { maxBytes: number };
-    },
+    options: E2BProcessOptions & { sustained?: boolean },
+    ctx: ProcessStartContext,
+  ) => Promise<NativeProcess>;
+  reopenProcess?: (
+    id: string,
+    reference: E2BProcessReference,
+    options: E2BProcessOptions,
     ctx: ProcessStartContext,
   ) => Promise<NativeProcess>;
   read(
@@ -812,123 +809,21 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
       if (ctx.signal.aborted) throw new AdapterError("UNAVAILABLE", "Process setup stopped");
 
-      if (options.sustained || options.stdin === "pipe" || options.capture)
-        return startProcess(
-          sandbox,
-          processCredentials.get(sandbox)!,
-          script,
-          options,
-          ctx,
-          fetcher,
-        );
-      const stream = new AbortController();
-      let native: CommandHandle | undefined;
-      let abandoned = false;
-      let disconnected = false;
+      return startProcess(sandbox, processCredentials.get(sandbox)!, script, options, ctx, fetcher);
+    },
+    async reopenProcess(id, reference, options, ctx) {
+      const sandbox = await attach(id, undefined, ctx.signal);
 
-      const disconnect = (): Promise<void> => {
-        if (!native || disconnected) return Promise.resolve();
-        disconnected = true;
+      if (ctx.signal.aborted) throw new AdapterError("UNAVAILABLE", "Process attachment stopped");
 
-        return native.disconnect();
-      };
-
-      const stop = () => {
-        abandoned = true;
-        stream.abort();
-
-        void disconnect().catch(() => undefined);
-      };
-
-      ctx.signal.addEventListener("abort", stop, { once: true });
-
-      const deliver = (streamName: "stdout" | "stderr", text: string) => {
-        if (abandoned) return;
-
-        try {
-          ctx.onOutput({ stream: streamName, text });
-        } catch (error) {
-          abandoned = true;
-          stream.abort();
-
-          void disconnect().catch(() => undefined);
-          throw error;
-        }
-      };
-
-      try {
-        native = await sandbox.commands.run(script, {
-          background: true,
-          stdin: false,
-          timeoutMs: 0,
-          requestTimeoutMs: 30_000,
-          cwd: options.cwd,
-          envs: options.env,
-          signal: stream.signal,
-          onStdout: (text) => deliver("stdout", text),
-          onStderr: (text) => deliver("stderr", text),
-        });
-        const handle = native;
-
-        const confirmedExit = () =>
-          Number.isSafeInteger(handle.exitCode) ? { exitCode: handle.exitCode! } : undefined;
-
-        const wait = handle.wait().then(
-          (result) => ({ exitCode: result.exitCode }),
-          // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native wait rejects arbitrary values; only the pinned error class and public exitCode supply evidence.
-          (error: unknown) => {
-            if (error instanceof CommandExitError) return { exitCode: error.exitCode };
-
-            const failure: ProcessObservationFailure = new AdapterError(
-              "UNAVAILABLE",
-              "E2B process observation failed",
-            );
-
-            failure.confirmedExit = confirmedExit();
-            throw failure;
-          },
-        );
-
-        void wait.catch(() => undefined);
-
-        if (abandoned) void disconnect().catch(() => undefined);
-
-        return {
-          get confirmedExit() {
-            return confirmedExit();
-          },
-          wait: () => wait,
-          async status(context) {
-            const exit = confirmedExit();
-
-            if (exit) return { state: "exited", exit, observedAt: new Date().toISOString() };
-
-            const processes = await sandbox.commands.list({
-              signal: context.signal,
-              requestTimeoutMs: Math.max(1, context.deadline - Date.now()),
-            });
-
-            return {
-              state: processes.some((process) => process.pid === handle.pid)
-                ? "running"
-                : "unknown",
-              observedAt: new Date().toISOString(),
-            };
-          },
-          async terminate(ctx) {
-            const killed = await sandbox.commands.kill(handle.pid, {
-              signal: ctx.signal,
-              requestTimeoutMs: Math.max(1, ctx.deadline - Date.now()),
-            });
-
-            return { status: killed ? "requested" : "not-found" };
-          },
-          detach: disconnect,
-        };
-      } finally {
-        // Setup cancellation must not stay connected to an established stream.
-        ctx.signal.removeEventListener("abort", stop);
-      }
+      return startProcess(
+        sandbox,
+        processCredentials.get(sandbox)!,
+        "",
+        { ...options, reopen: reference },
+        ctx,
+        fetcher,
+      );
     },
     async run(id, script, options) {
       const sandbox = await attach(id);

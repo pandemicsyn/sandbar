@@ -3,7 +3,7 @@ title: Streaming and interactive processes
 description: Stream sustained stdout/stderr, write incremental input, observe status and explicitly terminate a process.
 ---
 
-Use `sandbox.processes.start()` for builds, interactive workers and servers. Daytona and E2B expose the same application interface. Sustained mode retains a bounded pending queue rather than a full transcript; stream logs to your own sink if you need to keep them. Output is decoded UTF-8 text with separate stdout/stderr. It is not byte-faithful output or a terminal.
+Use `sandbox.processes.start()` for builds, interactive workers and servers. Daytona and E2B expose the same application interface. Sustained mode retains a bounded pending queue rather than a full transcript; stream logs to your own sink if you need to keep them. Output defaults to decoded UTF-8 text with separate stdout/stderr. Select original bytes explicitly when decoding would lose information. Ordinary process pipes do not have terminal semantics.
 
 ```ts
 const child = await sandbox.processes.start({
@@ -48,6 +48,27 @@ Output has one consumer. In sustained mode, breaking out of its loop stops only 
 
 The same recipes compile against packed SDK declarations and execute in Node and Bun with an independently authored adapter. Deterministic provider fixtures and the ordinary maintained live suite are separate evidence; adding a suite does not claim a deployed-provider pass.
 
+## Original output bytes
+
+Select `output: { mode: "stream", format: "bytes" }` before starting the process. `child.output()` then yields `{ stream, bytes: Uint8Array }`, preserving NUL and invalid UTF-8. Bytes come directly from the native pipe transport. Each chunk owns its bytes; chunk boundaries can split characters or application records. Consume incrementally or decode with your own streaming decoder.
+
+```ts
+const child = await sandbox.processes.start({
+  command: { kind: "argv", argv: ["cat", "/workspace/archive.bin"] },
+  output: { mode: "stream", format: "bytes" },
+});
+try {
+  for await (const chunk of child.output()) {
+    await storeBytes(chunk.stream, chunk.bytes);
+  }
+  console.log(await child.wait());
+} finally {
+  await child.detach();
+}
+```
+
+The same single-consumer, queue, overflow and completion rules apply. Each byte chunk is at most 16 KiB, with at most 64 KiB pending. The default format is `"text"`; adapters without binary output support reject the byte profile before dispatch. Exec callbacks continue to receive text. Byte output has deterministic fixtures and live qualification on both built-ins at `5f2bd13`, including 256 KiB of all byte values on stdout and invalid UTF-8/NUL on stderr. Each run destroyed its owned sandbox and closed its client.
+
 ## Provider transport facts
 
 E2B sustained mode uses the public envd process RPC rather than the pinned native client's cumulative text buffers. Start/SendInput/CloseStdin/List/SendSignal provide the mapping. EOF requires a compatible envd version. Exit comes from the native end event; PID presence supplies running status and absence without an end event is unknown. Termination is native PID-selected SIGKILL and may race PID reuse; descendants and application cleanup are not guaranteed. A stream disconnect may lose exit observation. End notification and final output drain are separate; final-drain expiry marks output incomplete. Attachment verifies running scope and disables auto-resume without renewing sandbox TTL.
@@ -60,7 +81,7 @@ Without `output: { mode: "stream" }`, the existing cumulative UTF-8 budget remai
 
 Start setup is bounded to 30 seconds. Pre-dispatch abort reports `WAIT_ABORTED`; abandoned/lost acknowledgement after dispatch reports `OUTCOME_UNKNOWN`. Start is never replayed. `deadlineSeconds` still rejects before start because no portable remote-runtime deadline is guaranteed. Sandbox TTL remains separate. Commands may buffer their own output.
 
-Reconnection, historical replay/cursors, binary output, PTYs and explicit signal selection require separate contracts and are not exposed by ordinary pipe handles. A local process handle cannot be serialized into a safe reopening reference.
+Historical replay and cursors remain unsupported. Use the scoped process reference and explicit terminal APIs below for the delivered P4 extensions.
 
 ## Live callbacks on bounded exec
 
@@ -69,3 +90,23 @@ Reconnection, historical replay/cursors, binary output, PTYs and explicit signal
 A slow or throwing callback can fail local observation. Any already confirmed exit and native byte capture remain attached to the failure as `confirmedExit` and `output`; neither the callback nor local cancellation terminates the remote process. The capture budget still limits retained bytes and reports truncation; it does not impose a cumulative limit on text delivered to the callback. Payloads, input and output are excluded from ordinary telemetry.
 
 Abandoned Daytona setup writes a private cancellation marker before releasing its local transport. A bootstrap delayed beyond the lost HTTP acknowledgement checks that marker before launching a child. If no bootstrap arrives, the small cancellation directory remains until owned sandbox destruction; it is not a running service or a retained provider artifact.
+
+## Signals and explicit terminals
+
+`await child.signal("SIGTERM")` requests graceful termination; `"SIGKILL"` is also supported. Request acknowledgement does not establish exit: await `child.wait()` separately. `terminate()` remains the SIGKILL convenience. There is no automatic escalation or sandbox destruction. A process can ignore SIGTERM, and descendants are not guaranteed to stop.
+
+Use `box.terminals.start({ command, columns: 80, rows: 24 })` when an application needs a terminal. Its single `output()` iterator yields combined `Uint8Array` chunks. It supports `write()`, `resize({ columns: 120, rows: 40 })`, status, wait, signals and termination. It has no `closeStdin()`: Ctrl+D is terminal input, not pipe EOF. PTYs can echo input, translate newlines and change program buffering. Ordinary process pipes retain their existing semantics.
+
+## Reopen a process after reconnecting
+
+Save both `sandbox.reference` and `child.reference()` as private JSON. A process reference snapshots its current profile; creating one rejects while EOF acknowledgement is pending or input delivery is uncertain. Call `await child.disconnect()` to park observation while preserving the child's stdin, then reconnect the client, obtain the same sandbox through `client.sandboxes.get(savedSandbox)`, and call `sandbox.processes.reopen(savedProcess)`. Terminals use `sandbox.terminals.reopen(savedTerminal)`. A disconnected handle rejects further input/control. `detach()` remains local disposal and may close guest stdin; use disconnect when you intend to reopen.
+
+References verify provider, sandbox, connection scope and profile; they expire after at most 24 hours and can become unavailable earlier. Reopening never starts a replacement process. Reopened handles have `outputGap: true`, and their exit results keep `outputComplete: false`. Only the newly attached live stream is available; there is no historical transcript replay. Native buffers may still deliver bytes emitted before attachment, so this is not an exact emission-time cutoff. Output during a connection gap can be lost. An active attachment may prevent reopening. Save references privately and do not treat them as immutable process identities across arbitrary native-provider operations.
+
+E2B uses random tags scoped to the sandbox and connection; native clients can reuse tags, so these are selectors rather than immutable generations. Its live streams can have concurrent subscribers. Daytona verifies a supervisor generation and rotates exclusive attachment leases; explicit disconnect releases the lease immediately, while a lost client's lease expires after 30 seconds without requests. Its supervisor discards output while disconnected. No application-level provider options are required for either mapping.
+
+## Bounded diagnostic lines and tails
+
+`readProcessLines(child.output(), { maxLineBytes: 16_384, signal })` yields `{ stream, text, partial, truncated }`. It decodes split UTF-8 separately for each stream, handles CRLF, clips oversized lines and discards their remainder until newline. A final unterminated line is partial. A quiet process waits until output or cancellation; cancellation releases only output observation.
+
+`createProcessTail({ maxBytes: 65_536, maxChunks: 256, maxLines: 200, maxLineBytes: 16_384 })` gives a rolling diagnostic window. Feed each output chunk to `tail.push(chunk)` while streaming it to your normal sink. `tail.snapshot()` returns `{ lines, truncated }` immediately, even for a quiet process. Snapshots are independent and include partial lines. Window eviction can start mid-character or mid-line; the truncation flag records that gap. These helpers never retain a full transcript, retrieve historical provider logs or own remote compute.

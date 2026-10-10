@@ -37,9 +37,9 @@ const adapter = defineAdapter({
         headers: { "x-access": "private" },
       }),
       processes: {
-        supports: { sustainedOutput: true, stdin: "bytes", status: true },
+        supports: { sustainedOutput: true, binaryOutput: true, stdin: "bytes", status: true },
         async start(input, ctx) {
-          assert.deepEqual(input.output, { mode: "stream" });
+          assert.equal(input.output.mode, "stream");
           let finish, end;
           let exit;
           let stopped = false;
@@ -57,6 +57,15 @@ const adapter = defineAdapter({
             finish(exit);
             end();
           };
+
+          if (input.command.argv[0] === "bytes") {
+            assert.equal(input.output.format, "bytes");
+            const original = Uint8Array.of(0, 255, 128, 226, 130, 172);
+            ctx.onOutputBytes({ stream: "stdout", bytes: original.subarray(0, 4) });
+            ctx.onOutputBytes({ stream: "stderr", bytes: original.subarray(4) });
+            original.fill(1);
+            complete();
+          }
 
           if (input.command.argv[0] === "build") {
             // A bounded producer yields between frames, allowing the single consumer to drain.
@@ -136,6 +145,21 @@ try {
   const worker = await interactiveWorker(box, ["worker"], requests(), () => {});
   assert.deepEqual(worker, { exitCode: 0, outputComplete: true });
   assert.deepEqual(received, [new TextEncoder().encode("λ\0"), Uint8Array.of(0, 255, 128)]);
+
+  const binary = await box.processes.start({
+    command: { kind: "argv", argv: ["bytes"] },
+    output: { mode: "stream", format: "bytes" },
+  });
+
+  const chunks = [];
+
+  for await (const chunk of binary.output()) chunks.push(chunk);
+  assert.deepEqual(chunks, [
+    { stream: "stdout", bytes: Uint8Array.of(0, 255, 128, 226) },
+    { stream: "stderr", bytes: Uint8Array.of(130, 172) },
+  ]);
+  assert.deepEqual(await binary.wait(), { exitCode: 0, outputComplete: true });
+  await binary.detach();
   await box.destroy();
 } finally {
   await client.close();
@@ -168,6 +192,6 @@ assert.equal(destroyed, 2);
 
 assert.equal(closed, 2);
 
-assert.equal(detached, 3);
+assert.equal(detached, 4);
 
 console.log("sustained build, interactive worker and owned server workflows passed");

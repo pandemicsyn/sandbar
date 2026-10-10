@@ -18,6 +18,7 @@ import {
   type SandboxReference,
 } from "sandbar-adapter";
 import { createHash } from "node:crypto";
+import { ProcessReference } from "./process-native";
 import {
   MountDurability as importMountDurability,
   AdapterError,
@@ -490,6 +491,10 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           truncated: stdout.truncated || stderr.truncated,
         };
       };
+
+      const processBinding = createHash("sha256")
+        .update(JSON.stringify({ authority, config }))
+        .digest("hex");
 
       const boundScope = {
         authority,
@@ -1707,9 +1712,48 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           ? {
               supports: {
                 sustainedOutput: true,
+                binaryOutput: true,
+                signals: ["SIGTERM", "SIGKILL"],
+                terminal: true,
+                reopen: true,
                 stdin: "bytes",
                 status: true,
                 execCapture: "bytes",
+              },
+              async reopen(input, ctx) {
+                const reference = ProcessReference.safeParse(input.reference);
+
+                if (
+                  !reference.success ||
+                  reference.data.sandbox !== input.sandbox.id ||
+                  reference.data.binding !== processBinding ||
+                  reference.data.profile !== input.profile
+                )
+                  throw new AdapterError(
+                    "CONFLICT",
+                    "E2B process reference differs from this binding",
+                  );
+
+                if (
+                  reference.data.expiresAt <= Date.now() ||
+                  reference.data.expiresAt > Date.now() + 86_400_000
+                )
+                  throw new AdapterError("UNAVAILABLE", "E2B process reference has expired");
+
+                if (!transport.reopenProcess)
+                  throw new AdapterError("UNSUPPORTED", "E2B process attachment is unavailable");
+                await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+                return transport.reopenProcess(
+                  input.sandbox.id,
+                  reference.data,
+                  {
+                    stdin: input.stdin,
+                    format: input.output.format,
+                    terminal: input.profile === "terminal" ? { columns: 80, rows: 24 } : undefined,
+                  },
+                  ctx,
+                );
               },
               async start(input, ctx) {
                 await requireRunning(input.sandbox.id, input.sandbox.reference);
@@ -1719,7 +1763,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
                 const command =
                   input.command.kind === "argv"
-                    ? `/bin/bash -c 'exec "$@"' sandbar ${input.command.argv.map(shellQuote).join(" ")}`
+                    ? `exec /bin/bash -c 'exec "$@"' sandbar ${input.command.argv.map(shellQuote).join(" ")}`
                     : `/bin/bash -c ${shellQuote(input.command.script)}`;
 
                 return transport.startText!(
@@ -1730,6 +1774,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                     env: input.env,
                     stdin: input.stdin,
                     sustained: input.output?.mode === "stream",
+                    format: input.output?.format,
+                    terminal: input.terminal,
+                    binding: processBinding,
                     capture: input.capture,
                   },
                   ctx,

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { afterEach, expect, test } from "bun:test";
 import { Sandbar } from "sandbar-sdk";
 import { sandboxReference, type NativeProcess } from "sandbar-adapter";
@@ -13,7 +14,7 @@ afterEach(() => {
 type ProcessFrame = {
   event?: {
     start?: { pid: number };
-    data?: { stdout?: string; stderr?: string };
+    data?: { stdout?: string; stderr?: string; pty?: string };
     end?: { exitCode: number };
   };
 };
@@ -48,6 +49,7 @@ async function fixture(
   let deleted = false;
   let target: "original" | "successor" = "original";
   let signaled: "original" | "successor" | undefined;
+  let tag: string | undefined;
 
   const detail = {
     sandboxID: "box_one",
@@ -91,11 +93,14 @@ async function fixture(
       expect(request.headers.get("X-Access-Token")).toBe("guest-secret");
       expect(request.headers.get("X-API-Key")).toBeNull();
 
-      if (url.pathname.endsWith("/Start")) {
+      if (url.pathname.endsWith("/Start") || url.pathname.endsWith("/Connect")) {
         const requestBytes = new Uint8Array(await request.arrayBuffer());
         calls[calls.length - 1]!.body = JSON.parse(
           new TextDecoder().decode(requestBytes.subarray(5)),
         );
+
+        if (url.pathname.endsWith("/Start"))
+          tag = z.object({ tag: z.string().optional() }).parse(calls[calls.length - 1]!.body).tag;
         expect([null, "0"]).toContain(request.headers.get("connect-timeout-ms"));
 
         const body = new ReadableStream<Uint8Array>({
@@ -130,10 +135,14 @@ async function fixture(
 
       if (url.pathname.endsWith("/List"))
         return Response.json({
-          processes: [{ pid: 9, config: { cmd: "worker", args: [], envs: {} } }],
+          processes: [{ pid: 9, tag, config: { cmd: "worker", args: [], envs: {} } }],
         });
 
-      if (url.pathname.endsWith("/SendInput") || url.pathname.endsWith("/CloseStdin")) {
+      if (
+        url.pathname.endsWith("/SendInput") ||
+        url.pathname.endsWith("/CloseStdin") ||
+        url.pathname.endsWith("/Update")
+      ) {
         calls[calls.length - 1]!.body = await request.json();
 
         return Response.json({});
@@ -147,7 +156,11 @@ async function fixture(
         if (options.signalReply === "not-found")
           return Response.json({ code: "not_found", message: "absent" }, { status: 404 });
 
-        signaled = target;
+        signaled = z
+          .object({ process: z.object({ tag: z.string().optional() }) })
+          .parse(calls[calls.length - 1]!.body).process.tag
+          ? "original"
+          : target;
 
         return Response.json({});
       }
@@ -167,6 +180,10 @@ async function fixture(
       async startText(id, command, startOptions, ctx) {
         const handle = await transport.startText!(id, command, startOptions, {
           ...ctx,
+          onOutputBytes(chunk) {
+            outputAttempts++;
+            ctx.onOutputBytes!(chunk);
+          },
           onOutput(chunk) {
             outputAttempts++;
 
@@ -201,6 +218,7 @@ async function fixture(
   return {
     client,
     box,
+    transport,
     calls,
     detail,
     get canceled() {
@@ -224,7 +242,7 @@ async function fixture(
     pause() {
       pauseAtAttach = true;
     },
-    data(stream: "stdout" | "stderr", bytes: Uint8Array) {
+    data(stream: "stdout" | "stderr" | "pty", bytes: Uint8Array) {
       controller.enqueue(
         frame({ event: { data: { [stream]: Buffer.from(bytes).toString("base64") } } }),
       );
@@ -397,7 +415,7 @@ test("native snapshot/suspend interruption cannot follow a changed guest generat
 });
 
 test.each(["ack", "not-found", "lost"])(
-  "pinned termination %s uses one PID SIGKILL and original connection",
+  "pinned termination %s uses one tag SIGKILL and original connection",
   async (mode) => {
     const f = await fixture({ signalReply: mode === "ack" ? undefined : mode });
     const p = await f.box.processes.start(input);
@@ -413,7 +431,10 @@ test.each(["ack", "not-found", "lost"])(
 
     const requests = f.calls.slice(before).filter((c) => c.path.endsWith("/SendSignal"));
     expect(requests).toHaveLength(1);
-    expect(requests[0]!.body).toEqual({ process: { pid: 9 }, signal: "SIGNAL_SIGKILL" });
+    expect(requests[0]!.body).toEqual({
+      process: { tag: expect.stringMatching(/^sandbar-/) },
+      signal: "SIGNAL_SIGKILL",
+    });
     expect(
       f.calls
         .slice(before)
@@ -430,16 +451,19 @@ test.each(["ack", "not-found", "lost"])(
   },
 );
 
-test("pinned active selector cannot distinguish an unobserved PID successor", async () => {
+test("tag selector does not target an unrelated reused PID", async () => {
   const f = await fixture();
   const p = await f.box.processes.start(input);
-  // Simulate remote PID 9 now belonging to a successor, before its old end event arrives.
-  // The request has no execution token with which the native fixture could reject it.
+  // Reusing PID 9 does not give a successor the random Sandbar tag.
+  // Duplicating the tag remains possible for external sandbox actors.
   f.reusePid();
   expect(await p.terminate()).toEqual({ status: "requested" });
-  expect(f.signaled).toBe("successor");
+  expect(f.signaled).toBe("original");
   const request = f.calls.find((c) => c.path.endsWith("/SendSignal"));
-  expect(request!.body).toEqual({ process: { pid: 9 }, signal: "SIGNAL_SIGKILL" });
+  expect(request!.body).toEqual({
+    process: { tag: expect.stringMatching(/^sandbar-/) },
+    signal: "SIGNAL_SIGKILL",
+  });
   await p.detach();
   await f.client.close();
 });
@@ -486,8 +510,8 @@ test("sustained exact byte input, EOF, live status and final output after exit",
   await p.closeStdin();
   await p.closeStdin();
   expect(f.calls.filter((c) => c.path.endsWith("/SendInput")).map((c) => c.body)).toEqual([
-    { process: { pid: 9 }, input: { stdin: "AP+ACg==" } },
-    { process: { pid: 9 }, input: { stdin: "aGVsbG8=" } },
+    { process: { tag: expect.stringMatching(/^sandbar-/) }, input: { stdin: "AP+ACg==" } },
+    { process: { tag: expect.stringMatching(/^sandbar-/) }, input: { stdin: "aGVsbG8=" } },
   ]);
   expect(f.calls.filter((c) => c.path.endsWith("/CloseStdin"))).toHaveLength(1);
   expect(await p.status()).toMatchObject({ state: "running" });
@@ -704,3 +728,178 @@ test("output-only detach preserves native stdin while process observation remain
   expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: false });
   await f.client.close();
 });
+
+test("binary native output preserves invalid UTF-8, NUL and split multi-byte frames independently", async () => {
+  const f = await fixture({ modern: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream", format: "bytes" } });
+  const out = p.output()[Symbol.asyncIterator]();
+  f.data("stdout", new Uint8Array([0xf0, 0x9f]));
+  expect((await out.next()).value).toEqual({
+    stream: "stdout",
+    bytes: new Uint8Array([0xf0, 0x9f]),
+  });
+  f.data("stderr", new Uint8Array([0, 255, 128, 10]));
+  expect((await out.next()).value).toEqual({
+    stream: "stderr",
+    bytes: new Uint8Array([0, 255, 128, 10]),
+  });
+  f.data("stdout", new Uint8Array([0x98, 0x80, 0xff, 0]));
+  expect((await out.next()).value).toEqual({
+    stream: "stdout",
+    bytes: new Uint8Array([0x98, 0x80, 0xff, 0]),
+  });
+  f.end(0);
+  expect((await out.next()).done).toBe(true);
+  expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: true });
+  await f.client.close();
+});
+
+test("binary native output splits large events fairly with exact original bytes", async () => {
+  const f = await fixture({ modern: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream", format: "bytes" } });
+  const original = Uint8Array.from({ length: 262_144 }, (_, index) => index % 256);
+  const chunks: Record<"stdout" | "stderr", Uint8Array[]> = { stdout: [], stderr: [] };
+
+  const consuming = (async () => {
+    for await (const chunk of p.output()) {
+      expect(chunk.bytes.length).toBeLessThanOrEqual(16_384);
+      chunks[chunk.stream].push(chunk.bytes);
+    }
+  })();
+
+  f.data("stdout", original);
+  f.data("stderr", original);
+  f.end(0);
+  await consuming;
+  expect(Buffer.concat(chunks.stdout)).toEqual(Buffer.from(original));
+  expect(Buffer.concat(chunks.stderr)).toEqual(Buffer.from(original));
+  expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: true });
+  await f.client.close();
+});
+
+test("binary slow consumer fails explicitly while retaining native exit observation", async () => {
+  const f = await fixture({ modern: true });
+  const p = await f.box.processes.start({ ...input, output: { mode: "stream", format: "bytes" } });
+  f.data("stdout", new Uint8Array(70_000).fill(255));
+
+  while (f.outputAttempts < 5) await Bun.sleep(0);
+  const out = p.output()[Symbol.asyncIterator]();
+
+  for (let index = 0; index < 4; index++)
+    expect((await out.next()).value!.bytes.length).toBe(16_384);
+  await expect(out.next()).rejects.toMatchObject({ code: "OUTPUT_CAPACITY" });
+  expect(f.canceled).toBe(0);
+  f.end(0);
+  expect(await p.wait()).toEqual({ exitCode: 0, outputComplete: false });
+  await f.client.close();
+});
+
+test("native byte profile rejects a missing byte callback before Start dispatch", async () => {
+  const f = await fixture({ modern: true });
+  await expect(
+    f.transport.startText!(
+      "box_one",
+      "printf hello",
+      { sustained: true, format: "bytes" },
+      {
+        signal: new AbortController().signal,
+        deadline: Date.now() + 30_000,
+        onOutput() {
+          throw new Error("text output cannot satisfy a byte request");
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  expect(f.calls.some((call) => call.path.endsWith("/Start"))).toBe(false);
+  await f.client.close();
+});
+
+test("public E2B disconnect parks pipe input and reopen reports the live-only gap", async () => {
+  const f = await fixture({ modern: true });
+
+  const first = await f.box.processes.start({
+    ...input,
+    stdin: "pipe",
+    output: { mode: "stream", format: "bytes" },
+  });
+
+  const reference = first.reference();
+  expect(reference).toBeDefined();
+  await first.disconnect();
+  const before = f.calls.length;
+  await expect(first.write("stale")).rejects.toBeDefined();
+  await expect(first.signal("SIGTERM")).rejects.toBeDefined();
+  expect(f.calls).toHaveLength(before);
+  const reopened = await f.box.processes.reopen(reference);
+  expect(reopened.outputGap).toBe(true);
+  const connect = f.calls.find((call) => call.path.endsWith("/Connect"));
+  expect(connect!.body).toEqual({ process: { tag: expect.stringMatching(/^sandbar-/) } });
+  await reopened.write(new Uint8Array([0, 255]));
+  const output = reopened.output()[Symbol.asyncIterator]();
+  f.data("stdout", new Uint8Array([128, 0]));
+  expect((await output.next()).value).toEqual({
+    stream: "stdout",
+    bytes: new Uint8Array([128, 0]),
+  });
+  f.end(0);
+  expect((await output.next()).done).toBe(true);
+  expect(await reopened.wait()).toEqual({ exitCode: 0, outputComplete: false });
+  expect(f.calls.filter((call) => call.path.endsWith("/Start"))).toHaveLength(1);
+  expect(f.calls.filter((call) => call.path.endsWith("/Connect"))).toHaveLength(1);
+  expect(f.calls.some((call) => /CloseStdin|SendSignal/.test(call.path))).toBe(false);
+  await f.client.close();
+});
+
+test("public E2B terminal exposes combined bytes, selected signals, resize and reattachment", async () => {
+  const f = await fixture({ modern: true });
+  const first = await f.box.terminals.start({ ...input, columns: 120, rows: 40 });
+  expect(f.calls.find((call) => call.path.endsWith("/Start"))!.body).toMatchObject({
+    process: {
+      cmd: "/bin/bash",
+      args: ["-l", "-c", `exec /bin/bash -c 'exec "$@"' sandbar 'printf' 'hello'`],
+    },
+    pty: { size: { cols: 120, rows: 40 } },
+  });
+  const output = first.output()[Symbol.asyncIterator]();
+  f.data("pty", new Uint8Array([0, 255]));
+  expect((await output.next()).value).toEqual(new Uint8Array([0, 255]));
+  await first.resize({ columns: 90, rows: 30 });
+  await first.signal("SIGTERM");
+  expect(f.calls.find((call) => call.path.endsWith("/SendSignal"))!.body).toEqual({
+    process: { tag: expect.stringMatching(/^sandbar-/) },
+    signal: "SIGNAL_SIGTERM",
+  });
+  const reference = first.reference();
+  await first.disconnect();
+  const reopened = await f.box.terminals.reopen(reference);
+  expect(reopened.outputGap).toBe(true);
+  await reopened.write(new Uint8Array([4]));
+  expect(f.calls.filter((call) => call.path.endsWith("/Start"))).toHaveLength(1);
+  expect(f.calls.filter((call) => call.path.endsWith("/Connect"))).toHaveLength(1);
+  expect(f.calls.some((call) => call.path.endsWith("/CloseStdin"))).toBe(false);
+  await f.client.close();
+});
+
+test.each(["sandbox", "binding", "profile", "expiresAt"] as const)(
+  "E2B native reference rejects mismatched %s before Connect",
+  async (field) => {
+    const f = await fixture({ modern: true });
+    const process = await f.box.processes.start({ ...input, output: { mode: "stream" } });
+    const reference = process.reference();
+    const native = z.record(z.string(), z.json()).parse(reference.native);
+
+    const replacements = {
+      sandbox: "other-box",
+      binding: "0".repeat(64),
+      profile: "terminal",
+      expiresAt: Date.now() - 1,
+    };
+
+    const altered = { ...reference, native: { ...native, [field]: replacements[field]! } };
+    await process.disconnect();
+    await expect(f.box.processes.reopen(altered)).rejects.toBeDefined();
+    expect(f.calls.some((call) => call.path.endsWith("/Connect"))).toBe(false);
+    expect(f.calls.filter((call) => call.path.endsWith("/Start"))).toHaveLength(1);
+    await f.client.close();
+  },
+);

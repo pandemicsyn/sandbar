@@ -945,6 +945,10 @@ try {
     await readFile(join(root, "apps/docs/examples/directory-files.ts"), "utf8"),
   );
   await writeFile(
+    join(custom, "process-output-types.ts"),
+    await readFile(join(root, "packages/sdk-qualification/process-output-types.ts"), "utf8"),
+  );
+  await writeFile(
     join(custom, "streaming-tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
@@ -956,6 +960,7 @@ try {
         types: [],
       },
       include: [
+        "process-output-types.ts",
         "text-streaming.ts",
         "interactive-processes.ts",
         "sandbox-renew.ts",
@@ -990,6 +995,13 @@ try {
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["directories.mjs"], custom)}`);
+  await writeFile(
+    join(custom, "process-extensions.mjs"),
+    await readFile(join(root, "packages/sdk-qualification/process-extensions-packed.mjs"), "utf8"),
+  );
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["process-extensions.mjs"], custom)}`);
   inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
   inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);

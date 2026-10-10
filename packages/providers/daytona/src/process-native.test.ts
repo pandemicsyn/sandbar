@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { processSupervisor, processRpc, pythonCommand } from "./process-helper";
-import { startDaytonaProcess, type ProcessExecute } from "./process-native";
-import type { NativeProcess, ProcessOutput } from "sandbar-adapter";
-import { Sandbar, AdapterSandbox } from "sandbar-sdk";
+import { reopenDaytonaProcess, startDaytonaProcess, type ProcessExecute } from "./process-native";
+import type { NativeProcess, ProcessOutput, ProcessOutputBytes } from "sandbar-adapter";
+import { Sandbar, AdapterSandbox, type ProcessHandle } from "sandbar-sdk";
 import { createDaytonaAdapter } from "./adapter";
 
 function fixture() {
@@ -267,7 +267,7 @@ test("Daytona bounds final output drain when a descendant retains a pipe", async
 test("Daytona public adapter maps interactive process HTTP workflow without native application options", async () => {
   const native = fixture();
   let client: Awaited<ReturnType<typeof Sandbar.connect>> | undefined;
-  let child: Awaited<ReturnType<AdapterSandbox["processes"]["start"]>> | undefined;
+  let child: ProcessHandle | undefined;
 
   const transport: typeof fetch = Object.assign(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -398,8 +398,11 @@ test("Daytona abandoned setup independently detaches its late pipe transport", a
   // The child exits on EOF from local transport cleanup; no termination or replacement dispatch.
   await cleanupAcknowledged;
 
-  for (let i = 0; i < 300 && (!native.root || existsSync(native.root)); i++) await Bun.sleep(10);
-  expect(existsSync(native.root)).toBe(false);
+  for (let i = 0; i < 300 && (!native.root || existsSync(native.root + "/control")); i++)
+    await Bun.sleep(10);
+  expect(existsSync(native.root + "/control")).toBe(false);
+  expect(existsSync(native.root + "/cancel")).toBe(true);
+  await rm(native.root, { recursive: true, force: true });
 });
 
 test("Daytona rejects malformed initial status without fabricating running", async () => {
@@ -510,12 +513,459 @@ test("Daytona cancellation between directory creation and socket bind shuts down
     ).toEqual({ ok: true });
     await writeFile(root + "/continue", "");
     expect(await child.exited).toBe(0);
-    expect(existsSync(root)).toBe(false);
+    expect(existsSync(root + "/control")).toBe(false);
+    expect(existsSync(root + "/cancel")).toBe(true);
     expect(existsSync(sentinel)).toBe(false);
   } finally {
     child.kill();
     await child.exited;
     await rm(root, { recursive: true, force: true });
     await rm(sentinel, { force: true });
+  }
+});
+
+test("Daytona byte output preserves invalid UTF-8, NUL and stream attribution across bounded native frames", async () => {
+  const native = fixture();
+  let child: NativeProcess | undefined;
+
+  const stdout = Buffer.concat([
+    Buffer.alloc(16_383, 120),
+    Buffer.from("雪"),
+    Buffer.from([0, 255, 192, 128, 233]),
+  ]);
+
+  const stderr = Buffer.from([255, 0, 128, 226, 130]);
+  const delivered: ProcessOutputBytes[] = [];
+
+  try {
+    child = await startDaytonaProcess(
+      native.execute,
+      {
+        sandbox,
+        maxOutputBytes: 0,
+        output: { mode: "stream", format: "bytes" },
+        command: {
+          kind: "argv",
+          argv: [
+            "python3",
+            "-c",
+            "import os,base64,sys; os.write(1,base64.b64decode(sys.argv[1])); os.write(2,base64.b64decode(sys.argv[2]))",
+            stdout.toString("base64"),
+            stderr.toString("base64"),
+          ],
+        },
+      },
+      {
+        ...read(),
+        onOutput() {
+          throw new Error("Byte profile must not emit text");
+        },
+        onOutputBytes(chunk) {
+          delivered.push(chunk);
+        },
+      },
+    );
+    expect((await child.wait()).exitCode).toBe(0);
+    await child.outputDone;
+    expect(
+      Buffer.concat(delivered.flatMap((chunk) => (chunk.stream === "stdout" ? [chunk.bytes] : []))),
+    ).toEqual(stdout);
+    expect(
+      Buffer.concat(delivered.flatMap((chunk) => (chunk.stream === "stderr" ? [chunk.bytes] : []))),
+    ).toEqual(stderr);
+    expect(delivered.every((chunk) => chunk.bytes.byteLength <= 16_384)).toBe(true);
+    expect(delivered.filter((chunk) => chunk.stream === "stdout").length).toBeGreaterThan(1);
+  } finally {
+    await cleanup(child, native.root);
+  }
+});
+
+test("Daytona byte profile rejects a missing byte consumer before launching a child", async () => {
+  let calls = 0;
+
+  const execute: ProcessExecute = async () => {
+    calls++;
+
+    return "{}";
+  };
+
+  await expect(
+    startDaytonaProcess(
+      execute,
+      {
+        sandbox,
+        maxOutputBytes: 0,
+        output: { mode: "stream", format: "bytes" },
+        command: { kind: "argv", argv: ["true"] },
+      },
+      { ...read(), onOutput() {} },
+    ),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(calls).toBe(0);
+});
+
+test("Daytona named SIGTERM requests the retained child and independently observes its exit", async () => {
+  const native = fixture();
+  let child: NativeProcess | undefined;
+
+  try {
+    child = await startDaytonaProcess(
+      native.execute,
+      {
+        sandbox,
+        command: { kind: "argv", argv: ["python3", "-c", "import time; time.sleep(30)"] },
+        maxOutputBytes: 0,
+        output: { mode: "stream" },
+      },
+      { ...read(), onOutput() {} },
+    );
+    expect(await child.signal!("SIGTERM", read())).toEqual({ status: "requested" });
+    expect((await child.wait()).exitCode).toBe(-15);
+    await child.outputDone;
+  } finally {
+    await cleanup(child, native.root);
+  }
+});
+
+test("Daytona parked process reconnects exclusively with live output, preserved stdin and fenced leases", async () => {
+  const native = fixture();
+  let child: NativeProcess | undefined;
+  let reopened: NativeProcess | undefined;
+  const initial: string[] = [];
+  const later: string[] = [];
+
+  try {
+    child = await startDaytonaProcess(
+      native.execute,
+      {
+        sandbox,
+        stdin: "pipe",
+        command: {
+          kind: "argv",
+          argv: [
+            "python3",
+            "-u",
+            "-c",
+            "import sys; print('ready'); [print(line.strip()) for line in sys.stdin]",
+          ],
+        },
+        maxOutputBytes: 0,
+        output: { mode: "stream" },
+      },
+      {
+        ...read(),
+        onOutput(chunk) {
+          initial.push(chunk.text);
+        },
+      },
+    );
+
+    for (let i = 0; i < 200 && !initial.join("").includes("ready"); i++) await Bun.sleep(10);
+    expect(initial.join("")).toContain("ready");
+    const reference = JSON.parse(JSON.stringify(child.reference));
+
+    const input = {
+      sandbox,
+      reference,
+      profile: "process" as const,
+      stdin: "pipe" as const,
+      output: { mode: "stream" as const, format: "text" as const },
+    };
+
+    await expect(
+      reopenDaytonaProcess(native.execute, input, { ...read(), onOutput() {} }),
+    ).rejects.toThrow();
+    await child.disconnect!();
+    await expect(child.write!(new TextEncoder().encode("stale\n"), read())).rejects.toThrow();
+    await expect(child.signal!("SIGKILL", read())).rejects.toThrow();
+    await expect(
+      reopenDaytonaProcess(
+        native.execute,
+        { ...input, reference: { ...reference, generation: crypto.randomUUID() } },
+        { ...read(), onOutput() {} },
+      ),
+    ).rejects.toThrow();
+    reopened = await reopenDaytonaProcess(native.execute, input, {
+      ...read(),
+      onOutput(chunk) {
+        later.push(chunk.text);
+      },
+    });
+    await expect(child.write!(new TextEncoder().encode("stale\n"), read())).rejects.toThrow();
+    await expect(child.signal!("SIGKILL", read())).rejects.toThrow();
+    await reopened.write!(new TextEncoder().encode("fresh\n"), read());
+    await reopened.closeStdin!(read());
+    expect((await reopened.wait()).exitCode).toBe(0);
+    await reopened.outputDone;
+    expect(later.join("")).toBe("fresh\n");
+    expect(initial.join("")).toBe("ready\n");
+  } finally {
+    await cleanup(reopened ?? child, native.root);
+  }
+});
+
+test("Daytona explicit PTY owns controlling terminal, exact argv, dimensions, resize and combined binary output", async () => {
+  const native = fixture();
+  let child: NativeProcess | undefined;
+  const chunks: Uint8Array[] = [];
+
+  try {
+    child = await startDaytonaProcess(
+      native.execute,
+      {
+        sandbox,
+        stdin: "pipe",
+        terminal: { columns: 91, rows: 37 },
+        command: {
+          kind: "argv",
+          argv: [
+            "python3",
+            "-u",
+            "-c",
+            "import os,sys,termios,tty; tty.setraw(0); print(str(os.isatty(0))+' '+str(os.tcgetpgrp(0)==os.getpgrp())+' '+str(os.get_terminal_size(0))+' '+sys.argv[1],flush=True); os.read(0,1); os.write(2,str(os.get_terminal_size(0)).encode()+bytes([0,255]));",
+            "a ; $literal",
+          ],
+        },
+        maxOutputBytes: 0,
+        output: { mode: "stream", format: "bytes" },
+      },
+      {
+        ...read(),
+        onOutput() {
+          throw new Error("Expected byte output");
+        },
+        onOutputBytes(chunk) {
+          expect(chunk.stream).toBe("stdout");
+          chunks.push(chunk.bytes);
+        },
+      },
+    );
+
+    for (let i = 0; i < 200 && !Buffer.concat(chunks).toString().includes("$literal"); i++)
+      await Bun.sleep(10);
+    expect(Buffer.concat(chunks).toString()).toContain(
+      "True True os.terminal_size(columns=91, lines=37) a ; $literal",
+    );
+    await expect(child.closeStdin!(read())).rejects.toThrow();
+    await expect(child.resize!({ columns: 0, rows: 43 }, read())).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    await expect(child.resize!({ columns: 112, rows: 1001 }, read())).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    await child.resize!({ columns: 112, rows: 43 }, read());
+    await child.write!(new Uint8Array([1]), read());
+    expect((await child.wait()).exitCode).toBe(0);
+    await child.outputDone;
+    expect(
+      Buffer.concat(chunks).includes(Buffer.from("os.terminal_size(columns=112, lines=43)")),
+    ).toBe(true);
+    expect([...Buffer.concat(chunks).subarray(-2)]).toEqual([0, 255]);
+  } finally {
+    await cleanup(child, native.root);
+  }
+});
+
+test("Daytona expired attachment leases park output, preserve input, and fence all old control", async () => {
+  const root = `/tmp/sandbar-process-${crypto.randomUUID()}`;
+  const generation = crypto.randomUUID();
+  const lease = crypto.randomUUID();
+  const nextLease = crypto.randomUUID();
+  const native = fixture();
+
+  const supervisor = Bun.spawn(
+    [
+      "/bin/sh",
+      "-c",
+      pythonCommand(processSupervisor.replaceAll("last_request>30", "last_request>0.5"), {
+        root,
+        generation,
+        lease,
+        pipe: true,
+        argv: [
+          "python3",
+          "-u",
+          "-c",
+          "import sys; print('discard me'); data=sys.stdin.buffer.read(); print(data.hex())",
+        ],
+      }),
+    ],
+    { stdout: "ignore", stderr: "pipe" },
+  );
+
+  const rpc = async (request: Parameters<typeof pythonCommand>[1] & { request: object }) =>
+    JSON.parse(await native.execute(pythonCommand(processRpc, request), read()));
+
+  try {
+    for (let i = 0; i < 300 && !existsSync(root + "/control"); i++) await Bun.sleep(10);
+    await Bun.sleep(650);
+    expect((await rpc({ root, request: { op: "status", generation, lease } })).error).toBeTruthy();
+    expect(await rpc({ root, request: { op: "hello", generation, nextLease } })).toMatchObject({
+      ok: true,
+    });
+
+    for (const request of [
+      { op: "read" },
+      { op: "write", data: "eA==" },
+      { op: "signal", signal: "SIGKILL" },
+      { op: "resize", columns: 20, rows: 20 },
+      { op: "close" },
+      { op: "detach" },
+    ] as const)
+      expect((await rpc({ root, request: { ...request, generation, lease } })).error).toBeTruthy();
+    expect(
+      await rpc({ root, request: { op: "write", generation, lease: nextLease, data: "AP8=" } }),
+    ).toMatchObject({ ok: true });
+    expect(
+      await rpc({ root, request: { op: "close", generation, lease: nextLease } }),
+    ).toMatchObject({ ok: true });
+    let text = "";
+
+    for (let i = 0; i < 100; i++) {
+      const result = await rpc({ root, request: { op: "read", generation, lease: nextLease } });
+
+      for (const frame of result.frames ?? []) text += Buffer.from(frame.data, "base64").toString();
+
+      if (result.done && result.exitCode !== null) break;
+    }
+
+    expect(text).toBe("00ff\n");
+    expect(await supervisor.exited).toBe(0);
+    expect(existsSync(root)).toBe(false);
+  } finally {
+    supervisor.kill();
+    await supervisor.exited;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Daytona PTY executes an explicitly requested shell script once", async () => {
+  const native = fixture();
+  let child: NativeProcess | undefined;
+  const chunks: Uint8Array[] = [];
+
+  try {
+    child = await startDaytonaProcess(
+      native.execute,
+      {
+        sandbox,
+        terminal: { columns: 80, rows: 24 },
+        command: {
+          kind: "shell",
+          script: "value='literal ; $'; printf '%s' \"$value\"; printf '%s' ' stderr' >&2",
+        },
+        output: { mode: "stream", format: "bytes" },
+        maxOutputBytes: 0,
+      },
+      {
+        ...read(),
+        onOutput() {},
+        onOutputBytes(chunk) {
+          chunks.push(chunk.bytes);
+        },
+      },
+    );
+    expect((await child.wait()).exitCode).toBe(0);
+    await child.outputDone;
+    expect(Buffer.concat(chunks).toString()).toBe("literal ; $ stderr");
+  } finally {
+    await cleanup(child, native.root);
+  }
+});
+
+test("Daytona validates terminal dimensions and byte profile before native effects", async () => {
+  let calls = 0;
+
+  const execute: ProcessExecute = async () => {
+    calls++;
+
+    return "{}";
+  };
+
+  for (const terminal of [
+    { columns: 0, rows: 24 },
+    { columns: 80, rows: 1001 },
+    { columns: 1.5, rows: 24 },
+    { columns: Number.NaN, rows: 24 },
+  ]) {
+    await expect(
+      startDaytonaProcess(
+        execute,
+        {
+          sandbox,
+          terminal,
+          command: { kind: "shell", script: "true" },
+          output: { mode: "stream", format: "bytes" },
+          maxOutputBytes: 0,
+        },
+        { ...read(), onOutput() {}, onOutputBytes() {} },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  }
+
+  await expect(
+    startDaytonaProcess(
+      execute,
+      {
+        sandbox,
+        terminal: { columns: 80, rows: 24 },
+        command: { kind: "shell", script: "true" },
+        output: { mode: "stream" },
+        maxOutputBytes: 0,
+      },
+      { ...read(), onOutput() {} },
+    ),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(calls).toBe(0);
+});
+
+test("Daytona already-exited signal and terminate return not-found and retain confirmed exit", async () => {
+  for (const action of ["SIGTERM", "SIGKILL", "terminate"] as const) {
+    const native = fixture();
+    let child: NativeProcess | undefined;
+
+    const execute: ProcessExecute = async (command, ctx) => {
+      const encoded = /'([A-Za-z0-9+/=]+)'(?: |$)/.exec(command)?.[1];
+
+      const request = encoded
+        ? JSON.parse(Buffer.from(encoded, "base64").toString()).request
+        : undefined;
+
+      if (request?.op === "read" || request?.op === "status") {
+        await Bun.sleep(10);
+
+        return JSON.stringify({ exitCode: null, frames: [], done: false });
+      }
+
+      return native.execute(command, ctx);
+    };
+
+    try {
+      child = await startDaytonaProcess(
+        execute,
+        {
+          sandbox,
+          command: { kind: "argv", argv: ["python3", "-c", "import sys; sys.exit(7)"] },
+          output: { mode: "stream" },
+          maxOutputBytes: 0,
+        },
+        { ...read(), onOutput() {} },
+      );
+      await Bun.sleep(200);
+      expect(child.confirmedExit).toBeUndefined();
+
+      const result =
+        action === "terminate"
+          ? await child.terminate!(read())
+          : await child.signal!(action, read());
+
+      expect(result).toEqual({ status: "not-found" });
+      expect(await child.wait()).toEqual({ exitCode: 7 });
+      expect((await child.status!(read())).exit?.exitCode).toBe(7);
+      expect(await child.signal!("SIGKILL", read())).toEqual({ status: "not-found" });
+      expect(await child.terminate!(read())).toEqual({ status: "not-found" });
+    } finally {
+      await cleanup(child, native.root);
+    }
   }
 });

@@ -102,6 +102,23 @@ export type ExecValue = {
 /** Decoded text observation; detach never terminates compute. */
 export type ProcessOutput = { stream: "stdout" | "stderr"; text: string };
 
+/** Original native bytes, with independent stdout/stderr ordering and no decoding. */
+export type ProcessOutputBytes = { stream: "stdout" | "stderr"; bytes: Uint8Array };
+
+export type ProcessOutputFormat = "text" | "bytes";
+
+export type ProcessSignal = "SIGTERM" | "SIGKILL";
+
+export type TerminalDimensions = { columns: number; rows: number };
+
+export type ProcessReopenInput = {
+  sandbox: Sandbox;
+  reference: Json;
+  profile: "process" | "terminal";
+  output: { mode: "stream"; format: ProcessOutputFormat };
+  stdin: "closed" | "pipe";
+};
+
 export type NativeProcessExit = { exitCode: number };
 
 export type NativeProcessStatus = {
@@ -114,9 +131,15 @@ export type ProcessObservationFailure = AdapterError & { confirmedExit?: NativeP
 
 export type ProcessStartContext = ReadContext & {
   onOutput(chunk: ProcessOutput): void;
+  onOutputBytes?(chunk: ProcessOutputBytes): void;
 };
 
 export interface NativeProcess {
+  readonly reference?: Json;
+  signal?(signal: ProcessSignal, ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>;
+  resize?(dimensions: TerminalDimensions, ctx: ReadContext): Promise<void>;
+  /** Park local observation without closing guest stdin or terminating compute. */
+  disconnect?(): Promise<void>;
   /** Synchronous confirmed evidence, including during final decoder callbacks. */
   readonly confirmedExit?: NativeProcessExit;
   wait(): Promise<NativeProcessExit>;
@@ -135,9 +158,10 @@ export interface NativeProcess {
 }
 
 export type ProcessStartInput = {
+  terminal?: TerminalDimensions;
   capture?: { maxBytes: number };
   stdin?: "closed" | "pipe";
-  output?: { mode: "stream" };
+  output?: { mode: "stream"; format?: ProcessOutputFormat };
   sandbox: Sandbox;
   command: Command;
   cwd?: string;
@@ -415,8 +439,18 @@ export type AdapterSession<
   ) => Promise<import("./preview").Preview>;
   processes?: {
     /** Additive behavior declarations; absence retains the finite, closed-input contract. */
-    supports?: { sustainedOutput?: true; stdin?: "bytes"; status?: true; execCapture?: "bytes" };
+    supports?: {
+      sustainedOutput?: true;
+      binaryOutput?: true;
+      signals?: readonly ProcessSignal[];
+      terminal?: true;
+      reopen?: true;
+      stdin?: "bytes";
+      status?: true;
+      execCapture?: "bytes";
+    };
     start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess>;
+    reopen?(input: ProcessReopenInput, ctx: ProcessStartContext): Promise<NativeProcess>;
   };
   files?: {
     maxBytes: number;

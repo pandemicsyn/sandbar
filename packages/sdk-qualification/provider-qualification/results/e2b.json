@@ -1535,6 +1535,122 @@
         "testName": "execution-termination"
       },
       "evidenceRef": "process-io-e2b-pr76"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "5f2bd1386c94f2adc64a796e1239e96346033601",
+      "harnessCommit": "5f2bd1386c94f2adc64a796e1239e96346033601",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-10-09T15:15:24.768Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "execution-streaming",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "execution-streaming"
+      },
+      "evidenceRef": "process-bytes-e2b-pr78"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "5f2bd1386c94f2adc64a796e1239e96346033601",
+      "harnessCommit": "5f2bd1386c94f2adc64a796e1239e96346033601",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-10-09T15:15:24.768Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "execution-termination",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "execution-termination"
+      },
+      "evidenceRef": "process-bytes-e2b-pr78"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "aaba981e572990f6f20beadd235989683f71e7c7",
+      "harnessCommit": "aaba981e572990f6f20beadd235989683f71e7c7",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-10-09T15:56:37.553Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "execution-streaming",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "execution-streaming"
+      },
+      "evidenceRef": "process-p4-e2b-pr79"
+    },
+    {
+      "provider": "e2b",
+      "sdkCommit": "aaba981e572990f6f20beadd235989683f71e7c7",
+      "harnessCommit": "aaba981e572990f6f20beadd235989683f71e7c7",
+      "sdkVersion": "0.0.0",
+      "nativeVersion": "e2b 2.51.0",
+      "runtime": "Bun 1.3.14",
+      "platform": "darwin-arm64",
+      "timestamp": "2026-10-09T15:56:37.553Z",
+      "configuration": {
+        "imageClass": "prepared",
+        "fileRoot": "/home/user",
+        "templateClass": "borrowed-template",
+        "authorityClass": "api-key",
+        "network": "blocked-requested",
+        "regionClass": "native-default"
+      },
+      "schemaVersion": 1,
+      "mode": "live",
+      "scenario": "execution-termination",
+      "status": "passed",
+      "runCleanup": "confirmed",
+      "runner": {
+        "name": "bun:test",
+        "format": "junit",
+        "testName": "execution-termination"
+      },
+      "evidenceRef": "process-p4-e2b-pr79"
     }
   ],
   "historicalEvidence": [
