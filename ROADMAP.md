@@ -18,7 +18,7 @@ These are completed slices, not outstanding implementation plans. Each retains d
 
 [Two OpenCode examples](examples/README.md) are implemented in a private root `examples/` workspace: capture the answer to “What is 2 + 2?”, or upload `message.txt`, ask the agent to replace `NAME` with `Sandbar`, then read and display the changed file. Both select Daytona or E2B through configuration and use the public SDK.
 
-Offline validation covers the entrypoints and deterministic fixtures. Local anonymous CLI checks passed for the pinned OpenCode version and model on both tasks. Daytona/E2B live qualification remains unrun and requires separate authorization; these checks do not imply broader provider qualification. See the [scope and acceptance reference](specs/runnable-agent-examples.md).
+Offline validation covers the entrypoints and deterministic fixtures. Live acceptance passed October 10, 2026 at `1446cf0a013a6a2b49a65f7c419dabc3b67302bf` for both imported workflows on Daytona (`daytona-small`, `us`, `daytona-default`) and E2B (`base`, `internet`), using standalone OpenCode 1.18.35 and anonymous `opencode/nemotron-3.5-lightning-free`. The harness shared one sandbox per provider; it did not rerun four standalone CLI invocations. All four allocations, including initial npm failures, were independently confirmed deleted. These results do not imply broader provider qualification; the [runnable guide](examples/README.md#lifecycle-and-validation) records the evidence. See the [scope and acceptance reference](specs/runnable-agent-examples.md).
 
 ## Qualification gaps
 

@@ -24,7 +24,7 @@ Edit `examples/.env.local` with the credentials for your selected sandbox provid
 | Daytona | `DAYTONA_API_KEY`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT` | An active Linux snapshot in your target region. `daytona-default` is selected on connection and creation; your organization's policy must permit GitHub release downloads and model endpoints. |
 | E2B | `E2B_API_KEY`; optional `E2B_TEMPLATE_ID` (default `base`) | A ready Linux template. Creation explicitly requests `internet`. |
 
-The guest image needs glibc-based Linux on x64 or arm64, `curl`, `tar`, `sha256sum`, `/bin/sh`, Python 3 and the adapter's standard shell/file utilities; see the [Daytona](../apps/docs/src/content/docs/docs/providers/daytona.md#image-requirements) and [E2B](../apps/docs/src/content/docs/docs/providers/e2b.md#files-and-commands) guides. The guest working directory is `/tmp/sandbar-agent-example`. OpenCode is installed under its `opencode/` subdirectory. Installation downloads the pinned standalone binary from GitHub releases (the x64 baseline build avoids an AVX2 requirement) and requires outbound GitHub access, and model execution needs access to the selected model service.
+The guest image needs glibc-based Linux on x64 or arm64, `curl`, `tar`, `sha256sum`, `/bin/sh`, Python 3 and the adapter's standard shell/file utilities; see the [Daytona](../apps/docs/src/content/docs/docs/providers/daytona.md#image-requirements) and [E2B](../apps/docs/src/content/docs/docs/providers/e2b.md#files-and-commands) guides. The guest working directory is `/tmp/sandbar-agent-example`. OpenCode is installed under its `opencode/` subdirectory. Installation downloads the pinned standalone binary from GitHub releases (the x64 baseline build avoids an AVX2 requirement) and verifies its pinned SHA-256 digest before extraction. It requires outbound GitHub access; model execution needs access to the selected model service.
 
 ## Model selection
 
@@ -73,7 +73,14 @@ OpenCode uses [`run --pure`](https://opencode.ai/docs/cli/) with editing permiss
 
 The sandbox lifetime is 600 seconds. Installation and agent calls have 120-second and 180-second deadlines, with a 480-second overall workflow wait. These bounds do not establish remote process termination at a deadline. Ctrl+C aborts local waiting and enters `finally`, which attempts sandbox destruction with a separate 30-second signal, then closes the client with a separate 5-second wait. A failed cleanup reports the known sandbox ID; inspect it in the provider dashboard. An uncertain SDK operation retains its recovery reference and is not automatically replayed. Primary workflow errors remain visible if cleanup also fails.
 
-These examples have not been live-qualified on Daytona or E2B. Offline fixtures validate SDK wiring and cleanup behavior; they do not prove the real OpenCode/model/provider integration. Live sandbox runs require separate authorization.
+Live acceptance passed on October 10, 2026 at source revision `1446cf0a013a6a2b49a65f7c419dabc3b67302bf`, using host Bun 1.3.14, standalone OpenCode 1.18.35 and anonymous `opencode/nemotron-3.5-lightning-free`:
+
+| Provider | Passing configuration | Verified results |
+| --- | --- | --- |
+| Daytona | Existing `daytona-small` snapshot, `us` target, `daytona-default` network | Answer contained `4`; remote file was exactly `Hello, Sandbar!\n`. |
+| E2B | Existing `base` template, `internet` network | Answer contained `4`; remote file was exactly `Hello, Sandbar!\n`. |
+
+The live harness imported the actual `hello`, `edit`, installation, provider setup and cleanup functions and ran both workflows sequentially in one owned sandbox per provider. It did not rerun all four standalone CLI invocations above. Initial attempts using npm failed because Daytona lacked npm and E2B's npm install exited 137; the corrected standalone installer passed. All four allocated sandboxes, including those initial attempts, were independently confirmed deleted by provider GET responses returning 404. These results qualify these workflows and configurations at that revision. Offline fixtures cover SDK wiring and failure cleanup; future live sandbox runs require separate authorization.
 
 For offline checks after package builds:
 
