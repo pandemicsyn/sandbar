@@ -3,7 +3,7 @@ title: Daytona
 description: Connect to Daytona with explicit region, prepared image, and network policy settings.
 ---
 
-Import `daytona` from `sandbar-sdk/daytona`. Start with an active Linux snapshot in your target region. The example uses strict blocked networking, which requires eligible organization settings; the policy section below shows the explicit `daytona-default` alternative.
+Import `daytona` from `sandbar-sdk/daytona`. Start with an active Linux snapshot in your target region. The example selects `daytona-default` on connection and creation, matching the getting-started configuration. Strict blocked networking requires eligible organization settings; see the policy section below.
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
@@ -16,11 +16,12 @@ const client = await Sandbar.connect(
     target: "us",
     environment: Image.prepared("daytona-small"),
     lifecycle: { lifetimeSeconds: 600 },
+    networkPolicy: "daytona-default",
   }),
 );
 
 try {
-  const box = await client.sandboxes.create();
+  const box = await client.sandboxes.create({ networkPolicy: "daytona-default" });
   try {
     await box.exec(["/bin/sh", "-c", "printf ready"]);
     const renewed = await box.renew();
@@ -72,12 +73,14 @@ Transfers use the existing authenticated `/files/download` response body and inc
 
 The expanded ordinary Bun `file-directories` case passed at `2f6afe8` on October 8, 2026, using the shared compiled artifact recipe and one 32 MiB streaming roundtrip with a complete SHA-256 comparison. Owned sandbox destruction and client close were confirmed. This qualifies the recorded borrowed image/configuration; other images and mounted storage remain outside that pass. Native-boundary fixtures, packed consumers and exact live provenance are reported separately in [provider support](/docs/providers/support/).
 
+Run OpenCode with this provider using the [runnable agent examples](/docs/guides/runnable-agent-examples/), which record the tested snapshot, region, and network configuration.
+
 ## Configured lifetime renewal
 
 The application workflow is the same for both built-in adapters:
 
 ```ts
-const box = await client.sandboxes.create();
+const box = await client.sandboxes.create({ networkPolicy: "daytona-default" });
 await box.exec(["/bin/sh", "-c", "printf ready"]);
 const renewed = await box.renew();
 await box.renew({ forSeconds: 61 });

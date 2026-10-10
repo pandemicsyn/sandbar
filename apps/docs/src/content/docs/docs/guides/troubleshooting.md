@@ -25,7 +25,7 @@ Check the prepared image contains the executable and any required shell utilitie
 
 ## A file write fails
 
-Use an absolute path in an existing writable directory, keep the payload at or below 1 MiB, and set `overwrite: true` only when replacing an existing file is intended. Use `/home/user` for E2B examples. No-clobber writes need compatible hard-link support and `ln -T`.
+Use an absolute path in an existing writable directory, keep the payload within the 1 MiB default (or pass `maxBytes` up to 16 MiB), and set `overwrite: true` only when replacing an existing file is intended. Use `/home/user` for E2B examples. No-clobber writes need compatible hard-link support and `ln -T`.
 
 ## A timeout leaves the outcome unknown
 

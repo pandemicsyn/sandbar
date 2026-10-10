@@ -7,6 +7,8 @@ description: Declared adapter support and dated live acceptance, with provider c
 
 Adapter support and live validation are separate facts. **Supported** means implemented; **conditional** requires the configuration in the linked note; **unsupported** means the adapter does not expose the workflow. Live results are **passed**, **failed**, **blocked**, or **not-run**. Each pass applies to its recorded source/configuration, not the current head or every provider account. Fixture and packed tests never produce live passes.
 
+**E2B experimental-volume exception:** the Volume CRUD row's unsupported label excludes experimental native CRUD from maintained live qualification; SDK hooks exist. A live create was blocked by HTTP 403 for the tested account; original volume custody remains unresolved, so maintained qualification skips volume cases before setup. This is separate from mounts, which the adapter rejects before allocation. See the [volume caveat](#e2b-volumes) and [mounted-persistence caveat](#e2b-persistence).
+
 | Feature                             | Daytona                                                         | E2B                                                                               |
 | ----------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Sandbox lifecycle                   | [Supported · passed at 8449def7](#daytona-lifecycle)            | [Supported · passed at 8449def7](#e2b-lifecycle)                                  |

@@ -24,6 +24,44 @@ try {
 
 Use the sandbox handle for execution, files, inspection, and destruction. Call `sandbar.close()` in an outer `finally` when you're done with the connection, as in [Getting started](/docs/direct-quickstart/). Each sandbox needs its own explicit cleanup. `close()` releases local client state and waiting; it does not destroy remote compute or retained storage.
 
+## Reopen and manage lifetime
+
+Save the complete `box.reference` in your application's trusted store before releasing the connection. Built-ins issue verified references; a legacy custom adapter can return `null`. Reopen with current credentials and the original provider/scope:
+
+```ts
+const box = await freshClient.sandboxes.get(savedReference);
+const info = await box.inspect();
+if (info.expires.status === "known") console.log(info.expires.at, info.expires.scope);
+```
+
+`get()` and `inspect()` are reads. They never create a replacement, resume inactive compute or renew its lifetime. Guest execution and file access require running compute. Missing or deleted resources reject with `NOT_FOUND`; a saved ID does not migrate between providers. For E2B credential rotation, configure the verified `teamId` when establishing the original connection.
+
+Set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for initial lifetime and the default renewal window. It is mutually exclusive with E2B `timeoutSeconds` or Daytona `ttlMinutes`. Once the sandbox is running:
+
+```ts
+const renewed = await box.renew(); // Uses this connection's configured window.
+await box.renew({ forSeconds: 61 });
+console.log(renewed.requested.forSeconds, renewed.observation?.expires);
+```
+
+Renewal resets a native deadline from provider processing; it is not additive and may shorten an existing longer deadline. E2B rounds small positive requests up to 60 seconds and permits at most 3,600 seconds. Daytona rounds up to minutes (61 becomes 120) and permits at most 86,400 seconds. Account limits can be tighter. `acknowledged: true` confirms acceptance even if the subsequent detail read fails and `observation` is `null`. A lost acknowledgement remains uncertain: recover the operation instead of automatically renewing again.
+
+Use `suspend()` to retain the same inactive compute resource and `resume()` to explicitly reactivate it:
+
+```ts
+const suspended = await box.suspend();
+console.log(suspended.preserve, suspended.processes);
+// Keep box.reference in your trusted store; close() leaves saved compute intact.
+const resumed = await box.resume();
+console.log(resumed.execution);
+```
+
+Daytona container suspension preserves private filesystem and ends processes; resume starts fresh processes under the same sandbox ID. It requires known empty mounts and deletion-on-stop disabled. Its hard TTL continues while stopped or archived; resume does not reset it. E2B suspension preserves filesystem and memory and drops connections. Resume starts a new active session using the connection's configured lifetime, but returns `execution: "unknown"` because current native evidence cannot certify process continuity after external lifecycle changes. Paused E2B state has no active-session expiry; this does not make it a reusable snapshot.
+
+Configure a minimum with `lifecycle: { suspension: { preserve: "filesystem" } }`; memory preservation also satisfies that minimum. Daytona rejects a memory requirement. Mounted suspension remains unsupported; neither provider promises external-storage durability or socket continuity. Already inactive `suspend()` and already running `resume()` reject with `CONFLICT`. Serialize lifecycle changes per sandbox and reconcile uncertain outcomes through their operation reference. `submitSuspend()`, `submitResume()` and `submitRenew()` separate submission from waiting. Cancellation stops local waiting, and no automatic inverse action runs. Destroy owned compute explicitly when its saved state is no longer needed.
+
+The compiled [reopening](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts), [renewal](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-renew.ts) and [suspend/resume](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-suspend-resume.ts) recipes show application persistence and cleanup. Inspections include `state`, `nativeState`, `observedAt`, `expires`, `idleStop`, `retention` and `execution`; unknown facts remain explicit. An observation is historical, and a locally calculated countdown does not prove deletion.
+
 ## Pass arguments literally
 
 An argument array never invokes a shell. Characters such as `$`, `;`, and `*` stay literal arguments. Use the object form to set a working directory, environment, deadline, or output limit:
@@ -101,7 +139,7 @@ A nonzero exit is a completed command. `NoExitCodeError` means execution complet
 
 ## Submit and wait separately
 
-`box.submitExec(input)` and `sandbar.sandboxes.submitCreate(input)` return an operation handle with `reference`, `observe()`, and `wait()`. Use them when your application needs to save a reference or manage waiting explicitly. Ordinary `exec()` and `create()` submit and wait for you. `wait({ signal })` cancellation stops local waiting and preserves an operation reference; it does not terminate the remote command. Use recovery to observe an already-submitted operation before deciding what to do next. Active E2B streaming process handles provide explicit native SIGKILL termination; this operation-handle API does not terminate commands. See [finite text streaming](/docs/guides/text-streaming/) for PID targeting limits.
+`box.submitExec(input)` and `sandbar.sandboxes.submitCreate(input)` return an operation handle with `reference`, `observe()`, and `wait()`. Use them when your application needs to save a reference or manage waiting explicitly. Ordinary `exec()` and `create()` submit and wait for you. `wait({ signal })` cancellation stops local waiting and preserves an operation reference; it does not terminate the remote command. Use recovery to observe an already-submitted operation before deciding what to do next. Streaming process handles provide explicit signals and termination on both built-ins; this operation-handle API does not terminate commands. See [streaming and interactive processes](/docs/guides/text-streaming/) for targeting limits.
 
 ## Serializable resource identity
 
