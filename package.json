@@ -6,7 +6,8 @@
   "workspaces": [
     "apps/*",
     "packages/*",
-    "packages/providers/*"
+    "packages/providers/*",
+    "examples"
   ],
   "scripts": {
     "build:packages": "bun run --cwd packages/adapter build && bun run --cwd packages/provider-spi build && bun run --cwd packages/providers/fake build && bun run --cwd packages/providers/daytona build && bun run --cwd packages/providers/modal build && bun run --cwd packages/providers/e2b build && bun run --cwd packages/sdk build",
@@ -30,7 +31,7 @@
     "docs:check:built": "bun run --cwd apps/docs check && bun run --cwd apps/docs build && bun run --cwd apps/docs examples:test",
     "package:smoke:built": "bun packages/sdk-qualification/package-smoke.mjs",
     "build:built": "bun run --cwd apps/docs build",
-    "test:sdk:built": "bun test packages/adapter packages/provider-spi packages/providers packages/sdk packages/sdk-qualification tools"
+    "test:sdk:built": "bun test packages/adapter packages/provider-spi packages/providers packages/sdk packages/sdk-qualification tools examples"
   },
   "devDependencies": {
     "@changesets/changelog-github": "1.0.0",

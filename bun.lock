@@ -42,6 +42,12 @@
         "zod": "4.6.5",
       },
     },
+    "examples": {
+      "name": "@sandbar/agent-examples",
+      "dependencies": {
+        "sandbar-sdk": "workspace:*",
+      },
+    },
     "packages/adapter": {
       "name": "sandbar-adapter",
       "version": "0.0.0",
@@ -679,6 +685,8 @@
     "@rolldown/binding-win32-x64-msvc": ["@rolldown/binding-win32-x64-msvc@1.2.11", "", { "os": "win32", "cpu": "x64" }, "sha512-/PzKqzAJ03i19oy2ItPvyvaVjOjBCNnfaJs8yvUdGBKmiESgnrJSQ2awd81QzFbbnAmu7YO9ZnJrDCb9VSJPRA=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
+
+    "@sandbar/agent-examples": ["@sandbar/agent-examples@workspace:examples"],
 
     "@sandbar/docs": ["@sandbar/docs@workspace:apps/docs"],
 

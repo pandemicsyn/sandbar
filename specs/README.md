@@ -26,6 +26,10 @@ These are shipped contracts, not unfinished delivery plans. The roadmap owns rem
 
 These contracts are retained to explain behavior and protect guarantees, not to reopen completed implementation plans. Current SDK/adapter exports and tested public examples own exact signatures. Native research is dated evidence, not proof of current deployed behavior. The [generated support table](../apps/docs/src/content/docs/docs/providers/support.md) records live results separately; the roadmap lists remaining qualification work.
 
+## Example references
+
+- [Runnable agent examples](runnable-agent-examples.md) — implemented scope and acceptance for two OpenCode applications using public SDK execution and files on Daytona or E2B. Offline/local CLI validation and live provider acceptance remain separate.
+
 ## Engineering references
 
 - [Architecture](design.md) — implemented SDK/adapter boundaries.

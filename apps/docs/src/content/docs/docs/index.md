@@ -7,6 +7,8 @@ Sandbar is a server-side TypeScript SDK for creating sandboxes, running commands
 
 Start with [Getting started](/docs/direct-quickstart/) to run your first command and clean up the sandbox. This site documents the current source build; packages are not yet published.
 
+Run OpenCode inside a sandbox with the [runnable agent examples](https://github.com/pandemicsyn/sandbar/tree/main/examples): capture a response or upload a file, ask the agent to edit it, and read it back. The guide includes checkout setup for Daytona and E2B.
+
 ## Build with an agent
 
 Copy a prompt to give your coding agent the right imports, examples, and constraints:
