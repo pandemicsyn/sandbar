@@ -2,9 +2,7 @@
 
 Implemented contract · Tracing/diagnostics and recipes merged in PR #24; metrics/events deferred
 
-Make Sandbar operations understandable inside the application's existing observability tools. This is a fresh SDK design, independent of the removed observability/accounting proposal. It adds no billing or Effect requirement. Sections 1–6 record the tracing contract; section 7 is deferred design. Current exports and tested recipes are authoritative for implemented APIs.
-
-Tracing and vendor recipes are implemented; no new observability work is on deck ahead of SDK usability.
+Make Sandbar operations understandable inside the application's existing observability tools. Sections 1–6 record the tracing contract; section 7 is deferred design. The [observability guide](../apps/docs/src/content/docs/docs/observability.mdx), [compiled OTel example](../apps/docs/examples/observability-otel.ts) and [qualification records](../packages/sdk-qualification/observability/README.md) own current usage and exact coverage; public exports are authoritative for signatures.
 
 ## Developer outcomes
 
@@ -25,17 +23,9 @@ Instrument using the OpenTelemetry trace API. The application owns the tracing S
 
 Use a named, versioned instrumentation scope for each owning public package. Package builds must externalize the shared OpenTelemetry API instead of bundling a private copy that can disconnect context. Keep vendor exporter dependencies out of the direct SDK import graph. Custom adapters must not need an OpenTelemetry dependency to implement ordinary operations.
 
-Proposed connection option, to integrate into the existing connect/client options rather than create a second connection API:
+The SDK connection tracing option uses the application's registered provider, an injected provider, or explicit disablement.
 
-```ts
-interface ObservabilityOptions {
-  tracing?: false | {
-    tracerProvider?: TracerProvider;
-  };
-}
-```
-
-Omission uses the application's registered global provider; `false` disables Sandbar-owned spans and Sandbar-owned propagation for that client. It cannot disable third-party HTTP instrumentation. An injected provider changes span creation only; the application still configures a compatible context manager and propagation. Add the option to the direct SDK without changing provider credential/configuration schemas.
+Omission uses the application's registered global provider; `false` disables Sandbar-owned spans and Sandbar-owned propagation for that client. It cannot disable third-party HTTP instrumentation. An injected provider changes span creation only; the application still configures a compatible context manager and propagation. Tracing configuration is independent of provider credential/configuration schemas.
 
 Capture the active context at each public call, not at connection creation. Two concurrent application requests using one Sandbar client must remain in separate traces. Starting work inside an active Sandbar span must preserve that context through async provider calls. Do not retain live spans or async context objects in long-lived resource handles.
 
@@ -45,7 +35,7 @@ This follows the [OpenTelemetry guidance for instrumented libraries](https://ope
 
 ## 2. Operation spans and timing
 
-Use stable operation names and bounded attributes. Never put resource IDs, commands, filenames, or native URLs in span names. Names below are proposed Sandbar conventions, not an existing OpenTelemetry sandbox standard.
+Use stable operation names and bounded attributes. Never put resource IDs, commands, filenames, or native URLs in span names. Names below describe Sandbar semantic boundaries; use current exports and fixtures for exact span names.
 
 | Layer | Examples | Meaning |
 | --- | --- | --- |
@@ -54,7 +44,7 @@ Use stable operation names and bounded attributes. Never put resource IDs, comma
 | Operation access | `sandbar.operation.observe`, `sandbar.operation.wait`, `sandbar.operation.recover` | Read-only observation, a local wait, or reopening existing work |
 | Internal phase | `sandbar.prepare`, `sandbar.submit`, `sandbar.wait`, `sandbar.observe` | A real phase boundary, with operation type as an attribute |
 
-Cover connect, capability checks, inventory, image operations, exec, files, inspect, destroy, recovery, and close as they actually exist. Later snapshots, volumes, and lifecycle operations extend the same convention when implemented. A successful capability query returning `unsupported` is a successful query; rejection of a caller's required operation is separately represented.
+Cover connect, capability checks, inventory, image operations, exec, files, inspect, destroy, recovery, and close as they actually exist. Snapshots, volumes and lifecycle operations follow the same convention. A successful capability query returning `unsupported` is a successful query; rejection of a caller's required operation is separately represented.
 
 Convenience methods that submit and wait produce one public-call span with phase children. Their internal calls must not also produce duplicate public `submit`/`wait` spans. Explicit user calls to those methods produce their own public spans. Direct semantic spans are INTERNAL; actual HTTP spans use the appropriate CLIENT/SERVER kinds.
 
@@ -79,13 +69,13 @@ Keep three facts separate: the result of this local call, knowledge of remote wo
 | Read-only observation reports pending/unknown | Observation completed; underlying operation did not become successful or failed merely because of that read |
 | Destruction confirmed with retained artifacts | Compute cleanup confirmed; retained storage/artifact status remains a separate fact |
 
-Proposed attributes include `sandbar.operation.type`, `sandbar.operation.id`, `sandbar.submission.id`, `sandbar.provider`, `sandbar.mode`, `sandbar.phase`, `sandbar.call.outcome`, `sandbar.operation.state`, `sandbar.effect`, and a bounded error code. Include exit status and retained-resource counts when known. Unknown is explicit rather than encoded as zero or success. Finalize the finite outcome vocabulary alongside executable tests in the first implementation slice.
+Correlation attributes include `sandbar.operation.type`, `sandbar.operation.id`, `sandbar.submission.id`, `sandbar.provider`, `sandbar.mode`, `sandbar.phase`, `sandbar.call.outcome`, `sandbar.operation.state`, `sandbar.effect`, and a bounded error code. Include exit status and retained-resource counts when known. Unknown is explicit rather than encoded as zero or success. Preserve the finite outcome vocabulary covered by executable fixtures.
 
 Set OTel ERROR status when the span's own API contract failed, with a fixed safe description. Expected caller cancellation uses a cancellation outcome without automatically becoming an infrastructure error. Record a sanitized exception at the boundary that surfaces the error; parent phase/call spans may carry status without repeating raw exceptions at every level.
 
 Do not call `Sentry.captureException()` or a vendor equivalent automatically. The application owns issue creation and decides whether a caught operational error should produce an issue. Recipes demonstrate capturing once, inside the request context, with safe Sandbar correlation fields. Correlation must still work when tracing is unsampled: existing operation IDs and structured error facts remain useful even when there is no exported trace.
 
-Provide a small public pure helper such as `diagnosticContext(errorOrOperation)` that returns a bounded allowlisted diagnostic record: safe error code, effect, operation/submission IDs where available, known operation state, and recovery availability. Its exact signature belongs in the first implementation slice. It must not serialize arbitrary error objects, native causes, recovery tokens, resource locators, or raw URLs. It performs no IO and does not change the error's identity or existing recovery API. The original error/handle remains the source for a usable recovery reference; the diagnostic record conveys correlation, not authority to recover or retry.
+The public pure diagnostic helper returns a bounded allowlisted diagnostic record: safe error code, effect, operation/submission IDs where available, known operation state, and recovery availability. Use the public exports for its exact signature. It must not serialize arbitrary error objects, native causes, recovery tokens, resource locators, or raw URLs. It performs no IO and does not change the error's identity or existing recovery API. The original error/handle remains the source for a usable recovery reference; the diagnostic record conveys correlation, not authority to recover or retry.
 
 ## 4. Context and SDK recovery
 
@@ -105,7 +95,7 @@ Bound attributes, links, and events, use fixed truncation/drop rules, and expose
 
 Instrumentation exceptions must not replace an operation result, mask the original failure, or skip cleanup. Export is asynchronous and application-owned; Sandbar never waits for delivery on the operation path. Test throwing tracer methods/processors and bounded failing sinks. This does not promise protection against arbitrary blocking application callbacks: Sandbar introduces no synchronous user diagnostics callback into the mutation path. Failures in diagnostics must not recursively generate more diagnostics.
 
-Measure disabled, unsampled, and sampled overhead on representative create/exec/read/write/wait fixtures, including concurrent calls. Record package size and dependency impact. Agree on a measured overhead budget during the first slice before calling the instrumentation production-ready; never claim zero overhead.
+Measure disabled, unsampled, and sampled overhead on representative create/exec/read/write/wait fixtures, including concurrent calls. Record package size and dependency impact. Use measured overhead when assessing readiness; never claim zero overhead.
 
 ## 6. Sentry, Datadog, and runtime qualification
 
@@ -131,13 +121,9 @@ Default dimensions are finite operation/mode/outcome/error-code classes and a bo
 
 Structured diagnostic events should reuse the same sanitized schema and carry trace/span IDs when available. Decide the logger/OTel-log bridge and bounded delivery behavior in that later slice; do not introduce a mandatory logger, console noise, or a second vendor export pipeline in the tracing release. Telemetry is best effort and is never the authoritative operation journal or a billing ledger.
 
-## 8. Implementation units and acceptance
+## 8. Regression and evidence boundaries
 
-Tracing/diagnostics and vendor recipes (units 1–2) merged in #24. The acceptance list below protects that contract; it is not an unfinished delivery plan. Metrics/events (unit 3) remain deferred.
-
-1. **Direct SDK tracing and error diagnostics.** Finalize the operation/outcome vocabulary, packaging and connection options, public/phase boundaries, safe diagnostic helper, and disabled/global/injected-provider behavior. Cover current direct operations and an independent adapter. Add an in-memory tracing example and establish overhead measurements.
-2. **Sentry and Datadog DevEx.** Deliver the three recipes above, pinned integration fixtures, runtime-specific evidence, exporter shutdown guidance, and debugging guidance for missing or disconnected spans. Mark vendor UI validation separately from local export evidence.
-3. **Metrics and structured events.** Specify and implement bounded measurements, logger integration, and their separate backend/runtime coverage after the tracing contract is stable.
+Tracing, diagnostics and vendor recipes are implemented. Metrics and structured events remain deferred under section 7; they need separate bounded measurements, logger integration and backend/runtime coverage.
 
 Local Sentry/Datadog export and runtime fixtures are separate from live vendor-UI qualification; consult the maintained observability recipes for the exact coverage. Trace names, attributes, outcomes, diagnostic-helper fields, and privacy guarantees become supported public contracts and need release notes when changed. Changes do not authorize native state operations, accounting, a telemetry database, new provider adapters, or guest instrumentation.
 

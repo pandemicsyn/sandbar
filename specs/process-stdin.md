@@ -2,7 +2,9 @@
 
 Implementation contract · Merged in PR #71 · October 6, 2026
 
-## Implemented surface in PR #71
+Exact signatures live in the [SDK exports](../packages/sdk/src/index.ts); see the [finite-input example](../apps/docs/examples/finite-stdin.ts) and [files/output guide](../apps/docs/src/content/docs/docs/guides/files-and-output.md). Incremental process input uses the separate [current process IO contract](process-io-dx.md).
+
+## Finite input contract
 
 Ordinary `box.exec` accepts an optional finite input payload:
 
@@ -15,7 +17,7 @@ const result = await box.exec({
 
 Strings are encoded as UTF-8. `Uint8Array` input is copied from the supplied view and preserves exactly those bytes, including NUL and non-text data. The maximum payload is 1 MiB; validation happens before provider dispatch and before retaining an oversized mutable buffer. Supplying an empty string or byte array still requests input completion. Omitted input also means guest stdin is closed. Every supported adapter delivers the finite bytes and then establishes EOF before it can report confirmed command success. Output remains separate stdout/stderr with the existing capture bound and ordinary exit behavior.
 
-This contract does not promise a pipe, seekable file or particular guest descriptor implementation. It does not add input to `processes.start`, a stream source, interactive input handle, PTY, process supervisor, or a new provider. Applications keep the same `exec` call when changing adapters; provider mechanics and limitations stay in adapter setup/documentation.
+This contract does not promise a pipe, seekable file or particular guest descriptor implementation. This finite-exec contract does not define incremental process input or terminal behavior; those use separately implemented process profiles. Applications keep the same `exec` call when changing adapters; provider mechanics and limitations stay in adapter setup/documentation.
 
 Adapters opt into the guarantee with `exec.finiteStdin: "bytes"`. An adapter without that declaration rejects an explicitly supplied input as `UNSUPPORTED` before native effects. The adapter runtime bounds and validates bytes, and the SDK rejects runtime-cast input on `processes.start` rather than dropping it. No input payload enters recovery tokens, diagnostics or telemetry.
 
@@ -27,6 +29,6 @@ Experimental Modal starts the existing command once, sends the finite bytes and 
 
 Shared public SDK fixtures exercise the actual command's read-to-EOF behavior and exact stdout bytes across all three adapters. Native-boundary fixtures cover staging and router outcomes; packed Node/Bun consumer coverage checks the published API shape. These are deterministic/packed evidence only. No live finite-input provider qualification is claimed here.
 
-## Future work
+## Separate process input contract
 
-Incremental input for `processes.start`, streaming sources, interactive shells and terminal behavior require separate contracts for concurrent output, backpressure, write acknowledgement, cancellation and EOF. They are not inferred from this finite-exec implementation. Tensorlake, boxd and Vercel remain future design examples; this slice does not add their adapters.
+Incremental input and EOF for `processes.start`, sustained concurrent output, terminals and reopening are implemented in [process IO](process-io-dx.md), with their own backpressure, acknowledgement and cancellation guarantees. Their live qualification does not qualify this finite-exec staging/router path. No live finite-exec input qualification is claimed. Future adapters must explicitly opt into the bytes-and-EOF guarantee; they are not inferred from existing provider implementations.
