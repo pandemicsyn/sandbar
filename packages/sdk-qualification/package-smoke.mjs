@@ -15,6 +15,7 @@ const packages = [
   ["@sandbar/provider-fake", "packages/providers/fake"],
   ["@sandbar/provider-daytona", "packages/providers/daytona"],
   ["sandbar-modal", "packages/providers/modal"],
+  ["sandbar-boxd", "packages/providers/boxd"],
   ["@sandbar/provider-e2b", "packages/providers/e2b"],
   ["sandbar-sdk", "packages/sdk"],
 ];
@@ -193,6 +194,26 @@ function lifecycleHooks(
 void lifecycleHooks;
 // @ts-expect-error config must include region
 void Sandbar.connect({ adapter: acme, config: {}, credentials: { token: "fixture" } });
+void flow;
+`;
+  else if (mode === "boxd")
+    source = `
+import { Sandbar } from "sandbar-sdk";
+import { boxdAdapter } from "sandbar-boxd";
+async function flow() {
+  const client = await Sandbar.connect({ adapter: boxdAdapter, config: { org: "team", networkPolicy: "internet" }, credentials: { apiKey: "fixture" } });
+  const box = await client.sandboxes.create();
+  const volume = await client.volumes.create({ name: "workspace" });
+  const filesystem: "object-backed" | "block-backed" = (await volume.inspect()).filesystem;
+  const suspended = await box.suspend();
+  const connections: "dropped" | "preserved" = suspended.connections;
+  await box.resume();
+  await box.exec(["true"]);
+  await box.writeFile("/file", new Uint8Array([0,255]), { overwrite: true });
+  await box.readFile("/file");
+  await box.destroy(); await volume.delete(); await client.close();
+  return { filesystem, connections };
+}
 void flow;
 `;
   else if (mode === "modal")
@@ -871,6 +892,29 @@ try {
     ...sdkDeps,
     "sandbar-modal": archiveOverrides["sandbar-modal"],
   };
+
+  const boxd = join(temporary, "boxd-consumer");
+  await consumer(
+    boxd,
+    { ...sdkDeps, "sandbar-boxd": archiveOverrides["sandbar-boxd"] },
+    archiveOverrides,
+    `
+import { Sandbar } from "sandbar-sdk";
+import { boxdAdapter } from "sandbar-boxd";
+if (boxdAdapter.name !== "boxd") throw Error("External adapter identity mismatch");
+if (boxdAdapter.config.safeParse({ org: "team" }).success) throw Error("Internet setup must be explicit");
+try {
+  await Sandbar.connect({ adapter: boxdAdapter, config: { org: "team" }, credentials: { apiKey: "fixture" } });
+  throw Error("Invalid configuration accepted");
+} catch (error) { if (error.code !== "INVALID_ARGUMENT") throw error; }
+console.log("Packed boxd imports and local validation passed without provider IO");
+`,
+  );
+  await checkTypes(boxd, "boxd");
+  inspectGraph(boxd, ["sandbar-sdk", "sandbar-boxd"]);
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], boxd)}`);
 
   const e2bDeps = { ...sdkDeps };
 

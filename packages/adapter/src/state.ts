@@ -250,7 +250,7 @@ export const VolumeInfo = z.strictObject({
   reference: ResourceReference.refine((ref) => ref.kind === "volume"),
   name: z.string().min(1).max(128),
   state: z.enum(["creating", "ready", "deleting", "unknown"]),
-  filesystem: z.literal("object-backed"),
+  filesystem: z.enum(["object-backed", "block-backed"]),
   visibility: z.enum(["immediate", "unknown"]),
   durability: z.literal("unknown"),
   locking: z.literal("unknown"),
@@ -335,6 +335,15 @@ export type SnapshotCaptureValue = z.infer<typeof SnapshotCaptureValue>;
 /** Known native results accompanying an incomplete operation; never dispatch authority. */
 export const OperationOutcome = z.discriminatedUnion("kind", [
   z.strictObject({
+    kind: z.literal("create"),
+    status: z.literal("partial"),
+    sandbox: ResourceReference.extend({ kind: z.literal("sandbox") }),
+    setup: z.strictObject({
+      expiry: z.enum(["acknowledged", "unconfirmed"]),
+      readiness: z.enum(["acknowledged", "unconfirmed"]),
+    }),
+  }),
+  z.strictObject({
     kind: z.literal("snapshot_restore"),
     status: z.literal("unknown"),
     sandbox: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
@@ -348,7 +357,7 @@ export const OperationOutcome = z.discriminatedUnion("kind", [
       acknowledged: z.boolean(),
       preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
       processes: z.enum(["terminated", "preserved"]).optional(),
-      connections: z.literal("dropped").optional(),
+      connections: z.enum(["dropped", "preserved"]).optional(),
       observation: SandboxInfoSchema.nullable(),
     })
     .refine((v) =>
@@ -371,7 +380,7 @@ export const OperationOutcome = z.discriminatedUnion("kind", [
       observation: SandboxInfoSchema.nullable(),
       execution: z.enum(["fresh", "resumed", "unknown"]).optional(),
       executionIdentity: SandboxInfoSchema.shape.execution.optional(),
-      connections: z.enum(["dropped", "unknown"]).optional(),
+      connections: z.enum(["dropped", "preserved", "unknown"]).optional(),
     })
     .refine((v) =>
       v.acknowledged
@@ -520,7 +529,7 @@ export type StateCapabilities = {
     suspend: Support<{
       preserve: "filesystem" | "filesystem+memory";
       processes: "terminated" | "preserved";
-      connections: "dropped";
+      connections: "dropped" | "preserved";
     }>;
     resume: Support<{ sourceStates: SandboxState[]; setsSessionTimeout: boolean }>;
     renew: Support<import("./lifecycle").RenewLimits>;
@@ -537,7 +546,7 @@ export type StateCapabilities = {
   suspension: Support<{
     preserve: "filesystem" | "filesystem+memory";
     processes: "terminated" | "preserved";
-    connections: "dropped";
+    connections: "dropped" | "preserved";
   }>;
 };
 
@@ -827,7 +836,7 @@ export const DirectCapabilities = z.strictObject({
         z.strictObject({
           preserve: z.enum(["filesystem", "filesystem+memory"]),
           processes: z.enum(["terminated", "preserved"]),
-          connections: z.literal("dropped"),
+          connections: z.enum(["dropped", "preserved"]),
         }),
       ),
       resume: supportSchema(
@@ -863,7 +872,7 @@ export const DirectCapabilities = z.strictObject({
     z.strictObject({
       preserve: z.enum(["filesystem", "filesystem+memory"]),
       processes: z.enum(["terminated", "preserved"]),
-      connections: z.literal("dropped"),
+      connections: z.enum(["dropped", "preserved"]),
     }),
   ),
 });

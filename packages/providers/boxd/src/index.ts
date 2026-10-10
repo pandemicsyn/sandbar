@@ -1,0 +1,1 @@
+export { boxdAdapter } from "./adapter";

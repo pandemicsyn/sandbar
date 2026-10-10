@@ -29,6 +29,8 @@ const profilePath = process.env.SANDBAR_QUAL_PROFILE
 
 const external = profilePath ? await loadProviderProfile(profilePath) : undefined;
 
+export const fileNoClobber = external?.fileNoClobber ?? true;
+
 const declared =
   external?.support ?? builtinSupport.find((profile) => profile.id === selectedProvider);
 
@@ -178,8 +180,20 @@ export async function setupLive(
     ledger,
     profile.imageId,
     profile.network,
-    { ...budget, exerciseMs: profile.exerciseMs, cleanupMs: profile.cleanupMs },
-    { provider: profile.provider, connection: profile.connection },
+    {
+      ...budget,
+      exerciseMs: profile.exerciseMs,
+      cleanupMs: profile.cleanupMs,
+      configuredEnvironment: external?.configuredEnvironment ?? !external,
+    },
+    {
+      provider: profile.provider,
+      connection: profile.connection,
+      image: {
+        kind: profile.configuration.imageClass === "oci" ? "borrowed-oci" : "borrowed-prepared",
+        class: profile.configuration.imageClass,
+      },
+    },
   );
 
   const manifest = JSON.parse(await readFile(join(root, "packages/sdk/package.json"), "utf8"));

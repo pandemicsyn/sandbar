@@ -206,3 +206,30 @@ test("lifecycle still fails when inventory never includes the owned sandbox and 
   expect(f.calls).toMatchObject({ create: 1, destroy: 1 });
   expect((await f.ledger.read()).cleanup).toBe("confirmed");
 });
+
+test("configured OCI baseline rejects unsupported no-clobber before upload and preserves bytes", async () => {
+  const f = await fixture({ defaultOciImage: true, fileNoClobber: false });
+
+  const t = new TestResources(f.connect, f.ledger, "ubuntu:24.04", "blocked", {
+    compute: 1,
+    snapshots: 0,
+    volumes: 0,
+    exerciseMs: 5000,
+    cleanupMs: 1000,
+    configuredEnvironment: true,
+  });
+
+  await t.open();
+
+  try {
+    const box = await t.create("sandbox/source");
+    await files(t, box, "/tmp", false);
+  } finally {
+    await t.close();
+  }
+
+  expect(f.calls.create).toBe(1);
+  expect(f.calls.fileWrite).toBe(2);
+  expect(f.boxes.size).toBe(0);
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+});
