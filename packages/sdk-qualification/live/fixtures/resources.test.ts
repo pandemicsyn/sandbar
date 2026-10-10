@@ -1,12 +1,13 @@
 import { afterEach, expect, test, spyOn } from "bun:test";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixture, disposeFixtures } from "./offline";
 import { TestResources } from "./resources";
 import { snapshotRoundtrip } from "../snapshots.test";
 import { cleanupOwned } from "./cleanup";
+import { LedgerStore } from "../../provider-qualification/ledger";
 
 async function resources(f: Awaited<ReturnType<typeof fixture>>, exerciseMs = 5000) {
   const t = new TestResources(f.connect, f.ledger, "base", "blocked", {
@@ -504,4 +505,66 @@ test("uncertain restored compute is retained immediately and cleanup does not ne
   expect(f.snapshots.size).toBe(0);
   expect((await f.ledger.read()).cleanup).toBe("confirmed");
   expect(f.calls.restore).toBe(1);
+});
+
+test("partial create keeps acknowledged compute custody and cleans it without replaying setup", async () => {
+  const f = await fixture({ partialCreate: true });
+  const t = await resources(f);
+  await expect(t.create("sandbox/source")).rejects.toMatchObject({
+    code: "OUTCOME_UNKNOWN",
+    outcome: {
+      kind: "create",
+      status: "partial",
+      sandbox: { nativeId: "box_1" },
+      setup: { expiry: "unconfirmed", readiness: "unconfirmed" },
+    },
+  });
+  const before = await f.ledger.read();
+  const entry = before.stateMutations?.find((value) => value.role === "sandbox/source");
+  expect(entry?.sandboxId).toBe("box_1");
+  expect(Object.values(before.stateObservations ?? {})).toContainEqual(
+    expect.objectContaining({
+      kind: "create",
+      sandbox: expect.objectContaining({ nativeId: "box_1" }),
+    }),
+  );
+  await t.close();
+  expect(f.calls.create).toBe(1);
+  expect(f.calls.destroy).toBe(1);
+  expect(f.boxes.size).toBe(0);
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+});
+
+test("initial OCI provenance stays borrowed without granting image build or deletion ownership", async () => {
+  const f = await fixture();
+  const ledger = new LedgerStore(dirname(f.ledger.path), crypto.randomUUID());
+
+  const t = new TestResources(
+    f.connect,
+    ledger,
+    "ubuntu:24.04",
+    "blocked",
+    {
+      compute: 1,
+      snapshots: 0,
+      volumes: 0,
+      exerciseMs: 5000,
+      cleanupMs: 1000,
+    },
+    {
+      provider: "daytona",
+      connection: undefined,
+      image: { kind: "borrowed-oci", class: "oci" },
+    },
+  );
+
+  try {
+    await t.open();
+    expect((await ledger.read()).image).toEqual({ kind: "borrowed-oci", class: "oci" });
+  } finally {
+    await t.close();
+  }
+
+  expect(f.calls.create).toBe(0);
+  expect((await ledger.read()).cleanup).toBe("not-required");
 });

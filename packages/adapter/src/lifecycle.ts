@@ -64,7 +64,7 @@ export const SuspendResult = z.strictObject({
   reference: RenewResult.shape.reference,
   preserve: z.enum(["filesystem", "filesystem+memory"]),
   processes: z.enum(["terminated", "preserved"]),
-  connections: z.literal("dropped"),
+  connections: z.enum(["dropped", "preserved"]),
   observation: SandboxInfoSchema,
 });
 
@@ -74,7 +74,7 @@ export const ResumeResult = z.strictObject({
   reference: RenewResult.shape.reference,
   execution: z.enum(["fresh", "resumed", "unknown"]),
   executionIdentity: SandboxInfoSchema.shape.execution,
-  connections: z.enum(["dropped", "unknown"]),
+  connections: z.enum(["dropped", "preserved", "unknown"]),
   observation: SandboxInfoSchema,
 });
 

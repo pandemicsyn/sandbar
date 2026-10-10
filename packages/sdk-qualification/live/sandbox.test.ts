@@ -3,7 +3,14 @@ import { createHash } from "node:crypto";
 import { artifactFiles } from "../../../apps/docs/examples/directory-files";
 import type { AdapterSandbox } from "sandbar-sdk";
 import { TestResources } from "./fixtures/resources";
-import { liveEnabled, featureSupported, setupLive, finishLive, reopenSnapshot } from "./providers";
+import {
+  liveEnabled,
+  featureSupported,
+  setupLive,
+  finishLive,
+  reopenSnapshot,
+  fileNoClobber,
+} from "./providers";
 import { boundedRead } from "../provider-qualification/bounds";
 import { assertFiniteStdinWorkflow } from "../finite-stdin";
 
@@ -118,7 +125,12 @@ export async function execution(t: TestResources, box: AdapterSandbox) {
   ).rejects.toMatchObject({ name: "NonzeroExitError", code: "NONZERO_EXIT" });
 }
 
-export async function files(t: TestResources, box: AdapterSandbox, root = "/tmp") {
+export async function files(
+  t: TestResources,
+  box: AdapterSandbox,
+  root = "/tmp",
+  noClobber = true,
+) {
   const path = `${root}/sandbar-${t.ledger.runId}`;
   const first = new Uint8Array([0, 255, 1, 128]);
   const second = new Uint8Array([2, 254, 0]);
@@ -135,7 +147,7 @@ export async function files(t: TestResources, box: AdapterSandbox, root = "/tmp"
   expect(await t.read(box, path)).toEqual(second);
   await expect(
     box.writeFile(path, first, { overwrite: false, signal: t.signal }),
-  ).rejects.toMatchObject({ code: "CONFLICT" });
+  ).rejects.toMatchObject({ code: noClobber ? "CONFLICT" : "UNSUPPORTED" });
   expect(await t.read(box, path)).toEqual(second);
 }
 
@@ -290,12 +302,7 @@ describe("Sandbar sandbox", () => {
       await fixture.resources.setup(async () => {
         await fixture!.resources.open();
         const t = fixture!.resources;
-        box = await t.create(
-          "sandbox/source",
-          undefined,
-          t.network,
-          t.client.provider === "daytona" || t.client.provider === "e2b",
-        );
+        box = await t.create("sandbox/source");
       });
     }
   }, 96000);
@@ -319,7 +326,7 @@ describe("Sandbar sandbox", () => {
   );
   (liveEnabled ? test : test.skip)(
     "files",
-    async () => files(fixture!.resources, box, fixture!.fileRoot),
+    async () => files(fixture!.resources, box, fixture!.fileRoot, fileNoClobber),
     241000,
   );
   (liveEnabled && featureSupported("directories") ? test : test.skip)(
@@ -377,7 +384,9 @@ describe("Sandbar sandbox", () => {
       t.at("sandbox/resume");
       const resumed = await box.resume({ signal: t.signal });
       expect(resumed.reference).toEqual(reference);
-      expect(resumed.execution).toBe(t.client.provider === "daytona" ? "fresh" : "unknown");
+
+      if (suspended.processes === "terminated") expect(resumed.execution).toBe("fresh");
+      else expect(["resumed", "unknown"]).toContain(resumed.execution);
       expect(await t.read(box, path)).toEqual(bytes);
 
       if (t.client.provider === "daytona") {

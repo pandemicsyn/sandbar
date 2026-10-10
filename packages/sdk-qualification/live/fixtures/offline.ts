@@ -37,6 +37,9 @@ export async function fixture(
     memory?: boolean;
     restoreUnsupported?: boolean;
     unknownRestore?: boolean;
+    partialCreate?: boolean;
+    defaultOciImage?: boolean;
+    fileNoClobber?: boolean;
     mountsUnsupported?: boolean;
     volumeFailure?: "rejected" | "uncertain";
     readyAfterInspect?: number;
@@ -82,6 +85,7 @@ export async function fixture(
     volumeCreate: 0,
     create: 0,
     destroy: 0,
+    fileWrite: 0,
     peak: 0,
   };
 
@@ -152,13 +156,14 @@ export async function fixture(
 
       return {
         scope,
+        defaultImage: options.defaultOciImage ? { kind: "oci", value: "ubuntu:24.04" } : undefined,
         supports: {
-          images: ["prepared"],
+          images: options.defaultOciImage ? ["oci"] : ["prepared"],
           network: ["blocked"],
           exec: { commands: ["shell", "argv"], maxOutputBytes: 4096 },
-          fileWrite: { overwrite: true, noClobber: true },
+          fileWrite: { overwrite: true, noClobber: options.fileNoClobber ?? true },
         },
-        async create(input) {
+        async create(input, ctx) {
           calls.create++;
 
           if (options.failCreate) throw new Error("Fixture setup failed");
@@ -166,7 +171,20 @@ export async function fixture(
           if (options.createDelayMs)
             await new Promise((resolve) => setTimeout(resolve, options.createDelayMs));
 
-          return allocate(new Map(), input.mounts);
+          const created = allocate(new Map(), input.mounts);
+
+          if (options.partialCreate)
+            return ctx.unknown("Native expiry installation unconfirmed", {
+              kind: "create",
+              status: "partial",
+              sandbox: sandboxReference("fixture.state.lifecycle", scope, created.id, {
+                operation: ctx.operationId,
+                submission: ctx.submissionId,
+              }),
+              setup: { expiry: "unconfirmed", readiness: "unconfirmed" },
+            });
+
+          return created;
         },
         async destroy(box) {
           calls.destroy++;
@@ -478,6 +496,7 @@ export async function fixture(
             );
           },
           async write(input, ctx) {
+            calls.fileWrite++;
             const files = fileMap(input.sandbox.id, input.path);
 
             if (!input.overwrite && files.has(input.path))

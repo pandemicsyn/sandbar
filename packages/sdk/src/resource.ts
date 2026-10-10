@@ -308,6 +308,7 @@ export function checkExec(result: ExecOutput): ExecOutput {
 export function validateCreate(
   input: CreateInput | undefined,
   defaultEnvironment?: ImageInput,
+  defaultNetworkPolicy = "blocked",
 ): CreateInput & { environment: ImageInput } {
   const parsed = z
     .strictObject({
@@ -349,7 +350,11 @@ export function validateCreate(
         "Configure an adapter environment (daytona({ environment: ... })) or pass create({ environment: ... })",
       );
 
-    return validateCreate({ ...parsed.data, environment: defaultEnvironment });
+    return validateCreate(
+      { ...parsed.data, environment: defaultEnvironment },
+      undefined,
+      defaultNetworkPolicy,
+    );
   }
 
   if (!parsed.data.environment.value.trim())
@@ -360,7 +365,7 @@ export function validateCreate(
       parsed.data.environment.kind === "prepared"
         ? { kind: "prepared", imageId: parsed.data.environment.value }
         : { kind: "oci", reference: parsed.data.environment.value },
-    network: { policy: parsed.data.networkPolicy ?? "blocked" },
+    network: { policy: parsed.data.networkPolicy ?? defaultNetworkPolicy },
     requirements: parsed.data.requirements,
     region: parsed.data.region,
     labels: parsed.data.labels,
@@ -371,7 +376,7 @@ export function validateCreate(
   return {
     ...parsed.data,
     environment: parsed.data.environment,
-    networkPolicy: parsed.data.networkPolicy ?? "blocked",
+    networkPolicy: parsed.data.networkPolicy ?? defaultNetworkPolicy,
   };
 }
 

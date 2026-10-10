@@ -28,6 +28,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Volume CRUD                         | [Supported · passed at 1505ee0d](#daytona-volumes)              | [Unsupported · blocked at working-tree-before-dfc34b6 (historical)](#e2b-volumes) |
 | Mounted persistence                 | [Conditional · passed at 1505ee0d](#daytona-persistence)        | [Unsupported · not-run](#e2b-persistence)                                         |
 
+The external experimental [boxd adapter](/docs/providers/boxd/) has deterministic fixture coverage and no live qualification. Its declarations are maintained in an external provider profile; it is outside the selected launch release.
 The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. Daytona baseline passed at 8449def after allowing bounded inventory convergence; the original 1505ee0 failure remains recorded. Snapshot roundtrip, volume CRUD and mounted persistence retain their 1505ee0 passes. E2B baseline and RAM snapshot roundtrip passed at 8449def; its measured network probe failed at 431cdaa. All newly owned compute and retained artifacts have confirmed cleanup, while the original E2B volume uncertainty remains unresolved. Other operation/configuration claims retain their own recorded revisions and limitations below.
 
 ## Daytona caveats

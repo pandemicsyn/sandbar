@@ -13,7 +13,7 @@ const ledgerSchema = z.strictObject({
   provider: z.string().regex(/^[a-z][a-z0-9.-]{0,79}$/),
   createdAt: z.iso.datetime(),
   image: z.strictObject({
-    kind: z.enum(["borrowed-prepared", "owned-built"]),
+    kind: z.enum(["borrowed-prepared", "borrowed-oci", "owned-built"]),
     class: z.string().min(1).max(80),
   }),
   connection: z
