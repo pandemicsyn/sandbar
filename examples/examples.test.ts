@@ -2,7 +2,13 @@ import { expect, spyOn, test } from "bun:test";
 import { type ExecInput, type ExecOutput } from "sandbar-sdk";
 import { hello } from "./agent-hello-world/main";
 import { edit } from "./agent-edit-file/main";
-import { agentEnvironment, OPENCODE, OPENCODE_VERSION, WORKDIR } from "./shared/opencode";
+import {
+  agentEnvironment,
+  installOpenCode,
+  OPENCODE,
+  OPENCODE_VERSION,
+  WORKDIR,
+} from "./shared/opencode";
 import { cleanup } from "./shared/provider";
 
 function output(stdout: string, stderr = ""): ExecOutput {
@@ -250,4 +256,62 @@ test("truncated capture is reported as incomplete", async () => {
       signal,
     ),
   ).rejects.toThrow("captured output is incomplete");
+});
+
+test("standalone installation is pinned, bounded and uses the workflow signal", async () => {
+  const steps: string[] = [];
+  await installOpenCode(
+    {
+      async makeDirectory(path, options) {
+        steps.push("directory");
+        expect(path).toBe(WORKDIR);
+        expect(options?.signal).toBe(signal);
+      },
+      async exec(input, options) {
+        steps.push("install");
+        expect(options?.signal).toBe(signal);
+        expect(input).toMatchObject({
+          cwd: WORKDIR,
+          deadlineSeconds: 120,
+          maxOutputBytes: 16_384,
+        });
+
+        if (!("command" in input)) throw new Error("Expected structured installer input");
+
+        expect(input.env).toBeUndefined();
+        expect(input.command.kind).toBe("argv");
+
+        if (input.command.kind !== "argv") throw new Error("Expected argv installer");
+
+        const [shell, flag, script, name, version, directory] = input.command.argv;
+        expect([shell, flag, name, version, directory]).toEqual([
+          "/bin/sh",
+          "-c",
+          "install-opencode",
+          "1.18.35",
+          `${WORKDIR}/opencode`,
+        ]);
+        expect(script).toContain("sha256sum --check --status");
+        expect(OPENCODE).toBe(`${directory}/opencode`);
+
+        return output("");
+      },
+    },
+    signal,
+  );
+  expect(steps).toEqual(["directory", "install"]);
+});
+
+test("truncated installation output fails before agent execution", async () => {
+  await expect(
+    installOpenCode(
+      {
+        async makeDirectory() {},
+        async exec() {
+          return { ...output(""), truncated: true };
+        },
+      },
+      signal,
+    ),
+  ).rejects.toThrow("OpenCode installation output exceeded its bound");
 });

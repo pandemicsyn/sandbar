@@ -11,7 +11,7 @@ export const OPENCODE_VERSION = "1.18.35";
 
 const INSTALL = `${WORKDIR}/opencode`;
 
-export const OPENCODE = `${INSTALL}/node_modules/.bin/opencode`;
+export const OPENCODE = `${INSTALL}/opencode`;
 
 interface AgentEnvironment {
   OPENCODE_CONFIG_CONTENT: string;
@@ -71,14 +71,32 @@ export async function installOpenCode(
       command: {
         kind: "argv",
         argv: [
-          "npm",
-          "install",
-          "--prefix",
+          "/bin/sh",
+          "-c",
+          `set -eu
+[ "$(uname -s)" = Linux ] || { echo "OpenCode example requires Linux" >&2; exit 1; }
+case "$(uname -m)" in
+  x86_64)
+    target=linux-x64-baseline
+    digest=90c97d4a24d36437bce36f27195c9cd2e0b70ed037a04d1c6a6740eb246c2a73
+    ;;
+  aarch64|arm64)
+    target=linux-arm64
+    digest=f7f2ba59ee8aa94d388f9696575a32d20e71c2ee48def9f80fc693a60fec6c72
+    ;;
+  *) echo "OpenCode example requires Linux x64 or arm64" >&2; exit 1 ;;
+esac
+mkdir -p "$2"
+archive="$2/opencode.tar.gz"
+trap 'rm -f "$archive"' 0
+curl --fail --location --silent --show-error --connect-timeout 10 --max-time 100 \
+  --output "$archive" "https://github.com/anomalyco/opencode/releases/download/v$1/opencode-$target.tar.gz"
+printf '%s  %s\n' "$digest" "$archive" | sha256sum --check --status
+tar -xzf "$archive" -C "$2" opencode
+test -x "$2/opencode"`,
+          "install-opencode",
+          OPENCODE_VERSION,
           INSTALL,
-          "--no-audit",
-          "--no-fund",
-          "--save-exact",
-          `opencode-ai@${OPENCODE_VERSION}`,
         ],
       },
       cwd: WORKDIR,
