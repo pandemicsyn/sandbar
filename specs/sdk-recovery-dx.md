@@ -8,6 +8,15 @@ Sandbar makes provider operations convenient and their outcomes understandable. 
 
 The snapshot/volume foundation merged in PR #25. Preserve its native identity and scope validation, configured capture defaults, deletion safeguards, and protection against replaying uncertain mutations. Existing runtime recovery facilities are compatibility concerns, not a requirement to expand every SDK operation into a durable workflow.
 
+## October 11 canonical vocabulary acceptance (implementation pending)
+
+Canonical SDK consumer names are `SandbarClient`, `SandboxHandle`, `SnapshotHandle`, `VolumeHandle`, `OperationHandle<T>`, `RecoveryReference`, `ConnectOptions` and `CloseOptions`. Connect inference and nested factory/get/restore/recover declarations present these names. Preserve typed recovery narrowing, submit/prepare/recover, resource references and incoming owned-sandbox helper functionality. Inventory public methods and packed consumers first.
+
+Keep existing Adapter*/Direct* exports as compatibility names with appropriate deprecation guidance and existing runtime class identity/instanceof behavior. Use staged aliases and declaration changes without wrappers, mechanical implementation renames or adapter-to-SDK runtime dependencies. Adapter-author names remain distinct. Review session/telemetry/scope exposures without silently removing exported advanced access: explicitly document compatibility treatment. Keep both complete bounded `listFiles` and metadata-rich `readDirectory`, recommending the former for ordinary listings.
+
+Acceptance requires emitted-declaration and strict packed-consumer checks, complete advanced API/recovery narrowing coverage, class identity, generated references, compiled examples and migration notes. Reconcile incoming scope-helper types before C handoff. Independent correctness and API reviews are required before PR creation.
+
+
 ## 1. Ordinary snapshot results
 
 Keep `const captured = await sandbox.snapshot()` as the primary API. Its result contains the snapshot handle, actual capture preservation and the source state observed when the call finishes. Retain useful capture guarantees in the current public types. The handle is bound to its provider connection. `provider` must be directly discoverable on the snapshot and present in its serialized reference, including when the snapshot appears in a partial error. The same identity principle applies to volume handles.
