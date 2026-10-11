@@ -1,6 +1,6 @@
 # sandbar-boxd
 
-Experimental external boxd adapter for Sandbar. Implementation and offline fixtures are available; npm publication and live provider qualification are separate steps. Requires Node 20+ or Bun and a boxd **member API key** fenced to your default organization. Native SDK pinned to `@boxd-sh/sdk@0.2.15`.
+Experimental external boxd adapter for Sandbar. Implementation, offline fixtures and a live baseline are available; npm publication remains separate. Requires Node 20+ or Bun and a boxd **member API key** fenced to your default organization. Native SDK pinned to `@boxd-sh/sdk@0.2.15`.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
@@ -70,4 +70,6 @@ A lost disk-create acknowledgement can leave a disk with no saved UUID. Volume C
 
 Native Exec cancellation terminates the guest process group. The adapter therefore does not advertise disconnect-safe process handles. A buffered command has an explicit execution deadline; stopping a local wait does not certify its exit or replay it. Closing a connection drains already-dispatched finite exec RPCs until their deadline before releasing that channel, rather than cancelling them as an implicit kill. Close does not delete compute or disks. Reads cooperate with local cancellation/deadlines. A missing exit receipt remains unknown.
 
-Deterministic tests use a local gRPC server and the pinned SDK's public protobuf codecs. They establish request construction, bounds, scope rejection, acknowledgement handling and no replay. They do not establish current hosted behavior. The shared Bun provider profile is `packages/sdk-qualification/provider-qualification/boxd-profile.ts`; paid runs require separate authorization. This experimental external package is excluded from the selected Daytona/E2B 1.0 release gate until separately qualified and scheduled for publication.
+The baseline passed at `fcb59d4056b71529b7e8d0c8c3f5a2b17f76b72e` on October 11, 2026: sandbox lifecycle, captured execution, binary files/overwrite and scoped reopening (four cases, 15 assertions). The run used Bun 1.3.14/darwin-arm64, native SDK 0.2.15, the provider-default OCI image, explicit internet policy and a 900-second expiry. Its one owned sandbox was destroyed and the client closed; no storage was allocated. Suspend/resume, renewal, directories, disks/mounts and other configurations remain unqualified. See [sanitized live evidence](qualification/live-qualification.md) and [support](qualification/support.md).
+
+Deterministic tests use a local gRPC server and the pinned SDK's public protobuf codecs. They establish request construction, bounds, scope rejection, acknowledgement handling and no replay. They do not extend the live baseline to other behavior. The shared Bun provider profile is `packages/sdk-qualification/provider-qualification/boxd-profile.ts`; paid runs require separate authorization. This experimental external package is excluded from the selected Daytona/E2B 1.0 release gate until separately qualified and scheduled for publication.

@@ -3,7 +3,7 @@ title: boxd (external, experimental)
 description: Use the external boxd adapter for microVMs, independent disks and warm lifecycle operations.
 ---
 
-The external `sandbar-boxd` package implements the public Sandbar adapter interface. It is available in this repository; publication and live qualification are separate steps. Use Node 20+ or Bun. Native SDK version: `@boxd-sh/sdk@0.2.15`.
+The external `sandbar-boxd` package implements the public Sandbar adapter interface. It is available in this repository; publication remains separate from its recorded live baseline. Use Node 20+ or Bun. Native SDK version: `@boxd-sh/sdk@0.2.15`.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
@@ -36,7 +36,7 @@ Use a member API key and its authenticated default org ID/slug. Userless org key
 
 ## Adapter support
 
-All implemented features below have deterministic native-boundary coverage. **None has live hosted qualification yet.**
+Implemented features have deterministic native-boundary coverage. The four baseline workflows—sandbox lifecycle, captured execution, binary files/overwrite and scoped reopening—passed at `fcb59d4056b71529b7e8d0c8c3f5a2b17f76b72e` on October 11, 2026 (four cases, 15 assertions). The run used Bun 1.3.14/darwin-arm64, native SDK 0.2.15, the provider-default OCI image, explicit internet policy and a 900-second expiry. Its one owned sandbox was destroyed and the client closed; no storage was allocated. Suspend/resume, renewal, directories, disks/mounts and other configurations remain unqualified.
 
 | Feature                                       | Support                                                                                               |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -69,6 +69,6 @@ A lost disk-create acknowledgement can leave a disk with no saved UUID. Volume C
 
 Mutations are single-attempt. Local read cancellation reaches the transport. Buffered exec uses an explicit execution deadline; local wait cancellation is not confirmed guest termination. Closing the client drains dispatched finite commands until their deadline rather than implicitly cancelling them, then releases the channel. It does not destroy machines or disks. Missing exit evidence is unknown, never inferred success.
 
-The maintained external profile reuses the ordinary Bun sandbox and volume suites. It distinguishes unsupported no-clobber from conflict, independently tests disk CRUD and mounts, and keeps exact snapshot roundtrip unsupported. Paid runs need explicit authorization; no generated live pass is claimed by this page.
+The maintained external profile reuses the ordinary Bun sandbox and volume suites. It distinguishes unsupported no-clobber from conflict, independently tests disk CRUD and mounts, and keeps exact snapshot roundtrip unsupported. Further paid runs need explicit authorization. [Sanitized baseline evidence](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/boxd/qualification/live-qualification.md) records the tested revision and configuration.
 
 See the [provider implementation brief and plan](https://github.com/pandemicsyn/sandbar/issues/41) and [official boxd SDK docs](https://docs.boxd.sh/reference/typescript-sdk).

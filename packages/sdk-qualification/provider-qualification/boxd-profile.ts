@@ -23,8 +23,16 @@ const implemented = new Set([
 ]);
 
 const notes: Partial<Record<keyof typeof features, string>> = {
+  lifecycle:
+    "Sandbox lifecycle passed at fcb59d4 on Bun 1.3.14/darwin-arm64, provider-default OCI image, internet policy and 900-second expiry; one owned sandbox destroyed and client closed. Other configurations remain unqualified.",
+  execution:
+    "Buffered argv/shell and captured nonzero exit passed in the fcb59d4 baseline with confirmed cleanup. Output bounds and other command variants retain deterministic coverage; sustained process IO is unsupported.",
+  reopening:
+    "Scoped reopening passed in the fcb59d4 baseline with confirmed cleanup. Other configurations remain unqualified.",
+  renewal:
+    "Native wall-clock expiry reset is implemented with acknowledgement-preserving observations. No live qualification yet.",
   files:
-    "Bounded binary read and overwrite upload; native byte-count acknowledgement required. Atomic no-clobber is unsupported and the shared suite must assert rejection with unchanged data. No large-file/staged stream transfer guarantee.",
+    "Bounded binary read and overwrite upload; native byte-count acknowledgement required. Atomic no-clobber is unsupported and the shared suite must assert rejection with unchanged data. Binary files/overwrite and unsupported no-clobber rejection passed in the fcb59d4 baseline with confirmed cleanup. No large-file/staged stream transfer guarantee.",
   suspension:
     "Native pause/wake retain filesystem, RAM, processes and sockets. Inspect/reopen use metadata only. Native inbound traffic may wake compute. No live qualification yet.",
   volumes:
