@@ -1,8 +1,14 @@
 import { expect, test } from "bun:test";
 import { gunzipSync } from "node:zlib";
 import { extract } from "tar-stream";
-import { connectAdapter, type Json } from "sandbar-adapter";
-import { adapterSuite } from "sandbar-adapter/testing";
+import {
+  AdapterCheckpointError,
+  connectAdapter,
+  createAttemptContext,
+  operationParts,
+  type Json,
+} from "@sandbar-sdk/adapter";
+import { adapterSuite } from "@sandbar-sdk/adapter/testing";
 import { Image, Sandbar, type ExecInput } from "sandbar-sdk";
 import { createVercelAdapter } from "./adapter";
 import type { VercelTransport } from "./transport";
@@ -27,6 +33,7 @@ function fixture() {
   let createPending = false;
   let mutationFailure: { suffix: string; status: number | "lost" } | undefined;
   let loseWait = false;
+  let confirmedExit: number | undefined;
   let receiptPath = "/tmp/sandbar-exec-Fixture/receipt.json";
   const json = (value: Json, status = 200) => Response.json(value, { status });
 
@@ -144,7 +151,17 @@ function fixture() {
       }
 
       if (route.endsWith("/logs"))
-        return new Response(JSON.stringify({ stream: "stdout", data: receiptPath + "\n" }) + "\n");
+        return new Response(
+          JSON.stringify({
+            stream: "stdout",
+            data:
+              receiptPath +
+              "\n" +
+              (confirmedExit === undefined
+                ? ""
+                : JSON.stringify({ sandbarExit: 1, exitCode: confirmedExit }) + "\n"),
+          }) + "\n",
+        );
 
       if (route.endsWith("/fs/write")) {
         const cwd = new Headers(init.headers).get("x-cwd");
@@ -205,6 +222,9 @@ function fixture() {
     },
     setCreateStatus(status: number) {
       createStatus = status;
+    },
+    setConfirmedExit(exitCode: number) {
+      confirmedExit = exitCode;
     },
     loseNextWaitResponse() {
       loseWait = true;
@@ -594,8 +614,9 @@ test("a fresh OS process reopens the saved SDK reference using current credentia
 
     const box = await creation.wait();
     originalId = box.id;
+    expect(box.reference).toMatchObject({ kind: "sandbox", nativeId: box.id, provider: "vercel" });
     saved = JSON.stringify({
-      reference: creation.reference,
+      reference: box.reference,
       credentials: { token: "fresh-process-current-token" },
     });
   } finally {
@@ -643,6 +664,195 @@ test("acknowledged pending creation reaches readiness through session reads with
     expect(
       native.requests.some((request) => request.url.pathname.endsWith("/sessions/session-1")),
     ).toBe(true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("omitted create options use the configured image and network policy defaults", async () => {
+  for (const networkPolicy of ["vercel-deny-all", "vercel-allow-all"] as const) {
+    const native = fixture();
+
+    const client = await Sandbar.connect({
+      adapter: native.adapter,
+      config: { ...config, networkPolicy },
+      credentials,
+    });
+
+    try {
+      const box = await client.sandboxes.create();
+      expect(box.reference).toMatchObject({ kind: "sandbox", nativeId: box.id });
+
+      const request = native.requests.find(
+        (request) => request.url.pathname === "/api/v3/sandboxes",
+      );
+
+      expect(request).toBeDefined();
+      expect(JSON.parse(String(request?.init.body))).toMatchObject({
+        image: "vercel/sandbox/node:24",
+        networkPolicy: { mode: networkPolicy === "vercel-deny-all" ? "deny-all" : "allow-all" },
+      });
+      expect(native.effects.create).toBe(1);
+    } finally {
+      await client.close();
+    }
+  }
+});
+
+test("native output-read failures preserve the user exit evidence from helper logs", async () => {
+  const native = fixture();
+  const client = await Sandbar.connect({ adapter: native.adapter, config, credentials });
+
+  try {
+    const box = await client.sandboxes.create({
+      environment: Image.prepared(createInput.image.value),
+      networkPolicy: createInput.networkPolicy,
+    });
+
+    native.setConfirmedExit(23);
+    native.failMutation("/fs/read", 503);
+    const connection = await connectAdapter(native.adapter, { config, credentials });
+
+    try {
+      const exec = connection.session.exec;
+
+      if (!exec) throw new Error("Expected execution support");
+      const parts = operationParts(exec);
+
+      const context = createAttemptContext(
+        {
+          operationId: "operation-fixture",
+          submissionId: "submission-fixture",
+          invocationKey: "invocation-fixture",
+          signal: connection.signal,
+        },
+        parts.recovery?.token,
+      );
+
+      await expect(
+        parts.submit(
+          {
+            sandbox: { id: box.id },
+            command: { kind: "argv", argv: ["true"] },
+            deadlineSeconds: 1,
+            maxOutputBytes: 1024,
+          },
+          context,
+        ),
+      ).rejects.toMatchObject({ code: "UNAVAILABLE", confirmedExit: { exitCode: 23 } });
+      expect(
+        native.requests.filter(
+          (request) => request.url.pathname.endsWith("/cmd") && request.init.method === "POST",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await connection.close();
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+test("public exec failures retain confirmed exit evidence in the recovery token without replay", async () => {
+  const native = fixture();
+  let client = await Sandbar.connect({ adapter: native.adapter, config, credentials });
+
+  try {
+    const box = await client.sandboxes.create();
+    native.setConfirmedExit(23);
+    native.failMutation("/fs/read", 503);
+    const execution = await box.submitExec({ command: { kind: "argv", argv: ["true"] } });
+    await expect(execution.wait()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      reference: { token: { confirmedExit: { exitCode: 23 } } },
+    });
+    const reference = execution.reference;
+    expect(reference).toMatchObject({
+      token: { commandId: "cmd-fixture", sessionId: box.id, confirmedExit: { exitCode: 23 } },
+    });
+
+    const mutations = native.requests.filter(
+      (request) => request.init.method === "POST" && !request.url.pathname.endsWith("/fs/read"),
+    ).length;
+
+    await client.close();
+    client = await Sandbar.connect({ adapter: native.adapter, config, credentials });
+    const recovered = await client.recover(reference);
+    await expect(recovered.observe()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      reference: { token: { confirmedExit: { exitCode: 23 } } },
+    });
+    expect(recovered.reference).toMatchObject({ token: { confirmedExit: { exitCode: 23 } } });
+    expect(
+      native.requests.filter(
+        (request) => request.init.method === "POST" && !request.url.pathname.endsWith("/fs/read"),
+      ),
+    ).toHaveLength(mutations);
+    expect(
+      native.requests.filter(
+        (request) => request.url.pathname.endsWith("/cmd") && request.init.method === "POST",
+      ),
+    ).toHaveLength(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("failed confirmed-exit checkpoint persistence prevents reading the receipt", async () => {
+  const native = fixture();
+  const client = await Sandbar.connect({ adapter: native.adapter, config, credentials });
+
+  try {
+    const box = await client.sandboxes.create();
+    native.setConfirmedExit(23);
+    const connection = await connectAdapter(native.adapter, { config, credentials });
+
+    try {
+      const exec = connection.session.exec;
+
+      if (!exec) throw new Error("Expected execution support");
+      const parts = operationParts(exec);
+      const checkpoints: Json[] = [];
+
+      const context = createAttemptContext(
+        {
+          operationId: "operation-fixture",
+          submissionId: "submission-fixture",
+          invocationKey: "invocation-fixture",
+          signal: connection.signal,
+          async onCheckpoint(token) {
+            checkpoints.push(token);
+
+            if (checkpoints.length === 2) throw new Error("durable persistence failed");
+          },
+        },
+        parts.recovery?.token,
+      );
+
+      await expect(
+        parts.submit(
+          {
+            sandbox: { id: box.id },
+            command: { kind: "argv", argv: ["true"] },
+            deadlineSeconds: 1,
+            maxOutputBytes: 1024,
+          },
+          context,
+        ),
+      ).rejects.toBeInstanceOf(AdapterCheckpointError);
+      expect(checkpoints).toHaveLength(2);
+      expect(checkpoints[1]).toMatchObject({ confirmedExit: { exitCode: 23 } });
+      expect(
+        native.requests.filter((request) => request.url.pathname.endsWith("/fs/read")),
+      ).toHaveLength(0);
+      expect(
+        native.requests.filter(
+          (request) => request.url.pathname.endsWith("/cmd") && request.init.method === "POST",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await connection.close();
+    }
   } finally {
     await client.close();
   }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Sandbar } from "sandbar-sdk";
-import { vercel } from "sandbar-vercel";
+import { vercel } from "@sandbar-sdk/vercel";
 import { defineProviderProfile } from "./profile";
 
 const identifier = z
@@ -21,13 +21,55 @@ const routingSchema = z.strictObject({
 /** Effect-free external profile; loading it neither authenticates nor allocates. */
 export default defineProviderProfile({
   id: "vercel",
-  nativeVersion: "REST v3 create v2 sessions",
+  nativeVersion: "REST v3 create v2 sessions audited SDK 3.6.1",
+  configuredEnvironment: true,
+  fileNoClobber: false,
   credentialVariables: ["VERCEL_TOKEN"],
   bounds: { nativeLifetimeSeconds: 300, exerciseMs: 120000, cleanupMs: 60000 },
   support: {
     id: "vercel",
     name: "Vercel Sandbox",
     features: {
+      suspension: {
+        support: "unsupported",
+        note: "Immutable disposable sessions expose no suspend/resume mapping or retained inactive compute lifecycle.",
+      },
+      previewProtected: {
+        support: "unsupported",
+        note: "No protected preview routes or access credentials are exposed; sessions have no configured ports.",
+      },
+      previewPublic: {
+        support: "unsupported",
+        note: "No public preview routes or visibility changes are exposed; sessions have no configured ports.",
+      },
+      termination: {
+        support: "unsupported",
+        note: "No process handles or explicit process termination API are exposed. Bounded helper deadlines and sandbox destruction are separate behavior.",
+      },
+      renewal: {
+        support: "unsupported",
+        note: "No lifetime renewal is exposed; configured native lifetime is finite and cannot be extended through this adapter.",
+      },
+      reopening: {
+        support: "conditional",
+        note: "Ordinary sandbox.reference and sandboxes.get bind the immutable original session to verified team/project/iad1 scope with current credentials. Bounded project-session membership reads fail closed; reopening does not allocate, resume or renew. No live qualification.",
+      },
+      streaming: {
+        support: "unsupported",
+        note: "Captured execution only; no streaming process handles, interactive stdin or PTYs are exposed.",
+      },
+      finiteStdin: {
+        support: "unsupported",
+        note: "Finite stdin is not supported by the audited published native boundary and is not exposed by this adapter.",
+      },
+      directories: {
+        support: "unsupported",
+        note: "Only bounded binary file read/write is exposed; directory browsing, stat, copy, move and removal primitives are unsupported.",
+      },
+      storageComposition: {
+        support: "unsupported",
+        note: "No snapshots, volumes or mounts are exposed, including cold snapshot composition with selected storage.",
+      },
       lifecycle: {
         support: "conditional",
         note: "Immutable nonpersistent session IDs, managed Node 24 in iad1, verified team/project and a five-minute native lifetime. Destroy confirms original-session stop and reports retained named-sandbox metadata; metadata deletion is unsupported. No live qualification.",
@@ -46,7 +88,7 @@ export default defineProviderProfile({
       },
       network: {
         support: "conditional",
-        note: "Named vercel-deny-all and vercel-allow-all policies map to native deny-all/allow-all; the configured policy must be repeated at creation. No measured isolation evidence. The existing E2B-only paired network suite cannot qualify this profile.",
+        note: "Named vercel-deny-all and vercel-allow-all policies map to native deny-all/allow-all; omitted create environment/policy use adapter defaults, and explicit values must match the configured policy. No measured isolation evidence. The existing E2B-only paired network suite cannot qualify this profile.",
       },
       snapshots: {
         support: "unsupported",

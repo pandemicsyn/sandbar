@@ -1,14 +1,14 @@
 import {
   Sandbar,
   SandbarError,
-  type AdapterDirectClient,
-  type AdapterSandbox,
+  type SandbarClient,
+  type SandboxHandle,
   type ResourceReference,
   type SnapshotResult,
-  type AdapterVolume,
+  type VolumeHandle,
 } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
-import { e2b } from "sandbar-sdk/e2b";
+import { daytona } from "@sandbar-sdk/daytona";
+import { e2b } from "@sandbar-sdk/e2b";
 
 export type SaveReference = (json: string) => Promise<void>;
 
@@ -22,7 +22,7 @@ export function connectE2B(config: Parameters<typeof e2b>[0]) {
 }
 
 /** Capture and save are separate so a failed application save cannot hide the handle. */
-export async function captureSnapshot(box: AdapterSandbox) {
+export async function captureSnapshot(box: SandboxHandle) {
   const captured = await box.snapshot();
   console.log(captured.snapshot.provider, captured.snapshot.id);
 
@@ -34,14 +34,14 @@ export async function saveSnapshot(captured: SnapshotResult, save: SaveReference
 }
 
 /** Configure matching provider/scope using current credentials before reopening. */
-export async function reopenSnapshot(freshClient: AdapterDirectClient, saved: ResourceReference) {
+export async function reopenSnapshot(freshClient: SandbarClient, saved: ResourceReference) {
   const snapshot = await freshClient.snapshots.get(saved);
 
   return snapshot.restore({ networkPolicy: "blocked" });
 }
 
 /** A failed composite call may still contain a usable, confirmed capture. */
-export async function captureWithPartialResult(box: AdapterSandbox) {
+export async function captureWithPartialResult(box: SandboxHandle) {
   try {
     return await box.snapshot();
   } catch (error) {
@@ -59,15 +59,15 @@ export async function captureWithPartialResult(box: AdapterSandbox) {
 }
 
 /** Keep retained storage across connections; compute cleanup does not delete it. */
-export function createVolume(client: AdapterDirectClient) {
+export function createVolume(client: SandbarClient) {
   return client.volumes.create({ name: "workspace-data" });
 }
 
-export async function saveVolume(volume: AdapterVolume, save: SaveReference) {
+export async function saveVolume(volume: VolumeHandle, save: SaveReference) {
   await save(JSON.stringify(volume.reference));
 }
 
-export async function reopenVolume(freshClient: AdapterDirectClient, saved: ResourceReference) {
+export async function reopenVolume(freshClient: SandbarClient, saved: ResourceReference) {
   const volume = await freshClient.volumes.get(saved);
   const info = await volume.inspect();
 

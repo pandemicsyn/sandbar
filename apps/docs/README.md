@@ -30,10 +30,14 @@ The landing page is maintained separately in `src/pages/index.astro`.
 
 The getting started page imports `examples/getting-started-{daytona,e2b,modal}.ts`
 as its displayed code, so all three copyable examples are checked by the examples
-TypeScript project. Synchronized provider tabs switch install, credentials, and
-code together. The examples are not executed in offline checks because they
-create real sandboxes. Installation copy describes the upcoming package release
-until publication; contributor setup stays in this README.
+TypeScript project. Synchronized provider tabs switch credentials, code, and source-run commands together. The examples are not executed in offline checks because they
+create real sandboxes. Getting started uses checkout installation and workspace imports while packages are unpublished.
+
+The runnable agent examples page at `/docs/guides/runnable-agent-examples/`
+links to the root `examples/README.md` runbook and individual application source.
+It is discoverable from Getting started, the overview, sidebar, and landing page.
+These OpenCode workflows are distinct from the docs fixtures in `apps/docs/examples/`;
+their recorded live acceptance does not run during the docs build.
 
 Provider test evidence comes from the reviewed JSON files in
 `packages/sdk-qualification/provider-qualification/results/`. After an authorized

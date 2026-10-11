@@ -12,25 +12,30 @@ import {
   VolumeCreateInput,
   InventoryInput,
   type ArtifactDeletionResult,
+  type OperationKind,
   type SnapshotCaptureValue,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   SandbarError,
   UnsupportedFeatureError,
   OutcomeUnknownError,
   raceAbort,
   validateResourceInput,
+  type ReadOptions,
+  type SandboxHandle,
+  type SnapshotHandle,
+  type VolumeHandle,
+  type OperationHandle,
 } from "./resource";
 import {
   AdapterSandbox,
   type AdapterDirectClient,
-  type AdapterOperation,
   type AdapterRecoveryReference,
 } from "./adapter-direct";
 
 async function resourceRead<T>(
   client: AdapterDirectClient,
-  work: (ctx: import("sandbar-adapter").ReadContext) => Promise<T>,
+  work: (ctx: import("@sandbar-sdk/adapter").ReadContext) => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
   client.ensureOpen();
@@ -60,9 +65,12 @@ async function resourceRead<T>(
   }
 }
 
-export type WaitOptions = { signal?: AbortSignal; pollMs?: number };
+/** SDK restore input; native RestoreRequest remains fully resolved. */
+export type RestoreInput = Omit<RestoreRequest, "networkPolicy"> & { networkPolicy?: string };
 
-export type SnapshotResult = Omit<SnapshotCaptureValue, "snapshot"> & { snapshot: AdapterSnapshot };
+export type WaitOptions = ReadOptions & { pollMs?: number };
+
+export type SnapshotResult = Omit<SnapshotCaptureValue, "snapshot"> & { snapshot: SnapshotHandle };
 
 export function checkedResource(
   client: AdapterDirectClient,
@@ -87,6 +95,7 @@ export function checkedResource(
   return structuredClone(checked);
 }
 
+/** Use the SnapshotHandle type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterSnapshot {
   readonly reference: ResourceReference;
   constructor(
@@ -121,13 +130,50 @@ export class AdapterSnapshot {
 
     return info;
   }
-  /** Mount choices remain accepted for compatibility, but nonempty choices and mounted/unknown-provenance snapshots are unsupported. */
+  /** Restore private captured state with explicitly selected current volume data. */
   async submitRestore(
-    request: RestoreRequest,
+    request: RestoreInput = {},
     options: WaitOptions = {},
-  ): Promise<AdapterOperation<AdapterSandbox>> {
+  ): Promise<OperationHandle<SandboxHandle<true>, OperationKind>> {
     const ref = checkedResource(this.client, this.reference, "snapshot");
-    const input = validateResourceInput(RestoreRequest, request, "Invalid restore request");
+    // SDK-only deprecated empty-object alias for release R and R+1.
+    const legacy = z.record(z.string(), z.unknown()).safeParse(request?.mounts);
+    let normalized = request;
+
+    if (legacy.success) {
+      if (Object.keys(legacy.data).length)
+        throw new SandbarError(
+          "INVALID_ARGUMENT",
+          "Restore mounts now use MountSpec[]; replace legacy share/replace/omit maps with volume.at(path) descriptors",
+        );
+      normalized = { ...request, mounts: undefined };
+    }
+
+    const checked = validateResourceInput(
+      RestoreRequest.partial({ networkPolicy: true }),
+      normalized,
+      "Invalid restore request",
+    );
+
+    const input = validateResourceInput(
+      RestoreRequest,
+      {
+        ...checked,
+        networkPolicy:
+          checked.networkPolicy ?? this.client.session.defaultNetworkPolicy ?? "blocked",
+      },
+      "Invalid restore request",
+    );
+
+    for (const mount of input.mounts ?? []) checkedResource(this.client, mount.volume, "volume");
+
+    if (input.mounts?.length && this.client.session.snapshotRestore?.mountInput !== "specs")
+      throw new UnsupportedFeatureError("snapshot restore", [
+        "Upgrade this adapter: restore with mounts requires snapshotRestore.mountInput: specs",
+      ]);
+
+    if (!input.mounts?.length && this.client.session.snapshotRestore?.mountInput !== "specs")
+      delete input.mounts;
     const info = await this.inspect(options);
 
     if (info.state !== "ready" || info.preserve === null)
@@ -136,7 +182,9 @@ export class AdapterSnapshot {
     const unmet: string[] = [];
 
     if (!info.restore.networkPolicies.includes(input.networkPolicy))
-      unmet.push(`Network policy '${input.networkPolicy}' is unsupported`);
+      unmet.push(
+        `Network policy '${input.networkPolicy}' is unsupported by this connection for restore; supported policies: ${info.restore.networkPolicies.join(", ") || "none"}. Configure a separate connection with the requested policy if the adapter supports it.`,
+      );
 
     if (Object.keys(input.resources ?? {}).length > 0 && !info.restore.resources)
       unmet.push("Resource sizing overrides are unsupported");
@@ -144,10 +192,12 @@ export class AdapterSnapshot {
     if (input.requireIndependentLifecycle !== false && !info.restore.independentLifecycle)
       unmet.push("Independent lifecycle is required but unsupported");
 
-    if (Object.keys(input.mounts ?? {}).length)
-      unmet.push(
-        "Snapshot mount restore is not implemented: share, replace and omit choices are unsupported",
-      );
+    if (input.mounts?.length) {
+      if (!info.restore.mounts) unmet.push("This adapter does not support restore with mounts");
+
+      if (info.preserve !== "filesystem" || info.restoreExecution !== "fresh")
+        unmet.push("Restore with mounts requires filesystem preservation and fresh execution");
+    }
 
     if (info.mountHandling !== "none")
       unmet.push(
@@ -170,16 +220,24 @@ export class AdapterSnapshot {
         )
           throw new OutcomeUnknownError(recovery);
 
-        return new AdapterSandbox(this.client, result.value.id);
+        if (
+          input.mounts?.length &&
+          JSON.stringify(result.value.mounts) !== JSON.stringify(input.mounts)
+        )
+          throw new OutcomeUnknownError(recovery);
+
+        return new AdapterSandbox(this.client, result.value.id, result.value.reference ?? null);
       },
-      { ...options, resource: ref },
+      { ...options, resource: ref, mounts: input.mounts, networkPolicy: input.networkPolicy },
     );
   }
-  /** Restore requires no recorded mounts, confirmed mountHandling: "none", and absent or empty mount choices. */
-  async restore(input: RestoreRequest, options: WaitOptions = {}): Promise<AdapterSandbox> {
+  /** Restore requires no recorded native mounts and confirmed mountHandling: "none". */
+  async restore(input: RestoreInput = {}, options: WaitOptions = {}): Promise<SandboxHandle<true>> {
     return (await this.submitRestore(input, options)).wait(options);
   }
-  submitDelete(options: WaitOptions = {}): Promise<AdapterOperation<ArtifactDeletionResult>> {
+  submitDelete(
+    options: WaitOptions = {},
+  ): Promise<OperationHandle<ArtifactDeletionResult, OperationKind>> {
     return deleteResource(this.client, this.reference, "snapshot", options);
   }
   async delete(options: WaitOptions = {}): Promise<ArtifactDeletionResult> {
@@ -187,6 +245,7 @@ export class AdapterSnapshot {
   }
 }
 
+/** Use the VolumeHandle type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterVolume {
   readonly reference: ResourceReference;
   constructor(
@@ -230,7 +289,9 @@ export class AdapterVolume {
       "Invalid volume mount",
     );
   }
-  submitDelete(options: WaitOptions = {}): Promise<AdapterOperation<ArtifactDeletionResult>> {
+  submitDelete(
+    options: WaitOptions = {},
+  ): Promise<OperationHandle<ArtifactDeletionResult, OperationKind>> {
     return deleteResource(this.client, this.reference, "volume", options);
   }
   async delete(options: WaitOptions = {}): Promise<ArtifactDeletionResult> {
@@ -243,7 +304,7 @@ function deleteResource(
   reference: ResourceReference,
   kind: "snapshot" | "volume",
   options: WaitOptions,
-): Promise<AdapterOperation<ArtifactDeletionResult>> {
+): Promise<OperationHandle<ArtifactDeletionResult, OperationKind>> {
   const ref = checkedResource(client, reference, kind);
 
   return client.submit(
@@ -262,7 +323,7 @@ function deleteResource(
 
 export function resourceManagers(client: AdapterDirectClient) {
   const snapshots = {
-    async get(ref: ResourceReference) {
+    async get(ref: ResourceReference): Promise<SnapshotHandle> {
       const reference = checkedResource(client, ref, "snapshot");
 
       if (!client.session.snapshotInspect)
@@ -316,13 +377,16 @@ export function resourceManagers(client: AdapterDirectClient) {
   };
 
   const volumes = {
-    async get(ref: ResourceReference) {
+    async get(ref: ResourceReference): Promise<VolumeHandle> {
       const handle = new AdapterVolume(client, ref);
       await handle.inspect();
 
       return handle;
     },
-    async submitCreate(input: VolumeCreateInput, options: WaitOptions = {}) {
+    async submitCreate(
+      input: VolumeCreateInput,
+      options: WaitOptions = {},
+    ): Promise<OperationHandle<VolumeHandle, OperationKind>> {
       return client.submit(
         "volume_create",
         validateResourceInput(VolumeCreateInput, input, "Invalid volume create request"),
@@ -335,7 +399,7 @@ export function resourceManagers(client: AdapterDirectClient) {
         options,
       );
     },
-    async create(input: VolumeCreateInput, options: WaitOptions = {}) {
+    async create(input: VolumeCreateInput, options: WaitOptions = {}): Promise<VolumeHandle> {
       return (await volumes.submitCreate(input, options)).wait(options);
     },
     async list(input: InventoryInput) {
@@ -409,7 +473,7 @@ export function decodeCapture(
 
 export function decodeResourceResult(
   client: AdapterDirectClient,
-  result: import("sandbar-adapter").RuntimeResult,
+  result: import("@sandbar-sdk/adapter").RuntimeResult,
   ref: AdapterRecoveryReference,
 ) {
   if (result.kind !== "completed") throw new OutcomeUnknownError(ref);
@@ -420,7 +484,7 @@ export function decodeResourceResult(
   }
 
   if (ref.kind === "snapshot_restore" && "id" in value && value.state === "running")
-    return new AdapterSandbox(client, value.id);
+    return new AdapterSandbox(client, value.id, value.reference ?? null);
 
   if (ref.kind === "volume_create" && "filesystem" in value)
     return new AdapterVolume(client, value.reference);

@@ -5,7 +5,7 @@ import {
   defineAdapter,
   ResourceReference,
   type SnapshotProfile,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   Sandbar,
   SandbarError,

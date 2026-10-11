@@ -1,33 +1,39 @@
 # Specifications
 
-Keep this directory for focused implementation specs and a small set of current engineering contracts. Public usage belongs in [the docs site](../apps/docs/README.md), qualification belongs [with its harness](../packages/sdk-qualification/README.md), and sequencing belongs in the [roadmap](../ROADMAP.md).
+This directory holds current contracts and focused future design. [ROADMAP.md](../ROADMAP.md) is the only delivery queue. New work targets the SDK and public adapter API; preserve scope/identity validation, unknown-effect handling and no automatic mutation replay. Public usage belongs in [the docs](../apps/docs/README.md), and qualification rules/results belong [with the maintained suites](../packages/sdk-qualification/README.md).
 
-New features target the SDK and public adapter API; see the [delivery rule](../plans/implementation-plan.md#delivery-rule).
+## Implemented SDK usability contracts
 
-## Merged foundation and current work
+- [Filesystem DX](filesystem-dx.md) — directory/metadata, bounded transfers, copy/move, traversal and text lines. Ranges and other optional extensions remain deferred.
+- [Streaming and interactive processes](process-io-dx.md) — sustained text/byte output, status, incremental input/EOF, signals, explicit terminals, scoped reopening and diagnostic helpers on both official adapters.
 
-- [Provider state portability](provider-state-portability.md) — snapshot/volume support merged in PR #25. Later lifecycle and richer storage contracts remain proposals until implemented.
-- [SDK results, errors and persisted resource identities](sdk-recovery-dx.md) — ordinary results, direct partial outcomes and provider-identifying snapshot/volume handles merged in PR #33. Expanded persistence callbacks and workflow machinery remain deferred.
-- Provider acceptance merged in PR #32; use the [maintained Bun runner](../packages/sdk-qualification/provider-qualification/README.md) and generated evidence, not proposed qualification behavior.
-- Public direct resource types and caller input errors merged in PR #35.
-- Cleanup configuration merged in PR #34. [Lifecycle slice 1 reopen/inspect](sandbox-lifecycle.md) is delegated implementation work, not merged. The streaming/cancellation brief merged in PR #36; runtime implementation remains unshipped. See the [authoritative roadmap](../ROADMAP.md) for task identities and order. Later lifecycle choices and mounted storage composition remain later work.
+These are shipped contracts, not unfinished delivery plans. The roadmap owns remaining sequencing and qualification gaps.
 
-## Implemented observability contract
+## Current contracts
 
-- [SDK observability and diagnostics](sdk-observability.md) — direct SDK tracing/diagnostics and OpenTelemetry, Sentry, and Datadog recipes merged in PR #24. Metrics/events remain later work.
+| Contract | Implemented scope | Remaining boundary |
+| --- | --- | --- |
+| [State portability](provider-state-portability.md) | Snapshots/volumes (#25), cleanup configuration (#34) | Broader state sketches are not exported promises; use focused contracts below |
+| [Results and resource identities](sdk-recovery-dx.md) | Ordinary partial outcomes, scoped saved identities (#33) | Expanded persistence callbacks and workflow machinery deferred |
+| [Sandbox lifecycle](sandbox-lifecycle.md) | Reopen/inspect (#38), renewal (#55), suspend/resume (#57) | Native defaults and evidence; mounted suspension excluded |
+| [Execution and read cancellation](interactive-execution-and-access.md) | Finite E2B text streaming (#52), local read cancellation (#51) | Legacy finite E2B profile; sustained/byte/reopening behavior belongs to the process contract |
+| [Output and timeout semantics](output-and-timeouts.md) | Full decoding/previews (#53), timeout docs/fixtures (#54) | No new native runtime-enforcement guarantee |
+| [Creation and everyday files](sandbox-basics-dx.md) | Creation defaults (#58), text helpers (#61), optional directory hooks (#59) | Current filesystem guarantees in the filesystem contract; configured-creation qualification pending |
+| [Preview and process control](preview-and-process-control.md) | HTTP previews (#60), E2B local-handle termination (#66) | Private ingress qualification remains separate; current process controls are in the process contract |
+| [Finite exec stdin](process-stdin.md) | Text/byte input plus EOF across Daytona, E2B and experimental Modal (#71) | Finite exec live qualification pending; interactive pipe input has a separate contract |
+| [Storage composition](storage-composition.md) | Explicit selected-volume Daytona cold restore (#69), scoped live pass at `5911ccc` | Mounted capture, memory composition and blocked-policy mounted restore unsupported |
+| [Observability](sdk-observability.md) | Tracing/diagnostics and Sentry/Datadog recipes (#24) | Metrics/events deferred; vendor UI coverage is separate from local export fixtures |
 
-## Later design work
+These contracts are retained to explain behavior and protect guarantees, not to reopen completed implementation plans. Current SDK/adapter exports and tested public examples own exact signatures. Native research is dated evidence, not proof of current deployed behavior. The [generated support table](../apps/docs/src/content/docs/docs/providers/support.md) records live results separately; the roadmap lists remaining qualification work.
 
-- [First streaming execution slice](interactive-execution-and-access.md) — E2B text-streaming implementation brief merged in PR #36. No streaming runtime is implemented; terminals, endpoints and tunnels remain later work.
+## Example references
 
-Vercel and Tensorlake adapter specs will be written later. Accounting is deferred. Rust is not on the roadmap.
+- [Runnable agent examples](runnable-agent-examples.md) — implemented scope and acceptance for two OpenCode applications using public SDK execution and files on Daytona or E2B. Offline/local CLI validation and live provider acceptance remain separate.
 
-## Current engineering contracts
+## Engineering references
 
-- [Architecture](design.md) — the implemented SDK and adapter boundaries.
-- [Package conventions](package-conventions.md) — public names, dependencies and distribution rules.
-- [Validation](validation-and-contracts.md) — executable schema ownership and boundary requirements.
+- [Architecture](design.md) — implemented SDK/adapter boundaries.
+- [Package conventions](package-conventions.md) — public names, dependencies and distribution.
+- [Validation](validation-and-contracts.md) — schema ownership and boundary requirements.
 
-For the current API, use the [SDK source](../packages/sdk/src/index.ts), [resource types](../packages/sdk/src/resource.ts), [adapter API](../packages/adapter/src/index.ts). Do not duplicate their API inventory in a prose spec.
-
-Superseded top-level plans have been removed; Git history preserves them. The pre-existing [historical archive](archive/README.md) is context only and does not establish requirements, provider support, or release gates. New superseded plans should normally be deleted rather than copied into that archive.
+For exact APIs, use [SDK exports](../packages/sdk/src/index.ts), [resource types](../packages/sdk/src/resource.ts) and [adapter exports](../packages/adapter/src/index.ts). Completed plans, PR audit notes and superseded service/API archives were removed; Git history preserves them. Keep new work in a focused contract and the single roadmap rather than another duplicate plan.

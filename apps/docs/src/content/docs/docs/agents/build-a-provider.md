@@ -3,12 +3,12 @@ title: Build a provider integration
 description: A copyable prompt to get your coding agent implementing a Sandbar provider adapter.
 ---
 
-An adapter connects a provider's native API to Sandbar. Replace the bracketed fields and copy this prompt into an agent with access to the integration repository.
+An adapter connects a provider's native API to Sandbar. Sandbar packages are currently unpublished; use a source checkout or local packed artifacts during development. Replace the bracketed fields and copy this prompt into an agent with access to the integration repository.
 
 ```text wrap title="Provider integration prompt"
 Implement a Sandbar adapter for [provider] in [repository or package].
 The requested operations are [create, destroy, inspect, exec, files, etc.].
-Distribution: [a separate adapter package or a built-in SDK subpath].
+Distribution: [a separately installed official or third-party adapter package].
 
 Read the current Sandbar authoring docs and tested examples:
 - https://sandbarsdk.dev/docs/guides/write-an-adapter/
@@ -22,7 +22,7 @@ If working in the Sandbar repository, follow AGENTS.md and the
 and tests as the implementation authority, not archived proposals.
 
 Inspect the provider's official API documentation and the exact native
-SDK version. Implement defineAdapter from "sandbar-adapter". Keep the
+SDK version. Implement defineAdapter from "@sandbar-sdk/adapter". Keep the
 adapter independent of Sandbar internals. Separate configuration from
 credentials, verify native identity with authenticated read-only IO,
 and include identity-relevant routing partitions in the returned scope.
@@ -48,7 +48,7 @@ failure. Recovery must never replay a mutation. Keep secrets and native
 logs out of public errors, tokens, and committed evidence.
 
 Build an injectable native boundary and deterministic tests. Run
-adapterSuite from "sandbar-adapter/testing" and verify actual outbound
+adapterSuite from "@sandbar-sdk/adapter/testing" and verify actual outbound
 attempt counts, scope separation, binary fidelity, uncertain outcomes,
 cleanup, and supported recovery. Qualify packed artifacts with an external
 TypeScript consumer and the supported runtimes.
@@ -63,4 +63,4 @@ Finish with the implementation, usage example, validation results,
 and a precise list of unsupported or untested behavior.
 ```
 
-For a separately distributed adapter, consumers install its package alongside `sandbar-sdk` and pass the exported definition to `Sandbar.connect({ adapter, config, credentials })`. Built-in adapters use the same public contract with an SDK convenience import.
+For a separately distributed adapter, consumers install its package alongside `sandbar-sdk` and pass the exported definition to `Sandbar.connect({ adapter, config, credentials })`. Official adapters use the same public contract with convenience factories imported from their separately installed packages.

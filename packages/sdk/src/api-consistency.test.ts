@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter, ResourceReference, type SnapshotInfo } from "sandbar-adapter";
+import { defineAdapter, ResourceReference, type SnapshotInfo } from "@sandbar-sdk/adapter";
 import {
   AdapterSandbox,
   AdapterSnapshot,
@@ -152,7 +152,9 @@ test("restore reports every unmet guarantee and rejects compatibility mount choi
       effect: "none",
       feature: "snapshot restore",
       unmetRequirements: [
-        "Network policy 'all' is unsupported",
+        expect.stringContaining(
+          "Network policy 'all' is unsupported by this connection for restore",
+        ),
         "Resource sizing overrides are unsupported",
         "Independent lifecycle is required but unsupported",
       ],
@@ -166,18 +168,19 @@ test("restore reports every unmet guarantee and rejects compatibility mount choi
         f.snapshot.restore({
           networkPolicy: "blocked",
           requireIndependentLifecycle: false,
-          mounts: { "/mnt/data": choice },
+          mounts: JSON.parse(JSON.stringify({ "/mnt/data": choice })),
         }),
-      ).rejects.toBeInstanceOf(UnsupportedFeatureError);
+      ).rejects.toBeInstanceOf(SandbarError);
       await expect(
         f.snapshot.restore({
           networkPolicy: "blocked",
           requireIndependentLifecycle: false,
-          mounts: { "/mnt/data": choice },
+          mounts: JSON.parse(JSON.stringify({ "/mnt/data": choice })),
         }),
       ).rejects.toMatchObject({
         effect: "none",
-        unmetRequirements: [expect.stringContaining("Snapshot mount restore is not implemented")],
+        code: "INVALID_ARGUMENT",
+        message: expect.stringContaining("Restore mounts now use MountSpec[]"),
       });
     }
 
@@ -187,7 +190,7 @@ test("restore reports every unmet guarantee and rejects compatibility mount choi
         f.snapshot.restore({
           networkPolicy: "blocked",
           requireIndependentLifecycle: false,
-          mounts: {},
+          mounts: JSON.parse("{}"),
         }),
       ).rejects.toMatchObject({
         unmetRequirements: [expect.stringContaining("capture mount provenance is")],

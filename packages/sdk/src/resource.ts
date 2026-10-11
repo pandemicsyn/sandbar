@@ -1,19 +1,22 @@
-import type { OperationOutcome } from "sandbar-adapter";
-import { SnapshotRequest, MountSpec } from "sandbar-adapter";
+import type { OperationOutcome } from "@sandbar-sdk/adapter";
+import { SnapshotRequest, MountSpec } from "@sandbar-sdk/adapter";
 import type {
   AdapterDirectClient,
   AdapterSandbox,
+  AdapterOperation,
   AdapterRecoveryReference,
 } from "./adapter-direct";
-import type { RetainedArtifact, Scope } from "sandbar-adapter";
+import type { OperationKind, RetainedArtifact, Scope } from "@sandbar-sdk/adapter";
 import { z } from "zod";
+import type { AdapterSnapshot, AdapterVolume } from "./resources";
 import {
   CreateSandboxInput,
   ExecCommand,
   ExecRequest,
+  MAX_EXEC_STDIN_BYTES,
   FilePath,
   type SafeError,
-} from "sandbar-adapter/portable";
+} from "@sandbar-sdk/adapter/portable";
 
 export type PreparedImage = {
   kind: "prepared";
@@ -27,15 +30,9 @@ export type ImageBuildResult = {
   retainedResources: RetainedArtifact[];
 };
 
-export type OciImage = { kind: "oci"; value: string };
+export type { OciImage, ImageInput } from "@sandbar-sdk/adapter";
 
-export type ImageInput =
-  | {
-      kind: "prepared";
-      value: string;
-      binding?: { provider: string; scope: Scope };
-    }
-  | OciImage;
+import type { ImageInput, OciImage } from "@sandbar-sdk/adapter";
 
 export const Image = {
   prepared(value: string | PreparedImage): ImageInput {
@@ -57,7 +54,7 @@ export const Image = {
 };
 
 export type CreateInput = {
-  environment: ImageInput;
+  environment?: ImageInput;
   requirements?: { snapshot: SnapshotRequest };
   mounts?: MountSpec[];
   networkPolicy?: string;
@@ -69,9 +66,30 @@ export type ExecInput = {
   command: ExecCommand;
   cwd?: string;
   env?: Record<string, string>;
+  /** Finite stdin bytes; strings encode as UTF-8 and supplied input ends with guest EOF. */
+  stdin?: string | Uint8Array;
+  /** Provider-specific execution/observation limit (default 300), not a total wait budget. Use the call signal to bound local waiting. */
   deadlineSeconds?: number;
   maxOutputBytes?: number;
 };
+
+export type ValidatedExecInput = Required<
+  Pick<ExecInput, "command" | "deadlineSeconds" | "maxOutputBytes">
+> &
+  Omit<ExecInput, "stdin"> & { stdin?: Uint8Array };
+
+const ExecStdinInput = z.union([
+  z
+    .string()
+    .max(MAX_EXEC_STDIN_BYTES)
+    .transform((value) => ({ kind: "text" as const, value })),
+  z
+    .instanceof(Uint8Array)
+    .refine((value) => value.byteLength <= MAX_EXEC_STDIN_BYTES)
+    .transform((value) => ({ kind: "bytes" as const, value })),
+]);
+
+export type OutputPreview = { text: string; shortened: boolean };
 
 export type ExecOutput = {
   exitCode: number | null;
@@ -79,19 +97,28 @@ export type ExecOutput = {
   stderr: Uint8Array;
   truncated: boolean;
   stdoutText(maxBytes?: number): string;
+  stdoutText(options: { full: true }): string;
   stderrText(maxBytes?: number): string;
+  stderrText(options: { full: true }): string;
+  stdoutPreview(options?: { maxBytes?: number }): OutputPreview;
+  stderrPreview(options?: { maxBytes?: number }): OutputPreview;
 };
 
 export type RecoveryReference = AdapterRecoveryReference;
 
-export interface OperationHandle<T> {
-  readonly durability: "process";
-  readonly reference: RecoveryReference;
-  observe(): Promise<T | null>;
-  wait(options?: { signal?: AbortSignal; pollMs?: number }): Promise<T>;
-}
+/** A submitted operation; a concrete kind retains advanced continuation and narrowing. */
+export type OperationHandle<T, K extends OperationKind | undefined = undefined> = [K] extends [
+  OperationKind,
+]
+  ? AdapterOperation<T, Extract<K, OperationKind>>
+  : {
+      readonly durability: "process";
+      readonly reference: RecoveryReference;
+      observe(): Promise<T | null>;
+      wait(options?: { signal?: AbortSignal; pollMs?: number }): Promise<T>;
+    };
 
-/** Public direct connection surface, including snapshots and retained volumes. */
+/** @deprecated Use SandbarClient for the complete SDK connection surface. */
 export type DirectSandbarClient = Pick<
   AdapterDirectClient,
   | "provider"
@@ -105,14 +132,24 @@ export type DirectSandbarClient = Pick<
   | "close"
 >;
 
-/** Public direct sandbox surface, including capture and provider support checks. */
+/** @deprecated Use SandboxHandle. This structural compatibility view remains available. */
 export type DirectSandboxHandle = Pick<AdapterSandbox, keyof AdapterSandbox>;
 
 /** Public sandbox handle. */
-export type SandboxHandle = DirectSandboxHandle;
+export type SandboxHandle<Advanced extends boolean = false> = Advanced extends true
+  ? AdapterSandbox
+  : DirectSandboxHandle;
 
 /** Public SDK connection. */
-export type SandbarClient = DirectSandbarClient;
+export type SandbarClient<Advanced extends boolean = false> = Advanced extends true
+  ? AdapterDirectClient
+  : DirectSandbarClient;
+
+/** A retained snapshot, with independent restore and deletion operations. */
+export type SnapshotHandle = AdapterSnapshot;
+
+/** Retained storage, with explicit mount descriptors and deletion. */
+export type VolumeHandle = AdapterVolume;
 
 export class SandbarError extends Error {
   constructor(
@@ -196,12 +233,56 @@ export function newInvocationKey(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-export function outputText(bytes: Uint8Array, maxBytes = 16_384): string {
+function displayLimit(maxBytes = 16_384): number {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > 1_048_576)
     throw new RangeError("maxBytes must be between 0 and 1048576");
-  const slice = bytes.subarray(0, maxBytes);
 
-  return new TextDecoder().decode(slice) + (bytes.length > slice.length ? "…" : "");
+  return maxBytes;
+}
+
+type OutputOptions = { full: true } | { maxBytes?: number };
+
+function optionObject(value: OutputOptions, key: string): boolean {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JavaScript callers can supply malformed options to this public API.
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+
+  return (
+    Object.prototype.toString.call(value) === "[object Object]" &&
+    Reflect.ownKeys(value).every((field) => field === key) &&
+    (!(key in value) || Object.hasOwn(value, key))
+  );
+}
+
+function decodeOutput(bytes: Uint8Array, options?: number | { full: true }): string {
+  if (options === undefined) return new TextDecoder().decode(bytes);
+
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Preserve the numeric overload while validating JavaScript option objects.
+  if (typeof options === "number") {
+    const maxBytes = displayLimit(options);
+
+    return (
+      new TextDecoder().decode(bytes.subarray(0, maxBytes)) + (bytes.length > maxBytes ? "…" : "")
+    );
+  }
+
+  if (!optionObject(options, "full") || !Object.hasOwn(options, "full") || options.full !== true)
+    throw new RangeError("Text options must contain only full: true");
+
+  return new TextDecoder().decode(bytes);
+}
+
+export function outputText(bytes: Uint8Array, maxBytes?: number): string;
+export function outputText(bytes: Uint8Array, options: { full: true }): string;
+export function outputText(bytes: Uint8Array, options?: number | { full: true }): string {
+  return decodeOutput(bytes, options);
+}
+
+function previewOutput(bytes: Uint8Array, options?: { maxBytes?: number }): OutputPreview {
+  if (options !== undefined && !optionObject(options, "maxBytes"))
+    throw new RangeError("Preview options allow only maxBytes");
+  const maxBytes = displayLimit(options?.maxBytes);
+
+  return { text: decodeOutput(bytes, maxBytes), shortened: bytes.length > maxBytes };
 }
 
 export function validateFilePath(path: string): string {
@@ -222,8 +303,10 @@ export function execOutput(
     stdout,
     stderr,
     truncated,
-    stdoutText: (max) => outputText(stdout, max),
-    stderrText: (max) => outputText(stderr, max),
+    stdoutText: (options) => decodeOutput(stdout, options),
+    stderrText: (options) => decodeOutput(stderr, options),
+    stdoutPreview: (options) => previewOutput(stdout, options),
+    stderrPreview: (options) => previewOutput(stderr, options),
   };
 }
 
@@ -235,37 +318,59 @@ export function checkExec(result: ExecOutput): ExecOutput {
   return result;
 }
 
-export function validateCreate(input: CreateInput): CreateInput {
+export function validateCreate(
+  input: CreateInput | undefined,
+  defaultEnvironment?: ImageInput,
+  defaultNetworkPolicy = "blocked",
+): CreateInput & { environment: ImageInput; networkPolicy: string } {
   const parsed = z
     .strictObject({
-      environment: z.discriminatedUnion("kind", [
-        z.strictObject({
-          kind: z.literal("prepared"),
-          value: z.string().min(1),
-          binding: z
-            .strictObject({
-              provider: z.string().min(1).max(128),
-              scope: z.strictObject({
-                authority: z.strictObject({
-                  kind: z.string().min(1).max(64),
-                  id: z.string().min(1).max(512),
+      environment: z
+        .discriminatedUnion("kind", [
+          z.strictObject({
+            kind: z.literal("prepared"),
+            value: z.string().min(1),
+            binding: z
+              .strictObject({
+                provider: z.string().min(1).max(128),
+                scope: z.strictObject({
+                  authority: z.strictObject({
+                    kind: z.string().min(1).max(64),
+                    id: z.string().min(1).max(512),
+                  }),
+                  partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
                 }),
-                partition: z.record(z.string().min(1).max(64), z.string().max(2048)),
-              }),
-            })
-            .optional(),
-        }),
-        z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
-      ]),
+              })
+              .optional(),
+          }),
+          z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
+        ])
+        .optional(),
       requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
       mounts: z.array(MountSpec).max(32).optional(),
       networkPolicy: z.string().min(1).max(128).optional(),
       region: z.string().min(1).max(128).optional(),
       labels: z.record(z.string(), z.string()).optional(),
     })
-    .safeParse(input);
+    .safeParse(input === undefined ? {} : input);
 
-  if (!parsed.success || !parsed.data.environment.value.trim())
+  if (!parsed.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid create request");
+
+  if (parsed.data.environment === undefined) {
+    if (defaultEnvironment === undefined)
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Configure an adapter environment (daytona({ environment: ... })) or pass create({ environment: ... })",
+      );
+
+    return validateCreate(
+      { ...parsed.data, environment: defaultEnvironment },
+      undefined,
+      defaultNetworkPolicy,
+    );
+  }
+
+  if (!parsed.data.environment.value.trim())
     throw new SandbarError("INVALID_ARGUMENT", "A prepared or OCI image is required");
 
   const contract = CreateSandboxInput.safeParse({
@@ -273,7 +378,7 @@ export function validateCreate(input: CreateInput): CreateInput {
       parsed.data.environment.kind === "prepared"
         ? { kind: "prepared", imageId: parsed.data.environment.value }
         : { kind: "oci", reference: parsed.data.environment.value },
-    network: { policy: parsed.data.networkPolicy ?? "blocked" },
+    network: { policy: parsed.data.networkPolicy ?? defaultNetworkPolicy },
     requirements: parsed.data.requirements,
     region: parsed.data.region,
     labels: parsed.data.labels,
@@ -281,7 +386,11 @@ export function validateCreate(input: CreateInput): CreateInput {
 
   if (!contract.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid create request");
 
-  return { ...parsed.data, networkPolicy: parsed.data.networkPolicy ?? "blocked" };
+  return {
+    ...parsed.data,
+    environment: parsed.data.environment,
+    networkPolicy: parsed.data.networkPolicy ?? defaultNetworkPolicy,
+  };
 }
 
 function isArgumentArray(input: ExecInput | readonly string[]): input is readonly string[] {
@@ -290,16 +399,38 @@ function isArgumentArray(input: ExecInput | readonly string[]): input is readonl
 
 export function validateExec(
   input: ExecInput | readonly string[],
-): Required<Pick<ExecInput, "command" | "deadlineSeconds" | "maxOutputBytes">> & ExecInput {
+  options: { allowStdin?: boolean } = {},
+): ValidatedExecInput {
   const request = isArgumentArray(input)
     ? { command: { kind: "argv" as const, argv: [...input] } }
     : input;
+
+  if (options.allowStdin === false && !isArgumentArray(input) && request?.stdin !== undefined)
+    throw new SandbarError("INVALID_ARGUMENT", "stdin is available only for finite exec input");
+
+  let stdin: Uint8Array | undefined;
+
+  if (request?.stdin !== undefined) {
+    const parsedInput = ExecStdinInput.safeParse(request.stdin);
+
+    if (!parsedInput.success)
+      throw new SandbarError("INVALID_ARGUMENT", "Invalid or oversized execution stdin");
+
+    stdin =
+      parsedInput.data.kind === "text"
+        ? new TextEncoder().encode(parsedInput.data.value)
+        : new Uint8Array(parsedInput.data.value);
+
+    if (stdin.byteLength > MAX_EXEC_STDIN_BYTES)
+      throw new SandbarError("INVALID_ARGUMENT", "Execution stdin exceeds the byte bound");
+  }
 
   const parsed = ExecRequest.safeParse({
     command: request?.command,
     cwd: request?.cwd,
     env: request?.env,
     deadlineSeconds: request?.deadlineSeconds,
+    stdin,
     output: { capture: "bounded", maxBytes: request?.maxOutputBytes ?? 1_048_576 },
   });
 
@@ -309,6 +440,7 @@ export function validateExec(
     command: parsed.data.command,
     cwd: parsed.data.cwd,
     env: parsed.data.env,
+    stdin,
     deadlineSeconds: parsed.data.deadlineSeconds ?? 300,
     maxOutputBytes: parsed.data.output?.maxBytes ?? 1_048_576,
   };
@@ -376,3 +508,6 @@ export function validateResourceInput<S extends z.ZodType>(
 
   return parsed.data;
 }
+
+/** Options for local read-only sandbox observation. */
+export type ReadOptions = { signal?: AbortSignal };

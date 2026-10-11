@@ -98,6 +98,8 @@ try {
     `,
     );
 
+    let providerReplaced = false;
+
     const build = await Bun.build({
       entrypoints: [join(root, `apps/docs/examples/observability-${example}.ts`)],
       target: "node",
@@ -108,9 +110,13 @@ try {
         {
           name: "local-provider-and-vendor-boundaries",
           setup(builder) {
-            builder.onResolve({ filter: /^sandbar-sdk\/daytona$/ }, () => ({
-              path: join(root, "packages/sdk-qualification/observability/example-daytona.ts"),
-            }));
+            builder.onResolve({ filter: /^@sandbar-sdk\/daytona$/ }, () => {
+              providerReplaced = true;
+
+              return {
+                path: join(root, "packages/sdk-qualification/observability/example-daytona.ts"),
+              };
+            });
             builder.onResolve({ filter: /^sandbar-sdk$/ }, () => ({ path: sdkWrapper }));
             builder.onResolve({ filter: /^@opentelemetry\/sdk-trace-node$/ }, () => ({
               path: providerWrapper,
@@ -122,6 +128,7 @@ try {
     });
 
     assert(build.success, build.logs.join("\n"));
+    assert(providerReplaced, "Documentation example must use the local provider fixture");
 
     // Resolve application/vendor dependencies beside the repository, not from tmp.
     const executable = join(executables, `${example}.mjs`);

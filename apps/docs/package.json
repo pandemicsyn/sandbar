@@ -22,9 +22,12 @@
     "@sandbar/provider-fake": "workspace:*",
     "typescript": "5.9.3",
     "wrangler": "4.141.0",
-    "sandbar-adapter": "workspace:*",
+    "@sandbar-sdk/adapter": "workspace:*",
     "zod": "4.6.5",
-    "sandbar-modal": "workspace:*",
-    "satteri": "0.10.5"
+    "@sandbar-sdk/modal": "workspace:*",
+    "satteri": "0.10.5",
+    "@sandbar-sdk/daytona": "workspace:*",
+    "@sandbar-sdk/e2b": "workspace:*",
+    "@sandbar-sdk/boxd": "workspace:*"
   }
 }

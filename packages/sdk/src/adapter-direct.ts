@@ -1,9 +1,51 @@
+import { withSandbox, type SandboxScopeOptions } from "./scoped-sandbox";
+import { connectionBudget, type ConnectionWaitOptions, type CloseOptions } from "./connection-wait";
+import {
+  bufferedLimit,
+  streamFile,
+  writeStream,
+  filesystemError,
+  FilesystemError,
+  type FileReadOptions,
+  type FileWriteOptions,
+  type FileStreamOptions,
+  type FileStreamWriteOptions,
+  type TransferPolicy,
+} from "./file-transfer";
+import { FileMutationIntent, type FileEntry } from "@sandbar-sdk/adapter";
+import {
+  directoryEntries,
+  directoryRead,
+  directoryListingRead,
+  directoryResult,
+} from "./directory-read";
+import { readFileBytes } from "./file-read";
+import {
+  walkFiles,
+  readTextLines,
+  type WalkFilesOptions,
+  type WalkFileEntry,
+  type ReadTextLinesOptions,
+} from "./filesystem-extensions";
 import { freezeReference } from "./freeze-reference";
+import {
+  startProcess,
+  reopenProcess,
+  terminalHandle,
+  type ProcessReference,
+  type StartTerminalInput,
+  type TerminalHandle,
+  callbackExec,
+  type ExecOptions,
+  type StartProcessInput,
+  type ProcessHandle,
+  type ProcessOutputFormat,
+} from "./processes";
 import { certifyRecoveryReference, certifyOperationReference } from "./recovery-diagnostics";
 import {
   ReferenceSchema,
   CaptureExpectation,
-  type AdapterRecoveryReference,
+  type AdapterRecoveryReference as RecoveryReference,
 } from "./adapter-reference";
 import {
   Telemetry,
@@ -16,7 +58,24 @@ import {
   type ObservabilityOptions,
 } from "./observability";
 import {
-  SandboxState,
+  SandboxInfoSchema,
+  LifecycleInput,
+  ResolvedLifecycleInput,
+  SuspendResult,
+  ResumeResult,
+  type LifecycleIntent,
+  PreviewResult,
+  PreviewPort,
+  type Preview,
+  RenewRequest,
+  RenewResult,
+  ResolvedRenewInput,
+  unknownSandboxFacts,
+  validateResourceReference,
+  assertSandboxReference,
+  sandboxReference,
+  type SandboxReference,
+  type SandboxInfo,
   stateCapabilities,
   resolveSnapshot,
   checkCreate,
@@ -25,7 +84,7 @@ import {
   type SnapshotPlan,
   type CreatePlan,
   type DirectCapabilities,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import {
   AdapterVolume,
@@ -42,7 +101,7 @@ import {
   type ArtifactDeletionResult,
   type DestroyValue,
   type OperationInput,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   AdapterError,
   AdapterCheckpointError,
@@ -63,7 +122,7 @@ import {
   type RuntimeResult,
   type Scope,
   type Sandbox,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   NonzeroExitError,
   NoExitCodeError,
@@ -78,6 +137,11 @@ import {
   validateCreate,
   validateExec,
   validateFilePath,
+  type ReadOptions,
+  type SandbarClient,
+  type SandboxHandle,
+  type VolumeHandle,
+  type OperationHandle,
   validateResourceInput,
   waitDelay,
   type CreateInput,
@@ -91,6 +155,12 @@ export { Image, outputText } from "./resource";
 
 export type { AdapterRecoveryReference } from "./adapter-reference";
 
+function directoryPath(path: string): string {
+  validateFilePath(path);
+
+  return "/" + path.split("/").filter(Boolean).join("/");
+}
+
 function canonicalScope(scope: Scope): string {
   return JSON.stringify({
     authority: scope.authority,
@@ -100,7 +170,7 @@ function canonicalScope(scope: Scope): string {
   });
 }
 
-function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryReference {
+function sealedReference(value: RecoveryReference): RecoveryReference {
   const parsed = ReferenceSchema.parse(value);
 
   if (new TextEncoder().encode(JSON.stringify(parsed)).length > 16_384)
@@ -114,7 +184,13 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
   );
 
   const artifactOperation = ["snapshot_delete", "volume_delete"].includes(copy.kind);
-  const boundSandbox = createsResource || artifactOperation ? !copy.sandboxId : !!copy.sandboxId;
+
+  const boundSandbox =
+    (createsResource || artifactOperation ? !copy.sandboxId : !!copy.sandboxId) &&
+    (!copy.sandboxReference ||
+      (copy.sandboxReference.nativeId === copy.sandboxId &&
+        copy.sandboxReference.provider === copy.provider &&
+        canonicalScope(copy.sandboxReference.scope) === canonicalScope(copy.scope)));
 
   const boundResource = ["snapshot_restore", "snapshot_delete"].includes(copy.kind)
     ? copy.resource?.kind === "snapshot"
@@ -122,11 +198,23 @@ function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryRefere
       ? copy.resource?.kind === "volume"
       : !copy.resource;
 
+  const boundLifecycle =
+    ["sandbox_suspend", "sandbox_resume"].includes(copy.kind) === !!copy.lifecycle &&
+    (!copy.lifecycle ||
+      (copy.kind === `sandbox_${copy.lifecycle.action}` && !!copy.sandboxReference));
+
+  const boundRenewal =
+    (copy.kind === "sandbox_renew") === !!copy.renewal &&
+    (copy.kind !== "sandbox_renew" || !!copy.sandboxReference);
+
   const boundCapture = (copy.kind === "snapshot_capture") === !!copy.capture;
 
   return boundSandbox &&
     boundResource &&
     boundCapture &&
+    boundLifecycle &&
+    boundRenewal &&
+    ["file_mkdir", "file_remove"].includes(copy.kind) === !!copy.fileMutation &&
     (copy.kind === "file_write") === !!copy.file
     ? certifyRecoveryReference(copy)
     : copy;
@@ -150,15 +238,80 @@ function identity() {
 }
 
 function asUnknown(
-  ref: AdapterRecoveryReference,
+  ref: RecoveryReference,
   reason?: string,
-  outcome?: import("sandbar-adapter").OperationOutcome,
-): OutcomeUnknownError<AdapterRecoveryReference> {
+  outcome?: import("@sandbar-sdk/adapter").OperationOutcome,
+): OutcomeUnknownError<RecoveryReference> {
   return new OutcomeUnknownError(ref, reason, outcome);
+}
+
+function acknowledgedLifecycleOutcome(
+  ref: RecoveryReference,
+): import("@sandbar-sdk/adapter").OperationOutcome | undefined {
+  if (!ref.sandboxReference || !ref.lifecycle) return undefined;
+
+  const token = z
+    .object({
+      acknowledged: z.literal(true),
+      preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
+      processes: z.enum(["terminated", "preserved"]).optional(),
+      connections: z.enum(["dropped", "preserved"]).optional(),
+      completed: z.record(z.string(), z.json()).optional(),
+    })
+    .safeParse(ref.token);
+
+  if (!token.success) return undefined;
+  const completed = token.data.completed;
+
+  const rawObservation = completed
+    ? z.record(z.string(), z.json()).safeParse(completed.observation)
+    : undefined;
+
+  const observation = rawObservation?.success
+    ? SandboxInfoSchema.safeParse({ ...rawObservation.data, reference: ref.sandboxReference })
+    : undefined;
+
+  const value = OperationOutcome.safeParse({
+    kind: ref.kind,
+    status: observation?.success ? "completed" : "partial",
+    reference: ref.sandboxReference,
+    acknowledged: true,
+    ...(ref.kind === "sandbox_suspend"
+      ? {
+          preserve: completed?.preserve ?? token.data.preserve,
+          processes: completed?.processes ?? token.data.processes,
+          connections: completed?.connections ?? token.data.connections,
+        }
+      : completed
+        ? {
+            execution: completed.execution,
+            executionIdentity: completed.executionIdentity,
+            connections: completed.connections,
+          }
+        : {}),
+    observation: observation?.success ? observation.data : null,
+  });
+
+  return value.success ? value.data : undefined;
 }
 
 function unsupported(feature: string): never {
   throw new SandbarError("UNSUPPORTED", `${feature} is unsupported`);
+}
+
+function fileOptions(options: {
+  signal?: AbortSignal;
+  overwrite?: boolean;
+  followSymlinks?: boolean;
+}): void {
+  assertSignal(options.signal);
+
+  if (
+    !z
+      .object({ overwrite: z.boolean().optional(), followSymlinks: z.boolean().optional() })
+      .safeParse(options).success
+  )
+    throw new SandbarError("INVALID_ARGUMENT", "Invalid filesystem options");
 }
 
 function fileReadLimit(maxBytes: number): number {
@@ -170,11 +323,11 @@ function fileReadLimit(maxBytes: number): number {
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- AbortSignal.reason may be any JavaScript value and is preserved in WaitAbortedError.
 function abortWaiting(
-  ref: AdapterRecoveryReference,
+  ref: RecoveryReference,
   reason: AbortSignal["reason"],
-  outcome?: import("sandbar-adapter").OperationOutcome,
+  outcome?: import("@sandbar-sdk/adapter").OperationOutcome,
 ): never {
-  throw new WaitAbortedError(ref, reason, outcome);
+  throw new WaitAbortedError(ref, reason, outcome ?? acknowledgedLifecycleOutcome(ref));
 }
 
 async function waitForSubmission<T>(
@@ -226,33 +379,93 @@ async function readWhileOpen<T>(client: AdapterDirectClient, work: Promise<T>): 
 export type AdapterCapabilities = DirectCapabilities;
 
 export type RecoveredOperation =
-  | AdapterOperation<AdapterSandbox, "create" | "snapshot_restore">
-  | AdapterOperation<SnapshotResult, "snapshot_capture">
-  | AdapterOperation<AdapterVolume, "volume_create">
-  | AdapterOperation<ArtifactDeletionResult, "snapshot_delete" | "volume_delete">
-  | AdapterOperation<ImageBuildResult, "image_build">
-  | AdapterOperation<ExecOutput, "exec">
-  | AdapterOperation<DestroyValue, "destroy">
-  | AdapterOperation<void, "file_write">;
+  | OperationHandle<SandboxHandle<true>, "create" | "snapshot_restore">
+  | OperationHandle<SuspendResult, "sandbox_suspend">
+  | OperationHandle<ResumeResult, "sandbox_resume">
+  | OperationHandle<RenewResult, "sandbox_renew">
+  | OperationHandle<SnapshotResult, "snapshot_capture">
+  | OperationHandle<VolumeHandle, "volume_create">
+  | OperationHandle<ArtifactDeletionResult, "snapshot_delete" | "volume_delete">
+  | OperationHandle<ImageBuildResult, "image_build">
+  | OperationHandle<ExecOutput, "exec">
+  | OperationHandle<DestroyValue, "destroy">
+  | OperationHandle<void, "file_write" | "file_mkdir" | "file_remove">;
 
+function decodeSuspend(result: RuntimeResult, ref: RecoveryReference): SuspendResult {
+  if (result.kind !== "completed" || !ref.sandboxReference || ref.lifecycle?.action !== "suspend")
+    throw asUnknown(ref);
+  const value = SuspendResult.parse(result.value);
+  assertSandboxReference(value.reference, ref.sandboxReference);
+
+  if (
+    value.preserve !== ref.lifecycle.preserve ||
+    !["stopped", "suspended"].includes(value.observation.state)
+  )
+    throw asUnknown(ref, "Suspension evidence differs");
+
+  if (value.observation.reference)
+    assertSandboxReference(value.observation.reference, ref.sandboxReference);
+
+  return value;
+}
+
+function decodeResume(result: RuntimeResult, ref: RecoveryReference): ResumeResult {
+  if (result.kind !== "completed" || !ref.sandboxReference || ref.lifecycle?.action !== "resume")
+    throw asUnknown(ref);
+  const value = ResumeResult.parse(result.value);
+  assertSandboxReference(value.reference, ref.sandboxReference);
+
+  if (value.observation.state !== "running") throw asUnknown(ref, "Resume evidence differs");
+
+  if (value.observation.reference)
+    assertSandboxReference(value.observation.reference, ref.sandboxReference);
+
+  return value;
+}
+
+function decodeRenew(result: RuntimeResult, ref: RecoveryReference): RenewResult {
+  if (
+    result.kind !== "completed" ||
+    !("acknowledged" in result.value) ||
+    !ref.sandboxReference ||
+    !ref.renewal
+  )
+    throw asUnknown(ref);
+  const value = RenewResult.parse(result.value);
+  assertSandboxReference(value.reference, ref.sandboxReference);
+
+  if (value.requested.forSeconds !== ref.renewal.forSeconds)
+    throw asUnknown(ref, "Resolved renewal window differs");
+
+  if (value.observation?.reference)
+    assertSandboxReference(value.observation.reference, ref.sandboxReference);
+
+  return value;
+}
+
+function sandboxInput(id: string, reference?: SandboxReference | null) {
+  return reference ? { id, reference } : { id };
+}
+
+/** Use the OperationHandle type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterOperation<T, K extends OperationKind = OperationKind> {
   readonly durability = "process" as const;
   private first: RuntimeResult | undefined;
-  #reference: AdapterRecoveryReference;
-  get reference(): AdapterRecoveryReference {
+  #reference: RecoveryReference;
+  get reference(): RecoveryReference {
     return this.#reference;
   }
   private continuing = false;
   private revision = 0;
   private persistence: Promise<void> = Promise.resolve();
-  private persistedReference?: AdapterRecoveryReference;
+  private persistedReference?: RecoveryReference;
   private terminal?: { value: T } | { error: Error };
   private pendingAt: number | null = null;
   private nextPollAt = 0;
   constructor(
     private readonly client: AdapterDirectClient,
-    reference: AdapterRecoveryReference,
-    private readonly decode: (value: RuntimeResult, ref: AdapterRecoveryReference) => T,
+    reference: RecoveryReference,
+    private readonly decode: (value: RuntimeResult, ref: RecoveryReference) => T,
     first?: RuntimeResult,
     // SAFETY: default K is OperationKind; internal narrowed constructors pass a validated kind.
     readonly kind: K = reference.kind as K,
@@ -318,7 +531,9 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
         {
           operationId: this.reference.operationId,
           submissionId: this.reference.submissionId,
-          sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+          sandbox: this.reference.sandboxId
+            ? sandboxInput(this.reference.sandboxId, this.reference.sandboxReference)
+            : undefined,
           resource: this.reference.resource,
           mounts: this.reference.mounts,
           capture: this.reference.capture,
@@ -428,9 +643,13 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
           {
             operationId: this.reference.operationId,
             submissionId: this.reference.submissionId,
-            sandbox: this.reference.sandboxId ? { id: this.reference.sandboxId } : undefined,
+            sandbox: this.reference.sandboxId
+              ? sandboxInput(this.reference.sandboxId, this.reference.sandboxReference)
+              : undefined,
             resource: this.reference.resource,
             mounts: this.reference.mounts,
+            lifecycle: this.reference.lifecycle,
+            renewal: this.reference.renewal,
             capture: this.reference.capture,
             token: this.reference.token,
             version: this.reference.tokenVersion,
@@ -600,24 +819,227 @@ export class AdapterOperation<T, K extends OperationKind = OperationKind> {
   }
 }
 
+// Shared only within one client/scope, never native execution-generation proof.
+const processControls = new WeakMap<AdapterDirectClient, Map<string, { active: boolean }>>();
+
+function processControl(client: AdapterDirectClient, sandboxId: string): { active: boolean } {
+  let controls = processControls.get(client);
+
+  if (!controls) {
+    controls = new Map();
+    processControls.set(client, controls);
+  }
+
+  let control = controls.get(sandboxId);
+
+  if (!control) {
+    control = { active: true };
+    controls.set(sandboxId, control);
+  }
+
+  return control;
+}
+
+/** Use the SandboxHandle type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterSandbox {
+  private invalidateProcessControl(): void {
+    const controls = processControls.get(this.client);
+    const control = controls?.get(this.id);
+
+    if (control) control.active = false;
+    controls?.delete(this.id);
+  }
+  #reference: SandboxReference | null;
+  get reference(): SandboxReference | null {
+    return this.#reference;
+  }
   constructor(
     private readonly client: AdapterDirectClient,
     readonly id: string,
+    reference: SandboxReference | null = null,
   ) {
+    if (reference) {
+      reference = validateResourceReference(reference);
+      assertResourceScope(reference, { provider: client.provider, scope: client.scope });
+
+      if (reference.kind !== "sandbox" || reference.nativeId !== id)
+        throw new SandbarError("INVALID_RESPONSE", "Sandbox identity differs");
+    }
+
+    this.#reference = reference ? freezeReference(reference) : null;
     instrument(this, "capabilities", client.telemetry, "sandbar.capabilities");
     instrument(this, "checkSnapshot", client.telemetry, "sandbar.snapshot.check");
+    instrument(this, "preview", client.telemetry, "sandbar.sandbox.preview");
     instrument(this, "inspect", client.telemetry, "sandbar.sandbox.inspect");
     instrument(this, "submitExec", client.telemetry, "sandbar.exec.submit", { effect: "possible" });
     instrument(this, "exec", client.telemetry, "sandbar.exec", { effect: "applied" });
+    instrument(this, "listFiles", client.telemetry, "sandbar.file.list");
+    instrument(this, "fileExists", client.telemetry, "sandbar.file.exists");
+    instrument(this, "makeDirectory", client.telemetry, "sandbar.file.mkdir", {
+      effect: "applied",
+    });
+    instrument(this, "removeFile", client.telemetry, "sandbar.file.remove", { effect: "applied" });
+    instrument(this, "readDirectory", client.telemetry, "sandbar.file.read_directory");
+    instrument(this, "statFile", client.telemetry, "sandbar.file.stat");
+    instrument(this, "copyFile", client.telemetry, "sandbar.file.copy", { effect: "applied" });
+    instrument(this, "moveFile", client.telemetry, "sandbar.file.move", { effect: "applied" });
+    instrument(this, "writeFileStream", client.telemetry, "sandbar.file.write_stream", {
+      effect: "applied",
+    });
     instrument(this, "readFile", client.telemetry, "sandbar.file.read");
     instrument(this, "writeFile", client.telemetry, "sandbar.file.write", { effect: "applied" });
     instrument(this, "destroy", client.telemetry, "sandbar.sandbox.destroy", { effect: "applied" });
+    instrument(this.processes, "reopen", client.telemetry, "sandbar.process.reopen");
+    instrument(this.terminals, "start", client.telemetry, "sandbar.terminal.start", {
+      effect: "possible",
+    });
+    instrument(this.terminals, "reopen", client.telemetry, "sandbar.terminal.reopen");
+    instrument(this.processes, "start", client.telemetry, "sandbar.process.start", {
+      effect: "possible",
+    });
+  }
+  readonly terminals = {
+    start: (input: StartTerminalInput, options: WaitOptions = {}): Promise<TerminalHandle> => {
+      this.client.ensureOpen();
+      const control = processControl(this.client, this.id);
+
+      return startProcess(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        {
+          command: input.command,
+          cwd: input.cwd,
+          env: input.env,
+          stdin: "pipe",
+          output: { mode: "stream", format: "bytes" },
+        },
+        options,
+        () => control.active,
+        undefined,
+        { columns: input.columns, rows: input.rows },
+      ).then(terminalHandle);
+    },
+    reopen: (
+      reference: ProcessReference<"bytes">,
+      options: WaitOptions = {},
+    ): Promise<TerminalHandle> => {
+      this.client.ensureOpen();
+
+      if (reference?.profile !== "terminal")
+        throw new SandbarError("INVALID_ARGUMENT", "Expected terminal reference");
+      const control = processControl(this.client, this.id);
+
+      return reopenProcess(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        reference,
+        options,
+        () => control.active,
+      ).then(terminalHandle);
+    },
+  };
+  readonly processes = {
+    reopen: <F extends ProcessOutputFormat>(
+      reference: ProcessReference<F>,
+      options: WaitOptions = {},
+    ): Promise<ProcessHandle<F>> => {
+      this.client.ensureOpen();
+
+      if (reference?.profile !== "process")
+        throw new SandbarError("INVALID_ARGUMENT", "Expected process reference");
+      const control = processControl(this.client, this.id);
+
+      return reopenProcess(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        reference,
+        options,
+        () => control.active,
+      );
+    },
+    start: <F extends ProcessOutputFormat = "text">(
+      input: StartProcessInput<F>,
+      options: WaitOptions = {},
+    ): Promise<ProcessHandle<F>> => {
+      this.client.ensureOpen();
+
+      const control = processControl(this.client, this.id);
+
+      return startProcess(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        input,
+        options,
+        () => control.active,
+      );
+    },
+  };
+  async submitSuspend(
+    options: WaitOptions = {},
+  ): Promise<OperationHandle<SuspendResult, "sandbox_suspend">> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+
+    if (!this.reference) unsupported("Suspension without a verified sandbox reference");
+    this.invalidateProcessControl();
+
+    return this.client.submit(
+      "sandbox_suspend",
+      { sandbox: { id: this.id, reference: this.reference } },
+      decodeSuspend,
+      { ...options, sandboxId: this.id, sandboxReference: this.reference },
+    );
+  }
+  async suspend(options: WaitOptions = {}): Promise<SuspendResult> {
+    return (await this.submitSuspend(options)).wait(options);
+  }
+  async submitResume(
+    options: WaitOptions = {},
+  ): Promise<OperationHandle<ResumeResult, "sandbox_resume">> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+
+    if (!this.reference) unsupported("Resumption without a verified sandbox reference");
+    this.invalidateProcessControl();
+
+    return this.client.submit(
+      "sandbox_resume",
+      { sandbox: { id: this.id, reference: this.reference } },
+      decodeResume,
+      { ...options, sandboxId: this.id, sandboxReference: this.reference },
+    );
+  }
+  async resume(options: WaitOptions = {}): Promise<ResumeResult> {
+    return (await this.submitResume(options)).wait(options);
+  }
+  async submitRenew(
+    input?: RenewRequest,
+    options: WaitOptions = {},
+  ): Promise<OperationHandle<RenewResult, "sandbox_renew">> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+
+    const request =
+      input === undefined
+        ? undefined
+        : validateResourceInput(RenewRequest, input, "Invalid renewal window");
+
+    if (!this.reference) unsupported("Lifetime renewal without a verified sandbox reference");
+
+    return this.client.submit(
+      "sandbox_renew",
+      { sandbox: { id: this.id, reference: this.reference }, ...request },
+      decodeRenew,
+      { ...options, sandboxId: this.id, sandboxReference: this.reference },
+    );
+  }
+  async renew(input?: RenewRequest, options: WaitOptions = {}): Promise<RenewResult> {
+    return (await this.submitRenew(input, options)).wait(options);
   }
   async submitSnapshot(
     request: SnapshotRequest = {},
     options: WaitOptions = {},
-  ): Promise<AdapterOperation<SnapshotResult>> {
+  ): Promise<OperationHandle<SnapshotResult, OperationKind>> {
     this.client.ensureOpen();
     assertSignal(options.signal);
     request = validateResourceInput(SnapshotRequest, request, "Invalid snapshot request");
@@ -633,10 +1055,13 @@ export class AdapterSandbox {
 
     if (plan.status !== "supported") throw new SandbarError("UNAVAILABLE", plan.reason, "none");
 
+    assertSignal(signal);
+    this.invalidateProcessControl();
+
     return this.client.submit(
       "snapshot_capture",
       {
-        sandbox: { id: this.id },
+        sandbox: sandboxInput(this.id, this.reference),
         request,
         expectation: { profile: plan.value.profile, sourceState: plan.value.sourceState },
       },
@@ -648,6 +1073,7 @@ export class AdapterSandbox {
       {
         ...options,
         sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
         capture: { profile: plan.value.profile, sourceState: plan.value.sourceState },
       },
     );
@@ -659,7 +1085,9 @@ export class AdapterSandbox {
     return (await this.submitSnapshot(request, options)).wait(options);
   }
   capabilities(): Promise<AdapterCapabilities> {
-    return internalMethod(this.client.capabilities)({ sandbox: { id: this.id } });
+    return internalMethod(this.client.capabilities)({
+      sandbox: sandboxInput(this.id, this.reference),
+    });
   }
   async checkSnapshot(request: SnapshotRequest = {}): Promise<Support<SnapshotPlan>> {
     return this.checkSnapshotWithSignal(request, this.client.signal);
@@ -672,7 +1100,7 @@ export class AdapterSandbox {
     request = validateResourceInput(SnapshotRequest, request, "Invalid snapshot request");
 
     const caps = await internalMethod(this.client.capabilities)(
-      { sandbox: { id: this.id } },
+      { sandbox: sandboxInput(this.id, this.reference) },
       { signal },
     );
 
@@ -685,7 +1113,26 @@ export class AdapterSandbox {
 
     return resolveSnapshot(caps.snapshots.capture, request, state);
   }
-  supports(feature: "inspect" | "exec" | "readFile" | "writeFile" | "destroy"): boolean {
+  supports(
+    feature:
+      | "inspect"
+      | "exec"
+      | "readFile"
+      | "writeFile"
+      | "destroy"
+      | "readDirectory"
+      | "walkFiles"
+      | "readTextLines"
+      | "statFile"
+      | "readFileStream"
+      | "writeFileStream"
+      | "copyFile"
+      | "moveFile"
+      | "listFiles"
+      | "fileExists"
+      | "makeDirectory"
+      | "removeFile",
+  ): boolean {
     if (feature === "inspect") return !!this.client.session.inspect;
 
     if (feature === "exec")
@@ -695,45 +1142,151 @@ export class AdapterSandbox {
 
     if (feature === "writeFile") return !!this.client.session.files?.write;
 
+    if (feature === "readDirectory") return !!this.client.session.files?.readDirectory;
+
+    if (feature === "walkFiles") return !!this.client.session.files?.readDirectory;
+
+    if (feature === "readTextLines") return !!this.client.session.files?.readStream;
+
+    if (feature === "statFile") return !!this.client.session.files?.stat;
+
+    if (feature === "readFileStream") return !!this.client.session.files?.readStream;
+
+    if (feature === "writeFileStream") return !!this.client.session.files?.writeStream;
+
+    if (feature === "copyFile") return !!this.client.session.files?.copy;
+
+    if (feature === "moveFile") return !!this.client.session.files?.move;
+
+    if (feature === "listFiles") return !!this.client.session.files?.list;
+
+    if (feature === "fileExists") return !!this.client.session.files?.exists;
+
+    if (feature === "makeDirectory") return !!this.client.session.files?.makeDirectory;
+
+    if (feature === "removeFile") return !!this.client.session.files?.remove;
+
     return true;
   }
-  async inspect(
-    options: WaitOptions = {},
-  ): Promise<{ state: import("sandbar-adapter").SandboxState }> {
+  async inspect(options: WaitOptions = {}): Promise<SandboxInfo> {
     this.client.ensureOpen();
 
     if (!this.client.session.inspect) unsupported("inspect");
 
     assertSignal(options.signal);
 
+    const timeout = AbortSignal.timeout(30000);
+
     const signal = AbortSignal.any([
       this.client.signal,
       ...(options.signal ? [options.signal] : []),
-      AbortSignal.timeout(30000),
+      timeout,
     ]);
 
-    const result = await readWhileOpen(
-      this.client,
-      raceAbort(
-        this.client.session.inspect({ id: this.id }, { signal, deadline: Date.now() + 30000 }),
-        signal,
-      ).catch((error) => {
-        assertSignal(options.signal);
-        throw error;
-      }),
-    );
+    try {
+      const result = await readWhileOpen(
+        this.client,
+        raceAbort(
+          this.client.session.inspect(sandboxInput(this.id, this.reference), {
+            signal,
+            deadline: Date.now() + 30000,
+          }),
+          signal,
+        ),
+      );
 
-    if (!result) return { state: "unknown" };
+      if (!result) throw new SandbarError("NOT_FOUND", "Sandbox is missing, expired, or deleted");
 
-    if (result.id !== this.id)
-      throw new SandbarError("INVALID_RESPONSE", "Provider returned another sandbox", "unknown");
+      if (result.id !== this.id)
+        throw new SandbarError("INVALID_RESPONSE", "Provider returned another sandbox", "unknown");
 
-    return { state: SandboxState.parse(result.state) };
+      const { id: _id, ...facts } = result;
+
+      const parsed = SandboxInfoSchema.safeParse({
+        ...unknownSandboxFacts(),
+        reference: this.reference,
+        nativeState: null,
+        ...facts,
+        observedAt: new Date().toISOString(),
+      });
+
+      if (!parsed.success) throw new SandbarError("INVALID_RESPONSE", "Invalid sandbox inspection");
+      const info = parsed.data;
+
+      if (info.reference) {
+        if (info.reference.nativeId !== this.id)
+          throw new SandbarError("INVALID_RESPONSE", "Provider sandbox identity differs");
+        assertResourceScope(info.reference, {
+          provider: this.client.provider,
+          scope: this.client.scope,
+        });
+
+        if (this.reference) assertSandboxReference(info.reference, this.reference);
+      }
+
+      return info;
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (timeout.aborted) throw new SandbarError("TIMEOUT", "Sandbox inspection timed out");
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
+  }
+  /** Resolve access to an existing running sandbox; URL availability is not readiness. */
+  async preview(port: number, options: { signal?: AbortSignal } = {}): Promise<Preview> {
+    this.client.ensureOpen();
+
+    if (!PreviewPort.safeParse(port).success)
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Preview port must be an integer from 1 through 65535",
+      );
+
+    if (!this.client.session.preview) unsupported("preview");
+    assertSignal(options.signal);
+    const timeout = AbortSignal.timeout(30000);
+
+    const signal = AbortSignal.any([
+      this.client.signal,
+      ...(options.signal ? [options.signal] : []),
+      timeout,
+    ]);
+
+    try {
+      const result = await readWhileOpen(
+        this.client,
+        raceAbort(
+          this.client.session.preview(
+            { sandbox: sandboxInput(this.id, this.reference), port },
+            { signal, deadline: Date.now() + 30000 },
+          ),
+          signal,
+        ),
+      );
+
+      const parsed = PreviewResult.safeParse(result);
+
+      if (!parsed.success)
+        throw new SandbarError("INVALID_RESPONSE", "Invalid preview access response");
+
+      return parsed.data;
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (timeout.aborted) throw new SandbarError("TIMEOUT", "Preview access timed out");
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+
+      if (error instanceof SandbarError) throw error;
+      throw new SandbarError("UNAVAILABLE", "Preview access is unavailable");
+    }
   }
   async submitExec(
     input: ExecInput | readonly string[],
     options: { signal?: AbortSignal } = {},
-  ): Promise<AdapterOperation<ExecOutput>> {
+  ): Promise<OperationHandle<ExecOutput, OperationKind>> {
     if (!this.supports("exec")) unsupported("exec");
     const request = validateExec(input);
     const max = this.client.session.supports.exec!.maxOutputBytes;
@@ -743,10 +1296,11 @@ export class AdapterSandbox {
     return this.client.submit(
       "exec",
       {
-        sandbox: { id: this.id },
+        sandbox: sandboxInput(this.id, this.reference),
         command: request.command,
         cwd: request.cwd,
         env: request.env,
+        stdin: request.stdin,
         deadlineSeconds: request.deadlineSeconds,
         maxOutputBytes: request.maxOutputBytes,
       },
@@ -761,93 +1315,422 @@ export class AdapterSandbox {
           execOutput(output.exitCode, output.stdout, output.stderr, output.truncated),
         );
       },
-      { ...options, sandboxId: this.id, maxOutputBytes: request.maxOutputBytes },
+      {
+        ...options,
+        sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
+        maxOutputBytes: request.maxOutputBytes,
+      },
     );
   }
-  async exec(
-    input: ExecInput | readonly string[],
-    options: { signal?: AbortSignal } = {},
-  ): Promise<ExecOutput> {
+  async exec(input: ExecInput | readonly string[], options: ExecOptions = {}): Promise<ExecOutput> {
+    if (options.onOutput !== undefined) {
+      this.client.ensureOpen();
+      const control = processControl(this.client, this.id);
+
+      return callbackExec(
+        this.client,
+        sandboxInput(this.id, this.reference),
+        () => control.active,
+        input,
+        options,
+      );
+    }
+
     return waitFor(
       this.client.telemetry,
       await internalMethod(this.submitExec)(input, options),
       options,
     );
   }
-  async readFile(path: string): Promise<Uint8Array> {
+  /** Decode the complete bounded file as UTF-8, replacing malformed sequences and consuming its BOM. */
+  async readTextFile(path: string, options: FileReadOptions = {}): Promise<string> {
+    return new TextDecoder().decode(await this.readFile(path, options));
+  }
+  /** Encode UTF-8 using the byte write's limits, cancellation and no-clobber default. */
+  async writeTextFile(path: string, text: string, options: FileWriteOptions = {}): Promise<void> {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JavaScript callers must not silently coerce non-text input during UTF-8 encoding.
+    if (typeof text !== "string")
+      throw new SandbarError("INVALID_ARGUMENT", "Expected text string");
+
+    await this.writeFile(path, new TextEncoder().encode(text), options);
+  }
+  async readDirectory(
+    path: string,
+    options: ReadOptions = {},
+  ): Promise<import("@sandbar-sdk/adapter").DirectoryResult> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.readDirectory) unsupported("readDirectory");
+
+    const result = await directoryListingRead(
+      (ctx) => files.readDirectory!({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+      this.client.signal,
+      options,
+    );
+
+    return directoryResult(result);
+  }
+  /** Depth-first traversal, with complete listings and no descent into links or unknown entries. */
+  walkFiles(path: string, options: WalkFilesOptions = {}): AsyncIterable<WalkFileEntry> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    path = directoryPath(path);
+
+    return walkFiles(
+      path,
+      (child) => this.readDirectory(child, options),
+      () => {
+        this.client.ensureOpen();
+
+        if (options.signal?.aborted) throw new SandbarError("WAIT_ABORTED", "Traversal cancelled");
+      },
+      options,
+    );
+  }
+  /** Incrementally decode UTF-8 lines, removing LF/CRLF delimiters and bounding each line. */
+  readTextLines(path: string, options: ReadTextLinesOptions = {}): AsyncIterable<string> {
+    return readTextLines(
+      this.readFileStream(path, options),
+      () => {
+        this.client.ensureOpen();
+
+        if (options.signal?.aborted) throw new SandbarError("WAIT_ABORTED", "Text read cancelled");
+      },
+      options,
+    );
+  }
+  async statFile(
+    path: string,
+    options: ReadOptions & { followSymlinks?: boolean } = {},
+  ): Promise<import("@sandbar-sdk/adapter").FileStat> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.stat) unsupported("statFile");
+
+    const result = await directoryRead(
+      (ctx) =>
+        files.stat!(
+          {
+            sandbox: sandboxInput(this.id, this.reference),
+            path,
+            followSymlinks: options.followSymlinks ?? false,
+          },
+          ctx,
+        ),
+      this.client.signal,
+      options,
+    );
+
+    const parsed = z
+      .strictObject({
+        type: z.enum(["file", "directory", "symlink", "unknown"]),
+        sizeBytes: z.number().int().nonnegative().safe().optional(),
+        modifiedAt: z.iso.datetime({ offset: true }).optional(),
+        mode: z.number().int().nonnegative().optional(),
+      })
+      .safeParse(result);
+
+    if (!parsed.success) throw new SandbarError("INVALID_RESPONSE", "Invalid file metadata");
+
+    return parsed.data;
+  }
+  readFileStream(path: string, options: FileStreamOptions = {}): AsyncIterable<Uint8Array> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    validateFilePath(path);
+    const files = this.client.session.files;
+
+    if (!files?.readStream) unsupported("readFileStream");
+
+    return this.client.telemetry.iterate(
+      "sandbar.file.read_stream",
+      streamFile(
+        (ctx) => files.readStream!({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+        this.client.signal,
+        options,
+        this.client.transferPolicy,
+      ),
+      options.signal ? AbortSignal.any([options.signal, this.client.signal]) : this.client.signal,
+    );
+  }
+  async writeFileStream(
+    path: string,
+    bytes: AsyncIterable<Uint8Array>,
+    options: FileStreamWriteOptions = {},
+  ): Promise<number> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    validateFilePath(path);
+    const files = this.client.session.files;
+
+    if (!files?.writeStream) unsupported("writeFileStream");
+
+    if (options.signal?.aborted) throw new SandbarError("WAIT_ABORTED", "File transfer cancelled");
+
+    const retained: Parameters<
+      NonNullable<import("@sandbar-sdk/adapter").FileTransferContext["retain"]>
+    >[0] = {};
+
+    try {
+      return await writeStream(
+        (input, ctx) =>
+          files.writeStream!(
+            {
+              sandbox: sandboxInput(this.id, this.reference),
+              path,
+              bytes: input,
+              overwrite: options.overwrite ?? false,
+            },
+            ctx,
+          ),
+        bytes,
+        this.client.signal,
+        options,
+        this.client.transferPolicy,
+        (details) =>
+          Object.assign(
+            retained,
+            details,
+            retained.effect === "applied" ? { effect: "applied" } : {},
+          ),
+      );
+    } catch (error) {
+      if (
+        error instanceof SandbarError &&
+        !(error instanceof FilesystemError) &&
+        ["WAIT_ABORTED", "CLIENT_CLOSED", "TIMEOUT", "INVALID_RESPONSE"].includes(error.code)
+      )
+        throw new FilesystemError(error.code, error.message, {
+          destination: path,
+          ...retained,
+          effect:
+            retained.effect ??
+            (options.signal?.aborted && !this.client.signal.aborted ? "possible" : "unknown"),
+        });
+      throw error;
+    }
+  }
+  async copyFile(
+    source: string,
+    destination: string,
+    options: { overwrite?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    return this.transferFile("copy", source, destination, options);
+  }
+  async moveFile(
+    source: string,
+    destination: string,
+    options: { overwrite?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    return this.transferFile("move", source, destination, options);
+  }
+  private async transferFile(
+    kind: "copy" | "move",
+    source: string,
+    destination: string,
+    options: { overwrite?: boolean; signal?: AbortSignal },
+  ): Promise<void> {
+    this.client.ensureOpen();
+    fileOptions(options);
+    source = directoryPath(source);
+    destination = directoryPath(destination);
+
+    if (source === destination || source === "/" || destination === "/")
+      throw new SandbarError("INVALID_ARGUMENT", "Invalid filesystem source or destination");
+    const files = this.client.session.files;
+    const operation = files?.[kind]?.bind(files);
+
+    if (!operation) unsupported(kind + "File");
+
+    if (options.signal?.aborted)
+      throw new SandbarError("WAIT_ABORTED", "Filesystem operation cancelled");
+
+    const retained: Parameters<
+      NonNullable<import("@sandbar-sdk/adapter").FileTransferContext["retain"]>
+    >[0] = {};
+
+    try {
+      const result = await directoryRead(
+        (ctx) =>
+          operation(
+            {
+              sandbox: sandboxInput(this.id, this.reference),
+              source,
+              destination,
+              overwrite: options.overwrite ?? false,
+            },
+            {
+              ...ctx,
+              retain: (details) =>
+                Object.assign(
+                  retained,
+                  details,
+                  retained.effect === "applied" ? { effect: "applied" } : {},
+                ),
+            },
+          ),
+        this.client.signal,
+        options,
+      );
+
+      if (result.acknowledged !== true)
+        throw new SandbarError(
+          "INVALID_RESPONSE",
+          "Filesystem completion was not confirmed",
+          "unknown",
+        );
+    } catch (error) {
+      if (
+        error instanceof SandbarError &&
+        !(error instanceof FilesystemError) &&
+        ["WAIT_ABORTED", "CLIENT_CLOSED", "TIMEOUT", "INVALID_RESPONSE"].includes(error.code)
+      )
+        throw new FilesystemError(error.code, error.message, {
+          source,
+          destination,
+          ...retained,
+          effect: retained.effect ?? "possible",
+        });
+      throw filesystemError(error);
+    }
+  }
+  async listFiles(path: string, options: ReadOptions = {}): Promise<FileEntry[]> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.list) unsupported("listFiles");
+    const list = files.list.bind(files);
+
+    return directoryEntries(
+      await directoryListingRead(
+        (ctx) => list({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+        this.client.signal,
+        options,
+      ),
+    );
+  }
+  async fileExists(path: string, options: ReadOptions = {}): Promise<boolean> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+    const files = this.client.session.files;
+
+    if (!files?.exists) unsupported("fileExists");
+    const exists = files.exists.bind(files);
+
+    const value = await directoryRead(
+      (ctx) => exists({ sandbox: sandboxInput(this.id, this.reference), path }, ctx),
+      this.client.signal,
+      options,
+    );
+
+    if (value !== true && value !== false)
+      throw new SandbarError("INVALID_RESPONSE", "Invalid entry existence result");
+
+    return value;
+  }
+  async makeDirectory(
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.fileMutation("file_mkdir", path, options);
+  }
+  async removeFile(
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.fileMutation("file_remove", path, options);
+  }
+  private async fileMutation(
+    kind: "file_mkdir" | "file_remove",
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal },
+  ): Promise<void> {
+    this.client.ensureOpen();
+    path = directoryPath(path);
+
+    if (kind === "file_remove" && path === "/")
+      throw new SandbarError("INVALID_ARGUMENT", "Cannot remove sandbox root");
+
+    const intent = validateResourceInput(
+      FileMutationIntent,
+      { path, recursive: options.recursive ?? false },
+      "Invalid filesystem request",
+    );
+
+    const op = await this.client.submit(
+      kind,
+      { sandbox: sandboxInput(this.id, this.reference), ...intent },
+      (result, ref) => {
+        if (
+          result.kind !== "completed" ||
+          !("acknowledged" in result.value) ||
+          result.value.acknowledged !== true
+        )
+          throw asUnknown(ref);
+      },
+      {
+        signal: options.signal,
+        sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
+        fileMutation: intent,
+      },
+    );
+
+    await waitFor(this.client.telemetry, op, options);
+  }
+  async readFile(path: string, options: FileReadOptions = {}): Promise<Uint8Array> {
     this.client.ensureOpen();
 
     if (!this.client.session.files?.read) unsupported("readFile");
     validateFilePath(path);
-    const maxBytes = fileReadLimit(this.client.session.files.maxBytes);
+    const maxBytes = bufferedLimit(options.maxBytes, this.client.session.files.maxBytes);
 
-    const value = await readWhileOpen(
-      this.client,
-      this.client.session.files.read(
-        { sandbox: { id: this.id }, path },
-        { signal: this.client.signal, deadline: Date.now() + 30_000 },
-      ),
+    const read = this.client.session.files.read.bind(this.client.session.files);
+
+    return readFileBytes(
+      (context) =>
+        read({ sandbox: sandboxInput(this.id, this.reference), path, maxBytes }, context),
+      maxBytes,
+      this.client.signal,
+      options,
     );
-
-    if (value instanceof Uint8Array) {
-      if (value.length > maxBytes)
-        throw new SandbarError("OUTPUT_CAPACITY", "File exceeds adapter limit", "unknown");
-
-      return Uint8Array.from(value);
-    }
-
-    const reader = value.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-
-    try {
-      while (true) {
-        const part = await readWhileOpen(this.client, reader.read());
-
-        if (part.done) break;
-
-        if (!(part.value instanceof Uint8Array) || total + part.value.length > maxBytes)
-          throw new SandbarError("OUTPUT_CAPACITY", "File exceeds adapter limit", "unknown");
-        chunks.push(Uint8Array.from(part.value));
-        total += part.value.length;
-      }
-    } finally {
-      // A non-cooperative stream must not hold a bounded result or local close.
-      try {
-        void reader.cancel().catch(() => undefined);
-      } catch {
-        // Reader cancellation is best effort after the read has ended.
-      }
-    }
-
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    this.client.ensureOpen();
-
-    return bytes;
   }
-  async writeFile(
-    path: string,
-    bytes: Uint8Array,
-    options: { overwrite?: boolean; signal?: AbortSignal } = {},
-  ): Promise<void> {
+  async writeFile(path: string, bytes: Uint8Array, options: FileWriteOptions = {}): Promise<void> {
     if (!this.supports("writeFile")) unsupported("writeFile");
     validateFilePath(path);
 
     if (!(bytes instanceof Uint8Array))
       throw new SandbarError("INVALID_ARGUMENT", "Expected byte buffer");
+    const limit = bufferedLimit(options.maxBytes, this.client.session.files!.maxBytes);
+
+    if (bytes.length > limit) throw new SandbarError("CAPACITY", "File exceeds byte limit");
+
+    if (bytes.length > 1_048_576 && this.client.session.files?.writeStream) {
+      const payload = Uint8Array.from(bytes);
+
+      async function* chunks() {
+        yield payload;
+      }
+
+      await internalMethod(this.writeFileStream)(path, chunks(), options);
+
+      return;
+    }
+
     const payload = Uint8Array.from(bytes);
 
     const op = await this.client.submit(
       "file_write",
       {
-        sandbox: { id: this.id },
+        sandbox: sandboxInput(this.id, this.reference),
         path,
         bytes: payload,
         overwrite: options.overwrite ?? false,
@@ -860,18 +1743,27 @@ export class AdapterSandbox {
         )
           throw asUnknown(ref);
       },
-      { ...options, sandboxId: this.id, file: { path, bytes: payload.length } },
+      {
+        ...options,
+        sandboxId: this.id,
+        sandboxReference: this.reference ?? undefined,
+        file: { path, bytes: payload.length },
+      },
     );
 
     await waitFor(this.client.telemetry, op, options);
   }
   async submitDestroy(
     options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
-  ): Promise<AdapterOperation<import("sandbar-adapter").DestroyValue>> {
-    const op = await this.client.submit<import("sandbar-adapter").DestroyValue>(
+  ): Promise<OperationHandle<import("@sandbar-sdk/adapter").DestroyValue, OperationKind>> {
+    this.client.ensureOpen();
+    assertSignal(options.signal);
+    this.invalidateProcessControl();
+
+    const op = await this.client.submit<import("@sandbar-sdk/adapter").DestroyValue>(
       "destroy",
       {
-        id: this.id,
+        ...sandboxInput(this.id, this.reference),
         storage: options.storage === undefined ? this.client.cleanupStorage : options.storage,
       },
       (result, ref) => {
@@ -884,14 +1776,14 @@ export class AdapterSandbox {
 
         return result.value;
       },
-      { ...options, sandboxId: this.id },
+      { ...options, sandboxId: this.id, sandboxReference: this.reference ?? undefined },
     );
 
     return op;
   }
   async destroy(
     options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
-  ): Promise<import("sandbar-adapter").DestroyValue> {
+  ): Promise<import("@sandbar-sdk/adapter").DestroyValue> {
     return waitFor(this.client.telemetry, await this.submitDestroy(options), options);
   }
 }
@@ -906,14 +1798,17 @@ export type AdvancedOperationKind = OperationKind;
 export type AdvancedIdentity = { operationId: string; submissionId: string; invocationKey: string };
 
 export type AdvancedObservation = {
-  capture?: AdapterRecoveryReference["capture"];
+  lifecycle?: LifecycleIntent;
+  renewal?: RenewRequest;
+  capture?: RecoveryReference["capture"];
   scope: Scope;
   kind: OperationKind;
   operationId: string;
   submissionId: string;
   sandboxId?: string;
+  sandboxReference?: SandboxReference;
   resource?: ResourceReference;
-  mounts?: import("sandbar-adapter").MountSpec[];
+  mounts?: import("@sandbar-sdk/adapter").MountSpec[];
   token?: Json;
   tokenVersion?: number;
 };
@@ -931,6 +1826,12 @@ class BeforeSubmitError extends Error {
   }
 }
 
+const preparedLifecycles = new WeakMap<PreparedAdapterAttempt, LifecycleIntent>();
+
+const preparedRenewals = new WeakMap<PreparedAdapterAttempt, RenewRequest>();
+
+const dispatchedLifecycles = new WeakSet<PreparedAdapterAttempt>();
+
 export class PreparedAdapterAttempt {
   private used = false;
   constructor(
@@ -938,7 +1839,26 @@ export class PreparedAdapterAttempt {
     private readonly prepared: PreparedOperation,
     private readonly kind: OperationKind,
     private readonly maxOutputBytes?: number,
-  ) {}
+  ) {
+    if (["sandbox_suspend", "sandbox_resume"].includes(kind))
+      preparedLifecycles.set(this, ResolvedLifecycleInput.parse(prepared.input).intent);
+
+    if (kind === "sandbox_renew")
+      preparedRenewals.set(this, {
+        forSeconds: ResolvedRenewInput.parse(prepared.input).forSeconds,
+      });
+  }
+  get lifecycle(): Readonly<LifecycleIntent> | undefined {
+    const intent = preparedLifecycles.get(this);
+
+    return intent ? { ...intent } : undefined;
+  }
+  /** Resolved renewal intent to persist in beforeSubmit and supply to operations.observe. */
+  get renewal(): Readonly<RenewRequest> | undefined {
+    const renewal = preparedRenewals.get(this);
+
+    return renewal ? { ...renewal } : undefined;
+  }
   /** The callback must durably record the submission marker; false cancels dispatch. */
   async submit(
     identity: AdvancedIdentity,
@@ -989,6 +1909,9 @@ export class PreparedAdapterAttempt {
     assertSignal(options.signal);
 
     if (!permitted) return null;
+
+    if (["sandbox_renew", "sandbox_suspend", "sandbox_resume"].includes(this.kind))
+      dispatchedLifecycles.add(this);
     this.client.telemetry.submitted();
 
     const submissionWaitSignal =
@@ -1051,11 +1974,15 @@ export class PreparedAdapterAttempt {
   }
 }
 
+/** Use the SandbarClient type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterDirectClient {
   private closed = false;
   private closePromise?: Promise<void>;
+  /** @deprecated Advanced compatibility access; prefer documented SDK operations. */
   readonly telemetry: Telemetry;
+  /** @deprecated Advanced compatibility access; prefer documented SDK operations. */
   readonly session: RuntimeSession;
+  /** @deprecated Advanced compatibility access; prefer documented SDK operations. */
   readonly scope: Scope;
   readonly operations: {
     inventory: (input: { cursor?: string; limit: number }) => Promise<{
@@ -1074,12 +2001,21 @@ export class AdapterDirectClient {
   };
   readonly signal: AbortSignal;
   readonly sandboxes: {
-    checkCreate: (input: CreateInput) => Promise<Support<CreatePlan>>;
-    create: (input: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
-    submitCreate: (
-      input: CreateInput,
+    with: <T>(
+      input: CreateInput | undefined,
+      callback: (sandbox: SandboxHandle<true>) => T | Promise<T>,
+      options?: SandboxScopeOptions,
+    ) => Promise<T>;
+    get: (reference: SandboxReference, options?: WaitOptions) => Promise<SandboxHandle<true>>;
+    checkCreate: (input?: CreateInput) => Promise<Support<CreatePlan>>;
+    create: (
+      input?: CreateInput,
       options?: { signal?: AbortSignal },
-    ) => Promise<AdapterOperation<AdapterSandbox>>;
+    ) => Promise<SandboxHandle<true>>;
+    submitCreate: (
+      input?: CreateInput,
+      options?: { signal?: AbortSignal },
+    ) => Promise<OperationHandle<SandboxHandle<true>, OperationKind>>;
   };
   readonly snapshots: ReturnType<typeof resourceManagers>["snapshots"];
   readonly volumes: ReturnType<typeof resourceManagers>["volumes"];
@@ -1091,14 +2027,15 @@ export class AdapterDirectClient {
     submitBuild: (
       input: ImageBuildInput,
       options?: { signal?: AbortSignal },
-    ) => Promise<AdapterOperation<ImageBuildResult>>;
+    ) => Promise<OperationHandle<ImageBuildResult, OperationKind>>;
   };
   constructor(
     readonly provider: string,
     private readonly connection: AdapterConnection<RuntimeSession>,
-    private readonly onReference?: (reference: AdapterRecoveryReference) => void | Promise<void>,
+    private readonly onReference?: (reference: RecoveryReference) => void | Promise<void>,
     observability: ObservabilityOptions = {},
     readonly cleanupStorage: "require-durable" | "allow-unconfirmed" = "require-durable",
+    readonly transferPolicy: TransferPolicy = {},
   ) {
     this.telemetry = new Telemetry(observability, "direct", provider);
     const managers = resourceManagers(this);
@@ -1150,6 +2087,22 @@ export class AdapterDirectClient {
           ? AbortSignal.any([this.signal, options.signal])
           : this.signal;
 
+        if (["sandbox_renew", "sandbox_suspend", "sandbox_resume"].includes(kind)) {
+          const parsed = (
+            kind === "sandbox_renew"
+              ? ResolvedRenewInput.partial({ forSeconds: true })
+              : LifecycleInput
+          ).safeParse(input);
+
+          if (!parsed.success)
+            throw new SandbarError("INVALID_ARGUMENT", "Invalid lifecycle mutation input");
+          const renewal = parsed.data;
+          assertResourceScope(renewal.sandbox.reference, {
+            provider: this.provider,
+            scope: this.scope,
+          });
+        }
+
         if ("snapshot" in input)
           assertResourceScope(ResourceReference.parse(input.snapshot), {
             provider: this.provider,
@@ -1176,13 +2129,7 @@ export class AdapterDirectClient {
           if (error instanceof AdapterError && error.code === "UNSUPPORTED")
             throw new UnsupportedFeatureError(kind, [error.message]);
 
-          if (
-            error instanceof AdapterError &&
-            (error.code === "INVALID_ARGUMENT" ||
-              error.code === "TIMEOUT" ||
-              error.code === "UNAVAILABLE")
-          )
-            throw new SandbarError(error.code, error.message);
+          if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
           throw error;
         }
 
@@ -1207,7 +2154,12 @@ export class AdapterDirectClient {
               "destroy",
               "exec",
               "file_write",
+              "file_mkdir",
+              "file_remove",
               "image_build",
+              "sandbox_suspend",
+              "sandbox_resume",
+              "sandbox_renew",
               "snapshot_capture",
               "snapshot_restore",
               "snapshot_delete",
@@ -1217,7 +2169,10 @@ export class AdapterDirectClient {
             operationId: z.string().min(1).max(128),
             submissionId: z.string().min(1).max(128),
             sandboxId: z.string().min(1).max(512).optional(),
+            sandboxReference: ReferenceSchema.shape.sandboxReference,
             resource: ResourceReference.optional(),
+            lifecycle: ReferenceSchema.shape.lifecycle,
+            renewal: ReferenceSchema.shape.renewal,
             capture: CaptureExpectation.optional(),
             mounts: z.array(importMountSpec).max(32).optional(),
             token: z.json().optional(),
@@ -1231,6 +2186,23 @@ export class AdapterDirectClient {
             "Observation scope differs from the verified connection",
           );
 
+        if (checked.kind === "sandbox_renew" && (!checked.renewal || !checked.sandboxReference))
+          throw new SandbarError(
+            "INVALID_ARGUMENT",
+            "Renewal observation requires saved intent and identity",
+          );
+
+        if (
+          ["sandbox_suspend", "sandbox_resume"].includes(checked.kind) &&
+          (!checked.lifecycle ||
+            checked.kind !== `sandbox_${checked.lifecycle.action}` ||
+            !checked.sandboxReference)
+        )
+          throw new SandbarError(
+            "INVALID_ARGUMENT",
+            "Lifecycle observation requires saved intent and identity",
+          );
+        this.assertRecoverySandbox(checked);
         assertRecoveryResourceKind(checked.kind, checked.resource);
 
         if (checked.resource)
@@ -1249,7 +2221,17 @@ export class AdapterDirectClient {
             "volume_delete",
           ].includes(checked.kind) &&
             checked.sandboxId) ||
-          (["destroy", "exec", "file_write", "snapshot_capture"].includes(checked.kind) &&
+          ([
+            "destroy",
+            "exec",
+            "file_write",
+            "file_mkdir",
+            "file_remove",
+            "snapshot_capture",
+            "sandbox_suspend",
+            "sandbox_resume",
+            "sandbox_renew",
+          ].includes(checked.kind) &&
             !checked.sandboxId) ||
           (["snapshot_restore", "snapshot_delete", "volume_delete"].includes(checked.kind) &&
             !checked.resource)
@@ -1272,8 +2254,12 @@ export class AdapterDirectClient {
               {
                 operationId: checked.operationId,
                 submissionId: checked.submissionId,
-                sandbox: checked.sandboxId ? { id: checked.sandboxId } : undefined,
+                sandbox: checked.sandboxId
+                  ? sandboxInput(checked.sandboxId, checked.sandboxReference)
+                  : undefined,
                 resource: checked.resource,
+                lifecycle: checked.lifecycle,
+                renewal: checked.renewal,
                 capture: checked.capture,
                 mounts: checked.mounts,
                 token: checked.token,
@@ -1304,6 +2290,8 @@ export class AdapterDirectClient {
       },
     };
     this.sandboxes = {
+      with: (input, callback, options) => withSandbox(this, input, callback, options),
+      get: (reference, options = {}) => this.reopenSandbox(reference, options),
       checkCreate: (input) => this.checkCreate(input),
       create: async (input, options = {}) =>
         waitFor(this.telemetry, await internalMethod(this.submitCreate)(input, options), options),
@@ -1349,19 +2337,25 @@ export class AdapterDirectClient {
     const support = this.session.supports;
     const signal = AbortSignal.any([this.signal, ...(options.signal ? [options.signal] : [])]);
 
-    const state = await readWhileOpen(
-      this,
-      raceAbort(
-        stateCapabilities(this.session, target, {
+    let state: Awaited<ReturnType<typeof stateCapabilities>>;
+
+    try {
+      state = await readWhileOpen(
+        this,
+        raceAbort(
+          stateCapabilities(this.session, target, {
+            signal,
+            deadline: Date.now() + 30000,
+          }),
           signal,
-          deadline: Date.now() + 30000,
-        }),
-        signal,
-      ).catch((error) => {
-        assertSignal(options.signal);
-        throw error;
-      }),
-    );
+        ),
+      );
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
 
     return structuredClone({
       ...state,
@@ -1378,15 +2372,21 @@ export class AdapterDirectClient {
       maxFileBytes: this.session.files ? fileReadLimit(this.session.files.maxBytes) : 0,
     });
   }
-  async checkCreate(input: CreateInput): Promise<Support<CreatePlan>> {
+  async checkCreate(input?: CreateInput): Promise<Support<CreatePlan>> {
     return this.checkCreateWithSignal(input, this.signal);
   }
   private async checkCreateWithSignal(
-    input: CreateInput,
+    input: CreateInput | undefined,
     signal: AbortSignal,
   ): Promise<Support<CreatePlan>> {
     this.ensureOpen();
-    const request = validateCreate(input);
+
+    const request = validateCreate(
+      input,
+      this.session.defaultImage,
+      this.session.defaultNetworkPolicy,
+    );
+
     this.checkImageBinding(request);
 
     for (const mount of request.mounts ?? [])
@@ -1409,7 +2409,7 @@ export class AdapterDirectClient {
         this.session,
         {
           image: { kind: request.environment.kind, value: request.environment.value },
-          networkPolicy: request.networkPolicy ?? "blocked",
+          networkPolicy: request.networkPolicy,
           region: request.region,
           labels: request.labels,
           requirements: request.requirements,
@@ -1419,7 +2419,9 @@ export class AdapterDirectClient {
       ),
     );
   }
-  private checkImageBinding(request: CreateInput): void {
+  private checkImageBinding(
+    request: CreateInput & { environment: import("./resource").ImageInput },
+  ): void {
     if (
       request.environment.kind === "prepared" &&
       request.environment.binding &&
@@ -1429,10 +2431,15 @@ export class AdapterDirectClient {
       throw new SandbarError("FORBIDDEN", "Prepared image scope differs from this connection");
   }
   async submitCreate(
-    input: CreateInput,
+    input?: CreateInput,
     options: { signal?: AbortSignal } = {},
-  ): Promise<AdapterOperation<AdapterSandbox>> {
-    const request = validateCreate(input);
+  ): Promise<OperationHandle<SandboxHandle<true>, OperationKind>> {
+    const request = validateCreate(
+      input,
+      this.session.defaultImage,
+      this.session.defaultNetworkPolicy,
+    );
+
     this.checkImageBinding(request);
 
     for (const mount of request.mounts ?? [])
@@ -1465,7 +2472,7 @@ export class AdapterDirectClient {
       "create",
       {
         image: { kind: request.environment.kind, value: request.environment.value },
-        networkPolicy: request.networkPolicy ?? "blocked",
+        networkPolicy: request.networkPolicy,
         region: request.region,
         labels: request.labels,
         requirements: request.requirements,
@@ -1481,15 +2488,67 @@ export class AdapterDirectClient {
         )
           throw asUnknown(ref, "Requested native mounts are not confirmed ready");
 
-        return new AdapterSandbox(this, result.value.id);
+        return new AdapterSandbox(this, result.value.id, result.value.reference ?? null);
       },
-      { ...options, mounts: request.mounts },
+      { ...options, mounts: request.mounts, networkPolicy: request.networkPolicy },
     );
+  }
+  private async reopenSandbox(
+    reference: SandboxReference,
+    options: WaitOptions,
+  ): Promise<SandboxHandle<true>> {
+    this.ensureOpen();
+
+    try {
+      reference = validateResourceReference(reference);
+
+      if (reference.kind !== "sandbox")
+        throw new SandbarError("INVALID_ARGUMENT", "Expected sandbox reference");
+      assertResourceScope(reference, { provider: this.provider, scope: this.scope });
+    } catch (error) {
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
+
+    if (!this.session.reopen) unsupported("reopen");
+    assertSignal(options.signal);
+
+    const timeout = AbortSignal.timeout(30000);
+
+    const signal = AbortSignal.any([
+      this.signal,
+      ...(options.signal ? [options.signal] : []),
+      timeout,
+    ]);
+
+    let info: SandboxInfo;
+
+    try {
+      info = await readWhileOpen(
+        this,
+        raceAbort(this.session.reopen(reference, { signal, deadline: Date.now() + 30000 }), signal),
+      );
+    } catch (error) {
+      assertSignal(options.signal);
+
+      if (timeout.aborted) throw new SandbarError("TIMEOUT", "Sandbox reopen timed out");
+
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
+
+    if (!info.reference)
+      throw new SandbarError("INVALID_RESPONSE", "Provider did not verify sandbox identity");
+    assertSandboxReference(info.reference, reference);
+
+    if (info.state === "destroyed") throw new SandbarError("NOT_FOUND", "Sandbox is destroyed");
+
+    return new AdapterSandbox(this, reference.nativeId, reference);
   }
   async submitBuild(
     input: ImageBuildInput,
     options: { signal?: AbortSignal } = {},
-  ): Promise<AdapterOperation<ImageBuildResult>> {
+  ): Promise<OperationHandle<ImageBuildResult, OperationKind>> {
     if (!this.session.imageBuild) unsupported("image build");
 
     return this.submit(
@@ -1514,17 +2573,20 @@ export class AdapterDirectClient {
   async submit<T, K extends OperationKind = OperationKind>(
     kind: K,
     input: OperationInput,
-    decode: (result: RuntimeResult, ref: AdapterRecoveryReference) => T,
+    decode: (result: RuntimeResult, ref: RecoveryReference) => T,
     options: {
       signal?: AbortSignal;
       sandboxId?: string;
+      sandboxReference?: SandboxReference;
       resource?: ResourceReference;
       capture?: z.infer<typeof CaptureExpectation>;
-      mounts?: import("sandbar-adapter").MountSpec[];
+      mounts?: import("@sandbar-sdk/adapter").MountSpec[];
+      networkPolicy?: string;
       file?: { path: string; bytes: number };
+      fileMutation?: RecoveryReference["fileMutation"];
       maxOutputBytes?: number;
     } = {},
-  ): Promise<AdapterOperation<T, K>> {
+  ): Promise<OperationHandle<T, K>> {
     this.ensureOpen();
     assertSignal(options.signal);
     const prepared = await this.operations.prepare(kind, input, options);
@@ -1540,10 +2602,15 @@ export class AdapterDirectClient {
       scope: this.connection.scope,
       ...ids,
       sandboxId: options.sandboxId,
+      sandboxReference: options.sandboxReference,
       resource: options.resource,
+      lifecycle: preparedLifecycles.get(prepared),
+      renewal: preparedRenewals.get(prepared),
       capture: options.capture,
       mounts: options.mounts,
+      networkPolicy: options.networkPolicy,
       file: options.file,
+      fileMutation: options.fileMutation,
       maxOutputBytes: options.maxOutputBytes,
     });
 
@@ -1605,6 +2672,14 @@ export class AdapterDirectClient {
           reference,
         );
 
+      if (
+        waiting.aborted &&
+        ["sandbox_renew", "sandbox_suspend", "sandbox_resume"].includes(kind) &&
+        !dispatchedLifecycles.has(prepared)
+      ) {
+        throw new SandbarError("WAIT_ABORTED", "Waiting stopped before lifecycle dispatch", "none");
+      }
+
       if (waiting.aborted) abortWaiting(reference, waiting.reason);
       throw asUnknown(reference, "Provider submission outcome is unknown");
     }
@@ -1612,9 +2687,9 @@ export class AdapterDirectClient {
     return new AdapterOperation(this, reference, decode, first, kind);
   }
   checkedOutcome(
-    reference: AdapterRecoveryReference,
-    outcome?: import("sandbar-adapter").OperationOutcome,
-  ): import("sandbar-adapter").OperationOutcome | undefined {
+    reference: RecoveryReference,
+    outcome?: import("@sandbar-sdk/adapter").OperationOutcome,
+  ): import("@sandbar-sdk/adapter").OperationOutcome | undefined {
     if (!outcome) return undefined;
     const parsed = OperationOutcome.safeParse(outcome);
 
@@ -1623,6 +2698,70 @@ export class AdapterDirectClient {
 
     if (checked.kind !== reference.kind)
       throw asUnknown(reference, "Provider partial result does not match operation");
+
+    if (checked.kind === "sandbox_suspend" || checked.kind === "sandbox_resume") {
+      if (!reference.sandboxReference || !reference.lifecycle)
+        throw asUnknown(reference, "Saved lifecycle intent is missing");
+      assertSandboxReference(checked.reference, reference.sandboxReference);
+
+      if (checked.observation?.reference)
+        assertSandboxReference(checked.observation.reference, reference.sandboxReference);
+
+      if (
+        checked.kind === "sandbox_suspend" &&
+        checked.acknowledged &&
+        (reference.lifecycle.action !== "suspend" ||
+          checked.preserve !== reference.lifecycle.preserve)
+      )
+        throw asUnknown(reference, "Suspension profile differs");
+
+      return checked;
+    }
+
+    if (checked.kind === "sandbox_renew") {
+      if (!reference.sandboxReference || !reference.renewal)
+        throw asUnknown(reference, "Saved renewal intent is missing");
+      assertSandboxReference(checked.reference, reference.sandboxReference);
+
+      if (checked.requested.forSeconds !== reference.renewal.forSeconds)
+        throw asUnknown(reference, "Observed renewal intent differs");
+
+      if (checked.observation?.reference)
+        assertSandboxReference(checked.observation.reference, reference.sandboxReference);
+
+      return checked;
+    }
+
+    if (checked.kind === "create") {
+      assertSandboxReference(
+        checked.sandbox,
+        sandboxReference(this.provider, this.scope, checked.sandbox.nativeId, {
+          operation: reference.operationId,
+          submission: reference.submissionId,
+        }),
+      );
+
+      return checked;
+    }
+
+    if (checked.kind === "snapshot_restore") {
+      if (JSON.stringify(checked.mounts) !== JSON.stringify(reference.mounts ?? []))
+        throw asUnknown(reference, "Provider partial restore selections differ");
+
+      if (checked.sandbox)
+        assertSandboxReference(
+          checked.sandbox,
+          sandboxReference(this.provider, this.scope, checked.sandbox.nativeId, {
+            operation: reference.operationId,
+            submission: reference.submissionId,
+          }),
+        );
+
+      for (const mount of checked.mounts)
+        assertResourceScope(mount.volume, { provider: this.provider, scope: this.scope });
+
+      return checked;
+    }
 
     const resources =
       checked.kind === "snapshot_capture"
@@ -1651,15 +2790,39 @@ export class AdapterDirectClient {
 
     return checked;
   }
-  async persistReference(reference: AdapterRecoveryReference): Promise<void> {
+  async persistReference(reference: RecoveryReference): Promise<void> {
     try {
       await this.onReference?.(reference);
     } catch {
-      throw asUnknown(reference, "Operation reference persistence failed after submission");
+      throw asUnknown(
+        reference,
+        "Operation reference persistence failed after submission",
+        acknowledgedLifecycleOutcome(reference),
+      );
     }
   }
 
-  async recover(reference: AdapterRecoveryReference): Promise<RecoveredOperation> {
+  private assertRecoverySandbox(reference: {
+    sandboxId?: string;
+    sandboxReference?: SandboxReference;
+  }): void {
+    if (!reference.sandboxReference) return;
+
+    if (reference.sandboxReference.nativeId !== reference.sandboxId)
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox identity differs");
+
+    try {
+      assertResourceScope(reference.sandboxReference, {
+        provider: this.provider,
+        scope: this.scope,
+      });
+    } catch (error) {
+      if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+      throw error;
+    }
+  }
+
+  async recover(reference: RecoveryReference): Promise<RecoveredOperation> {
     this.ensureOpen();
     reference = sealedReference(reference);
 
@@ -1678,6 +2841,27 @@ export class AdapterDirectClient {
     if (reference.kind === "snapshot_capture" && !reference.capture)
       throw new SandbarError("INVALID_ARGUMENT", "Recovery capture expectations are missing");
 
+    if (reference.kind === "sandbox_renew" && (!reference.renewal || !reference.sandboxReference))
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Recovery renewal intent and identity are missing",
+      );
+
+    if (
+      ["sandbox_suspend", "sandbox_resume"].includes(reference.kind) &&
+      (!reference.lifecycle ||
+        reference.kind !== `sandbox_${reference.lifecycle.action}` ||
+        !reference.sandboxReference)
+    )
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Lifecycle recovery requires saved intent and identity",
+      );
+
+    if (["file_mkdir", "file_remove"].includes(reference.kind) && !reference.fileMutation)
+      throw new SandbarError("INVALID_ARGUMENT", "Recovery filesystem intent is missing");
+
+    this.assertRecoverySandbox(reference);
     assertRecoveryResourceKind(reference.kind, reference.resource);
 
     if (reference.resource)
@@ -1700,18 +2884,34 @@ export class AdapterDirectClient {
       throw new SandbarError("INVALID_ARGUMENT", "Create reference cannot have a sandbox");
 
     if (
-      ["destroy", "exec", "file_write", "snapshot_capture"].includes(reference.kind) &&
+      [
+        "destroy",
+        "exec",
+        "file_write",
+        "file_mkdir",
+        "file_remove",
+        "snapshot_capture",
+        "sandbox_suspend",
+        "sandbox_resume",
+        "sandbox_renew",
+      ].includes(reference.kind) &&
       !reference.sandboxId
     )
       throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox is missing");
 
-    const completed = (result: RuntimeResult, ref: AdapterRecoveryReference) => {
+    const completed = (result: RuntimeResult, ref: RecoveryReference) => {
       if (result.kind !== "completed") throw asUnknown(ref);
 
       return result.value;
     };
 
     switch (reference.kind) {
+      case "sandbox_suspend":
+        return new AdapterOperation(this, reference, decodeSuspend, undefined, "sandbox_suspend");
+      case "sandbox_resume":
+        return new AdapterOperation(this, reference, decodeResume, undefined, "sandbox_resume");
+      case "sandbox_renew":
+        return new AdapterOperation(this, reference, decodeRenew, undefined, "sandbox_renew");
       case "snapshot_capture":
         return new AdapterOperation(
           this,
@@ -1744,7 +2944,7 @@ export class AdapterDirectClient {
             )
               throw asUnknown(ref, "Recovered mounts not confirmed ready");
 
-            return new AdapterSandbox(this, value.id);
+            return new AdapterSandbox(this, value.id, value.reference ?? null);
           },
           undefined,
           reference.kind,
@@ -1836,6 +3036,19 @@ export class AdapterDirectClient {
           undefined,
           "destroy",
         );
+      case "file_mkdir":
+      case "file_remove":
+        return new AdapterOperation(
+          this,
+          reference,
+          (result, ref) => {
+            const value = completed(result, ref);
+
+            if (!("acknowledged" in value) || value.acknowledged !== true) throw asUnknown(ref);
+          },
+          undefined,
+          reference.kind,
+        );
       case "file_write":
         return new AdapterOperation(
           this,
@@ -1852,44 +3065,60 @@ export class AdapterDirectClient {
     }
   }
 
-  close(): Promise<void> {
+  async close(options: CloseOptions = {}): Promise<void> {
+    const budget = connectionBudget(options, "close");
+
     if (!this.closePromise) {
       this.closed = true;
+      processControls.delete(this);
       this.closePromise = this.connection.close();
     }
 
-    return this.closePromise;
+    try {
+      await raceAbort(this.closePromise, budget.signal);
+    } finally {
+      budget.dispose();
+    }
   }
 }
 
 /** Default storage requirement for new compute cleanup submissions. */
-export type DirectConnectOptions = ObservabilityOptions & {
-  cleanup?: { storage?: "require-durable" | "allow-unconfirmed" };
-};
+export type ConnectOptions = ObservabilityOptions &
+  ConnectionWaitOptions & {
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Release diagnostics preserve thrown JavaScript values.
+    onDiagnostic?: (error: unknown) => void;
+    cleanup?: { storage?: "require-durable" | "allow-unconfirmed" };
+    transfers?: TransferPolicy;
+  };
+
+/** Compatibility name for connection controls. */
+export type DirectConnectOptions = ConnectOptions;
+
+export type { CloseOptions } from "./connection-wait";
 
 export type AdapterConnectOptions<
   C extends z.ZodType,
   K extends z.ZodType,
   S extends RuntimeSession,
-> = DirectConnectOptions & {
+> = ConnectOptions & {
   adapter: Pick<AdapterDefinition<C, K, S>, "name" | "config" | "credentials"> & {
     connect: (input: never) => Promise<S>;
     policy?: { schema: z.ZodType; default: Json };
   };
   config: z.input<C>;
   credentials: z.input<K>;
-  onReference?: (reference: AdapterRecoveryReference) => void | Promise<void>;
+  onReference?: (reference: RecoveryReference) => void | Promise<void>;
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- A cleanup hook may throw any JavaScript value; the diagnostic receives it intact.
   onDiagnostic?: (error: unknown) => void;
 };
 
 export function connectDirect(
   adapter: BoundAdapter,
-  options?: DirectConnectOptions,
-): Promise<AdapterDirectClient>;
+  options?: ConnectOptions,
+): Promise<SandbarClient<true>>;
 export function connectDirect<C extends z.ZodType, K extends z.ZodType, S extends RuntimeSession>(
   options: AdapterConnectOptions<C, K, S>,
-): Promise<AdapterDirectClient>;
+): Promise<SandbarClient<true>>;
 
 export async function connectDirect<
   C extends z.ZodType,
@@ -1897,8 +3126,8 @@ export async function connectDirect<
   S extends RuntimeSession,
 >(
   options: AdapterConnectOptions<C, K, S> | BoundAdapter,
-  observability: DirectConnectOptions = {},
-): Promise<AdapterDirectClient> {
+  observability: ConnectOptions = {},
+): Promise<SandbarClient<true>> {
   const cleanup = z
     .strictObject({ storage: z.enum(["require-durable", "allow-unconfirmed"]).optional() })
     .optional()
@@ -1914,25 +3143,45 @@ export async function connectDirect<
     "bound" in options ? options.name : options.adapter.name,
   );
 
-  return telemetry.run("sandbar.connect", async () => {
-    if ("bound" in options) {
-      const connection = await connectAdapter(options, { config: {}, credentials: {} });
+  const budget = connectionBudget("bound" in options ? observability : options, "connect");
 
-      return new AdapterDirectClient(options.name, connection, undefined, observability, storage);
-    }
+  try {
+    return await telemetry.run("sandbar.connect", async () => {
+      if ("bound" in options) {
+        const connection = await connectAdapter(options, {
+          config: {},
+          credentials: {},
+          signal: budget.signal,
+          onDiagnostic: observability.onDiagnostic,
+        });
 
-    const connection = await connectAdapter(options.adapter, {
-      config: options.config,
-      credentials: options.credentials,
-      onDiagnostic: options.onDiagnostic,
+        return new AdapterDirectClient(
+          options.name,
+          connection,
+          undefined,
+          observability,
+          storage,
+          observability.transfers,
+        );
+      }
+
+      const connection = await connectAdapter(options.adapter, {
+        config: options.config,
+        credentials: options.credentials,
+        onDiagnostic: options.onDiagnostic,
+        signal: budget.signal,
+      });
+
+      return new AdapterDirectClient(
+        options.adapter.name,
+        connection,
+        options.onReference,
+        options,
+        storage,
+        options.transfers,
+      );
     });
-
-    return new AdapterDirectClient(
-      options.adapter.name,
-      connection,
-      options.onReference,
-      options,
-      storage,
-    );
-  });
+  } finally {
+    budget.dispose();
+  }
 }

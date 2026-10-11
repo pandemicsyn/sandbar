@@ -14,7 +14,7 @@ description: Declare only native guarantees that the adapter can actually enforc
 | Recovery   | Observe a previous submission without starting it again. Validate token version and native resource/operation correlation.             |
 | Close      | Release owned local clients exactly once. Never imply that close or abort destroyed remote compute.                                    |
 
-`adapterSuite` from `sandbar-adapter/testing` exercises required managed-compute scenarios and reports which ran. The provider adapters run this suite against deterministic native boundaries. The fake provider is a test simulation, not an isolated execution environment. The suite does not certify an external provider's behavior by itself; its fixture must demonstrate that the native transport makes one outbound mutation attempt.
+`adapterSuite` from `@sandbar-sdk/adapter/testing` exercises required managed-compute scenarios and reports which ran. The provider adapters run this suite against deterministic native boundaries. The fake provider is a test simulation, not an isolated execution environment. The suite does not certify an external provider's behavior by itself; its fixture must demonstrate that the native transport makes one outbound mutation attempt.
 
 ## State portability checks
 
@@ -34,6 +34,8 @@ if (check.status === "supported") {
 
 Requirements are rechecked during create preparation and before submission. Unsupported requests fail before allocation; unknown and unavailable requirements also block allocation. No automatic provider switching is performed.
 
-Daytona and E2B direct connections implement distinct capture/restore and retained volume profiles; read [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) for their limits. Suspension and volume versions remain unsupported. The asynchronous direct capability getter is an intentional API change; callers must await it.
+Daytona and E2B direct connections implement distinct capture/restore profiles. Daytona maps volume CRUD and mounting; E2B maps volume CRUD behind native access eligibility but does not support mounts. Read [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) for their limits. Eligible private sandboxes also support explicit suspension, resumption and renewal; see [sandbox lifecycle](/docs/guides/resources/#reopen-and-manage-lifetime). Volume versions remain unsupported. The asynchronous direct capability getter is an intentional API change; callers must await it.
 
 Preparation validates requirements before the durable submission marker, then read-only eligibility is checked again before dispatch. Recovery only observes native evidence. For a source already observed as stopped, a profile ending stopped satisfies unchanged lifecycle state.
+
+`lifecycle.renew` reports resolved `minSeconds`, `maxSeconds`, `stepSeconds` and native clock `scope` when the mapped adapter can establish them. Positive requests below the native minimum may round upward; resolved settings never grant less time than requested. These bounds describe SDK mapping, not account entitlement or a reservation. Applications use `renew()` or `renew({ forSeconds })` with defaults selected in adapter setup; capability inspection is optional. Renewal checks the actual running state and policy before effects, preserves ACK independently of detail reads, and never replays an uncertain reset.

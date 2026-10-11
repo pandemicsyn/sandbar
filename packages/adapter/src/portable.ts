@@ -29,11 +29,17 @@ export const ExecCommand = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("shell"), script: z.string().min(1).max(65536) }),
 ]);
 
+export const MAX_EXEC_STDIN_BYTES = 1_048_576;
+
 export const ExecRequest = z.strictObject({
   command: ExecCommand,
   cwd: z.string().min(1).max(4096).optional(),
   env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(8192)).optional(),
   deadlineSeconds: z.number().int().min(1).max(3600).optional(),
+  stdin: z
+    .instanceof(Uint8Array)
+    .refine((bytes) => bytes.byteLength <= MAX_EXEC_STDIN_BYTES)
+    .optional(),
   output: z
     .strictObject({
       capture: z.enum(["bounded", "none"]),

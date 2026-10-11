@@ -11,6 +11,7 @@ for (const name of [
   "snapshot-roundtrip",
   "sandbox-lifecycle",
   "execution",
+  "execution-stdin",
   "files",
   "network-controls",
 ] as const)

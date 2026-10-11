@@ -1,5 +1,5 @@
 import { Image, Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 
 const apiKey = process.env.DAYTONA_API_KEY;
 
@@ -9,23 +9,17 @@ const sandbar = await Sandbar.connect(
   daytona({
     apiKey,
     target: "us",
+    environment: Image.prepared("daytona-small"),
     ttlMinutes: 15,
     networkPolicy: "daytona-default",
   }),
 );
 
 try {
-  const box = await sandbar.sandboxes.create({
-    environment: Image.prepared("daytona-small"),
-    networkPolicy: "daytona-default",
-  });
-
-  try {
+  await sandbar.sandboxes.with({}, async (box) => {
     const output = await box.exec(["printf", "Hello from Sandbar!\n"]);
     console.log(output.stdoutText());
-  } finally {
-    await box.destroy();
-  }
+  });
 } finally {
   await sandbar.close();
 }

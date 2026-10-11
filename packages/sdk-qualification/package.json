@@ -7,12 +7,15 @@
     "package-smoke": "bun package-smoke.mjs"
   },
   "dependencies": {
-    "sandbar-adapter": "workspace:*",
+    "@sandbar-sdk/adapter": "workspace:*",
     "@sandbar/provider-fake": "workspace:*",
     "sandbar-sdk": "workspace:*",
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "sandbar-vercel": "workspace:*"
+    "@sandbar-sdk/daytona": "workspace:*",
+    "@sandbar-sdk/e2b": "workspace:*",
+    "@sandbar-sdk/boxd": "workspace:*",
+    "@sandbar-sdk/vercel": "workspace:*"
   }
 }

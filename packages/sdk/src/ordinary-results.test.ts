@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { AdapterCheckpointError, defineAdapter, type SnapshotProfile } from "sandbar-adapter";
+import { AdapterCheckpointError, defineAdapter, type SnapshotProfile } from "@sandbar-sdk/adapter";
 import {
   Image,
   Sandbar,

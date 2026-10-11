@@ -1,16 +1,40 @@
 import { z } from "zod";
 import { e2bState } from "./state-native";
+import {
+  SandboxInfoSchema,
+  LifecycleInput,
+  ResolvedLifecycleInput,
+  SuspendResult,
+  ResumeResult,
+  RenewRequest,
+  PreviewPort,
+  ResolvedRenewInput,
+  sandboxReference,
+  assertSandboxReference,
+  assertResourceScope,
+  unknownSandboxFacts,
+  nativeDeadline,
+  type SandboxInfo,
+  type SandboxReference,
+} from "@sandbar-sdk/adapter";
 import { createHash } from "node:crypto";
+import { ProcessReference } from "./process-native";
 import {
   MountDurability as importMountDurability,
   AdapterError,
+  AdapterFilesystemError,
   AdapterCheckpointError,
   ResourceReference,
   type OperationOutcome,
   defineAdapter,
   type ExecValue,
-} from "sandbar-adapter";
+  type Json,
+} from "@sandbar-sdk/adapter";
+import { MAX_EXEC_STDIN_BYTES } from "@sandbar-sdk/adapter/portable";
 import {
+  E2BLifecycleRejected,
+  E2BRenewRejected,
+  E2BDirectoryRejected,
   createSdkTransport,
   E2B_ENDPOINT,
   MAX_BYTES,
@@ -21,21 +45,110 @@ import {
 
 import { classifyWriteFailure, WriteFailure, writeFailureReason } from "./write-failure";
 
-const Configuration = z.strictObject({
-  teamId: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(/^[A-Za-z0-9_-]+$/)
-    .optional(),
-  templateId: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
-    .default("base"),
-  timeoutSeconds: z.number().int().min(60).max(3600).default(300),
+const CreateToken = z.strictObject({
+  allowPublicTraffic: z.boolean(),
+  sandboxId: z.string().min(1).max(512).optional(),
 });
+
+const CreateRecoveryToken: z.ZodType<Json> = CreateToken;
+
+const Configuration = z
+  .strictObject({
+    teamId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9_-]+$/)
+      .optional(),
+    templateId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
+      .default("base"),
+    networkPolicy: z.enum(["blocked", "internet"]).default("blocked"),
+    timeoutSeconds: z.number().int().min(60).max(3600).optional(),
+    preview: z
+      .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
+      .default({ access: "protected" }),
+    lifecycle: z
+      .strictObject({
+        lifetimeSeconds: z.number().int().positive().safe().max(3600).optional(),
+        suspension: z
+          .strictObject({ preserve: z.enum(["filesystem", "filesystem+memory"]) })
+          .optional(),
+      })
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.lifecycle?.lifetimeSeconds !== undefined && value.timeoutSeconds !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["lifecycle", "lifetimeSeconds"],
+        message: "Supply one lifetime option",
+      });
+  })
+  .transform((value) => ({
+    ...value,
+    timeoutSeconds:
+      value.lifecycle?.lifetimeSeconds === undefined
+        ? (value.timeoutSeconds ?? 300)
+        : Math.max(60, value.lifecycle.lifetimeSeconds),
+  }));
+
+const CompactObservation = SandboxInfoSchema.omit({ reference: true });
+
+const SuspendToken = z.strictObject({
+  acknowledged: z.literal(true),
+  preserve: z.literal("filesystem+memory"),
+  processes: z.literal("preserved"),
+  connections: z.literal("dropped"),
+  completed: SuspendResult.omit({ reference: true })
+    .extend({ observation: CompactObservation })
+    .optional(),
+});
+
+function compactCompletion(value: SuspendResult | ResumeResult) {
+  const { reference: _reference, ...result } = value;
+  const { reference: _observedReference, ...observation } = value.observation;
+
+  return { ...result, observation };
+}
+
+const ResumeToken = z.strictObject({
+  acknowledged: z.literal(true),
+  completed: ResumeResult.omit({ reference: true })
+    .extend({ observation: CompactObservation })
+    .optional(),
+});
+
+const RenewToken = z.strictObject({ acknowledged: z.literal(true) });
+
+function suspendOutcome(
+  reference: SandboxReference,
+  acknowledged: boolean,
+  observation: SandboxInfo | null,
+): OperationOutcome {
+  if (!acknowledged)
+    return {
+      kind: "sandbox_suspend",
+      status: "unknown",
+      reference,
+      acknowledged: false,
+      observation,
+    };
+
+  return {
+    kind: "sandbox_suspend",
+    status: "partial",
+    reference,
+    acknowledged: true,
+    preserve: "filesystem+memory",
+    processes: "preserved",
+    connections: "dropped",
+    observation,
+  };
+}
 
 const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
@@ -91,8 +204,10 @@ function destroyToken(record: E2BRecord, sandboxId: string): z.infer<typeof Dest
   return token;
 }
 
-function destroyValue(token: z.infer<typeof DestroyToken>): import("sandbar-adapter").DestroyValue {
-  const value: import("sandbar-adapter").DestroyValue = {
+function destroyValue(
+  token: z.infer<typeof DestroyToken>,
+): import("@sandbar-sdk/adapter").DestroyValue {
+  const value: import("@sandbar-sdk/adapter").DestroyValue = {
     computeStopped: true,
     retainedResources: [
       ...(token.retainedTemplateId ? [`e2b-template:${token.retainedTemplateId}`] : []),
@@ -160,6 +275,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
     credentials: Credentials,
     async connect({ config, credentials, host }) {
       const transport = transportFactory?.(credentials) ?? createSdkTransport(credentials.apiKey);
+
+      if (config.lifecycle?.suspension && (!transport.suspend || !transport.resume))
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "Configured suspension requires mapped E2B lifecycle transport",
+        );
       host.onClose(() => transport.close());
 
       const verifyAuthority = () =>
@@ -199,17 +320,102 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           record.metadata.sandbar_template === record.templateId ||
           (record.metadata.sandbar_template === "base" && !record.metadata.sandbar_build));
 
-      const find = async (id: string): Promise<E2BRecord | null> => {
+      const assertRecordReference = (
+        record: E2BRecord,
+        id: string,
+        expected?: SandboxReference,
+      ) => {
+        if (expected) {
+          if (record.id !== id || !owned(record))
+            throw new AdapterError("CONFLICT", "E2B sandbox identity or scope differs");
+          assertSandboxReference(
+            sandboxReference("e2b", boundScope, record.id, {
+              operation: record.metadata.sandbar_operation!,
+              submission: record.metadata.sandbar_submission!,
+            }),
+            expected,
+          );
+        }
+      };
+
+      const find = async (id: string, expected?: SandboxReference): Promise<E2BRecord | null> => {
         if (!nativeId.test(id))
           throw new AdapterError("INVALID_ARGUMENT", "Invalid E2B sandbox ID");
         await verifyAuthority();
         const record = await transport.get(id);
 
+        if (record) assertRecordReference(record, id, expected);
+
         return record && owned(record) ? record : null;
       };
 
-      const requireRunning = async (id: string): Promise<E2BRecord> => {
-        const record = await find(id);
+      const inspection = async (
+        id: string,
+        expected?: SandboxReference,
+        renewalPolicy = false,
+      ): Promise<SandboxInfo> => {
+        let record;
+
+        try {
+          await verifyAuthority();
+          record = await transport.get(id);
+
+          if (record && (record.id !== id || !owned(record)))
+            throw new AdapterError(
+              "CONFLICT",
+              "E2B native identity, scope, or creation markers differ",
+            );
+        } catch (error) {
+          if (error instanceof AdapterError) throw error;
+          throw new AdapterError("UNAVAILABLE", "E2B native detail is unavailable");
+        }
+
+        if (!record)
+          throw new AdapterError("NOT_FOUND", "E2B sandbox is missing, expired, or deleted");
+
+        const reference = sandboxReference("e2b", boundScope, record.id, {
+          operation: record.metadata.sandbar_operation!,
+          submission: record.metadata.sandbar_submission!,
+        });
+
+        if (expected) assertSandboxReference(reference, expected);
+
+        if (
+          renewalPolicy &&
+          (record.lifecycle?.onTimeout !== "kill" || record.lifecycle?.autoResume !== false)
+        )
+          throw new AdapterError(
+            "UNAVAILABLE",
+            "E2B renewal requires known kill-on-timeout with auto-resume off",
+          );
+
+        return {
+          ...unknownSandboxFacts(),
+          reference,
+          observedAt: new Date().toISOString(),
+          nativeState: record.state,
+          state:
+            record.state === "running"
+              ? "running"
+              : record.state === "paused"
+                ? "suspended"
+                : "unknown",
+          expires:
+            record.state === "paused"
+              ? { status: "none" }
+              : nativeDeadline(record.endAt, "running-session"),
+          retention:
+            record.state === "paused"
+              ? { status: "known", value: { autoDeleteAfterStoppedSeconds: null } }
+              : unknownSandboxFacts().retention,
+        };
+      };
+
+      const requireRunning = async (
+        id: string,
+        expected?: SandboxReference,
+      ): Promise<E2BRecord> => {
+        const record = await find(id, expected);
 
         if (!record)
           throw new AdapterError("NOT_FOUND", "E2B sandbox is outside the verified scope");
@@ -217,7 +423,43 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         if (record.state !== "running")
           throw new AdapterError("UNAVAILABLE", "E2B sandbox is paused");
 
+        if (record.attachmentReady === false)
+          throw new AdapterError("UNAVAILABLE", "E2B read-only guest attachment is unavailable");
+
         return record;
+      };
+
+      const lifecycleSource = async (
+        box: import("@sandbar-sdk/adapter").Sandbox,
+        ctx: import("@sandbar-sdk/adapter").ReadContext,
+      ) => {
+        if (!box.reference)
+          throw new AdapterError("UNSUPPORTED", "Verified sandbox identity required");
+        assertResourceScope(box.reference, { provider: "e2b", scope: boundScope });
+        const info = await inspection(box.id, box.reference, true);
+        const record = await find(box.id, box.reference);
+
+        if (!record)
+          throw new AdapterError("NOT_FOUND", "E2B sandbox is missing, expired, or deleted");
+
+        if (
+          record.state !== info.nativeState ||
+          record.lifecycle?.onTimeout !== "kill" ||
+          record.lifecycle?.autoResume !== false
+        )
+          throw new AdapterError(
+            "UNAVAILABLE",
+            "Native lifecycle state or policy changed during validation",
+          );
+
+        // Missing mount metadata stays unknown; preservation covers private state only.
+        if (record.volumeMounts?.length)
+          throw new AdapterError("UNSUPPORTED", "Suspension with native mounts is unsupported");
+
+        if (ctx.signal.aborted)
+          throw new AdapterError("UNAVAILABLE", "Lifecycle validation cancelled");
+
+        return info;
       };
 
       const cleanup = async (id: string, paths: ReturnType<typeof executionPaths>) => {
@@ -241,9 +483,20 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
         if (status.truncated || !/^(?:0|[1-9][0-9]{0,2})$/.test(code))
           throw new Error("E2B command completion marker is invalid");
-        const stdout = await transport.read(id, paths.stdout, maxOutputBytes);
+
+        // Completion is independent of log availability. Never discard the validated
+        // exit marker or replay a command because one captured stream cannot be read.
+        const readOutput = async (path: string, budget: number) => {
+          try {
+            return await transport.read(id, path, budget);
+          } catch {
+            return { bytes: new Uint8Array(), truncated: true };
+          }
+        };
+
+        const stdout = await readOutput(paths.stdout, maxOutputBytes);
         const remaining = maxOutputBytes - stdout.bytes.length;
-        const stderr = await transport.read(id, paths.stderr, remaining);
+        const stderr = await readOutput(paths.stderr, remaining);
 
         return {
           exitCode: Number(code),
@@ -252,6 +505,10 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           truncated: stdout.truncated || stderr.truncated,
         };
       };
+
+      const processBinding = createHash("sha256")
+        .update(JSON.stringify({ authority, config }))
+        .digest("hex");
 
       const boundScope = {
         authority,
@@ -264,14 +521,238 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         scopeMarker,
         timeoutSeconds: config.timeoutSeconds,
         apiKey: credentials.apiKey,
+        allowPublicTraffic: config.preview.access === "public",
         find,
       });
 
+      const entryExists = transport.exists;
+      const makeDirectory = transport.makeDirectory;
+      const mkdir = transport.mkdir;
+      const unlink = transport.unlink;
+      const removeEntry = transport.removeEntry;
+
+      const directoryOperations: Partial<
+        NonNullable<import("@sandbar-sdk/adapter").AdapterSession["files"]>
+      > = {};
+
+      if (entryExists)
+        directoryOperations.exists = async (
+          input: { sandbox: import("@sandbar-sdk/adapter").Sandbox; path: string },
+          ctx: import("@sandbar-sdk/adapter").ReadContext,
+        ) => {
+          requirePath(input.path);
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+          ctx.signal.throwIfAborted();
+
+          return entryExists(input.sandbox.id, input.path, ctx.signal);
+        };
+
+      if (makeDirectory || mkdir)
+        directoryOperations.makeDirectory = {
+          async prepare(input: import("@sandbar-sdk/adapter").FileMutationInput) {
+            requirePath(input.path);
+
+            if (!input.recursive && !mkdir)
+              throw new AdapterError("UNSUPPORTED", "E2B makeDirectory requires recursive: true");
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+            return input;
+          },
+          async submit(
+            input: import("@sandbar-sdk/adapter").FileMutationInput,
+            ctx: import("@sandbar-sdk/adapter").AttemptContext,
+          ) {
+            let recursiveDispatched = false;
+
+            try {
+              await requireRunning(input.sandbox.id, input.sandbox.reference);
+              ctx.signal.throwIfAborted();
+
+              if (input.recursive && makeDirectory) {
+                recursiveDispatched = true;
+                await makeDirectory(input.sandbox.id, input.path, ctx.signal);
+              } else await mkdir!(input.sandbox.id, input.path, input.recursive, ctx.signal);
+
+              return { acknowledged: true as const };
+            } catch (error) {
+              if (
+                error instanceof AdapterError &&
+                (!recursiveDispatched || error instanceof E2BDirectoryRejected) &&
+                !(error instanceof AdapterFilesystemError && error.details.effect !== "none")
+              )
+                return ctx.reject(error.code, error.message);
+
+              return ctx.unknown(
+                "E2B directory creation acknowledgement unavailable; not replayed",
+              );
+            }
+          },
+        };
+
+      if (removeEntry || unlink)
+        directoryOperations.remove = {
+          async prepare(input: import("@sandbar-sdk/adapter").FileMutationInput) {
+            requirePath(input.path);
+
+            if (!input.recursive && !unlink)
+              throw new AdapterError("UNSUPPORTED", "E2B removeFile requires recursive: true");
+
+            if (input.path === "/")
+              throw new AdapterError("INVALID_ARGUMENT", "Cannot remove sandbox root");
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+            return input;
+          },
+          async submit(
+            input: import("@sandbar-sdk/adapter").FileMutationInput,
+            ctx: import("@sandbar-sdk/adapter").AttemptContext,
+          ) {
+            let recursiveDispatched = false;
+
+            try {
+              await requireRunning(input.sandbox.id, input.sandbox.reference);
+              ctx.signal.throwIfAborted();
+
+              if (input.recursive && removeEntry) {
+                recursiveDispatched = true;
+                await removeEntry(input.sandbox.id, input.path, ctx.signal);
+              } else await unlink!(input.sandbox.id, input.path, input.recursive, ctx.signal);
+
+              return { acknowledged: true as const };
+            } catch (error) {
+              if (
+                error instanceof AdapterError &&
+                !recursiveDispatched &&
+                !(error instanceof AdapterFilesystemError && error.details.effect !== "none")
+              )
+                return ctx.reject(error.code, error.message);
+
+              return ctx.unknown("E2B removal acknowledgement unavailable; not replayed");
+            }
+          },
+        };
+
+      if (transport.directory) {
+        directoryOperations.readDirectory = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+          return transport.directory!(input.sandbox.id, input.path, ctx.signal);
+        };
+
+        directoryOperations.list = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+          return (await transport.directory!(input.sandbox.id, input.path, ctx.signal)).entries;
+        };
+      }
+
+      if (transport.stat)
+        directoryOperations.stat = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+          return transport.stat!(input.sandbox.id, input.path, input.followSymlinks, ctx.signal);
+        };
+
+      if (transport.readStream)
+        directoryOperations.readStream = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+          return transport.readStream!(input.sandbox.id, input.path, ctx.signal);
+        };
+
+      if (transport.writeStream)
+        directoryOperations.writeStream = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+          return transport.writeStream!(
+            input.sandbox.id,
+            input.path,
+            input.bytes,
+            input.overwrite,
+            ctx.signal,
+            ctx.retain,
+          );
+        };
+
+      if (transport.transfer) {
+        directoryOperations.copy = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+          await transport.transfer!(
+            input.sandbox.id,
+            input.source,
+            input.destination,
+            input.overwrite,
+            false,
+            ctx.signal,
+            ctx.retain,
+          );
+
+          return { acknowledged: true as const };
+        };
+
+        directoryOperations.move = async (input, ctx) => {
+          await requireRunning(input.sandbox.id, input.sandbox.reference);
+          await transport.transfer!(
+            input.sandbox.id,
+            input.source,
+            input.destination,
+            input.overwrite,
+            true,
+            ctx.signal,
+            ctx.retain,
+          );
+
+          return { acknowledged: true as const };
+        };
+      }
+
       return {
         ...resources.fields,
+        defaultImage: { kind: "prepared", value: config.templateId },
+        defaultNetworkPolicy: config.networkPolicy,
         scope: {
           authority,
           partition: { endpoint: E2B_ENDPOINT, template: config.templateId },
+        },
+        async preview(input, ctx) {
+          if (!PreviewPort.safeParse(input.port).success)
+            throw new AdapterError(
+              "INVALID_ARGUMENT",
+              "Preview port must be an integer from 1 through 65535",
+            );
+
+          if (config.preview.access !== "public")
+            throw new AdapterError(
+              "UNSUPPORTED",
+              "E2B protected preview credentials cannot be retrieved read-only after reopening; select preview.access public explicitly or use Daytona protected previews",
+            );
+          ctx.signal.throwIfAborted();
+          const record = await find(input.sandbox.id, input.sandbox.reference);
+
+          if (!record)
+            throw new AdapterError("NOT_FOUND", "E2B sandbox is outside the verified scope");
+
+          if (record.id !== input.sandbox.id)
+            throw new AdapterError("CONFLICT", "E2B preview response identity differs");
+
+          if (record.state !== "running")
+            throw new AdapterError(
+              "UNAVAILABLE",
+              "E2B preview requires running compute; resume explicitly before requesting access",
+            );
+          ctx.signal.throwIfAborted();
+
+          if (
+            record.allowPublicTraffic !== true ||
+            record.domain !== "e2b.app" ||
+            record.lifecycle?.autoResume !== false
+          )
+            throw new AdapterError(
+              "UNAVAILABLE",
+              "E2B public preview requires confirmed public traffic, e2b.app domain, and auto-resume off",
+            );
+
+          return { access: "public" as const, url: `https://${input.port}-${record.id}.e2b.app` };
         },
         supports: {
           images: ["prepared", "oci"],
@@ -353,6 +834,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           },
         },
         create: {
+          recovery: { version: 1, token: CreateRecoveryToken },
           async prepare(input) {
             if (input.mounts?.length)
               throw new AdapterError(
@@ -390,6 +872,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
             if (!nativeId.test(ctx.submissionId) || !nativeId.test(ctx.operationId))
               return ctx.reject("INVALID_ARGUMENT", "Invalid E2B correlation ID");
+
+            const token: z.infer<typeof CreateToken> = {
+              allowPublicTraffic: config.preview.access === "public",
+            };
+
+            await ctx.checkpoint(token);
 
             let templateId =
               input.image.kind === "prepared" ? input.image.value : config.templateId;
@@ -452,11 +940,14 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 templateId,
                 timeoutMs: config.timeoutSeconds * 1000,
                 allowInternetAccess: input.networkPolicy === "internet",
+                allowPublicTraffic: token.allowPublicTraffic,
                 metadata,
                 signal: ctx.signal,
               });
 
               if (!nativeId.test(id)) return ctx.unknown("E2B create returned an invalid ID");
+              token.sandboxId = id;
+              await ctx.checkpoint(token);
               const record = await transport.get(id);
 
               if (
@@ -468,64 +959,102 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               )
                 return ctx.unknown("E2B create identity could not be verified");
 
+              if (record.allowPublicTraffic !== token.allowPublicTraffic)
+                return ctx.unknown(
+                  "E2B create inbound visibility could not be verified; no replay",
+                );
+
               return {
                 id,
+                reference: sandboxReference("e2b", boundScope, id, {
+                  operation: record.metadata.sandbar_operation!,
+                  submission: record.metadata.sandbar_submission!,
+                }),
                 mounts: input.mounts,
                 state: record.state === "running" ? ("running" as const) : ("unknown" as const),
               };
-            } catch {
+            } catch (error) {
+              if (error instanceof AdapterCheckpointError) throw error;
+
               return ctx.unknown(
                 `E2B create response unavailable; observe without replay${name ? `; retained template ${templateId}` : ""}`,
               );
             }
           },
           async observe(attempt, ctx) {
+            // Pre-preview creates had no recovery metadata and used native-public traffic.
+            const legacy = attempt.token === undefined;
+
+            const token = CreateToken.safeParse(
+              legacy ? { allowPublicTraffic: true } : attempt.token,
+            );
+
+            if (!token.success)
+              return ctx.unknown(
+                "Original E2B create inbound visibility is unavailable; no replay",
+              );
             await verifyAuthority();
 
-            const page = await transport.list(
-              {
-                sandbar_scope: scopeMarker,
-                sandbar_submission: attempt.submissionId,
-                sandbar_operation: attempt.operationId,
-              },
-              2,
-            );
+            let id = token.data.sandboxId;
 
-            const matches = page.items.filter(
-              (record) =>
-                owned(record) &&
-                record.metadata.sandbar_submission === attempt.submissionId &&
-                record.metadata.sandbar_operation === attempt.operationId,
-            );
-
-            if (matches.length !== 1 || page.nextToken) {
-              const build = await transport.findBuild(
-                config.teamId,
-                buildName(attempt.submissionId),
+            if (!id) {
+              const page = await transport.list(
+                {
+                  sandbar_scope: scopeMarker,
+                  sandbar_submission: attempt.submissionId,
+                  sandbar_operation: attempt.operationId,
+                },
+                2,
               );
 
-              return build
-                ? ctx.unknown(
-                    `E2B image build ${build.templateId} is ${build.status}; no sandbox was confirmed`,
-                  )
-                : null;
+              const matches = page.items.filter(
+                (record) =>
+                  owned(record) &&
+                  record.metadata.sandbar_submission === attempt.submissionId &&
+                  record.metadata.sandbar_operation === attempt.operationId,
+              );
+
+              if (matches.length !== 1 || page.nextToken) {
+                const build = await transport.findBuild(
+                  config.teamId,
+                  buildName(attempt.submissionId),
+                );
+
+                return build
+                  ? ctx.unknown(
+                      `E2B image build ${build.templateId} is ${build.status}; no sandbox was confirmed`,
+                    )
+                  : null;
+              }
+
+              id = matches[0]!.id;
             }
 
-            const record = (await transport.get(matches[0]!.id)) ?? matches[0]!;
+            const record = await transport.get(id);
 
             if (
-              record.id !== matches[0]!.id ||
+              !record ||
+              record.id !== id ||
               !owned(record) ||
               record.metadata.sandbar_submission !== attempt.submissionId ||
               record.metadata.sandbar_operation !== attempt.operationId
             )
               return ctx.unknown("Recovered E2B create identity could not be verified");
 
+            if (record.allowPublicTraffic !== token.data.allowPublicTraffic)
+              return ctx.unknown(
+                "Recovered E2B create inbound visibility is unverified; no replay",
+              );
+
             if (attempt.mounts?.length)
               return ctx.unknown("Recovered native volume IDs cannot be confirmed; no replay");
 
             return {
               id: record.id,
+              reference: sandboxReference("e2b", boundScope, record.id, {
+                operation: record.metadata.sandbar_operation!,
+                submission: record.metadata.sandbar_submission!,
+              }),
               mounts: attempt.mounts,
               state: record.state === "running" ? ("running" as const) : ("unknown" as const),
             };
@@ -534,7 +1063,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         destroy: {
           recovery: { version: 2, token: DestroyToken },
           async prepare(box) {
-            const record = await find(box.id);
+            const record = await find(box.id, box.reference);
 
             if (!record)
               throw new AdapterError("NOT_FOUND", "E2B sandbox is outside the verified scope");
@@ -550,7 +1079,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             return box;
           },
           async submit(box, ctx) {
-            const record = await find(box.id);
+            const record = await find(box.id, box.reference);
 
             if (!record)
               return ctx.reject("NOT_FOUND", "E2B sandbox is outside the verified scope");
@@ -594,6 +1123,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               return ctx.reject("UNAVAILABLE", "E2B termination cancelled before dispatch");
             }
 
+            if (box.reference) await find(box.id, box.reference);
+
             try {
               await transport.kill(box.id, ctx.signal);
               token.stage = "accepted";
@@ -628,6 +1159,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             try {
               await verifyAuthority();
               record = await transport.get(attempt.sandbox.id);
+
+              if (record)
+                assertRecordReference(record, attempt.sandbox.id, attempt.sandbox.reference);
             } catch {
               return ctx.unknown(
                 "E2B compute observation is unavailable; termination cannot be replayed",
@@ -666,15 +1200,512 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             );
           },
         },
-        async inspect(box) {
-          const record = await find(box.id);
+        async suspensionCapabilities(target, ctx) {
+          if (!transport.suspend || !transport.resume)
+            return { status: "unsupported" as const, reason: "Suspension transport is not mapped" };
 
-          return record
-            ? {
-                id: record.id,
-                state: record.state === "running" ? ("running" as const) : ("unknown" as const),
-              }
-            : null;
+          if (target.sandbox) {
+            try {
+              const info = await lifecycleSource(target.sandbox, ctx);
+
+              if (info.state !== "running")
+                return {
+                  status: "unavailable" as const,
+                  reason: "Suspension requires running compute",
+                };
+            } catch (error) {
+              return {
+                status:
+                  error instanceof AdapterError && error.code === "UNSUPPORTED"
+                    ? ("unsupported" as const)
+                    : error instanceof Error &&
+                        [
+                          "Native sandbox class unavailable",
+                          "Native auto-delete policy unavailable",
+                        ].includes(error.message)
+                      ? ("unknown" as const)
+                      : ("unavailable" as const),
+                reason:
+                  error instanceof Error
+                    ? error.message
+                    : "Native lifecycle eligibility unavailable",
+              };
+            }
+          }
+
+          return {
+            status: "supported" as const,
+            value: {
+              preserve: "filesystem+memory" as const,
+              processes: "preserved" as const,
+              connections: "dropped" as const,
+            },
+          };
+        },
+        async resumeCapabilities(target, ctx) {
+          if (!transport.suspend || !transport.resume)
+            return { status: "unsupported" as const, reason: "Suspension transport is not mapped" };
+
+          if (target.sandbox) {
+            try {
+              const info = await lifecycleSource(target.sandbox, ctx);
+
+              if (!["suspended"].includes(info.state))
+                return {
+                  status: "unavailable" as const,
+                  reason: "Resume requires inactive compute",
+                };
+            } catch (error) {
+              return {
+                status:
+                  error instanceof AdapterError && error.code === "UNSUPPORTED"
+                    ? ("unsupported" as const)
+                    : error instanceof Error &&
+                        [
+                          "Native sandbox class unavailable",
+                          "Native auto-delete policy unavailable",
+                        ].includes(error.message)
+                      ? ("unknown" as const)
+                      : ("unavailable" as const),
+                reason:
+                  error instanceof Error
+                    ? error.message
+                    : "Native lifecycle eligibility unavailable",
+              };
+            }
+          }
+
+          return {
+            status: "supported" as const,
+            value: {
+              sourceStates: ["suspended" as const],
+              setsSessionTimeout: true,
+            },
+          };
+        },
+        suspend: transport.suspend
+          ? {
+              recovery: { version: 1, token: SuspendToken },
+              async prepare(input, ctx) {
+                LifecycleInput.parse(input);
+                const info = await lifecycleSource(input.sandbox, ctx);
+
+                if (info.state === "destroyed")
+                  throw new AdapterError("NOT_FOUND", "Sandbox is destroyed");
+
+                if (["stopped", "suspended"].includes(info.state))
+                  throw new AdapterError("CONFLICT", "Sandbox is already inactive");
+
+                if (!(info.state === "running"))
+                  throw new AdapterError("UNAVAILABLE", "Sandbox is transitioning or unavailable");
+
+                return ResolvedLifecycleInput.parse({
+                  ...input,
+                  intent: { action: "suspend", preserve: "filesystem+memory" },
+                });
+              },
+              async submit(input, ctx) {
+                if (ctx.signal.aborted)
+                  return ctx.reject("UNAVAILABLE", "Lifecycle cancelled before dispatch");
+
+                try {
+                  await transport.suspend!(input.sandbox.id, ctx.signal);
+                } catch (error) {
+                  if (error instanceof E2BLifecycleRejected)
+                    return ctx.reject(error.code, error.message);
+                  const box = input.sandbox;
+                  const observation = await inspection(box.id, box.reference).catch(() => null);
+                  const acknowledged = false;
+
+                  return ctx.unknown(
+                    "Lifecycle acknowledgement unavailable; never replay",
+                    suspendOutcome(box.reference!, acknowledged, observation),
+                  );
+                }
+
+                try {
+                  await ctx.checkpoint({
+                    acknowledged: true,
+                    preserve: "filesystem+memory",
+                    processes: "preserved",
+                    connections: "dropped",
+                  });
+                } catch {
+                  /* ACK remains known. */
+                }
+
+                const box = input.sandbox;
+                const observation = await inspection(box.id, box.reference).catch(() => null);
+
+                if (observation && observation.state === "suspended") {
+                  const completed = {
+                    reference: input.sandbox.reference,
+                    preserve: "filesystem+memory" as const,
+                    processes: "preserved" as const,
+                    connections: "dropped" as const,
+                    observation,
+                  };
+
+                  try {
+                    await ctx.checkpoint(
+                      z.json().parse({
+                        acknowledged: true,
+                        preserve: "filesystem+memory",
+                        processes: "preserved",
+                        connections: "dropped",
+                        completed: compactCompletion(completed),
+                      }),
+                    );
+                  } catch {
+                    /* Completion remains known. */
+                  }
+
+                  return completed;
+                }
+
+                const acknowledged = true;
+
+                if (!observation)
+                  return ctx.unknown(
+                    "Lifecycle acknowledged; target observation unavailable",
+                    suspendOutcome(box.reference!, acknowledged, observation),
+                  );
+
+                return ctx.pending(
+                  {
+                    acknowledged: true,
+                    preserve: "filesystem+memory",
+                    processes: "preserved",
+                    connections: "dropped",
+                  },
+                  { pollAfterMs: 100 },
+                );
+              },
+              async observe(attempt, ctx) {
+                if (!attempt.sandbox?.reference || attempt.lifecycle?.action !== "suspend")
+                  return ctx.unknown("Saved lifecycle identity or intent missing");
+                const box = attempt.sandbox;
+                assertResourceScope(box.reference!, { provider: "e2b", scope: boundScope });
+                const token = SuspendToken.safeParse(attempt.token);
+
+                if (token.success && token.data.completed)
+                  return {
+                    ...token.data.completed,
+                    reference: box.reference!,
+                    observation: { ...token.data.completed.observation, reference: box.reference! },
+                  };
+                const observation = await inspection(box.id, box.reference).catch(() => null);
+                const acknowledged = token.success;
+
+                if (!acknowledged || !observation)
+                  return ctx.unknown(
+                    "Lifecycle outcome incomplete; observation cannot establish attribution",
+                    suspendOutcome(box.reference!, acknowledged, observation),
+                  );
+                const input = { sandbox: { id: box.id, reference: box.reference! } };
+
+                if (observation.state === "suspended")
+                  return ctx.pending(
+                    z.json().parse({
+                      acknowledged: true,
+                      preserve: "filesystem+memory",
+                      processes: "preserved",
+                      connections: "dropped",
+                      completed: compactCompletion({
+                        reference: input.sandbox.reference,
+                        preserve: "filesystem+memory" as const,
+                        processes: "preserved" as const,
+                        connections: "dropped" as const,
+                        observation,
+                      }),
+                    }),
+                    { pollAfterMs: 1 },
+                  );
+
+                return ctx.pending(
+                  {
+                    acknowledged: true,
+                    preserve: "filesystem+memory",
+                    processes: "preserved",
+                    connections: "dropped",
+                  },
+                  { pollAfterMs: 100 },
+                );
+              },
+            }
+          : undefined,
+        resume: transport.resume
+          ? {
+              recovery: { version: 1, token: ResumeToken },
+              async prepare(input, ctx) {
+                LifecycleInput.parse(input);
+                const info = await lifecycleSource(input.sandbox, ctx);
+
+                if (info.state === "destroyed")
+                  throw new AdapterError("NOT_FOUND", "Sandbox is destroyed");
+
+                if (info.state === "running")
+                  throw new AdapterError("CONFLICT", "Sandbox is already running");
+
+                if (!(info.state === "suspended"))
+                  throw new AdapterError("UNAVAILABLE", "Sandbox is transitioning or unavailable");
+
+                return ResolvedLifecycleInput.parse({
+                  ...input,
+                  intent: { action: "resume", forSeconds: config.timeoutSeconds },
+                });
+              },
+              async submit(input, ctx) {
+                if (ctx.signal.aborted)
+                  return ctx.reject("UNAVAILABLE", "Lifecycle cancelled before dispatch");
+
+                try {
+                  await transport.resume!(
+                    input.sandbox.id,
+                    input.intent.action === "resume" ? input.intent.forSeconds! : 0,
+                    ctx.signal,
+                  );
+                } catch (error) {
+                  if (error instanceof E2BLifecycleRejected)
+                    return ctx.reject(error.code, error.message);
+                  const box = input.sandbox;
+                  const observation = await inspection(box.id, box.reference).catch(() => null);
+                  const acknowledged = false;
+
+                  return ctx.unknown("Lifecycle acknowledgement unavailable; never replay", {
+                    kind: "sandbox_resume" as const,
+                    status: acknowledged ? ("partial" as const) : ("unknown" as const),
+                    reference: box.reference!,
+                    acknowledged,
+                    observation,
+                  });
+                }
+
+                try {
+                  await ctx.checkpoint({ acknowledged: true });
+                } catch {
+                  /* ACK remains known. */
+                }
+
+                const box = input.sandbox;
+                const observation = await inspection(box.id, box.reference).catch(() => null);
+
+                if (observation && observation.state === "running") {
+                  const completed = {
+                    reference: input.sandbox.reference,
+                    execution: "unknown" as const,
+                    executionIdentity: unknownSandboxFacts().execution,
+                    connections: "dropped" as const,
+                    observation,
+                  };
+
+                  try {
+                    await ctx.checkpoint(
+                      z
+                        .json()
+                        .parse({ acknowledged: true, completed: compactCompletion(completed) }),
+                    );
+                  } catch {
+                    /* Completion remains known. */
+                  }
+
+                  return completed;
+                }
+
+                const acknowledged = true;
+
+                if (!observation)
+                  return ctx.unknown("Lifecycle acknowledged; target observation unavailable", {
+                    kind: "sandbox_resume" as const,
+                    status: acknowledged ? ("partial" as const) : ("unknown" as const),
+                    reference: box.reference!,
+                    acknowledged,
+                    observation,
+                  });
+
+                return ctx.pending({ acknowledged: true }, { pollAfterMs: 100 });
+              },
+              async observe(attempt, ctx) {
+                if (!attempt.sandbox?.reference || attempt.lifecycle?.action !== "resume")
+                  return ctx.unknown("Saved lifecycle identity or intent missing");
+                const box = attempt.sandbox;
+                assertResourceScope(box.reference!, { provider: "e2b", scope: boundScope });
+                const token = ResumeToken.safeParse(attempt.token);
+
+                if (token.success && token.data.completed)
+                  return {
+                    ...token.data.completed,
+                    reference: box.reference!,
+                    observation: { ...token.data.completed.observation, reference: box.reference! },
+                  };
+                const observation = await inspection(box.id, box.reference).catch(() => null);
+                const acknowledged = token.success;
+
+                if (!acknowledged || !observation)
+                  return ctx.unknown(
+                    "Lifecycle outcome incomplete; observation cannot establish attribution",
+                    {
+                      kind: "sandbox_resume" as const,
+                      status: acknowledged ? ("partial" as const) : ("unknown" as const),
+                      reference: box.reference!,
+                      acknowledged,
+                      observation,
+                    },
+                  );
+                const input = { sandbox: { id: box.id, reference: box.reference! } };
+
+                if (observation.state === "running")
+                  return ctx.pending(
+                    z.json().parse({
+                      acknowledged: true,
+                      completed: compactCompletion({
+                        reference: input.sandbox.reference,
+                        execution: "unknown" as const,
+                        executionIdentity: unknownSandboxFacts().execution,
+                        connections: "dropped" as const,
+                        observation,
+                      }),
+                    }),
+                    { pollAfterMs: 1 },
+                  );
+
+                return ctx.pending({ acknowledged: true }, { pollAfterMs: 100 });
+              },
+            }
+          : undefined,
+        async renewCapabilities(target) {
+          if (!transport.renew)
+            return { status: "unsupported" as const, reason: "Renewal transport is not mapped" };
+
+          if (
+            target.sandbox &&
+            (await inspection(target.sandbox.id, target.sandbox.reference, true)).state !==
+              "running"
+          )
+            return { status: "unavailable" as const, reason: "Renewal requires running compute" };
+
+          return {
+            status: "supported" as const,
+            value: {
+              minSeconds: 60,
+              maxSeconds: 3600,
+              stepSeconds: 1,
+              scope: "running-session" as const,
+            },
+          };
+        },
+        renew: transport.renew
+          ? {
+              recovery: { version: 1, token: RenewToken },
+              async prepare(input) {
+                assertResourceScope(input.sandbox.reference, {
+                  provider: "e2b",
+                  scope: boundScope,
+                });
+
+                const requested = RenewRequest.parse({
+                  forSeconds: input.forSeconds ?? config.timeoutSeconds,
+                }).forSeconds;
+
+                if (requested > 3600)
+                  throw new AdapterError(
+                    "INVALID_ARGUMENT",
+                    "Renewal exceeds the adapter lifetime ceiling",
+                  );
+                const forSeconds = Math.max(60, requested);
+                const info = await inspection(input.sandbox.id, input.sandbox.reference, true);
+
+                if (info.state !== "running")
+                  throw new AdapterError("UNAVAILABLE", "Renewal requires running compute");
+
+                return ResolvedRenewInput.parse({ ...input, forSeconds });
+              },
+              async submit(input, ctx) {
+                if (ctx.signal.aborted)
+                  return ctx.reject("UNAVAILABLE", "Renewal cancelled before dispatch");
+
+                try {
+                  await transport.renew!(input.sandbox.id, input.forSeconds, ctx.signal);
+                } catch (error) {
+                  if (error instanceof E2BRenewRejected)
+                    return ctx.reject(error.code, error.message);
+
+                  return ctx.unknown(
+                    "E2B renewal acknowledgement was lost; never replay this reset",
+                    {
+                      kind: "sandbox_renew",
+                      status: "unknown",
+                      reference: input.sandbox.reference,
+                      requested: { forSeconds: input.forSeconds },
+                      observation: await inspection(
+                        input.sandbox.id,
+                        input.sandbox.reference,
+                      ).catch(() => null),
+                    },
+                  );
+                }
+
+                // One effect is complete. A failed compatibility save cannot erase its ACK.
+                try {
+                  await ctx.checkpoint({ acknowledged: true });
+                } catch {
+                  /* Return the confirmed result below. */
+                }
+
+                const observation = await inspection(
+                  input.sandbox.id,
+                  input.sandbox.reference,
+                ).catch(() => null);
+
+                return {
+                  reference: input.sandbox.reference,
+                  requested: { forSeconds: input.forSeconds },
+                  acknowledged: true as const,
+                  observation,
+                };
+              },
+              async observe(attempt, ctx) {
+                if (!attempt.sandbox?.reference || !attempt.renewal)
+                  return ctx.unknown("Saved renewal intent or identity is missing");
+                assertResourceScope(attempt.sandbox.reference, {
+                  provider: "e2b",
+                  scope: boundScope,
+                });
+                const acknowledged = RenewToken.safeParse(attempt.token).success;
+
+                const observation = await inspection(
+                  attempt.sandbox.id,
+                  attempt.sandbox.reference,
+                ).catch(() => null);
+
+                if (!acknowledged)
+                  return ctx.unknown(
+                    "A current deadline cannot prove renewal acknowledgement; never replay",
+                    {
+                      kind: "sandbox_renew",
+                      status: "unknown",
+                      reference: attempt.sandbox.reference,
+                      requested: attempt.renewal,
+                      observation,
+                    },
+                  );
+
+                return {
+                  reference: attempt.sandbox.reference,
+                  requested: attempt.renewal,
+                  acknowledged: true as const,
+                  observation,
+                };
+              },
+            }
+          : undefined,
+        async reopen(reference) {
+          assertResourceScope(reference, { provider: "e2b", scope: boundScope });
+
+          return inspection(reference.nativeId, reference);
+        },
+        async inspect(box) {
+          return { id: box.id, ...(await inspection(box.id, box.reference)) };
         },
         async inventory(input) {
           await verifyAuthority();
@@ -692,13 +1723,90 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
           return { items, nextCursor: page.nextToken };
         },
+        processes: transport.startText
+          ? {
+              supports: {
+                sustainedOutput: true,
+                binaryOutput: true,
+                signals: ["SIGTERM", "SIGKILL"],
+                terminal: true,
+                reopen: true,
+                stdin: "bytes",
+                status: true,
+                execCapture: "bytes",
+              },
+              async reopen(input, ctx) {
+                const reference = ProcessReference.safeParse(input.reference);
+
+                if (
+                  !reference.success ||
+                  reference.data.sandbox !== input.sandbox.id ||
+                  reference.data.binding !== processBinding ||
+                  reference.data.profile !== input.profile
+                )
+                  throw new AdapterError(
+                    "CONFLICT",
+                    "E2B process reference differs from this binding",
+                  );
+
+                if (
+                  reference.data.expiresAt <= Date.now() ||
+                  reference.data.expiresAt > Date.now() + 86_400_000
+                )
+                  throw new AdapterError("UNAVAILABLE", "E2B process reference has expired");
+
+                if (!transport.reopenProcess)
+                  throw new AdapterError("UNSUPPORTED", "E2B process attachment is unavailable");
+                await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+                return transport.reopenProcess(
+                  input.sandbox.id,
+                  reference.data,
+                  {
+                    stdin: input.stdin,
+                    format: input.output.format,
+                    terminal: input.profile === "terminal" ? { columns: 80, rows: 24 } : undefined,
+                  },
+                  ctx,
+                );
+              },
+              async start(input, ctx) {
+                await requireRunning(input.sandbox.id, input.sandbox.reference);
+
+                if (ctx.signal.aborted)
+                  throw new AdapterError("UNAVAILABLE", "Process setup stopped");
+
+                const command =
+                  input.command.kind === "argv"
+                    ? `exec /bin/bash -c 'exec "$@"' sandbar ${input.command.argv.map(shellQuote).join(" ")}`
+                    : `/bin/bash -c ${shellQuote(input.command.script)}`;
+
+                return transport.startText!(
+                  input.sandbox.id,
+                  command,
+                  {
+                    cwd: input.cwd,
+                    env: input.env,
+                    stdin: input.stdin,
+                    sustained: input.output?.mode === "stream",
+                    format: input.output?.format,
+                    terminal: input.terminal,
+                    binding: processBinding,
+                    capture: input.capture,
+                  },
+                  ctx,
+                );
+              },
+            }
+          : undefined,
         exec: {
+          finiteStdin: "bytes",
           recovery: {
             version: 1,
             token: ExecToken,
           },
           async prepare(input) {
-            await requireRunning(input.sandbox.id);
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
 
             if (
               input.command.kind === "argv" &&
@@ -717,17 +1825,75 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             return input;
           },
           async submit(input, ctx) {
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
             const paths = executionPaths(ctx.submissionId);
+            const stdinDirectory = `/tmp/.sandbar-${ctx.submissionId}.stdin`;
+            const stdinPath = `${stdinDirectory}/payload`;
 
             if (ctx.signal.aborted)
               return ctx.pending({ maxOutputBytes: input.maxOutputBytes }, { pollAfterMs: 1000 });
+
+            let ownsStdinDirectory = false;
+
+            if (input.stdin !== undefined) {
+              try {
+                await transport.run(
+                  input.sandbox.id,
+                  `mkdir -m 700 -- ${shellQuote(stdinDirectory)}`,
+                  { timeoutMs: 30_000 },
+                );
+                ownsStdinDirectory = true;
+                await transport.write(input.sandbox.id, stdinPath, input.stdin);
+
+                const staged = await transport.read(
+                  input.sandbox.id,
+                  stdinPath,
+                  MAX_EXEC_STDIN_BYTES,
+                );
+
+                if (
+                  staged.truncated ||
+                  staged.bytes.length !== input.stdin.length ||
+                  !staged.bytes.every((byte, index) => byte === input.stdin![index])
+                )
+                  throw new Error("E2B stdin staging could not be verified");
+              } catch {
+                if (ownsStdinDirectory)
+                  await transport
+                    .run(input.sandbox.id, `rm -rf -- ${shellQuote(stdinDirectory)}`, {
+                      timeoutMs: 30_000,
+                    })
+                    .catch(() => undefined);
+
+                return ctx.unknown("E2B stdin staging outcome is unknown; do not replay");
+              }
+            }
+
+            if (ctx.signal.aborted) {
+              if (ownsStdinDirectory)
+                await transport
+                  .run(input.sandbox.id, `rm -rf -- ${shellQuote(stdinDirectory)}`, {
+                    timeoutMs: 30_000,
+                  })
+                  .catch(() => undefined);
+
+              return ctx.unknown("E2B exec was stopped before command dispatch; do not replay");
+            }
 
             const command =
               input.command.kind === "argv"
                 ? `/bin/bash -c 'exec "$@"' sandbar ${input.command.argv.map(shellQuote).join(" ")}`
                 : `/bin/bash -c ${shellQuote(input.command.script)}`;
 
-            const script = `${command} >${shellQuote(paths.stdout)} 2>${shellQuote(paths.stderr)}; printf '%s' "$?" >${shellQuote(paths.status)}`;
+            const setup =
+              input.stdin === undefined
+                ? ""
+                : `stdin_dir=${shellQuote(stdinDirectory)}; trap 'rm -rf -- "$stdin_dir"' EXIT; `;
+
+            const inputRedirect =
+              input.stdin === undefined ? "< /dev/null" : `< ${shellQuote(stdinPath)}`;
+
+            const script = `${setup}${command} ${inputRedirect} >${shellQuote(paths.stdout)} 2>${shellQuote(paths.stderr)}; printf '%s' "$?" >${shellQuote(paths.status)}`;
 
             try {
               await transport.run(input.sandbox.id, script, {
@@ -760,18 +1926,26 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             const token = ExecToken.safeParse(attempt.token);
 
             if (!token.success) return null;
-            await requireRunning(attempt.sandbox.id);
+            await requireRunning(attempt.sandbox.id, attempt.sandbox.reference);
             const paths = executionPaths(attempt.submissionId);
 
             return readExecution(attempt.sandbox.id, paths, token.data.maxOutputBytes);
           },
         },
         files: {
-          maxBytes: MAX_BYTES,
-          async read(input) {
+          maxBytes: 16 * MAX_BYTES,
+          ...directoryOperations,
+          async read(input, ctx) {
             requirePath(input.path);
-            await requireRunning(input.sandbox.id);
-            const result = await transport.read(input.sandbox.id, input.path, MAX_BYTES);
+            await requireRunning(input.sandbox.id, input.sandbox.reference);
+            ctx.signal.throwIfAborted();
+
+            const result = await transport.read(
+              input.sandbox.id,
+              input.path,
+              input.maxBytes ?? MAX_BYTES,
+              ctx.signal,
+            );
 
             if (result.truncated)
               throw new AdapterError("CAPACITY", "E2B file exceeds the read bound");
@@ -782,14 +1956,16 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             recovery: { version: 1, token: WriteToken },
             async prepare(input) {
               requirePath(input.path);
-              await requireRunning(input.sandbox.id);
+              await requireRunning(input.sandbox.id, input.sandbox.reference);
 
-              if (input.bytes.length > MAX_BYTES)
+              if (input.bytes.length > 16 * MAX_BYTES)
                 throw new AdapterError("CAPACITY", "E2B file write exceeds the byte bound");
 
               return input;
             },
             async submit(input, ctx) {
+              await requireRunning(input.sandbox.id, input.sandbox.reference);
+
               if (!nativeId.test(ctx.submissionId))
                 return ctx.reject("INVALID_ARGUMENT", "Invalid E2B write submission ID");
 
@@ -859,7 +2035,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               const token = WriteToken.safeParse(attempt.token);
 
               if (!token.success) return ctx.unknown("E2B file write lacks recovery evidence");
-              await requireRunning(attempt.sandbox.id);
+              await requireRunning(attempt.sandbox.id, attempt.sandbox.reference);
               const { path, staged, bytesWritten, digest, failure } = token.data;
               requirePath(path);
 
@@ -917,3 +2093,5 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 export const e2bAdapter = createE2BAdapter();
 
 export { E2B_ENDPOINT, MAX_BYTES, type E2BTransport } from "./transport";
+
+export { e2b } from "./factory";

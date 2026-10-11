@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { AdapterSandbox, Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
+import { Sandbar } from "sandbar-sdk";
+import { ResourceReference } from "@sandbar-sdk/adapter";
 import { createVercelAdapter } from "../adapter";
 
 const input = z
@@ -9,10 +10,9 @@ const input = z
   })
   .parse(JSON.parse(await Bun.stdin.text()));
 
-// SAFETY: The parent fixture serializes the SDK-produced create reference; recover validates its scope and fields.
-const reference = input.reference as AdapterRecoveryReference;
+const reference = ResourceReference.extend({ kind: z.literal("sandbox") }).parse(input.reference);
 
-const sessionId = z.object({ sessionId: z.string() }).parse(reference.token).sessionId;
+const sessionId = reference.nativeId;
 
 const paths: string[] = [];
 
@@ -68,10 +68,7 @@ const client = await Sandbar.connect({
 });
 
 try {
-  const box = await (await client.recover(reference)).observe();
-
-  if (!(box instanceof AdapterSandbox))
-    throw new Error("Create reference did not restore a sandbox");
+  const box = await client.sandboxes.get(reference);
   const inspection = await box.inspect();
   await client.close();
   console.log(JSON.stringify({ id: box.id, inspection, paths, closed, pid: process.pid }));

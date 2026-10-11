@@ -1,12 +1,12 @@
-# sandbar-vercel
+# @sandbar-sdk/vercel
 
-External experimental Vercel Sandbox adapter for Sandbar. Implements disposable session creation, inspect, inventory, bounded execution, binary files and confirmed compute stop. Live provider behavior is unverified; deterministic fixtures and packed consumer checks are separate from live qualification. The package is not a built-in `sandbar-sdk` subpath, and this source does not establish npm publication.
+Official Vercel Sandbox adapter for Sandbar, installed separately as `@sandbar-sdk/vercel`. Implements disposable session creation, inspect, inventory, bounded execution, binary files and confirmed compute stop. Live provider behavior is unverified; deterministic fixtures and packed consumer checks are separate from live qualification. This source does not establish npm publication.
 
-Install `sandbar-sdk` and `sandbar-vercel` when available from your package source:
+Install `sandbar-sdk` and `@sandbar-sdk/vercel` when available from your package source:
 
 ```ts
-import { Image, Sandbar } from "sandbar-sdk";
-import { vercel } from "sandbar-vercel";
+import { Sandbar } from "sandbar-sdk";
+import { vercel } from "@sandbar-sdk/vercel";
 
 const client = await Sandbar.connect({
   adapter: vercel,
@@ -20,10 +20,7 @@ const client = await Sandbar.connect({
   credentials: { token: process.env.VERCEL_TOKEN! },
 });
 try {
-  const box = await client.sandboxes.create({
-    environment: Image.prepared("vercel/sandbox/node:24"),
-    networkPolicy: "vercel-deny-all",
-  });
+  const box = await client.sandboxes.create();
   try {
     await box.writeFile("/tmp/example.bin", new Uint8Array([0, 255, 129]), { overwrite: true });
     console.log(await box.readFile("/tmp/example.bin"));
@@ -46,7 +43,7 @@ try {
 | `networkPolicy` | `vercel-deny-all` by default; `vercel-allow-all` is the alternative. |
 | `credentials.token` | Required Vercel bearer token with team/project sandbox access. |
 
-Creation requires the explicit prepared environment `vercel/sandbox/node:24` and the same named network policy configured on the connection. No default-image API supplies these arguments. Policies map to native `deny-all` or `allow-all`; acknowledgement is checked against the requested policy. Measured egress isolation has not been live-qualified. Generic `blocked`/`internet`, arbitrary images, OCI builds, regions other than `iad1`, resource requirements and mounts reject before creation. Sandboxes use two vCPUs, no exposed ports and `persistent:false`.
+Calling `client.sandboxes.create()` uses the managed prepared environment `vercel/sandbox/node:24` and the connection's configured named network policy. Explicit creation inputs may select that same environment and policy; other image or policy values reject before allocation. Policies map to native `deny-all` or `allow-all`; acknowledgement is checked against the requested policy. Measured egress isolation has not been live-qualified. Generic `blocked`/`internet`, arbitrary images, OCI builds, regions other than `iad1`, resource requirements and mounts reject before creation. Sandboxes use two vCPUs, no exposed ports and `persistent:false`.
 
 Each handle binds the exact native session ID, rather than a reusable sandbox name or its latest session. Destroy stops and polls that original session until native `stopped` or `aborted` confirms compute termination. It reports `vercel-named-sandbox-metadata` as retained resources. The adapter does not delete that metadata or claim full resource deletion. Inventory includes nonpersistent sessions in the configured region; it is not a discovery mechanism for an unacknowledged create. The native timeout is fallback, not a cleanup receipt. Closing a client releases owned transport resources and local waits; destroy each sandbox explicitly.
 
@@ -56,22 +53,20 @@ Files use absolute file paths without trailing slashes or `.`/`..` segments and 
 
 Create acknowledgements checkpoint the immutable session ID for read-only recovery. A lost response before that ID is available cannot be reconciled through inventory or tags; preserve the saved attempt and treat its outcome as unknown. Acknowledged commands checkpoint their original command/session IDs and can recover the saved receipt through read-only observation without replay. A lost launch acknowledgement has no command ID to recover. Writes have no reconciliation token and cannot be safely replayed after uncertainty. Destroy observation checks the same session without issuing another stop. Absence does not prove compute termination. Fresh connections require current credentials and matching team/project/region scope; session membership is verified through project session reads before accessing a reopened session.
 
-This checkout exposes saved operation references rather than `sandbox.reference` or `client.sandboxes.get(reference)`. Reopen through its existing API (the separate-process fixture exercises this exact path):
+Save the ordinary sandbox reference in trusted application storage, then reopen the same session on a fresh connection with current credentials:
 
 ```ts
-const creation = await client.sandboxes.submitCreate({
-  environment: Image.prepared("vercel/sandbox/node:24"),
-  networkPolicy: "vercel-deny-all",
-});
-const box = await creation.wait();
-const saved = JSON.stringify(creation.reference);
-// Persist saved in application storage. On a fresh connection with current credentials:
-const reopened = await (await freshClient.recover(JSON.parse(saved))).observe();
+const box = await client.sandboxes.create();
+if (!box.reference) throw new Error("Verified sandbox reference is unavailable");
+await save(box.reference); // Application-owned persistence.
+// After opening freshClient with the original team/project/region:
+const reopened = await freshClient.sandboxes.get(await load());
+console.log((await reopened.inspect()).state);
 ```
 
-Reopened membership lookup is bounded to 100 pages of 100 sessions; an identity outside that window fails closed. No newer SDK API is emulated inside the adapter.
+`save` and `load` represent your application's trusted reference store. `get` reads the original identity without creating, resuming or renewing compute. Reopened membership lookup is bounded to 100 pages of 100 sessions; an identity outside that window fails closed. Saved operation references remain useful for uncertain submitted operations and read-only reconciliation; they are separate from the sandbox's resource reference.
 
-Snapshot capture/restore, memory preservation, persistent sandboxes, volumes and mounts are unsupported. No capture scope, source lifecycle or restored execution guarantee applies; unsupported requirements reject before effects. No storage cleanup or metadata deletion is emulated.
+Snapshot capture/restore, memory preservation, persistent sandboxes, volumes, mounts, suspension, resumption and lifetime renewal are unsupported. No capture scope, source lifecycle or restored execution guarantee applies; unsupported requirements reject before effects. No storage cleanup or metadata deletion is emulated.
 
 The external qualification profile is `packages/sdk-qualification/provider-qualification/vercel-profile.ts`. It pins the REST boundary to v3 creation/v2 sessions, saves only nonsecret routing, and caps native lifetime at 300 seconds, exercise at 120 seconds and cleanup at 60 seconds. Ordinary baseline tests allocate at most one compute instance per fixture; snapshot/volume suites skip declared unsupported workflows. The existing paired network suite is E2B-specific and does not qualify these named policies. Loading a profile performs no IO. Live calls require separate authorization, a concrete allocation budget and the normal persistent cleanup ledger; no live calls were used to create these docs.
 

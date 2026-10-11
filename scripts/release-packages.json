@@ -1,1 +1,7 @@
-["packages/adapter", "packages/sdk", "packages/providers/vercel"]
+[
+  "packages/adapter",
+  "packages/sdk",
+  "packages/providers/daytona",
+  "packages/providers/e2b",
+  "packages/providers/vercel"
+]

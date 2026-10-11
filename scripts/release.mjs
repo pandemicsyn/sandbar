@@ -83,7 +83,11 @@ function load() {
       ...manifest.optionalDependencies,
       ...manifest.peerDependencies,
     })) {
-      if (name.startsWith("@sandbar/") || name.startsWith("sandbar-")) {
+      if (
+        name.startsWith("@sandbar/") ||
+        name.startsWith("@sandbar-sdk/") ||
+        name.startsWith("sandbar-")
+      ) {
         if (!names.has(name))
           throw new Error(`${manifest.name} depends on unpublished internal package ${name}`);
 

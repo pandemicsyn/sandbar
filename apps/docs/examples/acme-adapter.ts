@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter } from "@sandbar-sdk/adapter";
 import { AcmeClient } from "./acme-native";
 
 /** Copy this shape, then replace AcmeClient with an authenticated provider client. */

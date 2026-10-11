@@ -3,13 +3,15 @@ title: Snapshots and volumes
 description: Capture and restore a sandbox, mount retained storage, save references, and clean up resources.
 ---
 
-Snapshots retain captured sandbox state independently of the source. Volumes retain storage independently of compute. These APIs are available on SDK connections.
+Snapshots retain captured sandbox state independently of the source. Volumes retain storage independently of compute. These APIs are available on SDK connections. Snapshot preservation, volume management and mounting are separate provider capabilities; support for one does not imply support for the others.
 
-Use `DirectSandbarClient` and `DirectSandboxHandle` from `sandbar-sdk` when annotating direct clients and sandboxes. `SandbarClient` and `SandboxHandle` are aliases for the same complete SDK surfaces.
+Use `SandbarClient`, `SandboxHandle`, `SnapshotHandle` and `VolumeHandle` from `sandbar-sdk` for application annotations. Existing `DirectSandbarClient`, `DirectSandboxHandle` and Adapter* exports remain available for compatibility; see the [TypeScript reference](/docs/reference/typescript/#consumer-vocabulary-and-compatibility) for the staged complete-surface type parameters.
 
 Malformed caller inputs in these APIs reject with `SandbarError` (`INVALID_ARGUMENT`, effect `none`) before mutation. Unsupported restore preflight throws `UnsupportedFeatureError`; its `unmetRequirements` lists each unmet network, sizing, independent lifecycle or mount requirement. Independent lifecycle is required unless explicitly set to `false`.
 
-`RestoreRequest.mounts` retains share, replace and omit choices for schema compatibility, but all nonempty choices currently reject. Restores require confirmed `mountHandling: "none"` and no recorded mounts; unknown provenance also rejects. Leave `mounts` absent or empty. A provider's mount metadata does not enable mounted restore in the SDK.
+Create and restore use the same `mounts: MountSpec[]` descriptors from `volume.at(path)`. Daytona maps caller-selected current volumes onto a mount-free filesystem snapshot with fresh execution, using explicit `daytona-default`. Mounted restore with `blocked` rejects before allocation because earliest-workload enforcement is unqualified. Mounted-source capture, memory composition, omitted recorded mounts, volume copies/versions and resizing remain unsupported. Restores require confirmed `mountHandling: "none"` and no recorded native mounts; unknown provenance rejects.
+
+Nonempty legacy share/replace/omit maps reject with `INVALID_ARGUMENT` and migration guidance; replace them with descriptor arrays. The SDK keeps legacy empty `{}` as a deprecated mount-free runtime alias for coordinated release R and the next published release R+1, removing it at the following API release. Public types teach arrays only. Custom restore hooks must declare `snapshotRestore.mountInput: "specs"` for nonempty arrays; old hooks keep mount-free operation and receive no mounts field.
 
 ## Capture and restore
 
@@ -81,7 +83,7 @@ Consistency is unknown unless native evidence or caller preparation establishes 
 
 ## Create and mount a volume
 
-Use a [Daytona connection](/docs/providers/daytona/) named `sandbar` configured with `networkPolicy: "daytona-default"`. Mounts attach during sandbox creation. `volume.at(path)` only creates a descriptor; it does not attach storage or mutate the provider.
+Use a [Daytona connection](/docs/providers/daytona/) named `sandbar` configured with `networkPolicy: "daytona-default"`. Mounts attach during sandbox creation. `volume.at(path)` only creates a descriptor; it does not attach storage or mutate the provider. Reusing the same volume in another supported sandbox creation selects its current shared data. Creating a different volume starts with independent empty storage; it does not copy the first volume. A sandbox snapshot must not be assumed to freeze external volume contents.
 
 The default `require-durable` policy blocks compute destruction when writable-volume durability cannot be confirmed. Choose `allow-unconfirmed` only when your application accepts cleanup without a confirmed write barrier. It does not establish account eligibility or promise flushed or durable writes. Finish finite writers before destroying compute.
 
@@ -89,7 +91,7 @@ Configure the policy once on a direct connection, or override it on `destroy` or
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 
 const sandbar = await Sandbar.connect(
   daytona({
@@ -134,16 +136,38 @@ To keep the data, omit the final deletion and saved-record removal, then attach 
 
 Mount paths must be absolute, normalized, nonoverlapping and outside reserved paths. Daytona supports writable subpaths. Its volumes are object-backed; mounted `writeFile` needs `overwrite: true`, and atomic no-clobber on mounted paths is unsupported. A verified write does not establish shutdown durability, POSIX semantics, locking or atomic rename guarantees.
 
+### Restore private state with selected data
+
+Capture private code/configuration from a separate mount-free source. Keep the full returned snapshot and volume references in your trusted store. After destroying the source, a fresh same-scope client can reopen both resources:
+
+```ts
+const snapshot = await sandbar.snapshots.get(saved.snapshot);
+const data = await sandbar.volumes.get(saved.data);
+const restored = await snapshot.restore({
+  networkPolicy: "daytona-default",
+  mounts: [data.at("/data")],
+});
+```
+
+The selected volume supplies its current shared bytes. To select independent empty data, explicitly create a new volume, retain its handle, then pass its descriptor. Omitted `mounts` or `[]` selects private captured state only. Attachment hides private snapshot bytes at the mountpoint without erasing them. No volume is copied, created implicitly, or replaced by name.
+
+Daytona validates scope, readiness, writable access, nonoverlapping paths and exact native IDs before submission, rechecks at dispatch, and verifies the complete mount set and snapshot identity. Read-only access rejects. A snapshot reference's saved capture history supports reopening after source deletion; imported snapshots with unknown provenance reject. Native mount-free classification does not certify absence of guest-created FUSE/network mounts.
+
+When acknowledged compute cannot be verified, an uncertain restore's `error.outcome` with kind `snapshot_restore` retains `sandbox` when known and the selected `mounts`. Save those identities and the operation reference and inspect without replay. The sandbox reference stays limited to identity and native creation selectors; current mounts come from authenticated native reads during reopening, recovery and cleanup. Compute cleanup retains application volumes and requires deliberate acceptance of unconfirmed writable-storage durability.
+
+The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/storage-composition.ts) and its mock test cover shared data, independently created empty data, private-only restore and full-reference reopening. These fixtures establish request mapping, not native startup ordering. The first bounded live case at `824946d` passed A startup evidence, then failed a harness snapshot-name/ID assertion before B. The corrected complete workflow passed at `5911ccc` on Bun 1.3.14 in `us` with `daytona-default` and the pinned first-action image. Both restores verified their selected marker/data profile, captured private state, current-start correlation, exact native identities and fresh-client reopening. All owned resources, including the temporary imported image, were cleaned up. This evidence covers that tested configuration.
+
 ### Current combinations
 
-| Workflow                                  | Current boundary                                                                                         |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Capture a sandbox with external mounts    | Unsupported on both adapters                                                                             |
-| Restore with mounts or resource overrides | Unsupported; empty override maps are equivalent to omission                                              |
-| Daytona writable create-time mounts       | Implemented; readiness and immutable volume identity checked                                             |
-| E2B volume CRUD                           | Mapped to private-beta native APIs; live validation blocked by account HTTP 403                          |
-| E2B create-time mounts                    | Unsupported separately: native mount requests/observations use reusable names without mounted volume IDs |
-| Read-only mounts or volume versions       | Not implemented on either adapter                                                                        |
+| Workflow                                   | Current boundary                                                                                                                                                                    |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Capture a sandbox with external mounts     | Unsupported on both adapters                                                                                                                                                        |
+| Daytona cold restore with selected volumes | Implemented for known mount-free filesystem/fresh snapshots and explicit daytona-default; first-action A/B acceptance passed at 5911ccc with the pinned image and confirmed cleanup |
+| Resource overrides, memory plus mounts     | Unsupported; empty resource overrides are equivalent to omission                                                                                                                    |
+| Daytona writable create-time mounts        | Implemented; readiness and immutable volume identity checked                                                                                                                        |
+| E2B volume CRUD                            | Mapped to private-beta native APIs; live validation blocked by account HTTP 403                                                                                                     |
+| E2B create-time mounts                     | Unsupported separately: inspected native requests/observations select names without proving exact mounted volume identity                                                           |
+| Read-only mounts or volume versions        | Not implemented on either adapter                                                                                                                                                   |
 
 ## Save and reopen references
 
@@ -197,4 +221,4 @@ Lost acknowledgements can leave billable artifacts without a safely owned identi
 
 ## Evidence
 
-The [generated support table](/docs/providers/support/) and [live evidence](/docs/providers/live-qualification/) preserve exact tested revisions/configuration, historical passes, blocked access and not-run cases. The merged Bun acceptance tooling generates these claims; this documentation change adds no live evidence. E2B volume creation is blocked by account HTTP 403, and the maintained built-in profile skips volume cases before setup. This does not prove that E2B lacks native volumes.
+The [generated support table](/docs/providers/support/) and [live evidence](/docs/providers/live-qualification/) preserve exact tested revisions/configuration, historical passes, blocked access and not-run cases. The maintained Bun acceptance tooling generates these claims, including the historical failed storage-composition case and the corrected full pass with confirmed cleanup. E2B volume creation is blocked by account HTTP 403, and the maintained official profile skips volume cases before setup. This does not prove that E2B lacks native volumes.

@@ -140,6 +140,53 @@ export const SandboxState = z.enum([
 
 export type SandboxState = z.infer<typeof SandboxState>;
 
+const UnknownFact = z.strictObject({ status: z.literal("unknown"), reason: z.string().min(1) });
+
+export const SandboxInfoSchema = z.strictObject({
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).nullable(),
+  state: SandboxState,
+  nativeState: z.string().nullable(),
+  observedAt: z.iso.datetime({ offset: true }),
+  expires: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      at: z.iso.datetime({ offset: true }),
+      action: z.enum(["destroy", "suspend"]),
+      scope: z.enum(["running-session", "sandbox"]),
+    }),
+    z.strictObject({ status: z.literal("none") }),
+    UnknownFact,
+  ]),
+  idleStop: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z
+        .strictObject({
+          seconds: z.number().nonnegative().finite(),
+          action: z.enum(["stop", "suspend"]),
+        })
+        .nullable(),
+    }),
+    UnknownFact,
+  ]),
+  retention: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z.strictObject({
+        autoDeleteAfterStoppedSeconds: z.number().nonnegative().finite().nullable(),
+      }),
+    }),
+    UnknownFact,
+  ]),
+  execution: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("known"),
+      value: z.strictObject({ nativeId: z.string().min(1) }),
+    }),
+    UnknownFact,
+  ]),
+});
+
 export const SnapshotProfile = z.strictObject({
   id: z.string().min(1).max(128),
   preserve: z.enum(["filesystem", "filesystem+memory"]),
@@ -203,7 +250,7 @@ export const VolumeInfo = z.strictObject({
   reference: ResourceReference.refine((ref) => ref.kind === "volume"),
   name: z.string().min(1).max(128),
   state: z.enum(["creating", "ready", "deleting", "unknown"]),
-  filesystem: z.literal("object-backed"),
+  filesystem: z.enum(["object-backed", "block-backed"]),
   visibility: z.enum(["immediate", "unknown"]),
   durability: z.literal("unknown"),
   locking: z.literal("unknown"),
@@ -223,16 +270,7 @@ export const RestoreRequest = z.strictObject({
       diskMiB: z.number().int().positive().optional(),
     })
     .optional(),
-  mounts: z
-    .record(
-      z.string(),
-      z.discriminatedUnion("action", [
-        z.strictObject({ action: z.literal("omit") }),
-        z.strictObject({ action: z.literal("share") }),
-        z.strictObject({ action: z.literal("replace"), mount: MountSpec }),
-      ]),
-    )
-    .optional(),
+  mounts: z.array(MountSpec).max(32).optional(),
 });
 
 export type RestoreRequest = z.infer<typeof RestoreRequest>;
@@ -267,7 +305,10 @@ export const SnapshotInfo = z.strictObject({
 export type SnapshotInfo = z.infer<typeof SnapshotInfo>;
 
 export const SnapshotCaptureInput = z.strictObject({
-  sandbox: z.strictObject({ id: z.string().min(1).max(512) }),
+  sandbox: z.strictObject({
+    id: z.string().min(1).max(512),
+    reference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
+  }),
   request: SnapshotRequest,
   expectation: z.strictObject({ profile: SnapshotProfile, sourceState: SandboxState }).optional(),
 });
@@ -293,6 +334,71 @@ export type SnapshotCaptureValue = z.infer<typeof SnapshotCaptureValue>;
 
 /** Known native results accompanying an incomplete operation; never dispatch authority. */
 export const OperationOutcome = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("create"),
+    status: z.literal("partial"),
+    sandbox: ResourceReference.extend({ kind: z.literal("sandbox") }),
+    setup: z.strictObject({
+      expiry: z.enum(["acknowledged", "unconfirmed"]),
+      readiness: z.enum(["acknowledged", "unconfirmed"]),
+    }),
+  }),
+  z.strictObject({
+    kind: z.literal("snapshot_restore"),
+    status: z.literal("unknown"),
+    sandbox: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
+    mounts: z.array(MountSpec).max(32),
+  }),
+  z
+    .strictObject({
+      kind: z.literal("sandbox_suspend"),
+      status: z.enum(["completed", "partial", "unknown"]),
+      reference: ResourceReference.extend({ kind: z.literal("sandbox") }),
+      acknowledged: z.boolean(),
+      preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
+      processes: z.enum(["terminated", "preserved"]).optional(),
+      connections: z.enum(["dropped", "preserved"]).optional(),
+      observation: SandboxInfoSchema.nullable(),
+    })
+    .refine((v) =>
+      v.acknowledged
+        ? !!v.preserve &&
+          !!v.processes &&
+          !!v.connections &&
+          (v.status === "partial" ||
+            (v.status === "completed" &&
+              !!v.observation &&
+              ["stopped", "suspended"].includes(v.observation.state)))
+        : !v.preserve && !v.processes && !v.connections && v.status === "unknown",
+    ),
+  z
+    .strictObject({
+      kind: z.literal("sandbox_resume"),
+      status: z.enum(["completed", "partial", "unknown"]),
+      reference: ResourceReference.extend({ kind: z.literal("sandbox") }),
+      acknowledged: z.boolean(),
+      observation: SandboxInfoSchema.nullable(),
+      execution: z.enum(["fresh", "resumed", "unknown"]).optional(),
+      executionIdentity: SandboxInfoSchema.shape.execution.optional(),
+      connections: z.enum(["dropped", "preserved", "unknown"]).optional(),
+    })
+    .refine((v) =>
+      v.acknowledged
+        ? v.status === "partial" ||
+          (v.status === "completed" &&
+            v.observation?.state === "running" &&
+            !!v.execution &&
+            !!v.executionIdentity &&
+            !!v.connections)
+        : v.status === "unknown",
+    ),
+  z.strictObject({
+    kind: z.literal("sandbox_renew"),
+    status: z.literal("unknown"),
+    reference: ResourceReference.extend({ kind: z.literal("sandbox") }),
+    requested: z.strictObject({ forSeconds: z.number().int().positive().safe() }),
+    observation: SandboxInfoSchema.nullable(),
+  }),
   z
     .strictObject({
       kind: z.literal("snapshot_capture"),
@@ -378,6 +484,7 @@ export type InventoryInput = z.infer<typeof InventoryInput>;
 
 export const DestroyInput = z.strictObject({
   id: z.string().min(1).max(512),
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
   storage: z.enum(["require-durable", "allow-unconfirmed"]).optional(),
 });
 
@@ -416,6 +523,17 @@ export type CreatePlan = {
 };
 
 export type StateCapabilities = {
+  lifecycle: {
+    reopen: Support<{}>;
+    inspect: Support<{}>;
+    suspend: Support<{
+      preserve: "filesystem" | "filesystem+memory";
+      processes: "terminated" | "preserved";
+      connections: "dropped" | "preserved";
+    }>;
+    resume: Support<{ sourceStates: SandboxState[]; setsSessionTimeout: boolean }>;
+    renew: Support<import("./lifecycle").RenewLimits>;
+  };
   snapshots: {
     capture: Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>;
     restore: Support<RestoreCapabilities>;
@@ -425,7 +543,11 @@ export type StateCapabilities = {
   };
   volumes: Support<VolumeCapabilities>;
   mounts: Support<MountCapabilities>;
-  suspension: Support<never>;
+  suspension: Support<{
+    preserve: "filesystem" | "filesystem+memory";
+    processes: "terminated" | "preserved";
+    connections: "dropped" | "preserved";
+  }>;
 };
 
 export const unsupportedState = (): Support<never> => ({
@@ -507,7 +629,34 @@ export async function stateCapabilities(
   const implemented = (yes: boolean): Support<{}> =>
     yes ? { status: "supported", value: {} } : unsupportedState();
 
+  const suspension =
+    session.suspend && session.suspensionCapabilities
+      ? await readBeforeDeadline(
+          (ctx) => session.suspensionCapabilities!(structuredClone(target), ctx),
+          context,
+        )
+      : unsupportedState();
+
   return {
+    lifecycle: {
+      suspend: suspension,
+      resume:
+        session.resume && session.resumeCapabilities
+          ? await readBeforeDeadline(
+              (ctx) => session.resumeCapabilities!(structuredClone(target), ctx),
+              context,
+            )
+          : unsupportedState(),
+      reopen: implemented(!!session.reopen),
+      inspect: implemented(!!session.inspect),
+      renew:
+        session.renew && session.renewCapabilities
+          ? await readBeforeDeadline(
+              (ctx) => session.renewCapabilities!(structuredClone(target), ctx),
+              context,
+            )
+          : unsupportedState(),
+    },
     snapshots: {
       capture,
       restore: session.snapshotRestore ? resources.restore : unsupportedState(),
@@ -532,7 +681,7 @@ export async function stateCapabilities(
           }
         : resources.volumes,
     mounts: session.checkMounts ? resources.mounts : unsupportedState(),
-    suspension: unsupportedState(),
+    suspension,
   };
 }
 
@@ -619,11 +768,14 @@ export async function checkCreate(
   input: CreateInput,
   context: ReadContext,
 ): Promise<Support<CreatePlan>> {
-  if (
-    !session.supports.images.includes(input.image.kind) ||
-    !session.supports.network.includes(input.networkPolicy)
-  )
-    return { status: "unsupported", reason: "Requested image or network policy is unsupported" };
+  if (!session.supports.images.includes(input.image.kind))
+    return { status: "unsupported", reason: "Requested image is unsupported" };
+
+  if (!session.supports.network.includes(input.networkPolicy))
+    return {
+      status: "unsupported",
+      reason: `Network policy '${input.networkPolicy}' is unsupported by this connection; supported policies: ${session.supports.network.join(", ") || "none"}. Configure a separate connection with the requested policy if the adapter supports it.`,
+    };
 
   if (input.mounts?.length) {
     const mounts = z.array(MountSpec).max(32).parse(input.mounts);
@@ -673,6 +825,30 @@ const supportSchema = <S extends z.ZodType>(value: S) =>
   ]);
 
 export const DirectCapabilities = z.strictObject({
+  lifecycle: z
+    .strictObject({
+      renew: supportSchema(
+        z.strictObject({
+          minSeconds: z.number().int().positive().safe(),
+          maxSeconds: z.number().int().positive().safe(),
+          stepSeconds: z.number().int().positive().safe(),
+          scope: z.enum(["sandbox", "running-session"]),
+        }),
+      ),
+      suspend: supportSchema(
+        z.strictObject({
+          preserve: z.enum(["filesystem", "filesystem+memory"]),
+          processes: z.enum(["terminated", "preserved"]),
+          connections: z.enum(["dropped", "preserved"]),
+        }),
+      ),
+      resume: supportSchema(
+        z.strictObject({ sourceStates: z.array(SandboxState), setsSessionTimeout: z.boolean() }),
+      ),
+      reopen: supportSchema(z.strictObject({})),
+      inspect: supportSchema(z.strictObject({})),
+    })
+    .optional(),
   commands: z.array(z.enum(["argv", "shell"])),
   images: z.array(z.enum(["prepared", "oci"])),
   network: z.array(z.string()),
@@ -695,7 +871,13 @@ export const DirectCapabilities = z.strictObject({
   }),
   volumes: supportSchema(VolumeCapabilities),
   mounts: supportSchema(MountCapabilities).optional(),
-  suspension: AbsentSupport,
+  suspension: supportSchema(
+    z.strictObject({
+      preserve: z.enum(["filesystem", "filesystem+memory"]),
+      processes: z.enum(["terminated", "preserved"]),
+      connections: z.enum(["dropped", "preserved"]),
+    }),
+  ),
 });
 
 export type DirectCapabilities = Omit<
@@ -759,3 +941,75 @@ export const CreateCheck = z.discriminatedUnion("status", [
     z.strictObject({ status: z.literal(status), reason: z.string().min(1).max(1024) }),
   ),
 ]);
+
+/** Current native observation; unknown deadlines never imply unlimited lifetime. */
+export type SandboxReference = ResourceReference<"sandbox">;
+
+export type Fact<T> = { status: "known"; value: T } | { status: "unknown"; reason: string };
+
+export type Deadline =
+  | {
+      status: "known";
+      at: string;
+      action: "destroy" | "suspend";
+      scope: "running-session" | "sandbox";
+    }
+  | { status: "none" }
+  | { status: "unknown"; reason: string };
+
+export interface SandboxInfo {
+  reference: SandboxReference | null;
+  state: SandboxState;
+  nativeState: string | null;
+  observedAt: string;
+  expires: Deadline;
+  idleStop: Fact<{ seconds: number; action: "stop" | "suspend" } | null>;
+  retention: Fact<{ autoDeleteAfterStoppedSeconds: number | null }>;
+  execution: Fact<{ nativeId: string }>;
+}
+
+/** Native creation selectors only; this reference carries no past observations. */
+export function sandboxReference(
+  provider: string,
+  scope: import("./index").Scope,
+  nativeId: string,
+  creation: { operation: string; submission: string },
+): SandboxReference {
+  if (!creation.operation || !creation.submission)
+    throw new AdapterError("CONFLICT", "Native sandbox creation correlation is missing");
+
+  return validateResourceReference({
+    version: 1,
+    kind: "sandbox",
+    provider,
+    scope,
+    nativeId,
+    ownership: "verified-created",
+    receipt: JSON.stringify(creation),
+  });
+}
+
+export function assertSandboxReference(actual: SandboxReference, expected: SandboxReference): void {
+  assertResourceIdentity(actual, expected);
+
+  if (actual.receipt !== expected.receipt || expected.history !== undefined)
+    throw new AdapterError("CONFLICT", "Native sandbox creation correlation differs");
+}
+
+export function unknownSandboxFacts() {
+  return {
+    expires: { status: "unknown" as const, reason: "Native expiry is unavailable" },
+    idleStop: { status: "unknown" as const, reason: "Native idle policy is unavailable" },
+    retention: { status: "unknown" as const, reason: "Native retention is unavailable" },
+    execution: { status: "unknown" as const, reason: "Native execution identity is unavailable" },
+  };
+}
+
+export function nativeDeadline(
+  at: string | null | undefined,
+  scope: "running-session" | "sandbox",
+): Deadline {
+  return at && z.iso.datetime({ offset: true }).safeParse(at).success
+    ? { status: "known", at, action: "destroy", scope }
+    : { status: "unknown", reason: "Native expiry is absent or invalid" };
+}

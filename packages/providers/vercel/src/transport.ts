@@ -1,4 +1,4 @@
-import { AdapterError, type Json } from "sandbar-adapter";
+import { AdapterError, type Json } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 
 /** Trusted host injection; implementations must dispatch each request at most once. */

@@ -3,7 +3,17 @@ title: TypeScript reference
 description: SDK connections, images, resource handles, operations, and errors.
 ---
 
-Import `Sandbar` and `Image` from `sandbar-sdk`. The built-in provider factories are `daytona` from `sandbar-sdk/daytona` and `e2b` from `sandbar-sdk/e2b`. See the [generated export index](/docs/reference/generated-typescript/) for public names.
+Import `Sandbar` and `Image` from `sandbar-sdk`. The official provider factories are `daytona` from `@sandbar-sdk/daytona` and `e2b` from `@sandbar-sdk/e2b`. See the [generated export index](/docs/reference/generated-typescript/) for public names.
+
+## Consumer vocabulary and compatibility
+
+Use `SandbarClient`, `SandboxHandle`, `SnapshotHandle`, `VolumeHandle`, `OperationHandle<T>`, `RecoveryReference`, `ConnectOptions` and `CloseOptions` in application annotations. Adapter-author contracts remain in `@sandbar-sdk/adapter`.
+
+Factory results preserve the complete advanced API and existing runtime identity. During this compatibility stage their declarations use `SandbarClient<true>` and `SandboxHandle<true>`; `true` is a type parameter, not a runtime setting. Default annotations retain the previous structural views, which applications may implement or mock. Concrete operation results provide their kind type parameter, preserving `kind` narrowing and `continue()`, while `OperationHandle<T>` alone keeps the original minimal observation/wait interface.
+
+Existing `AdapterDirectClient`, `AdapterSandbox`, `AdapterSnapshot`, `AdapterVolume`, `AdapterOperation`, `AdapterRecoveryReference`, `AdapterConnectOptions`, `DirectConnectOptions`, `DirectSandbarClient` and `DirectSandboxHandle` exports remain supported. Runtime constructors and `instanceof` checks still use the same classes. Migrate annotations incrementally; no wrapper or identity conversion is needed. Inferred complete clients retain advanced compatibility access to `session`, `telemetry` and `scope`, with deprecation guidance. Ordinary `SandbarClient` annotations omit this machinery; prefer documented operations and resource references. Exported advanced methods and prepare/submit/recover capabilities remain available.
+
+For ordinary directory listings, use `listFiles`: it returns a complete bounded array or rejects. Use `readDirectory` when completeness and observation metadata matter. Both APIs remain available with their distinct semantics.
 
 ## Connect
 
@@ -41,34 +51,86 @@ Build results contain `prepared` and `retainedResources`. A prepared handle is b
 
 ## Sandboxes
 
-| API                                                                                        | Behavior                                              |
-| ------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
-| `sandbar.sandboxes.create({ environment, networkPolicy?, region?, labels? }, { signal? })` | Submit creation and wait for a sandbox handle.        |
-| `sandbar.sandboxes.submitCreate(input, options?)`                                          | Submit creation and return an operation handle.       |
-| `box.id`                                                                                   | Sandbox identifier.                                   |
-| `box.inspect()`                                                                            | Read current state where supported.                   |
-| `box.exec(input, { signal? })`                                                             | Run a command and return bounded binary output.       |
-| `box.submitExec(input, options?)`                                                          | Submit execution and return an operation handle.      |
-| `box.readFile(path)`                                                                       | Read up to 1 MiB as a `Uint8Array`.                   |
-| `box.writeFile(path, bytes, { overwrite?, signal? })`                                      | Write up to 1 MiB; overwrite defaults to false.       |
-| `box.destroy({ signal? })`                                                                 | Wait for confirmed compute termination.               |
-| `sandbar.close()`                                                                          | Release client resources; does not destroy sandboxes. |
+| API                                                                  | Behavior                                                                      |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `sandbar.sandboxes.create(input?, { signal? })`                      | Submit creation and wait for a sandbox handle.                                |
+| `sandbar.sandboxes.submitCreate(input?, options?)`                   | Submit creation and return an operation handle.                               |
+| `sandbar.sandboxes.get(reference, { signal?, pollMs? })`             | Reopen the same verified sandbox without resuming or renewing it.             |
+| `sandbar.sandboxes.checkCreate(input?)`                              | Read-only evaluation of environment and snapshot requirements.                |
+| `sandbar.capabilities()` / `box.capabilities()`                      | Observe supported profiles and current eligibility.                           |
+| `box.reference`                                                      | Verified `SandboxReference`, or `null` for adapters without identity support. |
+| `box.id`                                                             | Sandbox identifier.                                                           |
+| `box.preview(port, { signal? })`                                     | Resolve ephemeral native HTTP access; availability is not readiness.          |
+| `box.inspect({ signal? })`                                           | Read current state where supported.                                           |
+| `box.exec(input, { signal?, onOutput? })`                            | Run a command and return bounded binary output.                               |
+| `box.submitExec(input, options?)`                                    | Submit execution and return an operation handle.                              |
+| `box.readTextFile(path, { maxBytes?, signal? })`                     | Read the complete bounded file as UTF-8.                                      |
+| `box.writeTextFile(path, text, { overwrite?, maxBytes?, signal? })`  | Write UTF-8; byte limits apply; overwrite defaults to false.                  |
+| `box.readFile(path, { maxBytes?, signal? })`                         | Read bounded bytes (1 MiB default, explicit max 16 MiB).                      |
+| `box.writeFile(path, bytes, { overwrite?, maxBytes?, signal? })`     | Write bounded bytes (1 MiB default, explicit max 16 MiB).                     |
+| `box.readDirectory(path, { signal? })`                               | Bounded immediate entries, completeness and observation timestamp.            |
+| `box.listFiles(path, { signal? })`                                   | Complete bounded immediate entries, or reject.                                |
+| `box.statFile(path, { followSymlinks?, signal? })`                   | Type and available metadata; final link unfollowed by default.                |
+| `box.fileExists(path, { signal? })`                                  | False only for confirmed entry absence.                                       |
+| `box.makeDirectory(path, { recursive?, signal? })`                   | Create a directory, recursion opt-in.                                         |
+| `box.removeFile(path, { recursive?, signal? })`                      | Remove an entry; missing succeeds, recursion opt-in.                          |
+| `box.copyFile(source, destination, { overwrite?, signal? })`         | Copy regular-file bytes; no-clobber by default.                               |
+| `box.moveFile(source, destination, { overwrite?, signal? })`         | Same-filesystem native rename; no-clobber by default.                         |
+| `box.readFileStream(path, options?)`                                 | Incremental `AsyncIterable<Uint8Array>` with transfer timeouts.               |
+| `box.writeFileStream(path, chunks, options?)`                        | Incremental upload; return confirmed byte count.                              |
+| `box.walkFiles(path, { maxDepth?, maxEntries?, exclude?, signal? })` | Bounded depth-first traversal with exact subtree exclusions.                  |
+| `box.readTextLines(path, { maxLineBytes?, ...transferOptions })`     | Incremental UTF-8 lines; delimiters removed and line bytes bounded.           |
+| `box.destroy({ signal?, storage? })`                                 | Wait for confirmed compute termination.                                       |
+| `sandbar.close()`                                                    | Release client resources; does not destroy sandboxes.                         |
 
-Optional operations fail locally when the adapter does not implement them.
+Creation input accepts `environment`, `networkPolicy`, `region`, `labels`, `mounts: MountSpec[]` and `requirements: { snapshot: SnapshotRequest }`. Omitted input resolves the adapter's configured environment. Optional operations reject with `UNSUPPORTED` when their hooks or requested guarantees are absent; current access/state can instead be unavailable or unknown.
+
+## Lifecycle and saved storage
+
+| API                                                   | Behavior                                                                |
+| ----------------------------------------------------- | ----------------------------------------------------------------------- |
+| `box.renew({ forSeconds }?, { signal?, pollMs? })`    | Reset the native lifetime window; omission uses the connection default. |
+| `box.suspend({ signal?, pollMs? })`                   | Preserve eligible inactive compute using the adapter's native profile.  |
+| `box.resume({ signal?, pollMs? })`                    | Reactivate the same resource; execution continuity can remain unknown.  |
+| `box.checkSnapshot(request?)`                         | Read-only evaluation of configured capture guarantees.                  |
+| `box.snapshot(request?, { signal?, pollMs? })`        | Return `{ snapshot, capture, source }`.                                 |
+| `sandbar.snapshots.get(reference)`                    | Reopen a verified snapshot with a native inspection.                    |
+| `sandbar.snapshots.list({ limit, cursor? })`          | Read scoped snapshot inventory and coverage.                            |
+| `snapshot.inspect({ signal?, pollMs? })`              | Observe preservation, identity and restore facts.                       |
+| `snapshot.restore(request, { signal?, pollMs? })`     | Create independent compute under an explicit network policy.            |
+| `snapshot.delete({ signal?, pollMs? })`               | Delete an eligible retained artifact, separately from compute.          |
+| `sandbar.volumes.create(input, { signal?, pollMs? })` | Create retained storage and return its handle.                          |
+| `sandbar.volumes.get(reference)`                      | Reopen a verified volume with a native inspection.                      |
+| `sandbar.volumes.list({ limit, cursor? })`            | Read scoped volume inventory and coverage.                              |
+| `volume.inspect({ signal?, pollMs? })`                | Observe volume readiness and storage facts.                             |
+| `volume.at(path, { access?, subpath? })`              | Create a mount descriptor; default access is read-write.                |
+| `volume.delete({ signal?, pollMs? })`                 | Explicitly delete eligible retained storage.                            |
+
+Lifecycle, capture, restore, volume creation and artifact deletion also expose `submit…` forms returning operation handles. Managers additionally expose `snapshots.delete(reference, options?)` and `volumes.delete(reference, options?)`. Snapshot and volume handles expose `provider`, `id` and `reference`; persist the complete reference. Restore accepts `mounts` descriptors, optional `resources`, and `requireIndependentLifecycle` (default true); unsupported combinations reject before allocation.
+
+`renew` is not additive and may shorten a longer deadline. `get` and `inspect` never renew or resume. Suspension is distinct from snapshot capture. See [lifecycle guarantees](/docs/guides/resources/#reopen-and-manage-lifetime) and [snapshots and volumes](/docs/guides/snapshots-and-volumes/) for native restrictions and cleanup. `destroy` returns confirmed cleanup details and retains volumes; its `storage` policy is `"require-durable"` by default or explicitly `"allow-unconfirmed"`.
+
+## Processes and terminals
+
+`box.processes.start({ command, cwd?, env?, stdin?, output?, maxOutputBytes?, deadlineSeconds? }, { signal? })` returns a `ProcessHandle`. `stdin` is `"closed"` by default or `"pipe"`. Select `output: { mode: "stream", format?: "text" | "bytes" }` for sustained output; omit `maxOutputBytes` in this mode. Without it, finite text output defaults to a 1 MiB cumulative limit. Explicit `deadlineSeconds` rejects because no portable process-runtime bound is guaranteed.
+
+A process exposes `output({ signal? })`, `wait({ signal? })`, `status({ signal? })`, `write(input, { signal? })`, `closeStdin({ signal? })`, `signal("SIGTERM" | "SIGKILL", { signal? })`, `terminate({ signal? })`, `reference()`, `disconnect()` and `detach()`. `wait` returns `{ exitCode, outputComplete }`; nonzero process exit is an ordinary result. Signal acknowledgement does not confirm exit. Output has one consumer and a bounded queue; disconnect preserves stdin for reopening, while detach may close it.
+
+`box.terminals.start({ command, columns, rows, cwd?, env? }, { signal? })` returns a terminal with combined byte output and `resize({ columns, rows }, { signal? })`. It has no `closeStdin`. `box.processes.reopen(reference, { signal? })` and `box.terminals.reopen(reference, { signal? })` attach to existing work with `outputGap: true`; they never launch a replacement or replay historical output. See [streaming and interactive processes](/docs/guides/text-streaming/) for limits, control and reference lifetime.
 
 ## Execution input and output
 
 `exec` and `submitExec` accept `readonly string[]` or an `ExecInput` object. An array is shorthand for `{ command: { kind: "argv", argv } }`. Each element is literal, the array is copied before dispatch, and an empty array is invalid.
 
-Use the object form for `cwd`, `env`, `deadlineSeconds`, `maxOutputBytes`, or `{ command: { kind: "shell", script } }`. The default deadline is 300 seconds and the default output limit is 1 MiB combined across stdout and stderr.
+Use the object form for `cwd`, `env`, finite `stdin` (UTF-8 string or exact bytes, up to 1 MiB), `deadlineSeconds`, `maxOutputBytes`, or `{ command: { kind: "shell", script } }`. The default deadline is 300 seconds and the default output limit is 1 MiB combined across stdout and stderr. `deadlineSeconds` is a provider execution/observation setting, not a total SDK waiting budget; use the call signal to bound local waiting. `onOutput` adds an awaitable live text callback while retaining bounded original output bytes from the same dispatch. Explicit deadlines reject on that callback path.
 
-`ExecOutput` contains `stdout` and `stderr` byte arrays, `exitCode`, `truncated`, and `stdoutText(maxBytes?)` / `stderrText(maxBytes?)` helpers. Text helpers default to 16 KiB. See [Files and output](/docs/guides/files-and-output/).
+`ExecOutput` contains `stdout` and `stderr` byte arrays, `exitCode`, `truncated`, and `stdoutText(maxBytes?)` / `stderrText(maxBytes?)` helpers, which also accept `{ full: true }`. No-argument text helpers decode all captured bytes; explicit numeric limits shorten display. Structured previews default to 16 KiB. `stdoutPreview({ maxBytes? })` / `stderrPreview({ maxBytes? })` return exported `OutputPreview` (`{ text, shortened }`); display shortening is independent of capture truncation. Exported `outputText` supports the same numeric and full overloads. See [Files and output](/docs/guides/files-and-output/).
 
 ## Operations and recovery
 
 An SDK operation exposes `reference`, `durability: "process"`, `observe()`, and `wait({ signal?, pollMs? })`. Observation returns `null` while completion is unknown. Poll intervals are between 50 and 60,000 milliseconds; adapter delays can set a later earliest poll.
 
-`sandbar.recover(reference)` imports a saved reference in the same verified scope and returns an operation handle. It only observes; it never resubmits. Aborting a wait stops local waiting, not provider compute.
+`sandbar.recover(reference)` imports a saved reference in the same verified scope and returns an operation handle. It never resubmits. `observe()` and `wait()` read existing evidence; advanced `continue({ signal? })` may dispatch a proven never-submitted next stage and must be serialized by the application. Aborting a wait stops local waiting, not provider compute.
 
 `SandbarError` exposes `code` and `effect`. `OutcomeUnknownError` and `WaitAbortedError` carry recovery references. `NonzeroExitError` carries a completed command's output; `NoExitCodeError` means its exit code is unconfirmed. See [Errors and recovery](/docs/guides/recovery/).
 
@@ -80,4 +142,6 @@ Persist accepted pending tokens with their versions. `operations.observe(...)` r
 
 ## Adapter authoring
 
-`sandbar-adapter` exports `defineAdapter`, `AdapterError`, operation result helpers, and scoped operation types. `sandbar-adapter/testing` exports `adapterSuite`. An adapter with no host policy does not expose `withPolicy`; policy-bearing definitions validate and clone host policy synchronously. Start with [Write an adapter](/docs/guides/write-an-adapter/).
+`@sandbar-sdk/adapter` exports `defineAdapter`, `AdapterError`, operation result helpers, and scoped operation types. `@sandbar-sdk/adapter/testing` exports `adapterSuite`. An adapter with no host policy does not expose `withPolicy`; policy-bearing definitions validate and clone host policy synchronously. Start with [Write an adapter](/docs/guides/write-an-adapter/).
+
+Creation input may be omitted when the adapter supplies a default environment. E2B uses its configured `templateId` (default `base`); Daytona accepts an `environment` setup option. Explicit per-call environments win. `checkCreate()` and `submitCreate()` resolve the same defaults without relaxing native create inputs. Missing defaults reject with `INVALID_ARGUMENT` before creation.

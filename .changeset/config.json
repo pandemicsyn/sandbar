@@ -7,12 +7,20 @@
     }
   ],
   "commit": false,
-  "fixed": [["sandbar-adapter", "sandbar-sdk", "sandbar-vercel"]],
+  "fixed": [
+    [
+      "@sandbar-sdk/adapter",
+      "sandbar-sdk",
+      "@sandbar-sdk/daytona",
+      "@sandbar-sdk/e2b",
+      "@sandbar-sdk/vercel"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["sandbar-modal"],
+  "ignore": ["@sandbar-sdk/modal", "@sandbar-sdk/boxd"],
   "privatePackages": {
     "version": false,
     "tag": false

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AdapterError, type ResourceReference } from "sandbar-adapter";
+import { AdapterError, type ResourceReference } from "@sandbar-sdk/adapter";
 
 const Evidence = z.strictObject({
   version: z.literal(1),

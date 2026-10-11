@@ -21,21 +21,34 @@ export const features = {
       "close",
     ],
   },
+  suspension: { label: "Native sandbox suspend/resume", scenarios: ["lifecycle-suspend-resume"] },
+  previewProtected: { label: "Protected HTTP preview", scenarios: ["preview-protected"] },
+  previewPublic: { label: "Public HTTP preview", scenarios: ["preview-public"] },
+  termination: { label: "Local-handle process termination", scenarios: ["execution-termination"] },
+  renewal: { label: "Configured lifetime renewal", scenarios: ["lifecycle-renew"] },
+  reopening: { label: "Scoped sandbox reopening", scenarios: ["lifecycle-reopen"] },
   execution: {
     label: "Execution and captured output",
     workflow: "execution",
     scenarios: ["exec-argv", "exec-shell", "exec-nonzero"],
   },
+  streaming: { label: "Process streams and terminals", scenarios: ["execution-streaming"] },
+  finiteStdin: { label: "Finite execution input", scenarios: ["execution-stdin"] },
   files: {
     label: "Binary files and overwrite",
     workflow: "files",
     scenarios: ["file-binary", "file-overwrite", "file-no-clobber"],
   },
+  directories: { label: "Directory primitives", scenarios: ["file-directories"] },
   oci: { label: "OCI image builds", scenarios: ["build-oci"] },
   network: {
     label: "Measured network controls",
     workflow: "network-controls",
     scenarios: ["network-internet", "network-blocked"],
+  },
+  storageComposition: {
+    label: "Cold snapshot with selected storage",
+    scenarios: ["storage-composition"],
   },
   snapshots: { label: "Snapshot roundtrip", scenarios: ["snapshot-roundtrip"] },
   volumes: { label: "Volume CRUD", scenarios: ["volume-crud"] },
@@ -59,22 +72,62 @@ export const supportMetadataSchema = z.strictObject({
 
 export type SupportMetadata = z.infer<typeof supportMetadataSchema>;
 
-export const builtinSupport: SupportMetadata[] = [
+export const officialSupport: SupportMetadata[] = [
   {
     id: "daytona",
     name: "Daytona",
     features: {
+      storageComposition: {
+        support: "conditional",
+        note: "Implemented exact-volume-ID mounts on known mount-free filesystem/fresh restore with explicit daytona-default. Blocked mounted restore, mounted capture and memory composition unsupported. Native fixtures/packed compatibility are separate from first-action acceptance. The bounded case at 824946d passed A startup evidence, then failed a harness snapshot-name/ID assertion before B; native selector resolution was corrected. The full workflow passed at 5911ccc on Bun 1.3.14, us, daytona-default with the pinned first-action image: selected A data, empty B, captured private state, exact native identities and fresh-client reopening. All owned compute, volumes, capture and temporary import were cleaned up.",
+      },
+      suspension: {
+        support: "conditional",
+        note: "Known unmounted Daytona containers retain files and end processes with auto-delete disabled; start from stopped/archived preserves UUID and reports fresh execution. Hard TTL keeps ticking. Bun lifecycle-suspend-resume passed at 6796b30 with confirmed owned cleanup.",
+      },
+      termination: {
+        support: "conditional",
+        note: "Process-scoped Python 3 supervisor retains child identity and requests SIGTERM/SIGKILL for the retained child; no descendant cleanup or sandbox-destruction fallback. Independent wait/status preserve confirmed exit. The maintained execution-termination workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed owned destruction and client close; this does not qualify descendant cleanup or other images.",
+      },
+      previewProtected: {
+        support: "conditional",
+        note: "Daytona protected header access only; standard token grants sandbox-wide command/file authority. Public setup unsupported. Native lookup can activate a route; no server start/resume or readiness claim. Bun preview-protected passed at 3188e33 in us with authenticated HTTP and denied missing/invalid headers; owned cleanup confirmed.",
+      },
+      previewPublic: {
+        support: "unsupported",
+        note: "Daytona sandbox-wide publication requires a separate product decision; preview never changes visibility.",
+      },
+      directories: {
+        support: "conditional",
+        note: "Complete listFiles/readDirectory, statFile, existence and recursive-opt-in mkdir/remove use a bounded Python3 helper on private Linux filesystems. Dangling links remain entries; nonrecursive remove uses rmdir/unlink. Copy and move use native race-safe publication; no-clobber rename needs Linux renameat2. Mounted destinations are unsupported for staged transfer mutations. Expanded file-directories passed at 2f6afe8 on borrowed Linux container/us/daytona-default: complete browsing/metadata, recursive-opt-in mutation, copy/move and the shared compiled artifact recipe with a 32 MiB hash-checked stream roundtrip. Sandbox destruction/client close confirmed. Earlier mkdir rejection failures at cd89f31 and 6d7ddc7 remain recorded with confirmed cleanup. F4 walkFiles/readTextLines compose these hooks and have fixture/packed coverage; the 2f6afe8 pass predates them and does not qualify F4. F4 traversal and UTF-8/CRLF text lines passed through the shared recipe at e91f2d5 with confirmed sandbox destruction/client close. Other images/mounts are unqualified.",
+      },
+      renewal: {
+        support: "conditional",
+        note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Bun lifecycle-renew passed at 3188e33 with deadline observation and confirmed owned cleanup; other configurations remain unqualified.",
+      },
+      reopening: {
+        support: "conditional",
+        note: "Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Bun lifecycle-reopen passed at 3188e33 with fresh-process scoped attachment, guest exec/files and confirmed owned cleanup; other configurations remain unqualified.",
+      },
       lifecycle: {
         support: "supported",
-        note: "The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified.",
+        note: "The immediate-inventory assertion failed at 1505ee0. A diagnostic reproduced native list-index lag. The Bun lifecycle test passed at 8449def in us with daytona-default after allowing a 30-second read-only convergence window; owned teardown and client close were confirmed. Other images/regions are unverified. The current suite omits the create environment to exercise adapter defaults; historical baseline passes do not qualify that newer path.",
+      },
+      streaming: {
+        support: "conditional",
+        note: "Finite and explicit sustained text streaming, exact-byte incremental stdin/EOF and status use a private Python 3 supervisor and Unix socket on writable /tmp. Queue 64 KiB/256 chunks, frames 16 KiB; no cumulative transcript. Pipe reads pause while full. Explicit PTYs combine bytes and support resize. Generation/lease-bound references reopen live output after disconnect (or 30s lease expiry), with an explicit gap and no replay. Disconnect preserves stdin; detach closes it. Helper removal follows child exit or owned sandbox destruction; abandonment markers remain until sandbox destruction. These P4 guarantees have deterministic coverage and separate live evidence. The maintained compiled >32 MiB build and incremental text/binary input/EOF workflow passed at ecc73de on borrowed Linux/us/daytona-default with confirmed sandbox destruction and client close; other images are unqualified.",
       },
       execution: {
         support: "supported",
         note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration.",
       },
+      finiteStdin: {
+        support: "conditional",
+        note: "Finite exec accepts up to 1 MiB of UTF-8 text or exact bytes followed by EOF. The adapter reserves a private directory, uploads and verifies the payload, then redirects command input from that regular file; omitted input reads /dev/null. Requires writable unmounted /tmp and the existing capture utilities. Input is seekable; no pipe, PTY or incremental-write guarantee. Uncertain staging/dispatch is never replayed; temporary input may remain after interruption until owned sandbox cleanup. Deterministic native-boundary and local wrapper tests are separate from live acceptance. The maintained execution-stdin case has not run live; older captured-output passes do not qualify finite input.",
+      },
       files: {
         support: "conditional",
-        note: "Baseline passed in /tmp with required GNU shell utilities. Custom image filesystem behavior is unverified.",
+        note: "Bun files passed at 3188e33 in /tmp with signal-bearing binary reads, overwrite/no-clobber and confirmed owned cleanup; required GNU shell utilities remain a prerequisite. Custom image filesystem behavior is unverified. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
       },
       oci: {
         support: "conditional",
@@ -102,17 +155,57 @@ export const builtinSupport: SupportMetadata[] = [
     id: "e2b",
     name: "E2B",
     features: {
+      storageComposition: {
+        support: "unsupported",
+        note: "The Sandbar adapter does not qualify filesystem/fresh restore with selected native volume IDs; memory composition and name-only mount selection remain unsupported.",
+      },
+      suspension: {
+        support: "conditional",
+        note: "E2B memory pause preserves private filesystem/RAM under the same ID; known native mounts are unsupported, missing mount metadata stays unknown, and external-storage durability/consistency is excluded; explicit resume uses configured initial session lifetime and reports execution unknown. Paused retention is indefinite and requires explicit owned cleanup. Live case failed before pause at cb39884 because native mount facts were unavailable; owned cleanup confirmed. Initial guest-routing failure at 6796b30 is retained; Revised private-state lifecycle case passed at 26f516d with confirmed owned cleanup, fresh-process inactive reopening, same files/identity and RAM nonce/counter continuity; prior failures remain recorded.",
+      },
+      previewPublic: {
+        support: "conditional",
+        note: "E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. Bun preview-public passed at 3188e33 with observed public visibility, HTTP content and confirmed owned cleanup. Private-default ingress denial remains unqualified.",
+      },
+      termination: {
+        support: "conditional",
+        note: "Active handles now use random scoped tag selectors for SIGTERM/SIGKILL; tags are not immutable native generations and other native clients can reuse them. Lost observation disables controls; no descendant cleanup guarantee. Historical PID-selected evidence follows. Calls share/cache acknowledgement or uncertainty without replay. Exit remains independently observed, including native -1. Bounded Bun live case passed at 131a8c6 with borrowed base on darwin-arm64/Bun 1.3.14 after the fixed-default routing correction: ready output, request acknowledgement/reuse, independently observed nonzero terminal result, owned cleanup and client close. The prior 4cc6a20 attachment failure remains recorded. Other images/platforms and signal delivery races are unqualified.",
+      },
+      previewProtected: {
+        support: "unsupported",
+        note: "Fresh traffic-token retrieval is absent from the pinned read-only detail API. Native connect may resume compute; protected preview rejects without calling it. Newly created/restored compute is private by default.",
+      },
+      directories: {
+        support: "conditional",
+        note: "Complete listFiles/readDirectory and statFile use a bounded Python3 helper; native lstat existence preserves dangling links. Recursive native primitives and race-safe helper nonrecursive mkdir/remove preserve opt-in. Parent links follow; recursive removal does not walk links. Copy/file stream publication uses same-directory staging and hardlinks; move no-clobber needs Linux renameat2. Stream upload requires envd >=0.5.7 to prevent native whole-file buffering. Original recursive-directory case passed at 3188e33 with owned cleanup; it does not qualify the expanded directory/32 MiB transfer/artifact workflow. Expanded file-directories passed at 2f6afe8 on borrowed base/Bun 1.3.14: complete browsing/metadata, recursive-opt-in mutations, copy/move and the shared compiled recipe with 32 MiB hash-checked byte streams. Owned sandbox destruction/client close confirmed. F4 walkFiles/readTextLines compose these hooks and have fixture/packed coverage; the 2f6afe8 pass predates them and does not qualify F4. F4 traversal and UTF-8/CRLF text lines passed through the shared recipe at e91f2d5 with confirmed sandbox destruction/client close. Other templates/guest versions remain unqualified.",
+      },
+      renewal: {
+        support: "conditional",
+        note: "Running scoped compute; configured lifetime defaults, bounded native reset, ACK-preserving metadata and read-only no-replay recovery. Bun lifecycle-renew passed at 3188e33 with deadline observation and confirmed owned cleanup; other configurations remain unqualified.",
+      },
+      reopening: {
+        support: "conditional",
+        note: "Scoped Sandbar-created compute only; fresh connection/process reopen, state/deadlines and running guest exec/files. Bun lifecycle-reopen passed at 3188e33 with fresh-process scoped attachment, guest exec/files and confirmed owned cleanup; other configurations remain unqualified.",
+      },
       lifecycle: {
         support: "supported",
-        note: "The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed.",
+        note: "The ordinary Bun base baseline passed at 8449def with API-key authority in the default region, requested blocked internet and five-minute native lifetime; compute cleanup and client close were confirmed. The current suite omits the create environment to exercise the configured template default; historical baseline passes do not qualify that newer path or private inbound defaults.",
+      },
+      streaming: {
+        support: "conditional",
+        note: "Finite legacy streaming plus explicit sustained public envd RPC text streaming, exact-byte incremental stdin/EOF (envd >=0.5.2), status and bounded byte capture for exec callbacks. No cumulative transcript in sustained mode. PID presence proves running; absence without EndEvent is unknown. RPC loss may lose exit observation. Initial sustained streaming failed at 37dd9c2 on coalesced-frame queue overflow; termination passed and cleanup was confirmed. After bounded fair delivery, >32 MiB build and exact text/binary input/EOF plus status/termination passed at ecc73de on borrowed base with confirmed sandbox destruction and client close. Historical finite evidence remains separate. Original-byte streaming passed at 5f2bd13 with confirmed owned cleanup. Scoped live-only process reopening, explicit PTYs and resize have deterministic coverage; no transcript replay, native tag generation or exclusive attachment guarantee. P4 live qualification is recorded separately.",
       },
       execution: {
         support: "supported",
-        note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration.",
+        note: "Argv/shell, cwd/env, binary output and nonzero exit use the prepared baseline configuration. Streaming is reported separately and is not qualified by this captured-output pass.",
+      },
+      finiteStdin: {
+        support: "conditional",
+        note: "Finite exec accepts up to 1 MiB of UTF-8 text or exact bytes followed by EOF. The adapter reserves a private directory, writes and verifies the payload, then redirects the existing foreground command from that regular file; omitted input reads /dev/null. Requires writable /tmp and existing Bash/file receipt utilities. Input is seekable; no pipe, PTY or incremental-write guarantee and no native stdin-close version requirement. Uncertain staging/dispatch is never replayed; temporary input may remain after interruption until owned sandbox cleanup. Deterministic native-boundary and local wrapper tests are separate from live acceptance. The maintained execution-stdin case has not run live; older captured-output passes do not qualify finite input.",
       },
       files: {
         support: "conditional",
-        note: "Passed in /home/user. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths.",
+        note: "Bun files passed at 3188e33 in /home/user with signal-bearing binary reads, overwrite/no-clobber and confirmed owned cleanup. An earlier sticky /tmp overwrite failed and dependent no-clobber was blocked; the home-workspace pass does not qualify arbitrary paths. UTF-8 readTextFile/writeTextFile wrap these byte operations; local encoding has deterministic/packed coverage and needs no separate live qualification.",
       },
       oci: {
         support: "conditional",
@@ -214,12 +307,12 @@ function validation(
 
 export function renderSupportMatrix(
   reports: readonly QualificationReport[],
-  metadata: readonly SupportMetadata[] = builtinSupport,
+  metadata: readonly SupportMetadata[] = officialSupport,
 ) {
   const profiles = metadata.map((profile) => supportMetadataSchema.parse(profile));
 
   const external = profiles.some(
-    (profile) => !builtinSupport.some((builtin) => builtin.id === profile.id),
+    (profile) => !officialSupport.some((official) => official.id === profile.id),
   );
 
   const historical = reports.flatMap((report) => parseReport(report).historicalEvidence ?? []);
@@ -264,8 +357,19 @@ export function renderSupportMatrix(
     "",
     "Adapter support and live validation are separate facts. **Supported** means implemented; **conditional** requires the configuration in the linked note; **unsupported** means the adapter does not expose the workflow. Live results are **passed**, **failed**, **blocked**, or **not-run**. Each pass applies to its recorded source/configuration, not the current head or every provider account. Fixture and packed tests never produce live passes.",
     "",
+    ...(profiles.some((profile) => profile.id === "e2b")
+      ? [
+          "**E2B experimental-volume exception:** the Volume CRUD row's unsupported label excludes experimental native CRUD from maintained live qualification; SDK hooks exist. A live create was blocked by HTTP 403 for the tested account; original volume custody remains unresolved, so maintained qualification skips volume cases before setup. This is separate from mounts, which the adapter rejects before allocation. See the [volume caveat](#e2b-volumes) and [mounted-persistence caveat](#e2b-persistence).",
+          "",
+        ]
+      : []),
     ...markdownTable(["Feature", ...profiles.map((profile) => profile.name)], rows),
     "",
+    ...(external
+      ? []
+      : [
+          "The external experimental [boxd adapter](/docs/providers/boxd/) has deterministic fixture coverage and separately maintained, dated live evidence. Its declarations are maintained in an external provider profile; it is outside the selected launch release.",
+        ]),
     external
       ? "The [live evidence detail](./live-qualification.md) contains only reviewed records supplied for this external profile. Missing records remain not-run; declarations do not establish live acceptance."
       : "The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. Daytona baseline passed at 8449def after allowing bounded inventory convergence; the original 1505ee0 failure remains recorded. Snapshot roundtrip, volume CRUD and mounted persistence retain their 1505ee0 passes. E2B baseline and RAM snapshot roundtrip passed at 8449def; its measured network probe failed at 431cdaa. All newly owned compute and retained artifacts have confirmed cleanup, while the original E2B volume uncertainty remains unresolved. Other operation/configuration claims retain their own recorded revisions and limitations below.",
@@ -290,7 +394,7 @@ export function renderSupportMatrix(
     "## Other integrations",
     "",
     external
-      ? "This page covers only the supplied external profile. Built-in and other adapter results are recorded separately."
+      ? "This page covers only the supplied external profile. Other adapter results are recorded separately."
       : "Modal is an external experimental adapter with offline native-boundary and packed consumer coverage, without live acceptance. Custom adapters supply a profile to the same ordinary Bun SDK suites. Fake is a deterministic fixture without isolation guarantees.",
     "",
     "## Runtimes",
@@ -300,7 +404,7 @@ export function renderSupportMatrix(
     "## Updating support",
     "",
     external
-      ? "Reviewed summaries belong in one results JSON per declared provider. Generate these pages with provider-qualification/render.ts --profile <profile> --results <results-directory> --output <output-directory>; use --check for drift. Live runs require separate explicit resource authorization and durable owned cleanup."
+      ? "Reviewed summaries belong in one results JSON per provider. Generate with provider-qualification/render.ts --profile <profile> --results <results-directory> --output <output-directory>; use --check for drift. Live runs require separate authorization and durable owned cleanup."
       : "Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The bounded Daytona Bun run at 1505ee0 is recorded, including its lifecycle failure. E2B volume tests skip; identified volume-only custody does not block bounded zero-volume suites. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.",
     "",
   );

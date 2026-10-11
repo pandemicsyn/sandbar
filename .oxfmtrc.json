@@ -9,7 +9,6 @@
   "sortPackageJson": false,
   "ignorePatterns": [
     "specs/**",
-    "plans/**",
     "README.md",
     ".agent/**",
     ".agents/**",

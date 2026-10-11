@@ -1,6 +1,6 @@
 # Releasing Sandbar packages
 
-`sandbar-adapter` and `sandbar-sdk` use one lockstep version (currently pre-1.0) and one `v<version>` Git tag. Changesets write package changelogs, and the release workflow composes its GitHub release notes from those same version sections. Private apps, provider implementation workspaces and internal SDK packages remain unpublished.
+`@sandbar-sdk/adapter`, `sandbar-sdk`, `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, and `@sandbar-sdk/vercel` use one lockstep version (currently pre-1.0) and one `v<version>` Git tag. Changesets write package changelogs, and the release workflow composes its GitHub release notes from those same version sections. Private apps, SPI, fake-provider and internal packages remain unpublished. Official adapters are public release packages; experimental Modal stays outside this release group.
 
 ## Contributor flow
 
@@ -16,10 +16,22 @@
 
 ## One-time setup before a real release
 
-- Confirm ownership and availability of every public npm package name. The selected public names are `sandbar-adapter` and `sandbar-sdk`. Confirm npm ownership of each name before publication; registry E404 does not prove ownership. The two selected packages have `private: false`, Apache-2.0 licensing and exact repository metadata. Keep provider implementation and app workspaces private. Update `scripts/release-packages.json` and the fixed group in `.changeset/config.json` together if the distributable graph changes.
+- Confirm ownership and availability of every public npm package name. The selected public names are `@sandbar-sdk/adapter`, `sandbar-sdk`, `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, and `@sandbar-sdk/vercel`. Confirm npm ownership of each name before publication; registry E404 does not prove ownership. The five selected packages have `private: false`, Apache-2.0 licensing and exact repository metadata. Keep internal SPI, fake-provider and app workspaces private; Modal remains experimental outside the coordinated release group. Update `scripts/release-packages.json` and the fixed group in `.changeset/config.json` together if the distributable graph changes.
 - Create a protected GitHub `npm` environment with required reviewers and restrict it to approved release tags. Enable Actions to write contents for version preparation; branch protection and the required independent review still apply to the version PR.
-- Configure an npm trusted publisher for **each** public package: GitHub owner `pandemicsyn`, repository `sandbar`, workflow filename `release-npm.yml`, environment `npm`, with direct `npm publish` allowed. GitHub-hosted runners, npm CLI 11.5.1+ and Node 22.14+ are required. OIDC requires `id-token: write`; this workflow supplies it. The npm `trust` command requires an existing package, so each first publication needs an authorized manual bootstrap with package ownership and a suitable scoped/public access setting before OIDC can be configured. No account credentials are stored in this repository.
+- Configure an npm trusted publisher for **each** public package: GitHub owner `pandemicsyn`, repository `sandbar`, workflow filename `release-npm.yml`, environment `npm`, with direct `npm publish` allowed. GitHub-hosted runners, npm CLI 11.5.1+ and Node 22.14+ are required. OIDC requires `id-token: write`; this workflow supplies it. No account credentials are stored in this repository.
 - Verify npm organization/scope rights and GitHub environment settings separately. This setup task does not publish packages or create a release.
+
+### npm bootstrap
+
+`npm trust` only accepts packages that already exist, so the package owner runs `bun run release:bootstrap` once from a local checkout with npm 11.15+ and account 2FA enabled. Placeholders are `0.0.0` packages containing only a README, LICENSE and manifest; Changesets never produces `0.0.0`, so they cannot collide with a real release.
+
+1. `bun run release:bootstrap` (or `plan`) reports registry state and packs placeholders without publishing.
+2. `npm login` as a member of the `sandbar-sdk` npm organization with publish rights, then `bun run release:bootstrap publish` publishes a placeholder for each package in `scripts/release-packages.json` that is not yet on the registry. It stops if an existing package is not owned by the logged-in account and skips packages the account already owns. npm prompts for 2FA. A brand-new package may be staged instead of going live: npm shows a public `0.0.0-stage` placeholder and holds `0.0.0` under **Staged Packages** on npmjs.com until an owner approves it there (or with `npm stage approve <stage-id>`). Approve each one before the trust step.
+3. `bun run release:bootstrap trust` runs `npm trust github` for each package with the settings above. Pass package names (for example `trust @sandbar-sdk/e2b`) to configure only those. npm prompts for 2FA once; choose the option to skip 2FA for the next five minutes. A package holds one trust configuration, so a failed rerun means checking `npm trust list <package>` and revoking a wrong entry before creating it again.
+4. On npmjs.com, set each package's **Publishing access** to require two-factor authentication and disallow tokens. Trusted publishing is unaffected.
+5. Create the protected GitHub `npm` environment described above before the first real release. A workflow referencing a missing environment creates it without protection.
+
+Placeholders hold `latest` until the first stable release; a prerelease on `next` leaves `latest` on `0.0.0`. Later packages added to the release group follow the same steps.
 
 ## Reproducible local qualification
 
@@ -27,6 +39,6 @@ Run `bun run release:fixture` after building packages. It uses temporary package
 
 ## Intended installs after publication
 
-Install the SDK alone for direct mode: `npm install sandbar-sdk`, `pnpm add sandbar-sdk`, or `bun add sandbar-sdk`. Its built-in provider imports are `sandbar-sdk/daytona` and `sandbar-sdk/e2b`. The experimental `sandbar-modal` adapter is a separate package outside this 1.0 release workflow.
+Install core plus the selected official adapter: `npm install sandbar-sdk @sandbar-sdk/daytona` or `npm install sandbar-sdk @sandbar-sdk/e2b` (equivalent pnpm/Bun commands work). Core alone supports independently authored adapters. Its official provider imports are `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, and `@sandbar-sdk/vercel`. The Vercel adapter has offline qualification and no live acceptance; its retained metadata and REST-boundary limitations remain documented. The experimental `@sandbar-sdk/modal` adapter is a separate package outside this 1.0 release workflow.
 
-Adapter authors install `sandbar-adapter` and import `sandbar-adapter/testing` for the conformance suite. These are package shapes for a future authorized publication; no npm release is performed by this task.
+Adapter authors install `@sandbar-sdk/adapter` and import `@sandbar-sdk/adapter/testing` for the conformance suite. These are package shapes for a future authorized publication; no npm release is performed by this task.

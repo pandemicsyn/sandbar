@@ -14,14 +14,16 @@ Read these docs first:
 - https://sandbarsdk.dev/docs/providers/support/
 - https://sandbarsdk.dev/docs/reference/typescript/
 - https://sandbarsdk.dev/docs/guides/recovery/
+- https://sandbarsdk.dev/docs/guides/runnable-agent-examples/
+- https://github.com/pandemicsyn/sandbar/blob/main/examples/README.md
 
 Inspect the project and installed package versions before changing code.
-If packages are not published yet, use an available source checkout or
-local packed artifacts. Do not substitute the unrelated npm package
+Sandbar packages are currently unpublished. Use an available source
+checkout or local packed artifacts; follow the checkout setup in the docs. Do not substitute the unrelated npm package
 named "sandbar".
 
 Use Sandbar and Image from "sandbar-sdk", with e2b from
-"sandbar-sdk/e2b" or daytona from "sandbar-sdk/daytona".
+"@sandbar-sdk/e2b" or daytona from "@sandbar-sdk/daytona".
 Run the SDK on the server and read credentials from environment variables.
 
 Start from an existing prepared image. E2B can use the "base" template;

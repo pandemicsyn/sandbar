@@ -10,8 +10,17 @@ import {
 
 export const scenarios = [
   "sandbox-lifecycle",
+  "lifecycle-reopen",
+  "lifecycle-renew",
+  "lifecycle-suspend-resume",
+  "preview-protected",
+  "preview-public",
   "execution",
+  "execution-stdin",
+  "execution-streaming",
+  "execution-termination",
   "files",
+  "file-directories",
   "network-controls",
   "connect",
   "create-prepared",
@@ -30,6 +39,7 @@ export const scenarios = [
   "network-internet",
   "network-blocked",
   "snapshot-roundtrip",
+  "storage-composition",
   "volume-persistence",
   "volume-crud",
 ] as const;
@@ -133,7 +143,16 @@ export const reportSchema = z
   .superRefine((report, ctx) => {
     for (const [index, record] of report.records.entries()) {
       if (
-        ["sandbox-lifecycle", "execution", "files", "network-controls"].includes(record.scenario) &&
+        [
+          "sandbox-lifecycle",
+          "execution",
+          "execution-stdin",
+          "execution-streaming",
+          "execution-termination",
+          "files",
+          "file-directories",
+          "network-controls",
+        ].includes(record.scenario) &&
         !record.runner
       )
         ctx.addIssue({

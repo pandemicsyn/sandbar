@@ -1,5 +1,5 @@
 {
-  "name": "sandbar-adapter",
+  "name": "@sandbar-sdk/adapter",
   "version": "0.0.0",
   "private": false,
   "type": "module",

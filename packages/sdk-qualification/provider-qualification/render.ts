@@ -1,7 +1,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
-import { builtinSupport, renderSupportMatrix } from "./support";
+import { officialSupport, renderSupportMatrix } from "./support";
 import { loadProviderProfile } from "./profile";
 import { parseReport, renderLiveMatrix } from "./report";
 
@@ -20,7 +20,7 @@ const profilePath = option("--profile");
 
 const external = profilePath ? await loadProviderProfile(profilePath) : undefined;
 
-const metadata = external ? [external.support] : builtinSupport;
+const metadata = external ? [external.support] : officialSupport;
 
 const directory = option("--results") ?? fileURLToPath(new URL("./results/", import.meta.url));
 

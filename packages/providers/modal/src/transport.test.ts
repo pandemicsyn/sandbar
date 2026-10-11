@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
 import { ModalClient } from "modal";
 import { noRetryGrpcMiddleware, readBoundedStream, readModalFile } from "./transport";
-import { field, message } from "./router-wire";
+import { field, message, parse } from "./router-wire";
 
 const server = new grpc.Server();
 
@@ -13,6 +13,8 @@ let port = 0;
 let imageSuccess = false;
 
 let createSuccess = false;
+
+let createRequest: Buffer | undefined;
 
 const path = "/modal.client.ModalClient/AppGetOrCreate";
 
@@ -57,10 +59,11 @@ server.addService(
     },
     appGetOrCreate: lost(path),
     sandboxCreateV2(
-      _call: grpc.ServerUnaryCall<Buffer, Buffer>,
+      call: grpc.ServerUnaryCall<Buffer, Buffer>,
       callback: grpc.sendUnaryData<Buffer>,
     ) {
       calls.set(createPath, (calls.get(createPath) ?? 0) + 1);
+      createRequest = call.request;
 
       if (createSuccess) callback(null, message(field(1, "sb-oci"), field(3, "ta-fixture")));
       else callback(Object.assign(new Error("lost response"), { code: grpc.status.UNAVAILABLE }));
@@ -300,10 +303,14 @@ test("pinned OCI path builds once and creates one V2 sandbox in the same submit"
     const sandbox = await client.sandboxes.experimentalCreate(
       { appId: "ap-fixture", environmentName: "main" } as never,
       image,
-      { name: "sub-fixture", blockNetwork: true },
+      { name: "sub-fixture", blockNetwork: true, timeoutMs: 120_000 },
     );
 
     expect(sandbox.sandboxId).toBe("sb-oci");
+    const definition = parse(createRequest!).get(2);
+    expect(definition).toBeInstanceOf(Uint8Array);
+    // SAFETY: The fixture just checked the native nested definition is bytes.
+    expect(parse(definition as Uint8Array).get(7)).toBe(120); // Sandbox lifetime, not exec field 6.
     expect(image.imageId).toBe("im-oci");
     expect(calls.get(imagePath)).toBe(1);
     expect(calls.get(createPath)).toBe(1);

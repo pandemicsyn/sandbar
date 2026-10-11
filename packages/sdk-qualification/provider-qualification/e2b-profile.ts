@@ -1,5 +1,5 @@
 import { Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
-import { e2b, createE2BAdapter, type E2BTransport } from "sandbar-sdk/e2b";
+import { e2b, createE2BAdapter, type E2BTransport } from "@sandbar-sdk/e2b";
 import { z } from "zod";
 
 export const e2bConfiguration = z.strictObject({
@@ -13,6 +13,7 @@ export const e2bConfiguration = z.strictObject({
     .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
     .default("base"),
   timeoutSeconds: z.literal(300).default(300),
+  preview: z.strictObject({ access: z.enum(["protected", "public"]) }).optional(),
 });
 
 export type E2BConfiguration = z.infer<typeof e2bConfiguration>;

@@ -10,13 +10,14 @@ import { z } from "zod";
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
 const packages = [
-  ["sandbar-adapter", "packages/adapter"],
+  ["@sandbar-sdk/adapter", "packages/adapter"],
   ["@sandbar/provider-spi", "packages/provider-spi"],
   ["@sandbar/provider-fake", "packages/providers/fake"],
-  ["@sandbar/provider-daytona", "packages/providers/daytona"],
-  ["sandbar-modal", "packages/providers/modal"],
-  ["sandbar-vercel", "packages/providers/vercel"],
-  ["@sandbar/provider-e2b", "packages/providers/e2b"],
+  ["@sandbar-sdk/daytona", "packages/providers/daytona"],
+  ["@sandbar-sdk/modal", "packages/providers/modal"],
+  ["@sandbar-sdk/boxd", "packages/providers/boxd"],
+  ["@sandbar-sdk/vercel", "packages/providers/vercel"],
+  ["@sandbar-sdk/e2b", "packages/providers/e2b"],
   ["sandbar-sdk", "packages/sdk"],
 ];
 
@@ -64,6 +65,20 @@ async function pack(directory) {
 
   if (contents.some((path) => path.includes("/src/") || path.endsWith(".test.d.ts")))
     throw new Error(`${manifest.name} archive contains source or test declarations`);
+
+  if (
+    ["sandbar-sdk", "@sandbar-sdk/adapter", "@sandbar-sdk/daytona", "@sandbar-sdk/e2b"].includes(
+      manifest.name,
+    )
+  ) {
+    for (const path of contents.filter((path) => /\.(?:js|d\.ts)$/.test(path))) {
+      const source = run("tar", ["-xOzf", archive, path], root);
+
+      if (/(?:from\s*|import\s*\(?)["']@sandbar\//.test(source))
+        throw new Error(`${manifest.name} leaks private workspace in ${path}`);
+    }
+  }
+
   const packed = JSON.parse(run("tar", ["-xOzf", archive, "package/package.json"], root));
 
   const exports = z
@@ -129,25 +144,104 @@ void flow;
 `;
   else if (mode === "custom")
     source = `
-import { Sandbar, Image } from "sandbar-sdk";
+import { Sandbar, Image, type ReadOptions, type SandboxHandle, type ConnectOptions, type CloseOptions } from "sandbar-sdk";
 import { acme } from "@acme/sandbar-adapter";
 async function flow() {
-  const client = await Sandbar.connect({ adapter: acme, config: { region: "us" }, credentials: { token: "fixture" } });
+  const setup: ConnectOptions = { signal: new AbortController().signal, timeoutMs: 30_000 };
+  const cleanup: CloseOptions = { timeoutMs: 5_000 };
+  const client = await Sandbar.connect({ adapter: acme, config: { region: "us" }, credentials: { token: "fixture" }, ...setup });
   const box = await client.sandboxes.create({ environment: Image.prepared("image-1") });
+  const handle: SandboxHandle = box;
+  const options: ReadOptions = { signal: new AbortController().signal };
+  const renewal: import("sandbar-sdk").RenewResult = await handle.renew({ forSeconds: 61 }, options);
+  const renewalOperation = await handle.submitRenew();
+  const renewed = await renewalOperation.wait();
+  const suspended: import("sandbar-sdk").SuspendResult = await handle.suspend(options);
+  const resumed: import("sandbar-sdk").ResumeResult = await handle.resume(options);
+  await (await handle.submitSuspend(options)).wait(options);
+  await (await handle.submitResume(options)).wait(options);
+  void suspended; void resumed;
+  void renewal; void renewed;
+  if (!box.reference) throw Error("Missing sandbox reference");
+  const preparedRenewal = await client.operations.prepare("sandbox_renew", {
+    sandbox: { id: box.id, reference: box.reference }, forSeconds: 61,
+  });
+  const resolvedRenewal: Readonly<import("sandbar-sdk").RenewRequest> | undefined = preparedRenewal.renewal;
+  void resolvedRenewal;
+  await handle.inspect(options);
+  await handle.inspect({ ...options, pollMs: 500 });
+  await handle.readFile("/file", options);
+  await handle.readFile("/file");
+  const text: string = await handle.readTextFile("/file", options);
+  await handle.readTextFile("/file");
+  await handle.writeTextFile("/text", text);
+  await handle.writeTextFile("/text", text, { overwrite: true, signal: options.signal });
+  const entries: import("sandbar-sdk").FileEntry[] = await handle.listFiles("/job", options);
+  const exists: boolean = await handle.fileExists("/job/file", options);
+  await handle.makeDirectory("/job/results", { recursive: true, signal: options.signal });
+  await handle.removeFile("/job", { recursive: true, signal: options.signal });
+  void entries; void exists;
   await box.destroy();
-  await client.close();
+  await client.close(cleanup);
 }
+function lifecycleHooks(
+  suspendSubmit: NonNullable<import("@sandbar-sdk/adapter").AdapterSession["suspend"]>["submit"],
+  resumeSubmit: NonNullable<import("@sandbar-sdk/adapter").AdapterSession["resume"]>["submit"],
+) {
+  type Session = import("@sandbar-sdk/adapter").AdapterSession;
+  // @ts-expect-error Suspend must resolve an intent in prepare; callable hooks cannot do so.
+  const callableSuspend: Session["suspend"] = suspendSubmit;
+  // @ts-expect-error Resume must resolve an intent in prepare; callable hooks cannot do so.
+  const callableResume: Session["resume"] = resumeSubmit;
+  // @ts-expect-error Suspend requires prepare even when submit accepts a resolved input.
+  const unresolvedSuspend: Session["suspend"] = { submit: suspendSubmit };
+  // @ts-expect-error Resume requires prepare even when submit accepts a resolved input.
+  const unresolvedResume: Session["resume"] = { submit: resumeSubmit };
+  const suspend: Session["suspend"] = {
+    async prepare(input) { return { ...input, intent: { action: "suspend", preserve: "filesystem" } }; },
+    submit: suspendSubmit,
+  };
+  const resume: Session["resume"] = {
+    async prepare(input) { return { ...input, intent: { action: "resume", forSeconds: 60 } }; },
+    submit: resumeSubmit,
+  };
+  void callableSuspend; void callableResume; void unresolvedSuspend; void unresolvedResume;
+  return { suspend, resume };
+}
+void lifecycleHooks;
 // @ts-expect-error config must include region
 void Sandbar.connect({ adapter: acme, config: {}, credentials: { token: "fixture" } });
+void flow;
+`;
+  else if (mode === "boxd")
+    source = `
+import { Sandbar } from "sandbar-sdk";
+import { boxdAdapter } from "@sandbar-sdk/boxd";
+async function flow() {
+  const client = await Sandbar.connect({ adapter: boxdAdapter, config: { org: "team", networkPolicy: "internet" }, credentials: { apiKey: "fixture" } });
+  const box = await client.sandboxes.create();
+  const volume = await client.volumes.create({ name: "workspace" });
+  const filesystem: "object-backed" | "block-backed" = (await volume.inspect()).filesystem;
+  const suspended = await box.suspend();
+  const connections: "dropped" | "preserved" = suspended.connections;
+  await box.resume();
+  await box.exec(["true"]);
+  await box.writeFile("/file", new Uint8Array([0,255]), { overwrite: true });
+  await box.readFile("/file");
+  await box.destroy(); await volume.delete(); await client.close();
+  return { filesystem, connections };
+}
 void flow;
 `;
   else if (mode === "vercel")
     source = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { vercel } from "sandbar-vercel";
+import { vercel } from "@sandbar-sdk/vercel";
 async function flow() {
   const client = await Sandbar.connect({ adapter: vercel, config: { teamId: "team", projectId: "project" }, credentials: { token: "fixture" } });
-  const box = await client.sandboxes.create({ environment: Image.prepared("vercel/sandbox/node:24"), networkPolicy: "vercel-deny-all" });
+  const box = await client.sandboxes.create();
+  const reopened = await client.sandboxes.get(box.reference!);
+  void reopened;
   const result = await box.exec(["printf", "ready"]);
   const bytes: Uint8Array = result.stdout;
   await box.destroy();
@@ -159,12 +253,14 @@ void flow;
   else if (mode === "modal")
     source = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { modalAdapter } from "sandbar-modal";
+import { modalAdapter } from "@sandbar-sdk/modal";
 async function flow() {
   const client = await Sandbar.connect({ adapter: modalAdapter, config: { appName: "existing", environment: "main" }, credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" } });
   const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked" });
   const bytes: Uint8Array = await box.readFile("/file");
   const exec = await box.exec({ command: { kind: "argv", argv: ["printf", "ready"] }, cwd: "/tmp", env: { KEY: "value" }, maxOutputBytes: 16 });
+  await box.exec({ command: { kind: "argv", argv: ["cat"] }, stdin: "λ\\0💜" });
+  await box.exec({ command: { kind: "argv", argv: ["cat"] }, stdin: Uint8Array.of(0, 255, 129) });
   const code: number | null = exec.exitCode;
   await box.writeFile("/file", new Uint8Array([0, 255]), { overwrite: false });
   const image = Image.oci("python:3.12-slim");
@@ -176,12 +272,15 @@ void flow;
   else if (mode === "daytona")
     source = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 async function flow() {
-  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15 }));
+  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15, environment: Image.prepared("snap-1") }));
   const built = await client.images.build({ source: Image.oci("alpine:3.21") });
   await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
-  const box = await client.sandboxes.create({ environment: Image.prepared("snap-1") });
+  await client.sandboxes.checkCreate();
+  const box = await client.sandboxes.create();
+  const tagged = await client.sandboxes.submitCreate({ labels: { job: "report" } });
+  void tagged;
   const result = await box.exec({ command: { kind: "shell", script: "printf ready" } });
   const text = result.stdoutText();
   await client.close();
@@ -192,14 +291,17 @@ void flow;
   else if (mode === "e2b")
     source = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { e2b, createE2BAdapter } from "sandbar-sdk/e2b";
+import { e2b, createE2BAdapter } from "@sandbar-sdk/e2b";
 async function flow() {
-  const client = await Sandbar.connect(e2b({ apiKey: "fixture" }));
+  const client = await Sandbar.connect(e2b({ apiKey: "fixture", lifecycle: { lifetimeSeconds: 600 } }));
   const built = await client.images.build({ source: Image.oci("node:24") });
   const prepared = Image.prepared(built.prepared);
   const builtBox = await client.sandboxes.create({ environment: prepared, networkPolicy: "blocked" });
   await builtBox.destroy();
-  const box = await client.sandboxes.create({ environment: Image.prepared("template_1"), networkPolicy: "blocked" });
+  await client.sandboxes.checkCreate();
+  const box = await client.sandboxes.create();
+  const tagged = await client.sandboxes.submitCreate({ labels: { job: "report" } });
+  void tagged;
   const output = await box.exec({ command: { kind: "argv", argv: ["printf", "test"] } });
   const bytes: Uint8Array = await box.readFile("/tmp/file");
   await box.writeFile("/tmp/file", bytes, { overwrite: false });
@@ -207,16 +309,24 @@ async function flow() {
   return output;
 }
 void e2b({ apiKey: "fixture", templateId: "template_1" });
-void createE2BAdapter;
+async function configuredLifecycle() {
+  const client = await Sandbar.connect({
+    adapter: createE2BAdapter(),
+    config: { lifecycle: { lifetimeSeconds: 600, suspension: { preserve: "filesystem+memory" } }, preview: { access: "protected" } },
+    credentials: { apiKey: "fixture" },
+  });
+  await client.close();
+}
+void configuredLifecycle;
 void flow;
 `;
   else if (mode === "builtins")
     source = `
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
-import { e2b } from "sandbar-sdk/e2b";
+import { daytona } from "@sandbar-sdk/daytona";
+import { e2b } from "@sandbar-sdk/e2b";
 async function flow() {
-  const daytonaClient = await Sandbar.connect(daytona({ apiKey: "fixture", target: "us" }));
+  const daytonaClient = await Sandbar.connect(daytona({ apiKey: "fixture", target: "us", lifecycle: { lifetimeSeconds: 600 } }));
   const e2bClient = await Sandbar.connect(e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" }));
   await daytonaClient.close();
   await e2bClient.close();
@@ -224,16 +334,21 @@ async function flow() {
 // @ts-expect-error Daytona requires an API key
 void daytona({ target: "us" });
 void e2b({ apiKey: "fixture", teamId: "team_1" });
-void e2b({ apiKey: "fixture" });
+void e2b({ apiKey: "fixture", networkPolicy: "internet" });
 void flow;
 `;
   else if (mode === "direct")
     source = `
-import { Sandbar, Image, type SandbarClient, type SandboxHandle, type DirectSandbarClient, type DirectSandboxHandle } from "sandbar-sdk";
+import { Sandbar, Image, type SandbarClient, type SandboxHandle, type DirectSandbarClient, type DirectSandboxHandle, type OutputPreview, type ExecOutput, outputText } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 async function flow() {
   const client: DirectSandbarClient = await Sandbar.connect({ adapter: createFakeAdapter({ url: "http://127.0.0.1:1234", token: "example-token-123456" }), config: {}, credentials: {} });
   const box: DirectSandboxHandle = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
+  const scoped: number = await client.sandboxes.with({ environment: Image.prepared("fake-starter") }, async owned => {
+    const handle: SandboxHandle = owned;
+    return handle.id.length;
+  }, { cleanupTimeoutMs: 1000, storage: "allow-unconfirmed" });
+  void scoped;
   const commonClient: SandbarClient = client;
   const commonSandbox: SandboxHandle = box;
   const destroy: SandboxHandle["destroy"] = box.destroy;
@@ -243,11 +358,31 @@ async function flow() {
   const operation = await box.submitExec(argv);
   await operation.wait();
   const text: string = result.stdoutText();
+  const oldNumeric: (maxBytes?: number) => string = result.stdoutText;
+  const oldStderr: (maxBytes?: number) => string = result.stderrText;
+  const oldOutputText: (bytes: Uint8Array, maxBytes?: number) => string = outputText;
+  const preview: OutputPreview = result.stdoutPreview({ maxBytes: 4096 });
+  const full: string = result.stdoutText({ full: true });
+  const stderr: string = result.stderrText({ full: true });
+  const standalone: string = outputText(result.stdout, { full: true });
+  function acceptsOutput(output: ExecOutput) { return output.stdoutText(100); }
+  void oldNumeric; void oldStderr; void oldOutputText; void preview; void full; void stderr; void standalone; void acceptsOutput;
+  // @ts-expect-error full mode cannot mix in a display bound
+  result.stdoutText({ full: true, maxBytes: 1 });
+  // @ts-expect-error preview options cannot select full mode
+  result.stderrPreview({ full: true });
   const volume=await client.volumes.create({name:"consumer-state"});
   const mounted=await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});
   const captured=await box.snapshot();
   const snapshot=await client.snapshots.get(captured.snapshot.reference);
-  const restored=await snapshot.restore({networkPolicy:"blocked"});
+  const restored=await snapshot.restore({mounts:[volume.at("/mnt/data")]});
+  void snapshot.restore();
+  void snapshot.submitRestore();
+  // @ts-expect-error legacy maps are absent from new public types
+  void snapshot.restore({networkPolicy:"blocked", mounts:{}});
+  if(!restored.reference)throw Error("Restored sandbox reference missing");
+  const reopenedBox=await client.sandboxes.get(JSON.parse(JSON.stringify(restored.reference)));
+  if(reopenedBox.id!==restored.id||(await reopenedBox.inspect()).state!=="running")throw Error("Restored sandbox reopen failed");
   await restored.destroy();
   await mounted.destroy({storage:"allow-unconfirmed"});
   await snapshot.delete();await volume.delete();
@@ -279,19 +414,42 @@ void flow;
 
 const directSource = `
 import { OutcomeUnknownError as RootUnknown } from "sandbar-sdk";
-import { Sandbar, Image } from "sandbar-sdk";
+import { Sandbar, Image, outputText } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 if (RootUnknown.name !== "OutcomeUnknownError") throw new Error("SDK error export unavailable");
 const client = await Sandbar.connect({ adapter: createFakeAdapter({ url: process.env.FAKE_URL, token: process.env.FAKE_TOKEN }), config: {}, credentials: {} });
 try {
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
+  let owned;
+  const scoped = await client.sandboxes.with({ environment: Image.prepared("fake-starter") }, async scopeBox => {
+    owned = scopeBox;
+    return scopeBox.id;
+  });
+  if (!owned || scoped !== owned.id) throw new Error("Scoped callback value missing");
+  if ((await owned.inspect()).state !== "destroyed") throw new Error("Scoped compute cleanup missing");
   const command = { kind: "argv", argv: ["fixture", "packed"] };
   const result = await box.exec(command.argv);
   if (result.exitCode !== 0 || result.stdout.length !== 4 || result.stdout[0] !== 255 || result.stdout[1] !== 0) throw new Error("Binary execution output changed");
+  if (result.stdoutText(1) !== "�…" || result.stderrText(0) !== "") throw new Error("Numeric text helpers changed");
+  if (outputText(result.stdout, { full: true }) !== result.stdoutText({ full: true })) throw new Error("Full helpers disagree");
+  const report = await box.exec(["fixture", "json"]);
+  const preview = report.stdoutPreview({ maxBytes: 4096 });
+  if (!preview.shortened || preview.text !== report.stdoutText(4096)) throw new Error("Preview metadata changed");
+  if (report.truncated) throw new Error("Captured report may be incomplete");
+  const parsed = JSON.parse(report.stdoutText());
+  if (report.stdoutText() !== report.stdoutText({ full: true }) || outputText(report.stdout) !== report.stdoutText()) throw new Error("Default helpers shortened captured bytes");
+  if (parsed.payload.length !== 20_000 || report.stderrPreview().shortened || report.stderrText({ full: true }) !== "diagnostic") throw new Error("Full JSON or independent stderr failed");
   const bytes = Uint8Array.from([0, 255, 129]);
   await box.writeFile("/data/packed", bytes);
   const loaded = await box.readFile("/data/packed");
   if (loaded.length !== bytes.length || loaded.some((value, index) => value !== bytes[index])) throw new Error("Binary file changed");
+  const text = "Ada 🌊 café\\r\\n終";
+  await box.writeTextFile("/data/text", text);
+  if (await box.readTextFile("/data/text") !== text) throw new Error("Text roundtrip changed");
+  const encoded = await box.readFile("/data/text");
+  if (encoded.length !== new TextEncoder().encode(text).length) throw new Error("Text byte encoding changed");
+  await box.writeTextFile("/data/text", "", { overwrite: true });
+  if (await box.readTextFile("/data/text", { signal: new AbortController().signal }) !== "") throw new Error("Empty text changed");
   await box.destroy();
   process.stdout.write("packed direct flow passed\\n");
 } finally { await client.close(); }
@@ -299,11 +457,12 @@ try {
 
 const daytonaSource = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { createDaytonaAdapter } from "@sandbar/provider-daytona";
-let name = "", mutations = 0, snapshotName = "";
+import { createDaytonaAdapter } from "@sandbar-sdk/daytona";
+let nativeState = "started";
+let name = "", mutations = 0, snapshotName = "", labels = {}, renewalWindows = [];
 const files = new Map([["/file", Uint8Array.from([0,255])]]);
 const origin = "https://proxy.app.daytona.io/toolbox";
-const native = (state = "started") => ({ labels: {}, id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
+const native = (state = nativeState) => ({ sandboxClass: "container", volumes: [], autoDeleteInterval: -1, labels, id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
 const mock = async (input, init = {}) => {
   const url = new URL(String(input));
   const json = value => Response.json(value);
@@ -317,7 +476,9 @@ const mock = async (input, init = {}) => {
   }
   if (url.pathname.startsWith("/api/snapshots/")) return snapshotName && [snapshotName, "built-1"].includes(decodeURIComponent(url.pathname.split("/").at(-1)))
     ? json({ id: "built-1", name: snapshotName, imageName: "alpine:3.21", organizationId: "org-1", state: "active", regionIds: ["us"], sandboxClass: "container" }) : new Response(null, { status: 404 });
-  if (url.pathname === "/api/sandbox" && init.method === "POST") { mutations++; name = JSON.parse(init.body).name; return json(native()); }
+  if (url.pathname === "/api/sandbox" && init.method === "POST") { nativeState = "started"; mutations++; const body = JSON.parse(init.body); name = body.name; labels = body.labels; return json(native()); }
+  if (["/api/sandbox/native-1/stop", "/api/sandbox/native-1/start"].includes(url.pathname)) { mutations++; nativeState = url.pathname.endsWith("/stop") ? "stopped" : "started"; return new Response(null, {status: 204}); }
+  if (url.pathname.startsWith("/api/sandbox/native-1/ttl/")) { mutations++; renewalWindows.push(Number(url.pathname.split("/").at(-1))*60); return json(native()); }
   if (url.pathname === "/api/sandbox/native-1" && init.method === "DELETE") { mutations++; return json(native("destroyed")); }
   if (url.pathname === "/api/sandbox/native-1") return json(native());
   if (url.pathname.endsWith("/process/execute")) {
@@ -350,13 +511,43 @@ try {
   const built = await client.images.build({ source: Image.oci("alpine:3.21") });
   if (built.prepared.value !== "built-1" || built.prepared.provider !== "daytona" || built.retainedResources[0]?.ownership !== "unknown" || mutations !== 1) throw Error("Daytona scoped build mismatch");
   const box = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
+  if (!box.reference) throw Error("Missing packed sandbox reference");
+  const fresh = await Sandbar.connect({ adapter: createDaytonaAdapter(mock), config: { target: "us" }, credentials: { apiKey: "rotated-fixture" } });
+  try {
+    const reopened = await fresh.sandboxes.get(JSON.parse(JSON.stringify(box.reference)));
+    if ((await reopened.inspect()).state !== "running" || reopened.id !== box.id) throw Error("Packed sandbox reopening differs");
+    const saved = JSON.parse(JSON.stringify(reopened.reference));
+    const suspend = await reopened.submitSuspend();
+    if ((await suspend.wait()).preserve !== "filesystem") throw Error("Packed Daytona preservation differs");
+    const inactive = await fresh.sandboxes.get(saved);
+    if ((await inactive.inspect()).state !== "stopped") throw Error("Packed inactive reopen woke sandbox");
+    if ((await inactive.resume()).execution !== "fresh" || inactive.id !== box.id) throw Error("Packed Daytona resume differs");
+    const recoveredSuspend = await fresh.recover(JSON.parse(JSON.stringify(suspend.reference)));
+    if (recoveredSuspend.kind !== "sandbox_suspend" || (await recoveredSuspend.wait()).observation.state !== "stopped") throw Error("Packed suspend recovery differs");
+    const renewal = await reopened.submitRenew({forSeconds:61});
+    if((await renewal.wait()).requested.forSeconds!==120)throw Error("Packed Daytona rounding differs");
+    const recovered=await fresh.recover(JSON.parse(JSON.stringify(renewal.reference)));
+    if(recovered.kind!=="sandbox_renew"||(await recovered.wait()).requested.forSeconds!==120||renewalWindows.join()!=="120")throw Error("Packed Daytona renewal replay");
+  } finally { await fresh.close(); }
   const result = await box.exec({ command: { kind: "shell", script: "printf test" } });
   if (result.stdout[0] !== 0 || result.stdout[1] !== 255 || result.stderr[0] !== 127) throw new Error("Binary output mismatch");
   await box.writeFile("/file", Uint8Array.from([0,255]), { overwrite: true });
-  const bytes = await box.readFile("/file");
+  const stopped = new AbortController();
+  stopped.abort();
+  try { await box.readFile("/file", { signal: stopped.signal }); throw Error("Pre-aborted read succeeded"); }
+  catch (error) { if (error.code !== "WAIT_ABORTED" || error.effect !== "none") throw error; }
+  const bytes = await box.readFile("/file", { signal: new AbortController().signal });
   if (bytes[0] !== 0 || bytes[1] !== 255) throw new Error("Binary file mismatch");
   await box.destroy();
-  if (mutations !== 7) throw new Error("Mutation replay in packed consumer: " + mutations);
+  if (mutations !== 10) throw new Error("Mutation replay in packed consumer: " + mutations);
+  if (process.env.PACKED_LIFECYCLE_EXAMPLE) {
+    const { saveWorkspace, finishWorkspace, daytonaSetup } = await import("./lifecycle-example.mjs");
+  globalThis.fetch = mock;
+  let savedExample;
+  const savedResult = await saveWorkspace(daytonaSetup("fixture"), "built-1", async ref => { savedExample=JSON.parse(JSON.stringify(ref)); });
+  const finished = await finishWorkspace(daytonaSetup("rotated-fixture"), savedExample);
+  if(savedResult.observation.state!=="stopped" || finished.inactive.state!=="stopped" || finished.resumed.reference.nativeId!==savedExample.nativeId || new TextDecoder().decode(finished.bytes)!=="saved") throw Error("Packed public lifecycle example differs");
+  }
   process.stdout.write("packed Daytona fixture flow passed\\n");
 } finally { await client.close(); }
 `;
@@ -364,7 +555,7 @@ try {
 const vercelSource = `
 import assert from "node:assert/strict";
 import { Sandbar, Image } from "sandbar-sdk";
-import { createVercelAdapter, vercel } from "sandbar-vercel";
+import { createVercelAdapter, vercel } from "@sandbar-sdk/vercel";
 assert.equal(vercel.name, "vercel");
 let stopped = false, closed = 0, mutations = 0;
 const session = () => ({ id: "session_1", region: "iad1", status: stopped ? "stopped" : "running", networkPolicy: { mode: "deny-all" } });
@@ -403,11 +594,12 @@ console.log("Packed Vercel adapter passed");
 
 const modalSource = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { createModalAdapter } from "sandbar-modal";
+import { createModalAdapter } from "@sandbar-sdk/modal";
 let creates = 0, terminates = 0, closed = 0;
 const records = new Map();
 const files = new Map();
 const executions = new Map();
+const execCommands = new Map();
 let writePath = "";
 const transport = {
   async lookupApp(name, environment) { if (name !== "existing" || environment !== "main") throw Error("Wrong App"); return "ap-fixture"; },
@@ -423,15 +615,33 @@ const transport = {
   async readBytes(id, path, maxBytes) { if (!id.startsWith("sb-") || maxBytes !== 1048576) throw Error("Wrong read"); return files.get(path) ?? Uint8Array.from([0, 255, 128]); },
   async fileExists(_id, path) { return files.has(path); },
   async start(input) {
+    execCommands.set(input.execId, input.command);
     if (input.command[0] === "/bin/sh" && input.command[2]?.includes("cat >")) {
       writePath = input.command.at(-1);
       executions.set(input.execId, { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false });
-    } else {
-      if (input.command.join(" ") !== "printf ready" || input.cwd !== "/tmp" || input.env?.KEY !== "value") throw Error("Wrong exec input");
+    } else if (input.command.join(" ") === "printf ready") {
+      if (input.cwd !== "/tmp" || input.env?.KEY !== "value") throw Error("Wrong exec input");
       executions.set(input.execId, { exitCode: 0, stdout: Uint8Array.from([0, 255]), stderr: new Uint8Array(), truncated: false });
+    } else if (input.command.join(" ") === "cat") {
+      executions.set(input.execId, { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false });
+    } else {
+      throw Error("Wrong exec input");
     }
   },
-  async stdin(_id, execId, bytes) { files.set(writePath, bytes.slice()); executions.set(execId, { exitCode: 0, stdout: new TextEncoder().encode(String(bytes.length) + "\\n"), stderr: new Uint8Array(), truncated: false }); },
+  async stdin(_id, execId, bytes) {
+    const command = execCommands.get(execId);
+    if (command?.[0] === "/bin/sh" && command[2]?.includes("cat >")) {
+      files.set(writePath, bytes.slice());
+      executions.set(execId, { exitCode: 0, stdout: new TextEncoder().encode(String(bytes.length) + "\\n"), stderr: new Uint8Array(), truncated: false });
+    } else if (command?.length === 1 && command[0] === "cat") {
+      executions.set(execId, {
+        exitCode: 0,
+        stdout: Uint8Array.from([...bytes, ...new TextEncoder().encode("out")]),
+        stderr: new TextEncoder().encode("err"),
+        truncated: false,
+      });
+    }
+  },
   async result(_id, execId) { return executions.get(execId); },
   async terminate() { terminates++; for (const record of records.values()) record.running = false; return true; },
   async poll() { return "stopped"; },
@@ -444,6 +654,13 @@ try {
   if (bytes.length !== 3 || bytes[0] !== 0 || bytes[1] !== 255 || bytes[2] !== 128) throw Error("Binary read mismatch");
   const result = await box.exec({ command: { kind: "argv", argv: ["printf", "ready"] }, cwd: "/tmp", env: { KEY: "value" }, maxOutputBytes: 16 });
   if (result.exitCode !== 0 || result.stdout[0] !== 0 || result.stdout[1] !== 255) throw Error("Binary exec mismatch");
+  const textInput = "λ\\0💜";
+  const textBytes = new TextEncoder().encode(textInput);
+  const textResult = await box.exec({ command: { kind: "argv", argv: ["cat"] }, stdin: textInput, maxOutputBytes: 32 });
+  if (textResult.exitCode !== 0 || textResult.stdout.length !== textBytes.length + 3 || textBytes.some((byte, index) => textResult.stdout[index] !== byte) || new TextDecoder().decode(textResult.stdout.slice(textBytes.length)) !== "out" || new TextDecoder().decode(textResult.stderr) !== "err") throw Error("Finite UTF-8 stdin changed");
+  const binaryInput = Uint8Array.of(0, 255, 129);
+  const binaryResult = await box.exec({ command: { kind: "argv", argv: ["cat"] }, stdin: binaryInput, maxOutputBytes: 32 });
+  if (binaryResult.exitCode !== 0 || binaryInput.some((byte, index) => binaryResult.stdout[index] !== byte) || new TextDecoder().decode(binaryResult.stdout.slice(binaryInput.length)) !== "out") throw Error("Finite binary stdin changed");
   await box.writeFile("/file", Uint8Array.from([0, 255, 129]), { overwrite: true });
   const roundtrip = await box.readFile("/file");
   if (roundtrip[2] !== 129) throw Error("Binary write mismatch");
@@ -458,8 +675,8 @@ process.stdout.write("packed Modal fixture flow passed\\n");
 
 const e2bSource = `
 import { Sandbar, Image, OutcomeUnknownError } from "sandbar-sdk";
-import { createE2BAdapter } from "sandbar-sdk/e2b";
-let creates = 0, kills = 0, closes = 0, buildName = "", retained = "";
+import { createE2BAdapter } from "@sandbar-sdk/e2b";
+let creates = 0, kills = 0, closes = 0, buildName = "", retained = "", renewalWindows = [];
 let record;
 let failWrite = false;
 const snapshots=new Map(),volumes=new Map();
@@ -475,11 +692,14 @@ const transport = {
   async create(input) {
     if (!["base", "template_1", "template_oci", "snapshot_packed:11111111-1111-4111-8111-111111111111"].includes(input.templateId) || input.allowInternetAccess !== false) throw Error("Wrong native create");
     creates++;
-    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
+    record = { id: "sb_" + creates, templateId: input.templateId === "base" ? "canonical_base" : input.templateId.split(":")[0], metadata: input.metadata, state: "running",allowPublicTraffic:input.allowPublicTraffic,lifecycle:{onTimeout:"kill",autoResume:false},envdVersion:"0.5.1",volumeMounts:Object.entries(input.volumeMounts??{}).map(([path,name])=>({path,name})) };
     return record.id;
   },
   async get(id) { return record?.id === id ? record : null; },
   async list(metadata) { return { items: record && Object.entries(metadata).every(([k,v]) => record.metadata[k] === v) ? [record] : [] }; },
+  async suspend(id) { if(id!==record?.id)throw Error("Wrong suspend ID"); record.state = "paused"; },
+  async resume(id, seconds) { if(id!==record?.id || seconds!==300)throw Error("Wrong resume intent"); record.state = "running"; },
+  async renew(id, seconds) { if(id!==record?.id)throw Error("Wrong renewal ID"); renewalWindows.push(seconds); },
   async kill(id) { if (id !== record?.id) throw Error("Wrong kill"); retained = record.metadata.sandbar_build ? record.templateId : ""; kills++; record = undefined; return true; },
   async run(_id, script) {
     if (script.includes("ln -T --")) { const staged = [...files.keys()].find((path) => path.includes(".sandbar-write-")); if (!staged) throw Error("Missing staged file"); files.set("/tmp/no-clobber.bin", files.get(staged)); return "CREATED"; }
@@ -508,6 +728,18 @@ try {
   if (result.stdout[0] !== 0 || result.stdout[1] !== 255 || result.stderr[0] !== 254) throw Error("Binary command output changed");
   await box.writeFile("/tmp/packed.bin", binary, { overwrite: true });
   await box.writeFile("/tmp/no-clobber.bin", binary, { overwrite: false });
+  const renewal=await box.submitRenew({forSeconds:1});
+  if((await renewal.wait()).requested.forSeconds!==60)throw Error("Packed E2B minimum differs");
+  const recoveredRenewal=await client.recover(JSON.parse(JSON.stringify(renewal.reference)));
+  if(recoveredRenewal.kind!=="sandbox_renew"||(await recoveredRenewal.wait()).requested.forSeconds!==60||renewalWindows.join()!=="60")throw Error("Packed E2B renewal replay");
+  const suspended = await box.suspend();
+  if(suspended.preserve!=="filesystem+memory")throw Error("Packed E2B preservation differs");
+  const fresh = await Sandbar.connect({adapter:createE2BAdapter(()=>transport),config:{},credentials:{apiKey:"fixture"}});
+  try {
+    const inactive = await fresh.sandboxes.get(JSON.parse(JSON.stringify(box.reference)));
+    if((await inactive.inspect()).state!=="suspended")throw Error("Packed E2B inactive reopen woke sandbox");
+    if((await inactive.resume()).execution!=="unknown" || inactive.id!==box.id)throw Error("Packed E2B execution evidence differs");
+  } finally { await fresh.close(); }
   const loaded = await box.readFile("/tmp/packed.bin");
   if (loaded.some((byte, i) => byte !== binary[i])) throw Error("Binary file changed");
   await box.writeFile("/tmp/packed-failure.bin", binary, {overwrite: true});
@@ -527,6 +759,9 @@ try {
   if(caps.snapshots.restore.status!=="supported"||caps.mounts.status!=="unsupported")throw Error("Packed state capabilities differ");
   if(saved.nativeId!=="snapshot_packed"||saved.generation!=="11111111-1111-4111-8111-111111111111")throw Error("Captured build identity missing");
   const restored=await snapshot.restore({networkPolicy:"blocked"});
+  if(!restored.reference)throw Error("Restored sandbox reference missing");
+  const reopenedBox=await client.sandboxes.get(JSON.parse(JSON.stringify(restored.reference)));
+  if(reopenedBox.id!==restored.id||(await reopenedBox.inspect()).state!=="running")throw Error("Restored sandbox reopen failed");
   if(record.metadata.sandbar_snapshot!=="snapshot_packed:11111111-1111-4111-8111-111111111111")throw Error("Restore did not pin the captured UUID");
   await restored.destroy();
   await snapshot.delete();
@@ -543,27 +778,27 @@ try {
   const fromBuild = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
   await fromBuild.destroy();
 } finally { await client.close(); }
-if (creates !== 4 || kills !== 4 || closes !== 1) throw Error("Packed E2B mutation or cleanup count mismatch");
+if (creates !== 4 || kills !== 4 || closes !== 2) throw Error("Packed E2B mutation or cleanup count mismatch");
 process.stdout.write("packed E2B fixture flow passed\\n");
 `;
 
 const builtinsSource = `
-import { daytona } from "sandbar-sdk/daytona";
-import { e2b } from "sandbar-sdk/e2b";
+import { daytona } from "@sandbar-sdk/daytona";
+import { e2b } from "@sandbar-sdk/e2b";
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw Error("Factory construction performed provider I/O"); };
 try {
   const daytonaAdapter = daytona({ apiKey: "fixture", target: "us", ttlMinutes: 15 });
   const e2bAdapter = e2b({ apiKey: "fixture" });
-  if (daytonaAdapter.name !== "daytona" || e2bAdapter.name !== "e2b") throw Error("Built-in factory identity mismatch");
-  if (!daytonaAdapter.bound || !e2bAdapter.bound) throw Error("Built-in factory did not bind public adapter contract");
-  process.stdout.write("packed built-in SDK subpaths passed\\n");
+  if (daytonaAdapter.name !== "daytona" || e2bAdapter.name !== "e2b") throw Error("Official factory identity mismatch");
+  if (!daytonaAdapter.bound || !e2bAdapter.bound) throw Error("Official factory did not bind public adapter contract");
+  process.stdout.write("packed official adapter factories passed\\n");
 } finally { globalThis.fetch = originalFetch; }
 `;
 
 const externalAdapterSource = `
 import { z } from "zod";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter, type SnapshotRestoreInput } from "@sandbar-sdk/adapter";
 export const metrics = { creates: 0, destroys: 0, closes: 0, observes: 0, builds: 0 };
 export const acme = defineAdapter({
   name: "example.acme",
@@ -589,11 +824,39 @@ export const acme = defineAdapter({
   },
 });
 
+export const restoreMetrics = { prepares: 0, submits: 0 };
+export const storageAdapter = defineAdapter({
+  name: "example.storage", config: z.strictObject({specs: z.boolean()}), credentials: z.strictObject({}),
+  async connect({config}) {
+    const scope = {authority: {kind: "account", id: "fixture"}, partition: {}};
+    return {
+      scope, supports: {images: ["prepared"], network: ["blocked"]},
+      async create() { return {id: "unused", state: "running"}; },
+      async destroy() { return {computeStopped: true, retainedResources: []}; },
+      async snapshotInspect(reference) {
+        return {reference, preserve: "filesystem", restoreExecution: "fresh", consistency: "unknown", source: null,
+          state: "ready", createdAt: null, expiration: "unknown", excludedPaths: null, mounts: [], mountHandling: "none",
+          restore: {networkPolicies: ["blocked"], resources: false, mounts: true, independentLifecycle: true},
+          dependencies: [], nativeDependencies: null};
+      },
+      snapshotRestore: {
+        mountInput: config.specs ? "specs" as const : undefined,
+        async prepare(input: SnapshotRestoreInput) {
+          restoreMetrics.prepares++;
+          if (!config.specs && "mounts" in input.request) throw Error("Old hook received mounts");
+          return input;
+        },
+        async submit(input: SnapshotRestoreInput) { restoreMetrics.submits++; return {id: "restored", state: "running", mounts: input.request.mounts}; },
+      },
+    };
+  },
+});
+
 `;
 
 const customSource = `
-import { Sandbar, Image, ResourceReference, assertResourceScope } from "sandbar-sdk";
-import { acme, metrics } from "@acme/sandbar-adapter";
+import { Sandbar, Image, ResourceReference, assertResourceScope, AdapterSnapshot, AdapterVolume } from "sandbar-sdk";
+import { acme, metrics, storageAdapter, restoreMetrics } from "@acme/sandbar-adapter";
 const client = await Sandbar.connect({
   adapter: acme,
   config: { region: "us" },
@@ -615,6 +878,24 @@ try {
   await box.destroy();
 } finally { await client.close(); }
 if (metrics.creates !== 1 || metrics.destroys !== 1 || metrics.closes !== 1) throw Error("Mutation or release count mismatch");
+for (const specs of [false, true]) {
+  const storage = await Sandbar.connect({adapter: storageAdapter, config: {specs}, credentials: {}});
+  try {
+    const ref = {version: 1, kind: "snapshot", provider: "example.storage", scope: storage.scope, nativeId: "snap", ownership: "unknown"};
+    const snapshot = new AdapterSnapshot(storage, ref);
+    const volume = new AdapterVolume(storage, {...ref, kind: "volume", nativeId: "data"});
+    for (const mounts of [undefined, [], {}]) await snapshot.restore({networkPolicy: "blocked", mounts});
+    const before = {...restoreMetrics};
+    if (specs) await snapshot.restore({networkPolicy: "blocked", mounts: [volume.at("/data")]});
+    else {
+      try { await snapshot.restore({networkPolicy: "blocked", mounts: [volume.at("/data")]}); throw Error("Old hook accepted new mounts"); }
+      catch(error) { if(error.code !== "UNSUPPORTED" || error.effect !== "none") throw error; }
+      if (restoreMetrics.prepares !== before.prepares || restoreMetrics.submits !== before.submits) throw Error("Old hook invoked for array");
+    }
+    try { await snapshot.restore({networkPolicy: "blocked", mounts: {"/data": {action: "share"}}}); throw Error("Legacy map accepted"); }
+    catch(error) { if(error.code !== "INVALID_ARGUMENT" || error.effect !== "none") throw error; }
+  } finally { await storage.close(); }
+}
 process.stdout.write("packed external adapter flow passed\\n");
 `;
 
@@ -645,10 +926,10 @@ try {
         type: "module",
         files: ["dist"],
         exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
-        peerDependencies: { "sandbar-adapter": "0.0.0" },
-        overrides: { "sandbar-adapter": archiveOverrides["sandbar-adapter"] },
+        peerDependencies: { "@sandbar-sdk/adapter": "0.0.0" },
+        overrides: { "@sandbar-sdk/adapter": archiveOverrides["@sandbar-sdk/adapter"] },
         dependencies: {
-          "sandbar-adapter": archiveOverrides["sandbar-adapter"],
+          "@sandbar-sdk/adapter": archiveOverrides["@sandbar-sdk/adapter"],
           zod: "4.6.5",
         },
       },
@@ -676,7 +957,7 @@ try {
   run("bun", ["install", "--no-save"], externalDir);
   run(join(root, "node_modules/.bin/tsc"), ["-p", "tsconfig.json"], externalDir);
   const externalManifest = JSON.parse(await readFile(join(externalDir, "package.json"), "utf8"));
-  delete externalManifest.dependencies["sandbar-adapter"];
+  delete externalManifest.dependencies["@sandbar-sdk/adapter"];
   delete externalManifest.overrides;
   await writeFile(join(externalDir, "package.json"), JSON.stringify(externalManifest, null, 2));
   const externalArchive = await pack(externalDir);
@@ -695,14 +976,14 @@ try {
 
   const daytonaDeps = {
     ...sdkDeps,
-    "@sandbar/provider-daytona": archiveOverrides["@sandbar/provider-daytona"],
+    "@sandbar-sdk/daytona": archiveOverrides["@sandbar-sdk/daytona"],
   };
 
-  const vercelDeps = { ...sdkDeps, "sandbar-vercel": archiveOverrides["sandbar-vercel"] };
+  const vercelDeps = { ...sdkDeps, "@sandbar-sdk/vercel": archiveOverrides["@sandbar-sdk/vercel"] };
   const vercel = join(temporary, "vercel-consumer");
   await consumer(vercel, vercelDeps, archiveOverrides, vercelSource);
   await checkTypes(vercel, "vercel");
-  const vercelGraph = inspectGraph(vercel, ["sandbar-sdk", "sandbar-vercel"]);
+  const vercelGraph = inspectGraph(vercel, ["sandbar-sdk", "@sandbar-sdk/vercel"]);
 
   if (vercelGraph.some((name) => name.startsWith("@sandbar/") || name === "@vercel/sandbox"))
     throw new Error("Vercel package leaked private or unused native dependencies");
@@ -712,10 +993,33 @@ try {
 
   const modalDeps = {
     ...sdkDeps,
-    "sandbar-modal": archiveOverrides["sandbar-modal"],
+    "@sandbar-sdk/modal": archiveOverrides["@sandbar-sdk/modal"],
   };
 
-  const e2bDeps = { ...sdkDeps };
+  const boxd = join(temporary, "boxd-consumer");
+  await consumer(
+    boxd,
+    { ...sdkDeps, "@sandbar-sdk/boxd": archiveOverrides["@sandbar-sdk/boxd"] },
+    archiveOverrides,
+    `
+import { Sandbar } from "sandbar-sdk";
+import { boxdAdapter } from "@sandbar-sdk/boxd";
+if (boxdAdapter.name !== "boxd") throw Error("External adapter identity mismatch");
+if (boxdAdapter.config.safeParse({ org: "team" }).success) throw Error("Internet setup must be explicit");
+try {
+  await Sandbar.connect({ adapter: boxdAdapter, config: { org: "team" }, credentials: { apiKey: "fixture" } });
+  throw Error("Invalid configuration accepted");
+} catch (error) { if (error.code !== "INVALID_ARGUMENT") throw error; }
+console.log("Packed boxd imports and local validation passed without provider IO");
+`,
+  );
+  await checkTypes(boxd, "boxd");
+  inspectGraph(boxd, ["sandbar-sdk", "@sandbar-sdk/boxd"]);
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], boxd)}`);
+
+  const e2bDeps = { ...sdkDeps, "@sandbar-sdk/e2b": archiveOverrides["@sandbar-sdk/e2b"] };
 
   const custom = join(temporary, "custom-consumer");
   const direct = join(temporary, "direct-consumer");
@@ -740,24 +1044,148 @@ try {
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], observability)}`);
+  const core = join(temporary, "core-consumer");
+  await consumer(
+    core,
+    sdkDeps,
+    archiveOverrides,
+    `import { Sandbar, Image } from "sandbar-sdk"; if (typeof Sandbar.connect !== "function" || Image.prepared("base").kind !== "prepared") throw Error("Core imports failed");`,
+  );
+  const coreGraph = inspectGraph(core, ["sandbar-sdk"]);
+
+  if (
+    coreGraph.some((name) =>
+      ["@sandbar-sdk/daytona", "@sandbar-sdk/e2b", "e2b", "@sandbar-sdk/modal", "modal"].includes(
+        name,
+      ),
+    )
+  )
+    throw Error(`Core installed provider dependencies: ${coreGraph}`);
+
+  for (const runtime of ["node", "bun"]) run(runtime, ["consumer.mjs"], core);
   await consumer(custom, customDeps, archiveOverrides, customSource);
   await consumer(direct, directDeps, archiveOverrides, directSource);
   await consumer(daytona, daytonaDeps, archiveOverrides, daytonaSource);
+
+  const lifecycleExample = await Bun.build({
+    entrypoints: [join(root, "apps/docs/examples/sandbox-suspend-resume.ts")],
+    target: "node",
+    external: ["sandbar-sdk", "@sandbar-sdk/daytona", "@sandbar-sdk/e2b"],
+    write: false,
+  });
+
+  if (!lifecycleExample.success) throw Error("Public lifecycle example compilation failed");
   await consumer(modal, modalDeps, archiveOverrides, modalSource);
   await consumer(e2b, e2bDeps, archiveOverrides, e2bSource);
-  await consumer(builtins, sdkDeps, archiveOverrides, builtinsSource);
+  await consumer(builtins, { ...daytonaDeps, ...e2bDeps }, archiveOverrides, builtinsSource);
+  await writeFile(
+    join(builtins, "lifecycle-example.mjs"),
+    await lifecycleExample.outputs[0].text(),
+  );
+
+  await writeFile(join(builtins, "daytona-example.mjs"), daytonaSource);
+
+  for (const runtime of ["node", "bun"])
+    run(runtime, ["daytona-example.mjs"], builtins, { PACKED_LIFECYCLE_EXAMPLE: "1" });
   await checkTypes(custom, "custom");
   await checkTypes(direct, "direct");
-  await checkRecoveryTypes(direct, root, run);
+  await checkRecoveryTypes(builtins, root, run);
   await checkTypes(daytona, "daytona");
   await checkTypes(modal, "modal");
   await checkTypes(e2b, "e2b");
   await checkTypes(builtins, "builtins");
+  await writeFile(
+    join(builtins, "interactive-processes.ts"),
+    await readFile(join(root, "apps/docs/examples/interactive-processes.ts"), "utf8"),
+  );
+  await writeFile(
+    join(builtins, "text-streaming.ts"),
+    await readFile(join(root, "apps/docs/examples/text-streaming.ts"), "utf8"),
+  );
+  await writeFile(
+    join(builtins, "sandbox-renew.ts"),
+    await readFile(join(root, "apps/docs/examples/sandbox-renew.ts"), "utf8"),
+  );
+  await writeFile(
+    join(builtins, "sandbox-suspend-resume.ts"),
+    await readFile(join(root, "apps/docs/examples/sandbox-suspend-resume.ts"), "utf8"),
+  );
+  await writeFile(
+    join(builtins, "sandbox-preview.ts"),
+    await readFile(join(root, "apps/docs/examples/sandbox-preview.ts"), "utf8"),
+  );
+  await writeFile(
+    join(builtins, "directory-files.ts"),
+    await readFile(join(root, "apps/docs/examples/directory-files.ts"), "utf8"),
+  );
+  await writeFile(
+    join(builtins, "process-output-types.ts"),
+    await readFile(join(root, "packages/sdk-qualification/process-output-types.ts"), "utf8"),
+  );
+  await writeFile(
+    join(builtins, "streaming-tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+        skipLibCheck: false,
+        types: [],
+      },
+      include: [
+        "process-output-types.ts",
+        "text-streaming.ts",
+        "interactive-processes.ts",
+        "sandbox-renew.ts",
+        "sandbox-suspend-resume.ts",
+        "sandbox-preview.ts",
+        "directory-files.ts",
+      ],
+    }),
+  );
+  run(join(root, "node_modules/.bin/tsc"), ["-p", "streaming-tsconfig.json"], builtins);
+  await writeFile(
+    join(builtins, "streaming.mjs"),
+    await readFile(join(root, "packages/sdk-qualification/streaming-packed.mjs"), "utf8"),
+  );
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["streaming.mjs"], builtins)}`);
+  await writeFile(
+    join(builtins, "interactive-processes.mjs"),
+    await readFile(
+      join(root, "packages/sdk-qualification/interactive-processes-packed.mjs"),
+      "utf8",
+    ),
+  );
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["interactive-processes.mjs"], builtins)}`);
+  await writeFile(
+    join(builtins, "directories.mjs"),
+    await readFile(join(root, "packages/sdk-qualification/directory-packed.mjs"), "utf8"),
+  );
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["directories.mjs"], builtins)}`);
+  await writeFile(
+    join(builtins, "process-extensions.mjs"),
+    await readFile(join(root, "packages/sdk-qualification/process-extensions-packed.mjs"), "utf8"),
+  );
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["process-extensions.mjs"], builtins)}`);
   inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
-  inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);
-  const modalGraph = inspectGraph(modal, ["sandbar-sdk", "sandbar-modal"]);
-  inspectGraph(e2b, ["sandbar-sdk"]);
+  const daytonaGraph = inspectGraph(daytona, ["sandbar-sdk", "@sandbar-sdk/daytona"]);
+
+  if (daytonaGraph.includes("e2b") || daytonaGraph.includes("@sandbar-sdk/e2b"))
+    throw new Error("Daytona installed E2B");
+  const modalGraph = inspectGraph(modal, ["sandbar-sdk", "@sandbar-sdk/modal"]);
+  const e2bGraph = inspectGraph(e2b, ["sandbar-sdk", "@sandbar-sdk/e2b"]);
+
+  if (e2bGraph.includes("@sandbar-sdk/daytona")) throw new Error("E2B installed Daytona");
   const publicSdkGraph = inspectGraph(builtins, ["sandbar-sdk"]);
 
   if (publicSdkGraph.some((name) => name.startsWith("@sandbar/")))
@@ -768,7 +1196,16 @@ try {
 
   if (
     publicSdkGraph.some((name) =>
-      ["modal", "sandbar-modal", "@grpc/grpc-js", "sandbar-vercel", "tar-stream"].includes(name),
+      [
+        "modal",
+        "@sandbar-sdk/modal",
+        "@grpc/grpc-js",
+        "e2b",
+        "@sandbar-sdk/e2b",
+        "@sandbar-sdk/daytona",
+        "@sandbar-sdk/vercel",
+        "tar-stream",
+      ].includes(name),
     )
   )
     throw new Error(`SDK package retained Modal dependencies: ${publicSdkGraph}`);
@@ -802,6 +1239,19 @@ try {
         command: { kind: "argv", argv: ["fixture", "packed"] },
         exitCode: 0,
         stdoutBase64: Buffer.from([255, 0, 128, 97]).toString("base64"),
+      },
+    });
+    await fixture.fakeControl("/_test/seed", {
+      submissionId: "*",
+      action: "exec",
+      behavior: "normal",
+      command: {
+        command: { kind: "argv", argv: ["fixture", "json"] },
+        exitCode: 0,
+        stdoutBase64: Buffer.from(JSON.stringify({ payload: "x".repeat(20_000) })).toString(
+          "base64",
+        ),
+        stderrBase64: Buffer.from("diagnostic").toString("base64"),
       },
     });
     console.log(

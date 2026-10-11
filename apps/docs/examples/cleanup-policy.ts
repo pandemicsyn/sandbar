@@ -1,5 +1,5 @@
 import { Sandbar, type DirectConnectOptions, type AdapterSandbox } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 import { acme } from "./acme-adapter";
 
 const options: DirectConnectOptions = { cleanup: { storage: "allow-unconfirmed" } };

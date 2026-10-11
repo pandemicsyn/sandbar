@@ -1,7 +1,23 @@
+export {
+  MAX_DIRECTORY_ENTRIES,
+  MAX_DIRECTORY_NAME_BYTES,
+  FileMutationIntent,
+  FileMutationValue,
+} from "./files";
+
+export type {
+  FileEntry,
+  FileMutationInput,
+  DirectoryResult,
+  FileStat,
+  FileTransferInput,
+  FileTransferContext,
+} from "./files";
+
 import { AdapterError } from "./errors";
 import { OperationOutcome } from "./state";
 
-export { AdapterError } from "./errors";
+export { AdapterError, AdapterFilesystemError } from "./errors";
 
 export { OperationOutcome } from "./state";
 
@@ -15,7 +31,10 @@ export type Scope = {
   partition: Readonly<Record<string, string>>;
 };
 
-export type Sandbox = { readonly id: string };
+export type Sandbox = {
+  readonly id: string;
+  readonly reference?: import("./state").SandboxReference;
+};
 
 export type RecoveryResource = Sandbox | ResourceReference;
 
@@ -34,6 +53,10 @@ export type ImageBuildValue = { preparedId: string; retainedResources: RetainedA
 
 export * from "./resources";
 
+export * from "./lifecycle";
+
+export * from "./preview";
+
 export type CreateInput = {
   image: Image;
   networkPolicy: string;
@@ -45,6 +68,7 @@ export type CreateInput = {
 
 export type CreateValue = {
   id: string;
+  reference?: import("./state").SandboxReference;
   state: "running" | "unknown";
   mounts?: import("./state").MountSpec[];
 };
@@ -64,6 +88,8 @@ export type ExecInput<C extends Command["kind"] = Command["kind"]> = {
   env?: Record<string, string>;
   deadlineSeconds: number;
   maxOutputBytes: number;
+  /** Finite input bytes; adapters advertising finiteStdin close guest stdin after these bytes. */
+  stdin?: Uint8Array;
 };
 
 export type ExecValue = {
@@ -71,6 +97,76 @@ export type ExecValue = {
   stdout: Uint8Array | ReadableStream<Uint8Array>;
   stderr: Uint8Array | ReadableStream<Uint8Array>;
   truncated: boolean;
+};
+
+/** Decoded text observation; detach never terminates compute. */
+export type ProcessOutput = { stream: "stdout" | "stderr"; text: string };
+
+/** Original native bytes, with independent stdout/stderr ordering and no decoding. */
+export type ProcessOutputBytes = { stream: "stdout" | "stderr"; bytes: Uint8Array };
+
+export type ProcessOutputFormat = "text" | "bytes";
+
+export type ProcessSignal = "SIGTERM" | "SIGKILL";
+
+export type TerminalDimensions = { columns: number; rows: number };
+
+export type ProcessReopenInput = {
+  sandbox: Sandbox;
+  reference: Json;
+  profile: "process" | "terminal";
+  output: { mode: "stream"; format: ProcessOutputFormat };
+  stdin: "closed" | "pipe";
+};
+
+export type NativeProcessExit = { exitCode: number };
+
+export type NativeProcessStatus = {
+  state: "running" | "exited" | "unknown";
+  exit?: NativeProcessExit;
+  observedAt: string;
+};
+
+export type ProcessObservationFailure = AdapterError & { confirmedExit?: NativeProcessExit };
+
+export type ProcessStartContext = ReadContext & {
+  onOutput(chunk: ProcessOutput): void;
+  onOutputBytes?(chunk: ProcessOutputBytes): void;
+};
+
+export interface NativeProcess {
+  readonly reference?: Json;
+  signal?(signal: ProcessSignal, ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>;
+  resize?(dimensions: TerminalDimensions, ctx: ReadContext): Promise<void>;
+  /** Park local observation without closing guest stdin or terminating compute. */
+  disconnect?(): Promise<void>;
+  /** Synchronous confirmed evidence, including during final decoder callbacks. */
+  readonly confirmedExit?: NativeProcessExit;
+  wait(): Promise<NativeProcessExit>;
+  /** Sustained transports report output end separately from confirmed exit. */
+  readonly outputDone?: Promise<void>;
+  /** Original bounded bytes for callback exec; never reconstructed from decoded text. */
+  readonly capture?: Promise<ExecValue>;
+  /** Release only output observation, preserving independent input/status/control. */
+  detachOutput?(): Promise<void>;
+  write?(bytes: Uint8Array, ctx: ReadContext): Promise<void>;
+  closeStdin?(ctx: ReadContext): Promise<void>;
+  status?(ctx: ReadContext): Promise<NativeProcessStatus>;
+  /** One native termination request, not confirmed exit. Local IO bounds only. */
+  terminate?(ctx: ReadContext): Promise<{ status: "requested" | "not-found" }>;
+  detach(): Promise<void>;
+}
+
+export type ProcessStartInput = {
+  terminal?: TerminalDimensions;
+  capture?: { maxBytes: number };
+  stdin?: "closed" | "pipe";
+  output?: { mode: "stream"; format?: ProcessOutputFormat };
+  sandbox: Sandbox;
+  command: Command;
+  cwd?: string;
+  env?: Record<string, string>;
+  maxOutputBytes: number;
 };
 
 export type FileWriteInput = {
@@ -114,6 +210,7 @@ export type AdapterErrorCode =
   | "INVALID_ARGUMENT"
   | "UNSUPPORTED"
   | "UNAUTHENTICATED"
+  | "FORBIDDEN"
   | "NOT_FOUND"
   | "CONFLICT"
   | "CAPACITY"
@@ -126,6 +223,7 @@ const AdapterErrorCodeSchema = z.enum([
   "INVALID_ARGUMENT",
   "UNSUPPORTED",
   "UNAUTHENTICATED",
+  "FORBIDDEN",
   "NOT_FOUND",
   "CONFLICT",
   "CAPACITY",
@@ -171,6 +269,8 @@ export type RecoveryAttempt<
   readonly sandbox: S;
   readonly resource?: ResourceReference;
   readonly mounts?: import("./state").MountSpec[];
+  readonly lifecycle?: import("./lifecycle").LifecycleIntent;
+  readonly renewal?: import("./lifecycle").RenewRequest;
   readonly capture?: import("./state").SnapshotCaptureInput["expectation"];
   readonly token?: T;
 };
@@ -199,6 +299,17 @@ export type Mutation<
       ) => Promise<V | Pending | Unknown | null>;
     };
 
+/** Lifecycle preparation resolves setup defaults before the SDK saves the dispatch intent. */
+type LifecycleMutation<V> = Extract<
+  Mutation<import("./lifecycle").LifecycleInput, V, import("./lifecycle").ResolvedLifecycleInput>,
+  { submit: unknown }
+> & {
+  prepare: (
+    input: import("./lifecycle").LifecycleInput,
+    ctx: ReadContext,
+  ) => Promise<import("./lifecycle").ResolvedLifecycleInput>;
+};
+
 export type Guarantees<C extends Command["kind"] = Command["kind"]> = {
   images: readonly ("prepared" | "oci")[];
   network: readonly string[];
@@ -215,16 +326,52 @@ export type AdapterSession<
   CT extends Json = Json,
 > = {
   scope: Scope;
+  /** Default for omitted SDK create/restore policies; native requests remain resolved. */
+  readonly defaultNetworkPolicy?: string;
+  /** Default for omitted SDK create environments; native create inputs remain required. */
+  defaultImage?:
+    | { kind: "prepared"; value: string; binding?: { provider: string; scope: Scope } }
+    | { kind: "oci"; value: string };
   /** Read-only evidence, scoped to the checked class or sandbox. Never allocate probe resources. */
   snapshotProfiles?: (
     target: { sandbox?: Sandbox; create?: CreateInput },
     ctx: ReadContext,
   ) => Promise<Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>>;
+  suspend?: LifecycleMutation<import("./lifecycle").SuspendResult>;
+  resume?: LifecycleMutation<import("./lifecycle").ResumeResult>;
+  suspensionCapabilities?: (
+    target: { sandbox?: Sandbox },
+    ctx: ReadContext,
+  ) => Promise<
+    Support<{
+      preserve: "filesystem" | "filesystem+memory";
+      processes: "terminated" | "preserved";
+      connections: "dropped" | "preserved";
+    }>
+  >;
+  resumeCapabilities?: (
+    target: { sandbox?: Sandbox },
+    ctx: ReadContext,
+  ) => Promise<
+    Support<{ sourceStates: import("./state").SandboxState[]; setsSessionTimeout: boolean }>
+  >;
+  renew?: Mutation<
+    import("./lifecycle").RenewInput,
+    import("./lifecycle").RenewResult,
+    import("./lifecycle").ResolvedRenewInput
+  >;
+  renewCapabilities?: (
+    target: { sandbox?: Sandbox },
+    ctx: ReadContext,
+  ) => Promise<Support<import("./lifecycle").RenewLimits>>;
   snapshotCapture?: Mutation<
     import("./resources").SnapshotCaptureInput,
     import("./resources").SnapshotCaptureValue
   >;
-  snapshotRestore?: Mutation<import("./resources").SnapshotRestoreInput, CreateValue>;
+  snapshotRestore?: Mutation<import("./resources").SnapshotRestoreInput, CreateValue> & {
+    /** Opt into the coordinated array input; absent hooks receive mount-free requests only. */
+    mountInput?: "specs";
+  };
   snapshotDelete?: Mutation<ResourceReference, import("./resources").ArtifactDeletionResult>;
   snapshotInspect?: (
     ref: ResourceReference,
@@ -271,18 +418,93 @@ export type AdapterSession<
   create: Mutation<CreateInput, CreateValue, CP, CT, undefined>;
   imageBuild?: Mutation<ImageBuildInput, ImageBuildValue, ImageBuildInput, Json, undefined>;
   destroy: Mutation<import("./resources").DestroyInput, DestroyValue, DP, Json, Sandbox>;
+  reopen?: (
+    reference: import("./state").SandboxReference,
+    ctx: ReadContext,
+  ) => Promise<import("./state").SandboxInfo>;
   inspect?: (
     box: Sandbox,
     ctx: ReadContext,
-  ) => Promise<{ id: string; state: import("./state").SandboxState } | null>;
-  exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox>;
+  ) => Promise<
+    | ({ id: string; state: import("./state").SandboxState } & Partial<
+        import("./state").SandboxInfo
+      >)
+    | null
+  >;
+  exec?: Mutation<ExecInput, ExecValue, EP, Json, Sandbox> & {
+    /** Declares support for the SDK's bounded, byte-preserving input followed by EOF. */
+    finiteStdin?: "bytes";
+  };
+  preview?: (
+    input: { sandbox: Sandbox; port: number },
+    ctx: ReadContext,
+  ) => Promise<import("./preview").Preview>;
+  processes?: {
+    /** Additive behavior declarations; absence retains the finite, closed-input contract. */
+    supports?: {
+      sustainedOutput?: true;
+      binaryOutput?: true;
+      signals?: readonly ProcessSignal[];
+      terminal?: true;
+      reopen?: true;
+      stdin?: "bytes";
+      status?: true;
+      execCapture?: "bytes";
+    };
+    start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess>;
+    reopen?(input: ProcessReopenInput, ctx: ProcessStartContext): Promise<NativeProcess>;
+  };
   files?: {
     maxBytes: number;
     read?: (
-      input: { sandbox: Sandbox; path: string },
+      input: { sandbox: Sandbox; path: string; maxBytes?: number },
       ctx: ReadContext,
     ) => Promise<Uint8Array | ReadableStream<Uint8Array>>;
     write?: Mutation<FileWriteInput, FileWriteValue, WP, Json, Sandbox>;
+    readDirectory?: (
+      input: { sandbox: Sandbox; path: string },
+      ctx: ReadContext,
+    ) => Promise<import("./files").DirectoryResult>;
+    stat?: (
+      input: { sandbox: Sandbox; path: string; followSymlinks: boolean },
+      ctx: ReadContext,
+    ) => Promise<import("./files").FileStat>;
+    /** Incremental transport; must not buffer the entire file. */
+    readStream?: (
+      input: { sandbox: Sandbox; path: string },
+      ctx: ReadContext,
+    ) => Promise<ReadableStream<Uint8Array>>;
+    /** Consume input with backpressure, stage and publish with race-safe collision handling. */
+    writeStream?: (
+      input: {
+        sandbox: Sandbox;
+        path: string;
+        bytes: AsyncIterable<Uint8Array>;
+        overwrite: boolean;
+      },
+      ctx: import("./files").FileTransferContext,
+    ) => Promise<{ bytesWritten: number }>;
+    copy?: (
+      input: import("./files").FileTransferInput,
+      ctx: import("./files").FileTransferContext,
+    ) => Promise<{ acknowledged: true }>;
+    move?: (
+      input: import("./files").FileTransferInput,
+      ctx: import("./files").FileTransferContext,
+    ) => Promise<{ acknowledged: true }>;
+
+    /** Must include every immediate entry, including dangling symlinks and unknown types. */
+    list?: (
+      input: { sandbox: Sandbox; path: string },
+      ctx: ReadContext,
+    ) => Promise<import("./files").FileEntry[]>;
+    /** False only for confirmed entry absence; final dangling symlinks exist. */
+    exists?: (input: { sandbox: Sandbox; path: string }, ctx: ReadContext) => Promise<boolean>;
+    makeDirectory?: Mutation<
+      import("./files").FileMutationInput,
+      import("./files").FileMutationValue
+    >;
+    remove?: Mutation<import("./files").FileMutationInput, import("./files").FileMutationValue>;
   };
   inventory?: (
     input: { cursor?: string; limit: number },
@@ -594,6 +816,7 @@ export async function connectAdapter<
     credentials: z.input<K>;
     // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Cleanup callbacks may throw any JavaScript value; diagnostics preserve that value.
     onDiagnostic?: (error: unknown) => void;
+    signal?: AbortSignal;
   },
 ): Promise<AdapterConnection<S>> {
   const config = parseBoundedSchema(definition.config, input.config, "configuration");
@@ -602,18 +825,31 @@ export async function connectAdapter<
   const releases: (() => void | Promise<void>)[] = [];
   let closed: Promise<void> | undefined;
 
+  // Diagnostics must never replace the initiating setup or release failure.
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Release callbacks may throw arbitrary JavaScript values, preserved only for diagnostics.
+  const diagnose = (error: unknown) => {
+    try {
+      void Promise.resolve(input.onDiagnostic?.(error)).catch(() => {});
+    } catch {
+      // A diagnostic sink is observational only.
+    }
+  };
+
+  const releaseOne = async (release: () => void | Promise<void>) => {
+    try {
+      await release();
+    } catch (error) {
+      diagnose(error);
+    }
+  };
+
   const close = () => {
     if (!closed) {
-      controller.abort();
-      closed = (async () => {
-        for (const release of releases.reverse()) {
-          try {
-            await release();
-          } catch (error) {
-            input.onDiagnostic?.(error);
-          }
-        }
-      })();
+      // Install the attempt before aborting: abort handlers may register releases.
+      closed = Promise.resolve().then(async () => {
+        for (const release of releases.splice(0).reverse()) await releaseOne(release);
+      });
+      controller.abort(input.signal?.aborted ? input.signal.reason : undefined);
     }
 
     return closed;
@@ -632,21 +868,63 @@ export async function connectAdapter<
     signal: controller.signal,
     policy: freezeJson(policy),
     onClose(release) {
-      if (closed) throw new AdapterError("CONFLICT", "Connection is closed");
-      releases.push(release);
+      if (closed) void releaseOne(release);
+      else releases.push(release);
     },
   };
 
+  let removeAbort = () => {};
+
   try {
-    const session =
-      await // SAFETY: connect accepts never only to store heterogeneous adapter definitions; config and credentials were parsed with this definition's schemas above.
-      (
+    if (input.signal?.aborted) throw input.signal.reason;
+
+    const abandoned = new Promise<never>((_resolve, reject) => {
+      const abort = () => {
+        // Reject first; synchronous adapter abort handlers cannot win settlement.
+        reject(input.signal?.reason ?? new DOMException("Connection setup aborted", "AbortError"));
+        void close();
+      };
+
+      input.signal?.addEventListener("abort", abort, { once: true });
+      removeAbort = () => input.signal?.removeEventListener("abort", abort);
+    });
+
+    const pending = Promise.resolve().then(() => {
+      if (input.signal?.aborted) throw input.signal.reason;
+
+      // SAFETY: connect accepts never only to store heterogeneous adapter definitions; config and credentials were parsed with this definition's schemas above.
+      return (
         definition.connect as (input: {
           config: z.output<C>;
           credentials: z.output<K>;
           host: HostContext;
         }) => Promise<S>
       )({ config, credentials, host });
+    });
+
+    const session = await Promise.race([pending, abandoned]);
+
+    // Promise.race adoption and this continuation are separate microtasks.
+    // Cancellation may have released resources after the session won the race.
+    if (input.signal?.aborted) throw input.signal.reason;
+
+    const defaults = z
+      .object({ defaultNetworkPolicy: z.string().min(1).max(128).optional() })
+      .safeParse(session);
+
+    if (!defaults.success)
+      throw new AdapterError("INVALID_ARGUMENT", "Invalid adapter default network policy");
+
+    // A connection can still inspect/reopen/clean up when create eligibility is
+    // unavailable. Resolve the default here; check support at each operation.
+    if (defaults.data.defaultNetworkPolicy !== undefined) {
+      Object.defineProperty(session, "defaultNetworkPolicy", {
+        value: defaults.data.defaultNetworkPolicy,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+    }
 
     const scope = ScopeSchema.safeParse(session.scope);
 
@@ -658,8 +936,11 @@ export async function connectAdapter<
 
     return { session, scope: detached, signal: controller.signal, close };
   } catch (error) {
-    await close();
+    // Cleanup continues locally; a failed/hung hook cannot hold setup failure open.
+    void close();
     throw error;
+  } finally {
+    removeAbort();
   }
 }
 
@@ -683,6 +964,24 @@ export function validateAdapterConfiguration<C extends z.ZodType, K extends z.Zo
   };
 }
 
-export { ExecCommand, ExecRequest, CreateSandboxInput, SafeError } from "./portable";
+export {
+  ExecCommand,
+  ExecRequest,
+  CreateSandboxInput,
+  SafeError,
+  MAX_EXEC_STDIN_BYTES,
+} from "./portable";
 
 export * from "./state";
+
+export { bindAdapter, type BoundAdapter } from "./bound";
+
+export type OciImage = { kind: "oci"; value: string };
+
+export type ImageInput =
+  | {
+      kind: "prepared";
+      value: string;
+      binding?: { provider: string; scope: Scope };
+    }
+  | OciImage;

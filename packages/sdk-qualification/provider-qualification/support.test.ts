@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { networkProbeId, networkSampleSchema } from "./network-probe";
-import { builtinSupport, renderSupportMatrix } from "./support";
+import { officialSupport, renderSupportMatrix } from "./support";
 import { renderLiveMatrix, parseReport, type QualificationRecord } from "./report";
 
 function record(
@@ -75,7 +75,7 @@ test("feature groups do not combine assertions from different source revisions",
 });
 
 test("external declared metadata renders with the same feature groups and report schema", () => {
-  const metadata = { ...builtinSupport[0]!, id: "external.fixture", name: "External fixture" };
+  const metadata = { ...officialSupport[0]!, id: "external.fixture", name: "External fixture" };
 
   const html = renderSupportMatrix(
     [
@@ -219,3 +219,51 @@ for (const [workflow, feature, operations] of [
     ).toThrow("Grouped workflow outcomes require a Bun testcase");
   });
 }
+
+test("captured execution never qualifies streaming, and streaming evidence has its own cell", () => {
+  const captured: QualificationRecord = {
+    ...record("passed"),
+    provider: "e2b",
+    configuration: {
+      ...record("passed").configuration,
+      templateClass: "borrowed-template",
+      authorityClass: "api-key",
+    },
+    scenario: "execution",
+    runner: { name: "bun:test", format: "junit", testName: "execution" },
+  };
+
+  expect(render([captured])).toContain("Supported · passed at aaaaaaaa](#e2b-execution)");
+  expect(render([captured])).toContain("Conditional · not-run](#e2b-streaming)");
+  expect(render([captured])).toContain("Conditional · not-run](#e2b-finiteStdin)");
+  expect(render([captured])).toContain("Conditional · not-run](#daytona-finiteStdin)");
+  expect(render([captured])).toContain("Conditional · not-run](#daytona-streaming)");
+
+  const streaming: QualificationRecord = {
+    ...captured,
+    scenario: "execution-streaming",
+    runner: { name: "bun:test", format: "junit", testName: "execution-streaming" },
+  };
+
+  expect(render([streaming])).toContain("Conditional · passed at aaaaaaaa](#e2b-streaming)");
+  expect(render([{ ...streaming, mode: "packed" }])).toContain(
+    "Conditional · not-run](#e2b-streaming)",
+  );
+  expect(render([{ ...streaming, status: "failed" }])).toContain(
+    "Conditional · failed](#e2b-streaming)",
+  );
+  expect(() => render([{ ...streaming, runCleanup: "incomplete" }])).toThrow(
+    "Bun passes require confirmed test-owned cleanup",
+  );
+
+  const stdin: QualificationRecord = {
+    ...captured,
+    scenario: "execution-stdin",
+    runner: { name: "bun:test", format: "junit", testName: "execution-stdin" },
+  };
+
+  expect(render([stdin])).toContain("Conditional · passed at aaaaaaaa](#e2b-finiteStdin)");
+  expect(render([{ ...stdin, mode: "packed" }])).toContain(
+    "Conditional · not-run](#e2b-finiteStdin)",
+  );
+});

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { adapterSuite } from "sandbar-adapter/testing";
+import { adapterSuite } from "@sandbar-sdk/adapter/testing";
 import { createFakeAdapter } from "./adapter";
 import { startFakeProviderServer } from "./server";
 

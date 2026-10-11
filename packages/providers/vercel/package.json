@@ -1,5 +1,5 @@
 {
-  "name": "sandbar-vercel",
+  "name": "@sandbar-sdk/vercel",
   "version": "0.0.0",
   "private": false,
   "files": [
@@ -18,12 +18,12 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external sandbar-adapter --external tar-stream --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external @sandbar-sdk/adapter --external tar-stream --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs"
   },
   "dependencies": {
-    "sandbar-adapter": "workspace:*",
     "zod": "4.6.5",
-    "tar-stream": "3.2.2"
+    "tar-stream": "3.2.2",
+    "@sandbar-sdk/adapter": "workspace:*"
   },
   "devDependencies": {
     "sandbar-sdk": "workspace:*",
@@ -42,5 +42,8 @@
   "publishConfig": {
     "access": "public"
   },
-  "types": "./dist/index.d.ts"
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  }
 }

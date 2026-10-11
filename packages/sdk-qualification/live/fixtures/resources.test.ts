@@ -1,12 +1,13 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, spyOn } from "bun:test";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixture, disposeFixtures } from "./offline";
 import { TestResources } from "./resources";
 import { snapshotRoundtrip } from "../snapshots.test";
 import { cleanupOwned } from "./cleanup";
+import { LedgerStore } from "../../provider-qualification/ledger";
 
 async function resources(f: Awaited<ReturnType<typeof fixture>>, exerciseMs = 5000) {
   const t = new TestResources(f.connect, f.ledger, "base", "blocked", {
@@ -235,11 +236,11 @@ import {writeFile,access} from "node:fs/promises";
 import {dirname,join} from "node:path";
 import {TestResources} from ${JSON.stringify(resourcesPath)};
 import {fixture} from ${JSON.stringify(fixturePath)};
-let t,f;
+// Initialize custody before the timed hook so cleanup always has its owner.
+const f=await fixture();
+const factory=${phase === "setup" ? "async (hook)=>{await new Promise(r=>setTimeout(r,100));return f.connect(hook);}" : "f.connect"};
+const t=new TestResources(factory,f.ledger,"base","blocked",{compute:1,snapshots:0,volumes:0,exerciseMs:500,cleanupMs:500});
 beforeAll(async()=>{
- f=await fixture();
- const factory=${phase === "setup" ? "async (hook)=>{await new Promise(r=>setTimeout(r,100));return f.connect(hook);}" : "f.connect"};
- t=new TestResources(factory,f.ledger,"base","blocked",{compute:1,snapshots:0,volumes:0,exerciseMs:500,cleanupMs:500});
  await t.open();
  if(${JSON.stringify(phase)}==="test")await t.create("sandbox/source");
 },${phase === "setup" ? 20 : 500});
@@ -370,7 +371,7 @@ for (const option of ["partialReferenceCapture", "pendingNativeCapture"] as cons
 test("snapshot profile metadata remains available when reopening later fails", async () => {
   const f = await fixture();
   const t = await resources(f);
-  let observed: import("sandbar-adapter").SnapshotProfile | undefined;
+  let observed: import("@sandbar-sdk/adapter").SnapshotProfile | undefined;
 
   try {
     await expect(
@@ -417,4 +418,153 @@ test("zero-volume fixtures reject volume creators before native dispatch", async
 
   expect(f.calls.volumeCreate).toBe(0);
   expect((await f.ledger.read()).cleanup).toBe("not-required");
+});
+
+test("teardown during admission persistence leaves no pending cleanup or connection", async () => {
+  const f = await fixture();
+  let entered!: () => void;
+  let release!: () => void;
+
+  const admission = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  const update = f.ledger.update.bind(f.ledger);
+  let first = true;
+
+  const mock = spyOn(f.ledger, "update").mockImplementation(async (work) => {
+    const result = await update(work);
+
+    if (first) {
+      first = false;
+      entered();
+      await gate;
+    }
+
+    return result;
+  });
+
+  let connections = 0;
+
+  const t = new TestResources(
+    async (...args) => {
+      connections++;
+
+      return f.connect(...args);
+    },
+    f.ledger,
+    "base",
+    "blocked",
+    { compute: 1, snapshots: 0, volumes: 0, exerciseMs: 500, cleanupMs: 500 },
+  );
+
+  const opening = t.open().catch((error) => error);
+
+  try {
+    await admission;
+    const closing = t.close();
+    release();
+    expect(await opening).toBeInstanceOf(Error);
+    await closing;
+    expect(connections).toBe(0);
+    expect((await f.ledger.read()).cleanup).toBe("not-required");
+    expect(f.boxes.size).toBe(0);
+    await expect(f.ledger.withAdmissionLock(async () => {})).resolves.toBeUndefined();
+  } finally {
+    release();
+    mock.mockRestore();
+  }
+});
+
+test("uncertain restored compute is retained immediately and cleanup does not need successful restore observation", async () => {
+  const f = await fixture({ unknownRestore: true });
+  const t = await resources(f);
+  const source = await t.create("snapshot/source");
+  t.at("snapshot/capture");
+  const captured = await t.wait(await source.submitSnapshot());
+  t.at("storage/restore");
+  const operation = await captured.snapshot.submitRestore({ networkPolicy: "blocked" });
+  await expect(t.wait(operation)).rejects.toMatchObject({
+    code: "OUTCOME_UNKNOWN",
+    outcome: { sandbox: { nativeId: "box_2" } },
+  });
+  const before = await f.ledger.read();
+  expect(before.stateMutations?.find((entry) => entry.role === "storage/restore")?.sandboxId).toBe(
+    "box_2",
+  );
+  expect(before.stateObservations?.[operation.reference.submissionId]).toMatchObject({
+    kind: "snapshot_restore",
+    sandbox: { nativeId: "box_2" },
+  });
+  await t.close();
+  expect(f.boxes.size).toBe(0);
+  expect(f.snapshots.size).toBe(0);
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+  expect(f.calls.restore).toBe(1);
+});
+
+test("partial create keeps acknowledged compute custody and cleans it without replaying setup", async () => {
+  const f = await fixture({ partialCreate: true });
+  const t = await resources(f);
+  await expect(t.create("sandbox/source")).rejects.toMatchObject({
+    code: "OUTCOME_UNKNOWN",
+    outcome: {
+      kind: "create",
+      status: "partial",
+      sandbox: { nativeId: "box_1" },
+      setup: { expiry: "unconfirmed", readiness: "unconfirmed" },
+    },
+  });
+  const before = await f.ledger.read();
+  const entry = before.stateMutations?.find((value) => value.role === "sandbox/source");
+  expect(entry?.sandboxId).toBe("box_1");
+  expect(Object.values(before.stateObservations ?? {})).toContainEqual(
+    expect.objectContaining({
+      kind: "create",
+      sandbox: expect.objectContaining({ nativeId: "box_1" }),
+    }),
+  );
+  await t.close();
+  expect(f.calls.create).toBe(1);
+  expect(f.calls.destroy).toBe(1);
+  expect(f.boxes.size).toBe(0);
+  expect((await f.ledger.read()).cleanup).toBe("confirmed");
+});
+
+test("initial OCI provenance stays borrowed without granting image build or deletion ownership", async () => {
+  const f = await fixture();
+  const ledger = new LedgerStore(dirname(f.ledger.path), crypto.randomUUID());
+
+  const t = new TestResources(
+    f.connect,
+    ledger,
+    "ubuntu:24.04",
+    "blocked",
+    {
+      compute: 1,
+      snapshots: 0,
+      volumes: 0,
+      exerciseMs: 5000,
+      cleanupMs: 1000,
+    },
+    {
+      provider: "daytona",
+      connection: undefined,
+      image: { kind: "borrowed-oci", class: "oci" },
+    },
+  );
+
+  try {
+    await t.open();
+    expect((await ledger.read()).image).toEqual({ kind: "borrowed-oci", class: "oci" });
+  } finally {
+    await t.close();
+  }
+
+  expect(f.calls.create).toBe(0);
+  expect((await ledger.read()).cleanup).toBe("not-required");
 });

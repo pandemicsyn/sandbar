@@ -9,96 +9,160 @@ description: Exported API names generated from the built package declarations.
 
 Import from `sandbar-sdk`.
 
-| Export                      | Kind      |
-| --------------------------- | --------- |
-| `ADAPTER_CONTRACT_VERSION`  | re-export |
-| `AdapterCapabilities`       | type      |
-| `AdapterConnectOptions`     | type      |
-| `AdapterDirectClient`       | re-export |
-| `AdapterOperation`          | re-export |
-| `AdapterRecoveryReference`  | type      |
-| `AdapterSandbox`            | re-export |
-| `AdapterSnapshot`           | re-export |
-| `AdapterVolume`             | re-export |
-| `AdvancedIdentity`          | type      |
-| `AdvancedObservation`       | type      |
-| `AdvancedOperationKind`     | type      |
-| `AdvancedOperationResult`   | type      |
-| `ArtifactDeletionResult`    | re-export |
-| `assertResourceIdentity`    | re-export |
-| `assertResourceScope`       | re-export |
-| `Capabilities`              | type      |
-| `CreateInput`               | type      |
-| `CreatePlan`                | type      |
-| `diagnosticContext`         | re-export |
-| `DiagnosticContext`         | type      |
-| `DirectCapabilities`        | type      |
-| `DirectConnectOptions`      | type      |
-| `DirectSandbarClient`       | type      |
-| `DirectSandboxHandle`       | type      |
-| `ExecInput`                 | type      |
-| `ExecOutput`                | type      |
-| `Image`                     | re-export |
-| `ImageBuildResult`          | type      |
-| `ImageInput`                | type      |
-| `MountCapabilities`         | type      |
-| `MountSpec`                 | re-export |
-| `NoExitCodeError`           | re-export |
-| `NonzeroExitError`          | re-export |
-| `ObservabilityOptions`      | type      |
-| `OperationHandle`           | type      |
-| `OperationOutcome`          | type      |
-| `OutcomeUnknownError`       | re-export |
-| `outputText`                | re-export |
-| `PreparedAdapterAttempt`    | re-export |
-| `PreparedImage`             | type      |
-| `RecoveredOperation`        | type      |
-| `RecoveryReference`         | type      |
-| `ResourceKind`              | re-export |
-| `ResourceReference`         | re-export |
-| `RestoreCapabilities`       | type      |
-| `RestoreRequest`            | re-export |
-| `Sandbar`                   | value     |
-| `SandbarClient`             | type      |
-| `SandbarError`              | re-export |
-| `SandboxHandle`             | type      |
-| `SandboxState`              | type      |
-| `SnapshotInfo`              | re-export |
-| `SnapshotPlan`              | type      |
-| `SnapshotProfile`           | type      |
-| `SnapshotRequest`           | re-export |
-| `SnapshotRequirements`      | re-export |
-| `SnapshotResult`            | type      |
-| `Support`                   | type      |
-| `UnsupportedFeatureError`   | re-export |
-| `validateResourceReference` | re-export |
-| `VolumeCapabilities`        | type      |
-| `VolumeCreateInput`         | re-export |
-| `VolumeInfo`                | re-export |
-| `WaitAbortedError`          | re-export |
-| `WaitOptions`               | type      |
+| Export                        | Kind      |
+| ----------------------------- | --------- |
+| `ADAPTER_CONTRACT_VERSION`    | re-export |
+| `AdapterCapabilities`         | type      |
+| `AdapterConnectOptions`       | type      |
+| `AdapterDirectClient`         | re-export |
+| `AdapterOperation`            | re-export |
+| `AdapterRecoveryReference`    | type      |
+| `AdapterSandbox`              | re-export |
+| `AdapterSnapshot`             | re-export |
+| `AdapterVolume`               | re-export |
+| `AdvancedIdentity`            | type      |
+| `AdvancedObservation`         | type      |
+| `AdvancedOperationKind`       | type      |
+| `AdvancedOperationResult`     | type      |
+| `ArtifactDeletionResult`      | re-export |
+| `assertResourceIdentity`      | re-export |
+| `assertResourceScope`         | re-export |
+| `Capabilities`                | type      |
+| `CloseOptions`                | type      |
+| `ConnectOptions`              | type      |
+| `CreateInput`                 | type      |
+| `CreatePlan`                  | type      |
+| `createProcessTail`           | re-export |
+| `Deadline`                    | type      |
+| `diagnosticContext`           | re-export |
+| `DiagnosticContext`           | type      |
+| `DirectCapabilities`          | type      |
+| `DirectConnectOptions`        | type      |
+| `DirectoryResult`             | type      |
+| `DirectSandbarClient`         | type      |
+| `DirectSandboxHandle`         | type      |
+| `ExecInput`                   | type      |
+| `ExecOptions`                 | type      |
+| `ExecOutput`                  | type      |
+| `Fact`                        | type      |
+| `FileEntry`                   | type      |
+| `FileReadOptions`             | type      |
+| `FileStat`                    | type      |
+| `FileStreamOptions`           | type      |
+| `FileStreamWriteOptions`      | type      |
+| `FilesystemError`             | re-export |
+| `FileWriteOptions`            | type      |
+| `Image`                       | re-export |
+| `ImageBuildResult`            | type      |
+| `ImageInput`                  | type      |
+| `MountCapabilities`           | type      |
+| `MountSpec`                   | re-export |
+| `NoExitCodeError`             | re-export |
+| `NonzeroExitError`            | re-export |
+| `ObservabilityOptions`        | type      |
+| `OperationHandle`             | type      |
+| `OperationOutcome`            | type      |
+| `OutcomeUnknownError`         | re-export |
+| `OutputPreview`               | type      |
+| `outputText`                  | re-export |
+| `PreparedAdapterAttempt`      | re-export |
+| `PreparedImage`               | type      |
+| `Preview`                     | type      |
+| `ProcessChunk`                | type      |
+| `ProcessExit`                 | type      |
+| `ProcessFailure`              | type      |
+| `ProcessHandle`               | type      |
+| `ProcessLine`                 | type      |
+| `ProcessLineOptions`          | type      |
+| `ProcessOutput`               | type      |
+| `ProcessOutputBytes`          | type      |
+| `ProcessOutputFormat`         | type      |
+| `ProcessReference`            | type      |
+| `ProcessSignal`               | type      |
+| `ProcessStatus`               | type      |
+| `ProcessTail`                 | type      |
+| `ProcessTailOptions`          | type      |
+| `ProcessTermination`          | type      |
+| `ReadOptions`                 | type      |
+| `readProcessLines`            | re-export |
+| `ReadTextLinesOptions`        | type      |
+| `RecoveredOperation`          | type      |
+| `RecoveryReference`           | type      |
+| `RenewRequest`                | type      |
+| `RenewResult`                 | type      |
+| `ResourceKind`                | re-export |
+| `ResourceReference`           | re-export |
+| `RestoreCapabilities`         | type      |
+| `RestoreInput`                | type      |
+| `RestoreRequest`              | re-export |
+| `ResumeResult`                | type      |
+| `Sandbar`                     | value     |
+| `SandbarClient`               | type      |
+| `SandbarError`                | re-export |
+| `SandboxCleanupError`         | re-export |
+| `SandboxHandle`               | type      |
+| `SandboxInfo`                 | type      |
+| `SandboxReference`            | type      |
+| `SandboxScopeCallbackOutcome` | type      |
+| `SandboxScopeOptions`         | type      |
+| `SandboxState`                | type      |
+| `SnapshotHandle`              | type      |
+| `SnapshotInfo`                | re-export |
+| `SnapshotPlan`                | type      |
+| `SnapshotProfile`             | type      |
+| `SnapshotRequest`             | re-export |
+| `SnapshotRequirements`        | re-export |
+| `SnapshotResult`              | type      |
+| `StartProcessInput`           | type      |
+| `StartTerminalInput`          | type      |
+| `Support`                     | type      |
+| `SuspendResult`               | type      |
+| `TerminalDimensions`          | type      |
+| `TerminalHandle`              | type      |
+| `TransferPolicy`              | type      |
+| `UnsupportedFeatureError`     | re-export |
+| `validateResourceReference`   | re-export |
+| `VolumeCapabilities`          | type      |
+| `VolumeCreateInput`           | re-export |
+| `VolumeHandle`                | type      |
+| `VolumeInfo`                  | re-export |
+| `WaitAbortedError`            | re-export |
+| `WaitOptions`                 | type      |
+| `WalkFileEntry`               | type      |
+| `WalkFilesOptions`            | type      |
 
 ## Daytona adapter
 
-Import from `sandbar-sdk/daytona`.
+Import from `@sandbar-sdk/daytona`.
 
-| Export    | Kind     |
-| --------- | -------- |
-| `daytona` | function |
+| Export                 | Kind      |
+| ---------------------- | --------- |
+| `boundedBytes`         | function  |
+| `createDaytonaAdapter` | re-export |
+| `daytona`              | re-export |
+| `daytonaAdapter`       | re-export |
+| `DaytonaDriver`        | class     |
+| `DaytonaEndpointPair`  | type      |
+| `DaytonaInput`         | type      |
+| `daytonaProvider`      | function  |
+| `daytonaRegistration`  | function  |
 
 ## E2B adapter
 
-Import from `sandbar-sdk/e2b`.
+Import from `@sandbar-sdk/e2b`.
 
 | Export             | Kind      |
 | ------------------ | --------- |
 | `createE2BAdapter` | function  |
-| `e2b`              | function  |
-| `E2BTransport`     | interface |
+| `e2b`              | re-export |
+| `E2B_ENDPOINT`     | re-export |
+| `e2bAdapter`       | value     |
+| `E2BTransport`     | type      |
+| `MAX_BYTES`        | re-export |
 
 ## Experimental Modal adapter
 
-Import from `sandbar-modal`.
+Import from `@sandbar-sdk/modal`.
 
 | Export               | Kind      |
 | -------------------- | --------- |
@@ -109,7 +173,7 @@ Import from `sandbar-modal`.
 
 ## Adapter authoring
 
-Import from `sandbar-adapter`.
+Import from `@sandbar-sdk/adapter`.
 
 | Export                         | Kind      |
 | ------------------------------ | --------- |
@@ -118,8 +182,11 @@ Import from `sandbar-adapter`.
 | `AdapterDefinition`            | type      |
 | `AdapterError`                 | re-export |
 | `AdapterErrorCode`             | type      |
+| `AdapterFilesystemError`       | re-export |
 | `AdapterSession`               | type      |
 | `AttemptContext`               | type      |
+| `bindAdapter`                  | re-export |
+| `BoundAdapter`                 | type      |
 | `Command`                      | type      |
 | `connectAdapter`               | function  |
 | `continueOperation`            | re-export |
@@ -130,10 +197,18 @@ Import from `sandbar-adapter`.
 | `CreateValue`                  | type      |
 | `defineAdapter`                | function  |
 | `DestroyValue`                 | type      |
+| `DirectoryResult`              | type      |
 | `ExecCommand`                  | re-export |
 | `ExecInput`                    | type      |
 | `ExecRequest`                  | re-export |
 | `ExecValue`                    | type      |
+| `FileEntry`                    | type      |
+| `FileMutationInput`            | type      |
+| `FileMutationIntent`           | re-export |
+| `FileMutationValue`            | re-export |
+| `FileStat`                     | type      |
+| `FileTransferContext`          | type      |
+| `FileTransferInput`            | type      |
 | `FileWriteInput`               | type      |
 | `FileWriteValue`               | type      |
 | `Guarantees`                   | type      |
@@ -141,11 +216,19 @@ Import from `sandbar-adapter`.
 | `Image`                        | type      |
 | `ImageBuildInput`              | type      |
 | `ImageBuildValue`              | type      |
+| `ImageInput`                   | type      |
 | `isOutcome`                    | function  |
 | `Json`                         | type      |
+| `MAX_DIRECTORY_ENTRIES`        | re-export |
+| `MAX_DIRECTORY_NAME_BYTES`     | re-export |
+| `MAX_EXEC_STDIN_BYTES`         | re-export |
 | `Mutation`                     | type      |
+| `NativeProcess`                | interface |
+| `NativeProcessExit`            | type      |
+| `NativeProcessStatus`          | type      |
 | `ObserveContext`               | type      |
 | `observeOperation`             | re-export |
+| `OciImage`                     | type      |
 | `OperationInput`               | type      |
 | `OperationKind`                | type      |
 | `OperationOutcome`             | re-export |
@@ -156,6 +239,14 @@ Import from `sandbar-adapter`.
 | `PolicyAdapterDefinition`      | type      |
 | `PreparedOperation`            | type      |
 | `prepareOperation`             | re-export |
+| `ProcessObservationFailure`    | type      |
+| `ProcessOutput`                | type      |
+| `ProcessOutputBytes`           | type      |
+| `ProcessOutputFormat`          | type      |
+| `ProcessReopenInput`           | type      |
+| `ProcessSignal`                | type      |
+| `ProcessStartContext`          | type      |
+| `ProcessStartInput`            | type      |
 | `ReadContext`                  | type      |
 | `RecoveryAttempt`              | type      |
 | `RecoveryResource`             | type      |
@@ -167,15 +258,17 @@ Import from `sandbar-adapter`.
 | `Sandbox`                      | type      |
 | `Scope`                        | type      |
 | `submitOperation`              | re-export |
+| `TerminalDimensions`           | type      |
 | `Unknown`                      | type      |
 | `validateAdapterConfiguration` | function  |
 
 ## Adapter test kit
 
-Import from `sandbar-adapter/testing`.
+Import from `@sandbar-sdk/adapter/testing`.
 
 | Export                | Kind     |
 | --------------------- | -------- |
 | `adapterSuite`        | function |
 | `AdapterSuiteFixture` | type     |
 | `AdapterSuiteReport`  | type     |
+| `filesystemSuite`     | function |

@@ -7,16 +7,26 @@ description: Declared adapter support and dated live acceptance, with provider c
 
 Adapter support and live validation are separate facts. **Supported** means implemented; **conditional** requires the configuration in the linked note; **unsupported** means the adapter does not expose the workflow. Live results are **passed**, **failed**, **blocked**, or **not-run**. Each pass applies to its recorded source/configuration, not the current head or every provider account. Fixture and packed tests never produce live passes.
 
-| Feature                       | Vercel Sandbox                               |
-| ----------------------------- | -------------------------------------------- |
-| Sandbox lifecycle             | [Conditional · not-run](#vercel-lifecycle)   |
-| Execution and captured output | [Supported · not-run](#vercel-execution)     |
-| Binary files and overwrite    | [Conditional · not-run](#vercel-files)       |
-| OCI image builds              | [Unsupported · not-run](#vercel-oci)         |
-| Measured network controls     | [Conditional · not-run](#vercel-network)     |
-| Snapshot roundtrip            | [Unsupported · not-run](#vercel-snapshots)   |
-| Volume CRUD                   | [Unsupported · not-run](#vercel-volumes)     |
-| Mounted persistence           | [Unsupported · not-run](#vercel-persistence) |
+| Feature                             | Vercel Sandbox                                      |
+| ----------------------------------- | --------------------------------------------------- |
+| Sandbox lifecycle                   | [Conditional · not-run](#vercel-lifecycle)          |
+| Native sandbox suspend/resume       | [Unsupported · not-run](#vercel-suspension)         |
+| Protected HTTP preview              | [Unsupported · not-run](#vercel-previewProtected)   |
+| Public HTTP preview                 | [Unsupported · not-run](#vercel-previewPublic)      |
+| Local-handle process termination    | [Unsupported · not-run](#vercel-termination)        |
+| Configured lifetime renewal         | [Unsupported · not-run](#vercel-renewal)            |
+| Scoped sandbox reopening            | [Conditional · not-run](#vercel-reopening)          |
+| Execution and captured output       | [Supported · not-run](#vercel-execution)            |
+| Process streams and terminals       | [Unsupported · not-run](#vercel-streaming)          |
+| Finite execution input              | [Unsupported · not-run](#vercel-finiteStdin)        |
+| Binary files and overwrite          | [Conditional · not-run](#vercel-files)              |
+| Directory primitives                | [Unsupported · not-run](#vercel-directories)        |
+| OCI image builds                    | [Unsupported · not-run](#vercel-oci)                |
+| Measured network controls           | [Conditional · not-run](#vercel-network)            |
+| Cold snapshot with selected storage | [Unsupported · not-run](#vercel-storageComposition) |
+| Snapshot roundtrip                  | [Unsupported · not-run](#vercel-snapshots)          |
+| Volume CRUD                         | [Unsupported · not-run](#vercel-volumes)            |
+| Mounted persistence                 | [Unsupported · not-run](#vercel-persistence)        |
 
 The [live evidence detail](./live-qualification.md) contains only reviewed records supplied for this external profile. Missing records remain not-run; declarations do not establish live acceptance.
 
@@ -28,17 +38,71 @@ The [live evidence detail](./live-qualification.md) contains only reviewed recor
 
 Immutable nonpersistent session IDs, managed Node 24 in iad1, verified team/project and a five-minute native lifetime. Destroy confirms original-session stop and reports retained named-sandbox metadata; metadata deletion is unsupported. No live qualification.
 
+<a id="vercel-suspension"></a>
+
+### Native sandbox suspend/resume
+
+Immutable disposable sessions expose no suspend/resume mapping or retained inactive compute lifecycle.
+
+<a id="vercel-previewProtected"></a>
+
+### Protected HTTP preview
+
+No protected preview routes or access credentials are exposed; sessions have no configured ports.
+
+<a id="vercel-previewPublic"></a>
+
+### Public HTTP preview
+
+No public preview routes or visibility changes are exposed; sessions have no configured ports.
+
+<a id="vercel-termination"></a>
+
+### Local-handle process termination
+
+No process handles or explicit process termination API are exposed. Bounded helper deadlines and sandbox destruction are separate behavior.
+
+<a id="vercel-renewal"></a>
+
+### Configured lifetime renewal
+
+No lifetime renewal is exposed; configured native lifetime is finite and cannot be extended through this adapter.
+
+<a id="vercel-reopening"></a>
+
+### Scoped sandbox reopening
+
+Ordinary sandbox.reference and sandboxes.get bind the immutable original session to verified team/project/iad1 scope with current credentials. Bounded project-session membership reads fail closed; reopening does not allocate, resume or renew. No live qualification.
+
 <a id="vercel-execution"></a>
 
 ### Execution and captured output
 
 Argv and /bin/sh scripts, cwd/env, nonzero exit and binary stdout/stderr through a managed Node capture helper; combined output capped at 1 MiB. No stdin, interactive processes or PTYs. Uncertain commands are never replayed. No live qualification.
 
+<a id="vercel-streaming"></a>
+
+### Process streams and terminals
+
+Captured execution only; no streaming process handles, interactive stdin or PTYs are exposed.
+
+<a id="vercel-finiteStdin"></a>
+
+### Finite execution input
+
+Finite stdin is not supported by the audited published native boundary and is not exposed by this adapter.
+
 <a id="vercel-files"></a>
 
 ### Binary files and overwrite
 
 Absolute-path binary reads and gzip/tar writes with overwrite:true, capped at 1 MiB per file. Atomic no-clobber is unsupported and rejects before effects. No live qualification.
+
+<a id="vercel-directories"></a>
+
+### Directory primitives
+
+Only bounded binary file read/write is exposed; directory browsing, stat, copy, move and removal primitives are unsupported.
 
 <a id="vercel-oci"></a>
 
@@ -50,7 +114,13 @@ Only vercel/sandbox/node:24 is accepted; OCI builds and arbitrary prepared image
 
 ### Measured network controls
 
-Named vercel-deny-all and vercel-allow-all policies map to native deny-all/allow-all; the configured policy must be repeated at creation. No measured isolation evidence. The existing E2B-only paired network suite cannot qualify this profile.
+Named vercel-deny-all and vercel-allow-all policies map to native deny-all/allow-all; omitted create environment/policy use adapter defaults, and explicit values must match the configured policy. No measured isolation evidence. The existing E2B-only paired network suite cannot qualify this profile.
+
+<a id="vercel-storageComposition"></a>
+
+### Cold snapshot with selected storage
+
+No snapshots, volumes or mounts are exposed, including cold snapshot composition with selected storage.
 
 <a id="vercel-snapshots"></a>
 
@@ -72,7 +142,7 @@ No persistent sandboxes, mounts, subpaths or read-only storage are exposed.
 
 ## Other integrations
 
-This page covers only the supplied external profile. Built-in and other adapter results are recorded separately.
+This page covers only the supplied external profile. Other adapter results are recorded separately.
 
 ## Runtimes
 
@@ -80,4 +150,4 @@ The SDK targets server-side Node.js and Bun. Packed consumer checks exercise emi
 
 ## Updating support
 
-Reviewed summaries belong in one results JSON per declared provider. Generate these pages with provider-qualification/render.ts --profile <profile> --results <results-directory> --output <output-directory>; use --check for drift. Live runs require separate explicit resource authorization and durable owned cleanup.
+Reviewed summaries belong in one results JSON per provider. Generate with provider-qualification/render.ts --profile <profile> --results <results-directory> --output <output-directory>; use --check for drift. Live runs require separate authorization and durable owned cleanup.

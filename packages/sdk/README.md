@@ -1,10 +1,12 @@
 # TypeScript resource SDK
 
-`sandbar-sdk` uses an installed adapter in the caller's server-side Node.js or Bun process. Built-in Daytona and E2B adapters are available from `sandbar-sdk/daytona` and `sandbar-sdk/e2b`. The experimental Modal integration is installed separately as `sandbar-modal` and uses the same public adapter contract as custom integrations. The fake provider is a deterministic test fixture. Live provider qualification remains separate from the packaged API shape.
+`sandbar-sdk` uses an installed adapter in the caller's server-side Node.js or Bun process. Official Daytona and E2B adapters are available from `@sandbar-sdk/daytona` and `@sandbar-sdk/e2b`. The experimental Modal integration is installed separately as `@sandbar-sdk/modal` and uses the same public adapter contract as custom integrations. The fake provider is a deterministic test fixture. Live provider qualification remains separate from the packaged API shape.
+
+Once published, install `sandbar-sdk @sandbar-sdk/daytona` (or `sandbar-sdk @sandbar-sdk/e2b`). The unpublished SDK provider subpaths have been removed; update imports to the separate packages.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 
 const sandbar = await Sandbar.connect(daytona({ apiKey: process.env.DAYTONA_API_KEY!, target: "us" }));
 await sandbar.close();
@@ -12,7 +14,7 @@ await sandbar.close();
 
 ```ts
 import { Sandbar, Image } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 
 const sandbar = await Sandbar.connect(daytona({ apiKey: process.env.DAYTONA_API_KEY!, target: "us" }));
 try {
@@ -32,7 +34,7 @@ Provider credentials remain in the caller's process and are inappropriate for br
 
 `exec` and `submitExec` accept a `readonly string[]` shorthand, such as `box.exec(["git", "status"])`. Each element is a literal argument; arrays never invoke a shell. The shorthand uses the same validation and defaults as `{ command: { kind: "argv", argv } }`, including rejection of empty arrays. Use the object form for `cwd`, `env`, deadlines, output limits, or an explicit `{ kind: "shell", script }` command. Arguments are copied before dispatch.
 
-`exec` returns exact `Uint8Array` stdout/stderr. A nonzero exit throws `NonzeroExitError` with the captured result; a completed execution with no exit code throws `NoExitCodeError`. Transport errors and unknown effects use separate errors. `stdoutText(maxBytes)` and `stderrText(maxBytes)` are bounded UTF-8 display helpers. File reads and writes are currently buffered to 1 MiB.
+`exec` returns exact `Uint8Array` stdout/stderr. A nonzero exit throws `NonzeroExitError` with the captured result; a completed execution with no exit code throws `NoExitCodeError`. Transport errors and unknown effects use separate errors. `stdoutText()` and `stderrText()` decode every captured byte as UTF-8 without a suffix; exported `outputText(bytes)` decodes every supplied byte. Existing `{ full: true }` calls remain equivalent. Pass an explicit numeric limit for bounded display, or use `stdoutPreview({ maxBytes? })` / `stderrPreview({ maxBytes? })` for `{ text, shortened }` with a 16 KiB default. Check `result.truncated` before parsing captured output. Full decoding cannot recover discarded capture; `shortened` is independent of `result.truncated`. Invalid display limits/options throw local `RangeError`s. File reads and writes default to a 1 MiB buffer bound; explicit `maxBytes` permits up to 16 MiB. Larger artifacts use `readFileStream`/`writeFileStream` with awaited byte chunks and no default whole-file ceiling.
 
 `submitCreate` and `box.submitExec` return operation handles with `reference`, `observe()`, and `wait({ signal })`. Ordinary `create` and `exec` call `wait` themselves. A direct operation has `durability: "process"`. An abort signal stops waiting, not provider compute. If it fires after an ordinary mutation was submitted, `WaitAbortedError` carries the recovery reference and original abort reason. `close()` releases client-owned state and never destroys a sandbox; call `box.destroy()` explicitly.
 
@@ -50,10 +52,9 @@ Requirement reads finish before the durable submission marker; the approved prep
 
 Tracing uses your application’s OpenTelemetry provider. Set `tracing: false` to disable Sandbar spans and propagation, or inject `tracing: { tracerProvider }`. Sandbar never configures exporters or shuts down your provider. See the [tracing and safe diagnostics guide](https://sandbarsdk.dev/docs/observability/) for pinned Node/Bun recipes and local-only vendor evidence; metrics and structured logs are a later release.
 
-
 Persist resource and operation references as versioned JSON in your own application storage. Their historical observations do not depend on the original API key or a mandatory signature. Reopen with current credentials for the same verified native scope; E2B credential rotation requires verified `teamId` configuration. `onReference` is awaited before stage dispatches and when evidence changes. Observation stays read-only; explicit `operation.continue()` may advance a proven never-submitted next stage. Serialize continuation across processes through your own lease or compare-and-swap. E2B cleanup deletes the containing template, not an individual build, and rejects known shared expansion; the provider offers no transactional read/delete generation condition.
 
-Empty restore resource and mount maps are equivalent to omitting those overrides. Snapshot and volume deletion persist a rejected stage when cancellation is known to precede native dispatch. The SDK allows up to one second after caller cancellation to join deletion finalization and surface a proven rejection with `effect: "none"`; client close remains immediate, and a stalled finalization still reports uncertainty. Other mutation waits retain their existing cancellation behavior.
+Empty restore resource maps and mount arrays are equivalent to omission. The SDK temporarily accepts legacy empty mount objects at runtime; see the migration below. Snapshot and volume deletion persist a rejected stage when cancellation is known to precede native dispatch. The SDK allows up to one second after caller cancellation to join deletion finalization and surface a proven rejection with `effect: "none"`; client close remains immediate, and a stalled finalization still reports uncertainty. Other mutation waits retain their existing cancellation behavior.
 
 Start with the [everyday SDK guides](https://sandbarsdk.dev/docs/guides/resources/) and [snapshots/volumes](https://sandbarsdk.dev/docs/guides/snapshots-and-volumes/). Save `captured.snapshot.reference` or `volume.reference` in application storage and reopen with `client.snapshots.get(...)` or `client.volumes.get(...)` on a fresh matching connection. Handles expose `provider` and `id`. Confirmed partial capture errors expose the snapshot reference and capture details through `SandbarError.outcome`; do not parse native tokens or repeat capture. The [compiled example](../../apps/docs/examples/recovery-outcomes.ts) demonstrates these paths. Existing checkpoint/continuation APIs are advanced compatibility paths, not a prerequisite for ordinary application persistence.
 
@@ -61,4 +62,60 @@ For explicit direct connection annotations, import `DirectSandbarClient` and `Di
 
 Malformed snapshot requests, restore requests, inventory inputs, volume creation inputs and mount descriptors reject with `SandbarError` (`INVALID_ARGUMENT`, effect `none`) before provider mutation. Restore preflight uses `UnsupportedFeatureError.unmetRequirements` to report network policy, sizing, independent lifecycle and mount limitations together. Native response validation remains separate from caller input errors.
 
-`RestoreRequest.mounts` remains in the schema for compatibility. Nonempty share, replace and omit choices are currently unsupported, as are snapshots with mounts or unknown mount provenance. Omit `mounts` (or pass an empty object) and restore only snapshots with confirmed `mountHandling: "none"` and no recorded mounts. Independent lifecycle is required by default; `requireIndependentLifecycle: false` opts out of that requirement only.
+Create and restore share `mounts: MountSpec[]` from `volume.at(path)`. Daytona selects exact current volumes alongside known mount-free filesystem/fresh snapshot state under explicit `daytona-default`; mounted `blocked` restore rejects before allocation. Unknown/recorded mount provenance and memory composition remain unsupported. No implicit storage creation, copying or name substitution occurs. Independent lifecycle is required unless explicitly set to `false`.
+
+The coordinated SDK/adapter release R replaces legacy action maps. Nonempty maps reject with `INVALID_ARGUMENT` and migration guidance. The SDK-only empty-object alias remains in R and the next published release R+1, then is removed at the next API release. Public types use arrays. Nonempty arrays require `snapshotRestore.mountInput: "specs"` before hook preparation; older hooks receive mount-free requests with no mounts field. Record actual R during version preparation. Snapshot, volume, sandbox and operation reference formats stay unchanged.
+
+Unknown restore outcomes expose selected `mounts` and an acknowledged `sandbox` reference when available. Persist these with the operation reference and reconcile read-only without another allocation. The first bounded mounted-restore acceptance at `824946d` passed A startup evidence, then failed a harness snapshot-name/ID assertion before B. The corrected workflow passed live at `5911ccc`: A and independently empty B passed first-action selected-data checks, private-state preservation, exact native identities and fresh-client reopening, with all owned resources cleaned up. Deterministic and packed evidence are separate from live qualification.
+
+
+## Reopen Sandbar-created compute
+
+Direct SDK sandbox handles expose `reference: SandboxReference | null`. Save that reference in an application-owned trusted store and configure a fresh connection with the same native binding:
+
+```ts
+const reference = sandbox.reference ?? (await sandbox.inspect()).reference;
+if (!reference) throw new Error("Verified sandbox identity is unavailable");
+const saved = JSON.parse(JSON.stringify(reference));
+await client.close();
+const reopened = await freshClient.sandboxes.get(saved);
+const info = await reopened.inspect();
+if (info.state === "running") {
+  const bytes = await reopened.readFile("/tmp/work.txt");
+  const output = await reopened.exec(["/bin/sh", "-c", "printf reopened"]);
+}
+```
+
+References contain native identity, provider/scope and the native creation selectors required for verification; no credentials, observations or workflow journal. Successful create, snapshot restore and recovered results issue references after native verification. Legacy adapters may return null; a failed optional identity read after confirmed Daytona creation also returns a usable handle with null reference rather than hiding completed creation. A later `inspect().reference` can supply verified identity when native metadata becomes readable. Do not save null or synthesize a reference from the display ID.
+
+`get` reads native detail and never creates, resumes or extends lifetime. Stopped/suspended resources remain inactive. `inspect` supplies current `nativeState`, local receipt `observedAt`, hard expiry, idle-stop policy and stopped-retention facts. Unknown facts remain unknown; an elapsed deadline alone does not establish deletion. Missing/expired/deleted resources fail `NOT_FOUND`, native authorization fails `FORBIDDEN`, transport/detail access fails `UNAVAILABLE`, and identity/configuration mismatch fails `CONFLICT`. A destroyed tombstone can be inspected but cannot be reopened.
+
+Applications own persistence, fresh credentials and serialization of competing operations. There is a crash window before the reference is saved. Operation recovery references retain the verified sandbox reference so fresh-process observation and continuation check the original creation correlation. Older operation references retain their ID-only behavior. Existing operation recovery remains separate and read-only; reopening compute does not replay a command or recover a mutation. Configured `renew()` and native `suspend()`/`resume()` are available through optional adapter hooks; no implicit mutation is added to reopening. Deterministic/packed tests cover this slice; its new live reopening workflow has not run.
+
+## Native sandbox suspension
+
+Configure `lifecycle.suspension.preserve` once on a compatible adapter as a minimum, then call `await box.suspend()`. Save `box.reference`, open it with `await freshClient.sandboxes.get(savedReference)` while inactive, and call `await box.resume()` explicitly. Submit forms use the existing operation/result/recovery conventions. Daytona containers preserve filesystem and terminate processes; E2B pauses with memory and reports unknown execution continuity on resume. Both drop connections, retain the same scoped ID and never replace expired compute. Daytona requires known empty native mounts. E2B rejects known native mounts but permits absent mount metadata without claiming an empty set; preservation covers private filesystem/RAM, excluding external-storage flush, durability, atomic consistency and remote connection continuity. Daytona hard TTL keeps ticking; E2B paused state has indefinite retention requiring explicit destruction. Lost ACK stays uncertain and recovery only observes; acknowledged native facts remain directly accessible on partial/aborted errors. Unsupported adapters still support their other operations. Daytona suspension passed live at `6796b30`; E2B's revised private-state mapping passed at `26f516d`, with earlier failures retained and owned cleanup confirmed.
+
+## Filesystem workflows
+
+`readDirectory` returns bounded immediate children with honest completeness and an observation timestamp. `statFile` reports link identity by default and only available metadata; `fileExists` distinguishes absence from permission/transport failure. Mkdir/remove preserve recursive opt-in. `copyFile` stages regular-file bytes and `moveFile` performs same-filesystem rename; both default to no-clobber. Daytona and E2B implement these operations on compatible private Linux filesystems with Python 3 and native rename prerequisites.
+
+Streams use `AsyncIterable<Uint8Array>` with backpressure and split chunks up to 64 KiB. `writeFileStream` returns the confirmed byte count. Configure `transfers: { setupTimeoutMs, inactivityTimeoutMs, overallTimeoutMs }` on connection or override those fields per call. Defaults are 30-second setup, 60-second active IO inactivity and no overall deadline. Consumer processing does not trigger inactivity failure. `FilesystemError.details` retains known source/destination, temporary paths and transferred bytes when remote effects or cleanup are uncertain; do not replay uncertain mutations. A timeout or cancellation during staging cleanup preserves `effect: "applied"` after confirmed publication, with remaining correlated temporary paths indicating unfinished cleanup. See [the portable artifact recipe](../../apps/docs/examples/directory-files.ts) and [file guide](../../apps/docs/src/content/docs/docs/guides/files-and-output.md).
+
+`walkFiles(path, { maxDepth, maxEntries, exclude, signal })` yields deterministic depth-first entries with absolute `path`, root-relative `relativePath` and `depth` (children start at 1). Defaults are depth 32 and 10,000 observed entries; exact relative-path exclusions prune subtrees, and excluded entries still count. Symlinks/unknown types are yielded without descent. Incomplete listings, unreadable subtrees and budget overflow reject. Traversal is an observation of a changing namespace, not a snapshot or confinement boundary.
+
+`readTextLines(path, { maxLineBytes, ...transferOptions })` incrementally decodes UTF-8, handles split code points and LF/CRLF, preserves lone CR, and yields the final unterminated line without a spurious terminal empty line. Malformed UTF-8 uses replacement decoding. The default line limit is 1 MiB of source bytes excluding delimiters; overflow rejects with `OUTPUT_CAPACITY`. Both helpers compose existing adapter hooks. Fixture/packed acceptance is separate from live evidence; the older `2f6afe8` artifact passes predate F4, while the expanded recipe passed at `e91f2d5` on both borrowed provider images with confirmed cleanup. Range reads, batch transfer, glob/search and tree copy remain deferred.
+
+## Process output profiles
+
+Start a sustained process with `output: { mode: "stream" }` and consume `child.output()` promptly. The default yields separate stdout/stderr text. Choose `output: { mode: "stream", format: "bytes" }` before start to receive `{ stream, bytes: Uint8Array }` chunks containing original native bytes, including NUL and malformed UTF-8. Type inference selects `ProcessHandle<"bytes">`; no decoder or implicit re-encoding runs in this profile. Unsupported byte transports reject before starting.
+
+Both profiles have one consumer, 16 KiB maximum emitted chunks, and a 64 KiB/256-chunk pending queue. Admitted byte buffers are copied. Slow consumers receive explicit output failure while independently usable wait/status/input/termination remain available. Returning a sustained output iterator releases output only; `detach()` disposes the full local handle without terminating remote compute. Output completeness requires native end plus delivery of all admitted chunks. The byte profile promises per-stream byte order, with no framing or cross-stream ordering guarantee. PTYs and reconnection use the explicit APIs below.
+
+`child.signal("SIGTERM" | "SIGKILL")` requests a named signal independently of confirmed exit; `terminate()` remains the SIGKILL convenience. `child.reference()` snapshots a private, scoped, expiring JSON selector. Call `disconnect()` to park local observation without EOF or termination, then `box.processes.reopen(saved)` on the same sandbox through a fresh matching connection. An old handle is fenced; pending EOF or uncertain input prevents reference creation. Reopened handles expose `outputGap: true` and never claim complete output. There is no retained transcript replay or exact emission-time cutoff; native buffers may deliver earlier bytes. Reference availability is limited by native process/sandbox lifetime and at most 24 hours.
+
+`box.terminals.start({ command, columns: 80, rows: 24 })` creates an explicit controlling terminal. `output()` yields combined `Uint8Array` chunks; `write`, `resize`, status, wait, signals and termination remain portable. Terminals omit pipe EOF. Save their reference and use `box.terminals.reopen(saved)` for live reattachment. PTY echo, newline translation and buffering differ from ordinary pipes. `readProcessLines()` and `createProcessTail()` compose either text or byte pipe output into bounded diagnostic lines/windows with explicit partial/truncated flags; they do not retain provider logs or own compute. See the [process guide](../../apps/docs/src/content/docs/docs/guides/text-streaming.md) for limits and adapter guarantees.
+
+## Consumer types
+
+Use `SandbarClient`, `SandboxHandle`, `SnapshotHandle`, `VolumeHandle`, `OperationHandle<T>` and `RecoveryReference` for application annotations. Concrete connection/handle declarations use the optional `true` type parameter to preserve their complete advanced and nominal compatibility surface; ordinary annotations retain their existing structural view. Concrete operations include a kind type parameter for continuation and recovery narrowing. Existing Adapter*/Direct* names, runtime classes and `instanceof` behavior remain supported. See the TypeScript reference for staged migration and advanced compatibility access.

@@ -1,70 +1,62 @@
 # Public packages and adapter conventions
 
-**Accepted user decision — September 27, 2026.** Updated for the 1.0 launch decision: Daytona and E2B are the only launch built-ins; Modal is external and experimental. It supersedes provisional package names and import paths in earlier specs. It records a design decision, not a claim that these packages are published or all providers are implemented.
+**Accepted user decision — October 11, 2026.** Daytona and E2B are separately installed, officially maintained integrations. This supersedes the September 27 bundled-provider decision. These packages remain unpublished; registry commands describe the intended release experience.
 
 ## Names and imports
 
 | Purpose | npm package | Import path |
 | --- | --- | --- |
-| Main SDK | `sandbar-sdk` | `sandbar-sdk` |
-| Built-in Daytona adapter | included in `sandbar-sdk` | `sandbar-sdk/daytona` |
-| External experimental Modal adapter | `sandbar-modal` | `sandbar-modal` |
-| Built-in E2B adapter for 1.0 | included in `sandbar-sdk` | `sandbar-sdk/e2b` |
-| External experimental Vercel adapter | `sandbar-vercel` | `sandbar-vercel` |
-| Custom adapter authoring | `sandbar-adapter` | `sandbar-adapter` |
-| Adapter conformance tests | included in `sandbar-adapter` | `sandbar-adapter/testing` |
-| Future additional integrations | `sandbar-<provider>` | e.g. `sandbar-tensorlake` |
+| Provider-neutral SDK | `sandbar-sdk` | `sandbar-sdk` |
+| Official Daytona adapter | `@sandbar-sdk/daytona` | `@sandbar-sdk/daytona` |
+| Official E2B adapter | `@sandbar-sdk/e2b` | `@sandbar-sdk/e2b` |
+| Experimental Modal adapter | `@sandbar-sdk/modal` | `@sandbar-sdk/modal` |
+| Official Vercel adapter | `@sandbar-sdk/vercel` | `@sandbar-sdk/vercel` |
+| Custom adapter authoring | `@sandbar-sdk/adapter` | `@sandbar-sdk/adapter` |
+| Adapter conformance tests | included in `@sandbar-sdk/adapter` | `@sandbar-sdk/adapter/testing` |
+| Future integrations | `@sandbar-sdk/<provider>` | e.g. `@sandbar-sdk/tensorlake` |
 
-SDK subpaths are exports of the parent package, not separate npm installations. Use these unscoped public names; do not assume ownership of the `@sandbar` npm scope. The occupied `sandbar` package is unrelated. Registry absence is not reservation or a guarantee of publication rights. Publication, account/scope setup and live provider operations are not authorized by this decision.
-
-Third-party authors may use their own names/scopes, for example `@acme/sandbar-adapter`. The npm name is independent of the adapter's stable provider ID (`daytona`, `modal`, `e2b`, or a custom ID).
+**Accepted user decision — October 11, 2026.** The core keeps the unscoped `sandbar-sdk` name; every other official package lives in the project-owned `@sandbar-sdk` npm scope, so new official integrations need no separate name reservation. This supersedes the earlier unscoped `sandbar-<package>` names, whose placeholders are removed from npm. The occupied `sandbar` package and `@sandbar` scope are unrelated; private workspaces keep `@sandbar/*` names and are never published. Registry absence does not reserve a name or authorize publication. Third-party authors may use their own names/scopes, such as `@acme/sandbar-adapter`. Package names are independent of stable provider IDs (`daytona`, `e2b`, `modal`).
 
 ## Consumer experience
 
-Built-in providers use one SDK installation:
-
 ```sh
-npm install sandbar-sdk
+npm install sandbar-sdk @sandbar-sdk/daytona
 ```
 
 ```ts
-import { Sandbar } from 'sandbar-sdk';
-import { daytona } from 'sandbar-sdk/daytona';
+import { Sandbar } from "sandbar-sdk";
+import { daytona } from "@sandbar-sdk/daytona";
 
-const sandbar = await Sandbar.connect(
-  daytona({
-    apiKey: process.env.DAYTONA_API_KEY!,
-    target: 'us',
-  }),
-);
+const sandbar = await Sandbar.connect(daytona({
+  apiKey: process.env.DAYTONA_API_KEY!,
+  target: "us",
+}));
 ```
 
-This API shape is implemented; the example does not establish live qualification or publication. `daytona` packages typed provider configuration and credentials for the common connection path. Constructing it performs no provider IO; `Sandbar.connect` validates and verifies the binding and owns the resulting session. It uses the same engine, configuration schemas, scope verification, host policy and close/recovery semantics as custom adapters. E2B uses the same built-in factory pattern; external adapters use the public binding or definition connection form. Exact options must follow their supported implementations. Keep the general custom-adapter connection form available without forcing custom authors to implement a factory.
+For E2B install `sandbar-sdk @sandbar-sdk/e2b` and import `e2b` from `@sandbar-sdk/e2b`. Factories package typed settings and credentials without provider IO. `Sandbar.connect` validates and verifies the binding and owns the session. Custom authors may use `bindAdapter` from `@sandbar-sdk/adapter`, or the definition/config/credentials connection form directly.
+
+The unpublished `sandbar-sdk/daytona` and `sandbar-sdk/e2b` subpaths are removed without aliases. Update imports and install the selected adapter. Provider IDs, configuration defaults, resource identity, references, recovery and execution semantics remain unchanged.
 
 ## Support and implementation scope
 
-Daytona and E2B are the selected 1.0 built-in providers. Bundled convenience, conformance tests and maintenance distinguish them; they have no privileged execution path. Both use the same public `sandbar-adapter` API as external integrations. Implementation, fixture qualification, packed qualification and live qualification are separate statuses; a roadmap selection does not establish support.
+Daytona and E2B remain first-class official integrations maintained in this monorepo. Separate installation does not imply experimental or community support. Implementation, deterministic fixture qualification, packed qualification and live qualification remain distinct statuses.
 
-Modal is a separately installed experimental `sandbar-modal` adapter. Its implementation uses the public adapter API; its built-in SDK export and bundled native dependencies have been removed. The experimental designation must describe actual limitations: private version-sensitive transport, uncertain image-build recovery and any unrun live qualification. Modal is not a 1.0 built-in release gate.
+Modal remains separately installed and experimental, with its existing release status unchanged. Its private version-sensitive transport, uncertain image-build recovery and unrun live scenarios remain documented limitations. It is not a 1.0 release gate.
 
-Fast-follow priority is exactly **Vercel, Boxed (boxd), Islo, Tensorlake**. Additional integrations retain the external `sandbar-<provider>` distribution convention unless the user separately changes it. This roadmap does not start those implementations, authorize publication or permit placeholder exports. None is a 1.0 launch gate.
-
-Daytona and E2B implementations and the external Modal transition are merged. Their package READMEs and qualification evidence describe supported behavior and remaining limitations; merger does not establish live qualification or npm publication. Vercel now has a separately packaged experimental `sandbar-vercel` implementation for disposable sessions, with deterministic and packed coverage. Its provider README records the version-sensitive REST boundary, retained named metadata and unrun live qualification. It adds no SDK subpath. The fake provider remains a deterministic development/test fixture.
+Fast-follow priority remains **Vercel, Boxed (boxd), Islo, Tensorlake**. This decision does not authorize their implementation, placeholder exports, publication or paid operations. Vercel is implemented as `@sandbar-sdk/vercel` for disposable immutable sessions with deterministic and packed qualification; its provider README records REST stability, retained metadata and unrun live qualification. The fake provider remains a deterministic development fixture.
 
 ## Dependency and schema ownership
 
-`sandbar-sdk` includes implemented built-in adapters and their required production dependencies. Modal's native dependencies belong only to the separately installed `sandbar-modal` package. Provider-specific code loads through explicit subpaths; importing the SDK root must not initialize provider clients or load unrelated provider implementations. One install can still download built-in provider dependencies: subpaths isolate imports, not installation size.
+`sandbar-sdk` contains the provider-neutral consumer API and execution engine. It must not depend on provider packages or native provider libraries. Each adapter owns its native production dependencies; E2B's native `e2b` dependency belongs only to `@sandbar-sdk/e2b`.
 
-Avoid a dependency cycle: `sandbar-adapter` holds the shared lower-level portable definitions needed by adapter implementations and the SDK. It must not depend on the SDK or native provider libraries. The SDK owns its consumer API, errors and execution engine. Built-in implementation workspaces may remain private and be bundled; their unpublished names must not leak into installed runtime imports or declarations. Do not publish SPI workspaces just to satisfy monorepo dependencies.
+`@sandbar-sdk/adapter` owns portable definitions, image inputs and the provider-neutral binding contract/helper. It must not depend on the SDK or native libraries. Adapters must not depend on the SDK at runtime. There is no catch-all public contracts package.
 
-There is no public catch-all contracts package. Portable definitions belong to the adapter API; consumer handles, errors and the execution engine belong to the SDK.
+Private implementation workspaces may be bundled into adapter artifacts. Their unpublished names must not leak into runtime imports or declarations. Daytona bundles private SPI implementation and vendors required declarations; do not publish SPI to satisfy packaging.
 
 ## Implementation and release acceptance
 
-Apply the names consistently to manifests, exports, dependency ranges, documentation, generated references, examples, tarball tests and Changesets release configuration. Remove superseded unpublished aliases rather than maintaining compatibility layers. Workspace directory names may remain stable; users depend on package names and export paths.
+The initial fixed, lockstep public release group is `@sandbar-sdk/adapter`, `sandbar-sdk`, `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, and `@sandbar-sdk/vercel`. Separate installation does not require independent release infrastructure. Keep the existing release machinery and release the actual distributable graph. Modal remains outside this group.
 
-Release the actual distributable graph. Do not include planned providers as releasable packages or phantom exports. Current implementation sequencing lives in [plans](../plans/implementation-plan.md).
+Qualify real tarballs in isolated consumers: core alone, core plus either provider, both providers, and an independently authored adapter. Verify strict NodeNext declarations, Node/Bun execution, private-workspace isolation and npm/pnpm/Bun installation. Archive overrides may resolve transitive local packages without adding undeclared root dependencies.
 
-Qualify actual packed artifacts with strict external TypeScript consumers and Node/Bun execution: SDK root plus built-in subpaths; an independently authored adapter. Release qualification additionally exercises npm, pnpm and Bun installation without workspace aliases or extra root dependencies masking missing transitive packages.
-
-Zero compatibility with unpublished APIs does not weaken current-version scope, binary fidelity, validation, abort/close or unknown/no-replay guarantees. Do not automatically delete user data. Effect remains parked and contributes no dependencies, hooks, work or completion gate.
+Unpublished API removal does not weaken scope, binary fidelity, validation, abort/close or unknown/no-replay guarantees. Never automatically delete user data. Effect remains parked.

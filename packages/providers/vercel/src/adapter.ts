@@ -3,7 +3,17 @@ import { gzipSync } from "node:zlib";
 import { posix } from "node:path";
 import { pack } from "tar-stream";
 import { setTimeout as delay } from "node:timers/promises";
-import { AdapterError, defineAdapter, type ReadContext } from "sandbar-adapter";
+import {
+  AdapterError,
+  defineAdapter,
+  assertResourceScope,
+  unknownSandboxFacts,
+  type Sandbox,
+  type SandboxReference,
+  type SandboxInfo,
+  type ReadContext,
+  type ProcessObservationFailure,
+} from "@sandbar-sdk/adapter";
 import { boundedBody, VercelClient, type VercelTransport } from "./transport";
 import { captureHelper, captureSpec, decodeReceipt } from "./capture";
 
@@ -67,6 +77,7 @@ const execToken = z.strictObject({
   sessionId: id,
   commandId: id,
   maxBytes: z.number().int().min(0).max(1048576),
+  confirmedExit: z.strictObject({ exitCode: z.number().int() }).optional(),
 });
 
 const maxBytes = 1048576;
@@ -149,6 +160,36 @@ export function createVercelAdapter(
       await client.json(`/v2/sandboxes?project=${project.id}&limit=1`, signal, page);
       const mode = config.networkPolicy === "vercel-deny-all" ? "deny-all" : "allow-all";
       const route = (sandboxId: string) => `/v2/sandboxes/sessions/${id.parse(sandboxId)}`;
+
+      const scope = {
+        authority: { kind: "vercel-team", id: team.id },
+        partition: { projectId: project.id, region: config.region },
+      };
+
+      const reference = (sessionId: string): SandboxReference => ({
+        version: 1,
+        kind: "sandbox",
+        provider: "vercel",
+        scope,
+        nativeId: sessionId,
+        ownership: "unknown",
+      });
+
+      const checkReference = (box: Sandbox) => {
+        if (!box.reference) return;
+        assertResourceScope(box.reference, { provider: "vercel", scope });
+
+        if (
+          box.reference.kind !== "sandbox" ||
+          box.reference.nativeId !== box.id ||
+          box.reference.generation !== undefined
+        )
+          throw new AdapterError(
+            "CONFLICT",
+            "Vercel sandbox reference differs from immutable session identity",
+          );
+      };
+
       const verifiedSessions = new Set<string>();
 
       const verifySession = async (sandboxId: string, signal: AbortSignal) => {
@@ -201,6 +242,20 @@ export function createVercelAdapter(
         return result.session;
       };
 
+      const inspection = async (box: Sandbox, signal: AbortSignal): Promise<SandboxInfo> => {
+        checkReference(box);
+        const value = await get(box.id, signal);
+
+        return {
+          reference: reference(value.id),
+          state: state(value.status),
+          nativeState: value.status,
+          observedAt: new Date().toISOString(),
+          ...unknownSandboxFacts(),
+          execution: { status: "known", value: { nativeId: value.id } },
+        };
+      };
+
       const read = async (
         sandboxId: string,
         file: string,
@@ -223,7 +278,11 @@ export function createVercelAdapter(
         return boundedBody(response, limit, signal);
       };
 
-      const collect = async (token: z.infer<typeof execToken>, signal: AbortSignal) => {
+      const collect = async (
+        token: z.infer<typeof execToken>,
+        signal: AbortSignal,
+        onConfirmedExit?: (exit: { exitCode: number }) => Promise<void>,
+      ) => {
         const commandPath = route(token.sessionId) + `/cmd/${token.commandId}`;
         const finished = await client.json(commandPath + "?wait=true", signal, command);
 
@@ -250,29 +309,74 @@ export function createVercelAdapter(
           if (log.stream === "stdout") output += log.data;
         }
 
-        const receiptPath = output.trim();
+        const records = output.trim().split("\n");
+        const receiptPath = records[0];
+        let confirmedExit: { exitCode: number } | undefined;
 
-        if (!/^\/tmp\/sandbar-exec-[A-Za-z0-9]+\/receipt\.json$/.test(receiptPath))
+        if (records.length === 2) {
+          const marker = z
+            .strictObject({ sandbarExit: z.literal(1), exitCode: z.number().int() })
+            .safeParse(JSON.parse(records[1]!));
+
+          if (!marker.success)
+            throw new AdapterError("UNAVAILABLE", "Invalid capture exit evidence");
+          confirmedExit = { exitCode: marker.data.exitCode };
+        }
+
+        if (
+          !receiptPath ||
+          records.length > 2 ||
+          !/^\/tmp\/sandbar-exec-[A-Za-z0-9]+\/receipt\.json$/.test(receiptPath)
+        )
           throw new AdapterError(
             "UNAVAILABLE",
             "Missing or invalid capture receipt path; command must not be replayed",
           );
 
-        const bytes = await read(
-          token.sessionId,
-          receiptPath,
-          signal,
-          Math.ceil(token.maxBytes / 3) * 4 + 1024,
-        );
+        if (
+          token.confirmedExit &&
+          confirmedExit &&
+          token.confirmedExit.exitCode !== confirmedExit.exitCode
+        )
+          throw new AdapterError("UNAVAILABLE", "Fresh capture exit conflicts with saved evidence");
 
-        return decodeReceipt(bytes, token.maxBytes);
+        if (confirmedExit && onConfirmedExit) await onConfirmedExit(confirmedExit);
+
+        try {
+          const bytes = await read(
+            token.sessionId,
+            receiptPath,
+            signal,
+            Math.ceil(token.maxBytes / 3) * 4 + 1024,
+          );
+
+          const result = decodeReceipt(bytes, token.maxBytes);
+
+          if (
+            (confirmedExit && result.exitCode !== confirmedExit.exitCode) ||
+            (token.confirmedExit && result.exitCode !== token.confirmedExit.exitCode)
+          )
+            throw new AdapterError("UNAVAILABLE", "Capture receipt conflicts with confirmed exit");
+
+          return result;
+        } catch (cause) {
+          const error: ProcessObservationFailure =
+            cause instanceof AdapterError
+              ? cause
+              : new AdapterError(
+                  "UNAVAILABLE",
+                  "Capture output retrieval failed; command must not be replayed",
+                );
+
+          if (confirmedExit) error.confirmedExit = confirmedExit;
+          throw error;
+        }
       };
 
       return {
-        scope: {
-          authority: { kind: "vercel-team", id: team.id },
-          partition: { projectId: project.id, region: config.region },
-        },
+        scope,
+        defaultImage: { kind: "prepared", value: image },
+        defaultNetworkPolicy: config.networkPolicy,
         supports: {
           images: ["prepared"],
           network: [config.networkPolicy],
@@ -355,6 +459,7 @@ export function createVercelAdapter(
 
             return {
               id: token.sessionId,
+              reference: reference(token.sessionId),
               state: result.session.status === "running" ? "running" : "unknown",
             };
           },
@@ -373,12 +478,17 @@ export function createVercelAdapter(
 
             if (value.status === "pending") return ctx.pending(token, { pollAfterMs: 250 });
 
-            return { id: value.id, state: value.status === "running" ? "running" : "unknown" };
+            return {
+              id: value.id,
+              reference: reference(value.id),
+              state: value.status === "running" ? "running" : "unknown",
+            };
           },
         },
         destroy: {
           async submit(box, ctx) {
             const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(30000)]);
+            checkReference(box);
             const before = await get(box.id, signal);
 
             if (state(before.status) !== "destroyed") {
@@ -401,6 +511,7 @@ export function createVercelAdapter(
           },
           async observe(attempt, ctx) {
             if (!attempt.sandbox) return null;
+            checkReference(attempt.sandbox);
             const value = await get(attempt.sandbox.id, readSignal(ctx));
 
             return state(value.status) === "destroyed"
@@ -408,10 +519,11 @@ export function createVercelAdapter(
               : ctx.unknown("Original session still unconfirmed");
           },
         },
+        async reopen(ref, ctx) {
+          return inspection({ id: ref.nativeId, reference: ref }, readSignal(ctx));
+        },
         async inspect(box, ctx) {
-          const value = await get(box.id, readSignal(ctx));
-
-          return { id: value.id, state: state(value.status) };
+          return { id: box.id, ...(await inspection(box, readSignal(ctx))) };
         },
         async inventory(input, ctx) {
           const query = new URLSearchParams({
@@ -432,6 +544,9 @@ export function createVercelAdapter(
         exec: {
           recovery: { version: 1, token: execToken },
           async prepare(input) {
+            if (input.stdin !== undefined)
+              throw new AdapterError("UNSUPPORTED", "Vercel finite stdin is unavailable");
+            checkReference(input.sandbox);
             const argv = captureSpec(input).argv;
 
             if (
@@ -453,6 +568,7 @@ export function createVercelAdapter(
               AbortSignal.timeout((input.deadlineSeconds + 10) * 1000),
             ]);
 
+            checkReference(input.sandbox);
             await verifySession(input.sandbox.id, signal);
 
             const launched = await client.json(route(input.sandbox.id) + "/cmd", signal, command, {
@@ -475,10 +591,13 @@ export function createVercelAdapter(
 
             await ctx.checkpoint(token);
 
-            return collect(token, signal);
+            return collect(token, signal, (confirmedExit) =>
+              ctx.checkpoint({ ...token, confirmedExit }),
+            );
           },
           async observe(attempt, ctx) {
             if (!attempt.token || !attempt.sandbox) return null;
+            checkReference(attempt.sandbox);
             const token = execToken.parse(attempt.token);
 
             if (token.sessionId !== attempt.sandbox.id)
@@ -491,7 +610,16 @@ export function createVercelAdapter(
         },
         files: {
           maxBytes,
-          read: (input, ctx) => read(input.sandbox.id, input.path, readSignal(ctx)),
+          read: (input, ctx) => {
+            checkReference(input.sandbox);
+
+            return read(
+              input.sandbox.id,
+              input.path,
+              readSignal(ctx),
+              input.maxBytes === undefined ? maxBytes : Math.min(input.maxBytes, maxBytes),
+            );
+          },
           write: {
             async prepare(input) {
               if (!input.overwrite)
@@ -505,6 +633,7 @@ export function createVercelAdapter(
             },
             async submit(input, ctx) {
               const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(30000)]);
+              checkReference(input.sandbox);
               await verifySession(input.sandbox.id, signal);
 
               const response = await client.request(

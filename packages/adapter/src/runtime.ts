@@ -1,3 +1,4 @@
+import { FileMutationIntent, FileMutationValue } from "./files";
 import {
   checkCreate,
   stateCapabilities,
@@ -17,8 +18,9 @@ import {
   VolumeCreateInput,
   VolumeInfo,
 } from "./resources";
+import { LifecycleInput, SuspendResult, ResumeResult, RenewInput, RenewResult } from "./lifecycle";
 import { z } from "zod";
-import { CreateSandboxInput, ExecRequest, FilePath } from "./portable";
+import { CreateSandboxInput, ExecRequest, FilePath, MAX_EXEC_STDIN_BYTES } from "./portable";
 import {
   AdapterError,
   createAttemptContext,
@@ -50,6 +52,9 @@ export type RuntimeSession = Omit<
   | "exec"
   | "files"
   | "imageBuild"
+  | "suspend"
+  | "resume"
+  | "renew"
   | "snapshotCapture"
   | "snapshotRestore"
   | "snapshotDelete"
@@ -57,18 +62,31 @@ export type RuntimeSession = Omit<
   | "volumeDelete"
 > & {
   create: unknown;
+  suspend?: unknown;
+  resume?: unknown;
+  renew?: unknown;
   snapshotCapture?: unknown;
-  snapshotRestore?: unknown;
+  snapshotRestore?: { mountInput?: "specs" };
   snapshotDelete?: unknown;
   volumeCreate?: unknown;
   volumeDelete?: unknown;
   imageBuild?: unknown;
   destroy: unknown;
-  exec?: unknown;
+  exec?: object & { finiteStdin?: "bytes" };
   files?: {
     maxBytes: number;
     read?: NonNullable<AdapterSession["files"]>["read"];
     write?: unknown;
+    readDirectory?: NonNullable<AdapterSession["files"]>["readDirectory"];
+    stat?: NonNullable<AdapterSession["files"]>["stat"];
+    readStream?: NonNullable<AdapterSession["files"]>["readStream"];
+    writeStream?: NonNullable<AdapterSession["files"]>["writeStream"];
+    copy?: NonNullable<AdapterSession["files"]>["copy"];
+    move?: NonNullable<AdapterSession["files"]>["move"];
+    list?: NonNullable<AdapterSession["files"]>["list"];
+    exists?: NonNullable<AdapterSession["files"]>["exists"];
+    makeDirectory?: unknown;
+    remove?: unknown;
   };
 };
 
@@ -77,7 +95,12 @@ export type OperationKind =
   | "destroy"
   | "exec"
   | "file_write"
+  | "file_mkdir"
+  | "file_remove"
   | "image_build"
+  | "sandbox_suspend"
+  | "sandbox_resume"
+  | "sandbox_renew"
   | "snapshot_capture"
   | "snapshot_restore"
   | "snapshot_delete"
@@ -86,10 +109,13 @@ export type OperationKind =
 
 export type OperationInput =
   | import("./resources").DestroyInput
+  | import("./lifecycle").LifecycleInput
+  | import("./lifecycle").RenewInput
   | CreateInput
   | ImageBuildInput
   | ExecInput
   | FileWriteInput
+  | import("./files").FileMutationInput
   | Sandbox
   | import("./resources").SnapshotCaptureInput
   | import("./resources").SnapshotRestoreInput
@@ -99,7 +125,11 @@ export type OperationInput =
 export type SpecialOutcome = Pending | Unknown | Rejected;
 
 export type OperationResult =
+  | import("./files").FileMutationValue
   | import("./index").CreateValue
+  | import("./lifecycle").SuspendResult
+  | import("./lifecycle").ResumeResult
+  | import("./lifecycle").RenewResult
   | DestroyValue
   | ExecValue
   | ImageBuildValue
@@ -123,7 +153,10 @@ export type RuntimeResult =
 
 const Id = z.string().min(1).max(512);
 
-const SandboxSchema = z.strictObject({ id: Id });
+const SandboxSchema = z.strictObject({
+  id: Id,
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
+});
 
 const CreateInputSchema = z.strictObject({
   image: z.discriminatedUnion("kind", [
@@ -157,6 +190,10 @@ const ExecInputSchema = z.strictObject({
   env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(8192)).optional(),
   deadlineSeconds: z.number().int().min(1).max(3600),
   maxOutputBytes: z.number().int().nonnegative().max(1_048_576),
+  stdin: z
+    .instanceof(Uint8Array)
+    .refine((bytes) => bytes.byteLength <= MAX_EXEC_STDIN_BYTES)
+    .optional(),
 });
 
 const FileWriteInputSchema = z.strictObject({
@@ -168,6 +205,7 @@ const FileWriteInputSchema = z.strictObject({
 
 const CreateValueSchema = z.strictObject({
   id: Id,
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
   state: z.enum(["running", "unknown"]),
   mounts: z.array(MountSpec).max(32).optional(),
 });
@@ -193,7 +231,7 @@ const DestroyValueSchema = z.strictObject({
 });
 
 const WriteValueSchema = z.strictObject({
-  bytesWritten: z.number().int().nonnegative().max(1_048_576),
+  bytesWritten: z.number().int().nonnegative().max(16_777_216),
 });
 
 const ExecValueSchema = z.strictObject({
@@ -332,6 +370,12 @@ async function validateValue(
 
   if (kind === "create" || kind === "snapshot_restore") return CreateValueSchema.parse(value);
 
+  if (kind === "sandbox_suspend") return SuspendResult.parse(value);
+
+  if (kind === "sandbox_resume") return ResumeResult.parse(value);
+
+  if (kind === "sandbox_renew") return RenewResult.parse(value);
+
   if (kind === "snapshot_capture") return SnapshotCaptureValue.parse(value);
 
   if (kind === "volume_create") return VolumeInfo.parse(value);
@@ -342,6 +386,8 @@ async function validateValue(
   if (kind === "image_build") return ImageBuildValueSchema.parse(value);
 
   if (kind === "destroy") return DestroyValueSchema.parse(value);
+
+  if (kind === "file_mkdir" || kind === "file_remove") return FileMutationValue.parse(value);
 
   if (kind === "file_write") return WriteValueSchema.parse(value);
   const parsed = ExecValueSchema.parse(value);
@@ -431,6 +477,15 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
   let op: unknown;
 
   switch (kind) {
+    case "sandbox_suspend":
+      op = session.suspend;
+      break;
+    case "sandbox_resume":
+      op = session.resume;
+      break;
+    case "sandbox_renew":
+      op = session.renew;
+      break;
     case "snapshot_capture":
       op = session.snapshotCapture;
       break;
@@ -458,6 +513,12 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
     case "exec":
       op = session.exec;
       break;
+    case "file_mkdir":
+      op = session.files?.makeDirectory;
+      break;
+    case "file_remove":
+      op = session.files?.remove;
+      break;
     case "file_write":
       op = session.files?.write;
       break;
@@ -474,6 +535,19 @@ function checkCapability(
   kind: OperationKind,
   input: OperationInput,
 ): OperationInput {
+  if (["sandbox_renew", "sandbox_suspend", "sandbox_resume"].includes(kind)) {
+    const value = kind === "sandbox_renew" ? RenewInput.parse(input) : LifecycleInput.parse(input);
+    assertResourceScope(value.sandbox.reference, {
+      provider: value.sandbox.reference.provider,
+      scope: session.scope,
+    });
+
+    if (value.sandbox.id !== value.sandbox.reference.nativeId)
+      throw new AdapterError("CONFLICT", "Renewal sandbox identity differs");
+
+    return value;
+  }
+
   if (kind === "snapshot_capture") return SnapshotCaptureInput.parse(input);
 
   if (kind === "snapshot_restore") {
@@ -482,6 +556,18 @@ function checkCapability(
       provider: value.snapshot.provider,
       scope: session.scope,
     });
+
+    if (value.request.mounts?.length && session.snapshotRestore?.mountInput !== "specs")
+      throw new AdapterError("UNSUPPORTED", "Upgrade adapter for restore MountSpec[] input");
+
+    for (const mount of value.request.mounts ?? [])
+      assertResourceScope(mount.volume, {
+        provider: value.snapshot.provider,
+        scope: session.scope,
+      });
+
+    if (!value.request.mounts?.length && session.snapshotRestore?.mountInput !== "specs")
+      delete value.request.mounts;
 
     return value;
   }
@@ -530,6 +616,7 @@ function checkCapability(
       cwd: request.cwd,
       env: request.env,
       deadlineSeconds: request.deadlineSeconds,
+      stdin: request.stdin,
       output: { capture: "bounded", maxBytes: request.maxOutputBytes },
     });
     const support = session.supports.exec;
@@ -541,7 +628,22 @@ function checkCapability(
     )
       throw new AdapterError("UNSUPPORTED", "Requested command or output limit is unsupported");
 
+    if (request.stdin !== undefined && session.exec?.finiteStdin !== "bytes")
+      throw new AdapterError("UNSUPPORTED", "Finite stdin is unsupported by this adapter");
+
     return request;
+  }
+
+  if (kind === "file_mkdir" || kind === "file_remove") {
+    const request = FileMutationIntent.extend({ sandbox: SandboxSchema }).parse(input);
+
+    if (kind === "file_remove" && request.path.split("/").every((segment) => segment === ""))
+      throw new AdapterError("INVALID_ARGUMENT", "Cannot remove sandbox root");
+
+    return {
+      ...request,
+      path: request.path.split("/").filter(Boolean).join("/").replace(/^/, "/"),
+    };
   }
 
   if (kind === "file_write") {
@@ -813,6 +915,8 @@ export async function observeOperation(
     sandbox?: Sandbox;
     resource?: import("./state").ResourceReference;
     mounts?: import("./state").MountSpec[];
+    lifecycle?: import("./lifecycle").LifecycleIntent;
+    renewal?: import("./lifecycle").RenewRequest;
     capture?: import("./state").SnapshotCaptureInput["expectation"];
     token?: Json;
     version?: number;

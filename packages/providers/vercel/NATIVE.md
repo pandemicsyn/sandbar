@@ -8,7 +8,7 @@ Audited October 11, 2026 against the published `@vercel/sandbox@3.6.1` archive, 
 - Upstream reference: https://github.com/vercel/sandbox/tree/31244aa3280dc3fdca0680933f85971570d73d2d
 - Implementation brief: https://github.com/pandemicsyn/sandbar/issues/28
 
-The adapter owns HTTP construction; it does not import SDK internals or install the native SDK. Every request uses the fixed `https://vercel.com/api` origin, explicit team routing, redirects disabled and one fetch dispatch. Injectable transports are trusted host code and must not retry mutations.
+`@sandbar-sdk/vercel` implements the public `@sandbar-sdk/adapter` API and owns HTTP construction; it does not import SDK internals or install the native SDK. Every request uses the fixed `https://vercel.com/api` origin, explicit team routing, redirects disabled and one fetch dispatch. Injectable transports are trusted host code and must not retry mutations.
 
 Creation uses `/v3/sandboxes`; session detail/stop, command detail/logs and binary filesystem routes use `/v2/sandboxes/sessions/{id}`. Project ownership reads use `/v2/teams/{teamId}` and `/v2/projects/{projectId}`. Collection queries use `project`, rather than uniformly substituting `projectId`. Reopened IDs are checked against the project's session collection. No named lookup, resume, renewal, or DELETE request is made.
 

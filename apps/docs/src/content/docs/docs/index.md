@@ -3,9 +3,11 @@ title: Sandbar SDK
 description: Create sandboxes, run code, and move files with one TypeScript SDK for Daytona and E2B.
 ---
 
-Sandbar is a server-side TypeScript SDK for creating sandboxes, running commands, and moving files across providers. **Daytona and E2B are built in.** Other providers can integrate through the public adapter API.
+Sandbar is a server-side TypeScript SDK for creating sandboxes, running commands, and moving files across providers. **Daytona and E2B are separately installed official integrations.** Other providers can integrate through the public adapter API.
 
 Start with [Getting started](/docs/direct-quickstart/) to run your first command and clean up the sandbox. This site documents the current source build; packages are not yet published.
+
+Run OpenCode inside a sandbox with the [runnable agent examples](/docs/guides/runnable-agent-examples/): capture a response or upload a file, ask the agent to edit it, and read it back. The guide includes checkout setup for Daytona and E2B.
 
 ## Build with an agent
 
@@ -16,14 +18,16 @@ Copy a prompt to give your coding agent the right imports, examples, and constra
 
 ## Use the SDK
 
-| Task                                 | Guide                                                        |
-| ------------------------------------ | ------------------------------------------------------------ |
-| Create a sandbox and run commands    | [Sandboxes and execution](/docs/guides/resources/)           |
-| Read and write files, capture output | [Files and output](/docs/guides/files-and-output/)           |
-| Choose an image or build one         | [Images and networking](/docs/guides/images-and-networking/) |
-| Save snapshots or reuse volumes      | [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) |
-| Handle a timeout or lost response    | [Errors and recovery](/docs/guides/recovery/)                |
-| Fix common setup issues              | [Troubleshooting](/docs/guides/troubleshooting/)             |
+| Task                                  | Guide                                                        |
+| ------------------------------------- | ------------------------------------------------------------ |
+| Create a sandbox and run commands     | [Sandboxes and execution](/docs/guides/resources/)           |
+| Read and write files, capture output  | [Files and output](/docs/guides/files-and-output/)           |
+| Stream process text or use a terminal | [Processes and streaming](/docs/guides/text-streaming/)      |
+| Access a sandbox HTTP service         | [HTTP previews](/docs/guides/preview-access/)                |
+| Choose an image or build one          | [Images and networking](/docs/guides/images-and-networking/) |
+| Save snapshots or reuse volumes       | [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) |
+| Handle a timeout or lost response     | [Errors and recovery](/docs/guides/recovery/)                |
+| Fix common setup issues               | [Troubleshooting](/docs/guides/troubleshooting/)             |
 
 ## Choose a provider
 

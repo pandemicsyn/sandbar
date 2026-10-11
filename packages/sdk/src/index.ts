@@ -1,5 +1,24 @@
 import { connectDirect } from "./adapter-direct";
 
+export type {
+  StartProcessInput,
+  ProcessOutput,
+  ProcessOutputBytes,
+  ProcessOutputFormat,
+  ProcessChunk,
+  ProcessExit,
+  ProcessStatus,
+  ProcessTermination,
+  ProcessHandle,
+  ProcessReference,
+  ProcessSignal,
+  TerminalDimensions,
+  StartTerminalInput,
+  TerminalHandle,
+  ProcessFailure,
+  ExecOptions,
+} from "./processes";
+
 export {
   AdapterDirectClient,
   AdapterSandbox,
@@ -12,6 +31,8 @@ export type {
   AdapterRecoveryReference,
   AdapterConnectOptions,
   DirectConnectOptions,
+  ConnectOptions,
+  CloseOptions,
   AdapterCapabilities,
   RecoveredOperation,
   AdvancedOperationResult,
@@ -40,9 +61,13 @@ export type {
   CreateInput,
   ExecInput,
   ExecOutput,
+  OutputPreview,
   DirectSandbarClient,
   DirectSandboxHandle,
   SandboxHandle,
+  SnapshotHandle,
+  VolumeHandle,
+  ReadOptions,
   OperationHandle,
   RecoveryReference,
   SandbarClient,
@@ -56,7 +81,7 @@ export {
   assertResourceIdentity,
   SnapshotRequest,
   SnapshotRequirements,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 
 export type {
   Support,
@@ -66,12 +91,21 @@ export type {
   SnapshotPlan,
   SnapshotProfile,
   SandboxState,
+  SandboxReference,
+  SuspendResult,
+  ResumeResult,
+  RenewRequest,
+  RenewResult,
+  SandboxInfo,
+  Preview,
+  Fact,
+  Deadline,
   CreatePlan,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 
 export { AdapterSnapshot, AdapterVolume } from "./resources";
 
-export type { SnapshotResult, WaitOptions } from "./resources";
+export type { SnapshotResult, WaitOptions, RestoreInput } from "./resources";
 
 export {
   MountSpec,
@@ -80,10 +114,45 @@ export {
   RestoreRequest,
   VolumeCreateInput,
   ArtifactDeletionResult,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 
-export type { MountCapabilities, VolumeCapabilities, RestoreCapabilities } from "sandbar-adapter";
+export type {
+  MountCapabilities,
+  VolumeCapabilities,
+  RestoreCapabilities,
+} from "@sandbar-sdk/adapter";
 
 export { diagnosticContext } from "./observability";
 
 export type { ObservabilityOptions, DiagnosticContext } from "./observability";
+
+export { FilesystemError } from "./file-transfer";
+
+export type {
+  FileReadOptions,
+  FileWriteOptions,
+  FileStreamOptions,
+  FileStreamWriteOptions,
+  TransferPolicy,
+} from "./file-transfer";
+
+export type { FileEntry, DirectoryResult, FileStat } from "@sandbar-sdk/adapter";
+
+export type {
+  WalkFilesOptions,
+  WalkFileEntry,
+  ReadTextLinesOptions,
+} from "./filesystem-extensions";
+
+export { createProcessTail, readProcessLines } from "./process-output";
+
+export type {
+  ProcessTail,
+  ProcessTailOptions,
+  ProcessLine,
+  ProcessLineOptions,
+} from "./process-output";
+
+export { SandboxCleanupError } from "./scoped-sandbox";
+
+export type { SandboxScopeOptions, SandboxScopeCallbackOutcome } from "./scoped-sandbox";

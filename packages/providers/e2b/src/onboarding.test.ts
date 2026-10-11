@@ -4,16 +4,17 @@ import {
   observeOperation,
   prepareOperation,
   submitOperation,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { Sandbar, Image } from "sandbar-sdk";
-import { e2b } from "sandbar-sdk/e2b";
+import { e2b } from "@sandbar-sdk/e2b";
 import { createE2BAdapter } from "./index";
 import { createSdkTransport, type E2BRecord, type E2BTransport } from "./transport";
 
 function fixture() {
   const records = new Map<string, E2BRecord>();
-  const calls = { auth: 0, team: 0, template: 0, create: 0 };
+  const calls = { auth: 0, team: 0, template: 0, create: 0, run: 0, write: 0, kill: 0 };
   let loseResponse = false;
+  const internetAccess: boolean[] = [];
 
   const adapter = createE2BAdapter((): E2BTransport => ({
     async verifyAuth() {
@@ -40,11 +41,13 @@ function fixture() {
     },
     async create(input) {
       calls.create++;
+      internetAccess.push(input.allowInternetAccess);
 
       const record: E2BRecord = {
         id: `sb_${calls.create}`,
         templateId: input.templateId === "base" ? "canonical_base" : input.templateId,
         metadata: input.metadata,
+        allowPublicTraffic: input.allowPublicTraffic,
         state: "running",
       };
 
@@ -67,15 +70,20 @@ function fixture() {
       };
     },
     async kill(id) {
+      calls.kill++;
+
       return records.delete(id);
     },
     async run() {
+      calls.run++;
       throw new Error("Not used");
     },
     async read() {
       throw new Error("Not used");
     },
-    async write() {},
+    async write() {
+      calls.write++;
+    },
     async remove() {},
     close() {},
   }));
@@ -84,6 +92,7 @@ function fixture() {
     adapter,
     records,
     calls,
+    internetAccess,
     loseNextResponse() {
       loseResponse = true;
     },
@@ -103,7 +112,8 @@ test("API-key-only defaults reopen the same scope and bind canonical base resour
   expect(JSON.stringify(client.scope)).not.toContain("first-key");
   expect(f.calls.template).toBe(0);
   expect(f.calls.create).toBe(0);
-  const creation = await client.sandboxes.submitCreate({ environment: Image.prepared("base") });
+  expect((await client.sandboxes.checkCreate()).status).toBe("supported");
+  const creation = await client.sandboxes.submitCreate();
   const box = await creation.wait();
   expect(f.records.get(box.id)?.templateId).toBe("canonical_base");
   const reference = creation.reference;
@@ -133,6 +143,8 @@ test("API-key-only defaults reopen the same scope and bind canonical base resour
     expect(f.calls.auth).toBeGreaterThan(0);
     expect(f.calls.team).toBe(0);
     expect(f.calls.create).toBe(1);
+    expect(recovered.reference.networkPolicy).toBe("blocked");
+    expect(f.internetAccess).toEqual([false]);
   } finally {
     await reopened.close();
     await rotated.close();
@@ -161,9 +173,23 @@ test("lost base create recovers by exact native markers after reconnect without 
     connection = await connectAdapter(f.adapter, options);
     const record = f.records.get("sb_1")!;
     record.metadata.sandbar_operation = "op_other";
-    expect(await observeOperation(connection.session, "create", identity, signal)).toBeNull();
+    expect(
+      await observeOperation(
+        connection.session,
+        "create",
+        { ...identity, token: { allowPublicTraffic: false }, version: 1 },
+        signal,
+      ),
+    ).toBeNull();
     record.metadata.sandbar_operation = identity.operationId;
-    expect(await observeOperation(connection.session, "create", identity, signal)).toMatchObject({
+    expect(
+      await observeOperation(
+        connection.session,
+        "create",
+        { ...identity, token: { allowPublicTraffic: false }, version: 1 },
+        signal,
+      ),
+    ).toMatchObject({
       kind: "completed",
       value: { id: "sb_1", state: "running" },
     });
@@ -277,3 +303,217 @@ test("native owned alias verification accepts only ready unambiguous default nam
   values = [ready, { ...ready, templateID: "another" }];
   await expect(transport.verifyTemplate(undefined, "my-template")).rejects.toThrow("ambiguous");
 });
+
+test("sandbox references reopen fresh scoped connections without creation and distinguish paused state", async () => {
+  const f = fixture();
+
+  const connect = (key: string, templateId = "base") =>
+    Sandbar.connect({
+      adapter: f.adapter,
+      config: { teamId: "team_one", templateId },
+      credentials: { apiKey: key },
+    });
+
+  const first = await connect("old-key");
+  const operation = await first.sandboxes.submitCreate({ environment: Image.prepared("base") });
+  const box = await operation.wait();
+  const saved = JSON.parse(JSON.stringify(box.reference));
+  expect(saved).toMatchObject({ kind: "sandbox", provider: "e2b", nativeId: box.id });
+  expect(saved.history).toBeUndefined();
+  expect(JSON.stringify(saved)).not.toContain("old-key");
+  await first.close();
+  const fresh = await connect("rotated-key");
+
+  try {
+    const reopened = await fresh.sandboxes.get(saved);
+    expect(reopened.id).toBe(box.id);
+    expect((await reopened.inspect()).expires.status).toBe("unknown");
+    const recovered = await fresh.recover(operation.reference);
+
+    if (recovered.kind !== "create") throw new Error("Wrong operation kind");
+    expect((await recovered.wait()).reference).toEqual(saved);
+    const record = f.records.get(box.id)!;
+    record.state = "paused";
+    record.endAt = "2000-01-01T00:00:00Z";
+    expect(await (await fresh.sandboxes.get(saved)).inspect()).toMatchObject({
+      state: "suspended",
+      nativeState: "paused",
+      expires: { status: "none" },
+      retention: { status: "known", value: { autoDeleteAfterStoppedSeconds: null } },
+    });
+    await expect(reopened.readFile("/tmp/value")).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    record.state = "native-future-state";
+    expect((await reopened.inspect()).state).toBe("unknown");
+    record.state = "running";
+    record.metadata.sandbar_operation = "different";
+
+    for (const operation of [
+      () => reopened.exec(["true"]),
+      () => reopened.readFile("/tmp/value"),
+      () => reopened.writeFile("/tmp/value", new Uint8Array([1])),
+      () => reopened.destroy(),
+    ])
+      await expect(operation()).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.records.has(box.id)).toBe(true);
+    await expect(fresh.sandboxes.get(saved)).rejects.toMatchObject({ code: "CONFLICT" });
+    record.metadata.sandbar_operation = JSON.parse(saved.receipt).operation;
+
+    for (const forged of [
+      { ...saved, version: 2 },
+      { ...saved, kind: "snapshot" },
+      { ...saved, credentials: "secret" },
+      { ...saved, service: { url: "https://service.invalid", projectId: "p", connectionId: "c" } },
+    ])
+      await expect(fresh.sandboxes.get(forged)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+
+    for (const forged of [
+      { ...saved, provider: "daytona" },
+      { ...saved, scope: { ...saved.scope, authority: { kind: "team", id: "foreign" } } },
+    ])
+      await expect(fresh.sandboxes.get(forged)).rejects.toMatchObject({ code: "CONFLICT" });
+    f.records.delete(box.id);
+    await expect(reopened.inspect()).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(fresh.sandboxes.get(saved)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(f.calls.create).toBe(1);
+  } finally {
+    await fresh.close();
+  }
+});
+
+test("sandbox key-scoped references cannot rotate credentials or change template binding", async () => {
+  const f = fixture();
+
+  const first = await Sandbar.connect({
+    adapter: f.adapter,
+    config: {},
+    credentials: { apiKey: "first-key" },
+  });
+
+  const box = await first.sandboxes.create({ environment: Image.prepared("base") });
+  await first.close();
+
+  for (const config of [{}, { templateId: "my-template" }]) {
+    const fresh = await Sandbar.connect({
+      adapter: f.adapter,
+      config,
+      credentials: { apiKey: "other-key" },
+    });
+
+    try {
+      await expect(fresh.sandboxes.get(box.reference!)).rejects.toMatchObject({ code: "CONFLICT" });
+    } finally {
+      await fresh.close();
+    }
+  }
+});
+
+for (const kind of ["exec", "file_write", "destroy"] as const) {
+  test(`E2B ${kind} rechecks markers after saving the submission reference`, async () => {
+    const f = fixture();
+
+    const client = await Sandbar.connect({
+      adapter: f.adapter,
+      config: { teamId: "team_one" },
+      credentials: { apiKey: "fixture" },
+      onReference(ref) {
+        if (ref.kind === kind && (kind !== "destroy" || ref.token !== undefined))
+          f.records.get(ref.sandboxId!)!.metadata.sandbar_operation = "changed";
+      },
+    });
+
+    try {
+      const created = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const box = await client.sandboxes.get(created.reference!);
+
+      const dispatch = {
+        exec: () => box.exec(["true"]),
+        file_write: () => box.writeFile("/tmp/value", new Uint8Array([1])),
+        destroy: () => box.destroy(),
+      };
+
+      await expect(dispatch[kind]()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+      expect(f.calls.run).toBe(0);
+      expect(f.calls.write).toBe(0);
+      expect(f.calls.kill).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("configured E2B defaults reach one native create; explicit invalid templates never fall back", async () => {
+  const f = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: f.adapter,
+    config: { templateId: "my-template" },
+    credentials: { apiKey: "fixture" },
+  });
+
+  try {
+    expect((await client.sandboxes.checkCreate()).status).toBe("supported");
+    expect(f.calls.create).toBe(0);
+    const box = await client.sandboxes.create({ labels: { job: "report" } });
+    expect(f.calls.create).toBe(1);
+    expect(f.records.get(box.id)?.templateId).toBe("template_one");
+    const override = await client.sandboxes.create({ environment: Image.prepared("base") });
+    expect(f.records.get(override.id)?.templateId).toBe("canonical_base");
+    await expect(
+      client.sandboxes.create({ environment: Image.prepared("missing") }),
+    ).rejects.toThrow();
+    expect(f.calls.create).toBe(2);
+  } finally {
+    await client.close();
+  }
+});
+
+test("lost default creation recovers confirmed identity without replacement or replay", async () => {
+  const f = fixture();
+  f.loseNextResponse();
+  const options = { adapter: f.adapter, config: {}, credentials: { apiKey: "fixture" } };
+  const client = await Sandbar.connect(options);
+  const operation = await client.sandboxes.submitCreate();
+  await client.close();
+  expect(operation.reference.networkPolicy).toBe("blocked");
+  const reopened = await Sandbar.connect({ ...options, config: { networkPolicy: "internet" } });
+
+  try {
+    const recovered = await reopened.recover(operation.reference);
+    expect(await recovered.wait()).toMatchObject({ id: "sb_1" });
+    expect(f.calls.create).toBe(1);
+    expect(recovered.reference.networkPolicy).toBe("blocked");
+    expect(f.internetAccess).toEqual([false]);
+  } finally {
+    await reopened.close();
+  }
+});
+
+test.each(["blocked", "internet"] as const)(
+  "configured E2B network default and per-call override: %s",
+  async (networkPolicy) => {
+    const f = fixture();
+
+    const client = await Sandbar.connect({
+      adapter: f.adapter,
+      config: { networkPolicy },
+      credentials: { apiKey: "fixture-key" },
+    });
+
+    try {
+      expect((await client.sandboxes.checkCreate()).status).toBe("supported");
+      expect(f.calls.create).toBe(0);
+      await client.sandboxes.create();
+      await (await client.sandboxes.submitCreate()).wait();
+      await client.sandboxes.create({
+        networkPolicy: networkPolicy === "internet" ? "blocked" : "internet",
+      });
+      expect(f.internetAccess).toEqual([
+        networkPolicy === "internet",
+        networkPolicy === "internet",
+        networkPolicy !== "internet",
+      ]);
+    } finally {
+      await client.close();
+    }
+  },
+);

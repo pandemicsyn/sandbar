@@ -19,6 +19,75 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 - Image / authority: prepared; borrowed-snapshot / verified-organization.
 - Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `aaba981e572990f6f20beadd235989683f71e7c7`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `aaba981e572990f6f20beadd235989683f71e7c7`.
+- Evidence: [reviewed record](process-p4-daytona-pr79).
+
+| Scenario              | Latest live result | Date       |
+| --------------------- | ------------------ | ---------- |
+| execution-streaming   | passed             | 2026-10-09 |
+| execution-termination | passed             | 2026-10-09 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
+- Evidence: [reviewed record](filesystem-f4-daytona-e91f2d5).
+
+| Scenario                | Latest live result | Date       |
+| ----------------------- | ------------------ | ---------- |
+| file-directories (/tmp) | passed             | 2026-10-08 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `5911cccddd3a25e8af1c0082ac5699875c831655`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `5911cccddd3a25e8af1c0082ac5699875c831655`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/69).
+
+| Scenario            | Latest live result | Date       |
+| ------------------- | ------------------ | ---------- |
+| storage-composition | passed             | 2026-10-02 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `3188e33327325d4eec22e39f4b627d7f900c8838`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `3188e33327325d4eec22e39f4b627d7f900c8838`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/68).
+
+| Scenario          | Latest live result | Date       |
+| ----------------- | ------------------ | ---------- |
+| files (/tmp)      | passed             | 2026-10-02 |
+| lifecycle-renew   | passed             | 2026-10-02 |
+| lifecycle-reopen  | passed             | 2026-10-02 |
+| preview-protected | passed             | 2026-10-02 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
+- SDK: 0.0.0, commit `6796b30b08ccb80ad845fc8b24d72c2d02eb4e35`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `6796b30b08ccb80ad845fc8b24d72c2d02eb4e35`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/57).
+
+| Scenario                 | Latest live result | Date       |
+| ------------------------ | ------------------ | ---------- |
+| lifecycle-suspend-resume | passed             | 2026-10-02 |
+
+### daytona-default-requested · us · /tmp
+
+- Image / authority: prepared; borrowed-snapshot / verified-organization.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: Daytona REST 0.218.
 - SDK: 0.0.0, commit `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
 - Fresh-process reopen: not recorded.
 - Harness commit: `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
@@ -27,7 +96,6 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 | Scenario          | Latest live result | Date       |
 | ----------------- | ------------------ | ---------- |
 | execution         | passed             | 2026-09-30 |
-| files (/tmp)      | passed             | 2026-09-30 |
 | sandbox-lifecycle | passed             | 2026-09-30 |
 
 ### daytona-default-requested · us · /tmp
@@ -154,6 +222,62 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 
 ## E2B
 
+### blocked-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `aaba981e572990f6f20beadd235989683f71e7c7`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `aaba981e572990f6f20beadd235989683f71e7c7`.
+- Evidence: [reviewed record](process-p4-e2b-pr79).
+
+| Scenario              | Latest live result | Date       |
+| --------------------- | ------------------ | ---------- |
+| execution-streaming   | passed             | 2026-10-09 |
+| execution-termination | passed             | 2026-10-09 |
+
+### blocked-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `e91f2d5f97943e08ea7b844212ed564e3d353a6f`.
+- Evidence: [reviewed record](filesystem-f4-e2b-e91f2d5).
+
+| Scenario                      | Latest live result | Date       |
+| ----------------------------- | ------------------ | ---------- |
+| file-directories (/home/user) | passed             | 2026-10-08 |
+
+### blocked-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `3188e33327325d4eec22e39f4b627d7f900c8838`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `3188e33327325d4eec22e39f4b627d7f900c8838`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/68).
+
+| Scenario           | Latest live result | Date       |
+| ------------------ | ------------------ | ---------- |
+| files (/home/user) | passed             | 2026-10-02 |
+| lifecycle-renew    | passed             | 2026-10-02 |
+| lifecycle-reopen   | passed             | 2026-10-02 |
+| preview-public     | passed             | 2026-10-02 |
+
+### blocked-requested · native-default · /home/user
+
+- Image / authority: prepared; borrowed-template / api-key.
+- Runtime: Bun 1.3.14, darwin-arm64. Native interface: e2b 2.51.0.
+- SDK: 0.0.0, commit `26f516d1d16c2e37d1b4820802412e4efca1c7dc`.
+- Fresh-process reopen: not recorded.
+- Harness commit: `26f516d1d16c2e37d1b4820802412e4efca1c7dc`.
+- Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/57).
+
+| Scenario                 | Latest live result | Date       |
+| ------------------------ | ------------------ | ---------- |
+| lifecycle-suspend-resume | passed             | 2026-10-02 |
+
 ### paired-internet-blocked-requested · native-default · /home/user
 
 - Image / authority: prepared; borrowed-template / api-key.
@@ -189,11 +313,10 @@ Only explicit network scenario evidence measures egress: the paired probe covers
 - Harness commit: `8449def77172cf4f8d745fa1065b9b22ec41b69c`.
 - Evidence: [reviewed record](https://github.com/pandemicsyn/sandbar/pull/32).
 
-| Scenario           | Latest live result | Date       |
-| ------------------ | ------------------ | ---------- |
-| execution          | passed             | 2026-09-30 |
-| files (/home/user) | passed             | 2026-09-30 |
-| sandbox-lifecycle  | passed             | 2026-09-30 |
+| Scenario          | Latest live result | Date       |
+| ----------------- | ------------------ | ---------- |
+| execution         | passed             | 2026-09-30 |
+| sandbox-lifecycle | passed             | 2026-09-30 |
 
 ### blocked-requested · provider-default · /home/user
 

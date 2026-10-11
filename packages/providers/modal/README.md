@@ -1,10 +1,10 @@
-# sandbar-modal (experimental)
+# @sandbar-sdk/modal (experimental)
 
 Status: **create, exec, files, inspect, inventory and destroy implemented; deterministic fixtures and packed Node/Bun consumers tested; live unverified**. This package uses the official `modal@0.10.1` JavaScript SDK plus a version-pinned TaskCommandRouter wire subset.
 
 ```ts
 import { Sandbar, Image } from "sandbar-sdk";
-import { modalAdapter } from "sandbar-modal";
+import { modalAdapter } from "@sandbar-sdk/modal";
 
 const client = await Sandbar.connect({
   adapter: modalAdapter,
@@ -31,6 +31,8 @@ The deployed Modal App must already exist; a prepared image ID must exist when t
 Prepared `im-` image IDs and `Image.oci("python:3.12-slim")` are supported. OCI validation in `prepare` is read-only. Inside one create submission, `fromRegistry` constructs the image, then Modal's `experimentalCreate` calls `image.build(app)` before `SandboxCreateV2`; image building may cost money. The adapter creates V2 sandboxes with `blockNetwork: true`, a unique submission name and tags, and a configured native timeout. It does not create secrets, volumes or apps. Destroy terminates compute; prepared and built images retain their existing Modal lifecycle. A lost image-build response can leave a paid image with no sandbox name to observe. The adapter reports unknown and never automatically retries or claims no effect. A lost sandbox-create response is observed by native name and matching tags when the sandbox remains active.
 
 The pinned SDK automatically retries task-router `execStart` and its filesystem write helper after transient errors. Sandbar sends `TaskExecStart` and stdin writes through a narrow gRPC wire client without hidden mutation retries. The execution ID is a deterministic UUID derived from the original submission ID, so SDK observation can reattach to that process without starting it again. Argv, shell, cwd, env, exit status, and binary stdout/stderr are supported with a combined 1 MiB output bound. Native exec timeouts constrain remote execution; abort and close stop local waits and transport calls, but do not promise remote process termination. After uncertain starts or writes, a missing process is unknown rather than proof of no effect.
+
+Ordinary `box.exec` accepts finite stdin up to 1 MiB, with UTF-8 strings encoded by the SDK and exact bytes preserved. Modal starts the command once, writes the bytes at the router's required offsets, then acknowledges EOF; omitted input sends empty input and EOF. The adapter records whether full input-and-EOF delivery was acknowledged. A lost start, chunk or EOF acknowledgement stays unknown even if result observation later finds a completed command; observation never infers delivery from exit and never resends bytes. A result can recover after a lost result response only once input and EOF were fully acknowledged. This support is deterministic and packed evidence; no live Modal calls, paid builds or sandboxes have been run for finite input.
 
 File reads use the pinned SDK's read-only filesystem tool with a 1 MiB transfer cap. File writes stream raw bytes to a sandbox-side POSIX shell command and verify the original process's exit code and byte-count output. `overwrite:false` uses shell noclobber (`O_EXCL` for an absent regular target), so a concurrent writer cannot be overwritten; an already present target is rejected before submission. `overwrite:true` replaces the target. The sandbox image must provide `/bin/sh`, `cat`, `mkdir`, and `wc`. The standard `python:3.12-slim` image has these tools; arbitrary prepared images should be checked by their owner. A crash or lost response while stdin is incomplete can leave a partial file or a waiting process; observation never replays bytes. A successful write is confirmed only by the same process's exit and byte count. No live Modal calls, paid builds or sandboxes have been run for qualification.
 

@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { ResourceReference, MountSpec, SnapshotProfile, SandboxState } from "sandbar-adapter";
+import {
+  LifecycleIntent,
+  FileMutationIntent,
+  ResourceReference,
+  MountSpec,
+  SnapshotProfile,
+  SandboxState,
+} from "@sandbar-sdk/adapter";
 
 export const CaptureExpectation = z.strictObject({
   profile: SnapshotProfile,
@@ -15,7 +22,12 @@ export const ReferenceSchema = z.strictObject({
     "destroy",
     "exec",
     "file_write",
+    "file_mkdir",
+    "file_remove",
     "image_build",
+    "sandbox_suspend",
+    "sandbox_resume",
+    "sandbox_renew",
     "snapshot_capture",
     "snapshot_restore",
     "snapshot_delete",
@@ -30,13 +42,19 @@ export const ReferenceSchema = z.strictObject({
   submissionId: z.string().min(1).max(128),
   invocationKey: z.string().min(1).max(128),
   sandboxId: z.string().min(1).max(512).optional(),
+  sandboxReference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),
+  lifecycle: LifecycleIntent.optional(),
+  renewal: z.strictObject({ forSeconds: z.number().int().positive().safe() }).optional(),
   capture: CaptureExpectation.optional(),
   resource: ResourceReference.optional(),
   mounts: z.array(MountSpec).max(32).optional(),
+  /** Resolved create/restore policy; absent on references saved before setup defaults. */
+  networkPolicy: z.string().min(1).max(128).optional(),
+  fileMutation: FileMutationIntent.optional(),
   file: z
     .strictObject({
       path: z.string().min(1).max(4096),
-      bytes: z.number().int().nonnegative().max(1_048_576),
+      bytes: z.number().int().nonnegative().max(16_777_216),
     })
     .optional(),
   maxOutputBytes: z.number().int().nonnegative().max(1_048_576).optional(),

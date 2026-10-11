@@ -1,11 +1,25 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
-import type { ExecCommand } from "sandbar-adapter/portable";
-import { daytonaProvider, daytonaRegistration, createDaytonaAdapter } from "./index";
+import type { ExecCommand } from "@sandbar-sdk/adapter/portable";
+import { daytonaProvider, daytonaRegistration, createDaytonaAdapter, DaytonaDriver } from "./index";
 import { NonzeroExitError, Sandbar } from "sandbar-sdk";
 import { ProviderReadError } from "@sandbar/provider-spi";
+import {
+  assertFiniteStdinWorkflow,
+  finiteStdinInput,
+} from "../../../sdk-qualification/finite-stdin";
 
 function fixtureFetch(
   handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
@@ -488,6 +502,244 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
   expect(calls.filter((value) => value.endsWith("/process/execute"))).toHaveLength(3);
   expect(calls.filter((value) => value.endsWith("/files/upload-v2"))).toHaveLength(1);
   await client.close();
+});
+
+test("public finite stdin preserves UTF-8 bytes, output streams, cwd, env and exit", async () => {
+  const files = new Map<string, Uint8Array>();
+  let createdName = "";
+  let stagedPath = "";
+  let submittedInput: Uint8Array | undefined;
+  const stagedInputs: Uint8Array[] = [];
+  const finalCommands: string[] = [];
+  let finalCommand = "";
+  let finalCwd: string | undefined;
+  let reservationBehavior: "ok" | "reject" | "lost" = "ok";
+  let uploadBehavior: "ok" | "lost" = "ok";
+  let uploads = 0;
+  let cleanups = 0;
+
+  const fetchImpl = fixtureFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const json = (value: FixtureJson, status = 200) => Response.json(value, { status });
+
+    if (url.pathname === "/api/api-keys/current") return json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return json([region()]);
+
+    if (url.pathname === "/api/snapshots/snap-1")
+      return json({
+        id: "snap-1",
+        organizationId: "org-1",
+        state: "active",
+        regionIds: ["us"],
+        sandboxClass: "linux-vm",
+      });
+
+    if (url.pathname === "/api/sandbox" && init?.method === "POST") {
+      createdName = z.object({ name: z.string() }).parse(JSON.parse(String(init.body))).name;
+
+      return json(native(createdName));
+    }
+
+    if (url.pathname === "/api/sandbox/native-1" && init?.method === "DELETE")
+      return json(native(createdName, "destroyed"));
+
+    if (url.pathname === "/api/sandbox/native-1") return json(native(createdName));
+
+    if (url.pathname.endsWith("/process/execute")) {
+      const request = z
+        .object({ command: z.string(), cwd: z.string().optional() })
+        .parse(JSON.parse(String(init?.body)));
+
+      if (request.command.startsWith("rm -rf -- ")) {
+        cleanups++;
+
+        return json({ exitCode: 0, result: "" });
+      }
+
+      if (
+        request.command.startsWith("mkdir -m 700 -- ") &&
+        !request.command.includes("SANDBAR-EXEC-V1")
+      ) {
+        if (reservationBehavior === "lost") throw new Error("Reservation response lost");
+
+        return json({ exitCode: reservationBehavior === "reject" ? 1 : 0, result: "" });
+      }
+
+      finalCommand = request.command;
+      finalCwd = request.cwd;
+      finalCommands.push(request.command);
+      const first = finalCommands.length === 1;
+      const exitCode = first ? 7 : 0;
+      const inputBytes = first ? new TextEncoder().encode(finiteStdinInput) : new Uint8Array();
+      const stdout = new Uint8Array(inputBytes.length + (first ? 3 : 0));
+      stdout.set(inputBytes);
+
+      if (first) stdout.set(new TextEncoder().encode("out"), inputBytes.length);
+      const stdoutHex = [...stdout].map((byte) => byte.toString(16).padStart(2, "0")).join(" ");
+      const stderrBytes = first ? "65 72 72" : "";
+
+      return json({
+        exitCode: 0,
+        result: `SANDBAR-EXEC-V1\n${exitCode}\n${stdout.length}\n${first ? 3 : 0}\n${stdoutHex}\nSANDBAR-STDERR\n${stderrBytes}\nSANDBAR-END\n`,
+      });
+    }
+
+    if (url.pathname.endsWith("/files/upload-v2")) {
+      uploads++;
+      stagedPath = url.searchParams.get("path")!;
+      const form = init?.body;
+
+      if (!(form instanceof FormData)) throw new Error("Expected multipart upload");
+      const file = form.get("file");
+
+      if (!(file instanceof Blob)) throw new Error("Expected uploaded stdin bytes");
+      submittedInput = new Uint8Array(await file.arrayBuffer());
+
+      if (uploadBehavior === "lost") throw new Error("Upload response lost before stored bytes");
+
+      stagedInputs.push(submittedInput.slice());
+      files.set(stagedPath, submittedInput.slice());
+
+      return json({ name: "file", path: stagedPath, type: "file" });
+    }
+
+    if (url.pathname.endsWith("/files/download")) {
+      const bytes = files.get(url.searchParams.get("path")!);
+
+      return bytes ? new Response(bytes.slice()) : new Response(null, { status: 404 });
+    }
+
+    throw new Error(`Unexpected ${url.pathname}`);
+  });
+
+  const client = await Sandbar.connect({
+    adapter: createDaytonaAdapter(fetchImpl),
+    config: { target: "us" },
+    credentials: { apiKey: "private-key" },
+  });
+
+  try {
+    const box = await client.sandboxes.create({
+      environment: { kind: "prepared", value: "snap-1" },
+    });
+
+    await assertFiniteStdinWorkflow(box, () => submittedInput);
+    expect(submittedInput).toEqual(new TextEncoder().encode(finiteStdinInput));
+    expect(stagedPath).toMatch(/^\/tmp\/.sandbar-exec-stdin-[a-f0-9]+\/payload$/);
+    expect(finalCwd).toBe("/tmp");
+    expect(finalCommand).toContain("FINITE_STDIN_FIXTURE='selected'; export FINITE_STDIN_FIXTURE;");
+    expect(finalCommand).toContain("cat; printf out; printf err >&2; exit 7");
+    expect(finalCommand).toContain('trap \'rm -rf "$d" "$stdin_dir"\' EXIT');
+    expect(finalCommand).toContain(` < '${stagedPath}'`);
+    expect(finalCommand).toContain("SANDBAR-END");
+
+    const empty = await box.exec({
+      command: { kind: "shell", script: "cat >/dev/null; exit 0" },
+      stdin: "",
+      maxOutputBytes: 16,
+    });
+
+    expect(empty.exitCode).toBe(0);
+    expect(stagedInputs.at(-1)).toEqual(new Uint8Array());
+    expect(finalCommand).toContain(` < '${stagedPath}'`);
+
+    const uploadsBeforeOmitted = stagedInputs.length;
+
+    const omitted = await box.exec({
+      command: { kind: "shell", script: "cat >/dev/null; exit 0" },
+      maxOutputBytes: 16,
+    });
+
+    expect(omitted.exitCode).toBe(0);
+    expect(stagedInputs).toHaveLength(uploadsBeforeOmitted);
+    expect(finalCommand).toContain("< /dev/null");
+
+    for (const [index, expectedStatus] of [7, 0, 0].entries()) {
+      const localRoot = mkdtempSync(join(tmpdir(), "sandbar-daytona-stdin-local-"));
+
+      try {
+        let localScript = finalCommands[index]!;
+        const remoteReceipt = /cat '([^']+\/receipt)'$/.exec(localScript)?.[1];
+
+        if (!remoteReceipt) throw new Error("Daytona receipt path missing from local wrapper");
+        const remoteReceiptDirectory = remoteReceipt.slice(0, remoteReceipt.lastIndexOf("/"));
+        const localReceiptDirectory = join(localRoot, "receipt");
+        localScript = localScript.replaceAll(remoteReceiptDirectory, localReceiptDirectory);
+        const remoteStage = /stdin_dir='([^']+)'/.exec(localScript)?.[1];
+        let localStage: string | undefined;
+
+        if (remoteStage) {
+          localStage = join(localRoot, "stdin");
+          mkdirSync(localStage);
+          writeFileSync(join(localStage, "payload"), stagedInputs[index]!);
+          localScript = localScript.replaceAll(remoteStage, localStage);
+        }
+
+        const execution = spawnSync("/bin/sh", ["-c", localScript], {
+          cwd: localRoot,
+          encoding: "utf8",
+          timeout: 5_000,
+        });
+
+        expect(execution.error).toBeUndefined();
+        expect(execution.status).toBe(0);
+        expect(execution.stdout).toContain(`SANDBAR-EXEC-V1\n${expectedStatus}\n`);
+        expect(execution.stdout).toContain("SANDBAR-END\n");
+        expect(execution.stderr).toBe("");
+
+        if (index === 0) {
+          const outputFrame = /SANDBAR-EXEC-V1\n7\n\d+\n3\n([\da-f\s]*)SANDBAR-STDERR/.exec(
+            execution.stdout,
+          );
+
+          const hexBytes = outputFrame?.[1]!.match(/[0-9a-f]{2}/g) ?? [];
+          expect(Uint8Array.from(hexBytes.map((byte) => Number.parseInt(byte, 16)))).toEqual(
+            Uint8Array.from([
+              ...new TextEncoder().encode(finiteStdinInput),
+              ...new TextEncoder().encode("out"),
+            ]),
+          );
+          expect(execution.stdout).toMatch(/SANDBAR-STDERR\n\s+65\s+72\s+72/);
+        } else expect(execution.stdout).toContain(`SANDBAR-EXEC-V1\n0\n0\n0\nSANDBAR-STDERR`);
+
+        if (localStage) expect(existsSync(localStage)).toBe(false);
+        expect(existsSync(join(localReceiptDirectory, "receipt"))).toBe(true);
+        expect(readFileSync(join(localReceiptDirectory, "receipt"), "utf8")).toBe(execution.stdout);
+      } finally {
+        rmSync(localRoot, { recursive: true, force: true });
+      }
+    }
+
+    const command = {
+      command: { kind: "argv" as const, argv: ["cat"] },
+      stdin: "failure",
+      maxOutputBytes: 16,
+    };
+
+    const finalCount = finalCommands.length;
+    const uploadCount = uploads;
+    reservationBehavior = "reject";
+    await expect(box.exec(command)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(finalCommands).toHaveLength(finalCount);
+    expect(uploads).toBe(uploadCount);
+
+    reservationBehavior = "lost";
+    await expect(box.exec(command)).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(finalCommands).toHaveLength(finalCount);
+    expect(uploads).toBe(uploadCount);
+
+    reservationBehavior = "ok";
+    uploadBehavior = "lost";
+    const cleanupsBeforeFailedUpload = cleanups;
+    await expect(box.exec(command)).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(finalCommands).toHaveLength(finalCount);
+    expect(uploads).toBe(uploadCount + 1);
+    expect(cleanups).toBe(cleanupsBeforeFailedUpload + 1);
+    await box.destroy();
+  } finally {
+    await client.close();
+  }
 });
 
 test("unexpected public create response remains unknown without replay", async () => {
@@ -2404,5 +2656,157 @@ test.each([
 
     if (receipt && receipt.startsWith("/tmp/.sandbar-write-"))
       rmSync(receipt, { recursive: true, force: true });
+  }
+});
+
+for (const cancelMode of ["stall", "reject"] as const) {
+  test(`Daytona file abort reaches download and releases reader despite ${cancelMode} cleanup`, async () => {
+    let entered!: () => void;
+
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+
+    let cancelled = 0;
+    let downloadSignal: AbortSignal | null | undefined;
+
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {
+        return new Promise<void>(() => {});
+      },
+      cancel() {
+        cancelled++;
+
+        return cancelMode === "stall"
+          ? new Promise<void>(() => {})
+          : Promise.reject(Error("cleanup failed"));
+      },
+    });
+
+    const fetchImpl = fixtureFetch(async (input, init) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions") return Response.json([region()]);
+
+      if (url.pathname === "/api/sandbox/native-1") return Response.json(native("read-fixture"));
+
+      if (url.pathname.endsWith("/files/download")) {
+        downloadSignal = init?.signal;
+        entered();
+
+        return new Response(stream);
+      }
+
+      throw Error(`Unexpected request ${url.pathname}`);
+    });
+
+    const provider = await daytonaProvider({ apiKey: "fixture", target: "us", fetch: fetchImpl });
+    const controller = new AbortController();
+
+    if (!(provider.driver instanceof DaytonaDriver)) throw Error("Expected Daytona driver");
+
+    const read = provider.driver
+      .readFile({
+        sandbox: { kind: "sandbox", nativeId: "native-1", scope: provider.scope },
+        path: "/file",
+        signal: controller.signal,
+      })
+      .catch((error: Error) => error);
+
+    await started;
+    // Allow the buffered collector to acquire the response reader.
+    await Promise.resolve();
+    controller.abort();
+    expect(await read).toBeInstanceOf(ProviderReadError);
+    expect(downloadSignal?.aborted).toBe(true);
+    expect(cancelled).toBe(1);
+    expect(stream.locked).toBe(false);
+  });
+}
+
+test("REST 0.218 exec timeout is separate from HTTP observation and original receipt recovery", async () => {
+  const timer = spyOn(AbortSignal, "timeout");
+  const local = new AbortController();
+  const durations: number[] = [];
+  timer.mockImplementation((ms) => {
+    durations.push(ms);
+
+    return ms === 17_000 ? local.signal : new AbortController().signal;
+  });
+  let executes = 0;
+  let receiptAvailable = false;
+  const requests: { method: string; path: string }[] = [];
+
+  const fetchImpl = fixtureFetch(async (input, init) => {
+    const url = new URL(String(input));
+    requests.push({ method: init?.method ?? "GET", path: url.pathname });
+
+    if (url.pathname === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+    if (url.pathname === "/api/regions") return Response.json([region()]);
+
+    if (url.pathname === "/api/sandbox/native-1") return Response.json(native("box"));
+
+    if (url.pathname.endsWith("/process/execute")) {
+      executes++;
+      expect(JSON.parse(String(init?.body))).toMatchObject({ cwd: "/tmp", timeout: 7 });
+      expect(durations).toContain(17_000);
+      expect(init?.signal?.aborted).toBe(false);
+      local.abort(new DOMException("HTTP budget expired", "TimeoutError"));
+      expect(init?.signal?.aborted).toBe(true);
+      throw local.signal.reason;
+    }
+
+    if (url.pathname.endsWith("/files/download")) {
+      expect(url.searchParams.get("path")).toContain("/receipt");
+
+      if (!receiptAvailable) return new Response(null, { status: 503 });
+
+      return new Response("SANDBAR-EXEC-V1\n0\n1\n0\n61\nSANDBAR-STDERR\nSANDBAR-END\n");
+    }
+
+    throw new Error(`Unexpected timeout fixture ${url.pathname}`);
+  });
+
+  try {
+    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
+    expect(
+      await provider.driver.exec({
+        sandbox,
+        identity: identity("timeout-original"),
+        command: { kind: "argv", argv: ["true"] },
+        cwd: "/tmp",
+        deadlineSeconds: 7,
+        maxOutputBytes: 10,
+      }),
+    ).toMatchObject({ status: "unknown", effect: "possible", submissionId: "timeout-original" });
+    expect(
+      await provider.driver.observeExec({
+        sandbox,
+        submissionId: "timeout-original",
+        maxOutputBytes: 10,
+      }),
+    ).toBeNull();
+    receiptAvailable = true;
+    expect(
+      await provider.driver.observeExec({
+        sandbox,
+        submissionId: "timeout-original",
+        maxOutputBytes: 10,
+      }),
+    ).toMatchObject({
+      status: "completed",
+      value: { observation: { exitCode: 0, stdoutBase64: "YQ==" } },
+    });
+    expect(executes).toBe(1);
+    expect(requests.filter((request) => request.method !== "GET")).toEqual([
+      { method: "POST", path: "/toolbox/native-1/process/execute" },
+    ]);
+  } finally {
+    timer.mockRestore();
   }
 });

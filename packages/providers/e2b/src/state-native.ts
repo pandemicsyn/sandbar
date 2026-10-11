@@ -1,3 +1,4 @@
+import { sandboxReference, type SandboxReference, type Sandbox } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { resourceHistory } from "./resource-history";
 import {
@@ -15,7 +16,7 @@ import {
   type SnapshotProfile,
   type ReadContext,
   type AttemptContext,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { E2BVolumeCreateRejected, type E2BTransport, type E2BRecord } from "./transport";
 
 const VolumeCreateToken = z.strictObject({
@@ -58,6 +59,7 @@ const restoreToken = z.strictObject({
   selector: z.string().min(1).max(256),
   state: z.enum(["uncertain", "accepted", "rejected"]),
   sandboxId: z.string().min(1).max(512).optional(),
+  allowPublicTraffic: z.boolean().optional(),
 });
 
 export function e2bState(input: {
@@ -65,8 +67,9 @@ export function e2bState(input: {
   transport: E2BTransport;
   scopeMarker: string;
   timeoutSeconds: number;
+  allowPublicTraffic?: boolean;
   apiKey: string;
-  find: (id: string) => Promise<E2BRecord | null>;
+  find: (id: string, expected?: SandboxReference) => Promise<E2BRecord | null>;
 }) {
   const { scope, transport } = input;
   const state = transport.state;
@@ -238,7 +241,7 @@ export function e2bState(input: {
   }
 
   function continueRejectedDeletion(kind: "snapshot" | "volume") {
-    return async (attempt: import("sandbar-adapter").RecoveryAttempt, ctx: AttemptContext) => {
+    return async (attempt: import("@sandbar-sdk/adapter").RecoveryAttempt, ctx: AttemptContext) => {
       const token = DeleteToken.safeParse(attempt.token);
       const ref = attempt.resource;
       const saved = token.success ? token.data.resource : undefined;
@@ -365,7 +368,7 @@ export function e2bState(input: {
     return info;
   }
 
-  async function profiles(target: { sandbox?: { id: string } }, _ctx: ReadContext) {
+  async function profiles(target: { sandbox?: Sandbox }, _ctx: ReadContext) {
     if (!state)
       return {
         status: "unsupported" as const,
@@ -377,7 +380,7 @@ export function e2bState(input: {
         status: "unknown" as const,
         reason: "Actual source envd/class/mount evidence is required",
       };
-    const box = await input.find(target.sandbox.id);
+    const box = await input.find(target.sandbox.id, target.sandbox.reference);
 
     if (!box) return { status: "unavailable" as const, reason: "Source is unavailable" };
 
@@ -462,7 +465,7 @@ export function e2bState(input: {
     snapshotCapture: {
       recovery: { version: 1, token: CaptureToken },
       async prepare(value, ctx) {
-        const box = await input.find(value.sandbox.id);
+        const box = await input.find(value.sandbox.id, value.sandbox.reference);
 
         const plan = resolveSnapshot(
           await profiles({ sandbox: value.sandbox }, ctx),
@@ -479,7 +482,7 @@ export function e2bState(input: {
         return value;
       },
       async submit(value, ctx) {
-        const box = await input.find(value.sandbox.id);
+        const box = await input.find(value.sandbox.id, value.sandbox.reference);
 
         const plan = resolveSnapshot(
           await profiles(
@@ -880,7 +883,13 @@ export function e2bState(input: {
         if (ctx.signal.aborted)
           return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
         const selector = `${value.snapshot.nativeId}:${value.snapshot.generation}`;
-        const token: z.infer<typeof restoreToken> = { selector, state: "uncertain" };
+
+        const token: z.infer<typeof restoreToken> = {
+          selector,
+          state: "uncertain",
+          allowPublicTraffic: input.allowPublicTraffic ?? false,
+        };
+
         await ctx.checkpoint(token);
 
         if (ctx.signal.aborted) {
@@ -901,6 +910,7 @@ export function e2bState(input: {
           },
           timeoutMs: input.timeoutSeconds * 1000,
           allowInternetAccess: value.request.networkPolicy === "internet",
+          allowPublicTraffic: token.allowPublicTraffic,
           signal: ctx.signal,
         });
 
@@ -965,7 +975,20 @@ export function e2bState(input: {
         )
           return ctx.unknown("Restored sandbox identity is unverified");
 
-        return { id: current.id, state: current.state === "running" ? "running" : "unknown" };
+        // Version-1 tokens written before preview configuration used native-public traffic.
+        const allowPublicTraffic = token.data.allowPublicTraffic ?? true;
+
+        if (current.allowPublicTraffic !== allowPublicTraffic)
+          return ctx.unknown("Restored sandbox inbound visibility is unverified; no replay");
+
+        return {
+          id: current.id,
+          reference: sandboxReference("e2b", input.scope, current.id, {
+            operation: current.metadata.sandbar_operation!,
+            submission: current.metadata.sandbar_submission!,
+          }),
+          state: current.state === "running" ? "running" : "unknown",
+        };
       },
       async continue(attempt, ctx) {
         const token = restoreToken.safeParse(attempt.token);
@@ -1097,7 +1120,9 @@ export function e2bState(input: {
         coverage: "provider-scope",
       };
     },
-    async resourceCapabilities() {
+    async resourceCapabilities(target) {
+      if (target.sandbox?.reference) await input.find(target.sandbox.id, target.sandbox.reference);
+
       const restore = state
         ? {
             status: "supported" as const,

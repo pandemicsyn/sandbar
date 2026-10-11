@@ -1,5 +1,5 @@
-import { Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { Image, Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
+import { daytona } from "@sandbar-sdk/daytona";
 import { z } from "zod";
 
 export const daytonaConfiguration = z.strictObject({
@@ -13,7 +13,8 @@ export const daytonaConfiguration = z.strictObject({
     .min(1)
     .max(128)
     .regex(/^[A-Za-z0-9_-]+$/),
-  ttlMinutes: z.literal(15).default(15),
+  ttlMinutes: z.union([z.literal(10), z.literal(15)]).default(15),
+  restartAfterCapture: z.boolean().optional(),
   networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
 });
 
@@ -32,7 +33,9 @@ export function daytonaConnection(configuration: DaytonaConfiguration, apiKey: s
       adapter: daytona({
         apiKey,
         target: config.target,
+        environment: Image.prepared(config.snapshotId),
         ttlMinutes: config.ttlMinutes,
+        snapshots: { restartAfterCapture: config.restartAfterCapture ?? true },
         networkPolicy: config.networkPolicy,
       }),
       config: {},

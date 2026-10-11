@@ -1,4 +1,6 @@
 ---
+import { Code } from "astro:components";
+import { oceanDriveCodeTheme } from "../ocean-drive-code-theme.mjs";
 import Logo from "../components/Logo.astro";
 import ThemeToggle from "../components/ThemeToggle.astro";
 import "../styles/tokens.css";
@@ -6,16 +8,41 @@ import "../styles/tokens.css";
 const title = "Sandbar | One SDK. Every sandbox.";
 
 const description =
-  "Sandbar is one typed TypeScript API to create, run code in and tear down sandboxes on Modal, Daytona, E2B or any provider you adapt.";
+  "Sandbar is a typed TypeScript API for Daytona and E2B sandboxes, with a public adapter API for other providers.";
 
 const fonts =
   "https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap";
 
 const github = "https://github.com/pandemicsyn/sandbar";
 
-const providers = ["modal", "daytona", "e2b"];
+const providers = ["daytona", "e2b", "boxd"];
 
-const install = "npm i sandbar-sdk";
+const install = "bun install --frozen-lockfile";
+
+const adapterExample = `// Inside your adapter's connect() method:
+// Authenticate the client and verify scope first.
+return {
+  scope,
+  supports: { images: ["prepared"], network: ["blocked"] },
+  async create(input, ctx) {
+    const box = await client.spawn({
+      account: account.id,
+      imageId: input.image.value,
+      region: config.region,
+      blockAllEgress: true,
+      public: false,
+      requestId: ctx.submissionId,
+    });
+    return {
+      id: box.id,
+      state: box.ready ? "running" : "unknown",
+    };
+  },
+  async destroy(box) {
+    await client.deleteAndWait(box.id, account.id, config.region);
+    return { computeStopped: true, retainedResources: [] };
+  },
+};`;
 
 const sunBands = [
   [5, "var(--sb-coral)"],
@@ -71,6 +98,7 @@ const sunBands = [
         </div>
         <nav class="nav" aria-label="Main">
           <a class="nav-link wide-only" href="/docs/">Docs</a>
+          <a class="nav-link wide-only" href="/docs/guides/runnable-agent-examples/">Examples</a>
           <a class="nav-link wide-only" href={github}>GitHub</a>
           <ThemeToggle />
         </nav>
@@ -84,18 +112,19 @@ const sunBands = [
             <div class="eyebrow"><span></span>Sandbox router for TypeScript</div>
             <h1>One SDK.<br />Every <span class="accent-word">sandbox.</span></h1>
             <p class="lede">
-              A single typed API to spin up, run code in, and tear down sandboxes on Modal, Daytona,
-              E2B, or any provider you adapt. Swap providers by changing one import.
+              A typed API to create, run code in, and tear down sandboxes on Daytona and E2B.
+              Keep application workflows consistent while configuring each provider explicitly.
             </p>
             <div class="cta-stack">
               <div class="ctas">
                 <a class="btn btn-primary" href="/docs/">Get started →</a>
-                <a class="btn btn-secondary" href={github}>View on GitHub</a>
+                <a class="btn btn-secondary" href="/docs/guides/runnable-agent-examples/">Run an agent →</a>
               </div>
               <button class="npm" type="button" data-copy={install} aria-label={`Copy ${install}`}>
                 <span class="prompt">$</span><span>{install}</span>
                 <span class="npm-state" data-copy-label>copy</span>
               </button>
+              <span class="release-note">From a checkout · packages unpublished · <a href="/docs/direct-quickstart/">checkout setup</a></span>
             </div>
           </div>
 
@@ -133,22 +162,29 @@ const sunBands = [
                   }
                 </div>
               </div>
-              <pre class="code" aria-label="Example: create a sandbox and run a command"><code><span class="k">import</span> {"{"} Sandbar, Image {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
-<span class="k">import</span> {"{"} <span data-typed-plain>modal</span> {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk/<span data-typed-plain>modal</span>"</span>
+              <pre class="code" aria-label="Example: create a sandbox and run a command"><code><span data-factory-connect><span class="k">import</span> {"{"} Sandbar<span data-image-import>, Image</span> {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
+<span class="k">import</span> {"{"} <span data-typed-plain>daytona</span> {"}"} <span class="k">from</span> <span class="s">"@sandbar-sdk/<span data-typed-plain>daytona</span>"</span>
 
-<span class="k">const</span> sandbar = <span class="k">await</span> <span class="t">Sandbar</span>.<span class="f">connect</span>(
-  <span class="typed"><span class="f" data-typed>modal</span><span class="caret" data-caret></span></span>({"{"}
-<span data-options>    tokenId: process.env.<span class="t">MODAL_TOKEN_ID</span>!,
-    tokenSecret: process.env.<span class="t">MODAL_TOKEN_SECRET</span>!,
-    appName: <span class="s">"sandbar"</span>,
-    environment: <span class="s">"main"</span>,</span>
+<span class="k">const</span> client = <span class="k">await</span> Sandbar.connect(
+  <span class="typed"><span data-typed>daytona</span><span class="caret" data-caret></span></span>({"{"}
+<span data-options>    apiKey: process.env.DAYTONA_API_KEY!,
+    target: "us",
+    environment: Image.prepared("daytona-small"),
+    networkPolicy: "daytona-default",</span>
   {"}"}),
-)
-<span class="k">const</span> box = <span class="k">await</span> sandbar.sandboxes.<span class="f">create</span>({"{"}
-  environment: <span class="t">Image</span>.<span class="f">oci</span>(<span class="s">"python:3.12-slim"</span>),
-{"})"}
-<span class="k">const</span> run = <span class="k">await</span> box.<span class="f">exec</span>([<span class="s">"python"</span>, <span class="s">"-V"</span>])
-console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <span class="c">// "Python 3.12.4"</span></code></pre>
+)</span><span data-boxd-connect hidden><span class="k">import</span> {"{"} Sandbar {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
+<span class="k">import</span> {"{"} boxdAdapter {"}"} <span class="k">from</span> <span class="s">"@sandbar-sdk/boxd"</span>
+
+<span class="k">const</span> client = <span class="k">await</span> Sandbar.connect({"{"}
+  adapter: <span class="typed"><span data-typed>boxdAdapter</span><span class="caret" data-caret></span></span>,
+  credentials: {"{"} apiKey: process.env.BOXD_API_KEY! {"}"},
+  config: {"{"} org: process.env.BOXD_ORG!, networkPolicy: <span class="s">"internet"</span> {"}"},
+{"}"})</span>
+<span class="k">await</span> client.sandboxes.with({"{}"}, <span class="k">async</span> (box) =&gt; {"{"}
+  <span class="k">const</span> run = <span class="k">await</span> box.exec([<span class="s">"printf"</span>, <span class="s">"ready"</span>])
+  console.log(run.stdoutText())
+{"}"})
+<span class="k">await</span> client.close()</code></pre>
               <div class="code-status" aria-live="polite">
                 <span class="status-dot" data-status-dot></span>
                 <span class="status-text" data-status>connecting…</span>
@@ -172,31 +208,32 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
         <div class="wrap adapters-row">
           <span class="adapters-label">Adapters</span>
           <ul class="chips">
-            <li class="chip chip-modal"><span></span>Modal</li>
             <li class="chip chip-daytona"><span></span>Daytona</li>
             <li class="chip chip-e2b"><span></span>E2B</li>
+            <li class="chip chip-boxd"><span></span>boxd</li>
+            <li class="chip chip-modal"><span></span>Modal (exp)</li>
             <li class="chip chip-yours">+ your adapter</li>
           </ul>
         </div>
       </section>
 
       <section class="features wrap">
-        <h2>Built on Effect. <span>Shipped as plain TypeScript.</span></h2>
+        <h2>Typed workflows. <span>Plain TypeScript.</span></h2>
         <div class="feature-grid">
           <article class="feature">
             <span class="rule" style="background:var(--sb-pink)"></span>
             <h3>One API, any provider</h3>
-            <p>Create, exec, files and destroy work the same on every adapter, so switching providers is a one-line change.</p>
+            <p>Use common create, exec, files and destroy calls. Choose provider configuration and check its supported capabilities.</p>
           </article>
           <article class="feature">
             <span class="rule" style="background:var(--sb-coral)"></span>
-            <h3>Effect inside</h3>
-            <p>Retries, timeouts, typed errors and scoped cleanup come from Effect. Your code stays plain async/await.</p>
+            <h3>Plays nice with serverless</h3>
+            <p>Save references to recover across invocations. Scope sandbox cleanup while keeping snapshots and volumes.</p>
           </article>
           <article class="feature">
             <span class="rule" style="background:var(--sb-aqua)"></span>
             <h3>Traced end to end</h3>
-            <p>Trace SDK calls and provider phases through your application’s OpenTelemetry setup, with safe error correlation and SDK recovery correlation. Metrics and structured logs are planned separately.</p>
+            <p>OpenTelemetry traces connect SDK calls, provider operations, errors, and recovery context. Integrates with Sentry and Datadog.</p>
           </article>
           <article class="feature">
             <span class="rule" style="background:var(--sb-lav)"></span>
@@ -209,7 +246,7 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
       <section class="band">
         <div class="wrap band-grid">
           <div class="band-copy">
-            <span class="band-chip">sandbar-adapter</span>
+            <span class="band-chip">@sandbar-sdk/adapter</span>
             <h2>Bring your own provider</h2>
             <p>
               Wrap any sandbox API with <code>defineAdapter</code>. Declare config and credential schemas,
@@ -219,22 +256,11 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
             <a class="band-link" href="/docs/guides/write-an-adapter/">Writing an adapter →</a>
           </div>
           <div class="code-card">
-            <div class="code-bar"><span class="file file-only">adapters/acme.ts</span></div>
-            <pre class="code" aria-label="Example: a small adapter"><code><span class="k">import</span> {"{"} z {"}"} <span class="k">from</span> <span class="s">"zod"</span>
-<span class="k">import</span> {"{"} defineAdapter {"}"} <span class="k">from</span> <span class="s">"sandbar-adapter"</span>
-
-<span class="k">export const</span> acme = <span class="f">defineAdapter</span>({"{"}
-  name: <span class="s">"acme"</span>,
-  config: z.<span class="f">strictObject</span>({"{"} region: z.<span class="f">string</span>() {"}"}),
-  credentials: z.<span class="f">strictObject</span>({"{"} token: z.<span class="f">string</span>() {"}"}),
-  <span class="k">async</span> <span class="f">connect</span>({"{"} config, credentials {"}"}) {"{"}
-    <span class="k">const</span> client = <span class="k">new</span> <span class="t">AcmeClient</span>(credentials)
-    <span class="k">return</span> {"{"}
-      <span class="f">create</span>: (input) =&gt; client.<span class="f">spawn</span>(input),
-      <span class="f">destroy</span>: (box) =&gt; client.<span class="f">delete</span>(box.id),
-    {"}"}
-  {"}"},
-{"})"}</code></pre>
+            <div class="code-bar"><span class="file file-only">adapters/acme.ts · excerpt</span></div>
+            <Code code={adapterExample} lang="ts" theme={{ ...oceanDriveCodeTheme, type: "dark" }} class="adapter-code" />
+            <div class="adapter-source">
+              <a class="band-link" href="https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/acme-adapter.ts">View complete source →</a>
+            </div>
           </div>
         </div>
       </section>
@@ -258,7 +284,7 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
         }
       });
 
-      // Copy the install command.
+      // Copy the checkout command.
       document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((button) => {
         const label = button.querySelector("[data-copy-label]");
         let reset: ReturnType<typeof setTimeout> | undefined;
@@ -281,7 +307,7 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
 
       const typedPlain = document.querySelectorAll<HTMLElement>("[data-typed-plain]");
 
-      const caret = document.querySelector<HTMLElement>("[data-caret]");
+      const carets = document.querySelectorAll<HTMLElement>("[data-caret]");
 
       const status = document.querySelector<HTMLElement>("[data-status]");
 
@@ -295,26 +321,19 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
 
       let tick: ReturnType<typeof setInterval> | undefined;
 
-      let current = "modal";
+      let current = "daytona";
 
       // Each provider factory's options: [key, env var] reads process.env, [key, , literal] is a string.
       const optionsNode = document.querySelector<HTMLElement>("[data-options]");
 
       const providerOptions = new Map<string, [string, string?, string?][]>([
         [
-          "modal",
-          [
-            ["tokenId", "MODAL_TOKEN_ID"],
-            ["tokenSecret", "MODAL_TOKEN_SECRET"],
-            ["appName", undefined, "sandbar"],
-            ["environment", undefined, "main"],
-          ],
-        ],
-        [
           "daytona",
           [
             ["apiKey", "DAYTONA_API_KEY"],
             ["target", undefined, "us"],
+            ["environment", undefined, "daytona-small"],
+            ["networkPolicy", undefined, "daytona-default"],
           ],
         ],
         ["e2b", [["apiKey", "E2B_API_KEY"]]],
@@ -322,6 +341,9 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
 
       function renderOptions(provider: string) {
         if (!optionsNode) return;
+        document.querySelector<HTMLElement>("[data-factory-connect]")!.hidden = provider === "boxd";
+        document.querySelector<HTMLElement>("[data-boxd-connect]")!.hidden = provider !== "boxd";
+        document.querySelector<HTMLElement>("[data-image-import]")!.hidden = provider !== "daytona";
 
         const lines = (providerOptions.get(provider) ?? []).map(([key, env, literal]) => {
           const line = document.createElement("span");
@@ -334,7 +356,9 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
           } else {
             value.className = "s";
             value.textContent = `"${literal}"`;
-            line.append(`    ${key}: `, value, ",");
+
+            if (key === "environment") line.append(`    ${key}: Image.prepared(`, value, "),");
+            else line.append(`    ${key}: `, value, ",");
           }
 
           return line;
@@ -344,7 +368,7 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
       }
 
       function setTyped(text: string) {
-        if (typed) typed.textContent = text;
+        document.querySelectorAll<HTMLElement>("[data-typed]").forEach((node) => (node.textContent = text));
         typedPlain.forEach((node) => (node.textContent = text));
       }
 
@@ -354,12 +378,6 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
         if (statusDot) statusDot.style.background = color;
 
         if (statusTime) statusTime.textContent = time;
-      }
-
-      function traceId() {
-        const bytes = crypto.getRandomValues(new Uint8Array(4));
-
-        return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
       }
 
       function later(fn: () => void, ms: number) {
@@ -373,10 +391,11 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
         current = to;
         tabs.forEach((tab) => tab.setAttribute("aria-pressed", String(tab.dataset.provider === to)));
         renderOptions(to);
-        caret?.classList.remove("idle");
+        carets.forEach((caret) => caret.classList.remove("idle"));
         setStatus("connecting…", "var(--sb-code-dim)", "");
 
         let t = 0;
+        const name = to === "boxd" ? "boxdAdapter" : to;
 
         if (motionOn()) {
           for (let i = from.length; i >= 0; i--) {
@@ -385,21 +404,21 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
             t += 35;
           }
 
-          for (let i = 1; i <= to.length; i++) {
-            const text = to.slice(0, i);
+          for (let i = 1; i <= name.length; i++) {
+            const text = name.slice(0, i);
             later(() => setTyped(text), t);
             t += 70;
           }
         } else {
-          setTyped(to);
+          setTyped(name);
         }
 
         const boot = 2000 + Math.random() * 4000;
 
         later(() => {
           const start = performance.now();
-          caret?.classList.add("idle");
-          setStatus("booting sandbox…", "var(--sb-coral)", "0.0s");
+          carets.forEach((caret) => caret.classList.add("idle"));
+          setStatus("creating…", "var(--sb-coral)", "0.0s");
           tick = setInterval(() => {
             if (statusTime) statusTime.textContent = ((performance.now() - start) / 1000).toFixed(1) + "s";
           }, 100);
@@ -408,9 +427,9 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
         later(() => {
           clearInterval(tick);
           setStatus(
-            "Python 3.12.4",
+            "ready",
             "var(--sb-aqua)",
-            `${(boot / 1000).toFixed(2)}s · via ${to} · trace ${traceId()}`,
+            `via ${to}`,
           );
         }, t + 200 + boot);
       }
@@ -425,7 +444,7 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
 
       setTyped("");
 
-      setTimeout(() => runHero("modal", ""), motionOn() ? 900 : 0);
+      setTimeout(() => runHero("daytona", ""), motionOn() ? 900 : 0);
 
       // Lens flare: brightest mid-scroll through the hero, ghosts trail down-right.
       const hero = document.getElementById("hero");
@@ -711,6 +730,10 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
         color: var(--sb-ink);
         box-shadow: 0 4px 0 var(--sb-ink);
       }
+      .release-note {
+        color: var(--sb-muted);
+        font-size: 13px;
+      }
       .npm {
         height: 48px;
         display: flex;
@@ -722,7 +745,7 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
         background: var(--sb-surface);
         color: var(--sb-ink);
         font-family: var(--sb-font-mono);
-        font-size: 15px;
+        font-size: clamp(10px, 1.1vw, 13px);
         font-weight: 500;
         cursor: pointer;
         text-align: left;
@@ -1094,6 +1117,14 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
         background: var(--e2b);
         transform: rotate(45deg);
       }
+      .chip-boxd {
+        background: color-mix(in srgb, var(--sb-lav) 18%, var(--sb-surface));
+        color: var(--sb-ink);
+      }
+      .chip-boxd span {
+        border-radius: 2px;
+        background: var(--sb-lav);
+      }
       .chip-yours {
         padding: 5px 15px;
         border: 1px dashed var(--sb-muted);
@@ -1211,6 +1242,20 @@ console.<span class="f">log</span>(run.<span class="f">stdoutText</span>()) <spa
       .band .code-bar {
         height: 40px;
         padding: 0 16px;
+      }
+
+      :global(.adapter-code) {
+        margin: 0;
+        padding: 20px 22px;
+        background: var(--sb-code-bg) !important;
+        font-family: var(--sb-font-mono);
+        font-size: 12px;
+        line-height: 1.8;
+        overflow-x: auto;
+      }
+      .adapter-source {
+        padding: 0 22px 20px;
+        font-size: 14px;
       }
 
       /* Footer */

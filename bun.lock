@@ -32,9 +32,12 @@
       },
       "devDependencies": {
         "@astrojs/check": "0.9.6",
+        "@sandbar-sdk/adapter": "workspace:*",
+        "@sandbar-sdk/boxd": "workspace:*",
+        "@sandbar-sdk/daytona": "workspace:*",
+        "@sandbar-sdk/e2b": "workspace:*",
+        "@sandbar-sdk/modal": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
-        "sandbar-adapter": "workspace:*",
-        "sandbar-modal": "workspace:*",
         "sandbar-sdk": "workspace:*",
         "satteri": "0.10.5",
         "typescript": "5.9.3",
@@ -42,8 +45,16 @@
         "zod": "4.6.5",
       },
     },
+    "examples": {
+      "name": "@sandbar/agent-examples",
+      "dependencies": {
+        "@sandbar-sdk/daytona": "workspace:*",
+        "@sandbar-sdk/e2b": "workspace:*",
+        "sandbar-sdk": "workspace:*",
+      },
+    },
     "packages/adapter": {
-      "name": "sandbar-adapter",
+      "name": "@sandbar-sdk/adapter",
       "version": "0.0.0",
       "dependencies": {
         "zod": "4.6.5",
@@ -53,28 +64,41 @@
       "name": "@sandbar/provider-spi",
       "version": "0.0.0",
       "dependencies": {
-        "sandbar-adapter": "workspace:*",
+        "@sandbar-sdk/adapter": "workspace:*",
         "zod": "4.6.5",
       },
     },
-    "packages/providers/daytona": {
-      "name": "@sandbar/provider-daytona",
+    "packages/providers/boxd": {
+      "name": "@sandbar-sdk/boxd",
       "version": "0.0.0",
       "dependencies": {
-        "@sandbar/provider-spi": "workspace:*",
-        "sandbar-adapter": "workspace:*",
+        "@boxd-sh/sdk": "0.2.15",
+        "@grpc/grpc-js": "1.14.5",
+        "@sandbar-sdk/adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
         "sandbar-sdk": "workspace:*",
       },
     },
-    "packages/providers/e2b": {
-      "name": "@sandbar/provider-e2b",
+    "packages/providers/daytona": {
+      "name": "@sandbar-sdk/daytona",
       "version": "0.0.0",
       "dependencies": {
+        "@sandbar-sdk/adapter": "workspace:*",
+        "zod": "4.6.5",
+      },
+      "devDependencies": {
+        "@sandbar/provider-spi": "workspace:*",
+        "sandbar-sdk": "workspace:*",
+      },
+    },
+    "packages/providers/e2b": {
+      "name": "@sandbar-sdk/e2b",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sandbar-sdk/adapter": "workspace:*",
         "e2b": "2.51.0",
-        "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
@@ -85,19 +109,19 @@
       "name": "@sandbar/provider-fake",
       "version": "0.0.0",
       "dependencies": {
+        "@sandbar-sdk/adapter": "workspace:*",
         "@sandbar/provider-spi": "workspace:*",
-        "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
     },
     "packages/providers/modal": {
-      "name": "sandbar-modal",
+      "name": "@sandbar-sdk/modal",
       "version": "0.0.0",
       "dependencies": {
         "@bufbuild/protobuf": "2.0.0",
         "@grpc/grpc-js": "1.14.5",
+        "@sandbar-sdk/adapter": "workspace:*",
         "modal": "0.10.1",
-        "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
@@ -105,10 +129,10 @@
       },
     },
     "packages/providers/vercel": {
-      "name": "sandbar-vercel",
+      "name": "@sandbar-sdk/vercel",
       "version": "0.0.0",
       "dependencies": {
-        "sandbar-adapter": "workspace:*",
+        "@sandbar-sdk/adapter": "workspace:*",
         "tar-stream": "3.2.2",
         "zod": "4.6.5",
       },
@@ -122,26 +146,28 @@
       "version": "0.0.0",
       "dependencies": {
         "@opentelemetry/api": "1.9.1",
-        "e2b": "2.51.0",
-        "sandbar-adapter": "workspace:*",
+        "@sandbar-sdk/adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
-        "@sandbar/provider-daytona": "workspace:*",
-        "@sandbar/provider-e2b": "workspace:*",
+        "@sandbar-sdk/daytona": "workspace:*",
+        "@sandbar-sdk/e2b": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
       },
     },
     "packages/sdk-qualification": {
       "name": "sandbar-sdk-qualification",
       "dependencies": {
+        "@sandbar-sdk/adapter": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
-        "sandbar-adapter": "workspace:*",
         "sandbar-sdk": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
-        "sandbar-vercel": "workspace:*",
+        "@sandbar-sdk/boxd": "workspace:*",
+        "@sandbar-sdk/daytona": "workspace:*",
+        "@sandbar-sdk/e2b": "workspace:*",
+        "@sandbar-sdk/vercel": "workspace:*",
       },
     },
   },
@@ -199,6 +225,8 @@
     "@babel/parser": ["@babel/parser@7.29.9", "", { "dependencies": { "@babel/types": "^7.29.8" }, "bin": "./bin/babel-parser.js" }, "sha512-CjXrNHTnvqBVqHgdBysY3vk2T8tpJHb5/RMeHJBTyVa9xgugCB0CJTx/3oO8RV2QRQP391RWpB7D6hLjm8V9uA=="],
 
     "@babel/types": ["@babel/types@7.29.8", "", { "dependencies": { "@babel/helper-string-parser": "^7.29.7", "@babel/helper-validator-identifier": "^7.29.7" } }, "sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg=="],
+
+    "@boxd-sh/sdk": ["@boxd-sh/sdk@0.2.15", "", { "dependencies": { "@bufbuild/protobuf": "^2.10.2", "@grpc/grpc-js": "^1.12.0" } }, "sha512-wAYx+oXlOmHH856yzQY+oodBbek6+Di/jiOuCg4GPIJoA96Nbl+Bi8YuELA3L8pHwKqULpFf5fLUvOaE9eJIPA=="],
 
     "@bruits/satteri-darwin-arm64": ["@bruits/satteri-darwin-arm64@0.10.5", "", { "os": "darwin", "cpu": "arm64" }, "sha512-27KTVl4TJkVahMy/ohyA7qd4938G5UNneFUz/PsScYfpIhj0IVAS23mpcJXdPF44sa6nva198lmV/cKIb2YPyA=="],
 
@@ -696,11 +724,21 @@
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
 
+    "@sandbar-sdk/adapter": ["@sandbar-sdk/adapter@workspace:packages/adapter"],
+
+    "@sandbar-sdk/boxd": ["@sandbar-sdk/boxd@workspace:packages/providers/boxd"],
+
+    "@sandbar-sdk/daytona": ["@sandbar-sdk/daytona@workspace:packages/providers/daytona"],
+
+    "@sandbar-sdk/e2b": ["@sandbar-sdk/e2b@workspace:packages/providers/e2b"],
+
+    "@sandbar-sdk/modal": ["@sandbar-sdk/modal@workspace:packages/providers/modal"],
+
+    "@sandbar-sdk/vercel": ["@sandbar-sdk/vercel@workspace:packages/providers/vercel"],
+
+    "@sandbar/agent-examples": ["@sandbar/agent-examples@workspace:examples"],
+
     "@sandbar/docs": ["@sandbar/docs@workspace:apps/docs"],
-
-    "@sandbar/provider-daytona": ["@sandbar/provider-daytona@workspace:packages/providers/daytona"],
-
-    "@sandbar/provider-e2b": ["@sandbar/provider-e2b@workspace:packages/providers/e2b"],
 
     "@sandbar/provider-fake": ["@sandbar/provider-fake@workspace:packages/providers/fake"],
 
@@ -1316,15 +1354,9 @@
 
     "rolldown": ["rolldown@1.2.11", "", { "dependencies": { "@oxc-project/types": "=0.151.0", "@rolldown/pluginutils": "^1.0.0" }, "optionalDependencies": { "@rolldown/binding-android-arm-eabi": "1.2.11", "@rolldown/binding-android-arm64": "1.2.11", "@rolldown/binding-darwin-arm64": "1.2.11", "@rolldown/binding-darwin-x64": "1.2.11", "@rolldown/binding-freebsd-x64": "1.2.11", "@rolldown/binding-linux-arm-gnueabihf": "1.2.11", "@rolldown/binding-linux-arm64-gnu": "1.2.11", "@rolldown/binding-linux-arm64-musl": "1.2.11", "@rolldown/binding-linux-ppc64-gnu": "1.2.11", "@rolldown/binding-linux-s390x-gnu": "1.2.11", "@rolldown/binding-linux-x64-gnu": "1.2.11", "@rolldown/binding-linux-x64-musl": "1.2.11", "@rolldown/binding-openharmony-arm64": "1.2.11", "@rolldown/binding-win32-arm64-msvc": "1.2.11", "@rolldown/binding-win32-x64-msvc": "1.2.11" }, "bin": { "rolldown": "./bin/cli.mjs" } }, "sha512-qpSwIyz0jHQq5qXBTNxFmE6664rJ7O+4TvPFOiOaBSrz8IOHc1koKKSqTM2H6u1UG1+TveuC6vaDHKXFOvb1Kw=="],
 
-    "sandbar-adapter": ["sandbar-adapter@workspace:packages/adapter"],
-
-    "sandbar-modal": ["sandbar-modal@workspace:packages/providers/modal"],
-
     "sandbar-sdk": ["sandbar-sdk@workspace:packages/sdk"],
 
     "sandbar-sdk-qualification": ["sandbar-sdk-qualification@workspace:packages/sdk-qualification"],
-
-    "sandbar-vercel": ["sandbar-vercel@workspace:packages/providers/vercel"],
 
     "satteri": ["satteri@0.10.5", "", { "dependencies": { "@types/estree-jsx": "^1.0.5", "@types/hast": "^3.0.5", "@types/mdast": "^4.0.4", "@types/unist": "^3.0.3" }, "optionalDependencies": { "@bruits/satteri-darwin-arm64": "0.10.5", "@bruits/satteri-darwin-x64": "0.10.5", "@bruits/satteri-linux-arm64-gnu": "0.10.5", "@bruits/satteri-linux-arm64-musl": "0.10.5", "@bruits/satteri-linux-x64-gnu": "0.10.5", "@bruits/satteri-linux-x64-musl": "0.10.5", "@bruits/satteri-wasm32-wasi": "0.10.5", "@bruits/satteri-win32-arm64-msvc": "0.10.5", "@bruits/satteri-win32-x64-msvc": "0.10.5" } }, "sha512-Ao1LKpAEa9Wdg0otgbVKViZHEq9ebdXe4DMrp3s9vQAU0HNIuHnFEuMuOcm0ZIXyV0Yzxj91NvhLpvXZJO/5ZQ=="],
 
@@ -1515,6 +1547,8 @@
     "@astrojs/compiler-binding-wasm32-wasi/@emnapi/core": ["@emnapi/core@1.11.3", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.3", "tslib": "^2.4.0" } }, "sha512-zLpS5asjEb7lq8jYLq37N6XKaE41DIexlY1rF/z4/tIl3wo13Sqm28fRyfIsKZD+NZ8mM5RoKkpW/rBcuoSZSg=="],
 
     "@astrojs/compiler-binding-wasm32-wasi/@emnapi/runtime": ["@emnapi/runtime@1.11.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA=="],
+
+    "@boxd-sh/sdk/@bufbuild/protobuf": ["@bufbuild/protobuf@2.15.0", "", {}, "sha512-DAheWUkVr/SJTWCc+lg9dhY0eN4SaWlf4+bG1KzHeXbnqt0AfB/NX0Z+VunGlM1ki1B4zVvye27MpKh/svySUA=="],
 
     "@changesets/parse/yaml": ["yaml@2.9.1", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw=="],
 

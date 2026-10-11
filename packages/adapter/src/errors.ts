@@ -7,3 +7,21 @@ export class AdapterError extends Error {
     this.name = "AdapterError";
   }
 }
+
+/** Filesystem effects retained when a transfer or publish cannot be confirmed. */
+export class AdapterFilesystemError extends AdapterError {
+  constructor(
+    code: import("./index").AdapterErrorCode,
+    message: string,
+    readonly details: {
+      effect: import("./portable").SafeError["effect"];
+      source?: string;
+      destination?: string;
+      temporaryPaths?: string[];
+      bytesTransferred?: number;
+    },
+  ) {
+    super(code, message);
+    this.name = "AdapterFilesystemError";
+  }
+}

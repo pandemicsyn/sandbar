@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { readFile, realpath, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { type ExecInput, type Json } from "sandbar-adapter";
+import { type ExecInput, type Json } from "@sandbar-sdk/adapter";
 import { captureHelper, captureSpec, decodeReceipt } from "./capture";
 
 const base: ExecInput = {
@@ -19,7 +19,7 @@ async function run(input: ExecInput) {
   });
 
   expect(helper.status).toBe(0);
-  const path = helper.stdout.trim();
+  const path = helper.stdout.split("\n")[0]!;
   expect(path).toMatch(/^\/tmp\/sandbar-exec-[A-Za-z0-9]+\/receipt\.json$/);
 
   try {

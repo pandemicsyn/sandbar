@@ -11,7 +11,7 @@ import {
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
 import { z } from "zod";
-import type { MountSpec } from "sandbar-adapter";
+import type { OperationOutcome, MountSpec } from "@sandbar-sdk/adapter";
 import type { ConnectionFactory } from "../../provider-qualification/connection";
 import { LedgerStore } from "../../provider-qualification/ledger";
 import { boundedRead } from "../../provider-qualification/bounds";
@@ -46,10 +46,12 @@ export class TestResources {
       volumes: number;
       exerciseMs: number;
       cleanupMs: number;
+      configuredEnvironment?: boolean;
     },
     private readonly initial?: {
       provider: string;
       connection: import("../../provider-qualification/ledger").RunLedger["connection"];
+      image: import("../../provider-qualification/ledger").RunLedger["image"];
     },
   ) {
     this.signal = this.controller.signal;
@@ -69,7 +71,7 @@ export class TestResources {
             await this.ledger.requirePreviousCleanup(this.initial.provider, this.bounds);
             await this.ledger.initialize(
               this.initial.provider,
-              { kind: "borrowed-prepared", class: "prepared" },
+              this.initial.image,
               this.initial.connection,
             );
           }
@@ -88,7 +90,10 @@ export class TestResources {
             cleanup: "pending",
           }));
 
-          if (this.cleaning) throw Error("Setup was cancelled before connection");
+          if (this.cleaning) {
+            await this.ledger.update((value) => ({ ...value, cleanup: "not-required" }));
+            throw Error("Setup was cancelled before connection");
+          }
 
           const held = new Promise<void>((release) => {
             this.release = release;
@@ -203,8 +208,13 @@ export class TestResources {
     this.client = await boundedRead(opening, signal);
   }
 
-  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- SDK generic results are narrowed to public resource handles before retaining custody.
-  private async save(reference: AdapterRecoveryReference, value?: unknown, noEffect = false) {
+  private async save(
+    reference: AdapterRecoveryReference,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- SDK generic results are narrowed to public resource handles before retaining custody.
+    value?: unknown,
+    noEffect = false,
+    outcome?: OperationOutcome,
+  ) {
     const capture = z.object({ snapshot: z.instanceof(AdapterSnapshot) }).safeParse(value);
 
     const resource =
@@ -216,6 +226,9 @@ export class TestResources {
 
     await this.ledger.update((state) => ({
       ...state,
+      stateObservations: outcome
+        ? { ...state.stateObservations, [reference.submissionId]: outcome }
+        : state.stateObservations,
       stateMutations: state.stateMutations?.map((entry) => {
         if (
           z.object({ submissionId: z.string() }).parse(entry.reference).submissionId !==
@@ -224,6 +237,9 @@ export class TestResources {
           return entry;
 
         if (value instanceof AdapterSandbox) return { ...entry, reference, sandboxId: value.id };
+
+        if ((outcome?.kind === "snapshot_restore" || outcome?.kind === "create") && outcome.sandbox)
+          return { ...entry, reference, sandboxId: outcome.sandbox.nativeId };
 
         if (resource) return { ...entry, reference, resource };
 
@@ -249,6 +265,7 @@ export class TestResources {
           : operation.reference,
         undefined,
         error instanceof SandbarError && error.effect === "none",
+        error instanceof SandbarError ? error.outcome : undefined,
       );
       throw error;
     }
@@ -259,30 +276,39 @@ export class TestResources {
     this.role = role;
   }
 
-  async create(role: string, mounts?: MountSpec[], network = this.network) {
+  async create(
+    role: string,
+    mounts?: MountSpec[],
+    network = this.network,
+    configuredEnvironment = this.bounds.configuredEnvironment ?? false,
+  ) {
     this.at(role);
 
     return this.wait(
       await this.client.sandboxes.submitCreate(
-        { environment: Image.prepared(this.imageId), networkPolicy: network, mounts },
+        {
+          environment: configuredEnvironment ? undefined : Image.prepared(this.imageId),
+          networkPolicy: network,
+          mounts,
+        },
         { signal: this.signal },
       ),
     );
   }
 
-  async volume() {
-    this.at("volume/create");
+  async volume(suffix?: "a" | "b") {
+    this.at(suffix ? `volume/${suffix}/create` : "volume/create");
 
     return this.wait(
       await this.client.volumes.submitCreate(
-        { name: `sandbar-${this.ledger.runId.replaceAll("-", "")}` },
+        { name: `sandbar-${this.ledger.runId.replaceAll("-", "")}${suffix ? `-${suffix}` : ""}` },
         { signal: this.signal },
       ),
     );
   }
 
   read(box: AdapterSandbox, path: string) {
-    return boundedRead(box.readFile(path), this.signal);
+    return box.readFile(path, { signal: this.signal });
   }
 
   async exec(box: AdapterSandbox, script: string) {

@@ -32,7 +32,13 @@ let loseStart = false;
 
 let holdWait = false;
 
+let onHeldWait:
+  | ((call: grpc.ServerUnaryCall<Buffer, Buffer>, callback: grpc.sendUnaryData<Buffer>) => void)
+  | undefined;
+
 let loseStdin = false;
+
+let loseOutput = false;
 
 let firstStream: "stdout" | "stderr" | undefined;
 
@@ -80,12 +86,29 @@ server.addService(
       // SAFETY: The fixture asserted the protobuf exec ID field is bytes.
       expect(new TextDecoder().decode(id as Uint8Array)).toBe("submission-1");
 
+      if (holdWait && onHeldWait) {
+        onHeldWait(call, callback);
+
+        return;
+      }
+
       if (holdWait) setTimeout(() => callback(null, waitReply), 100);
       else callback(null, waitReply);
     },
     taskExecStdioRead(call: grpc.ServerWritableStream<Buffer, Buffer>) {
       const descriptor = parse(call.request).get(4);
       expect(descriptor === 1 || descriptor === 2).toBe(true);
+
+      if (loseOutput && descriptor === 2) {
+        call.emit(
+          "error",
+          Object.assign(new Error("output unavailable after exit"), {
+            code: grpc.status.UNAVAILABLE,
+          }),
+        );
+
+        return;
+      }
 
       const emit = () => {
         call.write(
@@ -196,6 +219,30 @@ test("binary stdin uses exact offsets and bounded output truncates", async () =>
     const result = await wire.result("sb-fixture", "submission-1", 2);
     expect(result.stdout.length + result.stderr.length).toBe(2);
     expect(result.truncated).toBe(true);
+  } finally {
+    wire.close();
+  }
+});
+
+test("empty finite stdin sends one EOF request at offset zero", async () => {
+  starts = 0;
+  stdinWrites = 0;
+  seen.length = 0;
+  const wire = router();
+
+  try {
+    await wire.start({
+      sandboxId: "sb-fixture",
+      execId: "submission-1",
+      command: ["cat"],
+      timeoutSeconds: 5,
+    });
+    await wire.stdin("sb-fixture", "submission-1", new Uint8Array());
+    expect(stdinWrites).toBe(1);
+    expect(parse(seen[1]!).get(3)).toBe(0);
+    expect(parse(seen[1]!).get(5)).toBe(1);
+    expect(parse(seen[1]!).get(4)).toBeUndefined();
+    expect(starts).toBe(1);
   } finally {
     wire.close();
   }
@@ -411,5 +458,67 @@ test("abort or close during either control lookup prevents new channels and rout
     }
   } finally {
     channels.mockRestore();
+  }
+});
+
+test("local deadline permits later original-ID recovery; exit alone cannot hide output failure", async () => {
+  starts = 0;
+  const wire = router();
+
+  try {
+    await wire.start({
+      sandboxId: "sb-fixture",
+      execId: "submission-1",
+      command: ["true"],
+      timeoutSeconds: 7,
+    });
+    holdWait = true;
+    const controller = new AbortController();
+
+    let cancelled!: () => void;
+
+    const cancellation = new Promise<void>((resolve) => {
+      cancelled = resolve;
+    });
+
+    const entered = new Promise<void>((resolve) => {
+      onHeldWait = (call, callback) => {
+        call.once("cancelled", () => {
+          callback(Object.assign(new Error("cancelled"), { code: grpc.status.CANCELLED }));
+          cancelled();
+        });
+        resolve();
+      };
+    });
+
+    const rejected = wire.result("sb-fixture", "submission-1", 4, controller.signal).then(
+      () => false,
+      (error: grpc.ServiceError) => error.code === grpc.status.CANCELLED,
+    );
+
+    // Abort only after the fixture has received and held the original-ID wait.
+    await entered;
+    controller.abort(new DOMException("local deadline", "TimeoutError"));
+    expect(await rejected).toBe(true);
+    await cancellation;
+    onHeldWait = undefined;
+    holdWait = false;
+    waitReply = message(field(1, 0));
+    loseOutput = true;
+    await expect(wire.result("sb-fixture", "submission-1", 4)).rejects.toThrow();
+    loseOutput = false;
+    expect(await wire.result("sb-fixture", "submission-1", 4)).toMatchObject({
+      exitCode: 0,
+      stdout: Uint8Array.from([0, 255, 129]),
+      stderr: Uint8Array.from([42]),
+    });
+    expect(starts).toBe(1);
+    expect(parse(seen.at(-1)!).get(6)).toBe(7);
+  } finally {
+    onHeldWait = undefined;
+    holdWait = false;
+    loseOutput = false;
+    waitReply = message(field(1, 7));
+    wire.close();
   }
 });

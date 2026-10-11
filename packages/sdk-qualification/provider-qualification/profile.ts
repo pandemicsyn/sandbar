@@ -16,6 +16,10 @@ export type Routing = z.infer<typeof routingSchema>;
 export type ProviderProfile = {
   id: string;
   nativeVersion: string;
+  /** Create from defaults installed by connection(), including OCI-backed adapters. */
+  configuredEnvironment?: true;
+  /** Expected collision behavior for the shared binary-file assertions. */
+  fileNoClobber?: boolean;
   support: SupportMetadata;
   credentialVariables: readonly string[];
   bounds: { nativeLifetimeSeconds: number; exerciseMs: number; cleanupMs: number };
@@ -34,6 +38,8 @@ export type ProviderProfile = {
 export function defineProviderProfile(profile: ProviderProfile): ProviderProfile {
   providerId.parse(profile.id);
   const support = supportMetadataSchema.parse(profile.support);
+  z.literal(true).optional().parse(profile.configuredEnvironment);
+  z.boolean().optional().parse(profile.fileNoClobber);
 
   if (support.id !== profile.id) throw new Error("Profile support identity differs");
   z.string()

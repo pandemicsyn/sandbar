@@ -1,7 +1,7 @@
 /* oxlint-disable anti-slop/no-chained-type-assertions -- Fault-injection objects intentionally violate the OTel interface to prove that broken application providers cannot change SDK behavior. */
 import { afterAll, expect, test } from "bun:test";
 import type { AdapterRecoveryReference } from "./index";
-import { defineAdapter, type SnapshotProfile } from "sandbar-adapter";
+import { defineAdapter, type SnapshotProfile } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import {
   context,
@@ -138,6 +138,35 @@ test("per-call parents, convenience phases, nonzero exits, privacy and applicati
   afterClose.end();
   expect(exporter.getFinishedSpans().at(-1)?.name).toBe("provider-still-alive");
   await provider.shutdown();
+});
+
+test("text file helpers reuse one byte-operation span and one native call", async () => {
+  const { exporter, provider } = setup();
+  const fixture = fixtureAdapter();
+
+  const client = await Sandbar.connect({
+    ...fixture,
+    config: {},
+    credentials: {},
+    tracing: { tracerProvider: provider },
+  });
+
+  try {
+    const box = await client.sandboxes.create({ environment: Image.prepared("CANARY_IMAGE") });
+    await box.writeTextFile("/CANARY_FILE", "CANARY_TEXT");
+    expect(await box.readTextFile("/CANARY_FILE")).toBe("CANARY_FILE_CONTENT");
+    const spans = safeSpans(exporter);
+    expect(spans.filter((s) => s.name === "sandbar.file.read")).toHaveLength(1);
+    expect(spans.filter((s) => s.name === "sandbar.file.write")).toHaveLength(1);
+    expect(spans.filter((s) => s.name === "sandbar.prepare")).toHaveLength(2);
+    expect(spans.filter((s) => s.name === "sandbar.submit")).toHaveLength(2);
+    expect(spans.filter((s) => s.name === "sandbar.wait")).toHaveLength(2);
+    expect(fixture.counts.read).toBe(1);
+    expect(fixture.counts.write).toBe(1);
+  } finally {
+    await client.close();
+    await provider.shutdown();
+  }
 });
 
 test("disablement and unsampled tracing retain operational recovery without telemetry IO", async () => {

@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import type { AdapterRecoveryReference } from "sandbar-sdk";
 import { z } from "zod";
-import { ResourceScope, ResourceReference } from "sandbar-adapter";
+import { ResourceScope, ResourceReference } from "@sandbar-sdk/adapter";
 import { envdSchema, failureDiagnosticSchema } from "./diagnostics";
 import { networkEvidenceSchema, networkProbeId } from "./network-probe";
 
@@ -13,7 +13,7 @@ const ledgerSchema = z.strictObject({
   provider: z.string().regex(/^[a-z][a-z0-9.-]{0,79}$/),
   createdAt: z.iso.datetime(),
   image: z.strictObject({
-    kind: z.enum(["borrowed-prepared", "owned-built"]),
+    kind: z.enum(["borrowed-prepared", "borrowed-oci", "owned-built"]),
     class: z.string().min(1).max(80),
   }),
   connection: z
@@ -36,7 +36,9 @@ const ledgerSchema = z.strictObject({
           .min(1)
           .max(128)
           .regex(/^[A-Za-z0-9_-]+$/),
-        ttlMinutes: z.literal(15),
+        // Read known saved routing without changing the current fixture's creation budget.
+        ttlMinutes: z.union([z.literal(10), z.literal(15)]),
+        restartAfterCapture: z.boolean().optional(),
         networkPolicy: z.enum(["blocked", "daytona-default"]).optional(),
       }),
       z.strictObject({
@@ -51,6 +53,7 @@ const ledgerSchema = z.strictObject({
           .optional(),
         templateId: z.string().regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/),
         timeoutSeconds: z.literal(300),
+        preview: z.strictObject({ access: z.enum(["protected", "public"]) }).optional(),
       }),
     ])
     .optional(),

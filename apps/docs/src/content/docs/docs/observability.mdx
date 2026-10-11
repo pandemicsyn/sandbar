@@ -21,7 +21,7 @@ Keep your provider, context manager, exporters and instrumentation. No Sandbar t
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 
 const client = await Sandbar.connect(
   daytona({
@@ -56,6 +56,8 @@ Sandbar spans now join the active Datadog request/job trace. Do not register ano
 For Bun, or an application already exporting OTel to Datadog, keep the OTel provider and use an Agent/Collector OTLP endpoint. The complete OTLP example below works on both runtimes.
 
 ## Starting fresh
+
+The packages are currently unpublished. Registry installation commands below describe the release flow; from a source checkout, use the [repository setup and example commands](/docs/direct-quickstart/) with workspace packages until publication.
 
 These complete files create and destroy one Daytona sandbox under a `sandbar-demo` application span. Set `DAYTONA_API_KEY` and optionally `DAYTONA_TARGET` (defaults to `us`). Each sandbox has a 15-minute TTL and is explicitly destroyed. Run Node examples with Node 22.18 or later; Bun examples use Bun 1.3.14. Save the displayed file locally before running the commands.
 
@@ -158,7 +160,7 @@ No option is needed to use the application's provider. `tracing: false` disables
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 
 const client = await Sandbar.connect(
   daytona({
@@ -174,7 +176,7 @@ Provider injection uses `tracing: { tracerProvider }`. Injection changes span cr
 
 ## Interpret spans and errors
 
-Names are fixed, with INTERNAL semantic spans for connect, capabilities, checks, inventory, create/submit-create, image build/submit-build, exec/submit, files, inspect, destroy, operation observe/wait/recover and close. Real preparation, submission and convenience waiting use `sandbar.prepare`, `sandbar.submit` and `sandbar.wait`. Explicit advanced observation uses `sandbar.observe`. Convenience calls suppress their internal public submit/wait copies. Internal polling adds counts and at most eight changed-state events per wait, never one span per unchanged poll.
+Names are fixed, with INTERNAL semantic spans for connect, capabilities, checks, inventory, create/submit-create, image build/submit-build, exec/submit, files, preview, process/terminal start and reopen, inspect, destroy, operation observe/wait/recover and close. Real preparation, submission and convenience waiting use `sandbar.prepare`, `sandbar.submit` and `sandbar.wait`. Explicit advanced observation uses `sandbar.observe`. Convenience calls suppress their internal public submit/wait copies. Internal polling adds counts and at most eight changed-state events per wait, never one span per unchanged poll.
 
 `sandbar.call.outcome` is `success`, `error` or `cancelled`. `sandbar.effect` is separate: `none`, `possible`, `applied`, `partial` or `unknown`. Observation can succeed while the remote operation remains pending/unknown. Current `exec()` is success-only: a nonzero exit throws `NonzeroExitError`, records its exit code and applied effect, and fails that call's contract. Unsupported capability answers are successful queries. Local abort after dispatch does not prove that remote work stopped. Submission response loss remains uncertain and must use existing observation/recovery, without replay.
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AdapterError, type ExecInput } from "sandbar-adapter";
+import { AdapterError, type ExecInput } from "@sandbar-sdk/adapter";
 
 // Executed by the managed Node 24 image. User argv is JSON data, never interpolated code.
 // A private directory and exclusive receipt prevent concurrent executions from colliding.
@@ -30,6 +30,8 @@ for (const stream of ['stdout', 'stderr']) child[stream].on('data', chunk => {
 child.on('error', () => { failure = true; });
 child.on('close', (code, signal) => {
   clearTimeout(timer);
+  if (Number.isInteger(code) && !failure && !timedOut)
+    console.log(JSON.stringify({ sandbarExit: 1, exitCode: code }));
   const receipt = { version: 1, exitCode: code, signal, timedOut, failure, truncated,
     stdout: Buffer.concat(output.stdout).toString('base64'),
     stderr: Buffer.concat(output.stderr).toString('base64') };
