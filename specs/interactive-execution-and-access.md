@@ -56,7 +56,7 @@ Current bounded-exec timeout analysis and output-helper delivery are maintained 
 
 ## Full decoding and bounded display
 
-See the [selected helper API and capture/display contract](output-and-timeouts.md#selected-helper-api). Existing 16 KiB display defaults stay unchanged; full decode and structured previews are a separate additive SDK slice. The focused brief owns signatures, byte/UTF-8 behavior, examples and acceptance.
+See the [selected helper API and capture/display contract](output-and-timeouts.md#selected-helper-api). Text helpers decode all captured bytes by default; structured previews retain the explicit 16 KiB display default. Numeric limits and existing `{ full: true }` calls remain supported. The focused brief owns signatures, byte/UTF-8 behavior, examples and acceptance.
 
 ## Usage and delivery
 

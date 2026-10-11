@@ -7,16 +7,37 @@ import { execOutput } from "./resource";
 
 const encode = (text: string) => new TextEncoder().encode(text);
 
-test("existing text defaults and numeric limits remain byte based; full has no input cap", () => {
+test("text defaults decode all supplied bytes; numeric limits remain byte based", () => {
   const bytes = encode("x".repeat(20_000));
-  expect(outputText(bytes)).toBe("x".repeat(16_384) + "…");
+  expect(outputText(bytes)).toBe("x".repeat(20_000));
   expect(outputText(bytes, undefined)).toBe(outputText(bytes));
   expect(outputText(bytes, 4)).toBe("xxxx…");
   expect(outputText(bytes, 1_048_576)).toBe("x".repeat(20_000));
   expect(outputText(bytes, { full: true })).toBe("x".repeat(20_000));
   const large = encode("y".repeat(1_048_577));
+  expect(outputText(large)).toBe("y".repeat(1_048_577));
   expect(outputText(large, { full: true })).toBe("y".repeat(1_048_577));
   expect(outputText(large, 1_048_576)).toBe("y".repeat(1_048_576) + "…");
+});
+
+test("default helpers preserve complete large JSON and UTF-8 across the old display boundary", () => {
+  const report = { value: "x".repeat(16_373) + "🌊" + "é".repeat(3000) };
+  const json = JSON.stringify(report);
+  const bytes = encode(json);
+  expect(bytes.length).toBeGreaterThan(20_000);
+  const result = execOutput(0, bytes, bytes, false);
+
+  for (const text of [outputText(bytes), result.stdoutText(), result.stderrText(undefined)]) {
+    expect(text).toBe(json);
+    expect(JSON.parse(text)).toEqual(report);
+  }
+
+  expect(result.stdoutText({ full: true })).toBe(result.stdoutText());
+  expect(result.stderrText({ full: true })).toBe(result.stderrText());
+  expect(result.stdoutText(16_384)).toBe(json.slice(0, 16_383) + "�…");
+  expect(result.stdoutPreview()).toEqual({ text: result.stdoutText(16_384), shortened: true });
+  expect(result.stderrPreview()).toEqual(result.stdoutPreview());
+  expect(result.truncated).toBe(false);
 });
 
 test("each preview reports display shortening independently of capture and literal ellipsis", () => {
@@ -26,6 +47,8 @@ test("each preview reports display shortening independently of capture and liter
     expect(result.stderrPreview({ maxBytes: 3 })).toEqual({ text: "…", shortened: false });
     expect(result.stdoutPreview({ maxBytes: 6 })).toEqual({ text: "abcdef", shortened: false });
     expect(result.stderrPreview({ maxBytes: 0 })).toEqual({ text: "…", shortened: true });
+    expect(result.stdoutText()).toBe("abcdef");
+    expect(result.stderrText()).toBe("…");
     expect(result.stdoutText({ full: true })).toBe("abcdef");
     expect(result.stderrText({ full: true })).toBe("…");
     expect(result.truncated).toBe(truncated);
@@ -53,6 +76,8 @@ test("UTF-8 replacement, byte boundaries, and BOM handling match the standard de
   const bytes = Uint8Array.of(0xef, 0xbb, 0xbf, 0xc3, 0xa9, 0xff, 0xe2, 0x82);
   const before = bytes.slice();
   const result = execOutput(7, bytes, bytes, true);
+  expect(result.stdoutText()).toBe("é��");
+  expect(result.stderrText()).toBe("é��");
   expect(result.stdoutText({ full: true })).toBe("é��");
   expect(result.stderrText({ full: true })).toBe("é��");
   expect(result.stdoutPreview({ maxBytes: 4 })).toEqual({ text: "�…", shortened: true });
@@ -211,6 +236,8 @@ test.each([0, 7, null])(
         }
 
         expect(result).toMatchObject({ exitCode, truncated: false });
+        expect(result.stdoutText()).toBe("x".repeat(20_000));
+        expect(result.stderrText()).toBe("diagnostic");
         expect(result.stdoutText({ full: true })).toBe("x".repeat(20_000));
         expect(result.stdoutPreview()).toEqual({ text: "x".repeat(16_384) + "…", shortened: true });
         expect(result.stderrPreview()).toEqual({ text: "diagnostic", shortened: false });

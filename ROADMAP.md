@@ -6,7 +6,6 @@ Updated October 10, 2026 after #81. This is the authoritative work queue. Contra
 
 Task `01a12b8f-53e8-79b1-9c1b-7eefd3667c94` owns three focused slices: full captured-output decoding; honest exec observer/deadline semantics and confirmed bounded-exec exit evidence; opt-in owned sandbox scope. Acceptance lives in [output/timeouts](specs/output-and-timeouts.md), [process IO](specs/process-io-dx.md), and [lifecycle](specs/sandbox-lifecycle.md). These are implementation work, not merged behavior. Adapter extraction (#85) and connection close/cancellation, network defaults and canonical naming are separate work. Each slice requires independent correctness and API review before PR creation, deterministic tests and applicable package/docs/CI gates. No live calls or publication.
 
-
 ## Current baseline
 
 The SDK foundation and its planned everyday DX slices are merged: snapshots/volumes, partial outcomes and persisted identities, cleanup policy, creation defaults, reopen/inspect, lifetime renewal, native suspend/resume, file/text/directory APIs, HTTP preview access, sustained text/byte processes, incremental stdin/EOF, signals, terminals, scoped process reopening and diagnostics, full-output helpers, and timeout clarification. [Finite stdin](specs/process-stdin.md) merged in #71 (release metadata/status corrected in #72); [selected-volume cold restore](specs/storage-composition.md) merged in #69. CI parallelization merged in #73; see [CI validation](CI.md).
