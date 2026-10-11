@@ -28,6 +28,8 @@ Import from `sandbar-sdk`.
 | `assertResourceIdentity`      | re-export |
 | `assertResourceScope`         | re-export |
 | `Capabilities`                | type      |
+| `CloseOptions`                | type      |
+| `ConnectOptions`              | type      |
 | `CreateInput`                 | type      |
 | `CreatePlan`                  | type      |
 | `createProcessTail`           | re-export |

@@ -816,6 +816,7 @@ export async function connectAdapter<
     credentials: z.input<K>;
     // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Cleanup callbacks may throw any JavaScript value; diagnostics preserve that value.
     onDiagnostic?: (error: unknown) => void;
+    signal?: AbortSignal;
   },
 ): Promise<AdapterConnection<S>> {
   const config = parseBoundedSchema(definition.config, input.config, "configuration");
@@ -824,18 +825,31 @@ export async function connectAdapter<
   const releases: (() => void | Promise<void>)[] = [];
   let closed: Promise<void> | undefined;
 
+  // Diagnostics must never replace the initiating setup or release failure.
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Release callbacks may throw arbitrary JavaScript values, preserved only for diagnostics.
+  const diagnose = (error: unknown) => {
+    try {
+      void Promise.resolve(input.onDiagnostic?.(error)).catch(() => {});
+    } catch {
+      // A diagnostic sink is observational only.
+    }
+  };
+
+  const releaseOne = async (release: () => void | Promise<void>) => {
+    try {
+      await release();
+    } catch (error) {
+      diagnose(error);
+    }
+  };
+
   const close = () => {
     if (!closed) {
-      controller.abort();
-      closed = (async () => {
-        for (const release of releases.reverse()) {
-          try {
-            await release();
-          } catch (error) {
-            input.onDiagnostic?.(error);
-          }
-        }
-      })();
+      // Install the attempt before aborting: abort handlers may register releases.
+      closed = Promise.resolve().then(async () => {
+        for (const release of releases.splice(0).reverse()) await releaseOne(release);
+      });
+      controller.abort(input.signal?.aborted ? input.signal.reason : undefined);
     }
 
     return closed;
@@ -854,21 +868,45 @@ export async function connectAdapter<
     signal: controller.signal,
     policy: freezeJson(policy),
     onClose(release) {
-      if (closed) throw new AdapterError("CONFLICT", "Connection is closed");
-      releases.push(release);
+      if (closed) void releaseOne(release);
+      else releases.push(release);
     },
   };
 
+  let removeAbort = () => {};
+
   try {
-    const session =
-      await // SAFETY: connect accepts never only to store heterogeneous adapter definitions; config and credentials were parsed with this definition's schemas above.
-      (
+    if (input.signal?.aborted) throw input.signal.reason;
+
+    const abandoned = new Promise<never>((_resolve, reject) => {
+      const abort = () => {
+        // Reject first; synchronous adapter abort handlers cannot win settlement.
+        reject(input.signal?.reason ?? new DOMException("Connection setup aborted", "AbortError"));
+        void close();
+      };
+
+      input.signal?.addEventListener("abort", abort, { once: true });
+      removeAbort = () => input.signal?.removeEventListener("abort", abort);
+    });
+
+    const pending = Promise.resolve().then(() => {
+      if (input.signal?.aborted) throw input.signal.reason;
+
+      // SAFETY: connect accepts never only to store heterogeneous adapter definitions; config and credentials were parsed with this definition's schemas above.
+      return (
         definition.connect as (input: {
           config: z.output<C>;
           credentials: z.output<K>;
           host: HostContext;
         }) => Promise<S>
       )({ config, credentials, host });
+    });
+
+    const session = await Promise.race([pending, abandoned]);
+
+    // Promise.race adoption and this continuation are separate microtasks.
+    // Cancellation may have released resources after the session won the race.
+    if (input.signal?.aborted) throw input.signal.reason;
 
     const defaults = z
       .object({
@@ -894,8 +932,11 @@ export async function connectAdapter<
 
     return { session, scope: detached, signal: controller.signal, close };
   } catch (error) {
-    await close();
+    // Cleanup continues locally; a failed/hung hook cannot hold setup failure open.
+    void close();
     throw error;
+  } finally {
+    removeAbort();
   }
 }
 

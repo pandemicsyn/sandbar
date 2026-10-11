@@ -31,6 +31,8 @@ export type {
   AdapterRecoveryReference,
   AdapterConnectOptions,
   DirectConnectOptions,
+  ConnectOptions,
+  CloseOptions,
   AdapterCapabilities,
   RecoveredOperation,
   AdvancedOperationResult,

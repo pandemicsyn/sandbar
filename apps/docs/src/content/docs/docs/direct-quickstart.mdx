@@ -116,3 +116,14 @@ You should see `Hello from Sandbar!`. Each example destroys the sandbox in `fina
 - [Read and write files](/docs/guides/files-and-output/) or [configure execution](/docs/guides/resources/).
 - [Capture and restore state or mount retained storage](/docs/guides/snapshots-and-volumes/).
 - [Check tested provider support](/docs/providers/support/) for live-tested workflows and limits.
+
+## Bound connection waits
+
+`Sandbar.connect(adapter, { signal, timeoutMs: 30_000 })` accepts `ConnectOptions`.
+The advanced definition/config/credentials form accepts the same controls in its options object.
+`await client.close({ signal: cleanupSignal, timeoutMs: 5_000 })` accepts `CloseOptions`.
+Only positive finite safe-integer budgets are accepted; longer budgets are allowed.
+
+**Compatibility change:** setup now defaults to a 30-second local wait and each close call defaults to a 5-second local wait. These budgets do not change sandbox lifetime, command deadlines or remote compute. Setup cancellation reports `WAIT_ABORTED`; expiry reports `TIMEOUT`, with effect `none`, cause and a phase-specific message. Aborting the setup signal after the client returns has no effect on the usable client.
+
+Close immediately prevents new work and starts local cleanup once. Cancelling or timing out one close wait leaves that attempt running; a later close can wait for it. Cleanup runs in reverse registration order. A hanging hook can leave later hooks pending; failed releases are sent to `onDiagnostic` and remaining cleanup continues. Successful close means registered cleanup was attempted, not that every failed release succeeded. Late resources from abandoned setup are released locally. Neither setup failure nor close deletes sandboxes, volumes or snapshots; use explicit resource operations for those actions.

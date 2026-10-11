@@ -6,6 +6,15 @@ The [filesystem contract](filesystem-dx.md) owns current directory, metadata, tr
 
 Configure a provider once, create a sandbox, write input, execute, read output and clean up. Creation defaults and UTF-8 helpers are implemented; current directory support supersedes the original restricted native mappings. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
+## October 11 network default acceptance (implementation pending)
+
+Supersedes the earlier deliberate exclusion of network simplification below. Add optional validated immutable `session.defaultNetworkPolicy` alongside `defaultImage`, with explicit per-call policy > session default > blocked. Only undefined means default: null, empty and invalid explicit values reject. No unsupported-policy fallback. Daytona supplies its existing configured policy; E2B gains configured blocked/internet (default blocked), consistently across injectable/config factories. No generic SDK defaults bag or changes to image/lifetime/preview/snapshot defaults.
+
+Resolve once before preflight/persistence/dispatch for create/checkCreate/submitCreate and restore/submitRestore. SDK `RestoreInput` permits omitted policy/input; native `RestoreRequest` and stored operation intents remain fully resolved. Recovery never resolves a prepared intent again under another connection's defaults. Preserve mount/preview/security checks, Daytona scope partition and actionable policy mismatch rejection; do not change identity to make overrides pass. Keep the failed E2B direct-IP probe and live qualification limitations truthful.
+
+Acceptance includes both-provider defaults/overrides, legacy-adapter blocked fallback, invalid explicit values, mismatch rejection, check/submit parity, omitted restore/native input, persisted intent/recovery under different defaults, unchanged mount/preview/security checks and packed consumers. Provider setup docs and compiled shared examples remove repeated policy boilerplate when explicitly configured. No live calls.
+
+
 ## Creation defaults belong in adapter setup
 
 Allow `client.sandboxes.create()` and `create({ labels: ... })` when the adapter can resolve a default environment. An explicit per-call environment takes precedence. `checkCreate()` and `submitCreate()` resolve exactly the same defaults as `create()`; checking support must not provision resources.
