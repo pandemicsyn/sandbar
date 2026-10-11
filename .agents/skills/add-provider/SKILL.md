@@ -17,14 +17,24 @@ Inspect the provider's current official API documentation and the exact native S
 
 Use a small injectable native client or transport so fixtures exercise real request construction and response handling. Verify outbound attempt counts at that boundary: a Sandbar callback invoked once does not prove the native SDK disabled retries. Disable hidden mutation retries, or leave the affected operation unsupported until a safe transport is available.
 
-Read the [capability checklist](../../../apps/docs/src/content/docs/docs/guides/adapter-capabilities.md). Declare only guarantees enforced by the provider:
+Read the [capability checklist](../../../apps/docs/src/content/docs/docs/guides/adapter-capabilities.md). Declare only guarantees that the adapter and provider together enforce:
 
 - Verify the account, organization or app with authenticated read-only IO in `connect`. Include all identity-relevant routing partitions in `scope`; a caller-supplied account string alone is not verification. Keep credentials out of scope, tokens, errors and logs.
 - Check that images and resources belong to that scope. Advertise blocked egress only if the native policy actually provides it, including any account-tier restrictions or exceptions.
 - Preserve argv as arguments, shell scripts as shell scripts, and file/output bytes without text conversion. Bound collected output and file reads. Advertise no-clobber writes only if native creation is atomic.
 - Confirm compute termination before reporting `computeStopped: true`; report retained resources honestly. Register owned local-client cleanup with `host.onClose`. Closing a connection or aborting a wait is not destroying compute.
 
-Do not turn an unsupported capability into an emulation layer, provider redesign or broader hardening project without a concrete task requirement.
+### Bridge native differences inside the adapter
+
+A missing native endpoint is not automatically an unsupported SDK operation. For an in-scope operation, use a small adapter-owned helper, encoding/transport mapping or lifecycle orchestration when it faithfully implements the existing contract. Examples include safely mapping argv to a shell-only transport, capturing stdout/stderr bytes in the guest before a text-only log channel transforms them, and orchestrating stop/capture/start. Prefer a suitable native channel when available; do not prescribe one helper design for every provider.
+
+Keep these mechanics behind the SDK API. The adapter owns helper setup and cleanup; callers should not install helpers or configure wire encodings. Document meaningful image/runtime prerequisites, lifecycle effects and limitations. Guest output and command arguments remain untrusted data: do not confuse user output with helper control records or interpolate arguments unsafely.
+
+Prove the resulting guarantees at the native boundary, including byte/argument fidelity, bounded collection and draining, exit evidence, partial or malformed receipts, cancellation and cleanup. Re-encoding already-decoded text cannot recover original bytes. Preserve confirmed outcomes and available output when later retrieval fails; never replay a command to recover its output.
+
+Test an uncertain mechanism early with a focused fixture or experiment, then continue the implementation when the contract is established. Paid experiments still require explicit authorization. Missing evidence is an actionable investigation, not a claim of support or impossibility. Report unsupported when the operation cannot reliably meet the contract, and escalate a specific contract conflict rather than silently dropping an essential workflow.
+
+This does not authorize a new storage system, archive-based snapshot emulation, cross-provider fallback, provider redesign or broader hardening project. Those require a separately scoped task; ordinary adapter implementation techniques do not.
 
 ### Snapshot defaults
 
