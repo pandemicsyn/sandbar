@@ -15,7 +15,7 @@ const fonts =
 
 const github = "https://github.com/pandemicsyn/sandbar";
 
-const providers = ["daytona", "e2b"];
+const providers = ["daytona", "e2b", "boxd"];
 
 const install = "bun install --frozen-lockfile";
 
@@ -162,7 +162,7 @@ const sunBands = [
                   }
                 </div>
               </div>
-              <pre class="code" aria-label="Example: create a sandbox and run a command"><code><span class="k">import</span> {"{"} Sandbar, Image {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
+              <pre class="code" aria-label="Example: create a sandbox and run a command"><code><span data-factory-connect><span class="k">import</span> {"{"} Sandbar, Image {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
 <span class="k">import</span> {"{"} <span data-typed-plain>daytona</span> {"}"} <span class="k">from</span> <span class="s">"sandbar-<span data-typed-plain>daytona</span>"</span>
 
 <span class="k">const</span> client = <span class="k">await</span> Sandbar.connect(
@@ -171,12 +171,19 @@ const sunBands = [
     target: "us",
     networkPolicy: "daytona-default",</span>
   {"}"}),
-)
+)</span><span data-boxd-connect hidden><span class="k">import</span> {"{"} Sandbar {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
+<span class="k">import</span> {"{"} boxdAdapter {"}"} <span class="k">from</span> <span class="s">"sandbar-boxd"</span>
+
+<span class="k">const</span> client = <span class="k">await</span> Sandbar.connect({"{"}
+  adapter: boxdAdapter,
+  credentials: {"{"} apiKey: process.env.BOXD_API_KEY! {"}"},
+  config: {"{"} org: process.env.BOXD_ORG!, networkPolicy: <span class="s">"internet"</span> {"}"},
+{"}"})</span>
 <span class="k">try</span> {"{"}
-  <span class="k">const</span> box = <span class="k">await</span> client.sandboxes.create({"{"}
+  <span class="k">const</span> box = <span class="k">await</span> client.sandboxes.create(<span data-create-input>{"{"}
     environment: Image.prepared(<span class="s" data-image>"daytona-small"</span>),
     networkPolicy: <span class="s" data-network>"daytona-default"</span>,
-  {"}"})
+  {"}"}</span>)
   <span class="k">try</span> {"{"}
     <span class="k">const</span> run = <span class="k">await</span> box.exec([<span class="s">"printf"</span>, <span class="s">"ready"</span>])
     console.log(run.stdoutText())
@@ -184,7 +191,7 @@ const sunBands = [
 {"}"} <span class="k">finally</span> {"{"} <span class="k">await</span> client.close() {"}"}</code></pre>
               <div class="code-status" aria-live="polite">
                 <span class="status-dot" data-status-dot></span>
-                <span class="status-text" data-status>Illustration: connecting…</span>
+                <span class="status-text" data-status>connecting…</span>
                 <span class="status-time" data-status-time></span>
               </div>
             </div>
@@ -337,6 +344,9 @@ const sunBands = [
 
       function renderOptions(provider: string) {
         if (!optionsNode) return;
+        document.querySelector<HTMLElement>("[data-factory-connect]")!.hidden = provider === "boxd";
+        document.querySelector<HTMLElement>("[data-boxd-connect]")!.hidden = provider !== "boxd";
+        document.querySelector<HTMLElement>("[data-create-input]")!.hidden = provider === "boxd";
         const image = document.querySelector("[data-image]");
         const network = document.querySelector("[data-network]");
 
@@ -389,7 +399,7 @@ const sunBands = [
         tabs.forEach((tab) => tab.setAttribute("aria-pressed", String(tab.dataset.provider === to)));
         renderOptions(to);
         caret?.classList.remove("idle");
-        setStatus("Illustration: connecting…", "var(--sb-code-dim)", "");
+        setStatus("connecting…", "var(--sb-code-dim)", "");
 
         let t = 0;
 
@@ -414,7 +424,7 @@ const sunBands = [
         later(() => {
           const start = performance.now();
           caret?.classList.add("idle");
-          setStatus("Illustration: creating…", "var(--sb-coral)", "0.0s");
+          setStatus("creating…", "var(--sb-coral)", "0.0s");
           tick = setInterval(() => {
             if (statusTime) statusTime.textContent = ((performance.now() - start) / 1000).toFixed(1) + "s";
           }, 100);
@@ -423,7 +433,7 @@ const sunBands = [
         later(() => {
           clearInterval(tick);
           setStatus(
-            "Illustration: ready",
+            "ready",
             "var(--sb-aqua)",
             `via ${to}`,
           );
