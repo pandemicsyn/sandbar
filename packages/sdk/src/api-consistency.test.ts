@@ -152,7 +152,9 @@ test("restore reports every unmet guarantee and rejects compatibility mount choi
       effect: "none",
       feature: "snapshot restore",
       unmetRequirements: [
-        "Network policy 'all' is unsupported",
+        expect.stringContaining(
+          "Network policy 'all' is unsupported by this connection for restore",
+        ),
         "Resource sizing overrides are unsupported",
         "Independent lifecycle is required but unsupported",
       ],
