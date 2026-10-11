@@ -904,6 +904,10 @@ export async function connectAdapter<
 
     const session = await Promise.race([pending, abandoned]);
 
+    // Promise.race adoption and this continuation are separate microtasks.
+    // Cancellation may have released resources after the session won the race.
+    if (input.signal?.aborted) throw input.signal.reason;
+
     const defaults = z
       .object({
         defaultNetworkPolicy: z.string().min(1).max(128).optional(),

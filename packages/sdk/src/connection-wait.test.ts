@@ -314,16 +314,46 @@ test("success delivery wins an abort later in the same turn", async () => {
 
 test("schema validation failure wins over preaborted setup without calling adapter", async () => {
   let calls = 0;
+
   const adapter = fixture(async () => {
     calls++;
 
     return session();
   });
+
   // SAFETY: Invalid credentials exercise the schema boundary before setup dispatch.
   const credentials: z.input<typeof adapter.advanced.adapter.credentials> =
     JSON.parse('{"extra":"invalid"}');
+
   await expect(
     Sandbar.connect({ ...adapter.advanced, credentials, signal: AbortSignal.abort("cancel") }),
   ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   expect(calls).toBe(0);
+});
+
+test("abort between session resolution and success exposure never returns a closed client", async () => {
+  for (const depth of [2, 3]) {
+    const controller = new AbortController();
+    let releases = 0;
+
+    const adapter = fixture((host) => {
+      host.onClose(() => {
+        releases++;
+      });
+
+      const schedule = (remaining: number) => {
+        if (remaining === 0) controller.abort("resolution race");
+        else queueMicrotask(() => schedule(remaining - 1));
+      };
+
+      schedule(depth);
+
+      return Promise.resolve(session());
+    });
+
+    await expect(
+      Sandbar.connect(adapter.bound, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: "WAIT_ABORTED", cause: "resolution race" });
+    expect(releases).toBe(1);
+  }
 });
