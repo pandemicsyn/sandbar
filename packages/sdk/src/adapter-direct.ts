@@ -3085,7 +3085,7 @@ export type AdapterConnectOptions<
   C extends z.ZodType,
   K extends z.ZodType,
   S extends RuntimeSession,
-> = DirectConnectOptions & {
+> = ConnectOptions & {
   adapter: Pick<AdapterDefinition<C, K, S>, "name" | "config" | "credentials"> & {
     connect: (input: never) => Promise<S>;
     policy?: { schema: z.ZodType; default: Json };
@@ -3099,7 +3099,7 @@ export type AdapterConnectOptions<
 
 export function connectDirect(
   adapter: BoundAdapter,
-  options?: DirectConnectOptions,
+  options?: ConnectOptions,
 ): Promise<AdapterDirectClient>;
 export function connectDirect<C extends z.ZodType, K extends z.ZodType, S extends RuntimeSession>(
   options: AdapterConnectOptions<C, K, S>,
@@ -3111,7 +3111,7 @@ export async function connectDirect<
   S extends RuntimeSession,
 >(
   options: AdapterConnectOptions<C, K, S> | BoundAdapter,
-  observability: DirectConnectOptions = {},
+  observability: ConnectOptions = {},
 ): Promise<AdapterDirectClient> {
   const cleanup = z
     .strictObject({ storage: z.enum(["require-durable", "allow-unconfirmed"]).optional() })

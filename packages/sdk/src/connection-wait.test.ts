@@ -282,3 +282,48 @@ test("preaborted close still initiates exactly one cleanup attempt", async () =>
   await client.close();
   expect(releases).toBe(1);
 });
+
+test("success delivery wins an abort later in the same turn", async () => {
+  const controller = new AbortController();
+  let host!: HostContext;
+  let releases = 0;
+
+  const adapter = fixture(async (context) => {
+    host = context;
+    host.onClose(() => {
+      releases++;
+    });
+
+    return session();
+  });
+
+  // This reaction runs in the same microtask checkpoint as successful delivery.
+  const client = await Sandbar.connect(adapter.bound, { signal: controller.signal }).then(
+    (value) => {
+      controller.abort("after delivery");
+
+      return value;
+    },
+  );
+
+  expect(host.signal.aborted).toBe(false);
+  expect(releases).toBe(0);
+  await client.close();
+  expect(releases).toBe(1);
+});
+
+test("schema validation failure wins over preaborted setup without calling adapter", async () => {
+  let calls = 0;
+  const adapter = fixture(async () => {
+    calls++;
+
+    return session();
+  });
+  // SAFETY: Invalid credentials exercise the schema boundary before setup dispatch.
+  const credentials: z.input<typeof adapter.advanced.adapter.credentials> =
+    JSON.parse('{"extra":"invalid"}');
+  await expect(
+    Sandbar.connect({ ...adapter.advanced, credentials, signal: AbortSignal.abort("cancel") }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(calls).toBe(0);
+});
