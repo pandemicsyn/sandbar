@@ -4,6 +4,13 @@ Implementation contract · Updated October 1, 2026 · SDK helpers merged in PR #
 
 This contract distinguishes capture, display and timeout evidence. Exact signatures live in the [SDK exports](../packages/sdk/src/index.ts) and current usage in the [files/output guide](../apps/docs/src/content/docs/docs/guides/files-and-output.md). The [current process IO contract](process-io-dx.md) owns additive process profiles and exec callbacks; the [legacy finite E2B profile](interactive-execution-and-access.md) retains its separate limits. Requested streaming runtime deadlines remain unsupported. Follow the [ordinary result/error contract](sdk-recovery-dx.md).
 
+## October 11 accepted default correction (implementation pending)
+
+No-argument `outputText`, `stdoutText` and `stderrText` decode all supplied/captured bytes, including complete JSON larger than 16 KiB. `{ full: true }` remains supported. Explicit numeric limits retain byte-prefix, UTF-8 replacement and ellipsis semantics; structured previews retain the 16,384-byte default and independent `shortened` flag. No capture cap, provider call or `truncated` evidence changes. Tests cover large JSON, UTF-8 boundaries, invalid options, recovered/error results and existing overloads. Guides teach default decoding with an explicit capture-completeness check and previews for display. Release metadata records this deliberate default compatibility change after read-only registry verification. This supersedes older statements below preserving no-argument shortening.
+
+Bounded E2B execution must preserve a validated exit read before output retrieval fails, with available output and honest truncation. Observation may read an existing receipt again, but never submit execution again to recover output. Inject stdout/stderr retrieval failures after status confirmation in tests.
+
+
 ## Captured bytes and display
 
 The public [SDK implementation](../packages/sdk/src/resource.ts) returns `ExecOutput` with byte arrays, `exitCode`, `truncated`, and `stdoutText(maxBytes?)` / `stderrText(maxBytes?)`. Exported `outputText(bytes, maxBytes?)` implements both methods. Each defaults to **16,384 input bytes**, decodes that prefix with `new TextDecoder()`, and appends `…` when provided bytes exceed the prefix. Numeric limits are safe integers **0–1,048,576**; invalid limits throw `RangeError`. An intact 20 KiB stdout can therefore display an ellipsis while `truncated === false`.

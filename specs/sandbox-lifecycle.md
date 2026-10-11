@@ -4,6 +4,13 @@ Accepted SDK experience · Updated October 2, 2026 · Reopen/inspect merged in P
 
 Follow [ROADMAP.md](../ROADMAP.md) for remaining work. This refines [state portability §4](provider-state-portability.md#4-suspension-resumption-and-expiry), using its reference, scope and no-replay rules. Reopen/inspect and renewal are merged; suspend/resume is merged in #57. Do not introduce a generic lifecycle engine.
 
+## October 11 owned-sandbox scope acceptance (implementation pending)
+
+Add opt-in `client.sandboxes.with(input, callback, options)` beside manual lifecycle APIs. Create exactly one sandbox, pass that owned handle to the callback and return its value after successful cleanup. Always attempt destruction after callback success/failure/cancellation using a fresh bounded cleanup budget independent of the work signal. Apply configured storage cleanup policy and supported per-call override. Do not close the caller client, delete retained snapshots/volumes, or destroy reopened/guessed identities.
+
+Callback plus cleanup failure preserve both original failures and cleanup outcome/recovery evidence in a typed error; cleanup-only failure remains visible with callback completion evidence and the owned sandbox reference. Uncertain creation propagates its recoverable error unchanged, never guesses identity and never invokes the callback. Validate options before create. Tests cover arbitrary thrown values, cancellation, bounded independent cleanup, policy/override, partial/unknown cleanup, uncertain create and retention. Runnable examples reduce boilerplate while retaining recoverability and manual APIs. No connection-close waiting or automatic replay.
+
+
 ## Selected contract
 
 Reopen Sandbar-created compute, inspect current state/deadlines, renew lifetime through the configured adapter policy, and explicitly suspend/resume the same logical resource. Initial suspension covers Daytona **containers** and E2B **memory pause**. E2B filesystem-only pause is a real native choice but deferred; Daytona VM/GPU/Windows suspension is also deferred. No snapshot/delete/recreate emulation, raw-ID adoption, streaming processes, PTYs/tunnels, new providers, automatic paid snapshot policy, mounted suspension, or volume cleanup-policy configuration.
