@@ -8,21 +8,21 @@ Connect to [E2B](/docs/providers/e2b/) or [Daytona](/docs/providers/daytona/) fi
 ## Create and clean up
 
 ```ts
-const box = await sandbar.sandboxes.create({
-  environment: Image.prepared("base"),
-  networkPolicy: "blocked",
-});
-try {
-  const state = await box.inspect();
-  console.log(box.id, state.state);
-  const output = await box.exec(["printf", "hello"]);
-  console.log(output.stdoutText());
-} finally {
-  await box.destroy();
-}
+const text = await sandbar.sandboxes.with(
+  { environment: Image.prepared("base"), networkPolicy: "blocked" },
+  async (box) => {
+    console.log(box.id, (await box.inspect()).state);
+    return (await box.exec(["printf", "hello"])).stdoutText();
+  },
+);
+console.log(text); // Returned after compute cleanup is confirmed.
 ```
 
-Use the sandbox handle for execution, files, inspection, and destruction. Call `sandbar.close()` in an outer `finally` when you're done with the connection, as in [Getting started](/docs/direct-quickstart/). Each sandbox needs its own explicit cleanup. `close()` releases local client state and waiting; it does not destroy remote compute or retained storage.
+`with(input, callback, options)` owns exactly the sandbox it creates. It attempts destruction after callback success, failure or cancellation, without closing your client or deleting retained snapshots/volumes. Manual `create()`/`destroy()` remain available; `get()` never transfers cleanup ownership. Close the caller connection in an outer `finally` after the scope settles. `close()` releases local client state and waiting; it does not destroy remote compute or retained storage.
+
+Options are `signal`, `cleanupTimeoutMs` (positive integer milliseconds, default 30,000, maximum 300,000) and the existing `storage` policy override. Cleanup uses a fresh bounded budget independent of the work signal, honoring the connection's configured storage policy when no override is supplied. Pass the work signal to operations inside the callback as well. Abort stops local callback waiting and starts cleanup; a callback that ignores the signal can continue running, and abort alone does not prove remote termination.
+
+If cleanup succeeds, the callback value or original failure is preserved. If cleanup fails, catch exported `SandboxCleanupError`: `callbackOutcome` retains either the completed value or original thrown value, `cleanupError` retains the destruction failure, and `sandboxId`, `sandboxReference`, `cleanupOperation` and `cleanupReference` preserve available recovery evidence. Its inherited `outcome` retains any partial cleanup confirmation. Save both work and cleanup recovery references when present, and investigate without replaying work. An uncertain create propagates its original recoverable error, never calls the callback and never destroys a guessed identity. The [runnable examples](/docs/guides/runnable-agent-examples/) demonstrate scope cleanup and recovery reporting.
 
 ## Reopen and manage lifetime
 

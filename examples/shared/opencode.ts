@@ -1,6 +1,7 @@
 import {
   NonzeroExitError,
   NoExitCodeError,
+  SandboxCleanupError,
   type ExecOutput,
   type SandboxHandle,
 } from "sandbar-sdk";
@@ -110,9 +111,9 @@ test -x "$2/opencode"`,
 }
 
 export function printOutput(result: ExecOutput) {
-  if (result.stdout.length) process.stdout.write(result.stdoutText({ full: true }));
+  if (result.stdout.length) process.stdout.write(result.stdoutText());
 
-  if (result.stderr.length) process.stderr.write(result.stderrText({ full: true }));
+  if (result.stderr.length) process.stderr.write(result.stderrText());
 
   if (result.truncated)
     throw new Error("Agent output exceeded its bound; captured output is incomplete");
@@ -120,9 +121,15 @@ export function printOutput(result: ExecOutput) {
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- A caught JavaScript exception may be any value; narrow SDK process errors before reading their captured output.
 export function printFailedOutput(error: unknown) {
-  if (error instanceof NonzeroExitError || error instanceof NoExitCodeError) {
-    if (error.result.stdout.length) process.stdout.write(error.result.stdoutText({ full: true }));
+  if (error instanceof SandboxCleanupError && error.callbackOutcome.status === "failed") {
+    printFailedOutput(error.callbackOutcome.error);
 
-    if (error.result.stderr.length) process.stderr.write(error.result.stderrText({ full: true }));
+    return;
+  }
+
+  if (error instanceof NonzeroExitError || error instanceof NoExitCodeError) {
+    if (error.result.stdout.length) process.stdout.write(error.result.stdoutText());
+
+    if (error.result.stderr.length) process.stderr.write(error.result.stderrText());
   }
 }

@@ -57,21 +57,25 @@ async function main() {
 
   const client = await Sandbar.connect(setup.adapter);
   const run = cancellation();
-  let box: SandboxHandle | undefined;
   let failed = false;
 
   try {
-    box = await client.sandboxes.create(setup.create, { signal: run.signal });
-    console.error(`Created sandbox ${box.id}`);
-    await installOpenCode(box, run.signal);
-    await edit(box, env, run.signal, message);
+    await client.sandboxes.with(
+      setup.create,
+      async (box) => {
+        console.error(`Created sandbox ${box.id}`);
+        await installOpenCode(box, run.signal);
+        await edit(box, env, run.signal, message);
+      },
+      { signal: run.signal },
+    );
   } catch (error) {
     failed = true;
     printFailedOutput(error);
     throw error;
   } finally {
     try {
-      await cleanup(client, box, failed);
+      await cleanup(client, undefined, failed);
     } finally {
       run.dispose();
     }

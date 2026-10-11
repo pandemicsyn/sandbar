@@ -310,6 +310,11 @@ import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 async function flow() {
   const client: DirectSandbarClient = await Sandbar.connect({ adapter: createFakeAdapter({ url: "http://127.0.0.1:1234", token: "example-token-123456" }), config: {}, credentials: {} });
   const box: DirectSandboxHandle = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
+  const scoped: number = await client.sandboxes.with({ environment: Image.prepared("fake-starter") }, async owned => {
+    const handle: SandboxHandle = owned;
+    return handle.id.length;
+  }, { cleanupTimeoutMs: 1000, storage: "allow-unconfirmed" });
+  void scoped;
   const commonClient: SandbarClient = client;
   const commonSandbox: SandboxHandle = box;
   const destroy: SandboxHandle["destroy"] = box.destroy;
@@ -379,6 +384,13 @@ if (RootUnknown.name !== "OutcomeUnknownError") throw new Error("SDK error expor
 const client = await Sandbar.connect({ adapter: createFakeAdapter({ url: process.env.FAKE_URL, token: process.env.FAKE_TOKEN }), config: {}, credentials: {} });
 try {
   const box = await client.sandboxes.create({ environment: Image.prepared("fake-starter") });
+  let owned;
+  const scoped = await client.sandboxes.with({ environment: Image.prepared("fake-starter") }, async scopeBox => {
+    owned = scopeBox;
+    return scopeBox.id;
+  });
+  if (!owned || scoped !== owned.id) throw new Error("Scoped callback value missing");
+  if ((await owned.inspect()).state !== "destroyed") throw new Error("Scoped compute cleanup missing");
   const command = { kind: "argv", argv: ["fixture", "packed"] };
   const result = await box.exec(command.argv);
   if (result.exitCode !== 0 || result.stdout.length !== 4 || result.stdout[0] !== 255 || result.stdout[1] !== 0) throw new Error("Binary execution output changed");
@@ -388,7 +400,8 @@ try {
   const preview = report.stdoutPreview({ maxBytes: 4096 });
   if (!preview.shortened || preview.text !== report.stdoutText(4096)) throw new Error("Preview metadata changed");
   if (report.truncated) throw new Error("Captured report may be incomplete");
-  const parsed = JSON.parse(report.stdoutText({ full: true }));
+  const parsed = JSON.parse(report.stdoutText());
+  if (report.stdoutText() !== report.stdoutText({ full: true }) || outputText(report.stdout) !== report.stdoutText()) throw new Error("Default helpers shortened captured bytes");
   if (parsed.payload.length !== 20_000 || report.stderrPreview().shortened || report.stderrText({ full: true }) !== "diagnostic") throw new Error("Full JSON or independent stderr failed");
   const bytes = Uint8Array.from([0, 255, 129]);
   await box.writeFile("/data/packed", bytes);

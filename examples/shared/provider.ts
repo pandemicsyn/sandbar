@@ -1,6 +1,7 @@
 import {
   Image,
   SandbarError,
+  SandboxCleanupError,
   type CreateInput,
   type SandbarClient,
   type SandboxHandle,
@@ -104,6 +105,22 @@ export async function cleanup(
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- The top-level catch accepts arbitrary JavaScript errors and narrows SDK errors before accessing recovery references.
 export function reportFailure(error: unknown) {
   console.error(error);
+
+  if (error instanceof SandboxCleanupError) {
+    console.error("Owned sandbox requiring inspection:", error.sandboxId, error.sandboxReference);
+    console.error("Work outcome:", error.callbackOutcome, "Cleanup failure:", error.cleanupError);
+
+    if (
+      error.callbackOutcome.status === "failed" &&
+      error.callbackOutcome.error instanceof SandbarError &&
+      error.callbackOutcome.error.reference
+    ) {
+      console.error(
+        "Work recovery reference (do not blindly retry):",
+        JSON.stringify(error.callbackOutcome.error.reference),
+      );
+    }
+  }
 
   if (error instanceof SandbarError && error.reference) {
     console.error("Recovery reference (do not blindly retry):", JSON.stringify(error.reference));

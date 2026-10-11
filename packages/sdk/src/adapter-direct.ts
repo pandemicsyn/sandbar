@@ -1,3 +1,4 @@
+import { withSandbox, type SandboxScopeOptions } from "./scoped-sandbox";
 import {
   bufferedLimit,
   streamFile,
@@ -1989,6 +1990,11 @@ export class AdapterDirectClient {
   };
   readonly signal: AbortSignal;
   readonly sandboxes: {
+    with: <T>(
+      input: CreateInput | undefined,
+      callback: (sandbox: AdapterSandbox) => T | Promise<T>,
+      options?: SandboxScopeOptions,
+    ) => Promise<T>;
     get: (reference: SandboxReference, options?: WaitOptions) => Promise<AdapterSandbox>;
     checkCreate: (input?: CreateInput) => Promise<Support<CreatePlan>>;
     create: (input?: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
@@ -2270,6 +2276,7 @@ export class AdapterDirectClient {
       },
     };
     this.sandboxes = {
+      with: (input, callback, options) => withSandbox(this, input, callback, options),
       get: (reference, options = {}) => this.reopenSandbox(reference, options),
       checkCreate: (input) => this.checkCreate(input),
       create: async (input, options = {}) =>
