@@ -8,11 +8,13 @@ Sandbar makes provider operations convenient and their outcomes understandable. 
 
 The snapshot/volume foundation merged in PR #25. Preserve its native identity and scope validation, configured capture defaults, deletion safeguards, and protection against replaying uncertain mutations. Existing runtime recovery facilities are compatibility concerns, not a requirement to expand every SDK operation into a durable workflow.
 
-## October 11 canonical vocabulary acceptance (implementation pending)
+## October 11 canonical vocabulary acceptance (implemented, review-clear; not merged)
 
 Canonical SDK consumer names are `SandbarClient`, `SandboxHandle`, `SnapshotHandle`, `VolumeHandle`, `OperationHandle<T>`, `RecoveryReference`, `ConnectOptions` and `CloseOptions`. Connect inference and nested factory/get/restore/recover declarations present these names. Preserve typed recovery narrowing, submit/prepare/recover, resource references and incoming owned-sandbox helper functionality. Inventory public methods and packed consumers first.
 
 Keep existing Adapter*/Direct* exports as compatibility names with appropriate deprecation guidance and existing runtime class identity/instanceof behavior. Use staged aliases and declaration changes without wrappers, mechanical implementation renames or adapter-to-SDK runtime dependencies. Adapter-author names remain distinct. Review session/telemetry/scope exposures without silently removing exported advanced access: explicitly document compatibility treatment. Keep both complete bounded `listFiles` and metadata-rich `readDirectory`, recommending the former for ordinary listings.
+
+Compatibility staging: existing structural `SandbarClient`, `SandboxHandle` and minimal `OperationHandle<T>` annotations must still accept their previous views/mocks. Concrete factory results use `SandbarClient<true>` and `SandboxHandle<true>` to preserve nominal assignability to supported Adapter* runtime classes. Concrete operations supply the optional kind type parameter, preserving full continuation/narrowing while the one-parameter operation annotation keeps its existing minimal contract. These parameters affect types only. Runtime class names remain supported for construction and instanceof; no replacement objects are introduced. Ordinary default views omit session/telemetry/scope; inferred advanced compatibility access remains present with deprecation guidance during this stage.
 
 Acceptance requires emitted-declaration and strict packed-consumer checks, complete advanced API/recovery narrowing coverage, class identity, generated references, compiled examples and migration notes. Reconcile incoming scope-helper types before C handoff. Independent correctness and API reviews are required before PR creation.
 
@@ -78,3 +80,5 @@ The recovery DX slice is complete. Selected-volume Daytona cold restore also mer
 - Extend beyond #69's selected-volume cold restore only with verified native semantics. The implemented API uses `MountSpec[]` for create and restore; mounted-source capture, recorded-mount omission, memory composition and volume copy/version operations remain deferred. Enforce storage choices before restored execution; unknown provenance cannot authorize omission or sharing.
 
 Write the concrete request/result details and qualification cases when that provider work is scheduled. Until then, document the current limitations without advertising inactive extension points as implemented support.
+
+October 11 integration verification: a test-only merge with owned-sandbox scope commit `83108f8` passed scope/connection/default fixtures and source/emitted declaration checks. Both canonical client views retain `sandboxes.with`; callbacks retain structural and nominal sandbox compatibility. The incoming `SandboxCleanupError` keeps sandbox, callback outcome, cleanup operation and recovery reference evidence. The scope implementation remains owned by its separate task and is not duplicated by this naming slice.

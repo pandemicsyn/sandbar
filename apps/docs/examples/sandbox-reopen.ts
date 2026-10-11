@@ -1,8 +1,8 @@
-import { type AdapterDirectClient, type SandboxReference, type SandboxInfo } from "sandbar-sdk";
+import { type SandbarClient, type SandboxReference, type SandboxInfo } from "sandbar-sdk";
 
 /** Applications store the reference in their own trusted persistence. */
 export async function saveSandbox(
-  client: AdapterDirectClient,
+  client: SandbarClient,
   template: string,
   save: (reference: SandboxReference) => Promise<void>,
 ) {
@@ -19,7 +19,7 @@ export async function saveSandbox(
 }
 
 /** Configure a new connection using the saved provider and original native scope. */
-export async function reopenSandbox(freshClient: AdapterDirectClient, saved: SandboxReference) {
+export async function reopenSandbox(freshClient: SandbarClient, saved: SandboxReference) {
   const sandbox = await freshClient.sandboxes.get(saved);
   const info: SandboxInfo = await sandbox.inspect();
 

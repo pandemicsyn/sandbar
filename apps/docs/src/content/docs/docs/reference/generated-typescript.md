@@ -106,6 +106,7 @@ Import from `sandbar-sdk`.
 | `SandboxScopeCallbackOutcome` | type      |
 | `SandboxScopeOptions`         | type      |
 | `SandboxState`                | type      |
+| `SnapshotHandle`              | type      |
 | `SnapshotInfo`                | re-export |
 | `SnapshotPlan`                | type      |
 | `SnapshotProfile`             | type      |
@@ -123,6 +124,7 @@ Import from `sandbar-sdk`.
 | `validateResourceReference`   | re-export |
 | `VolumeCapabilities`          | type      |
 | `VolumeCreateInput`           | re-export |
+| `VolumeHandle`                | type      |
 | `VolumeInfo`                  | re-export |
 | `WaitAbortedError`            | re-export |
 | `WaitOptions`                 | type      |
