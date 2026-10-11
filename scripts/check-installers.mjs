@@ -30,6 +30,7 @@ for (const name of [
   "sandbar-sdk",
   "@sandbar-sdk/daytona",
   "@sandbar-sdk/e2b",
+  "@sandbar-sdk/boxd",
 ])
   if (!selected.has(name)) throw new Error(`Release graph lacks ${name}`);
 
@@ -90,6 +91,14 @@ for (const provider of ["daytona", "e2b"]) {
     types: `import { ${provider} } from "@sandbar-sdk/${provider}"; const bound = ${provider}(${JSON.stringify(options)}); void bound;`,
   });
 }
+
+cases.push({
+  name: "boxd",
+  packageName: "@sandbar-sdk/boxd",
+  overrides: [adapterName],
+  runtime: `import { boxdAdapter } from "@sandbar-sdk/boxd"; if (boxdAdapter.name !== "boxd") throw Error("Unexpected adapter");`,
+  types: `import { boxdAdapter } from "@sandbar-sdk/boxd"; const name: string = boxdAdapter.name; void name;`,
+});
 
 const temporary = mkdtempSync(join(tmpdir(), "sandbar-installers-"));
 
