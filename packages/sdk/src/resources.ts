@@ -61,6 +61,9 @@ async function resourceRead<T>(
   }
 }
 
+/** SDK restore input; native RestoreRequest remains fully resolved. */
+export type RestoreInput = Omit<RestoreRequest, "networkPolicy"> & { networkPolicy?: string };
+
 export type WaitOptions = ReadOptions & { pollMs?: number };
 
 export type SnapshotResult = Omit<SnapshotCaptureValue, "snapshot"> & { snapshot: AdapterSnapshot };
@@ -124,7 +127,7 @@ export class AdapterSnapshot {
   }
   /** Restore private captured state with explicitly selected current volume data. */
   async submitRestore(
-    request: RestoreRequest,
+    request: RestoreInput = {},
     options: WaitOptions = {},
   ): Promise<AdapterOperation<AdapterSandbox>> {
     const ref = checkedResource(this.client, this.reference, "snapshot");
@@ -141,7 +144,21 @@ export class AdapterSnapshot {
       normalized = { ...request, mounts: undefined };
     }
 
-    const input = validateResourceInput(RestoreRequest, normalized, "Invalid restore request");
+    const checked = validateResourceInput(
+      RestoreRequest.partial({ networkPolicy: true }),
+      normalized,
+      "Invalid restore request",
+    );
+
+    const input = validateResourceInput(
+      RestoreRequest,
+      {
+        ...checked,
+        networkPolicy:
+          checked.networkPolicy ?? this.client.session.defaultNetworkPolicy ?? "blocked",
+      },
+      "Invalid restore request",
+    );
 
     for (const mount of input.mounts ?? []) checkedResource(this.client, mount.volume, "volume");
 
@@ -160,7 +177,9 @@ export class AdapterSnapshot {
     const unmet: string[] = [];
 
     if (!info.restore.networkPolicies.includes(input.networkPolicy))
-      unmet.push(`Network policy '${input.networkPolicy}' is unsupported`);
+      unmet.push(
+        `Network policy '${input.networkPolicy}' is unsupported by this connection for restore; supported policies: ${info.restore.networkPolicies.join(", ") || "none"}. Configure a separate connection with the requested policy if the adapter supports it.`,
+      );
 
     if (Object.keys(input.resources ?? {}).length > 0 && !info.restore.resources)
       unmet.push("Resource sizing overrides are unsupported");
@@ -204,11 +223,11 @@ export class AdapterSnapshot {
 
         return new AdapterSandbox(this.client, result.value.id, result.value.reference ?? null);
       },
-      { ...options, resource: ref, mounts: input.mounts },
+      { ...options, resource: ref, mounts: input.mounts, networkPolicy: input.networkPolicy },
     );
   }
   /** Restore requires no recorded native mounts and confirmed mountHandling: "none". */
-  async restore(input: RestoreRequest, options: WaitOptions = {}): Promise<AdapterSandbox> {
+  async restore(input: RestoreInput = {}, options: WaitOptions = {}): Promise<AdapterSandbox> {
     return (await this.submitRestore(input, options)).wait(options);
   }
   submitDelete(options: WaitOptions = {}): Promise<AdapterOperation<ArtifactDeletionResult>> {

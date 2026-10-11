@@ -6,7 +6,7 @@ The [filesystem contract](filesystem-dx.md) owns current directory, metadata, tr
 
 Configure a provider once, create a sandbox, write input, execute, read output and clean up. Creation defaults and UTF-8 helpers are implemented; current directory support supersedes the original restricted native mappings. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
-## October 11 network default acceptance (implementation pending)
+## October 11 network default acceptance (implemented; review pending)
 
 Supersedes the earlier deliberate exclusion of network simplification below. Add optional validated immutable `session.defaultNetworkPolicy` alongside `defaultImage`, with explicit per-call policy > session default > blocked. Only undefined means default: null, empty and invalid explicit values reject. No unsupported-policy fallback. Daytona supplies its existing configured policy; E2B gains configured blocked/internet (default blocked), consistently across injectable/config factories. No generic SDK defaults bag or changes to image/lifetime/preview/snapshot defaults.
 
@@ -25,11 +25,13 @@ Implemented setup, using existing E2B terminology and one additional Daytona opt
 const e2bClient = await Sandbar.connect(e2b({
   apiKey: process.env.E2B_API_KEY!,
   templateId: "base", // existing option; also supplies create()'s default
+  networkPolicy: "internet",
 }));
 
 const daytonaClient = await Sandbar.connect(daytona({
   apiKey: process.env.DAYTONA_API_KEY!,
   target: "us",
+  networkPolicy: "daytona-default",
   environment: Image.prepared("my-project-image"), // default for omitted per-call environments
 }));
 
@@ -49,7 +51,7 @@ The public input is the existing `CreateInput` with optional `environment`; crea
 
 Defaults are explicit values, not a fallback search. Validate overrides normally: a foreign scoped image rejects before creation; an unavailable template does not fall back to `base`; an OCI image does not cause an unrequested build. Preserve the existing build/restore paths. Never substitute a new sandbox after an uncertain create. Returned sandbox references remain persistable using the shipped contract.
 
-This slice does not change network defaults, lifetime policy, image resolution, snapshot restore, mounts or permissions. In particular, an omitted network policy stays blocked under the existing contract. Daytona's explicit provider-managed egress configuration still requires its current per-call selection; simplifying that is a separately reviewed networking decision. Do not bundle CPU/memory sizing or create-time environment variables into this change.
+The October 11 network slice supersedes the original exclusion of network simplification: configured session networking now supplies omitted create/restore policies, with blocked as the legacy fallback. Lifetime policy, image resolution, mounts and permissions stay in their existing contracts. CPU/memory sizing and create-time environment variables are outside this change.
 
 ## Text files without encoding boilerplate
 

@@ -204,9 +204,23 @@ test.each([
     let client = await connect();
 
     try {
+      const mismatch = { environment: Image.prepared("base"), networkPolicy: "blocked" };
+      expect(await client.sandboxes.checkCreate(mismatch)).toMatchObject({
+        status: "unsupported",
+        reason: expect.stringContaining("daytona-default"),
+      });
+
+      for (const call of [client.sandboxes.create, client.sandboxes.submitCreate]) {
+        await expect(call(mismatch)).rejects.toMatchObject({
+          code: "UNSUPPORTED",
+          message: expect.stringContaining("separate connection"),
+        });
+      }
+
+      expect(posts).toBe(0);
+
       const source = await client.sandboxes.create({
         environment: Image.prepared("base"),
-        networkPolicy: "daytona-default",
       });
 
       const capture = await source.snapshot();
@@ -237,6 +251,17 @@ test.each([
       });
 
       const mounts = [volume.at("/data", { subpath: "tenant" })];
+
+      await expect(snapshotHandle.restore({ networkPolicy: "blocked" })).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+        message: expect.stringContaining("daytona-default"),
+      });
+      await expect(
+        snapshotHandle.submitRestore({ networkPolicy: "blocked" }),
+      ).rejects.toMatchObject({
+        code: "UNSUPPORTED",
+        message: expect.stringContaining("separate connection"),
+      });
 
       for (const bad of [
         { networkPolicy: "blocked", mounts },
@@ -281,10 +306,8 @@ test.each([
         return;
       }
 
-      const operation = await snapshotHandle.submitRestore({
-        networkPolicy: "daytona-default",
-        mounts,
-      });
+      const operation = await snapshotHandle.submitRestore({ mounts });
+      expect(operation.reference.networkPolicy).toBe("daytona-default");
 
       expect(operation.reference.mounts).toEqual(mounts);
 

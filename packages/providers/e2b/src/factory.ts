@@ -6,6 +6,7 @@ export function e2b(options: {
   apiKey: string;
   teamId?: string;
   templateId?: string;
+  networkPolicy?: "blocked" | "internet";
   timeoutSeconds?: number;
   preview?: { access: "protected" | "public" };
   lifecycle?: {
@@ -18,6 +19,7 @@ export function e2b(options: {
     {
       teamId: options.teamId,
       templateId: options.templateId,
+      networkPolicy: options.networkPolicy,
       timeoutSeconds: options.timeoutSeconds,
       lifecycle: options.lifecycle,
       preview: options.preview,

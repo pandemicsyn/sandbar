@@ -103,7 +103,7 @@ export type {
 
 export { AdapterSnapshot, AdapterVolume } from "./resources";
 
-export type { SnapshotResult, WaitOptions } from "./resources";
+export type { SnapshotResult, WaitOptions, RestoreInput } from "./resources";
 
 export {
   MountSpec,

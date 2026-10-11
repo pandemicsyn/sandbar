@@ -768,11 +768,14 @@ export async function checkCreate(
   input: CreateInput,
   context: ReadContext,
 ): Promise<Support<CreatePlan>> {
-  if (
-    !session.supports.images.includes(input.image.kind) ||
-    !session.supports.network.includes(input.networkPolicy)
-  )
-    return { status: "unsupported", reason: "Requested image or network policy is unsupported" };
+  if (!session.supports.images.includes(input.image.kind))
+    return { status: "unsupported", reason: "Requested image is unsupported" };
+
+  if (!session.supports.network.includes(input.networkPolicy))
+    return {
+      status: "unsupported",
+      reason: `Network policy '${input.networkPolicy}' is unsupported by this connection; supported policies: ${session.supports.network.join(", ") || "none"}. Configure a separate connection with the requested policy if the adapter supports it.`,
+    };
 
   if (input.mounts?.length) {
     const mounts = z.array(MountSpec).max(32).parse(input.mounts);

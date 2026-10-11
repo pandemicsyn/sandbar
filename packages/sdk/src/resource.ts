@@ -305,7 +305,7 @@ export function validateCreate(
   input: CreateInput | undefined,
   defaultEnvironment?: ImageInput,
   defaultNetworkPolicy = "blocked",
-): CreateInput & { environment: ImageInput } {
+): CreateInput & { environment: ImageInput; networkPolicy: string } {
   const parsed = z
     .strictObject({
       environment: z

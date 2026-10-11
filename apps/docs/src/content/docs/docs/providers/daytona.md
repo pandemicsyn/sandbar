@@ -3,7 +3,7 @@ title: Daytona
 description: Connect to Daytona with explicit region, prepared image, and network policy settings.
 ---
 
-Import `daytona` from `sandbar-daytona`. Start with an active Linux snapshot in your target region. The example selects `daytona-default` on connection and creation, matching the getting-started configuration. Strict blocked networking requires eligible organization settings; see the policy section below.
+Import `daytona` from `sandbar-daytona`. Start with an active Linux snapshot in your target region. The example selects `daytona-default` once on connection, matching the getting-started configuration. Strict blocked networking requires eligible organization settings; see the policy section below.
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
@@ -21,7 +21,7 @@ const client = await Sandbar.connect(
 );
 
 try {
-  const box = await client.sandboxes.create({ networkPolicy: "daytona-default" });
+  const box = await client.sandboxes.create();
   try {
     await box.exec(["/bin/sh", "-c", "printf ready"]);
     const renewed = await box.renew();
@@ -55,7 +55,7 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 
 ## Choose the policy deliberately
 
-`daytona-default` preserves Daytona's organization-managed restrictions, including essential-service access. Select it on **both** the connection and create request. It does not promise unrestricted internet or strict blocked egress.
+`daytona-default` preserves Daytona's organization-managed restrictions, including essential-service access. Configure it once on the connection; omitted create and restore policies use that value. Per-call policies must match this connection’s policy; open a separately configured connection to change it. It does not promise unrestricted internet or strict blocked egress.
 
 Omitting the policy selects `blocked`. This requires successful organization eligibility verification and native block-all support; a restricted or unreadable eligibility response disables creation. Tier 1/2 essential-service exceptions do not meet Sandbar's strict blocked contract. There is no automatic fallback, and the adapter does not expose an unrestricted `internet` mode.
 
@@ -80,7 +80,7 @@ Run OpenCode with this provider using the [runnable agent examples](/docs/guides
 The application workflow is the same for both official adapters:
 
 ```ts
-const box = await client.sandboxes.create({ networkPolicy: "daytona-default" });
+const box = await client.sandboxes.create();
 await box.exec(["/bin/sh", "-c", "printf ready"]);
 const renewed = await box.renew();
 await box.renew({ forSeconds: 61 });
