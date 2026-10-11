@@ -480,9 +480,20 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
         if (status.truncated || !/^(?:0|[1-9][0-9]{0,2})$/.test(code))
           throw new Error("E2B command completion marker is invalid");
-        const stdout = await transport.read(id, paths.stdout, maxOutputBytes);
+
+        // Completion is independent of log availability. Never discard the validated
+        // exit marker or replay a command because one captured stream cannot be read.
+        const readOutput = async (path: string, budget: number) => {
+          try {
+            return await transport.read(id, path, budget);
+          } catch {
+            return { bytes: new Uint8Array(), truncated: true };
+          }
+        };
+
+        const stdout = await readOutput(paths.stdout, maxOutputBytes);
         const remaining = maxOutputBytes - stdout.bytes.length;
-        const stderr = await transport.read(id, paths.stderr, remaining);
+        const stderr = await readOutput(paths.stderr, remaining);
 
         return {
           exitCode: Number(code),

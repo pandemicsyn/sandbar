@@ -2,11 +2,11 @@
 
 Current contract · Updated October 10, 2026 · P0–P4 implemented in #76–#79; cancellation corrections in #80
 
-## October 11 execution acceptance (implementation pending)
+## October 11 execution acceptance
 
 Keep the existing no-profile `processes.start` finite cumulative-output contract for compatibility. Long-running and interactive examples explicitly select `output: { mode: "stream" }`, whose bounded pending queue does not impose a lifetime output cap. Never turn `maxOutputBytes` into a lifetime or remote runtime guarantee. Document supported provider profiles and the legacy limitation.
 
-Adding `onOutput` preserves ordinary exec options whenever the native process path can map them honestly. Explicit deadlines must reach an evidenced provider-specific native observation/runtime boundary or reject before dispatch with the concrete limitation; never silently drop them. Provider deadline behavior and local cancellation remain distinct, with no portable termination claim. Preserve one dispatch, callback failure and available confirmed exit/capture, bounded memory, stdin backpressure/EOF and ownership. Native-boundary tests protect precise combinations before delivery. No close/connect API changes.
+Adding `onOutput` preserves command, cwd, env, stdin and bounded capture options, including advertised ordinary-exec capture limits. Explicit `deadlineSeconds` rejects before dispatch because the current process hook cannot map it: E2B sustained Start deliberately omits a total RPC timeout and Daytona's supervisor bootstrap timeout does not bound child execution. Ordinary E2B exec instead sends a native RPC observation timeout; ordinary Daytona exec sends its documented server timeout to the command wrapper. They are different native paths, so callback exec cannot reuse either field without changing semantics. Omission on ordinary exec retains the 300-second provider-specific default; omission on callback exec adds no process runtime or observation timer. Invalid deadline values remain `INVALID_ARGUMENT` before combination validation. Never silently drop a requested deadline. Provider deadline behavior and local cancellation remain distinct, with no portable termination claim. Preserve one dispatch, callback failure and available confirmed exit/capture, bounded memory, stdin backpressure/EOF and ownership. Native-boundary tests protect precise combinations before delivery. No close/connect API changes.
 
 
 ## Outcome and baseline
@@ -80,7 +80,7 @@ The Daytona helper footprint is: one Python 3 standard-library supervisor per pr
 
 Explicit `output: { mode: 'stream' }` selects sustained output; legacy `maxOutputBytes` finite semantics remain distinct, and supplying both rejects. Older adapters reject unsupported profiles before starting rather than falling back or replaying. Text remains the default; original bytes require the byte profile.
 
-`box.exec(input, { onOutput, signal })` uses one process dispatch, awaited live text callbacks and bounded original-byte capture. Input delivery and callback failure are observed concurrently. Failure preserves already confirmed exit and available capture. This does not resolve every ordinary bounded-`exec` output-retrieval failure; retain the separate [output and timeout contract](output-and-timeouts.md).
+`box.exec(input, { onOutput, signal })` uses one process dispatch, awaited live text callbacks and bounded original-byte capture. Input delivery and callback failure are observed concurrently. Failure preserves already confirmed exit and available capture. Ordinary E2B bounded exec also preserves validated exit and any available stream when output-file retrieval fails, marking capture truncated; other provider receipt limitations remain in the [output and timeout contract](output-and-timeouts.md).
 
 Preserve exact argv and explicit shell execution. Payloads, input and guest output stay out of telemetry. Remote runtime deadlines, transcript retention/replay, gap-free reconnect and descendant termination are not implemented guarantees. Making sustained output the default would require an explicit compatibility decision.
 

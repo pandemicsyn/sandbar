@@ -106,7 +106,7 @@ The 15-second signal stops local waiting without killing remote compute. `deadli
 
 The E2B timer distinction follows the exact [2.51.0 client artifact](https://unpkg.com/e2b@2.51.0/dist/index.mjs), rather than older descriptive SDK references. Native runtime intent comes from Daytona’s [process reference](https://www.daytona.io/docs/en/typescript-sdk/process/) and Modal’s [command guide](https://modal.com/docs/guide/sandbox-spawn). Modal’s [sandbox lifetime guide](https://modal.com/docs/guide/sandboxes) describes the separate expiry boundary. These sources establish client wiring or documented intent; offline fixtures do not establish deployed termination.
 
-Local timeout paths do not implicitly kill or destroy the sandbox and do not replay command submission. Completion and output are separate evidence: a successful command may still be publicly unconfirmed if E2B output-file reads, Daytona response/receipt retrieval, or Modal output streams fail. Current APIs return completion only after the required output evidence is available; they do not independently expose every known native exit through output failure.
+Local timeout paths do not implicitly kill or destroy the sandbox and do not replay command submission. Once E2B validates its command status marker, unavailable stdout/stderr preserves that exit and any available bytes with `truncated: true`; it never replays the command. Missing or invalid status, unavailable Daytona receipts, and Modal output/router failures can still leave completion unconfirmed. Local cancellation does not prove remote termination.
 
 ## Use a shell explicitly
 

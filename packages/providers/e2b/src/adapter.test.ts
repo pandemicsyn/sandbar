@@ -561,14 +561,27 @@ test("GNU ln -T creates only an absent exact target and survives stage cleanup",
   }
 });
 
-test.each(["complete", "lost-start", "output-failure"] as const)(
-  "E2B binary exec/file receipts without replay: %s",
+test.each([
+  "complete",
+  "lost-start",
+  "lost-start-output-failure",
+  "stdout-failure",
+  "stderr-failure",
+  "output-failure",
+] as const)(
+  "E2B binary exec/file receipts preserve confirmed status and available output without replay: %s",
   async (mode) => {
     const binary = Uint8Array.from([0, 255, 129, 10]);
     const files = new Map<string, Uint8Array>();
     const scripts: string[] = [];
     let linkAnswer = "CREATED";
-    let outputAvailable = mode !== "output-failure";
+    const unavailable = new Set<string>();
+
+    if (mode === "output-failure" || mode === "lost-start-output-failure") {
+      unavailable.add("stdout");
+      unavailable.add("stderr");
+    } else if (mode === "stdout-failure") unavailable.add("stdout");
+    else if (mode === "stderr-failure") unavailable.add("stderr");
     let kills = 0;
 
     const record: E2BRecord = {
@@ -617,16 +630,17 @@ test.each(["complete", "lost-start", "output-failure"] as const)(
           files.set("/tmp/.sandbar-sub_exec.stderr", Uint8Array.from([0, 254]));
           files.set(
             "/tmp/.sandbar-sub_exec.status",
-            new TextEncoder().encode(mode === "complete" ? "7" : "0"),
+            new TextEncoder().encode(mode === "complete" || mode === "stderr-failure" ? "7" : "0"),
           );
 
-          if (mode === "lost-start") throw new Error("RPC acknowledgement lost");
+          if (mode === "lost-start" || mode === "lost-start-output-failure")
+            throw new Error("RPC acknowledgement lost");
         }
 
         return script.includes("ln -T --") ? linkAnswer : "";
       },
       async read(_id, path, maxBytes) {
-        if (!outputAvailable && /\.(stdout|stderr)$/.test(path))
+        if ([...unavailable].some((stream) => path.endsWith(`.${stream}`)))
           throw new Error("output read unavailable after successful status");
         const bytes = files.get(path);
 
@@ -675,7 +689,7 @@ test.each(["complete", "lost-start", "output-failure"] as const)(
         signal,
       );
 
-      if (mode !== "complete") {
+      if (mode === "lost-start" || mode === "lost-start-output-failure") {
         expect(result.kind).toBe("pending");
 
         if (result.kind !== "pending") throw new Error("Expected existing exec receipt");
@@ -689,11 +703,6 @@ test.each(["complete", "lost-start", "output-failure"] as const)(
           version: result.version,
         };
 
-        if (mode === "output-failure")
-          await expect(
-            observeOperation(connection.session, "exec", identity, signal),
-          ).rejects.toThrow("output read unavailable");
-        outputAvailable = true;
         const observed = await observeOperation(connection.session, "exec", identity, signal);
 
         if (!observed) throw new Error("Expected existing exec receipt observation");
@@ -705,9 +714,14 @@ test.each(["complete", "lost-start", "output-failure"] as const)(
       expect(kills).toBe(0);
 
       if (result.kind === "completed" && "stdout" in result.value) {
-        expect(result.value.stdout).toEqual(binary);
-        expect(result.value.stderr).toEqual(Uint8Array.from([0, 254]));
-        expect(result.value.exitCode).toBe(mode === "complete" ? 7 : 0);
+        expect(result.value.stdout).toEqual(unavailable.has("stdout") ? new Uint8Array() : binary);
+        expect(result.value.stderr).toEqual(
+          unavailable.has("stderr") ? new Uint8Array() : Uint8Array.from([0, 254]),
+        );
+        expect(result.value.exitCode).toBe(
+          mode === "complete" || mode === "stderr-failure" ? 7 : 0,
+        );
+        expect(result.value.truncated).toBe(unavailable.size > 0);
       }
 
       expect(scripts[0]).toContain("'$(touch /tmp/never)'");
@@ -1276,16 +1290,16 @@ test.each(["stalled", "output-failure"] as const)(
 
       if (mode === "output-failure") {
         const operation = await box.submitExec(["true"]);
-        expect(await operation.observe()).toBeNull();
-        await expect((await client.recover(operation.reference)).observe()).rejects.toMatchObject({
-          code: "OUTCOME_UNKNOWN",
-          effect: "possible",
+        const completed = await operation.observe();
+        expect(completed).toMatchObject({
+          exitCode: 0,
+          stdout: new Uint8Array(),
+          stderr: new Uint8Array(),
+          truncated: true,
         });
         outputAvailable = true;
-        expect(await (await client.recover(operation.reference)).observe()).toMatchObject({
-          exitCode: 0,
-          stdout: Uint8Array.of(97),
-        });
+        // A later successful read cannot revise the already confirmed result.
+        expect(await operation.observe()).toEqual(completed);
         expect(new Set(statusPaths).size).toBe(1);
         expect(runs).toBe(1);
         expect(kills).toBe(0);

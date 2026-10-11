@@ -1472,9 +1472,18 @@ export async function callbackExec(
   if (typeof callback !== "function")
     throw new SandbarError("INVALID_ARGUMENT", "Expected execution output callback");
 
-  if (!Array.isArray(input) && "deadlineSeconds" in input && input.deadlineSeconds !== undefined)
-    throw new SandbarError("UNSUPPORTED", "Streaming execution runtime deadlines are unsupported");
   const request = validateExec(input);
+
+  if (!Array.isArray(input) && "deadlineSeconds" in input && input.deadlineSeconds !== undefined)
+    throw new SandbarError(
+      "UNSUPPORTED",
+      "Callback execution cannot map deadlineSeconds on the process transport; use signal to bound local observation",
+    );
+
+  const maxOutputBytes = client.session.supports.exec?.maxOutputBytes;
+
+  if (maxOutputBytes !== undefined && request.maxOutputBytes > maxOutputBytes)
+    throw new SandbarError("UNSUPPORTED", "Requested execution output limit is unsupported");
 
   if (client.session.processes?.supports?.execCapture !== "bytes")
     throw new SandbarError("UNSUPPORTED", "Streaming execution byte capture is unsupported");
@@ -1607,6 +1616,8 @@ export async function callbackExec(
       "Execution observation failed",
       error instanceof SandbarError ? error.effect : "possible",
     );
+
+    Object.defineProperty(failure, "cause", { value: error, configurable: true });
 
     const context: ProcessFailure & { output?: ExecOutput } = Object.assign(failure, {
       provider: process.provider,

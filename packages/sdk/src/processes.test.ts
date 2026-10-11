@@ -35,6 +35,7 @@ async function fixture(
     binary?: boolean;
     capture?: boolean;
     extensions?: boolean;
+    execMaxOutputBytes?: number;
   } = {},
 ) {
   const exit = deferred<{ exitCode: number }>();
@@ -115,7 +116,17 @@ async function fixture(
     async connect() {
       return {
         scope,
-        supports: { images: ["prepared"], network: ["blocked"] },
+        supports: {
+          images: ["prepared"],
+          network: ["blocked"],
+          exec:
+            options.execMaxOutputBytes === undefined
+              ? undefined
+              : {
+                  commands: ["argv", "shell"],
+                  maxOutputBytes: options.execMaxOutputBytes,
+                },
+        },
         create: async () => {
           const id = ++creates === 1 ? "one" : "two";
 
@@ -1092,11 +1103,12 @@ test("callback exec splits finite input and closes EOF without starting finite e
 test("callback failures preserve independently confirmed exit/capture and never replay", async () => {
   const f = await fixture({ interactive: true, capture: true });
   const gate = deferred<void>();
+  const callbackFailure = new Error("private output contents");
 
   const running = f.box.exec(input, {
     onOutput: async () => {
       await gate.promise;
-      throw new Error("private output contents");
+      throw callbackFailure;
     },
   });
 
@@ -1115,6 +1127,7 @@ test("callback failures preserve independently confirmed exit/capture and never 
     code: "UNAVAILABLE",
     confirmedExit: { exitCode: 7 },
     output: { exitCode: 7, stdout: Uint8Array.of(1) },
+    cause: callbackFailure,
   });
   expect(f.starts).toBe(1);
   expect(f.detaches).toBe(1);
@@ -1136,7 +1149,14 @@ test("callback exec preserves ordinary nonzero results and unsupported validatio
   await expect(running).rejects.toMatchObject({ code: "NONZERO_EXIT", result: { exitCode: 4 } });
   await expect(
     f.box.exec({ ...input, deadlineSeconds: 3 }, { onOutput() {} }),
-  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  ).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+    effect: "none",
+    message: expect.stringContaining("process transport"),
+  });
+  await expect(
+    f.box.exec({ ...input, deadlineSeconds: 0 }, { onOutput() {} }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT", effect: "none" });
   expect(f.starts).toBe(1);
   await f.client.close();
   const legacy = await fixture();
@@ -1145,6 +1165,15 @@ test("callback exec preserves ordinary nonzero results and unsupported validatio
   });
   expect(legacy.starts).toBe(0);
   await legacy.client.close();
+});
+
+test("callback exec rejects an advertised capture limit before dispatch", async () => {
+  const f = await fixture({ interactive: true, capture: true, execMaxOutputBytes: 8 });
+  await expect(
+    f.box.exec({ ...input, maxOutputBytes: 9 }, { onOutput() {} }),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+  expect(f.starts).toBe(0);
+  await f.client.close();
 });
 
 test.each(["closed", "pipe"] as const)(
