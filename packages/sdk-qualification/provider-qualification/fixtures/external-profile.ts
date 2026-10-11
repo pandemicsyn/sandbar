@@ -4,7 +4,7 @@ import {
   sandboxReference,
   assertSandboxReference,
   unknownSandboxFacts,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { Sandbar } from "sandbar-sdk";
 import { defineProviderProfile } from "../profile";
 import { features, supportMetadataSchema } from "../support";

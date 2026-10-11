@@ -1,5 +1,5 @@
 import { Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
-import { e2b, createE2BAdapter, type E2BTransport } from "sandbar-e2b";
+import { e2b, createE2BAdapter, type E2BTransport } from "@sandbar-sdk/e2b";
 import { z } from "zod";
 
 export const e2bConfiguration = z.strictObject({

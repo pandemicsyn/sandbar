@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { adapterSuite } from "sandbar-adapter/testing";
+import { adapterSuite } from "@sandbar-sdk/adapter/testing";
 import { createModalAdapter, modalWriteScript } from "./adapter";
 import type { ModalTransport } from "./transport";
 import { Image, OutcomeUnknownError, Sandbar } from "sandbar-sdk";

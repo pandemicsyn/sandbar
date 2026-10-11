@@ -13,7 +13,7 @@ import {
   type FileStat,
   type NativeProcess,
   type ProcessStartContext,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { startProcess } from "./process-native";

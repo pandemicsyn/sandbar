@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter, type MountSpec, type SnapshotProfile } from "sandbar-adapter";
+import { defineAdapter, type MountSpec, type SnapshotProfile } from "@sandbar-sdk/adapter";
 import { Sandbar } from "sandbar-sdk";
 import {
   createWriter,

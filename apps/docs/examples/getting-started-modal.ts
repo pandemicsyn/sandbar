@@ -1,5 +1,5 @@
 import { Image, Sandbar } from "sandbar-sdk";
-import { modalAdapter } from "sandbar-modal";
+import { modalAdapter } from "@sandbar-sdk/modal";
 
 const tokenId = process.env.MODAL_TOKEN_ID;
 

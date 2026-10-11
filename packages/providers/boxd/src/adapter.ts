@@ -20,7 +20,7 @@ import {
   type SandboxInfo,
   type SandboxState,
   type VolumeInfo,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   BOXD_ENDPOINT,
   MAX_BYTES,
@@ -296,7 +296,7 @@ export function createBoxdAdapter(
         token: Created,
         creation: { operation: string; submission: string },
         ctx: ReadContext,
-        mounts: import("sandbar-adapter").MountSpec[],
+        mounts: import("@sandbar-sdk/adapter").MountSpec[],
       ) => {
         const machine = await find(token.id, ctx);
 
@@ -337,8 +337,8 @@ export function createBoxdAdapter(
       const session: AdapterSession<
         CreateInput,
         DestroyPrepared,
-        import("sandbar-adapter").ExecInput,
-        import("sandbar-adapter").FileWriteInput,
+        import("@sandbar-sdk/adapter").ExecInput,
+        import("@sandbar-sdk/adapter").FileWriteInput,
         "argv" | "shell",
         Created
       > = {

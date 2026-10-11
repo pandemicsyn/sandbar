@@ -7,8 +7,8 @@ import {
   type SnapshotResult,
   type VolumeHandle,
 } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
-import { e2b } from "sandbar-e2b";
+import { daytona } from "@sandbar-sdk/daytona";
+import { e2b } from "@sandbar-sdk/e2b";
 
 export type SaveReference = (json: string) => Promise<void>;
 

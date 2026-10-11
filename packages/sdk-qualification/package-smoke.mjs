@@ -10,13 +10,13 @@ import { z } from "zod";
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
 const packages = [
-  ["sandbar-adapter", "packages/adapter"],
+  ["@sandbar-sdk/adapter", "packages/adapter"],
   ["@sandbar/provider-spi", "packages/provider-spi"],
   ["@sandbar/provider-fake", "packages/providers/fake"],
-  ["sandbar-daytona", "packages/providers/daytona"],
-  ["sandbar-modal", "packages/providers/modal"],
-  ["sandbar-boxd", "packages/providers/boxd"],
-  ["sandbar-e2b", "packages/providers/e2b"],
+  ["@sandbar-sdk/daytona", "packages/providers/daytona"],
+  ["@sandbar-sdk/modal", "packages/providers/modal"],
+  ["@sandbar-sdk/boxd", "packages/providers/boxd"],
+  ["@sandbar-sdk/e2b", "packages/providers/e2b"],
   ["sandbar-sdk", "packages/sdk"],
 ];
 
@@ -66,7 +66,9 @@ async function pack(directory) {
     throw new Error(`${manifest.name} archive contains source or test declarations`);
 
   if (
-    ["sandbar-sdk", "sandbar-adapter", "sandbar-daytona", "sandbar-e2b"].includes(manifest.name)
+    ["sandbar-sdk", "@sandbar-sdk/adapter", "@sandbar-sdk/daytona", "@sandbar-sdk/e2b"].includes(
+      manifest.name,
+    )
   ) {
     for (const path of contents.filter((path) => /\.(?:js|d\.ts)$/.test(path))) {
       const source = run("tar", ["-xOzf", archive, path], root);
@@ -182,10 +184,10 @@ async function flow() {
   await client.close(cleanup);
 }
 function lifecycleHooks(
-  suspendSubmit: NonNullable<import("sandbar-adapter").AdapterSession["suspend"]>["submit"],
-  resumeSubmit: NonNullable<import("sandbar-adapter").AdapterSession["resume"]>["submit"],
+  suspendSubmit: NonNullable<import("@sandbar-sdk/adapter").AdapterSession["suspend"]>["submit"],
+  resumeSubmit: NonNullable<import("@sandbar-sdk/adapter").AdapterSession["resume"]>["submit"],
 ) {
-  type Session = import("sandbar-adapter").AdapterSession;
+  type Session = import("@sandbar-sdk/adapter").AdapterSession;
   // @ts-expect-error Suspend must resolve an intent in prepare; callable hooks cannot do so.
   const callableSuspend: Session["suspend"] = suspendSubmit;
   // @ts-expect-error Resume must resolve an intent in prepare; callable hooks cannot do so.
@@ -213,7 +215,7 @@ void flow;
   else if (mode === "boxd")
     source = `
 import { Sandbar } from "sandbar-sdk";
-import { boxdAdapter } from "sandbar-boxd";
+import { boxdAdapter } from "@sandbar-sdk/boxd";
 async function flow() {
   const client = await Sandbar.connect({ adapter: boxdAdapter, config: { org: "team", networkPolicy: "internet" }, credentials: { apiKey: "fixture" } });
   const box = await client.sandboxes.create();
@@ -233,7 +235,7 @@ void flow;
   else if (mode === "modal")
     source = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { modalAdapter } from "sandbar-modal";
+import { modalAdapter } from "@sandbar-sdk/modal";
 async function flow() {
   const client = await Sandbar.connect({ adapter: modalAdapter, config: { appName: "existing", environment: "main" }, credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" } });
   const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture"), networkPolicy: "blocked" });
@@ -252,7 +254,7 @@ void flow;
   else if (mode === "daytona")
     source = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 async function flow() {
   const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15, environment: Image.prepared("snap-1") }));
   const built = await client.images.build({ source: Image.oci("alpine:3.21") });
@@ -271,7 +273,7 @@ void flow;
   else if (mode === "e2b")
     source = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { e2b, createE2BAdapter } from "sandbar-e2b";
+import { e2b, createE2BAdapter } from "@sandbar-sdk/e2b";
 async function flow() {
   const client = await Sandbar.connect(e2b({ apiKey: "fixture", lifecycle: { lifetimeSeconds: 600 } }));
   const built = await client.images.build({ source: Image.oci("node:24") });
@@ -303,8 +305,8 @@ void flow;
   else if (mode === "builtins")
     source = `
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
-import { e2b } from "sandbar-e2b";
+import { daytona } from "@sandbar-sdk/daytona";
+import { e2b } from "@sandbar-sdk/e2b";
 async function flow() {
   const daytonaClient = await Sandbar.connect(daytona({ apiKey: "fixture", target: "us", lifecycle: { lifetimeSeconds: 600 } }));
   const e2bClient = await Sandbar.connect(e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" }));
@@ -437,7 +439,7 @@ try {
 
 const daytonaSource = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { createDaytonaAdapter } from "sandbar-daytona";
+import { createDaytonaAdapter } from "@sandbar-sdk/daytona";
 let nativeState = "started";
 let name = "", mutations = 0, snapshotName = "", labels = {}, renewalWindows = [];
 const files = new Map([["/file", Uint8Array.from([0,255])]]);
@@ -534,7 +536,7 @@ try {
 
 const modalSource = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { createModalAdapter } from "sandbar-modal";
+import { createModalAdapter } from "@sandbar-sdk/modal";
 let creates = 0, terminates = 0, closed = 0;
 const records = new Map();
 const files = new Map();
@@ -615,7 +617,7 @@ process.stdout.write("packed Modal fixture flow passed\\n");
 
 const e2bSource = `
 import { Sandbar, Image, OutcomeUnknownError } from "sandbar-sdk";
-import { createE2BAdapter } from "sandbar-e2b";
+import { createE2BAdapter } from "@sandbar-sdk/e2b";
 let creates = 0, kills = 0, closes = 0, buildName = "", retained = "", renewalWindows = [];
 let record;
 let failWrite = false;
@@ -723,8 +725,8 @@ process.stdout.write("packed E2B fixture flow passed\\n");
 `;
 
 const builtinsSource = `
-import { daytona } from "sandbar-daytona";
-import { e2b } from "sandbar-e2b";
+import { daytona } from "@sandbar-sdk/daytona";
+import { e2b } from "@sandbar-sdk/e2b";
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw Error("Factory construction performed provider I/O"); };
 try {
@@ -738,7 +740,7 @@ try {
 
 const externalAdapterSource = `
 import { z } from "zod";
-import { defineAdapter, type SnapshotRestoreInput } from "sandbar-adapter";
+import { defineAdapter, type SnapshotRestoreInput } from "@sandbar-sdk/adapter";
 export const metrics = { creates: 0, destroys: 0, closes: 0, observes: 0, builds: 0 };
 export const acme = defineAdapter({
   name: "example.acme",
@@ -866,10 +868,10 @@ try {
         type: "module",
         files: ["dist"],
         exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
-        peerDependencies: { "sandbar-adapter": "0.0.0" },
-        overrides: { "sandbar-adapter": archiveOverrides["sandbar-adapter"] },
+        peerDependencies: { "@sandbar-sdk/adapter": "0.0.0" },
+        overrides: { "@sandbar-sdk/adapter": archiveOverrides["@sandbar-sdk/adapter"] },
         dependencies: {
-          "sandbar-adapter": archiveOverrides["sandbar-adapter"],
+          "@sandbar-sdk/adapter": archiveOverrides["@sandbar-sdk/adapter"],
           zod: "4.6.5",
         },
       },
@@ -897,7 +899,7 @@ try {
   run("bun", ["install", "--no-save"], externalDir);
   run(join(root, "node_modules/.bin/tsc"), ["-p", "tsconfig.json"], externalDir);
   const externalManifest = JSON.parse(await readFile(join(externalDir, "package.json"), "utf8"));
-  delete externalManifest.dependencies["sandbar-adapter"];
+  delete externalManifest.dependencies["@sandbar-sdk/adapter"];
   delete externalManifest.overrides;
   await writeFile(join(externalDir, "package.json"), JSON.stringify(externalManifest, null, 2));
   const externalArchive = await pack(externalDir);
@@ -916,22 +918,22 @@ try {
 
   const daytonaDeps = {
     ...sdkDeps,
-    "sandbar-daytona": archiveOverrides["sandbar-daytona"],
+    "@sandbar-sdk/daytona": archiveOverrides["@sandbar-sdk/daytona"],
   };
 
   const modalDeps = {
     ...sdkDeps,
-    "sandbar-modal": archiveOverrides["sandbar-modal"],
+    "@sandbar-sdk/modal": archiveOverrides["@sandbar-sdk/modal"],
   };
 
   const boxd = join(temporary, "boxd-consumer");
   await consumer(
     boxd,
-    { ...sdkDeps, "sandbar-boxd": archiveOverrides["sandbar-boxd"] },
+    { ...sdkDeps, "@sandbar-sdk/boxd": archiveOverrides["@sandbar-sdk/boxd"] },
     archiveOverrides,
     `
 import { Sandbar } from "sandbar-sdk";
-import { boxdAdapter } from "sandbar-boxd";
+import { boxdAdapter } from "@sandbar-sdk/boxd";
 if (boxdAdapter.name !== "boxd") throw Error("External adapter identity mismatch");
 if (boxdAdapter.config.safeParse({ org: "team" }).success) throw Error("Internet setup must be explicit");
 try {
@@ -942,12 +944,12 @@ console.log("Packed boxd imports and local validation passed without provider IO
 `,
   );
   await checkTypes(boxd, "boxd");
-  inspectGraph(boxd, ["sandbar-sdk", "sandbar-boxd"]);
+  inspectGraph(boxd, ["sandbar-sdk", "@sandbar-sdk/boxd"]);
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], boxd)}`);
 
-  const e2bDeps = { ...sdkDeps, "sandbar-e2b": archiveOverrides["sandbar-e2b"] };
+  const e2bDeps = { ...sdkDeps, "@sandbar-sdk/e2b": archiveOverrides["@sandbar-sdk/e2b"] };
 
   const custom = join(temporary, "custom-consumer");
   const direct = join(temporary, "direct-consumer");
@@ -983,7 +985,9 @@ console.log("Packed boxd imports and local validation passed without provider IO
 
   if (
     coreGraph.some((name) =>
-      ["sandbar-daytona", "sandbar-e2b", "e2b", "sandbar-modal", "modal"].includes(name),
+      ["@sandbar-sdk/daytona", "@sandbar-sdk/e2b", "e2b", "@sandbar-sdk/modal", "modal"].includes(
+        name,
+      ),
     )
   )
     throw Error(`Core installed provider dependencies: ${coreGraph}`);
@@ -996,7 +1000,7 @@ console.log("Packed boxd imports and local validation passed without provider IO
   const lifecycleExample = await Bun.build({
     entrypoints: [join(root, "apps/docs/examples/sandbox-suspend-resume.ts")],
     target: "node",
-    external: ["sandbar-sdk", "sandbar-daytona", "sandbar-e2b"],
+    external: ["sandbar-sdk", "@sandbar-sdk/daytona", "@sandbar-sdk/e2b"],
     write: false,
   });
 
@@ -1104,14 +1108,14 @@ console.log("Packed boxd imports and local validation passed without provider IO
     console.log(`${runtime}: ${run(runtime, ["process-extensions.mjs"], builtins)}`);
   inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
-  const daytonaGraph = inspectGraph(daytona, ["sandbar-sdk", "sandbar-daytona"]);
+  const daytonaGraph = inspectGraph(daytona, ["sandbar-sdk", "@sandbar-sdk/daytona"]);
 
-  if (daytonaGraph.includes("e2b") || daytonaGraph.includes("sandbar-e2b"))
+  if (daytonaGraph.includes("e2b") || daytonaGraph.includes("@sandbar-sdk/e2b"))
     throw new Error("Daytona installed E2B");
-  const modalGraph = inspectGraph(modal, ["sandbar-sdk", "sandbar-modal"]);
-  const e2bGraph = inspectGraph(e2b, ["sandbar-sdk", "sandbar-e2b"]);
+  const modalGraph = inspectGraph(modal, ["sandbar-sdk", "@sandbar-sdk/modal"]);
+  const e2bGraph = inspectGraph(e2b, ["sandbar-sdk", "@sandbar-sdk/e2b"]);
 
-  if (e2bGraph.includes("sandbar-daytona")) throw new Error("E2B installed Daytona");
+  if (e2bGraph.includes("@sandbar-sdk/daytona")) throw new Error("E2B installed Daytona");
   const publicSdkGraph = inspectGraph(builtins, ["sandbar-sdk"]);
 
   if (publicSdkGraph.some((name) => name.startsWith("@sandbar/")))
@@ -1122,9 +1126,14 @@ console.log("Packed boxd imports and local validation passed without provider IO
 
   if (
     publicSdkGraph.some((name) =>
-      ["modal", "sandbar-modal", "@grpc/grpc-js", "e2b", "sandbar-e2b", "sandbar-daytona"].includes(
-        name,
-      ),
+      [
+        "modal",
+        "@sandbar-sdk/modal",
+        "@grpc/grpc-js",
+        "e2b",
+        "@sandbar-sdk/e2b",
+        "@sandbar-sdk/daytona",
+      ].includes(name),
     )
   )
     throw new Error(`SDK package retained Modal dependencies: ${publicSdkGraph}`);

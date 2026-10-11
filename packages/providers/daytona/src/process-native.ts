@@ -10,7 +10,7 @@ import {
   type ReadContext,
   type Json,
   type ProcessReopenInput,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   processRpc,
   processSupervisor,

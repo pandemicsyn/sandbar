@@ -9,7 +9,7 @@ This complete fixture is [compiled and executed in the repository](https://githu
 
 ```ts
 import { z } from "zod";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter } from "@sandbar-sdk/adapter";
 import { AcmeClient } from "./acme-native.js";
 
 export const acme = defineAdapter({
@@ -52,7 +52,7 @@ The complete [AcmeClient fixture](https://github.com/pandemicsyn/sandbar/blob/ma
 
 For finite input to ordinary `box.exec`, the adapter hook receives optional bounded `Uint8Array` bytes. Set `exec.finiteStdin: "bytes"` only when the adapter preserves those exact bytes and establishes guest EOF before reporting confirmed command success. Omitted input must also start closed. Without the marker, an explicit input request rejects as `UNSUPPORTED` before provider effects. The SDK enforces a 1 MiB limit and does not include the payload in recovery tokens or diagnostics. `processes.start` is a separate operation and does not accept this finite input.
 
-Before distributing an adapter, run `adapterSuite` from `sandbar-adapter/testing` with a deterministic native-boundary fixture. Its report lists the scenarios actually run, including lost response, one native effect, scope separation, late response, and release behavior. Each provider fixture must independently prove that its upstream transport does not retry mutations.
+Before distributing an adapter, run `adapterSuite` from `@sandbar-sdk/adapter/testing` with a deterministic native-boundary fixture. Its report lists the scenarios actually run, including lost response, one native effect, scope separation, late response, and release behavior. Each provider fixture must independently prove that its upstream transport does not retry mutations.
 
 For lifetime renewal, add the optional `renew` mutation and `renewCapabilities` read hook. `RenewInput` contains a verified sandbox reference and optional positive `forSeconds`; its read-only `prepare` resolves the connection default, validates native policy/state, and returns `ResolvedRenewInput` with a positive safe integer window. Round upward when necessary and reject unsupported upper bounds before dispatch. The SDK saves that resolved window in its existing recovery reference, so another connection cannot reinterpret it through different defaults. `renewCapabilities` describes resolved minimum/maximum/granularity and native clock scope; ordinary application calls do not select scopes.
 

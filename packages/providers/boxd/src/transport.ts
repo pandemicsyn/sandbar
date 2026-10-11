@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 import { Client, Metadata, credentials as grpcCredentials, status } from "@grpc/grpc-js";
 import { AccountNamespace, Disks, Machines, Orgs } from "@boxd-sh/sdk";
-import { AdapterError, type ReadContext } from "sandbar-adapter";
+import { AdapterError, type ReadContext } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 
 export const BOXD_ENDPOINT = "https://boxd.sh:9443";

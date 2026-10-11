@@ -5,7 +5,7 @@ description: Add a sandbox provider to Sandbar as a separately distributed offic
 
 # Add a Sandbar provider
 
-Official and third-party providers implement the same public `sandbar-adapter` API. Official integrations are separately installed `sandbar-<provider>` packages maintained in this monorepo. Separate distribution does not imply experimental support. Implement only the requested provider and operations; paid usage requires explicit authorization.
+Official and third-party providers implement the same public `@sandbar-sdk/adapter` API. Official integrations are separately installed `@sandbar-sdk/<provider>` packages maintained in this monorepo. Separate distribution does not imply experimental support. Implement only the requested provider and operations; paid usage requires explicit authorization.
 
 Read [package conventions](../../../specs/package-conventions.md) before choosing names and exports. Custom authors may use their own names/scopes. Provider package names and stable adapter IDs are independent. Do not add SDK provider subpaths or placeholder exports.
 
@@ -75,7 +75,7 @@ Document operations whose uncertain outcomes cannot be reconciled. A new recover
 
 ### Separately installed adapter package
 
-- Export the adapter definition with ESM JS and corresponding TypeScript declarations. Declare `sandbar-adapter`, schema libraries and native libraries used by the installed artifact; use compatible public versions and avoid private workspace imports. The adapter implementation must not depend on SQL. It normally needs the SDK only for consumer examples/tests.
+- Export the adapter definition with ESM JS and corresponding TypeScript declarations. Declare `@sandbar-sdk/adapter`, schema libraries and native libraries used by the installed artifact; use compatible public versions and avoid private workspace imports. The adapter implementation must not depend on SQL. It normally needs the SDK only for consumer examples/tests.
 - Do not add an SDK subpath or SDK-root import. Consumers use the existing public form:
 
   ```ts
@@ -97,7 +97,7 @@ Document operations whose uncertain outcomes cannot be reconciled. A new recover
 Supply a small provider profile (`packages/sdk-qualification/provider-qualification/profile.ts`): public connection factory, pinned dependencies, nonsecret persisted routing, credential requirements, finite native/exercise/cleanup bounds, declared feature support and concise caveats. Reuse the normal `bun:test` suites in `packages/sdk-qualification/live`; add genuinely new SDK workflows as ordinary assertions rather than a provider-specific script or custom runner. Read the operator README and [qualification skill](../qualify-provider/SKILL.md). Bun owns selection, timeout/failure reporting and JUnit; shared helpers own setup, durable test-resource custody and bounded cleanup. Branch and merged sources use the same preload/build and invocation. Keep volume CRUD separate from mounts, account eligibility separate from implementation support, and extensive faults offline. Generate support pages from declared metadata and a thin mapping of reviewed JUnit/provenance/cleanup context. Never invent current-head live evidence or request paid reruns merely for an unchanged merge.
 
 
-Run `adapterSuite` from `sandbar-adapter/testing` against a deterministic native-boundary fixture. Follow `packages/adapter/src/testing.ts` for the fixture interface and `packages/providers/*/src/adapter.test.ts` for implementations. Supply genuinely different verified scopes, effect/release counters, lost-response and delayed-response faults, and evidence that native mutation retries are disabled. Report scenarios actually exercised; the suite is not live certification.
+Run `adapterSuite` from `@sandbar-sdk/adapter/testing` against a deterministic native-boundary fixture. Follow `packages/adapter/src/testing.ts` for the fixture interface and `packages/providers/*/src/adapter.test.ts` for implementations. Supply genuinely different verified scopes, effect/release counters, lost-response and delayed-response faults, and evidence that native mutation retries are disabled. Report scenarios actually exercised; the suite is not live certification.
 
 Add focused tests for supported operations: unsupported inputs before mutation, scope mismatch, loss after one native effect, observation without replay, binary/command fidelity, declared bounds and cleanup. If pending tokens are supported, reopen a connection and recover the saved reference.
 

@@ -9,7 +9,7 @@ import {
   ResourceReference,
   sandboxReference,
   type MountSpec,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { Sandbar } from "sandbar-sdk";
 import { LedgerStore } from "../../provider-qualification/ledger";
 

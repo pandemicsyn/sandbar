@@ -11,7 +11,7 @@ for (const artifacts of ["missing", "stale", "failed-build"] as const)
     try {
       const live = join(root, "packages/sdk-qualification/live");
       const qualification = join(root, "packages/sdk-qualification/provider-qualification");
-      const adapter = join(root, "node_modules/sandbar-adapter");
+      const adapter = join(root, "node_modules/@sandbar-sdk/adapter");
       await mkdir(join(live, "fixtures"), { recursive: true });
       await mkdir(join(live, "providers"));
       await mkdir(qualification);
@@ -31,7 +31,11 @@ for (const artifacts of ["missing", "stale", "failed-build"] as const)
       );
       await writeFile(
         join(adapter, "package.json"),
-        JSON.stringify({ name: "sandbar-adapter", type: "module", exports: "./dist/index.js" }),
+        JSON.stringify({
+          name: "@sandbar-sdk/adapter",
+          type: "module",
+          exports: "./dist/index.js",
+        }),
       );
 
       if (artifacts === "stale")
@@ -41,7 +45,7 @@ for (const artifacts of ["missing", "stale", "failed-build"] as const)
         `
         import { writeFile } from "node:fs/promises";
         await writeFile("trace.log", "build\\n");
-        ${artifacts === "failed-build" ? 'throw Error("fixture build failed");' : 'await writeFile("node_modules/sandbar-adapter/dist/index.js", \'export const schemaVersion = "fresh";\');'}
+        ${artifacts === "failed-build" ? 'throw Error("fixture build failed");' : 'await writeFile("node_modules/@sandbar-sdk/adapter/dist/index.js", \'export const schemaVersion = "fresh";\');'}
       `,
       );
       // Only the package boundary is synthetic: the entrypoint and rebuild helper are unchanged.
@@ -49,7 +53,7 @@ for (const artifacts of ["missing", "stale", "failed-build"] as const)
         join(qualification, "ledger.ts"),
         `
         import { appendFile } from "node:fs/promises";
-        import { schemaVersion } from "sandbar-adapter";
+        import { schemaVersion } from "@sandbar-sdk/adapter";
         await appendFile("trace.log", "ledger:" + schemaVersion + "\\n");
         export async function requirePrivateDirectory() {}
         export class LedgerStore {

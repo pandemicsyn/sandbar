@@ -9,7 +9,7 @@ import {
   type NativeProcess,
   type Sandbox,
   type ProcessStartContext,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { Sandbar, Image, diagnosticContext, type StartProcessInput } from "./index";
 
 function deferred<T>() {
@@ -40,7 +40,7 @@ async function fixture(
 ) {
   const exit = deferred<{ exitCode: number }>();
   const outputEnd = deferred<void>();
-  const capture = deferred<import("sandbar-adapter").ExecValue>();
+  const capture = deferred<import("@sandbar-sdk/adapter").ExecValue>();
   const writes: Uint8Array[] = [];
   let writeGate: Promise<void> | undefined;
   let closeGate: Promise<void> | undefined;
@@ -1781,10 +1781,10 @@ test("cyclic, huge and deeply nested native selectors cannot become persisted re
   for (const kind of ["cycle", "huge", "deep"] as const) {
     const f = await fixture({ interactive: true, extensions: true });
 
-    type CyclicSelector = { self?: import("sandbar-adapter").Json };
+    type CyclicSelector = { self?: import("@sandbar-sdk/adapter").Json };
 
     const cyclic: CyclicSelector = {};
-    let native: import("sandbar-adapter").Json = cyclic;
+    let native: import("@sandbar-sdk/adapter").Json = cyclic;
 
     if (kind === "cycle") cyclic.self = cyclic;
 
@@ -1816,7 +1816,7 @@ test("reopen snapshots nested native selectors before its asynchronous dispatch"
   const p = await f.box.processes.start({ ...input, stdin: "pipe", output: { mode: "stream" } });
   const selector = { tag: "original", generation: { id: "original-generation" } };
   const saved = { ...p.reference(), native: selector };
-  let selected: import("sandbar-adapter").Json | undefined;
+  let selected: import("@sandbar-sdk/adapter").Json | undefined;
   f.client.session.processes!.reopen = async (request) => {
     selected = request.reference;
 

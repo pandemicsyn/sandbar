@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter, type HostContext } from "sandbar-adapter";
+import { defineAdapter, type HostContext } from "@sandbar-sdk/adapter";
 import { Sandbar, SandbarError, type ConnectOptions, type CloseOptions } from "./index";
 import { bindAdapter } from "./bound";
 

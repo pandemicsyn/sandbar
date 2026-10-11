@@ -16,7 +16,7 @@ import {
   nativeDeadline,
   type SandboxInfo,
   type SandboxReference,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { createHash } from "node:crypto";
 import { ProcessReference } from "./process-native";
 import {
@@ -29,8 +29,8 @@ import {
   defineAdapter,
   type ExecValue,
   type Json,
-} from "sandbar-adapter";
-import { MAX_EXEC_STDIN_BYTES } from "sandbar-adapter/portable";
+} from "@sandbar-sdk/adapter";
+import { MAX_EXEC_STDIN_BYTES } from "@sandbar-sdk/adapter/portable";
 import {
   E2BLifecycleRejected,
   E2BRenewRejected,
@@ -204,8 +204,10 @@ function destroyToken(record: E2BRecord, sandboxId: string): z.infer<typeof Dest
   return token;
 }
 
-function destroyValue(token: z.infer<typeof DestroyToken>): import("sandbar-adapter").DestroyValue {
-  const value: import("sandbar-adapter").DestroyValue = {
+function destroyValue(
+  token: z.infer<typeof DestroyToken>,
+): import("@sandbar-sdk/adapter").DestroyValue {
+  const value: import("@sandbar-sdk/adapter").DestroyValue = {
     computeStopped: true,
     retainedResources: [
       ...(token.retainedTemplateId ? [`e2b-template:${token.retainedTemplateId}`] : []),
@@ -428,8 +430,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
       };
 
       const lifecycleSource = async (
-        box: import("sandbar-adapter").Sandbox,
-        ctx: import("sandbar-adapter").ReadContext,
+        box: import("@sandbar-sdk/adapter").Sandbox,
+        ctx: import("@sandbar-sdk/adapter").ReadContext,
       ) => {
         if (!box.reference)
           throw new AdapterError("UNSUPPORTED", "Verified sandbox identity required");
@@ -530,13 +532,13 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
       const removeEntry = transport.removeEntry;
 
       const directoryOperations: Partial<
-        NonNullable<import("sandbar-adapter").AdapterSession["files"]>
+        NonNullable<import("@sandbar-sdk/adapter").AdapterSession["files"]>
       > = {};
 
       if (entryExists)
         directoryOperations.exists = async (
-          input: { sandbox: import("sandbar-adapter").Sandbox; path: string },
-          ctx: import("sandbar-adapter").ReadContext,
+          input: { sandbox: import("@sandbar-sdk/adapter").Sandbox; path: string },
+          ctx: import("@sandbar-sdk/adapter").ReadContext,
         ) => {
           requirePath(input.path);
           await requireRunning(input.sandbox.id, input.sandbox.reference);
@@ -547,7 +549,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
       if (makeDirectory || mkdir)
         directoryOperations.makeDirectory = {
-          async prepare(input: import("sandbar-adapter").FileMutationInput) {
+          async prepare(input: import("@sandbar-sdk/adapter").FileMutationInput) {
             requirePath(input.path);
 
             if (!input.recursive && !mkdir)
@@ -557,8 +559,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             return input;
           },
           async submit(
-            input: import("sandbar-adapter").FileMutationInput,
-            ctx: import("sandbar-adapter").AttemptContext,
+            input: import("@sandbar-sdk/adapter").FileMutationInput,
+            ctx: import("@sandbar-sdk/adapter").AttemptContext,
           ) {
             let recursiveDispatched = false;
 
@@ -589,7 +591,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
       if (removeEntry || unlink)
         directoryOperations.remove = {
-          async prepare(input: import("sandbar-adapter").FileMutationInput) {
+          async prepare(input: import("@sandbar-sdk/adapter").FileMutationInput) {
             requirePath(input.path);
 
             if (!input.recursive && !unlink)
@@ -602,8 +604,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             return input;
           },
           async submit(
-            input: import("sandbar-adapter").FileMutationInput,
-            ctx: import("sandbar-adapter").AttemptContext,
+            input: import("@sandbar-sdk/adapter").FileMutationInput,
+            ctx: import("@sandbar-sdk/adapter").AttemptContext,
           ) {
             let recursiveDispatched = false;
 

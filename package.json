@@ -25,6 +25,7 @@
     "release:check-manifests": "bun scripts/release.mjs check",
     "release:refresh-lock": "bun scripts/refresh-workspace-lock.mjs",
     "release:fixture": "bun scripts/release-fixture.mjs",
+    "release:bootstrap": "bun scripts/npm-bootstrap.mjs",
     "observability:check": "bun run --cwd packages/sdk-qualification check && bun packages/sdk-qualification/observability/run.mjs",
     "check:built": "bun run --filter '@sandbar/*' check && bun run --cwd packages/adapter check && bun run --cwd packages/sdk check && bun run --cwd packages/providers/daytona check && bun run --cwd packages/providers/e2b check && bun run --cwd packages/providers/boxd check",
     "test:built": "bun test",

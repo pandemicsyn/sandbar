@@ -10,13 +10,13 @@ import {
   type SandboxRef,
   type ProviderDriver,
 } from "@sandbar/provider-spi";
-import { ExecRequest, MAX_EXEC_STDIN_BYTES, type ExecCommand } from "sandbar-adapter/portable";
+import { ExecRequest, MAX_EXEC_STDIN_BYTES, type ExecCommand } from "@sandbar-sdk/adapter/portable";
 import {
   AdapterError,
   AdapterFilesystemError,
   type FileTransferContext,
   type ImageBuildValue,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   filesystemCommand,
   filesystemResult,
@@ -804,7 +804,7 @@ export class DaytonaDriver implements ProviderDriver {
     requireSnapshotIdentity?: boolean;
     networkPolicy: string;
     labels?: Record<string, string>;
-    mounts?: import("sandbar-adapter").MountSpec[];
+    mounts?: import("@sandbar-sdk/adapter").MountSpec[];
     signal?: AbortSignal;
   }): Promise<DaytonaCreateResult> {
     this.sameScope(input.scope);
@@ -1219,7 +1219,10 @@ export class DaytonaDriver implements ProviderDriver {
     signal.throwIfAborted();
     const native = await this.toolbox(sandbox, true);
 
-    return async (command: string, ctx: import("sandbar-adapter").ReadContext): Promise<string> => {
+    return async (
+      command: string,
+      ctx: import("@sandbar-sdk/adapter").ReadContext,
+    ): Promise<string> => {
       ctx.signal.throwIfAborted();
       const remaining = Math.max(1, Math.min(30_000, ctx.deadline - Date.now()));
 

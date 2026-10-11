@@ -8,7 +8,7 @@ Create a sandbox, run a command, and clean up:
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
-import { e2b } from "sandbar-e2b";
+import { e2b } from "@sandbar-sdk/e2b";
 
 const apiKey = process.env.E2B_API_KEY;
 
@@ -33,7 +33,7 @@ try {
 }
 ```
 
-Install `sandbar-sdk sandbar-e2b` once published. Set `E2B_API_KEY` to use this example. Packages are not published yet; see [Getting started](https://sandbarsdk.dev/docs/direct-quickstart/) for setup and provider examples.
+Install `sandbar-sdk @sandbar-sdk/e2b` once published. Set `E2B_API_KEY` to use this example. Packages are not published yet; see [Getting started](https://sandbarsdk.dev/docs/direct-quickstart/) for setup and provider examples.
 
 [Provider support](https://sandbarsdk.dev/docs/providers/support/) · [API reference](https://sandbarsdk.dev/docs/reference/typescript/) · [Roadmap](ROADMAP.md) · [License](LICENSE)
 

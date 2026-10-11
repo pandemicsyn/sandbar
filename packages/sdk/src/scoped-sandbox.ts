@@ -7,7 +7,7 @@ import {
   type OperationHandle,
   type RecoveryReference,
 } from "./resource";
-import type { DestroyValue, SandboxReference, OperationKind } from "sandbar-adapter";
+import type { DestroyValue, SandboxReference, OperationKind } from "@sandbar-sdk/adapter";
 import type { AdapterDirectClient } from "./adapter-direct";
 
 /** Work cancellation does not cancel the separate cleanup budget. */

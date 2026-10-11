@@ -1,5 +1,5 @@
 import { Sandbar } from "sandbar-sdk";
-import { boxdAdapter } from "sandbar-boxd";
+import { boxdAdapter } from "@sandbar-sdk/boxd";
 import { z } from "zod";
 import { defineProviderProfile } from "./profile";
 import { features, supportMetadataSchema } from "./support";

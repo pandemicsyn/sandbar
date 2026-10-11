@@ -7,7 +7,7 @@ import {
   type Scope,
   sandboxReference,
   unknownSandboxFacts,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   Sandbar,
   AdapterSnapshot,
@@ -1941,7 +1941,7 @@ test.each(["x".repeat(128), "🚀".repeat(64)])(
   async (submissionId) => {
     const f = fixture();
     const client = await f.connect();
-    let token: import("sandbar-adapter").Json | undefined;
+    let token: import("@sandbar-sdk/adapter").Json | undefined;
     let tokenVersion: number | undefined;
 
     try {

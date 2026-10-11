@@ -163,7 +163,7 @@ const sunBands = [
                 </div>
               </div>
               <pre class="code" aria-label="Example: create a sandbox and run a command"><code><span data-factory-connect><span class="k">import</span> {"{"} Sandbar<span data-image-import>, Image</span> {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
-<span class="k">import</span> {"{"} <span data-typed-plain>daytona</span> {"}"} <span class="k">from</span> <span class="s">"sandbar-<span data-typed-plain>daytona</span>"</span>
+<span class="k">import</span> {"{"} <span data-typed-plain>daytona</span> {"}"} <span class="k">from</span> <span class="s">"@sandbar-sdk/<span data-typed-plain>daytona</span>"</span>
 
 <span class="k">const</span> client = <span class="k">await</span> Sandbar.connect(
   <span class="typed"><span data-typed>daytona</span><span class="caret" data-caret></span></span>({"{"}
@@ -173,7 +173,7 @@ const sunBands = [
     networkPolicy: "daytona-default",</span>
   {"}"}),
 )</span><span data-boxd-connect hidden><span class="k">import</span> {"{"} Sandbar {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
-<span class="k">import</span> {"{"} boxdAdapter {"}"} <span class="k">from</span> <span class="s">"sandbar-boxd"</span>
+<span class="k">import</span> {"{"} boxdAdapter {"}"} <span class="k">from</span> <span class="s">"@sandbar-sdk/boxd"</span>
 
 <span class="k">const</span> client = <span class="k">await</span> Sandbar.connect({"{"}
   adapter: <span class="typed"><span data-typed>boxdAdapter</span><span class="caret" data-caret></span></span>,
@@ -246,7 +246,7 @@ const sunBands = [
       <section class="band">
         <div class="wrap band-grid">
           <div class="band-copy">
-            <span class="band-chip">sandbar-adapter</span>
+            <span class="band-chip">@sandbar-sdk/adapter</span>
             <h2>Bring your own provider</h2>
             <p>
               Wrap any sandbox API with <code>defineAdapter</code>. Declare config and credential schemas,
@@ -356,6 +356,7 @@ const sunBands = [
           } else {
             value.className = "s";
             value.textContent = `"${literal}"`;
+
             if (key === "environment") line.append(`    ${key}: Image.prepared(`, value, "),");
             else line.append(`    ${key}: `, value, ",");
           }

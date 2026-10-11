@@ -25,12 +25,17 @@ const selected = new Map(
   }),
 );
 
-for (const name of ["sandbar-adapter", "sandbar-sdk", "sandbar-daytona", "sandbar-e2b"])
+for (const name of [
+  "@sandbar-sdk/adapter",
+  "sandbar-sdk",
+  "@sandbar-sdk/daytona",
+  "@sandbar-sdk/e2b",
+])
   if (!selected.has(name)) throw new Error(`Release graph lacks ${name}`);
 
 const sdkName = selected.get("sandbar-sdk").manifest.name;
 
-const adapterName = selected.get("sandbar-adapter").manifest.name;
+const adapterName = selected.get("@sandbar-sdk/adapter").manifest.name;
 
 const cases = [
   {
@@ -79,10 +84,10 @@ for (const provider of ["daytona", "e2b"]) {
 
   cases.push({
     name: provider,
-    packageName: `sandbar-${provider}`,
+    packageName: `@sandbar-sdk/${provider}`,
     overrides: [adapterName],
-    runtime: `import { ${provider} } from "sandbar-${provider}"; if (!${provider}(${JSON.stringify(options)}).bound) throw Error("Unbound factory");`,
-    types: `import { ${provider} } from "sandbar-${provider}"; const bound = ${provider}(${JSON.stringify(options)}); void bound;`,
+    runtime: `import { ${provider} } from "@sandbar-sdk/${provider}"; if (!${provider}(${JSON.stringify(options)}).bound) throw Error("Unbound factory");`,
+    types: `import { ${provider} } from "@sandbar-sdk/${provider}"; const bound = ${provider}(${JSON.stringify(options)}); void bound;`,
   });
 }
 

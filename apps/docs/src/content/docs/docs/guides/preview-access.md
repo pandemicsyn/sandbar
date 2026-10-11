@@ -7,7 +7,7 @@ Use `await box.preview(3000)` to obtain access to an HTTP service already runnin
 
 ```ts
 import { Sandbar, Image } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 
 const client = await Sandbar.connect(
   daytona({

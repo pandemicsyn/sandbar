@@ -16,12 +16,15 @@ import {
   nativeDeadline,
   type SandboxInfo,
   type SandboxReference,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { directoryEntries, GuestStat } from "./filesystem";
 import { daytonaState } from "./state-native";
 import { reopenDaytonaProcess, startDaytonaProcess } from "./process-native";
-import { MountDurability as importMountDurability, type ResourceReference } from "sandbar-adapter";
+import {
+  MountDurability as importMountDurability,
+  type ResourceReference,
+} from "@sandbar-sdk/adapter";
 import {
   AdapterError,
   AdapterFilesystemError,
@@ -30,7 +33,7 @@ import {
   defineAdapter,
   type AttemptContext,
   type ObserveContext,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import type { DriverResult } from "@sandbar/provider-spi";
 import {
   boundedBytes,
@@ -436,7 +439,7 @@ export function createDaytonaAdapter(
       const inspection = async (
         id: string,
         expected?: SandboxReference,
-        ctx?: import("sandbar-adapter").ReadContext,
+        ctx?: import("@sandbar-sdk/adapter").ReadContext,
       ): Promise<SandboxInfo> => {
         let value;
 
@@ -469,7 +472,7 @@ export function createDaytonaAdapter(
           assertSandboxReference(reference, expected);
         }
 
-        const states = new Map<string, import("sandbar-adapter").SandboxState>([
+        const states = new Map<string, import("@sandbar-sdk/adapter").SandboxState>([
           ["started", "running"],
           ["stopped", "stopped"],
           ["archived", "suspended"],
@@ -514,8 +517,8 @@ export function createDaytonaAdapter(
       };
 
       const lifecycleSource = async (
-        box: import("sandbar-adapter").Sandbox,
-        ctx: import("sandbar-adapter").ReadContext,
+        box: import("@sandbar-sdk/adapter").Sandbox,
+        ctx: import("@sandbar-sdk/adapter").ReadContext,
       ) => {
         if (!box.reference)
           throw new AdapterError("UNSUPPORTED", "Verified sandbox identity required");
@@ -630,7 +633,7 @@ export function createDaytonaAdapter(
 
       const restoreUnknown = (
         result: Awaited<ReturnType<typeof driver.create>>,
-        mounts: import("sandbar-adapter").MountSpec[],
+        mounts: import("@sandbar-sdk/adapter").MountSpec[],
         ctx: AttemptContext | ObserveContext,
       ) => {
         const detail = result.acknowledgedSandbox ?? result.nativeSandbox;
@@ -652,8 +655,8 @@ export function createDaytonaAdapter(
       };
 
       const validateRestore = async (
-        input: import("sandbar-adapter").SnapshotRestoreInput,
-        ctx: import("sandbar-adapter").ReadContext,
+        input: import("@sandbar-sdk/adapter").SnapshotRestoreInput,
+        ctx: import("@sandbar-sdk/adapter").ReadContext,
       ) => {
         const info = await resourceState.inspectSnapshot(input.snapshot, ctx);
 
@@ -698,8 +701,8 @@ export function createDaytonaAdapter(
         mountInput: "specs" as const,
         recovery: { version: 1, token: RestoreToken },
         async prepare(
-          input: import("sandbar-adapter").SnapshotRestoreInput,
-          ctx: import("sandbar-adapter").ReadContext,
+          input: import("@sandbar-sdk/adapter").SnapshotRestoreInput,
+          ctx: import("@sandbar-sdk/adapter").ReadContext,
         ) {
           await validateRestore(input, ctx);
 
@@ -714,7 +717,10 @@ export function createDaytonaAdapter(
 
           return input;
         },
-        async submit(input: import("sandbar-adapter").SnapshotRestoreInput, ctx: AttemptContext) {
+        async submit(
+          input: import("@sandbar-sdk/adapter").SnapshotRestoreInput,
+          ctx: AttemptContext,
+        ) {
           try {
             await validateRestore(input, { signal: ctx.signal, deadline: Date.now() + 30000 });
           } catch (error) {
@@ -757,7 +763,10 @@ export function createDaytonaAdapter(
 
           return "id" in value ? { ...value, mounts: input.request.mounts } : value;
         },
-        async observe(attempt: import("sandbar-adapter").RecoveryAttempt, ctx: ObserveContext) {
+        async observe(
+          attempt: import("@sandbar-sdk/adapter").RecoveryAttempt,
+          ctx: ObserveContext,
+        ) {
           if (!attempt.resource || attempt.resource.kind !== "snapshot")
             return ctx.unknown("Missing restore snapshot identity");
 
@@ -877,7 +886,10 @@ export function createDaytonaAdapter(
         defaultImage: config.environment,
         defaultNetworkPolicy: config.networkPolicy,
         snapshotRestore: createMutation,
-        async snapshotInspect(ref: ResourceReference, ctx: import("sandbar-adapter").ReadContext) {
+        async snapshotInspect(
+          ref: ResourceReference,
+          ctx: import("@sandbar-sdk/adapter").ReadContext,
+        ) {
           const info = await resourceState.inspectSnapshot(ref, ctx);
           info.restore.networkPolicies = [...caps.networkPolicies];
           info.restore.mounts = true;
@@ -886,9 +898,9 @@ export function createDaytonaAdapter(
         },
         async snapshotList(
           page: Parameters<
-            NonNullable<import("sandbar-adapter").AdapterSession["snapshotList"]>
+            NonNullable<import("@sandbar-sdk/adapter").AdapterSession["snapshotList"]>
           >[0],
-          ctx: import("sandbar-adapter").ReadContext,
+          ctx: import("@sandbar-sdk/adapter").ReadContext,
         ) {
           const result = await resourceState.fields.snapshotList!(page, ctx);
 

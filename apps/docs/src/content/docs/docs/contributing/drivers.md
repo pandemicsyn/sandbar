@@ -3,18 +3,18 @@ title: Contributing an adapter
 description: Authoring and conformance for provider integrations.
 ---
 
-Use `defineAdapter` from `sandbar-adapter` to describe a provider. The definition connects through `sandbar-sdk` using the public adapter contract. Implement only the operations the provider supports; the SDK handles resource references, validation, polling and public errors. Start with the [adapter authoring guide](/docs/guides/write-an-adapter/) and the [copyable Acme example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/acme-adapter.ts).
+Use `defineAdapter` from `@sandbar-sdk/adapter` to describe a provider. The definition connects through `sandbar-sdk` using the public adapter contract. Implement only the operations the provider supports; the SDK handles resource references, validation, polling and public errors. Start with the [adapter authoring guide](/docs/guides/write-an-adapter/) and the [copyable Acme example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/acme-adapter.ts).
 
-Use `adapterSuite` from `sandbar-adapter/testing` with a deterministic provider fixture. Include loss after effect, scope changes, binary output and recovery without another submission for every capability you claim. The fake provider is a simulation; it persists native effect evidence for these tests. Real-provider support requires separate native conformance evidence in the [support matrix](/docs/providers/support/).
+Use `adapterSuite` from `@sandbar-sdk/adapter/testing` with a deterministic provider fixture. Include loss after effect, scope changes, binary output and recovery without another submission for every capability you claim. The fake provider is a simulation; it persists native effect evidence for these tests. Real-provider support requires separate native conformance evidence in the [support matrix](/docs/providers/support/).
 
-Packages are currently unpublished. Develop from a checkout and use local packed artifacts for consumer qualification. Modal is a separate experimental `sandbar-modal` adapter with offline coverage; it is not a built-in SDK subpath or a live-qualified provider.
+Packages are currently unpublished. Develop from a checkout and use local packed artifacts for consumer qualification. Modal is a separate experimental `@sandbar-sdk/modal` adapter with offline coverage; it is not a built-in SDK subpath or a live-qualified provider.
 
 ## Choose a package shape
 
-| Maintenance            | Consumer import                   | Distribution                                 |
-| ---------------------- | --------------------------------- | -------------------------------------------- |
-| Official Daytona / E2B | `sandbar-daytona` / `sandbar-e2b` | Separately installed alongside `sandbar-sdk` |
-| Third-party            | The author's package name         | Separately installed; no SDK subpath         |
+| Maintenance            | Consumer import                             | Distribution                                 |
+| ---------------------- | ------------------------------------------- | -------------------------------------------- |
+| Official Daytona / E2B | `@sandbar-sdk/daytona` / `@sandbar-sdk/e2b` | Separately installed alongside `sandbar-sdk` |
+| Third-party            | The author's package name                   | Separately installed; no SDK subpath         |
 
 Follow the repository's [add-provider workflow](https://github.com/pandemicsyn/sandbar/blob/main/.agents/skills/add-provider/SKILL.md) and [package conventions](https://github.com/pandemicsyn/sandbar/blob/main/specs/package-conventions.md). The [agent prompt](/docs/agents/build-a-provider/) provides a starting brief.
 

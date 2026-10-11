@@ -1,5 +1,5 @@
 import { Image, Sandbar, type AdapterRecoveryReference } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 import { z } from "zod";
 
 export const daytonaConfiguration = z.strictObject({

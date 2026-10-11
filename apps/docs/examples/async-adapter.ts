@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter } from "@sandbar-sdk/adapter";
 
 /** Simulated durable provider job boundary for the asynchronous recovery guide. */
 const jobs = new Map<string, { operationId: string; image: string; sandboxId: string }>();

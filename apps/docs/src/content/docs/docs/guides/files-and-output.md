@@ -9,7 +9,7 @@ Use `writeTextFile` and `readTextFile` for UTF-8 without encoding boilerplate:
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
-import { e2b } from "sandbar-e2b";
+import { e2b } from "@sandbar-sdk/e2b";
 
 const client = await Sandbar.connect(e2b({ apiKey: process.env.E2B_API_KEY! }));
 try {

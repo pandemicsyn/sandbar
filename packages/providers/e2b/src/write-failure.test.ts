@@ -4,7 +4,7 @@ import {
   observeOperation,
   prepareOperation,
   submitOperation,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { Image, Sandbar } from "sandbar-sdk";
 import { createE2BAdapter } from "./index";
 import { createSdkTransport, type E2BRecord } from "./transport";

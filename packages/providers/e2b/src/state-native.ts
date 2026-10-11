@@ -1,4 +1,4 @@
-import { sandboxReference, type SandboxReference, type Sandbox } from "sandbar-adapter";
+import { sandboxReference, type SandboxReference, type Sandbox } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { resourceHistory } from "./resource-history";
 import {
@@ -16,7 +16,7 @@ import {
   type SnapshotProfile,
   type ReadContext,
   type AttemptContext,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { E2BVolumeCreateRejected, type E2BTransport, type E2BRecord } from "./transport";
 
 const VolumeCreateToken = z.strictObject({
@@ -241,7 +241,7 @@ export function e2bState(input: {
   }
 
   function continueRejectedDeletion(kind: "snapshot" | "volume") {
-    return async (attempt: import("sandbar-adapter").RecoveryAttempt, ctx: AttemptContext) => {
+    return async (attempt: import("@sandbar-sdk/adapter").RecoveryAttempt, ctx: AttemptContext) => {
       const token = DeleteToken.safeParse(attempt.token);
       const ref = attempt.resource;
       const saved = token.success ? token.data.resource : undefined;

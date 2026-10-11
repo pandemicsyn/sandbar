@@ -6,7 +6,7 @@ import {
   type ProcessStartContext,
   type ReadContext,
   type Json,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import type { Sandbox } from "e2b";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";

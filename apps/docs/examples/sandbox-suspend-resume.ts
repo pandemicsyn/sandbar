@@ -1,6 +1,6 @@
 import { Sandbar, Image, type SandboxReference } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
-import { e2b } from "sandbar-e2b";
+import { daytona } from "@sandbar-sdk/daytona";
+import { e2b } from "@sandbar-sdk/e2b";
 
 // Provider changes stay in setup. Memory preservation also meets a filesystem minimum.
 export const daytonaSetup = (apiKey: string) =>

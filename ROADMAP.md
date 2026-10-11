@@ -58,4 +58,4 @@ Vercel, Tensorlake and other adapters remain behind SDK usability. Reassess whet
 
 Universal native parity and every optional extension above are not required. Select the next adapter only after that usability review. Accounting, the removed service/management UI and Rust are not on the delivery queue. Completed plans and audit records live in Git history; do not recreate parallel backlogs.
 
-Daytona and E2B remain first-class official integrations, distributed as separately installed `sandbar-daytona` and `sandbar-e2b` packages alongside the provider-neutral SDK. The initial four public packages release in lockstep; Modal retains its experimental status.
+Daytona and E2B remain first-class official integrations, distributed as separately installed `@sandbar-sdk/daytona` and `@sandbar-sdk/e2b` packages alongside the provider-neutral SDK. The initial four public packages release in lockstep; Modal retains its experimental status.

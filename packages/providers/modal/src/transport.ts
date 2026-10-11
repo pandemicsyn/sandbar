@@ -6,7 +6,7 @@ import {
   type ModalClientParams,
   type Sandbox,
 } from "modal";
-import { AdapterError } from "sandbar-adapter";
+import { AdapterError } from "@sandbar-sdk/adapter";
 import { ModalRouterWire, type RouterRun } from "./router-wire";
 
 export const MODAL_ENDPOINT = "https://api.modal.com:443";

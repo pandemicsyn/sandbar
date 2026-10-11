@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
 import { Sandbar, Image } from "sandbar-sdk";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter } from "@sandbar-sdk/adapter";
 import { artifactFiles, directoryFiles, listChildren } from "./directory-files";
 
 test("public directory example preserves bytes and requests recursion deliberately", async () => {

@@ -9,7 +9,7 @@ provider.register();
 // Import the SDK after registering the application's existing Datadog tracer.
 const { Sandbar, Image } = await import("sandbar-sdk");
 
-const { daytona } = await import("sandbar-daytona");
+const { daytona } = await import("@sandbar-sdk/daytona");
 
 const client = await Sandbar.connect(
   daytona({

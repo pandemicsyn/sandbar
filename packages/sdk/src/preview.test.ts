@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { z } from "zod";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { defineAdapter, type Preview } from "sandbar-adapter";
+import { defineAdapter, type Preview } from "@sandbar-sdk/adapter";
 import { Image, Sandbar } from "./index";
 
 async function fixture(

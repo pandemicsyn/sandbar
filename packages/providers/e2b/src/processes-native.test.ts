@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { afterEach, expect, test } from "bun:test";
 import { Sandbar } from "sandbar-sdk";
-import { sandboxReference, type NativeProcess } from "sandbar-adapter";
+import { sandboxReference, type NativeProcess } from "@sandbar-sdk/adapter";
 import { createE2BAdapter } from "./index";
 import { createSdkTransport } from "./transport";
 

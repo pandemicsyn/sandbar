@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "sandbar-sdk": "workspace:*",
-    "sandbar-daytona": "workspace:*",
-    "sandbar-e2b": "workspace:*"
+    "@sandbar-sdk/daytona": "workspace:*",
+    "@sandbar-sdk/e2b": "workspace:*"
   }
 }

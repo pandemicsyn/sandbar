@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { AdapterError, defineAdapter, type AdapterSession, type FileEntry } from "sandbar-adapter";
+import {
+  AdapterError,
+  defineAdapter,
+  type AdapterSession,
+  type FileEntry,
+} from "@sandbar-sdk/adapter";
 import { Image, Sandbar, type AdapterRecoveryReference } from "./index";
 
 async function directoryFixture(files: NonNullable<AdapterSession["files"]>) {

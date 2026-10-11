@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { AdapterError, defineAdapter, type ReadContext } from "sandbar-adapter";
+import { AdapterError, defineAdapter, type ReadContext } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { Image, Sandbar, type ReadOptions, type SandboxHandle } from "./index";
 

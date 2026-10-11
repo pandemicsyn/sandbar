@@ -1,6 +1,6 @@
 import { Image, Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
-import { e2b } from "sandbar-e2b";
+import { daytona } from "@sandbar-sdk/daytona";
+import { e2b } from "@sandbar-sdk/e2b";
 
 /** Caller supplies a ready Daytona image and explicitly chooses provider networking. */
 export async function configuredWorkflow(

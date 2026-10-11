@@ -7,7 +7,7 @@ import {
   prepareOperation,
   submitOperation,
   type Json,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   Sandbar,
   SandbarError,

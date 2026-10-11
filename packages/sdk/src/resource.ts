@@ -1,12 +1,12 @@
-import type { OperationOutcome } from "sandbar-adapter";
-import { SnapshotRequest, MountSpec } from "sandbar-adapter";
+import type { OperationOutcome } from "@sandbar-sdk/adapter";
+import { SnapshotRequest, MountSpec } from "@sandbar-sdk/adapter";
 import type {
   AdapterDirectClient,
   AdapterSandbox,
   AdapterOperation,
   AdapterRecoveryReference,
 } from "./adapter-direct";
-import type { OperationKind, RetainedArtifact, Scope } from "sandbar-adapter";
+import type { OperationKind, RetainedArtifact, Scope } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import type { AdapterSnapshot, AdapterVolume } from "./resources";
 import {
@@ -16,7 +16,7 @@ import {
   MAX_EXEC_STDIN_BYTES,
   FilePath,
   type SafeError,
-} from "sandbar-adapter/portable";
+} from "@sandbar-sdk/adapter/portable";
 
 export type PreparedImage = {
   kind: "prepared";
@@ -30,9 +30,9 @@ export type ImageBuildResult = {
   retainedResources: RetainedArtifact[];
 };
 
-export type { OciImage, ImageInput } from "sandbar-adapter";
+export type { OciImage, ImageInput } from "@sandbar-sdk/adapter";
 
-import type { ImageInput, OciImage } from "sandbar-adapter";
+import type { ImageInput, OciImage } from "@sandbar-sdk/adapter";
 
 export const Image = {
   prepared(value: string | PreparedImage): ImageInput {

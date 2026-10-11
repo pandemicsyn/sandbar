@@ -1,4 +1,4 @@
-import type { DirectoryResult, FileEntry } from "sandbar-adapter";
+import type { DirectoryResult, FileEntry } from "@sandbar-sdk/adapter";
 import { byteLimit, type FileStreamOptions } from "./file-transfer";
 import { SandbarError, type ReadOptions } from "./resource";
 

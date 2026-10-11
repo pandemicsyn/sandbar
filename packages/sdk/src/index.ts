@@ -81,7 +81,7 @@ export {
   assertResourceIdentity,
   SnapshotRequest,
   SnapshotRequirements,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 
 export type {
   Support,
@@ -101,7 +101,7 @@ export type {
   Fact,
   Deadline,
   CreatePlan,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 
 export { AdapterSnapshot, AdapterVolume } from "./resources";
 
@@ -114,9 +114,13 @@ export {
   RestoreRequest,
   VolumeCreateInput,
   ArtifactDeletionResult,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 
-export type { MountCapabilities, VolumeCapabilities, RestoreCapabilities } from "sandbar-adapter";
+export type {
+  MountCapabilities,
+  VolumeCapabilities,
+  RestoreCapabilities,
+} from "@sandbar-sdk/adapter";
 
 export { diagnosticContext } from "./observability";
 
@@ -132,7 +136,7 @@ export type {
   TransferPolicy,
 } from "./file-transfer";
 
-export type { FileEntry, DirectoryResult, FileStat } from "sandbar-adapter";
+export type { FileEntry, DirectoryResult, FileStat } from "@sandbar-sdk/adapter";
 
 export type {
   WalkFilesOptions,
