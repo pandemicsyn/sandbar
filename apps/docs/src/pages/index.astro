@@ -356,6 +356,7 @@ const sunBands = [
           } else {
             value.className = "s";
             value.textContent = `"${literal}"`;
+
             if (key === "environment") line.append(`    ${key}: Image.prepared(`, value, "),");
             else line.append(`    ${key}: `, value, ",");
           }
