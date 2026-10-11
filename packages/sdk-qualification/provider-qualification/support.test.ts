@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { networkProbeId, networkSampleSchema } from "./network-probe";
-import { builtinSupport, renderSupportMatrix } from "./support";
+import { officialSupport, renderSupportMatrix } from "./support";
 import { renderLiveMatrix, parseReport, type QualificationRecord } from "./report";
 
 function record(
@@ -75,7 +75,7 @@ test("feature groups do not combine assertions from different source revisions",
 });
 
 test("external declared metadata renders with the same feature groups and report schema", () => {
-  const metadata = { ...builtinSupport[0]!, id: "external.fixture", name: "External fixture" };
+  const metadata = { ...officialSupport[0]!, id: "external.fixture", name: "External fixture" };
 
   const html = renderSupportMatrix(
     [

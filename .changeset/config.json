@@ -7,7 +7,7 @@
     }
   ],
   "commit": false,
-  "fixed": [["sandbar-adapter", "sandbar-sdk"]],
+  "fixed": [["sandbar-adapter", "sandbar-sdk", "sandbar-daytona", "sandbar-e2b"]],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

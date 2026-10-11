@@ -10,8 +10,8 @@ const target = fileURLToPath(
 
 const surfaces = [
   ["SDK", "sandbar-sdk", "packages/sdk/dist/index.d.ts"],
-  ["Daytona adapter", "sandbar-sdk/daytona", "packages/sdk/dist/daytona.d.ts"],
-  ["E2B adapter", "sandbar-sdk/e2b", "packages/sdk/dist/e2b.d.ts"],
+  ["Daytona adapter", "sandbar-daytona", "packages/providers/daytona/dist/index.d.ts"],
+  ["E2B adapter", "sandbar-e2b", "packages/providers/e2b/dist/index.d.ts"],
   ["Experimental Modal adapter", "sandbar-modal", "packages/providers/modal/dist/index.d.ts"],
   ["Adapter authoring", "sandbar-adapter", "packages/adapter/dist/index.d.ts"],
   ["Adapter test kit", "sandbar-adapter/testing", "packages/adapter/dist/testing.d.ts"],

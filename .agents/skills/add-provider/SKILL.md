@@ -1,26 +1,13 @@
 ---
 name: add-provider
-description: Add a sandbox provider to Sandbar as a built-in SDK subpath or a separately distributed adapter package. Covers the public adapter API, native guarantees, packaging and qualification.
+description: Add a sandbox provider to Sandbar as a separately distributed official or third-party adapter package. Covers the public adapter API, native guarantees, packaging and qualification.
 ---
 
 # Add a Sandbar provider
 
-Built-in and external providers implement the same public `sandbar-adapter` API. The difference is distribution and convenience wiring, not access to a privileged execution engine. Implement the requested provider and supported operations; adding one does not authorize other planned integrations or live provider usage.
+Official and third-party providers implement the same public `sandbar-adapter` API. Official integrations are separately installed `sandbar-<provider>` packages maintained in this monorepo. Separate distribution does not imply experimental support. Implement only the requested provider and operations; paid usage requires explicit authorization.
 
-Paths below are relative to the repository root unless linked. Use current exported types and tested examples as the implementation authority; do not copy historical SPI designs from archived specs.
-
-## Choose the distribution
-
-Read [package conventions](../../../specs/package-conventions.md) before choosing names or exports.
-
-| | Built-in | External |
-| --- | --- | --- |
-| Consumer install | `sandbar-sdk` | `sandbar-sdk` plus the adapter package |
-| Import | `sandbar-sdk/<provider>` | `sandbar-<provider>` for maintained integrations, or the author's own package name/scope |
-| Implementation | Usually a private workspace in `packages/providers/<provider>` bundled into the SDK | A separately packed package in the requested repository/workspace |
-| SDK change | Typed factory, explicit subpath, build and dependency wiring | None required; connect the exported definition through the public API |
-
-Package names and the adapter's stable `name` are separate. Do not assume ownership of an npm name or scope. A planned provider in the conventions is not an implemented export. Do not add placeholder exports or publish packages as part of implementation.
+Read [package conventions](../../../specs/package-conventions.md) before choosing names and exports. Custom authors may use their own names/scopes. Provider package names and stable adapter IDs are independent. Do not add SDK provider subpaths or placeholder exports.
 
 ## Establish the native boundary
 
@@ -76,14 +63,7 @@ Document operations whose uncertain outcomes cannot be reconciled. A new recover
 
 ## Wire the chosen package
 
-### Built-in SDK subpath
-
-- Add the private provider workspace's source, tests, manifest and build/typecheck configuration. Use the public adapter API; keep provider-specific dependencies out of `sandbar-adapter`.
-- Add `packages/sdk/src/<provider>.ts` with the typed, IO-free binding factory. Follow `packages/sdk/src/daytona.ts` and the existing SDK-local `bindAdapter` helper. The result must work with `await Sandbar.connect(provider(options))` through the common connection path.
-- Update `packages/sdk/package.json` exports, build entrypoints and production dependency treatment. Add build ordering and lockfile changes actually needed. A native package left external by the bundler must be an installed production dependency, not merely a workspace/dev dependency.
-- Keep the SDK root free of eager provider imports. Inspect emitted JS and declarations for private `@sandbar/*` leaks. Subpath isolation avoids loading unrelated providers; it does not promise their dependencies are absent from installation.
-
-### External adapter package
+### Separately installed adapter package
 
 - Export the adapter definition with ESM JS and corresponding TypeScript declarations. Declare `sandbar-adapter`, schema libraries and native libraries used by the installed artifact; use compatible public versions and avoid private workspace imports. The adapter implementation must not depend on SQL. It normally needs the SDK only for consumer examples/tests.
 - Do not add an SDK subpath or SDK-root import. Consumers use the existing public form:
@@ -100,7 +80,7 @@ Document operations whose uncertain outcomes cannot be reconciled. A new recover
   ```
 
   This connection shape is exercised in [the Acme consumer test](../../../apps/docs/examples/acme.test.ts); replace its names and inputs with the real package schemas.
-- Keep distribution metadata, dependency ranges, exports and packed files complete. If maintained in this monorepo, include the new package in the applicable release/version configuration; private built-in workspaces should not become separately published packages. Do not add a release system to an external repository unless requested.
+- Keep distribution metadata, dependency ranges, exports and packed files complete. If maintained in this monorepo, include the new package in the applicable release/version configuration; official integrations belong in the coordinated fixed release group; preserve experimental packages’ existing status. Do not add a release system to an external repository unless requested.
 
 ## Qualify and document
 
@@ -111,6 +91,6 @@ Run `adapterSuite` from `sandbar-adapter/testing` against a deterministic native
 
 Add focused tests for supported operations: unsupported inputs before mutation, scope mismatch, loss after one native effect, observation without replay, binary/command fidelity, declared bounds and cleanup. If pending tokens are supported, reopen a connection and recover the saved reference.
 
-For distribution, extend or follow `packages/sdk-qualification/package-smoke.mjs`. Pack real artifacts into a clean consumer, install only documented top-level packages, compile strict NodeNext declarations, and run Node/Bun consumers. Include the new built-in subpath or external definition and check dependency isolation. Local archive overrides may resolve transitive packages but must not mask missing dependencies by installing extra roots. Exercise npm, pnpm and Bun installs when qualifying release/install support, and report unrun environments explicitly.
+For distribution, extend or follow `packages/sdk-qualification/package-smoke.mjs`. Pack real artifacts into a clean consumer, install only documented top-level packages, compile strict NodeNext declarations, and run Node/Bun consumers. Include the new public factory or definition and check dependency isolation. Local archive overrides may resolve transitive packages but must not mask missing dependencies by installing extra roots. Exercise npm, pnpm and Bun installs when qualifying release/install support, and report unrun environments explicitly.
 
 Use root build/typecheck, lint/format, package smoke and documentation scripts appropriate to the changed surfaces. Run shared builds sequentially. Update the provider support matrix, capability/credential/image instructions, examples and package docs; regenerate references through existing scripts when affected. Distinguish fixture-tested, packed-tested and live-tested behavior, unsupported operations and recovery limitations. Never run paid/live tests, publish or deploy without explicit authorization.

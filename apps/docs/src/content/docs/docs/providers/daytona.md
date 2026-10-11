@@ -3,11 +3,11 @@ title: Daytona
 description: Connect to Daytona with explicit region, prepared image, and network policy settings.
 ---
 
-Import `daytona` from `sandbar-sdk/daytona`. Start with an active Linux snapshot in your target region. The example selects `daytona-default` on connection and creation, matching the getting-started configuration. Strict blocked networking requires eligible organization settings; see the policy section below.
+Import `daytona` from `sandbar-daytona`. Start with an active Linux snapshot in your target region. The example selects `daytona-default` on connection and creation, matching the getting-started configuration. Strict blocked networking requires eligible organization settings; see the policy section below.
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "sandbar-daytona";
 
 // Provider setup: adapter credentials, region/template and prepared image.
 const client = await Sandbar.connect(
@@ -77,7 +77,7 @@ Run OpenCode with this provider using the [runnable agent examples](/docs/guides
 
 ## Configured lifetime renewal
 
-The application workflow is the same for both built-in adapters:
+The application workflow is the same for both official adapters:
 
 ```ts
 const box = await client.sandboxes.create({ networkPolicy: "daytona-default" });

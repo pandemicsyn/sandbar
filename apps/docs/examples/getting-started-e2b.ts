@@ -1,5 +1,5 @@
 import { Sandbar } from "sandbar-sdk";
-import { e2b } from "sandbar-sdk/e2b";
+import { e2b } from "sandbar-e2b";
 
 const apiKey = process.env.E2B_API_KEY;
 

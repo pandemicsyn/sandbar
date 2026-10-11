@@ -7,7 +7,7 @@
   {
     "name": "target:builtin",
     "color": "0E8A16",
-    "description": "Candidate for an adapter bundled with sandbar-sdk; rationale in issue"
+    "description": "Legacy bundled distribution target; current policy uses separate adapter packages"
   },
   {
     "name": "target:external",

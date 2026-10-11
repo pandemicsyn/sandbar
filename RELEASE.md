@@ -1,6 +1,6 @@
 # Releasing Sandbar packages
 
-`sandbar-adapter` and `sandbar-sdk` use one lockstep version (currently pre-1.0) and one `v<version>` Git tag. Changesets write package changelogs, and the release workflow composes its GitHub release notes from those same version sections. Private apps, provider implementation workspaces and internal SDK packages remain unpublished.
+`sandbar-adapter`, `sandbar-sdk`, `sandbar-daytona`, and `sandbar-e2b` use one lockstep version (currently pre-1.0) and one `v<version>` Git tag. Changesets write package changelogs, and the release workflow composes its GitHub release notes from those same version sections. Private apps, SPI, fake-provider and internal packages remain unpublished. Official adapters are public release packages; experimental Modal stays outside this release group.
 
 ## Contributor flow
 
@@ -16,7 +16,7 @@
 
 ## One-time setup before a real release
 
-- Confirm ownership and availability of every public npm package name. The selected public names are `sandbar-adapter` and `sandbar-sdk`. Confirm npm ownership of each name before publication; registry E404 does not prove ownership. The two selected packages have `private: false`, Apache-2.0 licensing and exact repository metadata. Keep provider implementation and app workspaces private. Update `scripts/release-packages.json` and the fixed group in `.changeset/config.json` together if the distributable graph changes.
+- Confirm ownership and availability of every public npm package name. The selected public names are `sandbar-adapter`, `sandbar-sdk`, `sandbar-daytona`, and `sandbar-e2b`. Confirm npm ownership of each name before publication; registry E404 does not prove ownership. The four selected packages have `private: false`, Apache-2.0 licensing and exact repository metadata. Keep internal SPI, fake-provider and app workspaces private; Modal remains experimental outside the coordinated release group. Update `scripts/release-packages.json` and the fixed group in `.changeset/config.json` together if the distributable graph changes.
 - Create a protected GitHub `npm` environment with required reviewers and restrict it to approved release tags. Enable Actions to write contents for version preparation; branch protection and the required independent review still apply to the version PR.
 - Configure an npm trusted publisher for **each** public package: GitHub owner `pandemicsyn`, repository `sandbar`, workflow filename `release-npm.yml`, environment `npm`, with direct `npm publish` allowed. GitHub-hosted runners, npm CLI 11.5.1+ and Node 22.14+ are required. OIDC requires `id-token: write`; this workflow supplies it. The npm `trust` command requires an existing package, so each first publication needs an authorized manual bootstrap with package ownership and a suitable scoped/public access setting before OIDC can be configured. No account credentials are stored in this repository.
 - Verify npm organization/scope rights and GitHub environment settings separately. This setup task does not publish packages or create a release.
@@ -27,6 +27,6 @@ Run `bun run release:fixture` after building packages. It uses temporary package
 
 ## Intended installs after publication
 
-Install the SDK alone for direct mode: `npm install sandbar-sdk`, `pnpm add sandbar-sdk`, or `bun add sandbar-sdk`. Its built-in provider imports are `sandbar-sdk/daytona` and `sandbar-sdk/e2b`. The experimental `sandbar-modal` adapter is a separate package outside this 1.0 release workflow.
+Install core plus the selected official adapter: `npm install sandbar-sdk sandbar-daytona` or `npm install sandbar-sdk sandbar-e2b` (equivalent pnpm/Bun commands work). Core alone supports independently authored adapters. Its official provider imports are `sandbar-daytona` and `sandbar-e2b`. The experimental `sandbar-modal` adapter is a separate package outside this 1.0 release workflow.
 
 Adapter authors install `sandbar-adapter` and import `sandbar-adapter/testing` for the conformance suite. These are package shapes for a future authorized publication; no npm release is performed by this task.

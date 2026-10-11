@@ -11,10 +11,10 @@ Packages are currently unpublished. Develop from a checkout and use local packed
 
 ## Choose a package shape
 
-| Distribution     | Consumer import           | When to use it                                                                           |
-| ---------------- | ------------------------- | ---------------------------------------------------------------------------------------- |
-| Built-in         | `sandbar-sdk/<provider>`  | A maintained integration explicitly included in the SDK. Daytona and E2B use this shape. |
-| Separate package | The author's package name | A provider integration distributed independently. It needs no SDK subpath.               |
+| Maintenance            | Consumer import                   | Distribution                                 |
+| ---------------------- | --------------------------------- | -------------------------------------------- |
+| Official Daytona / E2B | `sandbar-daytona` / `sandbar-e2b` | Separately installed alongside `sandbar-sdk` |
+| Third-party            | The author's package name         | Separately installed; no SDK subpath         |
 
 Follow the repository's [add-provider workflow](https://github.com/pandemicsyn/sandbar/blob/main/.agents/skills/add-provider/SKILL.md) and [package conventions](https://github.com/pandemicsyn/sandbar/blob/main/specs/package-conventions.md). The [agent prompt](/docs/agents/build-a-provider/) provides a starting brief.
 

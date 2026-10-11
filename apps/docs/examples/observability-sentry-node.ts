@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { Sandbar, Image } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "sandbar-daytona";
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN!,

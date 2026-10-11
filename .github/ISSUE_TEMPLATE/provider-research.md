@@ -20,7 +20,7 @@ Keep this opening to roughly 200 words: recommendation and target, minimum usefu
 - Research date, Sandbar revision, native API/SDK version and source revision:
 - Official TypeScript SDK package/repository; or evidence of absence/unknown availability:
 - Researched configuration: account tier, region, image/runtime class, hosted/self-hosted:
-- Target (`builtin` / `external` / `unknown`, matching the label) and proposed transport:
+- Distribution (official separately installed package / third-party package / unknown), support status, and proposed transport:
 - Target rationale with sources: actual chosen dependencies/runtime, licensing, packaging and maintenance tradeoffs. Distinguish accepted project policy from technical suitability; unused SDK dependencies are only an alternative's cost:
 - Related or superseded issues/PRs and accepted decisions:
 

@@ -912,3 +912,15 @@ export {
 } from "./portable";
 
 export * from "./state";
+
+export { bindAdapter, type BoundAdapter } from "./bound";
+
+export type OciImage = { kind: "oci"; value: string };
+
+export type ImageInput =
+  | {
+      kind: "prepared";
+      value: string;
+      binding?: { provider: string; scope: Scope };
+    }
+  | OciImage;

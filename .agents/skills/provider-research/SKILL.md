@@ -15,7 +15,7 @@ Open that page to identify the exact sandbox product and follow its official doc
 
 ## Establish scope and conventions
 
-Read the [issue conventions](../../../.github/provider-research-conventions.md) and [label manifest](../../../.github/provider-research-labels.json). Use `[provider-candidate]: <Official product name>`, `provider-candidate`, and exactly one `target:builtin`, `target:external`, or `target:unknown`. Record the target rationale using the chosen implementation's dependencies/runtime; distinguish accepted policy from technical suitability and unused alternatives' costs.
+Read the [issue conventions](../../../.github/provider-research-conventions.md) and [label manifest](../../../.github/provider-research-labels.json). Use `[provider-candidate]: <Official product name>`, `provider-candidate`, and exactly one `target:external` or `target:unknown` (retain legacy `target:builtin` only on existing issues). Record the target rationale using the chosen implementation's dependencies/runtime; distinguish accepted policy from technical suitability and unused alternatives' costs.
 
 Read supplied issues/discussion, preserve user decisions, and search the selected repository for prior research before proposing a duplicate. If instructed not to consult earlier research, state that limitation rather than claiming none exists.
 

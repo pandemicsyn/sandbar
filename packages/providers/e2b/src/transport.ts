@@ -16,7 +16,8 @@ import {
 } from "sandbar-adapter";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { startProcess, type E2BProcessOptions, type E2BProcessReference } from "./process-native";
+import { startProcess } from "./process-native";
+import type { E2BProcessOptions, E2BProcessReference } from "./process-contract";
 import { guestFilesystem, directoryValue, statValue } from "./filesystem-native";
 import { classifyWriteFailure, E2BWriteFailure } from "./write-failure";
 

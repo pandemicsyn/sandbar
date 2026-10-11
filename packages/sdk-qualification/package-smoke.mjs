@@ -13,9 +13,9 @@ const packages = [
   ["sandbar-adapter", "packages/adapter"],
   ["@sandbar/provider-spi", "packages/provider-spi"],
   ["@sandbar/provider-fake", "packages/providers/fake"],
-  ["@sandbar/provider-daytona", "packages/providers/daytona"],
+  ["sandbar-daytona", "packages/providers/daytona"],
   ["sandbar-modal", "packages/providers/modal"],
-  ["@sandbar/provider-e2b", "packages/providers/e2b"],
+  ["sandbar-e2b", "packages/providers/e2b"],
   ["sandbar-sdk", "packages/sdk"],
 ];
 
@@ -63,6 +63,18 @@ async function pack(directory) {
 
   if (contents.some((path) => path.includes("/src/") || path.endsWith(".test.d.ts")))
     throw new Error(`${manifest.name} archive contains source or test declarations`);
+
+  if (
+    ["sandbar-sdk", "sandbar-adapter", "sandbar-daytona", "sandbar-e2b"].includes(manifest.name)
+  ) {
+    for (const path of contents.filter((path) => /\.(?:js|d\.ts)$/.test(path))) {
+      const source = run("tar", ["-xOzf", archive, path], root);
+
+      if (/(?:from\s*|import\s*\(?)["']@sandbar\//.test(source))
+        throw new Error(`${manifest.name} leaks private workspace in ${path}`);
+    }
+  }
+
   const packed = JSON.parse(run("tar", ["-xOzf", archive, "package/package.json"], root));
 
   const exports = z
@@ -217,7 +229,7 @@ void flow;
   else if (mode === "daytona")
     source = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "sandbar-daytona";
 async function flow() {
   const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15, environment: Image.prepared("snap-1") }));
   const built = await client.images.build({ source: Image.oci("alpine:3.21") });
@@ -236,7 +248,7 @@ void flow;
   else if (mode === "e2b")
     source = `
 import { Sandbar, Image } from "sandbar-sdk";
-import { e2b, createE2BAdapter } from "sandbar-sdk/e2b";
+import { e2b, createE2BAdapter } from "sandbar-e2b";
 async function flow() {
   const client = await Sandbar.connect(e2b({ apiKey: "fixture", lifecycle: { lifetimeSeconds: 600 } }));
   const built = await client.images.build({ source: Image.oci("node:24") });
@@ -268,8 +280,8 @@ void flow;
   else if (mode === "builtins")
     source = `
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
-import { e2b } from "sandbar-sdk/e2b";
+import { daytona } from "sandbar-daytona";
+import { e2b } from "sandbar-e2b";
 async function flow() {
   const daytonaClient = await Sandbar.connect(daytona({ apiKey: "fixture", target: "us", lifecycle: { lifetimeSeconds: 600 } }));
   const e2bClient = await Sandbar.connect(e2b({ apiKey: "fixture", teamId: "team_1", templateId: "template_1" }));
@@ -386,9 +398,8 @@ try {
 `;
 
 const daytonaSource = `
-import { saveWorkspace, finishWorkspace, daytonaSetup } from "./lifecycle-example.mjs";
 import { Sandbar, Image } from "sandbar-sdk";
-import { createDaytonaAdapter } from "@sandbar/provider-daytona";
+import { createDaytonaAdapter } from "sandbar-daytona";
 let nativeState = "started";
 let name = "", mutations = 0, snapshotName = "", labels = {}, renewalWindows = [];
 const files = new Map([["/file", Uint8Array.from([0,255])]]);
@@ -471,11 +482,14 @@ try {
   if (bytes[0] !== 0 || bytes[1] !== 255) throw new Error("Binary file mismatch");
   await box.destroy();
   if (mutations !== 10) throw new Error("Mutation replay in packed consumer: " + mutations);
+  if (process.env.PACKED_LIFECYCLE_EXAMPLE) {
+    const { saveWorkspace, finishWorkspace, daytonaSetup } = await import("./lifecycle-example.mjs");
   globalThis.fetch = mock;
   let savedExample;
   const savedResult = await saveWorkspace(daytonaSetup("fixture"), "built-1", async ref => { savedExample=JSON.parse(JSON.stringify(ref)); });
   const finished = await finishWorkspace(daytonaSetup("rotated-fixture"), savedExample);
   if(savedResult.observation.state!=="stopped" || finished.inactive.state!=="stopped" || finished.resumed.reference.nativeId!==savedExample.nativeId || new TextDecoder().decode(finished.bytes)!=="saved") throw Error("Packed public lifecycle example differs");
+  }
   process.stdout.write("packed Daytona fixture flow passed\\n");
 } finally { await client.close(); }
 `;
@@ -563,7 +577,7 @@ process.stdout.write("packed Modal fixture flow passed\\n");
 
 const e2bSource = `
 import { Sandbar, Image, OutcomeUnknownError } from "sandbar-sdk";
-import { createE2BAdapter } from "sandbar-sdk/e2b";
+import { createE2BAdapter } from "sandbar-e2b";
 let creates = 0, kills = 0, closes = 0, buildName = "", retained = "", renewalWindows = [];
 let record;
 let failWrite = false;
@@ -671,16 +685,16 @@ process.stdout.write("packed E2B fixture flow passed\\n");
 `;
 
 const builtinsSource = `
-import { daytona } from "sandbar-sdk/daytona";
-import { e2b } from "sandbar-sdk/e2b";
+import { daytona } from "sandbar-daytona";
+import { e2b } from "sandbar-e2b";
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw Error("Factory construction performed provider I/O"); };
 try {
   const daytonaAdapter = daytona({ apiKey: "fixture", target: "us", ttlMinutes: 15 });
   const e2bAdapter = e2b({ apiKey: "fixture" });
-  if (daytonaAdapter.name !== "daytona" || e2bAdapter.name !== "e2b") throw Error("Built-in factory identity mismatch");
-  if (!daytonaAdapter.bound || !e2bAdapter.bound) throw Error("Built-in factory did not bind public adapter contract");
-  process.stdout.write("packed built-in SDK subpaths passed\\n");
+  if (daytonaAdapter.name !== "daytona" || e2bAdapter.name !== "e2b") throw Error("Official factory identity mismatch");
+  if (!daytonaAdapter.bound || !e2bAdapter.bound) throw Error("Official factory did not bind public adapter contract");
+  process.stdout.write("packed official adapter factories passed\\n");
 } finally { globalThis.fetch = originalFetch; }
 `;
 
@@ -864,7 +878,7 @@ try {
 
   const daytonaDeps = {
     ...sdkDeps,
-    "@sandbar/provider-daytona": archiveOverrides["@sandbar/provider-daytona"],
+    "sandbar-daytona": archiveOverrides["sandbar-daytona"],
   };
 
   const modalDeps = {
@@ -872,7 +886,7 @@ try {
     "sandbar-modal": archiveOverrides["sandbar-modal"],
   };
 
-  const e2bDeps = { ...sdkDeps };
+  const e2bDeps = { ...sdkDeps, "sandbar-e2b": archiveOverrides["sandbar-e2b"] };
 
   const custom = join(temporary, "custom-consumer");
   const direct = join(temporary, "direct-consumer");
@@ -897,6 +911,23 @@ try {
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], observability)}`);
+  const core = join(temporary, "core-consumer");
+  await consumer(
+    core,
+    sdkDeps,
+    archiveOverrides,
+    `import { Sandbar, Image } from "sandbar-sdk"; if (typeof Sandbar.connect !== "function" || Image.prepared("base").kind !== "prepared") throw Error("Core imports failed");`,
+  );
+  const coreGraph = inspectGraph(core, ["sandbar-sdk"]);
+
+  if (
+    coreGraph.some((name) =>
+      ["sandbar-daytona", "sandbar-e2b", "e2b", "sandbar-modal", "modal"].includes(name),
+    )
+  )
+    throw Error(`Core installed provider dependencies: ${coreGraph}`);
+
+  for (const runtime of ["node", "bun"]) run(runtime, ["consumer.mjs"], core);
   await consumer(custom, customDeps, archiveOverrides, customSource);
   await consumer(direct, directDeps, archiveOverrides, directSource);
   await consumer(daytona, daytonaDeps, archiveOverrides, daytonaSource);
@@ -904,52 +935,60 @@ try {
   const lifecycleExample = await Bun.build({
     entrypoints: [join(root, "apps/docs/examples/sandbox-suspend-resume.ts")],
     target: "node",
-    external: ["sandbar-sdk", "sandbar-sdk/daytona", "sandbar-sdk/e2b"],
+    external: ["sandbar-sdk", "sandbar-daytona", "sandbar-e2b"],
     write: false,
   });
 
   if (!lifecycleExample.success) throw Error("Public lifecycle example compilation failed");
-  await writeFile(join(daytona, "lifecycle-example.mjs"), await lifecycleExample.outputs[0].text());
   await consumer(modal, modalDeps, archiveOverrides, modalSource);
   await consumer(e2b, e2bDeps, archiveOverrides, e2bSource);
-  await consumer(builtins, sdkDeps, archiveOverrides, builtinsSource);
+  await consumer(builtins, { ...daytonaDeps, ...e2bDeps }, archiveOverrides, builtinsSource);
+  await writeFile(
+    join(builtins, "lifecycle-example.mjs"),
+    await lifecycleExample.outputs[0].text(),
+  );
+
+  await writeFile(join(builtins, "daytona-example.mjs"), daytonaSource);
+
+  for (const runtime of ["node", "bun"])
+    run(runtime, ["daytona-example.mjs"], builtins, { PACKED_LIFECYCLE_EXAMPLE: "1" });
   await checkTypes(custom, "custom");
   await checkTypes(direct, "direct");
-  await checkRecoveryTypes(direct, root, run);
+  await checkRecoveryTypes(builtins, root, run);
   await checkTypes(daytona, "daytona");
   await checkTypes(modal, "modal");
   await checkTypes(e2b, "e2b");
   await checkTypes(builtins, "builtins");
   await writeFile(
-    join(custom, "interactive-processes.ts"),
+    join(builtins, "interactive-processes.ts"),
     await readFile(join(root, "apps/docs/examples/interactive-processes.ts"), "utf8"),
   );
   await writeFile(
-    join(custom, "text-streaming.ts"),
+    join(builtins, "text-streaming.ts"),
     await readFile(join(root, "apps/docs/examples/text-streaming.ts"), "utf8"),
   );
   await writeFile(
-    join(custom, "sandbox-renew.ts"),
+    join(builtins, "sandbox-renew.ts"),
     await readFile(join(root, "apps/docs/examples/sandbox-renew.ts"), "utf8"),
   );
   await writeFile(
-    join(custom, "sandbox-suspend-resume.ts"),
+    join(builtins, "sandbox-suspend-resume.ts"),
     await readFile(join(root, "apps/docs/examples/sandbox-suspend-resume.ts"), "utf8"),
   );
   await writeFile(
-    join(custom, "sandbox-preview.ts"),
+    join(builtins, "sandbox-preview.ts"),
     await readFile(join(root, "apps/docs/examples/sandbox-preview.ts"), "utf8"),
   );
   await writeFile(
-    join(custom, "directory-files.ts"),
+    join(builtins, "directory-files.ts"),
     await readFile(join(root, "apps/docs/examples/directory-files.ts"), "utf8"),
   );
   await writeFile(
-    join(custom, "process-output-types.ts"),
+    join(builtins, "process-output-types.ts"),
     await readFile(join(root, "packages/sdk-qualification/process-output-types.ts"), "utf8"),
   );
   await writeFile(
-    join(custom, "streaming-tsconfig.json"),
+    join(builtins, "streaming-tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
         target: "ES2022",
@@ -970,16 +1009,16 @@ try {
       ],
     }),
   );
-  run(join(root, "node_modules/.bin/tsc"), ["-p", "streaming-tsconfig.json"], custom);
+  run(join(root, "node_modules/.bin/tsc"), ["-p", "streaming-tsconfig.json"], builtins);
   await writeFile(
-    join(custom, "streaming.mjs"),
+    join(builtins, "streaming.mjs"),
     await readFile(join(root, "packages/sdk-qualification/streaming-packed.mjs"), "utf8"),
   );
 
   for (const runtime of ["node", "bun"])
-    console.log(`${runtime}: ${run(runtime, ["streaming.mjs"], custom)}`);
+    console.log(`${runtime}: ${run(runtime, ["streaming.mjs"], builtins)}`);
   await writeFile(
-    join(custom, "interactive-processes.mjs"),
+    join(builtins, "interactive-processes.mjs"),
     await readFile(
       join(root, "packages/sdk-qualification/interactive-processes-packed.mjs"),
       "utf8",
@@ -987,26 +1026,31 @@ try {
   );
 
   for (const runtime of ["node", "bun"])
-    console.log(`${runtime}: ${run(runtime, ["interactive-processes.mjs"], custom)}`);
+    console.log(`${runtime}: ${run(runtime, ["interactive-processes.mjs"], builtins)}`);
   await writeFile(
-    join(custom, "directories.mjs"),
+    join(builtins, "directories.mjs"),
     await readFile(join(root, "packages/sdk-qualification/directory-packed.mjs"), "utf8"),
   );
 
   for (const runtime of ["node", "bun"])
-    console.log(`${runtime}: ${run(runtime, ["directories.mjs"], custom)}`);
+    console.log(`${runtime}: ${run(runtime, ["directories.mjs"], builtins)}`);
   await writeFile(
-    join(custom, "process-extensions.mjs"),
+    join(builtins, "process-extensions.mjs"),
     await readFile(join(root, "packages/sdk-qualification/process-extensions-packed.mjs"), "utf8"),
   );
 
   for (const runtime of ["node", "bun"])
-    console.log(`${runtime}: ${run(runtime, ["process-extensions.mjs"], custom)}`);
+    console.log(`${runtime}: ${run(runtime, ["process-extensions.mjs"], builtins)}`);
   inspectGraph(custom, ["sandbar-sdk", "@acme/sandbar-adapter"]);
   inspectGraph(direct, ["sandbar-sdk", "@sandbar/provider-fake"]);
-  inspectGraph(daytona, ["sandbar-sdk", "@sandbar/provider-daytona"]);
+  const daytonaGraph = inspectGraph(daytona, ["sandbar-sdk", "sandbar-daytona"]);
+
+  if (daytonaGraph.includes("e2b") || daytonaGraph.includes("sandbar-e2b"))
+    throw new Error("Daytona installed E2B");
   const modalGraph = inspectGraph(modal, ["sandbar-sdk", "sandbar-modal"]);
-  inspectGraph(e2b, ["sandbar-sdk"]);
+  const e2bGraph = inspectGraph(e2b, ["sandbar-sdk", "sandbar-e2b"]);
+
+  if (e2bGraph.includes("sandbar-daytona")) throw new Error("E2B installed Daytona");
   const publicSdkGraph = inspectGraph(builtins, ["sandbar-sdk"]);
 
   if (publicSdkGraph.some((name) => name.startsWith("@sandbar/")))
@@ -1015,7 +1059,13 @@ try {
   if (modalGraph.some((name) => name.startsWith("@sandbar/")))
     throw new Error(`Modal package leaked a private workspace dependency: ${modalGraph}`);
 
-  if (publicSdkGraph.some((name) => ["modal", "sandbar-modal", "@grpc/grpc-js"].includes(name)))
+  if (
+    publicSdkGraph.some((name) =>
+      ["modal", "sandbar-modal", "@grpc/grpc-js", "e2b", "sandbar-e2b", "sandbar-daytona"].includes(
+        name,
+      ),
+    )
+  )
     throw new Error(`SDK package retained Modal dependencies: ${publicSdkGraph}`);
 
   console.log(

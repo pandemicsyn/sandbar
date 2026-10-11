@@ -9,7 +9,7 @@ import {
   type RunLedger,
 } from "../../provider-qualification/ledger";
 import { loadCredentials } from "../../provider-qualification/credentials";
-import { builtinSupport, type SupportMetadata } from "../../provider-qualification/support";
+import { officialSupport, type SupportMetadata } from "../../provider-qualification/support";
 import {
   loadProviderProfile,
   profileRouting,
@@ -30,7 +30,7 @@ const profilePath = process.env.SANDBAR_QUAL_PROFILE
 const external = profilePath ? await loadProviderProfile(profilePath) : undefined;
 
 const declared =
-  external?.support ?? builtinSupport.find((profile) => profile.id === selectedProvider);
+  external?.support ?? officialSupport.find((profile) => profile.id === selectedProvider);
 
 export const featureSupported = (feature: keyof SupportMetadata["features"]) =>
   declared?.features[feature]?.support !== undefined &&
@@ -126,7 +126,10 @@ export async function configuredProvider(saved?: RunLedger["connection"]) {
   );
 
   process.env.E2B_API_KEY = required("E2B_API_KEY");
-  const manifest = JSON.parse(await readFile(join(root, "packages/sdk/package.json"), "utf8"));
+
+  const manifest = JSON.parse(
+    await readFile(join(root, "packages/providers/e2b/package.json"), "utf8"),
+  );
 
   return {
     provider,

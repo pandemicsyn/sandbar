@@ -72,7 +72,7 @@ export const supportMetadataSchema = z.strictObject({
 
 export type SupportMetadata = z.infer<typeof supportMetadataSchema>;
 
-export const builtinSupport: SupportMetadata[] = [
+export const officialSupport: SupportMetadata[] = [
   {
     id: "daytona",
     name: "Daytona",
@@ -307,7 +307,7 @@ function validation(
 
 export function renderSupportMatrix(
   reports: readonly QualificationReport[],
-  metadata: readonly SupportMetadata[] = builtinSupport,
+  metadata: readonly SupportMetadata[] = officialSupport,
 ) {
   const profiles = metadata.map((profile) => supportMetadataSchema.parse(profile));
   const historical = reports.flatMap((report) => parseReport(report).historicalEvidence ?? []);

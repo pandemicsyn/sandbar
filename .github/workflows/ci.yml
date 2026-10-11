@@ -41,7 +41,7 @@ jobs:
             if grep -Eq \
               -e '(^bun.lock$|^\.github/workflows/|^\.changeset/(config\.json|pre\.json)$|^scripts/)' \
               -e '(^|/)(package.json|tsconfig[^/]*\.json|build-assets\.ts|flatten-declarations\.mjs|\.npmignore|\.gitignore)$' \
-              -e '^packages/([^/]+|providers/[^/]+)/src/(index|client|server|adapter|portable|testing|daytona|e2b)\.ts$' \
+              -e '^packages/([^/]+|providers/[^/]+)/src/(index|client|server|adapter|portable|testing|bound|factory|process-contract)\.ts$' \
               -e '^packages/([^/]+|providers/[^/]+)/assets/' \
               -e '^packages/sdk-qualification/.*\.(ts|mjs|json)$' \
               -e '^apps/docs/examples/recovery-outcomes\.ts$' \

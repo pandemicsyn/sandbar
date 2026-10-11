@@ -25,7 +25,7 @@ const selected = new Map(
   }),
 );
 
-for (const name of ["sandbar-adapter", "sandbar-sdk"])
+for (const name of ["sandbar-adapter", "sandbar-sdk", "sandbar-daytona", "sandbar-e2b"])
   if (!selected.has(name)) throw new Error(`Release graph lacks ${name}`);
 
 const sdkName = selected.get("sandbar-sdk").manifest.name;
@@ -57,21 +57,34 @@ void [definition, suite];
     overrides: [adapterName],
     runtime: `
 import { Sandbar, Image } from ${JSON.stringify(sdkName)};
-import { daytona } from ${JSON.stringify(`${sdkName}/daytona`)};
-if (typeof Sandbar.connect !== "function" || typeof daytona !== "function" ||
+
+if (typeof Sandbar.connect !== "function" ||
     Image.prepared("fixture").kind !== "prepared")
   throw new Error("Packed SDK import failed");
 `,
     types: `
 import { Sandbar, Image } from ${JSON.stringify(sdkName)};
-import { daytona } from ${JSON.stringify(`${sdkName}/daytona`)};
+
 const direct: typeof Sandbar.connect = Sandbar.connect;
-const daytonaFactory: typeof daytona = daytona;
+
 const image = Image.prepared("fixture");
-void [direct, daytonaFactory, image];
+void [direct, image];
 `,
   },
 ];
+
+for (const provider of ["daytona", "e2b"]) {
+  const options =
+    provider === "daytona" ? { apiKey: "fixture", target: "us" } : { apiKey: "fixture" };
+
+  cases.push({
+    name: provider,
+    packageName: `sandbar-${provider}`,
+    overrides: [adapterName],
+    runtime: `import { ${provider} } from "sandbar-${provider}"; if (!${provider}(${JSON.stringify(options)}).bound) throw Error("Unbound factory");`,
+    types: `import { ${provider} } from "sandbar-${provider}"; const bound = ${provider}(${JSON.stringify(options)}); void bound;`,
+  });
+}
 
 const temporary = mkdtempSync(join(tmpdir(), "sandbar-installers-"));
 

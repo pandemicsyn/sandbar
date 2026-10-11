@@ -125,21 +125,32 @@ Import from `sandbar-sdk`.
 
 ## Daytona adapter
 
-Import from `sandbar-sdk/daytona`.
+Import from `sandbar-daytona`.
 
-| Export    | Kind     |
-| --------- | -------- |
-| `daytona` | function |
+| Export                 | Kind      |
+| ---------------------- | --------- |
+| `boundedBytes`         | function  |
+| `createDaytonaAdapter` | re-export |
+| `daytona`              | re-export |
+| `daytonaAdapter`       | re-export |
+| `DaytonaDriver`        | class     |
+| `DaytonaEndpointPair`  | type      |
+| `DaytonaInput`         | type      |
+| `daytonaProvider`      | function  |
+| `daytonaRegistration`  | function  |
 
 ## E2B adapter
 
-Import from `sandbar-sdk/e2b`.
+Import from `sandbar-e2b`.
 
 | Export             | Kind      |
 | ------------------ | --------- |
 | `createE2BAdapter` | function  |
-| `e2b`              | function  |
-| `E2BTransport`     | interface |
+| `e2b`              | re-export |
+| `E2B_ENDPOINT`     | re-export |
+| `e2bAdapter`       | value     |
+| `E2BTransport`     | type      |
+| `MAX_BYTES`        | re-export |
 
 ## Experimental Modal adapter
 
@@ -166,6 +177,8 @@ Import from `sandbar-adapter`.
 | `AdapterFilesystemError`       | re-export |
 | `AdapterSession`               | type      |
 | `AttemptContext`               | type      |
+| `bindAdapter`                  | re-export |
+| `BoundAdapter`                 | type      |
 | `Command`                      | type      |
 | `connectAdapter`               | function  |
 | `continueOperation`            | re-export |
@@ -195,6 +208,7 @@ Import from `sandbar-adapter`.
 | `Image`                        | type      |
 | `ImageBuildInput`              | type      |
 | `ImageBuildValue`              | type      |
+| `ImageInput`                   | type      |
 | `isOutcome`                    | function  |
 | `Json`                         | type      |
 | `MAX_DIRECTORY_ENTRIES`        | re-export |
@@ -206,6 +220,7 @@ Import from `sandbar-adapter`.
 | `NativeProcessStatus`          | type      |
 | `ObserveContext`               | type      |
 | `observeOperation`             | re-export |
+| `OciImage`                     | type      |
 | `OperationInput`               | type      |
 | `OperationKind`                | type      |
 | `OperationOutcome`             | re-export |

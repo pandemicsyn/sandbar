@@ -1,6 +1,6 @@
-import { createDaytonaAdapter } from "@sandbar/provider-daytona";
-import type { ImageInput } from "./resource";
-import { bindAdapter, type BoundAdapter } from "./bound";
+import { createDaytonaAdapter } from "./index";
+import type { ImageInput } from "sandbar-adapter";
+import { bindAdapter, type BoundAdapter } from "sandbar-adapter";
 
 /** First-party Daytona adapter. Select daytona-default explicitly on connection and create for provider-managed egress. */
 export function daytona(options: {

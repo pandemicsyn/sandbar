@@ -7,7 +7,7 @@ description: Resolve package, connection, execution, file, and cleanup issues.
 
 The current packages are unpublished, so registry installs will not work until release. The [getting started guide](/docs/direct-quickstart/) shows the upcoming consumer installation flow. If working from a source checkout, use its workspace packages or packed artifacts. Do not install the unrelated `sandbar` npm package.
 
-Built-ins import from `sandbar-sdk/daytona` and `sandbar-sdk/e2b`. The experimental Modal adapter is a separate `sandbar-modal` package; `sandbar-sdk/modal` is not an export.
+Built-ins import from `sandbar-daytona` and `sandbar-e2b`. The experimental Modal adapter is a separate `sandbar-modal` package; `sandbar-sdk/modal` is not an export.
 
 ## Connection rejected
 

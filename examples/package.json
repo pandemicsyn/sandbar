@@ -10,6 +10,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "sandbar-sdk": "workspace:*"
+    "sandbar-sdk": "workspace:*",
+    "sandbar-daytona": "workspace:*",
+    "sandbar-e2b": "workspace:*"
   }
 }

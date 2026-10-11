@@ -91,7 +91,7 @@ Configure the policy once on a direct connection, or override it on `destroy` or
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "sandbar-daytona";
 
 const sandbar = await Sandbar.connect(
   daytona({
@@ -221,4 +221,4 @@ Lost acknowledgements can leave billable artifacts without a safely owned identi
 
 ## Evidence
 
-The [generated support table](/docs/providers/support/) and [live evidence](/docs/providers/live-qualification/) preserve exact tested revisions/configuration, historical passes, blocked access and not-run cases. The maintained Bun acceptance tooling generates these claims, including the historical failed storage-composition case and the corrected full pass with confirmed cleanup. E2B volume creation is blocked by account HTTP 403, and the maintained built-in profile skips volume cases before setup. This does not prove that E2B lacks native volumes.
+The [generated support table](/docs/providers/support/) and [live evidence](/docs/providers/live-qualification/) preserve exact tested revisions/configuration, historical passes, blocked access and not-run cases. The maintained Bun acceptance tooling generates these claims, including the historical failed storage-composition case and the corrected full pass with confirmed cleanup. E2B volume creation is blocked by account HTTP 403, and the maintained official profile skips volume cases before setup. This does not prove that E2B lacks native volumes.
