@@ -46,10 +46,12 @@ export class TestResources {
       volumes: number;
       exerciseMs: number;
       cleanupMs: number;
+      configuredEnvironment?: boolean;
     },
     private readonly initial?: {
       provider: string;
       connection: import("../../provider-qualification/ledger").RunLedger["connection"];
+      image: import("../../provider-qualification/ledger").RunLedger["image"];
     },
   ) {
     this.signal = this.controller.signal;
@@ -69,7 +71,7 @@ export class TestResources {
             await this.ledger.requirePreviousCleanup(this.initial.provider, this.bounds);
             await this.ledger.initialize(
               this.initial.provider,
-              { kind: "borrowed-prepared", class: "prepared" },
+              this.initial.image,
               this.initial.connection,
             );
           }
@@ -236,7 +238,7 @@ export class TestResources {
 
         if (value instanceof AdapterSandbox) return { ...entry, reference, sandboxId: value.id };
 
-        if (outcome?.kind === "snapshot_restore" && outcome.sandbox)
+        if ((outcome?.kind === "snapshot_restore" || outcome?.kind === "create") && outcome.sandbox)
           return { ...entry, reference, sandboxId: outcome.sandbox.nativeId };
 
         if (resource) return { ...entry, reference, resource };
@@ -278,7 +280,7 @@ export class TestResources {
     role: string,
     mounts?: MountSpec[],
     network = this.network,
-    configuredEnvironment = false,
+    configuredEnvironment = this.bounds.configuredEnvironment ?? false,
   ) {
     this.at(role);
 

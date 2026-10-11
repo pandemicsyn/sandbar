@@ -1,0 +1,47 @@
+{
+  "name": "sandbar-boxd",
+  "version": "0.0.0",
+  "private": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external sandbar-adapter --external @boxd-sh/sdk --external @grpc/grpc-js --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs"
+  },
+  "dependencies": {
+    "@boxd-sh/sdk": "0.2.15",
+    "@grpc/grpc-js": "1.14.5",
+    "zod": "4.6.5",
+    "sandbar-adapter": "workspace:*"
+  },
+  "devDependencies": {
+    "sandbar-sdk": "workspace:*"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pandemicsyn/sandbar.git",
+    "directory": "packages/providers/boxd"
+  },
+  "description": "boxd microVM provider adapter for Sandbar.",
+  "bugs": {
+    "url": "https://github.com/pandemicsyn/sandbar/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  }
+}

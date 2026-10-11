@@ -326,6 +326,8 @@ export type AdapterSession<
   CT extends Json = Json,
 > = {
   scope: Scope;
+  /** Used for omitted create policy only; must be explicitly chosen in adapter setup. */
+  defaultNetworkPolicy?: string;
   /** Default for omitted SDK create environments; native create inputs remain required. */
   defaultImage?:
     | { kind: "prepared"; value: string; binding?: { provider: string; scope: Scope } }
@@ -344,7 +346,7 @@ export type AdapterSession<
     Support<{
       preserve: "filesystem" | "filesystem+memory";
       processes: "terminated" | "preserved";
-      connections: "dropped";
+      connections: "dropped" | "preserved";
     }>
   >;
   resumeCapabilities?: (
@@ -867,6 +869,20 @@ export async function connectAdapter<
           host: HostContext;
         }) => Promise<S>
       )({ config, credentials, host });
+
+    const defaults = z
+      .object({
+        defaultNetworkPolicy: z.string().min(1).max(128).optional(),
+        supports: z.object({ network: z.array(z.string()) }).optional(),
+      })
+      .safeParse(session);
+
+    if (
+      !defaults.success ||
+      (defaults.data.defaultNetworkPolicy !== undefined &&
+        !defaults.data.supports?.network.includes(defaults.data.defaultNetworkPolicy))
+    )
+      throw new AdapterError("INVALID_ARGUMENT", "Default network policy is not supported");
 
     const scope = ScopeSchema.safeParse(session.scope);
 

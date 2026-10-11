@@ -27,6 +27,7 @@
     "sandbar-modal": "workspace:*",
     "satteri": "0.10.5",
     "sandbar-daytona": "workspace:*",
-    "sandbar-e2b": "workspace:*"
+    "sandbar-e2b": "workspace:*",
+    "sandbar-boxd": "workspace:*"
   }
 }
