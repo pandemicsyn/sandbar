@@ -326,8 +326,8 @@ export type AdapterSession<
   CT extends Json = Json,
 > = {
   scope: Scope;
-  /** Used for omitted create policy only; must be explicitly chosen in adapter setup. */
-  defaultNetworkPolicy?: string;
+  /** Default for omitted SDK create/restore policies; native requests remain resolved. */
+  readonly defaultNetworkPolicy?: string;
   /** Default for omitted SDK create environments; native create inputs remain required. */
   defaultImage?:
     | { kind: "prepared"; value: string; binding?: { provider: string; scope: Scope } }
@@ -909,18 +909,22 @@ export async function connectAdapter<
     if (input.signal?.aborted) throw input.signal.reason;
 
     const defaults = z
-      .object({
-        defaultNetworkPolicy: z.string().min(1).max(128).optional(),
-        supports: z.object({ network: z.array(z.string()) }).optional(),
-      })
+      .object({ defaultNetworkPolicy: z.string().min(1).max(128).optional() })
       .safeParse(session);
 
-    if (
-      !defaults.success ||
-      (defaults.data.defaultNetworkPolicy !== undefined &&
-        !defaults.data.supports?.network.includes(defaults.data.defaultNetworkPolicy))
-    )
-      throw new AdapterError("INVALID_ARGUMENT", "Default network policy is not supported");
+    if (!defaults.success)
+      throw new AdapterError("INVALID_ARGUMENT", "Invalid adapter default network policy");
+
+    // A connection can still inspect/reopen/clean up when create eligibility is
+    // unavailable. Resolve the default here; check support at each operation.
+    if (defaults.data.defaultNetworkPolicy !== undefined) {
+      Object.defineProperty(session, "defaultNetworkPolicy", {
+        value: defaults.data.defaultNetworkPolicy,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+    }
 
     const scope = ScopeSchema.safeParse(session.scope);
 

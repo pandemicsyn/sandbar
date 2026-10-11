@@ -314,7 +314,7 @@ async function flow() {
 // @ts-expect-error Daytona requires an API key
 void daytona({ target: "us" });
 void e2b({ apiKey: "fixture", teamId: "team_1" });
-void e2b({ apiKey: "fixture" });
+void e2b({ apiKey: "fixture", networkPolicy: "internet" });
 void flow;
 `;
   else if (mode === "direct")
@@ -355,7 +355,9 @@ async function flow() {
   const mounted=await client.sandboxes.create({environment:Image.prepared("base"),mounts:[volume.at("/mnt/data")]});
   const captured=await box.snapshot();
   const snapshot=await client.snapshots.get(captured.snapshot.reference);
-  const restored=await snapshot.restore({networkPolicy:"blocked", mounts:[volume.at("/mnt/data")]});
+  const restored=await snapshot.restore({mounts:[volume.at("/mnt/data")]});
+  void snapshot.restore();
+  void snapshot.submitRestore();
   // @ts-expect-error legacy maps are absent from new public types
   void snapshot.restore({networkPolicy:"blocked", mounts:{}});
   if(!restored.reference)throw Error("Restored sandbox reference missing");

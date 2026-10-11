@@ -48,6 +48,8 @@ export const ReferenceSchema = z.strictObject({
   capture: CaptureExpectation.optional(),
   resource: ResourceReference.optional(),
   mounts: z.array(MountSpec).max(32).optional(),
+  /** Resolved create/restore policy; absent on references saved before setup defaults. */
+  networkPolicy: z.string().min(1).max(128).optional(),
   fileMutation: FileMutationIntent.optional(),
   file: z
     .strictObject({

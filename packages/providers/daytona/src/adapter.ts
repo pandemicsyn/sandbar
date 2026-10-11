@@ -875,6 +875,7 @@ export function createDaytonaAdapter(
           },
         },
         defaultImage: config.environment,
+        defaultNetworkPolicy: config.networkPolicy,
         snapshotRestore: createMutation,
         async snapshotInspect(ref: ResourceReference, ctx: import("sandbar-adapter").ReadContext) {
           const info = await resourceState.inspectSnapshot(ref, ctx);

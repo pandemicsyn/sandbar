@@ -52,11 +52,27 @@ test("explicit adapter policy applies to omitted create input; caller overrides 
   }
 });
 
-test("an unsupported adapter default fails connection and releases owned resources", async () => {
-  const fixture = definition("unsupported-policy");
+test("an invalid adapter default fails connection and releases owned resources", async () => {
+  const fixture = definition("");
   await expect(
     Sandbar.connect({ adapter: fixture.adapter, config: {}, credentials: {} }),
   ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   expect(fixture.observed).toEqual([]);
+  expect(fixture.releases()).toBe(1);
+});
+
+test("unsupported configured default leaves read-only connection available without fallback", async () => {
+  const fixture = definition("unsupported-policy");
+  const client = await Sandbar.connect({ adapter: fixture.adapter, config: {}, credentials: {} });
+
+  try {
+    expect((await client.sandboxes.checkCreate()).status).toBe("unsupported");
+    await expect(client.sandboxes.create()).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    await expect(client.sandboxes.submitCreate()).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect(fixture.observed).toEqual([]);
+  } finally {
+    await client.close();
+  }
+
   expect(fixture.releases()).toBe(1);
 });

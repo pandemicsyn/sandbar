@@ -66,6 +66,7 @@ const Configuration = z
       .max(128)
       .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
       .default("base"),
+    networkPolicy: z.enum(["blocked", "internet"]).default("blocked"),
     timeoutSeconds: z.number().int().min(60).max(3600).optional(),
     preview: z
       .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
@@ -706,6 +707,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
       return {
         ...resources.fields,
         defaultImage: { kind: "prepared", value: config.templateId },
+        defaultNetworkPolicy: config.networkPolicy,
         scope: {
           authority,
           partition: { endpoint: E2B_ENDPOINT, template: config.templateId },

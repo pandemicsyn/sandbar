@@ -16,9 +16,7 @@ const sandbar = await Sandbar.connect(
 );
 
 try {
-  const box = await sandbar.sandboxes.create({
-    networkPolicy: "daytona-default",
-  });
+  const box = await sandbar.sandboxes.create();
 
   try {
     const output = await box.exec(["printf", "Hello from Sandbar!\n"]);

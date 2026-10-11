@@ -2396,7 +2396,7 @@ export class AdapterDirectClient {
         this.session,
         {
           image: { kind: request.environment.kind, value: request.environment.value },
-          networkPolicy: request.networkPolicy ?? "blocked",
+          networkPolicy: request.networkPolicy,
           region: request.region,
           labels: request.labels,
           requirements: request.requirements,
@@ -2459,7 +2459,7 @@ export class AdapterDirectClient {
       "create",
       {
         image: { kind: request.environment.kind, value: request.environment.value },
-        networkPolicy: request.networkPolicy ?? "blocked",
+        networkPolicy: request.networkPolicy,
         region: request.region,
         labels: request.labels,
         requirements: request.requirements,
@@ -2477,7 +2477,7 @@ export class AdapterDirectClient {
 
         return new AdapterSandbox(this, result.value.id, result.value.reference ?? null);
       },
-      { ...options, mounts: request.mounts },
+      { ...options, mounts: request.mounts, networkPolicy: request.networkPolicy },
     );
   }
   private async reopenSandbox(
@@ -2568,6 +2568,7 @@ export class AdapterDirectClient {
       resource?: ResourceReference;
       capture?: z.infer<typeof CaptureExpectation>;
       mounts?: import("sandbar-adapter").MountSpec[];
+      networkPolicy?: string;
       file?: { path: string; bytes: number };
       fileMutation?: AdapterRecoveryReference["fileMutation"];
       maxOutputBytes?: number;
@@ -2594,6 +2595,7 @@ export class AdapterDirectClient {
       renewal: preparedRenewals.get(prepared),
       capture: options.capture,
       mounts: options.mounts,
+      networkPolicy: options.networkPolicy,
       file: options.file,
       fileMutation: options.fileMutation,
       maxOutputBytes: options.maxOutputBytes,

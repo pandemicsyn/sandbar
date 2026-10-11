@@ -35,19 +35,20 @@ Set `E2B_API_KEY` before running this on the server. `E2B_API_ID` is not require
 
 ## Connection options
 
-| Option                      | Default  | Purpose                                                                              |
-| --------------------------- | -------- | ------------------------------------------------------------------------------------ |
-| `apiKey`                    | Required | Authenticated E2B API key.                                                           |
-| `templateId`                | `base`   | Public base template or a ready owned template ID/name.                              |
-| `lifecycle.lifetimeSeconds` | Omitted  | Initial/default renewal window in seconds; mutually exclusive with `timeoutSeconds`. |
-| `timeoutSeconds`            | `300`    | Native sandbox lifetime, from 60 to 3,600 seconds.                                   |
-| `teamId`                    | Omitted  | Optional verified team scope.                                                        |
+| Option                      | Default   | Purpose                                                                              |
+| --------------------------- | --------- | ------------------------------------------------------------------------------------ |
+| `apiKey`                    | Required  | Authenticated E2B API key.                                                           |
+| `networkPolicy`             | `blocked` | Default outbound request for create and restore: `blocked` or `internet`.            |
+| `templateId`                | `base`    | Public base template or a ready owned template ID/name.                              |
+| `lifecycle.lifetimeSeconds` | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `timeoutSeconds`. |
+| `timeoutSeconds`            | `300`     | Native sandbox lifetime, from 60 to 3,600 seconds.                                   |
+| `teamId`                    | Omitted   | Optional verified team scope.                                                        |
 
 For an owned template, configure its selector once with `templateId`. Supported names are untagged or use `:default`; arbitrary named tags and public aliases are outside this integration's current scope.
 
 Without `teamId`, Sandbar verifies the API key with an authenticated read and binds recovery to that key's scope. Rotating the key changes scope. With `teamId`, Sandbar verifies the team; this allows same-team key rotation without changing authority. Switching scope modes requires a separate connection.
 
-`create()`, `create({ labels: { job: "report" } })`, `checkCreate()` and `submitCreate()` use `templateId`, including its existing `base` default. An explicit per-call `environment` wins for that call only. Invalid or unavailable overrides never fall back to `base`; scoped prepared images retain scope checks. Omitted networking stays blocked. Default-creation live acceptance remains unrun.
+`create()`, `create({ labels: { job: "report" } })`, `checkCreate()` and `submitCreate()` use `templateId`, including its existing `base` default. An explicit per-call `environment` wins for that call only. Invalid or unavailable overrides never fall back to `base`; scoped prepared images retain scope checks. Omitted networking uses the configured `networkPolicy`, which defaults to blocked. Per-call blocked/internet overrides apply only to that request. Default-creation live acceptance remains unrun.
 
 ## Files and commands
 

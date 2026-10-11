@@ -93,6 +93,7 @@ Import from `sandbar-sdk`.
 | `ResourceKind`                | re-export |
 | `ResourceReference`           | re-export |
 | `RestoreCapabilities`         | type      |
+| `RestoreInput`                | type      |
 | `RestoreRequest`              | re-export |
 | `ResumeResult`                | type      |
 | `Sandbar`                     | value     |

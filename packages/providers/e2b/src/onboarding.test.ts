@@ -14,6 +14,7 @@ function fixture() {
   const records = new Map<string, E2BRecord>();
   const calls = { auth: 0, team: 0, template: 0, create: 0, run: 0, write: 0, kill: 0 };
   let loseResponse = false;
+  const internetAccess: boolean[] = [];
 
   const adapter = createE2BAdapter((): E2BTransport => ({
     async verifyAuth() {
@@ -40,6 +41,7 @@ function fixture() {
     },
     async create(input) {
       calls.create++;
+      internetAccess.push(input.allowInternetAccess);
 
       const record: E2BRecord = {
         id: `sb_${calls.create}`,
@@ -90,6 +92,7 @@ function fixture() {
     adapter,
     records,
     calls,
+    internetAccess,
     loseNextResponse() {
       loseResponse = true;
     },
@@ -140,6 +143,8 @@ test("API-key-only defaults reopen the same scope and bind canonical base resour
     expect(f.calls.auth).toBeGreaterThan(0);
     expect(f.calls.team).toBe(0);
     expect(f.calls.create).toBe(1);
+    expect(recovered.reference.networkPolicy).toBe("blocked");
+    expect(f.internetAccess).toEqual([false]);
   } finally {
     await reopened.close();
     await rotated.close();
@@ -469,13 +474,46 @@ test("lost default creation recovers confirmed identity without replacement or r
   const client = await Sandbar.connect(options);
   const operation = await client.sandboxes.submitCreate();
   await client.close();
-  const reopened = await Sandbar.connect(options);
+  expect(operation.reference.networkPolicy).toBe("blocked");
+  const reopened = await Sandbar.connect({ ...options, config: { networkPolicy: "internet" } });
 
   try {
     const recovered = await reopened.recover(operation.reference);
     expect(await recovered.wait()).toMatchObject({ id: "sb_1" });
     expect(f.calls.create).toBe(1);
+    expect(recovered.reference.networkPolicy).toBe("blocked");
+    expect(f.internetAccess).toEqual([false]);
   } finally {
     await reopened.close();
   }
 });
+
+test.each(["blocked", "internet"] as const)(
+  "configured E2B network default and per-call override: %s",
+  async (networkPolicy) => {
+    const f = fixture();
+
+    const client = await Sandbar.connect({
+      adapter: f.adapter,
+      config: { networkPolicy },
+      credentials: { apiKey: "fixture-key" },
+    });
+
+    try {
+      expect((await client.sandboxes.checkCreate()).status).toBe("supported");
+      expect(f.calls.create).toBe(0);
+      await client.sandboxes.create();
+      await (await client.sandboxes.submitCreate()).wait();
+      await client.sandboxes.create({
+        networkPolicy: networkPolicy === "internet" ? "blocked" : "internet",
+      });
+      expect(f.internetAccess).toEqual([
+        networkPolicy === "internet",
+        networkPolicy === "internet",
+        networkPolicy !== "internet",
+      ]);
+    } finally {
+      await client.close();
+    }
+  },
+);
