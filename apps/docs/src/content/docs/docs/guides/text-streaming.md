@@ -44,7 +44,7 @@ Output has one consumer. In sustained mode, breaking out of its loop stops only 
 
 ## Build, worker and server recipes
 
-`apps/docs/examples/interactive-processes.ts` contains compiled `buildWithProgress`, `interactiveWorker` and `serverWorkspace` recipes. The server recipe starts output consumption, obtains preview access, probes readiness for at most 15 seconds, runs application work, requests termination and observes exit with a ten-second cleanup budget. It then detaches, destroys its owned sandbox and closes its client. Configure preview access explicitly in adapter setup; starting a process does not publish a port. Protected preview requests carry the returned headers and refuse redirects.
+The [interactive process recipes](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/interactive-processes.ts) contain compiled `buildWithProgress`, `interactiveWorker` and `serverWorkspace` recipes. The server recipe starts output consumption, obtains preview access, probes readiness for at most 15 seconds, runs application work, requests termination and observes exit with a ten-second cleanup budget. It then detaches, destroys its owned sandbox and closes its client. Configure preview access explicitly in adapter setup; starting a process does not publish a port. Protected preview requests carry the returned headers and refuse redirects.
 
 The same recipes compile against packed SDK declarations and execute in Node and Bun with an independently authored adapter. Deterministic provider fixtures and the ordinary maintained live suite are separate evidence; adding a suite does not claim a deployed-provider pass.
 
@@ -77,11 +77,11 @@ Daytona uses an adapter-owned Python 3 supervisor because native session input c
 
 ## Finite compatibility and limits
 
-Without `output: { mode: "stream" }`, the existing cumulative UTF-8 budget remains: default 1 MiB, configurable with `maxOutputBytes` from 1 through 1,048,576. Supplying both options is invalid. Adapters lacking new hooks reject only the requested new feature; their existing finite operations remain usable. `apps/docs/examples/text-streaming.ts` retains the finite example.
+Without `output: { mode: "stream" }`, the existing cumulative UTF-8 budget remains: default 1 MiB, configurable with `maxOutputBytes` from 1 through 1,048,576. Supplying both options is invalid. Adapters lacking new hooks reject only the requested new feature; their existing finite operations remain usable. The [finite streaming example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/text-streaming.ts) retains the finite profile.
 
 Start setup is bounded to 30 seconds. Pre-dispatch abort reports `WAIT_ABORTED`; abandoned/lost acknowledgement after dispatch reports `OUTCOME_UNKNOWN`. Start is never replayed. `deadlineSeconds` still rejects before start because no portable remote-runtime deadline is guaranteed. Sandbox TTL remains separate. Commands may buffer their own output.
 
-Historical replay and cursors remain unsupported. Use the scoped process reference and explicit terminal APIs below for the delivered P4 extensions.
+Historical replay and cursors remain unsupported. Use the scoped process reference and explicit terminal APIs below for signals, terminals and reconnecting.
 
 ## Live callbacks on bounded exec
 

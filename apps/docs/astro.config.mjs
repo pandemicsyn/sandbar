@@ -70,7 +70,11 @@ export default defineConfig({
       sidebar: [
         {
           label: "Getting started",
-          items: [{ slug: "docs", label: "Overview" }, { slug: "docs/direct-quickstart" }],
+          items: [
+            { slug: "docs", label: "Overview" },
+            { slug: "docs/direct-quickstart" },
+            { slug: "docs/guides/runnable-agent-examples" },
+          ],
         },
         {
           label: "Build with an agent",
@@ -82,6 +86,8 @@ export default defineConfig({
             { slug: "docs/guides/resources" },
             { slug: "docs/guides/snapshots-and-volumes" },
             { slug: "docs/guides/files-and-output" },
+            { slug: "docs/guides/text-streaming", label: "Processes and streaming" },
+            { slug: "docs/guides/preview-access", label: "HTTP previews" },
             { slug: "docs/guides/images-and-networking" },
             { slug: "docs/guides/recovery" },
             { slug: "docs/observability" },

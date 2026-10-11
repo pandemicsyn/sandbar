@@ -3,7 +3,7 @@ title: Build a provider integration
 description: A copyable prompt to get your coding agent implementing a Sandbar provider adapter.
 ---
 
-An adapter connects a provider's native API to Sandbar. Replace the bracketed fields and copy this prompt into an agent with access to the integration repository.
+An adapter connects a provider's native API to Sandbar. Sandbar packages are currently unpublished; use a source checkout or local packed artifacts during development. Replace the bracketed fields and copy this prompt into an agent with access to the integration repository.
 
 ```text wrap title="Provider integration prompt"
 Implement a Sandbar adapter for [provider] in [repository or package].

@@ -31,6 +31,12 @@ Uncertain restores expose selected descriptors in `outcome.mounts` and an acknow
 
 The [compiled example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/recovery-outcomes.ts) demonstrates application persistence, fresh reopening and partial results.
 
+## Reopen compute and recover lifecycle changes
+
+Save `sandbox.reference` to reopen the same compute through `client.sandboxes.get(reference)`. Reopening verifies identity and current access; it neither resumes nor renews the sandbox and does not prove a lost mutation succeeded. Legacy adapters can leave this resource reference `null`.
+
+Renewal, suspension and resumption have separate operation recovery references. Use `recover()` to investigate their original dispatch without retrying it. An acknowledged renewal returns `acknowledged: true` even if a subsequent detail read fails (`observation: null`). A similar deadline observed after a lost acknowledgement cannot attribute acceptance to that request. A suspended-state observation alone cannot establish that the requested memory preservation occurred. See [sandbox lifecycle](/docs/guides/resources/#reopen-and-manage-lifetime).
+
 ## Existing asynchronous operations
 
 The existing `submit*`, `recover`, `observe`, `wait` and explicit `continue` APIs remain available for native pending operations. `recover`, `observe` and `wait` do not replay mutations. An operation reference is useful only where the provider retains matching native identity or correlation; it cannot universally discover a missing ID. `null` observation means completion is not known.

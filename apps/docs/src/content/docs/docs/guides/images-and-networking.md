@@ -12,7 +12,7 @@ description: Choose prepared images, build OCI images, and select explicit netwo
 | E2B      | `base`, or a ready owned template ID/name | `templateId` on the connection defaults to `base`; select your template there too. |
 | Daytona  | Active Linux snapshot ID/name             | The snapshot must be available to the verified organization and target region.     |
 
-Use prepared images for the [getting started workflow](/docs/direct-quickstart/). A Daytona snapshot used as a prepared image is not a Sandbar snapshot capture/restore API; that API does not exist yet.
+Use prepared images for the [getting started workflow](/docs/direct-quickstart/). A Daytona snapshot selected as a prepared image is an existing native image. To capture a sandbox and restore its recorded state, use the separate [snapshot APIs](/docs/guides/snapshots-and-volumes/).
 
 ## Build an OCI image
 

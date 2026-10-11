@@ -34,7 +34,7 @@ if (check.status === "supported") {
 
 Requirements are rechecked during create preparation and before submission. Unsupported requests fail before allocation; unknown and unavailable requirements also block allocation. No automatic provider switching is performed.
 
-Daytona and E2B direct connections implement distinct capture/restore and retained volume profiles; read [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) for their limits. Suspension and volume versions remain unsupported. The asynchronous direct capability getter is an intentional API change; callers must await it.
+Daytona and E2B direct connections implement distinct capture/restore profiles. Daytona maps volume CRUD and mounting; E2B maps volume CRUD behind native access eligibility but does not support mounts. Read [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) for their limits. Eligible private sandboxes also support explicit suspension, resumption and renewal; see [sandbox lifecycle](/docs/guides/resources/#reopen-and-manage-lifetime). Volume versions remain unsupported. The asynchronous direct capability getter is an intentional API change; callers must await it.
 
 Preparation validates requirements before the durable submission marker, then read-only eligibility is checked again before dispatch. Recovery only observes native evidence. For a source already observed as stopped, a profile ending stopped satisfies unchanged lifecycle state.
 

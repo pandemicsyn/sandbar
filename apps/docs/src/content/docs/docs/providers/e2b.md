@@ -51,7 +51,7 @@ Without `teamId`, Sandbar verifies the API key with an authenticated read and bi
 
 ## Files and commands
 
-Use `/home/user` for file workflows on `base`. The live baseline covers binary transfer, overwrite, and no-clobber in that directory. An earlier overwrite attempt directly in sticky `/tmp` failed; custom paths, users, and images need their own validation.
+Use `/home/user` for general file workflows on `base`. The [runnable agent examples](/docs/guides/runnable-agent-examples/) separately passed in their own `/tmp/sandbar-agent-example` workspace with explicit `internet` networking. The live baseline covers binary transfer, overwrite, and no-clobber in `/home/user`. An earlier overwrite attempt directly in sticky `/tmp` failed; custom paths, users, and images need their own validation.
 
 The adapter supports argument arrays and Bash shell scripts, working directory and environment options, and bounded binary stdout/stderr. No-clobber writes require GNU `ln -T` and hard-link support. Captured output remains capped at 1 MiB. Buffered file IO defaults to 1 MiB with an explicit `maxBytes` override up to 16 MiB; larger files use incremental byte streams.
 
