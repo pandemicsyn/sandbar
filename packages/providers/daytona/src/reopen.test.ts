@@ -6,6 +6,7 @@ function fixture() {
   let creates = 0;
   let status = 200;
   let unavailable = false;
+  let restricted = false;
 
   type CreationLabels = Record<string, string>;
 
@@ -40,7 +41,7 @@ function fixture() {
         return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
 
       if (url.pathname === "/api/organizations/org-1")
-        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: restricted });
 
       if (url.pathname === "/api/snapshots/prepared")
         return Response.json({
@@ -85,6 +86,9 @@ function fixture() {
         credentials: { apiKey: key },
         onReference,
       }),
+    restrict() {
+      restricted = true;
+    },
     status(value: number) {
       status = value;
     },
@@ -259,5 +263,30 @@ test("Daytona destroy recovery rejects a mismatched tombstone but accepts true a
     await expect(missing.wait()).resolves.toMatchObject({ computeStopped: true });
   } finally {
     await client.close();
+  }
+});
+
+test("Daytona connection retains reopen and inspection when blocked create eligibility changes", async () => {
+  const f = fixture();
+  const first = await f.connect();
+  const box = await first.sandboxes.create({ environment: Image.prepared("prepared") });
+  const saved = JSON.parse(JSON.stringify(box.reference));
+  await first.close();
+  f.restrict();
+  f.calls.length = 0;
+  const fresh = await f.connect("rotated-key");
+  try {
+    const reopened = await fresh.sandboxes.get(saved);
+    expect((await reopened.inspect()).state).toBe("running");
+    const input = { environment: Image.prepared("prepared") };
+    expect((await fresh.sandboxes.checkCreate(input)).status).toBe("unsupported");
+    await expect(fresh.sandboxes.create(input)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    await expect(fresh.sandboxes.submitCreate(input)).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+    });
+    expect(f.calls.every((call) => call.startsWith("GET "))).toBe(true);
+    expect(f.creates()).toBe(1);
+  } finally {
+    await fresh.close();
   }
 });
