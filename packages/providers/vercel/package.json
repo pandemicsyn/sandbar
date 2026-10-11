@@ -1,0 +1,46 @@
+{
+  "name": "sandbar-vercel",
+  "version": "0.0.0",
+  "private": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NATIVE.md",
+    "qualification"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external sandbar-adapter --external tar-stream --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs"
+  },
+  "dependencies": {
+    "sandbar-adapter": "workspace:*",
+    "zod": "4.6.5",
+    "tar-stream": "3.2.2"
+  },
+  "devDependencies": {
+    "sandbar-sdk": "workspace:*",
+    "@types/tar-stream": "3.1.5"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pandemicsyn/sandbar.git",
+    "directory": "packages/providers/vercel"
+  },
+  "description": "Disposable Vercel Sandbox adapter for Sandbar.",
+  "bugs": {
+    "url": "https://github.com/pandemicsyn/sandbar/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "types": "./dist/index.d.ts"
+}

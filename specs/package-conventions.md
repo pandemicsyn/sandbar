@@ -10,9 +10,10 @@
 | Built-in Daytona adapter | included in `sandbar-sdk` | `sandbar-sdk/daytona` |
 | External experimental Modal adapter | `sandbar-modal` | `sandbar-modal` |
 | Built-in E2B adapter for 1.0 | included in `sandbar-sdk` | `sandbar-sdk/e2b` |
+| External experimental Vercel adapter | `sandbar-vercel` | `sandbar-vercel` |
 | Custom adapter authoring | `sandbar-adapter` | `sandbar-adapter` |
 | Adapter conformance tests | included in `sandbar-adapter` | `sandbar-adapter/testing` |
-| Future additional integrations | `sandbar-<provider>` | e.g. `sandbar-tensorlake`, `sandbar-vercel` |
+| Future additional integrations | `sandbar-<provider>` | e.g. `sandbar-tensorlake` |
 
 SDK subpaths are exports of the parent package, not separate npm installations. Use these unscoped public names; do not assume ownership of the `@sandbar` npm scope. The occupied `sandbar` package is unrelated. Registry absence is not reservation or a guarantee of publication rights. Publication, account/scope setup and live provider operations are not authorized by this decision.
 
@@ -48,7 +49,7 @@ Modal is a separately installed experimental `sandbar-modal` adapter. Its implem
 
 Fast-follow priority is exactly **Vercel, Boxed (boxd), Islo, Tensorlake**. Additional integrations retain the external `sandbar-<provider>` distribution convention unless the user separately changes it. This roadmap does not start those implementations, authorize publication or permit placeholder exports. None is a 1.0 launch gate.
 
-Daytona and E2B implementations and the external Modal transition are merged. Their package READMEs and qualification evidence describe supported behavior and remaining limitations; merger does not establish live qualification or npm publication. The fake provider remains a deterministic development/test fixture.
+Daytona and E2B implementations and the external Modal transition are merged. Their package READMEs and qualification evidence describe supported behavior and remaining limitations; merger does not establish live qualification or npm publication. Vercel now has a separately packaged experimental `sandbar-vercel` implementation for disposable sessions, with deterministic and packed coverage. Its provider README records the version-sensitive REST boundary, retained named metadata and unrun live qualification. It adds no SDK subpath. The fake provider remains a deterministic development/test fixture.
 
 ## Dependency and schema ownership
 
