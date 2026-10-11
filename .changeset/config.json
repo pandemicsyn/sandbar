@@ -13,6 +13,7 @@
       "sandbar-sdk",
       "@sandbar-sdk/daytona",
       "@sandbar-sdk/e2b",
+      "@sandbar-sdk/boxd",
       "@sandbar-sdk/vercel"
     ]
   ],
@@ -20,7 +21,7 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@sandbar-sdk/modal", "@sandbar-sdk/boxd"],
+  "ignore": ["@sandbar-sdk/modal"],
   "privatePackages": {
     "version": false,
     "tag": false

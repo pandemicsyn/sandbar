@@ -55,7 +55,7 @@ Private implementation workspaces may be bundled into adapter artifacts. Their u
 
 ## Implementation and release acceptance
 
-The initial fixed, lockstep public release group is `@sandbar-sdk/adapter`, `sandbar-sdk`, `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, and `@sandbar-sdk/vercel`. Separate installation does not require independent release infrastructure. Keep the existing release machinery and release the actual distributable graph. Modal remains outside this group.
+The initial fixed, lockstep public release group is `@sandbar-sdk/adapter`, `sandbar-sdk`, `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, `@sandbar-sdk/boxd`, and `@sandbar-sdk/vercel`. Separate installation does not require independent release infrastructure. Keep the existing release machinery and release the actual distributable graph. Modal remains outside this group.
 
 Qualify real tarballs in isolated consumers: core alone, core plus either provider, both providers, and an independently authored adapter. Verify strict NodeNext declarations, Node/Bun execution, private-workspace isolation and npm/pnpm/Bun installation. Archive overrides may resolve transitive local packages without adding undeclared root dependencies.
 

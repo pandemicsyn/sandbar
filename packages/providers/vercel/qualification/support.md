@@ -78,7 +78,7 @@ Ordinary sandbox.reference and sandboxes.get bind the immutable original session
 
 ### Execution and captured output
 
-Argv and /bin/sh scripts, cwd/env, nonzero exit and binary stdout/stderr through a managed Node capture helper; combined output capped at 1 MiB. No stdin, interactive processes or PTYs. Uncertain commands are never replayed. No live qualification.
+Argv and /bin/sh scripts, cwd/env, nonzero exit and binary stdout/stderr through a managed Node capture helper; combined output capped at 1 MiB. No stdin, interactive processes or PTYs. Confirmed exit is checkpointed in the existing recovery token before output retrieval and survives output-read failure in the public operation reference; incomplete output remains unconfirmed. Uncertain commands are never replayed. No live qualification.
 
 <a id="vercel-streaming"></a>
 

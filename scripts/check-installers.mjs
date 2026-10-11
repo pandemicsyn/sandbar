@@ -31,6 +31,7 @@ for (const name of [
   "@sandbar-sdk/daytona",
   "@sandbar-sdk/e2b",
   "@sandbar-sdk/vercel",
+  "@sandbar-sdk/boxd",
 ])
   if (!selected.has(name)) throw new Error(`Release graph lacks ${name}`);
 
@@ -101,6 +102,14 @@ if (vercel.name !== "vercel" || createVercelAdapter().name !== "vercel") throw E
 vercel.config.parse({ teamId: "team", projectId: "project" });`,
   types: `import { vercel, createVercelAdapter } from "@sandbar-sdk/vercel";
 const definition: typeof vercel = createVercelAdapter(); void definition;`,
+});
+
+cases.push({
+  name: "boxd",
+  packageName: "@sandbar-sdk/boxd",
+  overrides: [adapterName],
+  runtime: `import { boxdAdapter } from "@sandbar-sdk/boxd"; if (boxdAdapter.name !== "boxd") throw Error("Unexpected adapter");`,
+  types: `import { boxdAdapter } from "@sandbar-sdk/boxd"; const name: string = boxdAdapter.name; void name;`,
 });
 
 const temporary = mkdtempSync(join(tmpdir(), "sandbar-installers-"));

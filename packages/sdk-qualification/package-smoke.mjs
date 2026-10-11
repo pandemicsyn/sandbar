@@ -67,9 +67,13 @@ async function pack(directory) {
     throw new Error(`${manifest.name} archive contains source or test declarations`);
 
   if (
-    ["sandbar-sdk", "@sandbar-sdk/adapter", "@sandbar-sdk/daytona", "@sandbar-sdk/e2b"].includes(
-      manifest.name,
-    )
+    [
+      "sandbar-sdk",
+      "@sandbar-sdk/adapter",
+      "@sandbar-sdk/daytona",
+      "@sandbar-sdk/e2b",
+      "@sandbar-sdk/boxd",
+    ].includes(manifest.name)
   ) {
     for (const path of contents.filter((path) => /\.(?:js|d\.ts)$/.test(path))) {
       const source = run("tar", ["-xOzf", archive, path], root);
