@@ -4,7 +4,7 @@ import {
   defineAdapter,
   type AttemptContext,
   type ObserveContext,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import type { DriverResult } from "@sandbar/provider-spi";
 import { fakeProvider } from "./client";
 

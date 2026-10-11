@@ -5,7 +5,7 @@ import {
   type ObserveContext,
   type FileWriteInput,
   type RecoveryAttempt,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { z } from "zod";
 
 /** Independent deterministic adapter, no provider IO or telemetry dependency. */

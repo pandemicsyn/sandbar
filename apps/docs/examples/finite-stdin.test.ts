@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Sandbar, Image } from "sandbar-sdk";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { finiteStdinEcho } from "./finite-stdin";
 

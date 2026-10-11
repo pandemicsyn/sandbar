@@ -1,10 +1,10 @@
-# sandbar-boxd
+# @sandbar-sdk/boxd
 
 Experimental external boxd adapter for Sandbar. Implementation, offline fixtures and a live baseline are available; npm publication remains separate. Requires Node 20+ or Bun and a boxd **member API key** fenced to your default organization. Native SDK pinned to `@boxd-sh/sdk@0.2.15`.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { boxdAdapter } from "sandbar-boxd";
+import { boxdAdapter } from "@sandbar-sdk/boxd";
 
 const client = await Sandbar.connect({
   adapter: boxdAdapter,

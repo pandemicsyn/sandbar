@@ -3,11 +3,11 @@ title: boxd (external, experimental)
 description: Use the external boxd adapter for microVMs, independent disks and warm lifecycle operations.
 ---
 
-The external `sandbar-boxd` package implements the public Sandbar adapter interface. It is available in this repository; publication remains separate from its recorded live baseline. Use Node 20+ or Bun. Native SDK version: `@boxd-sh/sdk@0.2.15`.
+The external `@sandbar-sdk/boxd` package implements the public Sandbar adapter interface. It is available in this repository; publication remains separate from its recorded live baseline. Use Node 20+ or Bun. Native SDK version: `@boxd-sh/sdk@0.2.15`.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { boxdAdapter } from "sandbar-boxd";
+import { boxdAdapter } from "@sandbar-sdk/boxd";
 
 const client = await Sandbar.connect({
   adapter: boxdAdapter,

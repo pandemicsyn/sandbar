@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Sandbox, Template } from "e2b";
-import { adapterSuite } from "sandbar-adapter/testing";
+import { adapterSuite } from "@sandbar-sdk/adapter/testing";
 import { Image, Sandbar } from "sandbar-sdk";
 import {
   connectAdapter,
@@ -23,7 +23,7 @@ import {
   prepareOperation,
   submitOperation,
   type Json,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { createE2BAdapter } from "./index";
 import {
   assertFiniteStdinWorkflow,

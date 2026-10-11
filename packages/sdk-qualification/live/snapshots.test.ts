@@ -1,4 +1,4 @@
-import type { SnapshotProfile } from "sandbar-adapter";
+import type { SnapshotProfile } from "@sandbar-sdk/adapter";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { ResourceReference, SandbarError, OutcomeUnknownError } from "sandbar-sdk";
 import { z } from "zod";

@@ -1,4 +1,4 @@
-import type { Json } from "sandbar-adapter";
+import type { Json } from "@sandbar-sdk/adapter";
 
 const validatedReferences = new WeakSet<object>();
 

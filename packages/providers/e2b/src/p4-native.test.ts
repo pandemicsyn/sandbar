@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Sandbox } from "e2b";
 import { z } from "zod";
-import type { Json } from "sandbar-adapter";
+import type { Json } from "@sandbar-sdk/adapter";
 import { startProcess, ProcessReference } from "./process-native";
 
 function envelope(value: Json) {

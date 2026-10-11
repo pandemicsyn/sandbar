@@ -1,4 +1,4 @@
-import { AdapterError, type ReadContext } from "sandbar-adapter";
+import { AdapterError, type ReadContext } from "@sandbar-sdk/adapter";
 import { SandbarError, raceAbort, type ReadOptions } from "./resource";
 
 function disposeReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Sandbar, Image, diagnosticContext } from "sandbar-sdk";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { previewResponse } from "./sandbox-preview.js";
 import { textStreaming, terminateJob } from "./text-streaming.js";

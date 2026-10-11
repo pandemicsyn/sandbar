@@ -16,17 +16,17 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --splitting --outdir dist --external sandbar-adapter --external zod --external @opentelemetry/api && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --splitting --outdir dist --external @sandbar-sdk/adapter --external zod --external @opentelemetry/api && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../scripts/rewrite-declarations.mjs"
   },
   "dependencies": {
-    "sandbar-adapter": "workspace:*",
+    "@sandbar-sdk/adapter": "workspace:*",
     "zod": "4.6.5",
     "@opentelemetry/api": "1.9.1"
   },
   "devDependencies": {
     "@sandbar/provider-fake": "workspace:*",
-    "sandbar-daytona": "workspace:*",
-    "sandbar-e2b": "workspace:*"
+    "@sandbar-sdk/daytona": "workspace:*",
+    "@sandbar-sdk/e2b": "workspace:*"
   },
   "license": "Apache-2.0",
   "repository": {

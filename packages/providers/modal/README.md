@@ -1,10 +1,10 @@
-# sandbar-modal (experimental)
+# @sandbar-sdk/modal (experimental)
 
 Status: **create, exec, files, inspect, inventory and destroy implemented; deterministic fixtures and packed Node/Bun consumers tested; live unverified**. This package uses the official `modal@0.10.1` JavaScript SDK plus a version-pinned TaskCommandRouter wire subset.
 
 ```ts
 import { Sandbar, Image } from "sandbar-sdk";
-import { modalAdapter } from "sandbar-modal";
+import { modalAdapter } from "@sandbar-sdk/modal";
 
 const client = await Sandbar.connect({
   adapter: modalAdapter,

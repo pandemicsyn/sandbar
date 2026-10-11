@@ -11,7 +11,7 @@ import {
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
 import { z } from "zod";
-import type { OperationOutcome, MountSpec } from "sandbar-adapter";
+import type { OperationOutcome, MountSpec } from "@sandbar-sdk/adapter";
 import type { ConnectionFactory } from "../../provider-qualification/connection";
 import { LedgerStore } from "../../provider-qualification/ledger";
 import { boundedRead } from "../../provider-qualification/bounds";

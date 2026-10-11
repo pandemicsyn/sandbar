@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { AdapterError, defineAdapter, type ReadContext } from "sandbar-adapter";
+import { AdapterError, defineAdapter, type ReadContext } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { Image, Sandbar, type SandboxHandle } from "./index";
 

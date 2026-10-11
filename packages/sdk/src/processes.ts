@@ -10,7 +10,7 @@ import {
   type ProcessOutputBytes,
   type ProcessOutputFormat,
   type NativeProcessStatus,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import {
   SandbarError,
@@ -25,7 +25,7 @@ import {
 import type { AdapterDirectClient } from "./adapter-direct";
 import { noteOperation } from "./observability";
 
-export type { ProcessOutput, ProcessOutputBytes, ProcessOutputFormat } from "sandbar-adapter";
+export type { ProcessOutput, ProcessOutputBytes, ProcessOutputFormat } from "@sandbar-sdk/adapter";
 
 export type ProcessChunk<F extends ProcessOutputFormat> = F extends "bytes"
   ? ProcessOutputBytes
@@ -38,7 +38,7 @@ export type StartProcessInput<F extends ProcessOutputFormat = ProcessOutputForma
     ? { output: { mode: "stream"; format: "bytes" } }
     : object);
 
-export type { ProcessSignal, TerminalDimensions } from "sandbar-adapter";
+export type { ProcessSignal, TerminalDimensions } from "@sandbar-sdk/adapter";
 
 // oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters -- Native/reference JSON is untrusted and must be bounded without recursive parsing or invoking accessors.
 function boundedNative(value: unknown): boolean {

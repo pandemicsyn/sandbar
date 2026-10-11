@@ -3,11 +3,11 @@ title: TypeScript reference
 description: SDK connections, images, resource handles, operations, and errors.
 ---
 
-Import `Sandbar` and `Image` from `sandbar-sdk`. The official provider factories are `daytona` from `sandbar-daytona` and `e2b` from `sandbar-e2b`. See the [generated export index](/docs/reference/generated-typescript/) for public names.
+Import `Sandbar` and `Image` from `sandbar-sdk`. The official provider factories are `daytona` from `@sandbar-sdk/daytona` and `e2b` from `@sandbar-sdk/e2b`. See the [generated export index](/docs/reference/generated-typescript/) for public names.
 
 ## Consumer vocabulary and compatibility
 
-Use `SandbarClient`, `SandboxHandle`, `SnapshotHandle`, `VolumeHandle`, `OperationHandle<T>`, `RecoveryReference`, `ConnectOptions` and `CloseOptions` in application annotations. Adapter-author contracts remain in `sandbar-adapter`.
+Use `SandbarClient`, `SandboxHandle`, `SnapshotHandle`, `VolumeHandle`, `OperationHandle<T>`, `RecoveryReference`, `ConnectOptions` and `CloseOptions` in application annotations. Adapter-author contracts remain in `@sandbar-sdk/adapter`.
 
 Factory results preserve the complete advanced API and existing runtime identity. During this compatibility stage their declarations use `SandbarClient<true>` and `SandboxHandle<true>`; `true` is a type parameter, not a runtime setting. Default annotations retain the previous structural views, which applications may implement or mock. Concrete operation results provide their kind type parameter, preserving `kind` narrowing and `continue()`, while `OperationHandle<T>` alone keeps the original minimal observation/wait interface.
 
@@ -142,6 +142,6 @@ Persist accepted pending tokens with their versions. `operations.observe(...)` r
 
 ## Adapter authoring
 
-`sandbar-adapter` exports `defineAdapter`, `AdapterError`, operation result helpers, and scoped operation types. `sandbar-adapter/testing` exports `adapterSuite`. An adapter with no host policy does not expose `withPolicy`; policy-bearing definitions validate and clone host policy synchronously. Start with [Write an adapter](/docs/guides/write-an-adapter/).
+`@sandbar-sdk/adapter` exports `defineAdapter`, `AdapterError`, operation result helpers, and scoped operation types. `@sandbar-sdk/adapter/testing` exports `adapterSuite`. An adapter with no host policy does not expose `withPolicy`; policy-bearing definitions validate and clone host policy synchronously. Start with [Write an adapter](/docs/guides/write-an-adapter/).
 
 Creation input may be omitted when the adapter supplies a default environment. E2B uses its configured `templateId` (default `base`); Daytona accepts an `environment` setup option. Explicit per-call environments win. `checkCreate()` and `submitCreate()` resolve the same defaults without relaxing native create inputs. Missing defaults reject with `INVALID_ARGUMENT` before creation.

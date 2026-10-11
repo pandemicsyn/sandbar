@@ -6,7 +6,7 @@ import {
   defineAdapter,
   type ExecInput,
   type ExecValue,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { Image } from "./resource";
 import { Sandbar } from "./index";
 

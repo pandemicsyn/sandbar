@@ -91,7 +91,7 @@ Configure the policy once on a direct connection, or override it on `destroy` or
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 
 const sandbar = await Sandbar.connect(
   daytona({

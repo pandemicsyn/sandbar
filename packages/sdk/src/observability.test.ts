@@ -1,7 +1,7 @@
 /* oxlint-disable anti-slop/no-chained-type-assertions -- Fault-injection objects intentionally violate the OTel interface to prove that broken application providers cannot change SDK behavior. */
 import { afterAll, expect, test } from "bun:test";
 import type { AdapterRecoveryReference } from "./index";
-import { defineAdapter, type SnapshotProfile } from "sandbar-adapter";
+import { defineAdapter, type SnapshotProfile } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import {
   context,

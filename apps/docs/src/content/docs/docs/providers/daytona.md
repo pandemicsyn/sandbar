@@ -3,11 +3,11 @@ title: Daytona
 description: Connect to Daytona with explicit region, prepared image, and network policy settings.
 ---
 
-Import `daytona` from `sandbar-daytona`. Start with an active Linux snapshot in your target region. The example selects `daytona-default` once on connection, matching the getting-started configuration. Strict blocked networking requires eligible organization settings; see the policy section below.
+Import `daytona` from `@sandbar-sdk/daytona`. Start with an active Linux snapshot in your target region. The example selects `daytona-default` once on connection, matching the getting-started configuration. Strict blocked networking requires eligible organization settings; see the policy section below.
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 
 // Provider setup: adapter credentials, region/template and prepared image.
 const client = await Sandbar.connect(

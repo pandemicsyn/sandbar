@@ -24,7 +24,7 @@ Pre-aborted start rejects `WAIT_ABORTED` before dispatch. Abort or transport los
 
 ## Legacy adapter boundary
 
-The legacy profile uses the optional `processes` member on the public adapter session. Do not route it through the durable `Mutation`/checkpoint runtime or internal provider SPI. Use current `Command`, `Sandbox` and error conventions from `sandbar-adapter`.
+The legacy profile uses the optional `processes` member on the public adapter session. Do not route it through the durable `Mutation`/checkpoint runtime or internal provider SPI. Use current `Command`, `Sandbox` and error conventions from `@sandbar-sdk/adapter`.
 
 Exact adapter hooks are owned by the [adapter exports](../packages/adapter/src/index.ts); legacy native observation failures may carry validated `confirmedExit` evidence.
 

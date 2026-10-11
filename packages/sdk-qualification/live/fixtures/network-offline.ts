@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Sandbar } from "sandbar-sdk";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { LedgerStore } from "../../provider-qualification/ledger";
 

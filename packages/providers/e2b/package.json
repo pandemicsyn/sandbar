@@ -1,5 +1,5 @@
 {
-  "name": "sandbar-e2b",
+  "name": "@sandbar-sdk/e2b",
   "version": "0.0.0",
   "private": false,
   "type": "module",
@@ -16,10 +16,10 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external sandbar-adapter --external e2b --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external @sandbar-sdk/adapter --external e2b --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs"
   },
   "dependencies": {
-    "sandbar-adapter": "workspace:*",
+    "@sandbar-sdk/adapter": "workspace:*",
     "e2b": "2.51.0",
     "zod": "4.6.5"
   },

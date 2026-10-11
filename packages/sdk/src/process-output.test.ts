@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import type { ProcessOutput, ProcessOutputBytes } from "sandbar-adapter";
+import type { ProcessOutput, ProcessOutputBytes } from "@sandbar-sdk/adapter";
 import { createProcessTail, readProcessLines } from "./process-output";
 
 const encode = (text: string) => new TextEncoder().encode(text);

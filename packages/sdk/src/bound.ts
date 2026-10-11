@@ -1,1 +1,1 @@
-export { bindAdapter, type BoundAdapter } from "sandbar-adapter";
+export { bindAdapter, type BoundAdapter } from "@sandbar-sdk/adapter";

@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import type { AdapterRecoveryReference } from "sandbar-sdk";
 import { z } from "zod";
-import { ResourceScope, ResourceReference } from "sandbar-adapter";
+import { ResourceScope, ResourceReference } from "@sandbar-sdk/adapter";
 import { envdSchema, failureDiagnosticSchema } from "./diagnostics";
 import { networkEvidenceSchema, networkProbeId } from "./network-probe";
 

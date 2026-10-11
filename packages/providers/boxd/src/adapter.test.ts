@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { adapterSuite } from "sandbar-adapter/testing";
+import { adapterSuite } from "@sandbar-sdk/adapter/testing";
 import { Sandbar, OutcomeUnknownError } from "sandbar-sdk";
 import { createBoxdAdapter } from "./adapter";
 import { boxdFixture } from "./fixture.test-support";
@@ -243,7 +243,7 @@ test("expiry failure preserves an acknowledged UUID and observation never create
     const operation = await client.sandboxes.submitCreate();
     const before = fixture.calls.filter((call) => call.method === "SetDeleteAfter").length;
     expect(JSON.stringify(refs)).toContain([...fixture.machines.keys()][0]);
-    let saved: import("sandbar-adapter").ResourceReference<"sandbox"> | undefined;
+    let saved: import("@sandbar-sdk/adapter").ResourceReference<"sandbox"> | undefined;
 
     try {
       await operation.observe();
@@ -259,7 +259,9 @@ test("expiry failure preserves an acknowledged UUID and observation never create
       });
 
       if (error instanceof OutcomeUnknownError) {
-        const outcome = (await import("sandbar-adapter")).OperationOutcome.parse(error.outcome);
+        const outcome = (await import("@sandbar-sdk/adapter")).OperationOutcome.parse(
+          error.outcome,
+        );
 
         if (outcome.kind === "create") saved = outcome.sandbox;
       }
@@ -361,7 +363,7 @@ test("checkpoint failure exposes the known sandbox and stops before expiry insta
   });
 
   try {
-    let saved: import("sandbar-adapter").ResourceReference<"sandbox"> | undefined;
+    let saved: import("@sandbar-sdk/adapter").ResourceReference<"sandbox"> | undefined;
 
     try {
       await client.sandboxes.create();
@@ -377,7 +379,9 @@ test("checkpoint failure exposes the known sandbox and stops before expiry insta
       });
 
       if (error instanceof Error && "outcome" in error) {
-        const outcome = (await import("sandbar-adapter")).OperationOutcome.parse(error.outcome);
+        const outcome = (await import("@sandbar-sdk/adapter")).OperationOutcome.parse(
+          error.outcome,
+        );
 
         if (outcome.kind === "create") saved = outcome.sandbox;
       }
@@ -414,7 +418,7 @@ test.each(["unavailable", "wrong-org", "wrong-id"] as const)(
       if (fault === "unavailable") fixture.failNextGet();
       else if (fault === "wrong-org") fixture.badOrg();
       else fixture.wrongGetId();
-      let saved: import("sandbar-adapter").ResourceReference<"sandbox"> | undefined;
+      let saved: import("@sandbar-sdk/adapter").ResourceReference<"sandbox"> | undefined;
 
       try {
         await client.sandboxes.create();
@@ -423,7 +427,9 @@ test.each(["unavailable", "wrong-org", "wrong-id"] as const)(
         expect(error).toBeInstanceOf(OutcomeUnknownError);
 
         if (error instanceof OutcomeUnknownError) {
-          const outcome = (await import("sandbar-adapter")).OperationOutcome.parse(error.outcome);
+          const outcome = (await import("@sandbar-sdk/adapter")).OperationOutcome.parse(
+            error.outcome,
+          );
 
           if (outcome.kind === "create") saved = outcome.sandbox;
         }
@@ -474,7 +480,7 @@ test("native terminal readiness failure retains expiry acknowledgement and norma
   try {
     fixture.machineStates(["pending", "pending", "failed"]);
     const operation = await client.sandboxes.submitCreate();
-    let saved: import("sandbar-adapter").ResourceReference<"sandbox"> | undefined;
+    let saved: import("@sandbar-sdk/adapter").ResourceReference<"sandbox"> | undefined;
 
     try {
       await operation.observe();
@@ -490,7 +496,9 @@ test("native terminal readiness failure retains expiry acknowledgement and norma
       });
 
       if (error instanceof OutcomeUnknownError) {
-        const outcome = (await import("sandbar-adapter")).OperationOutcome.parse(error.outcome);
+        const outcome = (await import("@sandbar-sdk/adapter")).OperationOutcome.parse(
+          error.outcome,
+        );
 
         if (outcome.kind === "create") saved = outcome.sandbox;
       }

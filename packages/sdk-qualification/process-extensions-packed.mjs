@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Sandbar, Image, createProcessTail, readProcessLines } from "sandbar-sdk";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 
 // Independent adapter demonstrates only portable hooks, with no provider imports.

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter, type CreateInput as NativeCreateInput } from "sandbar-adapter";
+import { defineAdapter, type CreateInput as NativeCreateInput } from "@sandbar-sdk/adapter";
 import { Image, Sandbar, type ImageInput } from "./index";
 
 async function fixture(defaultImage?: ImageInput) {

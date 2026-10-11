@@ -14,7 +14,7 @@ import {
   type ArtifactDeletionResult,
   type OperationKind,
   type SnapshotCaptureValue,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   SandbarError,
   UnsupportedFeatureError,
@@ -35,7 +35,7 @@ import {
 
 async function resourceRead<T>(
   client: AdapterDirectClient,
-  work: (ctx: import("sandbar-adapter").ReadContext) => Promise<T>,
+  work: (ctx: import("@sandbar-sdk/adapter").ReadContext) => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
   client.ensureOpen();
@@ -473,7 +473,7 @@ export function decodeCapture(
 
 export function decodeResourceResult(
   client: AdapterDirectClient,
-  result: import("sandbar-adapter").RuntimeResult,
+  result: import("@sandbar-sdk/adapter").RuntimeResult,
   ref: AdapterRecoveryReference,
 ) {
   if (result.kind !== "completed") throw new OutcomeUnknownError(ref);

@@ -9,7 +9,7 @@ Sandbar is a server-side TypeScript SDK. Callers connect an installed adapter in
 ```mermaid
 flowchart TD
   Direct[Direct TypeScript caller] --> SDK[sandbar-sdk]
-  SDK --> Adapter[Public sandbar-adapter contract]
+  SDK --> Adapter[Public @sandbar-sdk/adapter contract]
   Adapter --> Provider[Configured provider transport]
 ```
 

@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import type { ExecCommand } from "sandbar-adapter/portable";
+import type { ExecCommand } from "@sandbar-sdk/adapter/portable";
 import { daytonaProvider, daytonaRegistration, createDaytonaAdapter, DaytonaDriver } from "./index";
 import { NonzeroExitError, Sandbar } from "sandbar-sdk";
 import { ProviderReadError } from "@sandbar/provider-spi";

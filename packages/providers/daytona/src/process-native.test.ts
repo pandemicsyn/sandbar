@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { processSupervisor, processRpc, pythonCommand } from "./process-helper";
 import { reopenDaytonaProcess, startDaytonaProcess, type ProcessExecute } from "./process-native";
-import type { NativeProcess, ProcessOutput, ProcessOutputBytes } from "sandbar-adapter";
+import type { NativeProcess, ProcessOutput, ProcessOutputBytes } from "@sandbar-sdk/adapter";
 import { Sandbar, AdapterSandbox, type ProcessHandle } from "sandbar-sdk";
 import { createDaytonaAdapter } from "./adapter";
 

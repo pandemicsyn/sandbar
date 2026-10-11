@@ -1,6 +1,6 @@
 import { Image, type SandbarClient, type SandboxReference, type RenewResult } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
-import { e2b } from "sandbar-e2b";
+import { daytona } from "@sandbar-sdk/daytona";
+import { e2b } from "@sandbar-sdk/e2b";
 
 // Change only setup when choosing a provider for new compute.
 export const daytonaSetup = (apiKey: string) =>

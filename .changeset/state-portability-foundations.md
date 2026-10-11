@@ -1,5 +1,5 @@
 ---
-"sandbar-adapter": minor
+"@sandbar-sdk/adapter": minor
 "sandbar-sdk": minor
 ---
 

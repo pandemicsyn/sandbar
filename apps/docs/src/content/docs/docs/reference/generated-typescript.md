@@ -133,7 +133,7 @@ Import from `sandbar-sdk`.
 
 ## Daytona adapter
 
-Import from `sandbar-daytona`.
+Import from `@sandbar-sdk/daytona`.
 
 | Export                 | Kind      |
 | ---------------------- | --------- |
@@ -149,7 +149,7 @@ Import from `sandbar-daytona`.
 
 ## E2B adapter
 
-Import from `sandbar-e2b`.
+Import from `@sandbar-sdk/e2b`.
 
 | Export             | Kind      |
 | ------------------ | --------- |
@@ -162,7 +162,7 @@ Import from `sandbar-e2b`.
 
 ## Experimental Modal adapter
 
-Import from `sandbar-modal`.
+Import from `@sandbar-sdk/modal`.
 
 | Export               | Kind      |
 | -------------------- | --------- |
@@ -173,7 +173,7 @@ Import from `sandbar-modal`.
 
 ## Adapter authoring
 
-Import from `sandbar-adapter`.
+Import from `@sandbar-sdk/adapter`.
 
 | Export                         | Kind      |
 | ------------------------------ | --------- |
@@ -264,7 +264,7 @@ Import from `sandbar-adapter`.
 
 ## Adapter test kit
 
-Import from `sandbar-adapter/testing`.
+Import from `@sandbar-sdk/adapter/testing`.
 
 | Export                | Kind     |
 | --------------------- | -------- |

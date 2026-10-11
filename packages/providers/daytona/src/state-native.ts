@@ -22,7 +22,7 @@ import {
   type CreateInput,
   type SnapshotProfile,
   type OperationOutcome,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 
 const CompactReference = ResourceReference.omit({ scope: true });
 
@@ -828,7 +828,7 @@ export function daytonaState(input: {
 
   function matchesCaptureIntent(
     token: z.infer<typeof Token>,
-    accepted: import("sandbar-adapter").RecoveryAttempt["capture"],
+    accepted: import("@sandbar-sdk/adapter").RecoveryAttempt["capture"],
   ) {
     if (!accepted) return false;
     const profile = accepted.profile;

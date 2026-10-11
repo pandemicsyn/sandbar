@@ -1,4 +1,4 @@
-import type { ProcessOutput, ProcessOutputBytes } from "sandbar-adapter";
+import type { ProcessOutput, ProcessOutputBytes } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { SandbarError, raceAbort } from "./resource";
 

@@ -6,8 +6,8 @@ import {
   type SandbarClient,
   type SandboxHandle,
 } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
-import { e2b } from "sandbar-e2b";
+import { daytona } from "@sandbar-sdk/daytona";
+import { e2b } from "@sandbar-sdk/e2b";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();

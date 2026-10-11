@@ -1,5 +1,5 @@
 import { Image, Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 
 const apiKey = process.env.DAYTONA_API_KEY;
 

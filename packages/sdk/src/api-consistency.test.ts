@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter, ResourceReference, type SnapshotInfo } from "sandbar-adapter";
+import { defineAdapter, ResourceReference, type SnapshotInfo } from "@sandbar-sdk/adapter";
 import {
   AdapterSandbox,
   AdapterSnapshot,

@@ -22,7 +22,7 @@ If working in the Sandbar repository, follow AGENTS.md and the
 and tests as the implementation authority, not archived proposals.
 
 Inspect the provider's official API documentation and the exact native
-SDK version. Implement defineAdapter from "sandbar-adapter". Keep the
+SDK version. Implement defineAdapter from "@sandbar-sdk/adapter". Keep the
 adapter independent of Sandbar internals. Separate configuration from
 credentials, verify native identity with authenticated read-only IO,
 and include identity-relevant routing partitions in the returned scope.
@@ -48,7 +48,7 @@ failure. Recovery must never replay a mutation. Keep secrets and native
 logs out of public errors, tokens, and committed evidence.
 
 Build an injectable native boundary and deterministic tests. Run
-adapterSuite from "sandbar-adapter/testing" and verify actual outbound
+adapterSuite from "@sandbar-sdk/adapter/testing" and verify actual outbound
 attempt counts, scope separation, binary fidelity, uncertain outcomes,
 cleanup, and supported recovery. Qualify packed artifacts with an external
 TypeScript consumer and the supported runtimes.

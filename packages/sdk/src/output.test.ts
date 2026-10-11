@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
 import { runInNewContext } from "node:vm";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter } from "@sandbar-sdk/adapter";
 import { Image, Sandbar, outputText, NonzeroExitError, NoExitCodeError } from "./index";
 import { execOutput } from "./resource";
 

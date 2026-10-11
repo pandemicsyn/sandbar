@@ -3,7 +3,7 @@ import {
   AdapterFilesystemError,
   type ReadContext,
   type FileTransferContext,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { SandbarError, raceAbort } from "./resource";
 
 export type TransferPolicy = {

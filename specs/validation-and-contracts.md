@@ -6,7 +6,7 @@ Use Zod 4 for runtime contracts. TypeScript types do not validate provider data 
 
 ## Ownership
 
-- [sandbar-adapter](../packages/adapter/src/index.ts) owns adapter definitions, scope, native-operation outcomes and their validation. Its [portable schemas](../packages/adapter/src/portable.ts) validate portable inputs and results.
+- [@sandbar-sdk/adapter](../packages/adapter/src/index.ts) owns adapter definitions, scope, native-operation outcomes and their validation. Its [portable schemas](../packages/adapter/src/portable.ts) validate portable inputs and results.
 - The [SDK resource layer](../packages/sdk/src/resource.ts) owns consumer input normalization, handles and public errors. Direct calls do not pass through HTTP serialization for code reuse.
 - Each provider adapter validates native responses and its own configuration/credentials. Native SDK types alone are insufficient.
 

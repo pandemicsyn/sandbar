@@ -1,5 +1,5 @@
 {
-  "name": "sandbar-daytona",
+  "name": "@sandbar-sdk/daytona",
   "version": "0.0.0",
   "private": false,
   "type": "module",
@@ -16,11 +16,11 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external sandbar-adapter --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs && bun ../../../scripts/package-daytona-declarations.mjs"
+    "build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist --external @sandbar-sdk/adapter --external zod && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist && bun ../../../scripts/rewrite-declarations.mjs && bun ../../../scripts/package-daytona-declarations.mjs"
   },
   "dependencies": {
     "zod": "4.6.5",
-    "sandbar-adapter": "workspace:*"
+    "@sandbar-sdk/adapter": "workspace:*"
   },
   "devDependencies": {
     "sandbar-sdk": "workspace:*",

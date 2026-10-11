@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { defineAdapter, type AttemptContext, type DestroyValue } from "sandbar-adapter";
+import { defineAdapter, type AttemptContext, type DestroyValue } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { Sandbar } from "./index";
 import { Image, SandbarError } from "./resource";

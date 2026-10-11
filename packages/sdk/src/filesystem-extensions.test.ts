@@ -5,7 +5,7 @@ import {
   defineAdapter,
   type AdapterSession,
   type DirectoryResult,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { Image, Sandbar } from "./index";
 
 async function fixture(files: NonNullable<AdapterSession["files"]>) {

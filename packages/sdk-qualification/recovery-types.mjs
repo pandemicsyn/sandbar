@@ -42,7 +42,7 @@ export async function checkRecoveryTypes(directory, root, run) {
     join(directory, "recovery-types.ts"),
     `
 import { Sandbar, type DirectConnectOptions, type AdapterDirectClient, type AdapterRecoveryReference, type SnapshotResult, type AdapterVolume, type ExecOutput } from "sandbar-sdk";
-import { daytona } from "sandbar-daytona";
+import { daytona } from "@sandbar-sdk/daytona";
 function cleanupConnection() {
   const options: DirectConnectOptions = { cleanup: { storage: "allow-unconfirmed" } };
   const connection = Sandbar.connect(daytona({ apiKey: "example", target: "us" }), options);
@@ -118,7 +118,7 @@ function cleanupEvidence(error: import("sandbar-sdk").SandboxCleanupError<number
   const box: import("sandbar-sdk").SandboxHandle<true> = error.sandbox;
   const reference: import("sandbar-sdk").RecoveryReference | undefined = error.cleanupReference;
   if (error.cleanupOperation) {
-    const legacy: import("sandbar-sdk").AdapterOperation<import("sandbar-adapter").DestroyValue> = error.cleanupOperation;
+    const legacy: import("sandbar-sdk").AdapterOperation<import("@sandbar-sdk/adapter").DestroyValue> = error.cleanupOperation;
     void legacy.continue;
   }
   if (error.callbackOutcome.status === "completed") {

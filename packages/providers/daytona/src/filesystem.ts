@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AdapterError, AdapterFilesystemError, type FileEntry } from "sandbar-adapter";
+import { AdapterError, AdapterFilesystemError, type FileEntry } from "@sandbar-sdk/adapter";
 
 // Paths travel as one base64 JSON argument, never as shell program text.
 export const FILESYSTEM_HELPER = String.raw`

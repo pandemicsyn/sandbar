@@ -1,4 +1,4 @@
-/** Experimental Modal integration through the public sandbar-adapter contract. */
+/** Experimental Modal integration through the public @sandbar-sdk/adapter contract. */
 export { modalAdapter, createModalAdapter } from "./adapter";
 
 export { MODAL_ENDPOINT, type ModalTransport } from "./transport";

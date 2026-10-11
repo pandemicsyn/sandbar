@@ -30,7 +30,7 @@ Acceptance tests cover preabort, hung setup, authentication failure, success/abo
 
 Reopen Sandbar-created compute, inspect current state/deadlines, renew lifetime through the configured adapter policy, and explicitly suspend/resume the same logical resource. Initial suspension covers Daytona **containers** and E2B **memory pause**. E2B filesystem-only pause is a real native choice but deferred; Daytona VM/GPU/Windows suspension is also deferred. No snapshot/delete/recreate emulation, raw-ID adoption, streaming processes, PTYs/tunnels, new providers, automatic paid snapshot policy, mounted suspension, or volume cleanup-policy configuration.
 
-The SDK exports sandbox references, `sandboxes.get`, enriched `inspect`, renewal and native suspend/resume. The [recovery DX contract](sdk-recovery-dx.md) governs ordinary results/errors and compatibility. Current `sandbar-sdk` and `sandbar-adapter` exports are authoritative for types; legacy adapters retain the null-reference fallback below.
+The SDK exports sandbox references, `sandboxes.get`, enriched `inspect`, renewal and native suspend/resume. The [recovery DX contract](sdk-recovery-dx.md) governs ordinary results/errors and compatibility. Current `sandbar-sdk` and `@sandbar-sdk/adapter` exports are authoritative for types; legacy adapters retain the null-reference fallback below.
 
 ### SDK experience and adapter setup
 

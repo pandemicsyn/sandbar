@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { defineAdapter } from "sandbar-adapter";
+import { defineAdapter } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { Sandbar } from "./index";
 

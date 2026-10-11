@@ -5,7 +5,7 @@ import {
   MAX_DIRECTORY_NAME_BYTES,
   type FileEntry,
   type ReadContext,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { filesystemError } from "./file-transfer";
 import { SandbarError, raceAbort, type ReadOptions } from "./resource";
 
@@ -19,8 +19,8 @@ const Entry = z.strictObject({
 });
 
 export function directoryResult(
-  result: import("sandbar-adapter").DirectoryResult,
-): import("sandbar-adapter").DirectoryResult {
+  result: import("@sandbar-sdk/adapter").DirectoryResult,
+): import("@sandbar-sdk/adapter").DirectoryResult {
   const parsed = z
     .strictObject({
       entries: z.custom<FileEntry[]>(Array.isArray),

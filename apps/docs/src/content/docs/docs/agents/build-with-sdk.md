@@ -23,7 +23,7 @@ checkout or local packed artifacts; follow the checkout setup in the docs. Do no
 named "sandbar".
 
 Use Sandbar and Image from "sandbar-sdk", with e2b from
-"sandbar-e2b" or daytona from "sandbar-daytona".
+"@sandbar-sdk/e2b" or daytona from "@sandbar-sdk/daytona".
 Run the SDK on the server and read credentials from environment variables.
 
 Start from an existing prepared image. E2B can use the "base" template;

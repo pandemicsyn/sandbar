@@ -7,7 +7,7 @@ import {
   unknownSandboxFacts,
   type AdapterSession,
   type Sandbox,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   Sandbar,
   Image,
@@ -16,7 +16,7 @@ import {
   type AdapterRecoveryReference,
 } from "./index";
 
-type InspectionFixtureFacts = Record<string, import("sandbar-adapter").Json>;
+type InspectionFixtureFacts = Record<string, import("@sandbar-sdk/adapter").Json>;
 
 function fixture(reopening: boolean, pendingOperations = false) {
   const scope = { authority: { kind: "fixture", id: "account" }, partition: {} };

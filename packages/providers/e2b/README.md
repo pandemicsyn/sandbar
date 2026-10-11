@@ -1,10 +1,10 @@
 # Official E2B adapter
 
-Install `sandbar-sdk` and `sandbar-e2b`, then import the official adapter:
+Install `sandbar-sdk` and `@sandbar-sdk/e2b`, then import the official adapter:
 
 ```ts
 import { Sandbar, Image } from "sandbar-sdk";
-import { e2b } from "sandbar-e2b";
+import { e2b } from "@sandbar-sdk/e2b";
 
 const client = await Sandbar.connect(e2b({ apiKey: process.env.E2B_API_KEY! }));
 
@@ -36,7 +36,7 @@ The factory performs no provider IO. `Sandbar.connect` validates the API key wit
 
 For scope that survives same-team key rotation, optionally pass `teamId`; Sandbar verifies it through an authenticated E2B team metrics read and uses `team` authority. Switching between these scope modes requires a separate connection. `templateId` defaults to `base`. To use an owned template, pass its canonical ID or untagged name (optionally namespaced or suffixed `:default`); connect and create verify a ready owned template and resolve it to its canonical ID. Other named tags and arbitrary public aliases are outside this slice. The partition includes the configured selector and fixed API endpoint. Alias selection does not promise an immutable build version.
 
-The native default `base` is supported without requiring it to appear in the team's owned-template listing. Its preparation checks syntax and authenticated scope; the single native create request validates current public access/readiness after the submission marker. There is no probe sandbox or claim that read-only preparation verified public readiness. Authenticated sandbox reads bind the returned canonical template ID to the exact Sandbar scope, operation and submission metadata. Recovery observes those markers and never resolves an alias to submit another create. The adapter uses only the public `sandbar-adapter` contract.
+The native default `base` is supported without requiring it to appear in the team's owned-template listing. Its preparation checks syntax and authenticated scope; the single native create request validates current public access/readiness after the submission marker. There is no probe sandbox or claim that read-only preparation verified public readiness. Authenticated sandbox reads bind the returned canonical template ID to the exact Sandbar scope, operation and submission metadata. Recovery observes those markers and never resolves an alias to submit another create. The adapter uses only the public `@sandbar-sdk/adapter` contract.
 
 Owned prepared images use the verified template ID; `base` retains the native selector until submission. An OCI reference runs E2B's `Template().fromImage(reference)` build inside the create submission, then creates a sandbox from the ready E2B template. OCI builds are paid effects and retain the built template after sandbox destruction; the destroy result names it as a retained resource. Public registry images are the supported input; private registry credentials have no common Sandbar input yet. Network modes are `internet` and `blocked` through E2B's `allowInternetAccess` control. Region selection is unsupported. Command forms are argv and Bash shell, with cwd and environment. E2B's command API decodes process output as text, so the adapter redirects each stream to a sandbox file and reads the bytes through E2B's streaming file API. Combined stdout and stderr are capped at 1 MiB; buffered file reads and writes default to 1 MiB and accept a `maxBytes` override up to 16 MiB. Streaming APIs handle larger files. A no-clobber write uploads to a temporary file in the destination directory and links it to the exact destination atomically with GNU `ln -T --`. Images without that utility fail without a fallback write; this path has not been qualified live across custom E2B images.
 

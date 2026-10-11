@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
-import { AdapterError, defineAdapter } from "sandbar-adapter";
+import { AdapterError, defineAdapter } from "@sandbar-sdk/adapter";
 import { createSdkTransport, MODAL_ENDPOINT, type ModalTransport } from "./transport";
 
 const MAX_BYTES = 1_048_576;

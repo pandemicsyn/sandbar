@@ -9,7 +9,7 @@ import {
   type AdapterDirectClient,
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
-import { SnapshotInfo, assertResourceScope } from "sandbar-adapter";
+import { SnapshotInfo, assertResourceScope } from "@sandbar-sdk/adapter";
 import { LedgerStore } from "../../provider-qualification/ledger";
 
 const SavedResource = z.union([

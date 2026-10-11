@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { AdapterError, defineAdapter, type AdapterSession } from "sandbar-adapter";
+import { AdapterError, defineAdapter, type AdapterSession } from "@sandbar-sdk/adapter";
 import { Sandbar, Image } from "./index";
 
 /** Independently authored adapter stores chunk records, never a contiguous file buffer. */

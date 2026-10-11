@@ -1,5 +1,5 @@
 import { Sandbar } from "sandbar-sdk";
-import { boxdAdapter } from "sandbar-boxd";
+import { boxdAdapter } from "@sandbar-sdk/boxd";
 
 export async function boxdExample(apiKey: string, org: string) {
   const client = await Sandbar.connect({

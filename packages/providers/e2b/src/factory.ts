@@ -1,5 +1,5 @@
 import { createE2BAdapter } from "./index";
-import { bindAdapter, type BoundAdapter } from "sandbar-adapter";
+import { bindAdapter, type BoundAdapter } from "@sandbar-sdk/adapter";
 
 /** E2B adapter with API-key scope and default base template; optional verified team scope. */
 export function e2b(options: {

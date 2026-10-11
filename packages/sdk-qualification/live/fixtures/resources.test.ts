@@ -371,7 +371,7 @@ for (const option of ["partialReferenceCapture", "pendingNativeCapture"] as cons
 test("snapshot profile metadata remains available when reopening later fails", async () => {
   const f = await fixture();
   const t = await resources(f);
-  let observed: import("sandbar-adapter").SnapshotProfile | undefined;
+  let observed: import("@sandbar-sdk/adapter").SnapshotProfile | undefined;
 
   try {
     await expect(

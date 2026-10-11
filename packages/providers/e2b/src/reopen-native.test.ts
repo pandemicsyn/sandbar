@@ -3,7 +3,7 @@ import { Sandbox } from "e2b";
 import { createSdkTransport } from "./transport";
 import { createE2BAdapter } from "./index";
 import { Sandbar } from "sandbar-sdk";
-import { sandboxReference } from "sandbar-adapter";
+import { sandboxReference } from "@sandbar-sdk/adapter";
 
 const originalFetch = globalThis.fetch;
 

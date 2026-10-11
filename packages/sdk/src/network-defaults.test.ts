@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { defineAdapter, type SnapshotInfo, type SnapshotRestoreInput } from "sandbar-adapter";
+import { defineAdapter, type SnapshotInfo, type SnapshotRestoreInput } from "@sandbar-sdk/adapter";
 import { Sandbar, Image, AdapterSnapshot } from "./index";
 
 const scope = { authority: { kind: "account", id: "one" }, partition: {} };

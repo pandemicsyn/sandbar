@@ -12,7 +12,7 @@ import {
   type FileStreamWriteOptions,
   type TransferPolicy,
 } from "./file-transfer";
-import { FileMutationIntent, type FileEntry } from "sandbar-adapter";
+import { FileMutationIntent, type FileEntry } from "@sandbar-sdk/adapter";
 import {
   directoryEntries,
   directoryRead,
@@ -84,7 +84,7 @@ import {
   type SnapshotPlan,
   type CreatePlan,
   type DirectCapabilities,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import {
   AdapterVolume,
@@ -101,7 +101,7 @@ import {
   type ArtifactDeletionResult,
   type DestroyValue,
   type OperationInput,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   AdapterError,
   AdapterCheckpointError,
@@ -122,7 +122,7 @@ import {
   type RuntimeResult,
   type Scope,
   type Sandbox,
-} from "sandbar-adapter";
+} from "@sandbar-sdk/adapter";
 import {
   NonzeroExitError,
   NoExitCodeError,
@@ -240,14 +240,14 @@ function identity() {
 function asUnknown(
   ref: RecoveryReference,
   reason?: string,
-  outcome?: import("sandbar-adapter").OperationOutcome,
+  outcome?: import("@sandbar-sdk/adapter").OperationOutcome,
 ): OutcomeUnknownError<RecoveryReference> {
   return new OutcomeUnknownError(ref, reason, outcome);
 }
 
 function acknowledgedLifecycleOutcome(
   ref: RecoveryReference,
-): import("sandbar-adapter").OperationOutcome | undefined {
+): import("@sandbar-sdk/adapter").OperationOutcome | undefined {
   if (!ref.sandboxReference || !ref.lifecycle) return undefined;
 
   const token = z
@@ -325,7 +325,7 @@ function fileReadLimit(maxBytes: number): number {
 function abortWaiting(
   ref: RecoveryReference,
   reason: AbortSignal["reason"],
-  outcome?: import("sandbar-adapter").OperationOutcome,
+  outcome?: import("@sandbar-sdk/adapter").OperationOutcome,
 ): never {
   throw new WaitAbortedError(ref, reason, outcome ?? acknowledgedLifecycleOutcome(ref));
 }
@@ -1358,7 +1358,7 @@ export class AdapterSandbox {
   async readDirectory(
     path: string,
     options: ReadOptions = {},
-  ): Promise<import("sandbar-adapter").DirectoryResult> {
+  ): Promise<import("@sandbar-sdk/adapter").DirectoryResult> {
     this.client.ensureOpen();
     fileOptions(options);
     path = directoryPath(path);
@@ -1406,7 +1406,7 @@ export class AdapterSandbox {
   async statFile(
     path: string,
     options: ReadOptions & { followSymlinks?: boolean } = {},
-  ): Promise<import("sandbar-adapter").FileStat> {
+  ): Promise<import("@sandbar-sdk/adapter").FileStat> {
     this.client.ensureOpen();
     fileOptions(options);
     path = directoryPath(path);
@@ -1475,7 +1475,7 @@ export class AdapterSandbox {
     if (options.signal?.aborted) throw new SandbarError("WAIT_ABORTED", "File transfer cancelled");
 
     const retained: Parameters<
-      NonNullable<import("sandbar-adapter").FileTransferContext["retain"]>
+      NonNullable<import("@sandbar-sdk/adapter").FileTransferContext["retain"]>
     >[0] = {};
 
     try {
@@ -1553,7 +1553,7 @@ export class AdapterSandbox {
       throw new SandbarError("WAIT_ABORTED", "Filesystem operation cancelled");
 
     const retained: Parameters<
-      NonNullable<import("sandbar-adapter").FileTransferContext["retain"]>
+      NonNullable<import("@sandbar-sdk/adapter").FileTransferContext["retain"]>
     >[0] = {};
 
     try {
@@ -1755,12 +1755,12 @@ export class AdapterSandbox {
   }
   async submitDestroy(
     options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
-  ): Promise<OperationHandle<import("sandbar-adapter").DestroyValue, OperationKind>> {
+  ): Promise<OperationHandle<import("@sandbar-sdk/adapter").DestroyValue, OperationKind>> {
     this.client.ensureOpen();
     assertSignal(options.signal);
     this.invalidateProcessControl();
 
-    const op = await this.client.submit<import("sandbar-adapter").DestroyValue>(
+    const op = await this.client.submit<import("@sandbar-sdk/adapter").DestroyValue>(
       "destroy",
       {
         ...sandboxInput(this.id, this.reference),
@@ -1783,7 +1783,7 @@ export class AdapterSandbox {
   }
   async destroy(
     options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
-  ): Promise<import("sandbar-adapter").DestroyValue> {
+  ): Promise<import("@sandbar-sdk/adapter").DestroyValue> {
     return waitFor(this.client.telemetry, await this.submitDestroy(options), options);
   }
 }
@@ -1808,7 +1808,7 @@ export type AdvancedObservation = {
   sandboxId?: string;
   sandboxReference?: SandboxReference;
   resource?: ResourceReference;
-  mounts?: import("sandbar-adapter").MountSpec[];
+  mounts?: import("@sandbar-sdk/adapter").MountSpec[];
   token?: Json;
   tokenVersion?: number;
 };
@@ -2580,7 +2580,7 @@ export class AdapterDirectClient {
       sandboxReference?: SandboxReference;
       resource?: ResourceReference;
       capture?: z.infer<typeof CaptureExpectation>;
-      mounts?: import("sandbar-adapter").MountSpec[];
+      mounts?: import("@sandbar-sdk/adapter").MountSpec[];
       networkPolicy?: string;
       file?: { path: string; bytes: number };
       fileMutation?: RecoveryReference["fileMutation"];
@@ -2688,8 +2688,8 @@ export class AdapterDirectClient {
   }
   checkedOutcome(
     reference: RecoveryReference,
-    outcome?: import("sandbar-adapter").OperationOutcome,
-  ): import("sandbar-adapter").OperationOutcome | undefined {
+    outcome?: import("@sandbar-sdk/adapter").OperationOutcome,
+  ): import("@sandbar-sdk/adapter").OperationOutcome | undefined {
     if (!outcome) return undefined;
     const parsed = OperationOutcome.safeParse(outcome);
 

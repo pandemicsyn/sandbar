@@ -110,7 +110,7 @@ try {
         {
           name: "local-provider-and-vendor-boundaries",
           setup(builder) {
-            builder.onResolve({ filter: /^sandbar-daytona$/ }, () => {
+            builder.onResolve({ filter: /^@sandbar-sdk\/daytona$/ }, () => {
               providerReplaced = true;
 
               return {
