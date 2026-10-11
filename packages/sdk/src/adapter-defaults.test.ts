@@ -64,6 +64,7 @@ test("an invalid adapter default fails connection and releases owned resources",
 test("unsupported configured default leaves read-only connection available without fallback", async () => {
   const fixture = definition("unsupported-policy");
   const client = await Sandbar.connect({ adapter: fixture.adapter, config: {}, credentials: {} });
+
   try {
     expect((await client.sandboxes.checkCreate()).status).toBe("unsupported");
     await expect(client.sandboxes.create()).rejects.toMatchObject({ code: "UNSUPPORTED" });
@@ -72,5 +73,6 @@ test("unsupported configured default leaves read-only connection available witho
   } finally {
     await client.close();
   }
+
   expect(fixture.releases()).toBe(1);
 });

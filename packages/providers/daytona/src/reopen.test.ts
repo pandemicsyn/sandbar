@@ -275,6 +275,7 @@ test("Daytona connection retains reopen and inspection when blocked create eligi
   f.restrict();
   f.calls.length = 0;
   const fresh = await f.connect("rotated-key");
+
   try {
     const reopened = await fresh.sandboxes.get(saved);
     expect((await reopened.inspect()).state).toBe("running");
