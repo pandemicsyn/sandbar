@@ -25,6 +25,7 @@
     "sandbar-adapter": "workspace:*",
     "zod": "4.6.5",
     "sandbar-modal": "workspace:*",
-    "satteri": "0.10.5"
+    "satteri": "0.10.5",
+    "sandbar-boxd": "workspace:*"
   }
 }

@@ -12,7 +12,7 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["sandbar-modal"],
+  "ignore": ["sandbar-modal", "sandbar-boxd"],
   "privatePackages": {
     "version": false,
     "tag": false

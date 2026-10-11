@@ -10,6 +10,7 @@
     "sandbar-adapter": "workspace:*",
     "@sandbar/provider-fake": "workspace:*",
     "sandbar-sdk": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "sandbar-boxd": "workspace:*"
   }
 }

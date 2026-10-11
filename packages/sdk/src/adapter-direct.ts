@@ -249,7 +249,7 @@ function acknowledgedLifecycleOutcome(
       acknowledged: z.literal(true),
       preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
       processes: z.enum(["terminated", "preserved"]).optional(),
-      connections: z.literal("dropped").optional(),
+      connections: z.enum(["dropped", "preserved"]).optional(),
       completed: z.record(z.string(), z.json()).optional(),
     })
     .safeParse(ref.token);
@@ -2359,7 +2359,13 @@ export class AdapterDirectClient {
     signal: AbortSignal,
   ): Promise<Support<CreatePlan>> {
     this.ensureOpen();
-    const request = validateCreate(input, this.session.defaultImage);
+
+    const request = validateCreate(
+      input,
+      this.session.defaultImage,
+      this.session.defaultNetworkPolicy,
+    );
+
     this.checkImageBinding(request);
 
     for (const mount of request.mounts ?? [])
@@ -2407,7 +2413,12 @@ export class AdapterDirectClient {
     input?: CreateInput,
     options: { signal?: AbortSignal } = {},
   ): Promise<AdapterOperation<AdapterSandbox>> {
-    const request = validateCreate(input, this.session.defaultImage);
+    const request = validateCreate(
+      input,
+      this.session.defaultImage,
+      this.session.defaultNetworkPolicy,
+    );
+
     this.checkImageBinding(request);
 
     for (const mount of request.mounts ?? [])
@@ -2694,6 +2705,18 @@ export class AdapterDirectClient {
 
       if (checked.observation?.reference)
         assertSandboxReference(checked.observation.reference, reference.sandboxReference);
+
+      return checked;
+    }
+
+    if (checked.kind === "create") {
+      assertSandboxReference(
+        checked.sandbox,
+        sandboxReference(this.provider, this.scope, checked.sandbox.nativeId, {
+          operation: reference.operationId,
+          submission: reference.submissionId,
+        }),
+      );
 
       return checked;
     }
