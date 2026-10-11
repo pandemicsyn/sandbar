@@ -1,4 +1,6 @@
 ---
+import { Code } from "astro:components";
+import { oceanDriveCodeTheme } from "../ocean-drive-code-theme.mjs";
 import Logo from "../components/Logo.astro";
 import ThemeToggle from "../components/ThemeToggle.astro";
 import "../styles/tokens.css";
@@ -16,6 +18,31 @@ const github = "https://github.com/pandemicsyn/sandbar";
 const providers = ["daytona", "e2b"];
 
 const install = "bun install --frozen-lockfile";
+
+const adapterExample = `// Inside your adapter's connect() method:
+// Authenticate the client and verify scope first.
+return {
+  scope,
+  supports: { images: ["prepared"], network: ["blocked"] },
+  async create(input, ctx) {
+    const box = await client.spawn({
+      account: account.id,
+      imageId: input.image.value,
+      region: config.region,
+      blockAllEgress: true,
+      public: false,
+      requestId: ctx.submissionId,
+    });
+    return {
+      id: box.id,
+      state: box.ready ? "running" : "unknown",
+    };
+  },
+  async destroy(box) {
+    await client.deleteAndWait(box.id, account.id, config.region);
+    return { computeStopped: true, retainedResources: [] };
+  },
+};`;
 
 const sunBands = [
   [5, "var(--sb-coral)"],
@@ -178,9 +205,10 @@ const sunBands = [
         <div class="wrap adapters-row">
           <span class="adapters-label">Adapters</span>
           <ul class="chips">
-            <li class="chip chip-modal"><span></span>Modal · external / experimental</li>
             <li class="chip chip-daytona"><span></span>Daytona</li>
             <li class="chip chip-e2b"><span></span>E2B</li>
+            <li class="chip chip-modal"><span></span>Modal · experimental</li>
+            <li class="chip chip-boxd"><span></span>boxd</li>
             <li class="chip chip-yours">+ your adapter</li>
           </ul>
         </div>
@@ -196,8 +224,8 @@ const sunBands = [
           </article>
           <article class="feature">
             <span class="rule" style="background:var(--sb-coral)"></span>
-            <h3>Explicit lifecycle</h3>
-            <p>Use async/await, typed errors and recoverable operations. Destroy owned compute explicitly; closing a client releases local resources.</p>
+            <h3>Plays nice with serverless</h3>
+            <p>Save references to recover across invocations. Scope sandbox cleanup while keeping snapshots and volumes.</p>
           </article>
           <article class="feature">
             <span class="rule" style="background:var(--sb-aqua)"></span>
@@ -225,11 +253,10 @@ const sunBands = [
             <a class="band-link" href="/docs/guides/write-an-adapter/">Writing an adapter →</a>
           </div>
           <div class="code-card">
-            <div class="code-bar"><span class="file file-only">Adapter authoring</span></div>
-            <div class="code">
-              <p>Start with the checked Acme adapter example:</p>
-              <p><a class="band-link" href="https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/acme-adapter.ts">View complete source →</a></p>
-              <p>Verify native identity and scope, map create and confirmed destruction, then add capabilities backed by the provider.</p>
+            <div class="code-bar"><span class="file file-only">adapters/acme.ts · excerpt</span></div>
+            <Code code={adapterExample} lang="ts" theme={{ ...oceanDriveCodeTheme, type: "dark" }} class="adapter-code" />
+            <div class="adapter-source">
+              <a class="band-link" href="https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/acme-adapter.ts">View complete source →</a>
             </div>
           </div>
         </div>
@@ -1086,6 +1113,14 @@ const sunBands = [
         background: var(--e2b);
         transform: rotate(45deg);
       }
+      .chip-boxd {
+        background: color-mix(in srgb, var(--sb-lav) 18%, var(--sb-surface));
+        color: var(--sb-ink);
+      }
+      .chip-boxd span {
+        border-radius: 2px;
+        background: var(--sb-lav);
+      }
       .chip-yours {
         padding: 5px 15px;
         border: 1px dashed var(--sb-muted);
@@ -1203,6 +1238,20 @@ const sunBands = [
       .band .code-bar {
         height: 40px;
         padding: 0 16px;
+      }
+
+      :global(.adapter-code) {
+        margin: 0;
+        padding: 20px 22px;
+        background: var(--sb-code-bg) !important;
+        font-family: var(--sb-font-mono);
+        font-size: 12px;
+        line-height: 1.8;
+        overflow-x: auto;
+      }
+      .adapter-source {
+        padding: 0 22px 20px;
+        font-size: 14px;
       }
 
       /* Footer */
