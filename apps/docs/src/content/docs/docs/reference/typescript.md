@@ -5,6 +5,16 @@ description: SDK connections, images, resource handles, operations, and errors.
 
 Import `Sandbar` and `Image` from `sandbar-sdk`. The official provider factories are `daytona` from `sandbar-daytona` and `e2b` from `sandbar-e2b`. See the [generated export index](/docs/reference/generated-typescript/) for public names.
 
+## Consumer vocabulary and compatibility
+
+Use `SandbarClient`, `SandboxHandle`, `SnapshotHandle`, `VolumeHandle`, `OperationHandle<T>`, `RecoveryReference`, `ConnectOptions` and `CloseOptions` in application annotations. Adapter-author contracts remain in `sandbar-adapter`.
+
+Factory results preserve the complete advanced API and existing runtime identity. During this compatibility stage their declarations use `SandbarClient<true>` and `SandboxHandle<true>`; `true` is a type parameter, not a runtime setting. Default annotations retain the previous structural views, which applications may implement or mock. Concrete operation results provide their kind type parameter, preserving `kind` narrowing and `continue()`, while `OperationHandle<T>` alone keeps the original minimal observation/wait interface.
+
+Existing `AdapterDirectClient`, `AdapterSandbox`, `AdapterSnapshot`, `AdapterVolume`, `AdapterOperation`, `AdapterRecoveryReference`, `AdapterConnectOptions`, `DirectConnectOptions`, `DirectSandbarClient` and `DirectSandboxHandle` exports remain supported. Runtime constructors and `instanceof` checks still use the same classes. Migrate annotations incrementally; no wrapper or identity conversion is needed. Inferred complete clients retain advanced compatibility access to `session`, `telemetry` and `scope`, with deprecation guidance. Ordinary `SandbarClient` annotations omit this machinery; prefer documented operations and resource references. Exported advanced methods and prepare/submit/recover capabilities remain available.
+
+For ordinary directory listings, use `listFiles`: it returns a complete bounded array or rejects. Use `readDirectory` when completeness and observation metadata matter. Both APIs remain available with their distinct semantics.
+
 ## Connect
 
 ```ts

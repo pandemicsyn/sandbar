@@ -1,4 +1,4 @@
-import { Image, type AdapterDirectClient, type AdapterSandbox, type Preview } from "sandbar-sdk";
+import { Image, type SandbarClient, type SandboxHandle, type Preview } from "sandbar-sdk";
 import { daytona } from "sandbar-daytona";
 import { e2b } from "sandbar-e2b";
 
@@ -9,7 +9,7 @@ export const daytonaPreviewSetup = (apiKey: string) =>
 export const e2bPreviewSetup = (apiKey: string) => e2b({ apiKey, preview: { access: "public" } });
 
 export async function previewResponse(
-  box: AdapterSandbox,
+  box: SandboxHandle,
   port: number,
   request: typeof fetch = fetch,
 ): Promise<Response> {
@@ -23,7 +23,7 @@ export async function previewResponse(
 
 // Select an existing prepared image whose startup command serves HTTP on port 3000.
 // This recipe neither starts a server nor claims indefinite process/log support.
-export async function previewWorkspace(client: AdapterDirectClient, preparedImage: string) {
+export async function previewWorkspace(client: SandbarClient, preparedImage: string) {
   try {
     const box = await client.sandboxes.create({
       environment: Image.prepared(preparedImage),

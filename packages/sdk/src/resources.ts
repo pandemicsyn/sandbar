@@ -12,6 +12,7 @@ import {
   VolumeCreateInput,
   InventoryInput,
   type ArtifactDeletionResult,
+  type OperationKind,
   type SnapshotCaptureValue,
 } from "sandbar-adapter";
 import {
@@ -21,11 +22,14 @@ import {
   raceAbort,
   validateResourceInput,
   type ReadOptions,
+  type SandboxHandle,
+  type SnapshotHandle,
+  type VolumeHandle,
+  type OperationHandle,
 } from "./resource";
 import {
   AdapterSandbox,
   type AdapterDirectClient,
-  type AdapterOperation,
   type AdapterRecoveryReference,
 } from "./adapter-direct";
 
@@ -66,7 +70,7 @@ export type RestoreInput = Omit<RestoreRequest, "networkPolicy"> & { networkPoli
 
 export type WaitOptions = ReadOptions & { pollMs?: number };
 
-export type SnapshotResult = Omit<SnapshotCaptureValue, "snapshot"> & { snapshot: AdapterSnapshot };
+export type SnapshotResult = Omit<SnapshotCaptureValue, "snapshot"> & { snapshot: SnapshotHandle };
 
 export function checkedResource(
   client: AdapterDirectClient,
@@ -91,6 +95,7 @@ export function checkedResource(
   return structuredClone(checked);
 }
 
+/** Use the SnapshotHandle type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterSnapshot {
   readonly reference: ResourceReference;
   constructor(
@@ -129,7 +134,7 @@ export class AdapterSnapshot {
   async submitRestore(
     request: RestoreInput = {},
     options: WaitOptions = {},
-  ): Promise<AdapterOperation<AdapterSandbox>> {
+  ): Promise<OperationHandle<SandboxHandle<true>, OperationKind>> {
     const ref = checkedResource(this.client, this.reference, "snapshot");
     // SDK-only deprecated empty-object alias for release R and R+1.
     const legacy = z.record(z.string(), z.unknown()).safeParse(request?.mounts);
@@ -227,10 +232,12 @@ export class AdapterSnapshot {
     );
   }
   /** Restore requires no recorded native mounts and confirmed mountHandling: "none". */
-  async restore(input: RestoreInput = {}, options: WaitOptions = {}): Promise<AdapterSandbox> {
+  async restore(input: RestoreInput = {}, options: WaitOptions = {}): Promise<SandboxHandle<true>> {
     return (await this.submitRestore(input, options)).wait(options);
   }
-  submitDelete(options: WaitOptions = {}): Promise<AdapterOperation<ArtifactDeletionResult>> {
+  submitDelete(
+    options: WaitOptions = {},
+  ): Promise<OperationHandle<ArtifactDeletionResult, OperationKind>> {
     return deleteResource(this.client, this.reference, "snapshot", options);
   }
   async delete(options: WaitOptions = {}): Promise<ArtifactDeletionResult> {
@@ -238,6 +245,7 @@ export class AdapterSnapshot {
   }
 }
 
+/** Use the VolumeHandle type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterVolume {
   readonly reference: ResourceReference;
   constructor(
@@ -281,7 +289,9 @@ export class AdapterVolume {
       "Invalid volume mount",
     );
   }
-  submitDelete(options: WaitOptions = {}): Promise<AdapterOperation<ArtifactDeletionResult>> {
+  submitDelete(
+    options: WaitOptions = {},
+  ): Promise<OperationHandle<ArtifactDeletionResult, OperationKind>> {
     return deleteResource(this.client, this.reference, "volume", options);
   }
   async delete(options: WaitOptions = {}): Promise<ArtifactDeletionResult> {
@@ -294,7 +304,7 @@ function deleteResource(
   reference: ResourceReference,
   kind: "snapshot" | "volume",
   options: WaitOptions,
-): Promise<AdapterOperation<ArtifactDeletionResult>> {
+): Promise<OperationHandle<ArtifactDeletionResult, OperationKind>> {
   const ref = checkedResource(client, reference, kind);
 
   return client.submit(
@@ -313,7 +323,7 @@ function deleteResource(
 
 export function resourceManagers(client: AdapterDirectClient) {
   const snapshots = {
-    async get(ref: ResourceReference) {
+    async get(ref: ResourceReference): Promise<SnapshotHandle> {
       const reference = checkedResource(client, ref, "snapshot");
 
       if (!client.session.snapshotInspect)
@@ -367,13 +377,16 @@ export function resourceManagers(client: AdapterDirectClient) {
   };
 
   const volumes = {
-    async get(ref: ResourceReference) {
+    async get(ref: ResourceReference): Promise<VolumeHandle> {
       const handle = new AdapterVolume(client, ref);
       await handle.inspect();
 
       return handle;
     },
-    async submitCreate(input: VolumeCreateInput, options: WaitOptions = {}) {
+    async submitCreate(
+      input: VolumeCreateInput,
+      options: WaitOptions = {},
+    ): Promise<OperationHandle<VolumeHandle, OperationKind>> {
       return client.submit(
         "volume_create",
         validateResourceInput(VolumeCreateInput, input, "Invalid volume create request"),
@@ -386,7 +399,7 @@ export function resourceManagers(client: AdapterDirectClient) {
         options,
       );
     },
-    async create(input: VolumeCreateInput, options: WaitOptions = {}) {
+    async create(input: VolumeCreateInput, options: WaitOptions = {}): Promise<VolumeHandle> {
       return (await volumes.submitCreate(input, options)).wait(options);
     },
     async list(input: InventoryInput) {

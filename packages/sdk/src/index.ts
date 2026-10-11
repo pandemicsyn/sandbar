@@ -65,6 +65,8 @@ export type {
   DirectSandbarClient,
   DirectSandboxHandle,
   SandboxHandle,
+  SnapshotHandle,
+  VolumeHandle,
   ReadOptions,
   OperationHandle,
   RecoveryReference,

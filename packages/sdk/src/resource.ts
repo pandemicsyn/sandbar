@@ -3,10 +3,12 @@ import { SnapshotRequest, MountSpec } from "sandbar-adapter";
 import type {
   AdapterDirectClient,
   AdapterSandbox,
+  AdapterOperation,
   AdapterRecoveryReference,
 } from "./adapter-direct";
-import type { RetainedArtifact, Scope } from "sandbar-adapter";
+import type { OperationKind, RetainedArtifact, Scope } from "sandbar-adapter";
 import { z } from "zod";
+import type { AdapterSnapshot, AdapterVolume } from "./resources";
 import {
   CreateSandboxInput,
   ExecCommand,
@@ -104,14 +106,19 @@ export type ExecOutput = {
 
 export type RecoveryReference = AdapterRecoveryReference;
 
-export interface OperationHandle<T> {
-  readonly durability: "process";
-  readonly reference: RecoveryReference;
-  observe(): Promise<T | null>;
-  wait(options?: { signal?: AbortSignal; pollMs?: number }): Promise<T>;
-}
+/** A submitted operation; a concrete kind retains advanced continuation and narrowing. */
+export type OperationHandle<T, K extends OperationKind | undefined = undefined> = [K] extends [
+  OperationKind,
+]
+  ? AdapterOperation<T, Extract<K, OperationKind>>
+  : {
+      readonly durability: "process";
+      readonly reference: RecoveryReference;
+      observe(): Promise<T | null>;
+      wait(options?: { signal?: AbortSignal; pollMs?: number }): Promise<T>;
+    };
 
-/** Public direct connection surface, including snapshots and retained volumes. */
+/** @deprecated Use SandbarClient for the complete SDK connection surface. */
 export type DirectSandbarClient = Pick<
   AdapterDirectClient,
   | "provider"
@@ -125,14 +132,24 @@ export type DirectSandbarClient = Pick<
   | "close"
 >;
 
-/** Public direct sandbox surface, including capture and provider support checks. */
+/** @deprecated Use SandboxHandle. This structural compatibility view remains available. */
 export type DirectSandboxHandle = Pick<AdapterSandbox, keyof AdapterSandbox>;
 
 /** Public sandbox handle. */
-export type SandboxHandle = DirectSandboxHandle;
+export type SandboxHandle<Advanced extends boolean = false> = Advanced extends true
+  ? AdapterSandbox
+  : DirectSandboxHandle;
 
 /** Public SDK connection. */
-export type SandbarClient = DirectSandbarClient;
+export type SandbarClient<Advanced extends boolean = false> = Advanced extends true
+  ? AdapterDirectClient
+  : DirectSandbarClient;
+
+/** A retained snapshot, with independent restore and deletion operations. */
+export type SnapshotHandle = AdapterSnapshot;
+
+/** Retained storage, with explicit mount descriptors and deletion. */
+export type VolumeHandle = AdapterVolume;
 
 export class SandbarError extends Error {
   constructor(

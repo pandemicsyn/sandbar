@@ -1,9 +1,4 @@
-import {
-  Image,
-  type AdapterDirectClient,
-  type SandboxReference,
-  type RenewResult,
-} from "sandbar-sdk";
+import { Image, type SandbarClient, type SandboxReference, type RenewResult } from "sandbar-sdk";
 import { daytona } from "sandbar-daytona";
 import { e2b } from "sandbar-e2b";
 
@@ -14,7 +9,7 @@ export const daytonaSetup = (apiKey: string) =>
 export const e2bSetup = (apiKey: string, teamId: string) =>
   e2b({ apiKey, teamId, lifecycle: { lifetimeSeconds: 600 } });
 
-export async function renewWorkspace(client: AdapterDirectClient, preparedImage: string) {
+export async function renewWorkspace(client: SandbarClient, preparedImage: string) {
   try {
     const box = await client.sandboxes.create({ environment: Image.prepared(preparedImage) });
 
@@ -32,7 +27,7 @@ export async function renewWorkspace(client: AdapterDirectClient, preparedImage:
   }
 }
 
-export async function reopenAndRenew(client: AdapterDirectClient, saved: SandboxReference) {
+export async function reopenAndRenew(client: SandbarClient, saved: SandboxReference) {
   const box = await client.sandboxes.get(saved); // read-only, no reset
 
   return box.renew(); // explicitly uses this connection's configured window

@@ -5,7 +5,7 @@ description: Capture and restore a sandbox, mount retained storage, save referen
 
 Snapshots retain captured sandbox state independently of the source. Volumes retain storage independently of compute. These APIs are available on SDK connections. Snapshot preservation, volume management and mounting are separate provider capabilities; support for one does not imply support for the others.
 
-Use `DirectSandbarClient` and `DirectSandboxHandle` from `sandbar-sdk` when annotating direct clients and sandboxes. `SandbarClient` and `SandboxHandle` are aliases for the same complete SDK surfaces.
+Use `SandbarClient`, `SandboxHandle`, `SnapshotHandle` and `VolumeHandle` from `sandbar-sdk` for application annotations. Existing `DirectSandbarClient`, `DirectSandboxHandle` and Adapter* exports remain available for compatibility; see the [TypeScript reference](/docs/reference/typescript/#consumer-vocabulary-and-compatibility) for the staged complete-surface type parameters.
 
 Malformed caller inputs in these APIs reject with `SandbarError` (`INVALID_ARGUMENT`, effect `none`) before mutation. Unsupported restore preflight throws `UnsupportedFeatureError`; its `unmetRequirements` lists each unmet network, sizing, independent lifecycle or mount requirement. Independent lifecycle is required unless explicitly set to `false`.
 

@@ -45,7 +45,7 @@ import { certifyRecoveryReference, certifyOperationReference } from "./recovery-
 import {
   ReferenceSchema,
   CaptureExpectation,
-  type AdapterRecoveryReference,
+  type AdapterRecoveryReference as RecoveryReference,
 } from "./adapter-reference";
 import {
   Telemetry,
@@ -138,6 +138,10 @@ import {
   validateExec,
   validateFilePath,
   type ReadOptions,
+  type SandbarClient,
+  type SandboxHandle,
+  type VolumeHandle,
+  type OperationHandle,
   validateResourceInput,
   waitDelay,
   type CreateInput,
@@ -166,7 +170,7 @@ function canonicalScope(scope: Scope): string {
   });
 }
 
-function sealedReference(value: AdapterRecoveryReference): AdapterRecoveryReference {
+function sealedReference(value: RecoveryReference): RecoveryReference {
   const parsed = ReferenceSchema.parse(value);
 
   if (new TextEncoder().encode(JSON.stringify(parsed)).length > 16_384)
@@ -234,15 +238,15 @@ function identity() {
 }
 
 function asUnknown(
-  ref: AdapterRecoveryReference,
+  ref: RecoveryReference,
   reason?: string,
   outcome?: import("sandbar-adapter").OperationOutcome,
-): OutcomeUnknownError<AdapterRecoveryReference> {
+): OutcomeUnknownError<RecoveryReference> {
   return new OutcomeUnknownError(ref, reason, outcome);
 }
 
 function acknowledgedLifecycleOutcome(
-  ref: AdapterRecoveryReference,
+  ref: RecoveryReference,
 ): import("sandbar-adapter").OperationOutcome | undefined {
   if (!ref.sandboxReference || !ref.lifecycle) return undefined;
 
@@ -319,7 +323,7 @@ function fileReadLimit(maxBytes: number): number {
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- AbortSignal.reason may be any JavaScript value and is preserved in WaitAbortedError.
 function abortWaiting(
-  ref: AdapterRecoveryReference,
+  ref: RecoveryReference,
   reason: AbortSignal["reason"],
   outcome?: import("sandbar-adapter").OperationOutcome,
 ): never {
@@ -375,19 +379,19 @@ async function readWhileOpen<T>(client: AdapterDirectClient, work: Promise<T>): 
 export type AdapterCapabilities = DirectCapabilities;
 
 export type RecoveredOperation =
-  | AdapterOperation<AdapterSandbox, "create" | "snapshot_restore">
-  | AdapterOperation<SuspendResult, "sandbox_suspend">
-  | AdapterOperation<ResumeResult, "sandbox_resume">
-  | AdapterOperation<RenewResult, "sandbox_renew">
-  | AdapterOperation<SnapshotResult, "snapshot_capture">
-  | AdapterOperation<AdapterVolume, "volume_create">
-  | AdapterOperation<ArtifactDeletionResult, "snapshot_delete" | "volume_delete">
-  | AdapterOperation<ImageBuildResult, "image_build">
-  | AdapterOperation<ExecOutput, "exec">
-  | AdapterOperation<DestroyValue, "destroy">
-  | AdapterOperation<void, "file_write" | "file_mkdir" | "file_remove">;
+  | OperationHandle<SandboxHandle<true>, "create" | "snapshot_restore">
+  | OperationHandle<SuspendResult, "sandbox_suspend">
+  | OperationHandle<ResumeResult, "sandbox_resume">
+  | OperationHandle<RenewResult, "sandbox_renew">
+  | OperationHandle<SnapshotResult, "snapshot_capture">
+  | OperationHandle<VolumeHandle, "volume_create">
+  | OperationHandle<ArtifactDeletionResult, "snapshot_delete" | "volume_delete">
+  | OperationHandle<ImageBuildResult, "image_build">
+  | OperationHandle<ExecOutput, "exec">
+  | OperationHandle<DestroyValue, "destroy">
+  | OperationHandle<void, "file_write" | "file_mkdir" | "file_remove">;
 
-function decodeSuspend(result: RuntimeResult, ref: AdapterRecoveryReference): SuspendResult {
+function decodeSuspend(result: RuntimeResult, ref: RecoveryReference): SuspendResult {
   if (result.kind !== "completed" || !ref.sandboxReference || ref.lifecycle?.action !== "suspend")
     throw asUnknown(ref);
   const value = SuspendResult.parse(result.value);
@@ -405,7 +409,7 @@ function decodeSuspend(result: RuntimeResult, ref: AdapterRecoveryReference): Su
   return value;
 }
 
-function decodeResume(result: RuntimeResult, ref: AdapterRecoveryReference): ResumeResult {
+function decodeResume(result: RuntimeResult, ref: RecoveryReference): ResumeResult {
   if (result.kind !== "completed" || !ref.sandboxReference || ref.lifecycle?.action !== "resume")
     throw asUnknown(ref);
   const value = ResumeResult.parse(result.value);
@@ -419,7 +423,7 @@ function decodeResume(result: RuntimeResult, ref: AdapterRecoveryReference): Res
   return value;
 }
 
-function decodeRenew(result: RuntimeResult, ref: AdapterRecoveryReference): RenewResult {
+function decodeRenew(result: RuntimeResult, ref: RecoveryReference): RenewResult {
   if (
     result.kind !== "completed" ||
     !("acknowledged" in result.value) ||
@@ -443,24 +447,25 @@ function sandboxInput(id: string, reference?: SandboxReference | null) {
   return reference ? { id, reference } : { id };
 }
 
+/** Use the OperationHandle type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterOperation<T, K extends OperationKind = OperationKind> {
   readonly durability = "process" as const;
   private first: RuntimeResult | undefined;
-  #reference: AdapterRecoveryReference;
-  get reference(): AdapterRecoveryReference {
+  #reference: RecoveryReference;
+  get reference(): RecoveryReference {
     return this.#reference;
   }
   private continuing = false;
   private revision = 0;
   private persistence: Promise<void> = Promise.resolve();
-  private persistedReference?: AdapterRecoveryReference;
+  private persistedReference?: RecoveryReference;
   private terminal?: { value: T } | { error: Error };
   private pendingAt: number | null = null;
   private nextPollAt = 0;
   constructor(
     private readonly client: AdapterDirectClient,
-    reference: AdapterRecoveryReference,
-    private readonly decode: (value: RuntimeResult, ref: AdapterRecoveryReference) => T,
+    reference: RecoveryReference,
+    private readonly decode: (value: RuntimeResult, ref: RecoveryReference) => T,
     first?: RuntimeResult,
     // SAFETY: default K is OperationKind; internal narrowed constructors pass a validated kind.
     readonly kind: K = reference.kind as K,
@@ -835,6 +840,7 @@ function processControl(client: AdapterDirectClient, sandboxId: string): { activ
   return control;
 }
 
+/** Use the SandboxHandle type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterSandbox {
   private invalidateProcessControl(): void {
     const controls = processControls.get(this.client);
@@ -970,7 +976,7 @@ export class AdapterSandbox {
   };
   async submitSuspend(
     options: WaitOptions = {},
-  ): Promise<AdapterOperation<SuspendResult, "sandbox_suspend">> {
+  ): Promise<OperationHandle<SuspendResult, "sandbox_suspend">> {
     this.client.ensureOpen();
     assertSignal(options.signal);
 
@@ -989,7 +995,7 @@ export class AdapterSandbox {
   }
   async submitResume(
     options: WaitOptions = {},
-  ): Promise<AdapterOperation<ResumeResult, "sandbox_resume">> {
+  ): Promise<OperationHandle<ResumeResult, "sandbox_resume">> {
     this.client.ensureOpen();
     assertSignal(options.signal);
 
@@ -1009,7 +1015,7 @@ export class AdapterSandbox {
   async submitRenew(
     input?: RenewRequest,
     options: WaitOptions = {},
-  ): Promise<AdapterOperation<RenewResult, "sandbox_renew">> {
+  ): Promise<OperationHandle<RenewResult, "sandbox_renew">> {
     this.client.ensureOpen();
     assertSignal(options.signal);
 
@@ -1033,7 +1039,7 @@ export class AdapterSandbox {
   async submitSnapshot(
     request: SnapshotRequest = {},
     options: WaitOptions = {},
-  ): Promise<AdapterOperation<SnapshotResult>> {
+  ): Promise<OperationHandle<SnapshotResult, OperationKind>> {
     this.client.ensureOpen();
     assertSignal(options.signal);
     request = validateResourceInput(SnapshotRequest, request, "Invalid snapshot request");
@@ -1280,7 +1286,7 @@ export class AdapterSandbox {
   async submitExec(
     input: ExecInput | readonly string[],
     options: { signal?: AbortSignal } = {},
-  ): Promise<AdapterOperation<ExecOutput>> {
+  ): Promise<OperationHandle<ExecOutput, OperationKind>> {
     if (!this.supports("exec")) unsupported("exec");
     const request = validateExec(input);
     const max = this.client.session.supports.exec!.maxOutputBytes;
@@ -1749,7 +1755,7 @@ export class AdapterSandbox {
   }
   async submitDestroy(
     options: { signal?: AbortSignal; storage?: "require-durable" | "allow-unconfirmed" } = {},
-  ): Promise<AdapterOperation<import("sandbar-adapter").DestroyValue>> {
+  ): Promise<OperationHandle<import("sandbar-adapter").DestroyValue, OperationKind>> {
     this.client.ensureOpen();
     assertSignal(options.signal);
     this.invalidateProcessControl();
@@ -1794,7 +1800,7 @@ export type AdvancedIdentity = { operationId: string; submissionId: string; invo
 export type AdvancedObservation = {
   lifecycle?: LifecycleIntent;
   renewal?: RenewRequest;
-  capture?: AdapterRecoveryReference["capture"];
+  capture?: RecoveryReference["capture"];
   scope: Scope;
   kind: OperationKind;
   operationId: string;
@@ -1968,11 +1974,15 @@ export class PreparedAdapterAttempt {
   }
 }
 
+/** Use the SandbarClient type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterDirectClient {
   private closed = false;
   private closePromise?: Promise<void>;
+  /** @deprecated Advanced compatibility access; prefer documented SDK operations. */
   readonly telemetry: Telemetry;
+  /** @deprecated Advanced compatibility access; prefer documented SDK operations. */
   readonly session: RuntimeSession;
+  /** @deprecated Advanced compatibility access; prefer documented SDK operations. */
   readonly scope: Scope;
   readonly operations: {
     inventory: (input: { cursor?: string; limit: number }) => Promise<{
@@ -1993,16 +2003,19 @@ export class AdapterDirectClient {
   readonly sandboxes: {
     with: <T>(
       input: CreateInput | undefined,
-      callback: (sandbox: AdapterSandbox) => T | Promise<T>,
+      callback: (sandbox: SandboxHandle<true>) => T | Promise<T>,
       options?: SandboxScopeOptions,
     ) => Promise<T>;
-    get: (reference: SandboxReference, options?: WaitOptions) => Promise<AdapterSandbox>;
+    get: (reference: SandboxReference, options?: WaitOptions) => Promise<SandboxHandle<true>>;
     checkCreate: (input?: CreateInput) => Promise<Support<CreatePlan>>;
-    create: (input?: CreateInput, options?: { signal?: AbortSignal }) => Promise<AdapterSandbox>;
+    create: (
+      input?: CreateInput,
+      options?: { signal?: AbortSignal },
+    ) => Promise<SandboxHandle<true>>;
     submitCreate: (
       input?: CreateInput,
       options?: { signal?: AbortSignal },
-    ) => Promise<AdapterOperation<AdapterSandbox>>;
+    ) => Promise<OperationHandle<SandboxHandle<true>, OperationKind>>;
   };
   readonly snapshots: ReturnType<typeof resourceManagers>["snapshots"];
   readonly volumes: ReturnType<typeof resourceManagers>["volumes"];
@@ -2014,12 +2027,12 @@ export class AdapterDirectClient {
     submitBuild: (
       input: ImageBuildInput,
       options?: { signal?: AbortSignal },
-    ) => Promise<AdapterOperation<ImageBuildResult>>;
+    ) => Promise<OperationHandle<ImageBuildResult, OperationKind>>;
   };
   constructor(
     readonly provider: string,
     private readonly connection: AdapterConnection<RuntimeSession>,
-    private readonly onReference?: (reference: AdapterRecoveryReference) => void | Promise<void>,
+    private readonly onReference?: (reference: RecoveryReference) => void | Promise<void>,
     observability: ObservabilityOptions = {},
     readonly cleanupStorage: "require-durable" | "allow-unconfirmed" = "require-durable",
     readonly transferPolicy: TransferPolicy = {},
@@ -2420,7 +2433,7 @@ export class AdapterDirectClient {
   async submitCreate(
     input?: CreateInput,
     options: { signal?: AbortSignal } = {},
-  ): Promise<AdapterOperation<AdapterSandbox>> {
+  ): Promise<OperationHandle<SandboxHandle<true>, OperationKind>> {
     const request = validateCreate(
       input,
       this.session.defaultImage,
@@ -2483,7 +2496,7 @@ export class AdapterDirectClient {
   private async reopenSandbox(
     reference: SandboxReference,
     options: WaitOptions,
-  ): Promise<AdapterSandbox> {
+  ): Promise<SandboxHandle<true>> {
     this.ensureOpen();
 
     try {
@@ -2535,7 +2548,7 @@ export class AdapterDirectClient {
   async submitBuild(
     input: ImageBuildInput,
     options: { signal?: AbortSignal } = {},
-  ): Promise<AdapterOperation<ImageBuildResult>> {
+  ): Promise<OperationHandle<ImageBuildResult, OperationKind>> {
     if (!this.session.imageBuild) unsupported("image build");
 
     return this.submit(
@@ -2560,7 +2573,7 @@ export class AdapterDirectClient {
   async submit<T, K extends OperationKind = OperationKind>(
     kind: K,
     input: OperationInput,
-    decode: (result: RuntimeResult, ref: AdapterRecoveryReference) => T,
+    decode: (result: RuntimeResult, ref: RecoveryReference) => T,
     options: {
       signal?: AbortSignal;
       sandboxId?: string;
@@ -2570,10 +2583,10 @@ export class AdapterDirectClient {
       mounts?: import("sandbar-adapter").MountSpec[];
       networkPolicy?: string;
       file?: { path: string; bytes: number };
-      fileMutation?: AdapterRecoveryReference["fileMutation"];
+      fileMutation?: RecoveryReference["fileMutation"];
       maxOutputBytes?: number;
     } = {},
-  ): Promise<AdapterOperation<T, K>> {
+  ): Promise<OperationHandle<T, K>> {
     this.ensureOpen();
     assertSignal(options.signal);
     const prepared = await this.operations.prepare(kind, input, options);
@@ -2674,7 +2687,7 @@ export class AdapterDirectClient {
     return new AdapterOperation(this, reference, decode, first, kind);
   }
   checkedOutcome(
-    reference: AdapterRecoveryReference,
+    reference: RecoveryReference,
     outcome?: import("sandbar-adapter").OperationOutcome,
   ): import("sandbar-adapter").OperationOutcome | undefined {
     if (!outcome) return undefined;
@@ -2777,7 +2790,7 @@ export class AdapterDirectClient {
 
     return checked;
   }
-  async persistReference(reference: AdapterRecoveryReference): Promise<void> {
+  async persistReference(reference: RecoveryReference): Promise<void> {
     try {
       await this.onReference?.(reference);
     } catch {
@@ -2809,7 +2822,7 @@ export class AdapterDirectClient {
     }
   }
 
-  async recover(reference: AdapterRecoveryReference): Promise<RecoveredOperation> {
+  async recover(reference: RecoveryReference): Promise<RecoveredOperation> {
     this.ensureOpen();
     reference = sealedReference(reference);
 
@@ -2886,7 +2899,7 @@ export class AdapterDirectClient {
     )
       throw new SandbarError("INVALID_ARGUMENT", "Recovery sandbox is missing");
 
-    const completed = (result: RuntimeResult, ref: AdapterRecoveryReference) => {
+    const completed = (result: RuntimeResult, ref: RecoveryReference) => {
       if (result.kind !== "completed") throw asUnknown(ref);
 
       return result.value;
@@ -3094,7 +3107,7 @@ export type AdapterConnectOptions<
   };
   config: z.input<C>;
   credentials: z.input<K>;
-  onReference?: (reference: AdapterRecoveryReference) => void | Promise<void>;
+  onReference?: (reference: RecoveryReference) => void | Promise<void>;
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- A cleanup hook may throw any JavaScript value; the diagnostic receives it intact.
   onDiagnostic?: (error: unknown) => void;
 };
@@ -3102,10 +3115,10 @@ export type AdapterConnectOptions<
 export function connectDirect(
   adapter: BoundAdapter,
   options?: ConnectOptions,
-): Promise<AdapterDirectClient>;
+): Promise<SandbarClient<true>>;
 export function connectDirect<C extends z.ZodType, K extends z.ZodType, S extends RuntimeSession>(
   options: AdapterConnectOptions<C, K, S>,
-): Promise<AdapterDirectClient>;
+): Promise<SandbarClient<true>>;
 
 export async function connectDirect<
   C extends z.ZodType,
@@ -3114,7 +3127,7 @@ export async function connectDirect<
 >(
   options: AdapterConnectOptions<C, K, S> | BoundAdapter,
   observability: ConnectOptions = {},
-): Promise<AdapterDirectClient> {
+): Promise<SandbarClient<true>> {
   const cleanup = z
     .strictObject({ storage: z.enum(["require-durable", "allow-unconfirmed"]).optional() })
     .optional()
