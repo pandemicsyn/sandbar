@@ -1,4 +1,5 @@
 import { withSandbox, type SandboxScopeOptions } from "./scoped-sandbox";
+import { connectionBudget, type ConnectionWaitOptions, type CloseOptions } from "./connection-wait";
 import {
   bufferedLimit,
   streamFile,
@@ -3049,22 +3050,36 @@ export class AdapterDirectClient {
     }
   }
 
-  close(): Promise<void> {
+  async close(options: CloseOptions = {}): Promise<void> {
+    const budget = connectionBudget(options, "close");
+
     if (!this.closePromise) {
       this.closed = true;
       processControls.delete(this);
       this.closePromise = this.connection.close();
     }
 
-    return this.closePromise;
+    try {
+      await raceAbort(this.closePromise, budget.signal);
+    } finally {
+      budget.dispose();
+    }
   }
 }
 
 /** Default storage requirement for new compute cleanup submissions. */
-export type DirectConnectOptions = ObservabilityOptions & {
-  cleanup?: { storage?: "require-durable" | "allow-unconfirmed" };
-  transfers?: TransferPolicy;
-};
+export type ConnectOptions = ObservabilityOptions &
+  ConnectionWaitOptions & {
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Release diagnostics preserve thrown JavaScript values.
+    onDiagnostic?: (error: unknown) => void;
+    cleanup?: { storage?: "require-durable" | "allow-unconfirmed" };
+    transfers?: TransferPolicy;
+  };
+
+/** Compatibility name for connection controls. */
+export type DirectConnectOptions = ConnectOptions;
+
+export type { CloseOptions } from "./connection-wait";
 
 export type AdapterConnectOptions<
   C extends z.ZodType,
@@ -3113,33 +3128,45 @@ export async function connectDirect<
     "bound" in options ? options.name : options.adapter.name,
   );
 
-  return telemetry.run("sandbar.connect", async () => {
-    if ("bound" in options) {
-      const connection = await connectAdapter(options, { config: {}, credentials: {} });
+  const budget = connectionBudget("bound" in options ? observability : options, "connect");
+
+  try {
+    return await telemetry.run("sandbar.connect", async () => {
+      if ("bound" in options) {
+        const connection = await connectAdapter(options, {
+          config: {},
+          credentials: {},
+          signal: budget.signal,
+          onDiagnostic: observability.onDiagnostic,
+        });
+
+        return new AdapterDirectClient(
+          options.name,
+          connection,
+          undefined,
+          observability,
+          storage,
+          observability.transfers,
+        );
+      }
+
+      const connection = await connectAdapter(options.adapter, {
+        config: options.config,
+        credentials: options.credentials,
+        onDiagnostic: options.onDiagnostic,
+        signal: budget.signal,
+      });
 
       return new AdapterDirectClient(
-        options.name,
+        options.adapter.name,
         connection,
-        undefined,
-        observability,
+        options.onReference,
+        options,
         storage,
-        observability.transfers,
+        options.transfers,
       );
-    }
-
-    const connection = await connectAdapter(options.adapter, {
-      config: options.config,
-      credentials: options.credentials,
-      onDiagnostic: options.onDiagnostic,
     });
-
-    return new AdapterDirectClient(
-      options.adapter.name,
-      connection,
-      options.onReference,
-      options,
-      storage,
-      options.transfers,
-    );
-  });
+  } finally {
+    budget.dispose();
+  }
 }

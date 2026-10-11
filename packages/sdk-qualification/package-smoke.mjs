@@ -141,10 +141,12 @@ void flow;
 `;
   else if (mode === "custom")
     source = `
-import { Sandbar, Image, type ReadOptions, type SandboxHandle } from "sandbar-sdk";
+import { Sandbar, Image, type ReadOptions, type SandboxHandle, type ConnectOptions, type CloseOptions } from "sandbar-sdk";
 import { acme } from "@acme/sandbar-adapter";
 async function flow() {
-  const client = await Sandbar.connect({ adapter: acme, config: { region: "us" }, credentials: { token: "fixture" } });
+  const setup: ConnectOptions = { signal: new AbortController().signal, timeoutMs: 30_000 };
+  const cleanup: CloseOptions = { timeoutMs: 5_000 };
+  const client = await Sandbar.connect({ adapter: acme, config: { region: "us" }, credentials: { token: "fixture" }, ...setup });
   const box = await client.sandboxes.create({ environment: Image.prepared("image-1") });
   const handle: SandboxHandle = box;
   const options: ReadOptions = { signal: new AbortController().signal };
@@ -177,7 +179,7 @@ async function flow() {
   await handle.removeFile("/job", { recursive: true, signal: options.signal });
   void entries; void exists;
   await box.destroy();
-  await client.close();
+  await client.close(cleanup);
 }
 function lifecycleHooks(
   suspendSubmit: NonNullable<import("sandbar-adapter").AdapterSession["suspend"]>["submit"],
