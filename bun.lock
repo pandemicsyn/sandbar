@@ -35,6 +35,8 @@
         "@sandbar/provider-fake": "workspace:*",
         "sandbar-adapter": "workspace:*",
         "sandbar-boxd": "workspace:*",
+        "sandbar-daytona": "workspace:*",
+        "sandbar-e2b": "workspace:*",
         "sandbar-modal": "workspace:*",
         "sandbar-sdk": "workspace:*",
         "satteri": "0.10.5",
@@ -46,6 +48,8 @@
     "examples": {
       "name": "@sandbar/agent-examples",
       "dependencies": {
+        "sandbar-daytona": "workspace:*",
+        "sandbar-e2b": "workspace:*",
         "sandbar-sdk": "workspace:*",
       },
     },
@@ -78,19 +82,19 @@
       },
     },
     "packages/providers/daytona": {
-      "name": "@sandbar/provider-daytona",
+      "name": "sandbar-daytona",
       "version": "0.0.0",
       "dependencies": {
-        "@sandbar/provider-spi": "workspace:*",
         "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
+        "@sandbar/provider-spi": "workspace:*",
         "sandbar-sdk": "workspace:*",
       },
     },
     "packages/providers/e2b": {
-      "name": "@sandbar/provider-e2b",
+      "name": "sandbar-e2b",
       "version": "0.0.0",
       "dependencies": {
         "e2b": "2.51.0",
@@ -129,14 +133,13 @@
       "version": "0.0.0",
       "dependencies": {
         "@opentelemetry/api": "1.9.1",
-        "e2b": "2.51.0",
         "sandbar-adapter": "workspace:*",
         "zod": "4.6.5",
       },
       "devDependencies": {
-        "@sandbar/provider-daytona": "workspace:*",
-        "@sandbar/provider-e2b": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
+        "sandbar-daytona": "workspace:*",
+        "sandbar-e2b": "workspace:*",
       },
     },
     "packages/sdk-qualification": {
@@ -144,9 +147,13 @@
       "dependencies": {
         "@sandbar/provider-fake": "workspace:*",
         "sandbar-adapter": "workspace:*",
-        "sandbar-boxd": "workspace:*",
         "sandbar-sdk": "workspace:*",
         "zod": "4.6.5",
+      },
+      "devDependencies": {
+        "sandbar-boxd": "workspace:*",
+        "sandbar-daytona": "workspace:*",
+        "sandbar-e2b": "workspace:*",
       },
     },
   },
@@ -706,10 +713,6 @@
     "@sandbar/agent-examples": ["@sandbar/agent-examples@workspace:examples"],
 
     "@sandbar/docs": ["@sandbar/docs@workspace:apps/docs"],
-
-    "@sandbar/provider-daytona": ["@sandbar/provider-daytona@workspace:packages/providers/daytona"],
-
-    "@sandbar/provider-e2b": ["@sandbar/provider-e2b@workspace:packages/providers/e2b"],
 
     "@sandbar/provider-fake": ["@sandbar/provider-fake@workspace:packages/providers/fake"],
 
@@ -1310,6 +1313,10 @@
     "sandbar-adapter": ["sandbar-adapter@workspace:packages/adapter"],
 
     "sandbar-boxd": ["sandbar-boxd@workspace:packages/providers/boxd"],
+
+    "sandbar-daytona": ["sandbar-daytona@workspace:packages/providers/daytona"],
+
+    "sandbar-e2b": ["sandbar-e2b@workspace:packages/providers/e2b"],
 
     "sandbar-modal": ["sandbar-modal@workspace:packages/providers/modal"],
 

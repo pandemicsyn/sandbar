@@ -2078,3 +2078,5 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 export const e2bAdapter = createE2BAdapter();
 
 export { E2B_ENDPOINT, MAX_BYTES, type E2BTransport } from "./transport";
+
+export { e2b } from "./factory";

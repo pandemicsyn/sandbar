@@ -1,6 +1,6 @@
 import { Image, type AdapterDirectClient, type AdapterSandbox, type Preview } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
-import { e2b } from "sandbar-sdk/e2b";
+import { daytona } from "sandbar-daytona";
+import { e2b } from "sandbar-e2b";
 
 export const daytonaPreviewSetup = (apiKey: string) =>
   daytona({ apiKey, target: "us", preview: { access: "protected" } });

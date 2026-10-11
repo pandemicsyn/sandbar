@@ -3,13 +3,13 @@ title: E2B
 description: Connect to E2B with an API key, select a template, and use the tested file workspace.
 ---
 
-Import `e2b` from `sandbar-sdk/e2b`. The built-in adapter uses the E2B API key and public `base` template by default.
+Import `e2b` from `sandbar-e2b`. The official adapter uses the E2B API key and public `base` template by default.
 
 E2B also supports [finite text streaming](/docs/guides/text-streaming/) through `sandbox.processes.start()`. Separate stdout/stderr text, confirmed zero/nonzero exit and prompt local detach use bounded queues and a cumulative output budget. Active local handles also support native SIGKILL termination with an explicit PID-reuse race; request acknowledgement is separate from confirmed exit. No process runtime deadline or binary streaming is provided. Finite streaming passed at `3188e33` on borrowed base with confirmed owned cleanup; other configurations remain unqualified.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { e2b } from "sandbar-sdk/e2b";
+import { e2b } from "sandbar-e2b";
 
 // Provider setup: adapter credentials, region/template and prepared image.
 const client = await Sandbar.connect(
@@ -71,7 +71,7 @@ The expanded ordinary Bun `file-directories` case passed at `2f6afe8` on October
 
 ## Configured lifetime renewal
 
-The application workflow is the same for both built-in adapters:
+The application workflow is the same for both official adapters:
 
 ```ts
 const box = await client.sandboxes.create();
@@ -100,7 +100,7 @@ There is no memory-exclusion option for this native capture. Optional requiremen
 
 Lost capture acknowledgements remain uncertain and are never resubmitted. Recovery cannot establish original build generation from a later tag lookup. Save operation references. Unnamed capture allocates a dedicated containing template. Inspection checks the saved build and its current addressability without substituting `default`. Cleanup deletes the raw containing template after identity, alias, current builds, names, visibility and dependency checks; it rejects known expansion into shared storage. Native deletion has no transactional generation condition, so external changes between the read and delete remain a provider limitation. Automatic cleanup requires correlated creation history. Save resource references in your application storage; for recovery with rotated credentials use an authenticated, verified `teamId` scope. The default API-key scope changes with the key.
 
-Private-beta volume create, inspect, list and owned deletion are mapped; names allow letters, numbers and hyphens. Sandbar create-time mounts are unsupported because E2B selects reusable names and does not expose the mounted native volume ID. Account access is checked before effects. Live volume creation was blocked by account HTTP 403; the maintained built-in acceptance profile skips volume cases before setup. This is separate from the unsupported Sandbar mount mapping. Read-only enforcement, subpaths and volume versions are unsupported. Shutdown durability remains unknown; writable mounted compute requires explicit `storage: "allow-unconfirmed"` cleanup. Retained mounted storage is reported by unresolved name, without assigning a native volume ID from inventory. Volumes retain independent custody and require separate owned deletion. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) and [E2B volume management](https://docs.e2b.dev/volumes/manage).
+Private-beta volume create, inspect, list and owned deletion are mapped; names allow letters, numbers and hyphens. Sandbar create-time mounts are unsupported because E2B selects reusable names and does not expose the mounted native volume ID. Account access is checked before effects. Live volume creation was blocked by account HTTP 403; the maintained official acceptance profile skips volume cases before setup. This is separate from the unsupported Sandbar mount mapping. Read-only enforcement, subpaths and volume versions are unsupported. Shutdown durability remains unknown; writable mounted compute requires explicit `storage: "allow-unconfirmed"` cleanup. Retained mounted storage is reported by unresolved name, without assigning a native volume ID from inventory. Volumes retain independent custody and require separate owned deletion. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/) and [E2B volume management](https://docs.e2b.dev/volumes/manage).
 
 ## Scoped sandbox reopening
 

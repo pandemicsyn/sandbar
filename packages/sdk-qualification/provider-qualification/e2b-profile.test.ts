@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { E2BTransport } from "sandbar-sdk/e2b";
+import type { E2BTransport } from "sandbar-e2b";
 import { e2bConfiguration, e2bConnection } from "./e2b-profile";
 import { LedgerStore, requirePrivateDirectory } from "./ledger";
 import { TestResources } from "../live/fixtures/resources";

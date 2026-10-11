@@ -3,7 +3,7 @@ title: Runnable agent examples
 description: Run OpenCode inside a Daytona or E2B sandbox, capture its answer, or edit a remote file.
 ---
 
-Run two small TypeScript applications from the Sandbar checkout. They use the same public execution and file API with either built-in provider:
+Run two small TypeScript applications from the Sandbar checkout. They use the same public execution and file API with either official provider:
 
 | Workflow | What it does                                                                                                                                | Source                                                                                                     |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |

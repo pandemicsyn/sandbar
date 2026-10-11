@@ -8,7 +8,7 @@ Title: **`[provider-candidate]: <Official product name>`**, for example `[provid
 
 ## Labels
 
-The [label manifest](provider-research-labels.json) defines exact names, descriptions and colors. Apply `provider-candidate` and exactly one of `target:builtin`, `target:external`, or `target:unknown`. These are the only labels managed by this workflow. Keep capability statuses and research readiness in the issue body.
+The [label manifest](provider-research-labels.json) defines exact names, descriptions and colors. Apply `provider-candidate` and exactly one of `target:external` or `target:unknown` (retain legacy `target:builtin` only for existing issues). These are the only labels managed by this workflow. Keep capability statuses and research readiness in the issue body.
 
 On updates, replace the old target label and preserve unrelated labels. Remove superseded `provider-research`, `research:*` and `native:*` labels from migrated research issues. Do not create provider-specific, capability or research-status labels. The template starts with `provider-candidate` and `target:unknown`. GitHub's Markdown template does not enforce these invariants; check them when filing or updating.
 
@@ -16,15 +16,11 @@ On updates, replace the old target label and preserve unrelated labels. Remove s
 
 Record the recommendation, its dependency/runtime evidence, and unresolved tradeoffs in the issue. The target is a packaging recommendation, not a claim that the adapter is implemented, merged, live-qualified or approved for a release.
 
-- **`target:builtin`**: a maintained usable TypeScript SDK and conventional dependencies fit Sandbar's supported Node/Bun runtimes and bundling. Confirm package size/transitive dependencies, platform requirements, licensing, import behavior and native transport stability before recommending that every SDK installation carry them.
-- **`target:external`**: unusual or heavy dependencies, Python/another runtime, mandatory CLI/native tools, private/version-sensitive transports, or lack of a usable official TypeScript SDK justify a separately installed adapter. Modal is the project's example of an external adapter; cite its actual dependency/transport facts rather than assuming it lacks TypeScript support. No TypeScript SDK defaults to external even when a REST implementation is feasible.
-- **`target:unknown`**: insufficient evidence to choose. Identify what package/runtime/API information would resolve it; do not infer built-in suitability merely from an npm package's existence.
+- **`target:external`**: a separately installed adapter, the current distribution policy for all new integrations. Record whether it is officially maintained or third-party, and assess dependency size, runtime/platform requirements, licensing and transport stability.
+- **`target:unknown`**: insufficient evidence to choose the implementation or maintenance arrangement. List what would resolve it.
+- **`target:builtin`**: legacy label retained for existing issues. It does not authorize SDK bundling; follow [package conventions](../specs/package-conventions.md).
 
-Honor an explicit user choice or existing accepted distribution decision in [package conventions](../specs/package-conventions.md). If research suggests changing it, state the proposed change separately; applying a label does not migrate an existing adapter. A TypeScript SDK alone does not guarantee a built-in recommendation. Missing optional native features, such as snapshots, do not by themselves force external distribution.
-
-Report two independent facts in the body: **research completeness** (`incomplete` / `complete`) and **implementation readiness** (`ready` / `conditional` / `blocked`) for the named slice. A complete brief can identify an unresolved implementation blocker. Ready means no unresolved design/research prerequisite blocks starting that slice; implementation tests still remain. Conditional means a named subset can proceed while other paths await a decision; blocked means the proposed useful slice cannot proceed. Optional unsupported features do not automatically block it. Neither status certifies a released adapter. Link implementation issues/PRs separately.
-
-Separate accepted distribution policy from technical suitability. Evaluate dependencies, runtime requirements and maintenance costs of the chosen transport. SDK dependencies that a proposed REST implementation will not install are costs of an alternative, not that implementation's costs. Record evidence for the actual target recommendation and any proposed policy change.
+Official maintenance and experimental status are independent of installation. Applying a research label does not migrate an adapter or authorize publication.
 
 ## Capability statuses
 

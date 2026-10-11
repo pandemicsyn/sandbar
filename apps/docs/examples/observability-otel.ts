@@ -3,7 +3,7 @@ import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-ho
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { BatchSpanProcessor, ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base";
 import { Sandbar, Image } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "sandbar-daytona";
 
 const manager = new AsyncLocalStorageContextManager().enable();
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { defineAdapter } from "sandbar-adapter";
-import { bindAdapter } from "../../sdk/src/bound";
+import { bindAdapter } from "sandbar-adapter";
 import { fixtureAdapter } from "./adapter";
 
 /** Only the provider boundary is replaced; the published example executes unchanged. */

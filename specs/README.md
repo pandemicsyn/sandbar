@@ -5,7 +5,7 @@ This directory holds current contracts and focused future design. [ROADMAP.md](.
 ## Implemented SDK usability contracts
 
 - [Filesystem DX](filesystem-dx.md) — directory/metadata, bounded transfers, copy/move, traversal and text lines. Ranges and other optional extensions remain deferred.
-- [Streaming and interactive processes](process-io-dx.md) — sustained text/byte output, status, incremental input/EOF, signals, explicit terminals, scoped reopening and diagnostic helpers on both built-ins.
+- [Streaming and interactive processes](process-io-dx.md) — sustained text/byte output, status, incremental input/EOF, signals, explicit terminals, scoped reopening and diagnostic helpers on both official adapters.
 
 These are shipped contracts, not unfinished delivery plans. The roadmap owns remaining sequencing and qualification gaps.
 

@@ -8,7 +8,7 @@ An adapter connects a provider's native API to Sandbar. Sandbar packages are cur
 ```text wrap title="Provider integration prompt"
 Implement a Sandbar adapter for [provider] in [repository or package].
 The requested operations are [create, destroy, inspect, exec, files, etc.].
-Distribution: [a separate adapter package or a built-in SDK subpath].
+Distribution: [a separately installed official or third-party adapter package].
 
 Read the current Sandbar authoring docs and tested examples:
 - https://sandbarsdk.dev/docs/guides/write-an-adapter/
@@ -63,4 +63,4 @@ Finish with the implementation, usage example, validation results,
 and a precise list of unsupported or untested behavior.
 ```
 
-For a separately distributed adapter, consumers install its package alongside `sandbar-sdk` and pass the exported definition to `Sandbar.connect({ adapter, config, credentials })`. Built-in adapters use the same public contract with an SDK convenience import.
+For a separately distributed adapter, consumers install its package alongside `sandbar-sdk` and pass the exported definition to `Sandbar.connect({ adapter, config, credentials })`. Official adapters use the same public contract with convenience factories imported from their separately installed packages.

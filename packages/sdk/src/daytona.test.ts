@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Sandbar, Image } from "./index";
-import { daytona } from "./daytona";
+import { daytona } from "sandbar-daytona";
 
 test("public Daytona factory forwards bounded TTL without provider IO during construction", async () => {
   const originalFetch = globalThis.fetch;

@@ -28,15 +28,9 @@ export type ImageBuildResult = {
   retainedResources: RetainedArtifact[];
 };
 
-export type OciImage = { kind: "oci"; value: string };
+export type { OciImage, ImageInput } from "sandbar-adapter";
 
-export type ImageInput =
-  | {
-      kind: "prepared";
-      value: string;
-      binding?: { provider: string; scope: Scope };
-    }
-  | OciImage;
+import type { ImageInput, OciImage } from "sandbar-adapter";
 
 export const Image = {
   prepared(value: string | PreparedImage): ImageInput {

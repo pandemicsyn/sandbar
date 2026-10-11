@@ -21,7 +21,7 @@ Keep your provider, context manager, exporters and instrumentation. No Sandbar t
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "sandbar-daytona";
 
 const client = await Sandbar.connect(
   daytona({
@@ -160,7 +160,7 @@ No option is needed to use the application's provider. `tracing: false` disables
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "sandbar-daytona";
 
 const client = await Sandbar.connect(
   daytona({

@@ -14,7 +14,7 @@ These are completed slices, not outstanding implementation plans. Each retains d
 
 ## Completed SDK usability slices
 
-[Filesystem DX](specs/filesystem-dx.md) F1–F4 directory, transfer, copy/move, traversal and text-line behavior is implemented. The expanded artifact recipe passed on both built-ins at `e91f2d5`, with confirmed owned cleanup. Range reads, batches, search/glob and tree copy remain deferred.
+[Filesystem DX](specs/filesystem-dx.md) F1–F4 directory, transfer, copy/move, traversal and text-line behavior is implemented. The expanded artifact recipe passed on both official adapters at `e91f2d5`, with confirmed owned cleanup. Range reads, batches, search/glob and tree copy remain deferred.
 
 [Streaming and interactive processes](specs/process-io-dx.md) P0–P4 are implemented, including original-byte output, SIGTERM/SIGKILL, explicit PTYs, scoped references/reopening and bounded diagnostics. Historical live evidence covers baseline at `ecc73de`, byte output at `5f2bd13`, and fresh-process pipe reopen plus PTY resize/SIGTERM at `aaba981`. Cancellation corrections merged in #80 with deterministic coverage. These are exact-revision passes, not current-head or universal qualification.
 
@@ -51,3 +51,5 @@ Scoped evidence already exists: #68 passed files, renewal, fresh-process reopeni
 Vercel, Tensorlake and other adapters remain behind SDK usability. Reassess whether applications can create/execute/transfer files, reopen resources, handle partial outcomes, manage supported lifecycles/output and clean up with clear retained-storage ownership. Resolve or explicitly disposition material qualification gaps using tested examples and current evidence.
 
 Universal native parity and every optional extension above are not required. Select the next adapter only after that usability review. Accounting, the removed service/management UI and Rust are not on the delivery queue. Completed plans and audit records live in Git history; do not recreate parallel backlogs.
+
+Daytona and E2B remain first-class official integrations, distributed as separately installed `sandbar-daytona` and `sandbar-e2b` packages alongside the provider-neutral SDK. The initial four public packages release in lockstep; Modal retains its experimental status.

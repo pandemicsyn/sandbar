@@ -2542,3 +2542,5 @@ export async function daytonaProvider(input: DaytonaInput) {
 }
 
 export { daytonaAdapter, createDaytonaAdapter } from "./adapter";
+
+export { daytona } from "./factory";

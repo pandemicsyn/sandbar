@@ -15,7 +15,7 @@ export async function checkRecoveryTypes(directory, root, run) {
     join(directory, "recovery-types.ts"),
     `
 import { Sandbar, type DirectConnectOptions, type AdapterDirectClient, type AdapterRecoveryReference, type SnapshotResult, type AdapterVolume, type ExecOutput } from "sandbar-sdk";
-import { daytona } from "sandbar-sdk/daytona";
+import { daytona } from "sandbar-daytona";
 function cleanupConnection() {
   const options: DirectConnectOptions = { cleanup: { storage: "allow-unconfirmed" } };
   const connection = Sandbar.connect(daytona({ apiKey: "example", target: "us" }), options);

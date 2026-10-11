@@ -3,7 +3,7 @@ title: TypeScript reference
 description: SDK connections, images, resource handles, operations, and errors.
 ---
 
-Import `Sandbar` and `Image` from `sandbar-sdk`. The built-in provider factories are `daytona` from `sandbar-sdk/daytona` and `e2b` from `sandbar-sdk/e2b`. See the [generated export index](/docs/reference/generated-typescript/) for public names.
+Import `Sandbar` and `Image` from `sandbar-sdk`. The official provider factories are `daytona` from `sandbar-daytona` and `e2b` from `sandbar-e2b`. See the [generated export index](/docs/reference/generated-typescript/) for public names.
 
 ## Connect
 

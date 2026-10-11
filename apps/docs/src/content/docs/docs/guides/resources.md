@@ -139,7 +139,7 @@ A nonzero exit is a completed command. `NoExitCodeError` means execution complet
 
 ## Submit and wait separately
 
-`box.submitExec(input)` and `sandbar.sandboxes.submitCreate(input)` return an operation handle with `reference`, `observe()`, and `wait()`. Use them when your application needs to save a reference or manage waiting explicitly. Ordinary `exec()` and `create()` submit and wait for you. `wait({ signal })` cancellation stops local waiting and preserves an operation reference; it does not terminate the remote command. Use recovery to observe an already-submitted operation before deciding what to do next. Streaming process handles provide explicit signals and termination on both built-ins; this operation-handle API does not terminate commands. See [streaming and interactive processes](/docs/guides/text-streaming/) for targeting limits.
+`box.submitExec(input)` and `sandbar.sandboxes.submitCreate(input)` return an operation handle with `reference`, `observe()`, and `wait()`. Use them when your application needs to save a reference or manage waiting explicitly. Ordinary `exec()` and `create()` submit and wait for you. `wait({ signal })` cancellation stops local waiting and preserves an operation reference; it does not terminate the remote command. Use recovery to observe an already-submitted operation before deciding what to do next. Streaming process handles provide explicit signals and termination on both official adapters; this operation-handle API does not terminate commands. See [streaming and interactive processes](/docs/guides/text-streaming/) for targeting limits.
 
 ## Serializable resource identity
 

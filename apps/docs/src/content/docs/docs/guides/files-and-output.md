@@ -9,7 +9,7 @@ Use `writeTextFile` and `readTextFile` for UTF-8 without encoding boilerplate:
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
-import { e2b } from "sandbar-sdk/e2b";
+import { e2b } from "sandbar-e2b";
 
 const client = await Sandbar.connect(e2b({ apiKey: process.env.E2B_API_KEY! }));
 try {
@@ -86,7 +86,7 @@ Mkdir accepts an existing directory. Without `recursive: true`, parents must exi
 
 Copy initially accepts regular-file operands only. Move renames a file or directory on the same filesystem, without a copy/delete fallback. Both reject identical source/destination paths and default to no-clobber; `{ overwrite: true }` deliberately replaces a compatible destination. Parents must exist. Copy does not promise a snapshot of a concurrently changing source, metadata cloning or storage durability. Linux native rename collision guarantees do not imply global atomicity on object-backed mounts.
 
-Both built-ins use adapter-owned Python 3 helpers for complete directory/link observations and race-safe filesystem changes. Their private Linux filesystem requires Python 3; no-clobber native rename requires Linux `renameat2`. See the provider pages for transport and image prerequisites. Experimental Modal can reject optional hooks with `UNSUPPORTED`.
+Both official adapters use adapter-owned Python 3 helpers for complete directory/link observations and race-safe filesystem changes. Their private Linux filesystem requires Python 3; no-clobber native rename requires Linux `renameat2`. See the provider pages for transport and image prerequisites. Experimental Modal can reject optional hooks with `UNSUPPORTED`.
 
 ## Large byte transfers
 

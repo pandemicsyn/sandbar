@@ -16,7 +16,7 @@ Use prepared images for the [getting started workflow](/docs/direct-quickstart/)
 
 ## Build an OCI image
 
-Both built-in adapters implement explicit OCI builds. These are separate provider operations that can incur build and storage charges; check the [live test coverage](/docs/providers/support/) before relying on them.
+Both official adapters implement explicit OCI builds. These are separate provider operations that can incur build and storage charges; check the [live test coverage](/docs/providers/support/) before relying on them.
 
 ```ts
 const built = await sandbar.images.build({ source: Image.oci("node:24") });

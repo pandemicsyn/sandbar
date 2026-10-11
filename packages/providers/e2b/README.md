@@ -1,10 +1,10 @@
-# E2B built-in adapter
+# Official E2B adapter
 
-Install `sandbar-sdk` and import the built-in subpath:
+Install `sandbar-sdk` and `sandbar-e2b`, then import the official adapter:
 
 ```ts
 import { Sandbar, Image } from "sandbar-sdk";
-import { e2b } from "sandbar-sdk/e2b";
+import { e2b } from "sandbar-e2b";
 
 const client = await Sandbar.connect(e2b({ apiKey: process.env.E2B_API_KEY! }));
 
