@@ -114,7 +114,7 @@ E2B same-team key rotation requires configured `teamId`; API-key-scoped referenc
 
 `deadlineSeconds` defaults to 300. The pinned `e2b@2.51.0` client receives this value in milliseconds as foreground RPC `timeoutMs` and handshake `requestTimeoutMs`; the handshake timer clears when a PID arrives. This establishes observation deadlines, without a verified remote command-termination guarantee. A command may continue after RPC observation ends. Sandbar polls its original status/output files without replaying submission; setup, polling and output reads mean this is not a total SDK wait budget.
 
-Use an explicit caller `signal` to stop local waiting. Neither a local abort nor an RPC timeout implicitly kills compute or changes the independent sandbox `timeoutSeconds`. A valid exit marker followed by failed output retrieval can still leave the public result pending or unknown. See [execution and waiting timeouts](/docs/guides/resources/#execution-and-waiting-timeouts). Offline fixtures exercise the pinned client timers and no-kill request paths; they do not prove deployed envd termination.
+Use an explicit caller `signal` to stop local waiting. Neither a local abort nor an RPC timeout implicitly kills compute or changes the independent sandbox `timeoutSeconds`. A validated exit marker remains confirmed when stdout/stderr retrieval fails: the result preserves any available bytes and sets `truncated: true`. Missing or invalid status still cannot establish completion. The command is never replayed to recover output. See [execution and waiting timeouts](/docs/guides/resources/#execution-and-waiting-timeouts). Offline fixtures exercise the pinned client timers and no-kill request paths; they do not prove deployed envd termination.
 
 ## Suspend and resume
 
