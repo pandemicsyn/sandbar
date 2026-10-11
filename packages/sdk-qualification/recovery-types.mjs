@@ -7,10 +7,12 @@ export async function checkRecoveryTypes(directory, root, run) {
     join(directory, "node_modules/sandbar-sdk/dist/adapter-direct.d.ts"),
     "utf8",
   );
+
   const resources = await readFile(
     join(directory, "node_modules/sandbar-sdk/dist/resources.d.ts"),
     "utf8",
   );
+
   for (const declaration of [
     "Promise<SandbarClient<true>>",
     "Promise<SandboxHandle<true>>",
@@ -19,6 +21,7 @@ export async function checkRecoveryTypes(directory, root, run) {
   ])
     if (!direct.includes(declaration))
       throw new Error(`Missing canonical SDK declaration: ${declaration}`);
+
   for (const declaration of [
     "snapshot: SnapshotHandle",
     "Promise<SnapshotHandle>",
