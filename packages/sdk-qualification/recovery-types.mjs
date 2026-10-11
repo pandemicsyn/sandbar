@@ -93,6 +93,13 @@ async function canonical(client: import("sandbar-sdk").SandbarClient<true>, refe
     // @ts-expect-error Kind narrowing excludes sandbox methods.
     (await recovered.wait()).exec(["true"]);
   }
+  const scoped: string = await client.sandboxes.with(undefined, (owned) => {
+    const nominal: import("sandbar-sdk").AdapterSandbox = owned;
+    const canonical: import("sandbar-sdk").SandboxHandle<true> = owned;
+    void nominal; void canonical;
+    return owned.id;
+  });
+  void scoped;
   void legacyClient; void legacyBox; void ordinaryBox; void reopened; void legacyOperation;
   void legacyVolume; void legacySnapshot; void restored;
 }
@@ -107,7 +114,20 @@ function structural(client: import("sandbar-sdk").DirectSandbarClient, box: impo
   void ordinary.session;
   void sandbox.listFiles; void sandbox.readDirectory;
 }
-void canonical; void minimal; void structural;
+function cleanupEvidence(error: import("sandbar-sdk").SandboxCleanupError<number>) {
+  const box: import("sandbar-sdk").SandboxHandle<true> = error.sandbox;
+  const reference: import("sandbar-sdk").RecoveryReference | undefined = error.cleanupReference;
+  if (error.cleanupOperation) {
+    const legacy: import("sandbar-sdk").AdapterOperation<import("sandbar-adapter").DestroyValue> = error.cleanupOperation;
+    void legacy.continue;
+  }
+  if (error.callbackOutcome.status === "completed") {
+    const value: number = error.callbackOutcome.value;
+    void value;
+  }
+  void box; void reference;
+}
+void canonical; void minimal; void structural; void cleanupEvidence;
 void narrow;
 `,
   );

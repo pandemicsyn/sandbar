@@ -1,12 +1,14 @@
 import { z } from "zod";
-import { SandbarError, raceAbort, type CreateInput } from "./resource";
-import type { DestroyValue, SandboxReference } from "sandbar-adapter";
-import type {
-  AdapterDirectClient,
-  AdapterOperation,
-  AdapterRecoveryReference,
-  AdapterSandbox,
-} from "./adapter-direct";
+import {
+  SandbarError,
+  raceAbort,
+  type CreateInput,
+  type SandboxHandle,
+  type OperationHandle,
+  type RecoveryReference,
+} from "./resource";
+import type { DestroyValue, SandboxReference, OperationKind } from "sandbar-adapter";
+import type { AdapterDirectClient } from "./adapter-direct";
 
 /** Work cancellation does not cancel the separate cleanup budget. */
 export interface SandboxScopeOptions {
@@ -26,11 +28,11 @@ export class SandboxCleanupError<T = unknown> extends SandbarError {
   readonly sandboxId: string;
   readonly sandboxReference: SandboxReference | null;
   constructor(
-    readonly sandbox: AdapterSandbox,
+    readonly sandbox: SandboxHandle<true>,
     readonly callbackOutcome: SandboxScopeCallbackOutcome<T>,
     // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Cleanup can reject with any JavaScript value; retain it exactly for diagnosis.
     readonly cleanupError: unknown,
-    readonly cleanupOperation?: AdapterOperation<DestroyValue>,
+    readonly cleanupOperation?: OperationHandle<DestroyValue, OperationKind>,
   ) {
     const failure = cleanupError instanceof SandbarError ? cleanupError : undefined;
     super(
@@ -44,7 +46,7 @@ export class SandboxCleanupError<T = unknown> extends SandbarError {
     this.sandboxId = sandbox.id;
     this.sandboxReference = sandbox.reference;
   }
-  get cleanupReference(): AdapterRecoveryReference | undefined {
+  get cleanupReference(): RecoveryReference | undefined {
     return this.cleanupOperation?.reference ?? this.reference;
   }
 }
@@ -52,7 +54,7 @@ export class SandboxCleanupError<T = unknown> extends SandbarError {
 export async function withSandbox<T>(
   client: AdapterDirectClient,
   input: CreateInput | undefined,
-  callback: (sandbox: AdapterSandbox) => T | Promise<T>,
+  callback: (sandbox: SandboxHandle<true>) => T | Promise<T>,
   options: SandboxScopeOptions = {},
 ): Promise<T> {
   const parsed = z
@@ -93,7 +95,7 @@ export async function withSandbox<T>(
     timeout,
   );
 
-  let operation: AdapterOperation<DestroyValue> | undefined;
+  let operation: OperationHandle<DestroyValue, OperationKind> | undefined;
 
   try {
     const cleanup = async () => {
