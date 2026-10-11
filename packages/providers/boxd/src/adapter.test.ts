@@ -25,6 +25,66 @@ async function setup() {
   return { fixture, adapter, connect };
 }
 
+test("native token exchange accepts user_id and additive response fields", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    expect(fixture.calls.filter((call) => call.method === "Whoami")).toHaveLength(1);
+    expect(fixture.effects.create).toBe(0);
+  } finally {
+    await client.close();
+  }
+});
+
+test.each([
+  "missing-token",
+  "invalid-token",
+  "empty-token",
+  "missing-expiry",
+  "invalid-expiry",
+  "nonpositive-expiry",
+  "expired-token",
+] as const)("native token exchange rejects %s before authenticated RPCs", async (fault) => {
+  const { fixture, connect } = await setup();
+
+  const envelope: Parameters<typeof fixture.tokenResponse>[0] = {
+    token: "fixture-main",
+    expires_at: Date.now() / 1000 + 3600,
+    user_id: "user-fixture",
+    future_field: true,
+  };
+
+  switch (fault) {
+    case "missing-token":
+      delete envelope.token;
+      break;
+    case "invalid-token":
+      envelope.token = 123;
+      break;
+    case "empty-token":
+      envelope.token = "";
+      break;
+    case "missing-expiry":
+      delete envelope.expires_at;
+      break;
+    case "invalid-expiry":
+      envelope.expires_at = "later";
+      break;
+    case "nonpositive-expiry":
+      envelope.expires_at = 0;
+      break;
+    case "expired-token":
+      envelope.expires_at = Date.now() / 1000 - 60;
+      break;
+  }
+
+  fixture.tokenResponse(envelope);
+  await expect(connect()).rejects.toThrow();
+  expect(fixture.calls).toHaveLength(0);
+  expect(fixture.effects).toEqual({ create: 0, destroy: 0, release: 1 });
+});
+
 test("boxd conformance exercises real protobuf RPCs, one-attempt faults and distinct orgs", async () => {
   const { fixture, adapter } = await setup();
 

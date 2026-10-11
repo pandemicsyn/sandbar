@@ -172,6 +172,7 @@ export async function boxdFixture() {
   let omitExit = false;
   let execFailures = 0;
   let machineStates: string[] = [];
+  let tokenResponse: Record<string, string | number | boolean | null> | undefined;
   let failNextGet = false;
   let wrongGetId = false;
   let failLifecycleRead = false;
@@ -421,10 +422,14 @@ export async function boxdFixture() {
       }),
       exchange: async (_url, options) =>
         new Response(
-          JSON.stringify({
-            token: JSON.parse(String(options?.body)).api_key,
-            expires_at: Date.now() / 1000 + 3600,
-          }),
+          JSON.stringify(
+            tokenResponse ?? {
+              token: JSON.parse(String(options?.body)).api_key,
+              expires_at: Date.now() / 1000 + 3600,
+              user_id: "user-fixture",
+              future_field: true,
+            },
+          ),
         ),
     });
 
@@ -445,6 +450,9 @@ export async function boxdFixture() {
     disks,
     files,
     observedStates,
+    tokenResponse(value: Record<string, string | number | boolean | null>) {
+      tokenResponse = { ...value };
+    },
     machineStates(value: string[]) {
       machineStates = [...value];
     },

@@ -40,7 +40,7 @@ const ExitFrame = z.object({
 
 const Upload = z.object({ bytesWritten: z.number().int().nonnegative().safe() });
 
-const Token = z.strictObject({
+const Token = z.object({
   token: z.string().min(1).max(16384),
   expires_at: z.number().positive(),
 });
