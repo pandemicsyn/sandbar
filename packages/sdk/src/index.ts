@@ -144,3 +144,7 @@ export type {
   ProcessLine,
   ProcessLineOptions,
 } from "./process-output";
+
+export { SandboxCleanupError } from "./scoped-sandbox";
+
+export type { SandboxScopeOptions, SandboxScopeCallbackOutcome } from "./scoped-sandbox";
