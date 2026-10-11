@@ -243,8 +243,10 @@ function optionObject(value: OutputOptions, key: string): boolean {
 }
 
 function decodeOutput(bytes: Uint8Array, options?: number | { full: true }): string {
+  if (options === undefined) return new TextDecoder().decode(bytes);
+
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Preserve the numeric overload while validating JavaScript option objects.
-  if (options === undefined || typeof options === "number") {
+  if (typeof options === "number") {
     const maxBytes = displayLimit(options);
 
     return (

@@ -4,9 +4,16 @@ Implementation contract · Updated October 1, 2026 · SDK helpers merged in PR #
 
 This contract distinguishes capture, display and timeout evidence. Exact signatures live in the [SDK exports](../packages/sdk/src/index.ts) and current usage in the [files/output guide](../apps/docs/src/content/docs/docs/guides/files-and-output.md). The [current process IO contract](process-io-dx.md) owns additive process profiles and exec callbacks; the [legacy finite E2B profile](interactive-execution-and-access.md) retains its separate limits. Requested streaming runtime deadlines remain unsupported. Follow the [ordinary result/error contract](sdk-recovery-dx.md).
 
+## October 11 accepted default correction
+
+No-argument `outputText`, `stdoutText` and `stderrText` decode all supplied/captured bytes, including complete JSON larger than 16 KiB. `{ full: true }` remains supported. Explicit numeric limits retain byte-prefix, UTF-8 replacement and ellipsis semantics; structured previews retain the 16,384-byte default and independent `shortened` flag. No capture cap, provider call or `truncated` evidence changes. Tests cover large JSON, UTF-8 boundaries, invalid options, recovered/error results and existing overloads. Guides teach default decoding with an explicit capture-completeness check and previews for display. Release metadata records this deliberate default compatibility change after read-only registry verification. The helper contract below incorporates this correction. Read-only npm registry verification on October 11 returned HTTP 404 for `sandbar-sdk`; the local manifest remains `0.0.0`. This is a deliberate unpublished default correction, recorded in a minor Changeset rather than a published-major migration.
+
+Bounded E2B execution must preserve a validated exit read before output retrieval fails, with available output and honest truncation. Observation may read an existing receipt again, but never submit execution again to recover output. Inject stdout/stderr retrieval failures after status confirmation in tests.
+
+
 ## Captured bytes and display
 
-The public [SDK implementation](../packages/sdk/src/resource.ts) returns `ExecOutput` with byte arrays, `exitCode`, `truncated`, and `stdoutText(maxBytes?)` / `stderrText(maxBytes?)`. Exported `outputText(bytes, maxBytes?)` implements both methods. Each defaults to **16,384 input bytes**, decodes that prefix with `new TextDecoder()`, and appends `…` when provided bytes exceed the prefix. Numeric limits are safe integers **0–1,048,576**; invalid limits throw `RangeError`. An intact 20 KiB stdout can therefore display an ellipsis while `truncated === false`.
+The public [SDK implementation](../packages/sdk/src/resource.ts) returns `ExecOutput` with byte arrays, `exitCode`, `truncated`, and `stdoutText(maxBytes?)` / `stderrText(maxBytes?)`. Exported `outputText(bytes, maxBytes?)` implements both methods. With no limit (including explicit `undefined`), each decodes **all supplied/captured bytes** with `new TextDecoder()` and adds no suffix. An explicit numeric limit decodes that byte prefix and appends `…` when provided bytes exceed the prefix. Numeric limits are safe integers **0–1,048,576**; invalid limits throw `RangeError`. An intact 20 KiB stdout decodes completely by default; an explicit bounded display can still add an ellipsis while `truncated === false`.
 
 `exec` capture defaults to **1,048,576 bytes combined**, accepting integers **0–1,048,576** (subject to the adapter's advertised maximum). `deadlineSeconds` defaults to **300**, accepting integers **1–3,600**. Invalid exec input uses existing `INVALID_ARGUMENT`; unsupported adapter limits use `UNSUPPORTED` before submission. These defaults and validation stay unchanged.
 
@@ -23,7 +30,7 @@ A display helper operates on captured bytes only. It neither reads more output n
 
 ## Selected helper API
 
-PR #53 retains the existing no-argument and numeric signatures/defaults and exports these overloads/methods through `sandbar-sdk`:
+The SDK retains the existing no-argument and numeric signatures and exports these overloads/methods through `sandbar-sdk`. The October 11 correction changes only the no-argument text default:
 
 ```ts
 export type OutputPreview = { text: string; shortened: boolean };
@@ -41,17 +48,17 @@ stdoutPreview(options?: { maxBytes?: number }): OutputPreview;
 stderrPreview(options?: { maxBytes?: number }): OutputPreview;
 ```
 
-`{ full: true }` decodes **all provided/captured bytes** with no synthetic suffix, still using `new TextDecoder()`. It does not require a numeric display bound or recover missing capture. The standalone full overload can decode any supplied `Uint8Array`; the exec capture cap is not an arbitrary decoder-input cap. Full decode allocates a string proportional to input size.
+No-argument decoding and `{ full: true }` decode **all provided/captured bytes** with no synthetic suffix, still using `new TextDecoder()`. It does not require a numeric display bound or recover missing capture. The standalone full overload can decode any supplied `Uint8Array`; the exec capture cap is not an arbitrary decoder-input cap. Full decode allocates a string proportional to input size.
 
-Preview defaults to 16,384 bytes, accepts the same numeric range including zero, and returns the exact text of the existing bounded helper, including `…` when shortened. `shortened = bytes.length > maxBytes` concerns this stream only and never incorporates `result.truncated`. For empty input it returns `{ text: "", shortened: false }`; nonempty input with zero returns `{ text: "…", shortened: true }`. Exact-bound input has no suffix and `shortened: false`, regardless of capture loss. Stdout/stderr use identical independent display rules.
+Preview defaults to 16,384 bytes, accepts the same numeric range including zero, and returns the exact text of an explicitly bounded text helper, including `…` when shortened. `shortened = bytes.length > maxBytes` concerns this stream only and never incorporates `result.truncated`. For empty input it returns `{ text: "", shortened: false }`; nonempty input with zero returns `{ text: "…", shortened: true }`. Exact-bound input has no suffix and `shortened: false`, regardless of capture loss. Stdout/stderr use identical independent display rules.
 
 All decoding is UTF-8 with replacement, not fatal decoding: invalid sequences and an incomplete multibyte sequence at a preview byte boundary produce U+FFFD. Full decode also replaces an incomplete captured suffix, including one caused by capture loss. The standard decoder consumes an initial UTF-8 BOM. Limits count input bytes, not characters or encoded bytes of the resulting string; replacement and the suffix can make rendered UTF-8 longer than the input limit. Do not change to code-point-aligned clipping in this compatibility slice. For strict parsing, callers can use `new TextDecoder("utf-8", { fatal: true }).decode(result.stdout)`.
 
-Only `{ full: true }` is accepted for the new full mode. Reject `full: false`, mixed `{ full: true, maxBytes: ... }`, unknown fields, null, and malformed option objects with `RangeError`; preview objects allow only optional `maxBytes`, using existing limit validation. Typed callers are constrained by the overloads; JavaScript input must also be validated. Omitted/undefined options keep defaults. No new SDK error class or provider mutation is involved.
+Only `{ full: true }` is accepted for the new full mode. Reject `full: false`, mixed `{ full: true, maxBytes: ... }`, unknown fields, null, and malformed option objects with `RangeError`; preview objects allow only optional `maxBytes`, using existing limit validation. Typed callers are constrained by the overloads; JavaScript input must also be validated. Omitted/undefined text options decode all input; omitted/undefined preview options retain the 16 KiB display default. No new SDK error class or provider mutation is involved.
 
-Why this surface: the full overload extends the three existing decoding entrypoints consistently, avoiding a second family of `*FullText` names. Structured previews solve the separate need to detect display loss without inspecting a literal ellipsis. Keep the two convenient result methods; do not also export a standalone `outputPreview` without an actual use case. Existing text methods remain supported bounded-display conveniences, with no formal deprecation or default migration.
+Why this surface: the full overload extends the three existing decoding entrypoints consistently, avoiding a second family of `*FullText` names. Structured previews solve the separate need to detect display loss without inspecting a literal ellipsis. Keep the two convenient result methods; do not also export a standalone `outputPreview` without an actual use case. Existing numeric text calls remain supported bounded-display conveniences. Existing `{ full: true }` calls need no migration; callers that relied on no-argument shortening should use a preview or an explicit numeric limit.
 
-This is additive for ordinary consumers. It changes the structural `ExecOutput` type: code manually constructing it must implement the two new methods (including custom fixtures). Adapter authors continue returning `ExecValue` byte arrays, so their public contract does not change. The central result constructor gives recovered outputs and `NonzeroExitError.result` / `NoExitCodeError.result` the same methods. Existing functions accepting `ExecOutput` continue to work; preserve assignability of its old numeric methods.
+The original preview/full additions changed the structural `ExecOutput` type: code manually constructing it must implement the two new methods (including custom fixtures). Adapter authors continue returning `ExecValue` byte arrays, so their public contract does not change. The central result constructor gives recovered outputs and `NonzeroExitError.result` / `NoExitCodeError.result` the same methods. Existing functions accepting `ExecOutput` continue to work; preserve assignability of its old numeric methods.
 
 ### Usage
 
@@ -61,7 +68,7 @@ const preview = result.stdoutPreview({ maxBytes: 4096 });
 console.log(preview.text);
 if (preview.shortened) console.log("Display shortened; captured bytes remain available");
 if (result.truncated) throw new Error("Captured report may be incomplete");
-const report = JSON.parse(result.stdoutText({ full: true }));
+const report = JSON.parse(result.stdoutText());
 const diagnostic = result.stderrPreview();
 console.error(diagnostic.text);
 ```

@@ -2,6 +2,13 @@
 
 Current contract · Updated October 10, 2026 · P0–P4 implemented in #76–#79; cancellation corrections in #80
 
+## October 11 execution acceptance (implementation pending)
+
+Keep the existing no-profile `processes.start` finite cumulative-output contract for compatibility. Long-running and interactive examples explicitly select `output: { mode: "stream" }`, whose bounded pending queue does not impose a lifetime output cap. Never turn `maxOutputBytes` into a lifetime or remote runtime guarantee. Document supported provider profiles and the legacy limitation.
+
+Adding `onOutput` preserves ordinary exec options whenever the native process path can map them honestly. Explicit deadlines must reach an evidenced provider-specific native observation/runtime boundary or reject before dispatch with the concrete limitation; never silently drop them. Provider deadline behavior and local cancellation remain distinct, with no portable termination claim. Preserve one dispatch, callback failure and available confirmed exit/capture, bounded memory, stdin backpressure/EOF and ownership. Native-boundary tests protect precise combinations before delivery. No close/connect API changes.
+
+
 ## Outcome and baseline
 
 Applications should start a build, display progress, run a server, send repeated input to a child process, inspect whether it is still running, request termination and obtain a confirmed exit without changing application logic between Daytona and E2B. Output must remain useful beyond 1 MiB without accumulating forever in the SDK or its native client. A process is not a terminal; PTY support is a separately named extension.

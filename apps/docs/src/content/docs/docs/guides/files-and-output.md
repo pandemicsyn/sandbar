@@ -148,20 +148,20 @@ if (preview.shortened) console.log("Display shortened; captured bytes remain ava
 if (result.truncated) console.warn("Command output was truncated");
 ```
 
-`stdout` and `stderr` are `Uint8Array` values. Keep those bytes for binary processing. `stdoutText(maxBytes?)`, `stderrText(maxBytes?)` and exported `outputText(bytes, maxBytes?)` decode bounded UTF-8 for display, defaulting to **16,384 input bytes**. Numeric display limits are safe integers from **0 to 1,048,576**, including zero. Invalid limits throw a local `RangeError`.
+`stdout` and `stderr` are `Uint8Array` values. Keep those bytes for binary processing. `stdoutText(maxBytes?)`, `stderrText(maxBytes?)` and exported `outputText(bytes, maxBytes?)` decode **all captured/supplied bytes** as UTF-8 by default, without adding a suffix. Pass an explicit numeric limit to shorten text for display. Numeric display limits are safe integers from **0 to 1,048,576**, including zero. Invalid limits throw a local `RangeError`.
 
-`stdoutPreview({ maxBytes? })` and `stderrPreview({ maxBytes? })` return `OutputPreview`: `{ text, shortened }`. They use the same defaults, byte limits and text as the bounded helpers. `shortened` concerns only that stream's display: exact-bound or empty input is not shortened; nonempty input with a zero bound returns `{ text: "…", shortened: true }`. A literal ellipsis in command output does not establish display loss.
+`stdoutPreview({ maxBytes? })` and `stderrPreview({ maxBytes? })` return `OutputPreview`: `{ text, shortened }`. They default to **16,384 input bytes**, using the same byte limits and text as an explicitly bounded text helper. `shortened` concerns only that stream's display: exact-bound or empty input is not shortened; nonempty input with a zero bound returns `{ text: "…", shortened: true }`. A literal ellipsis in command output does not establish display loss.
 
-For full decoding of captured output, use `{ full: true }`:
+For parsing captured output, check capture completeness before decoding:
 
 ```ts
 const result = await box.exec(["cat", "/home/user/report.json"]);
 if (result.truncated) throw new Error("Captured report may be incomplete");
-const report = JSON.parse(result.stdoutText({ full: true }));
-console.error(result.stderrText({ full: true }));
+const report = JSON.parse(result.stdoutText());
+console.error(result.stderrText());
 ```
 
-Full decoding also works with `outputText(bytes, { full: true })`, decodes every supplied byte, and adds no suffix. It allocates a string proportional to input size. Full options must contain only `full: true`; preview options allow only optional `maxBytes`. Invalid option objects throw `RangeError` without changing the execution result. Omitted or undefined options preserve defaults.
+Existing `{ full: true }` calls on either text method or `outputText(bytes, { full: true })` remain supported and equivalent to no-argument decoding. Full decoding allocates a string proportional to input size. Full options must contain only `full: true`; preview options allow only optional `maxBytes`. Invalid option objects throw `RangeError` without changing the execution result. Omitted or undefined text options decode all supplied bytes; omitted preview options use the 16 KiB default.
 
 The execution capture limit defaults to **1 MiB combined across both streams**, retaining stdout first and stderr with the remainder. `result.truncated` means output may be incomplete, including when a stream reaches the cap before its end can be confirmed. Capture loss and display shortening are independent: complete capture can have a shortened preview; truncated capture can have an unshortened preview. Full decoding and larger display bounds cannot recover discarded capture.
 
@@ -180,7 +180,7 @@ const result = await box.exec({
   stdin: payload,
 });
 
-console.log(result.stdoutText({ full: true }));
+console.log(result.stdoutText());
 ```
 
 String input is encoded as UTF-8. `Uint8Array` input preserves its bytes, including NUL and binary values. The payload limit is **1 MiB**; an oversized value rejects before provider dispatch. Explicit empty input still sends EOF, and omitted input is closed. The result keeps stdout, stderr and exit status separate under the ordinary capture limit. Adapters may implement this with a seekable staging file; the contract promises bytes and EOF, not a pipe descriptor. For incremental input, use [`processes.start({ command, stdin: "pipe", output: { mode: "stream" } })`](/docs/guides/text-streaming/), then `write()` and `closeStdin()`. Process stdin defaults to closed. See the [compiled finite-input example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/finite-stdin.ts) and [provider support](/docs/providers/support/); deterministic and packed coverage does not establish live provider qualification.
