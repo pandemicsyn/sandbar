@@ -156,6 +156,7 @@ export async function boxdFixture() {
   const machines = new Map<string, MachineRecord>();
   const disks = new Map<string, DiskRecord>();
   const files = new Map<string, Uint8Array>();
+  const observedStates: string[] = [];
 
   let loseCreate = false,
     holdCreate = false;
@@ -169,6 +170,8 @@ export async function boxdFixture() {
 
   let execFrames = [{ data: Uint8Array.of(0, 255, 128), exitCode: 0 }];
   let omitExit = false;
+  let execFailures = 0;
+  let machineStates: string[] = [];
   let failNextGet = false;
   let wrongGetId = false;
   let failLifecycleRead = false;
@@ -193,12 +196,17 @@ export async function boxdFixture() {
         // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Capture decoded native frames for assertions without interpreting command contents.
         call.on("data", (request: unknown) => calls.push({ method: name, request }));
         call.on("end", () => {
+          if (execFailures > 0) {
+            execFailures--;
+            call.emit("error", { code: status.UNAVAILABLE, details: "guest agent unavailable" });
+
+            return;
+          }
+
           for (const frame of execFrames) call.write(frame);
-          call.write(
-            omitExit
-              ? { data: new Uint8Array(), windowChange: true }
-              : { data: new Uint8Array(), exitCode: execFrames.at(-1)?.exitCode ?? 0 },
-          );
+
+          if (!omitExit)
+            call.write({ data: new Uint8Array(), exitCode: execFrames.at(-1)?.exitCode ?? 0 });
           call.end();
         });
       };
@@ -209,7 +217,8 @@ export async function boxdFixture() {
         const chunks = downloadChunks ?? [files.get(request.path) ?? new Uint8Array()];
         const totalSize = chunks.reduce((sum, bytes) => sum + bytes.length, 0);
 
-        for (const data of chunks) call.write({ data, totalSize });
+        for (const [index, data] of chunks.entries())
+          call.write({ data, totalSize: index === 0 ? totalSize : 0 });
         call.end();
       };
     } else {
@@ -286,12 +295,16 @@ export async function boxdFixture() {
             const machine = machines.get(req.vmId);
 
             if (!machine) missing();
-            else
+            else {
+              machine.status = machineStates.shift() ?? machine.status;
+              observedStates.push(machine.status);
               ok({
                 ...machine,
                 vmId: wrongGetId ? crypto.randomUUID() : machine.vmId,
                 billingOrgId: badOrg ? "org-other" : machine.billingOrgId,
               });
+            }
+
             break;
           }
 
@@ -431,6 +444,13 @@ export async function boxdFixture() {
     machines,
     disks,
     files,
+    observedStates,
+    machineStates(value: string[]) {
+      machineStates = [...value];
+    },
+    execFailures(value: number) {
+      execFailures = value;
+    },
     loseNextCreateResponse() {
       loseCreate = true;
     },

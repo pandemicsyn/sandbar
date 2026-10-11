@@ -92,6 +92,7 @@ test("byte fidelity, bounded exec collection and raw upload acknowledgement", as
     });
 
     expect(result.stdout).toEqual(Uint8Array.of(0, 255, 128));
+    expect(result.exitCode).toBe(0);
     expect(result.truncated).toBe(true);
     expect(fixture.calls.filter((call) => call.method === "Exec").at(-1)?.request).toMatchObject({
       command: "printf 'with spaces' '$(false)'",
@@ -108,6 +109,8 @@ test("byte fidelity, bounded exec collection and raw upload acknowledgement", as
     await expect(box.writeFile("/file", bytes, { overwrite: true })).rejects.toBeInstanceOf(
       OutcomeUnknownError,
     );
+    fixture.downloadChunks([Uint8Array.of(0, 255), Uint8Array.of(128), Uint8Array.of(3, 7)]);
+    expect(await box.readFile("/file")).toEqual(Uint8Array.of(0, 255, 128, 3, 7));
     fixture.downloadChunks([new Uint8Array(700000), new Uint8Array(700000)]);
     await expect(box.readFile("/file")).rejects.toMatchObject({ code: "CAPACITY" });
     await box.destroy();
@@ -263,6 +266,28 @@ test("native exec without an exit receipt is unknown", async () => {
   }
 });
 
+test("native empty final exec frame confirms a zero exit without output", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    const box = await client.sandboxes.create();
+    fixture.execFrames([]);
+
+    const result = await box.exec({
+      command: { kind: "argv", argv: ["true"] },
+      deadlineSeconds: 1,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toEqual(new Uint8Array());
+    expect(result.stderr).toEqual(new Uint8Array());
+    await box.destroy();
+  } finally {
+    await client.close();
+  }
+});
+
 test("checkpoint failure exposes the known sandbox and stops before expiry installation", async () => {
   const { fixture, adapter } = await setup();
 
@@ -382,29 +407,17 @@ test("confirmed pause and wake acknowledgements survive failed observations with
   }
 });
 
-test("readiness failure retains the expiry acknowledgement and normal cleanup identity", async () => {
-  const { fixture } = await setup();
-
-  const adapter = createBoxdAdapter((apiKey) => {
-    const native = fixture.factory(apiKey);
-    native.machines.waitUntilReady = async () => {
-      throw Error("Guest unavailable");
-    };
-
-    return native;
-  });
-
-  const client = await Sandbar.connect({
-    adapter,
-    config: { org: "main", networkPolicy: "internet" },
-    credentials: { apiKey: "fixture-main" },
-  });
+test("native terminal readiness failure retains expiry acknowledgement and normal cleanup identity", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
 
   try {
+    fixture.machineStates(["pending", "pending", "failed"]);
+    const operation = await client.sandboxes.submitCreate();
     let saved: import("sandbar-adapter").ResourceReference<"sandbox"> | undefined;
 
     try {
-      await client.sandboxes.create();
+      await operation.observe();
       throw Error("Expected readiness failure");
     } catch (error) {
       expect(error).toMatchObject({
@@ -423,10 +436,65 @@ test("readiness failure retains the expiry acknowledgement and normal cleanup id
       }
     }
 
+    expect(fixture.observedStates).toEqual(["pending", "pending", "failed"]);
+    await expect((await client.recover(operation.reference)).observe()).rejects.toMatchObject({
+      outcome: { kind: "create", status: "partial", sandbox: saved },
+    });
+    expect(fixture.effects.create).toBe(1);
     expect(fixture.calls.filter((call) => call.method === "SetDeleteAfter")).toHaveLength(1);
+    expect(fixture.calls.filter((call) => call.method === "Exec")).toHaveLength(0);
 
     if (!saved) throw Error("Known sandbox reference missing");
     await (await client.sandboxes.get(saved)).destroy();
+  } finally {
+    await client.close();
+  }
+});
+
+test("native readiness polls pending and starting before probing a running guest", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    fixture.machineStates(["pending", "pending", "pending", "starting", "running"]);
+    const box = await client.sandboxes.create();
+    expect(fixture.observedStates).toEqual([
+      "pending",
+      "pending",
+      "pending",
+      "starting",
+      "running",
+      "running",
+    ]);
+    expect(fixture.calls.filter((call) => call.method === "Exec")).toHaveLength(1);
+    expect(fixture.calls.find((call) => call.method === "Exec")?.request).toMatchObject({
+      command: "true",
+    });
+    expect(fixture.effects.create).toBe(1);
+    expect(fixture.calls.filter((call) => call.method === "SetDeleteAfter")).toHaveLength(1);
+    await box.destroy();
+  } finally {
+    await client.close();
+  }
+});
+
+test("native readiness retries a failed true probe while preserving the created machine", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    fixture.execFailures(1);
+    const box = await client.sandboxes.create();
+    expect(fixture.calls.filter((call) => call.method === "Exec")).toHaveLength(2);
+    expect(
+      fixture.calls.filter((call) => call.method === "Exec").map((call) => call.request),
+    ).toMatchObject([
+      { command: "true", vmId: box.id },
+      { command: "true", vmId: box.id },
+    ]);
+    expect(fixture.effects.create).toBe(1);
+    expect(fixture.calls.filter((call) => call.method === "SetDeleteAfter")).toHaveLength(1);
+    await box.destroy();
   } finally {
     await client.close();
   }
