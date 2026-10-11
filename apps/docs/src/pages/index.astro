@@ -162,33 +162,29 @@ const sunBands = [
                   }
                 </div>
               </div>
-              <pre class="code" aria-label="Example: create a sandbox and run a command"><code><span data-factory-connect><span class="k">import</span> {"{"} Sandbar, Image {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
+              <pre class="code" aria-label="Example: create a sandbox and run a command"><code><span data-factory-connect><span class="k">import</span> {"{"} Sandbar<span data-image-import>, Image</span> {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
 <span class="k">import</span> {"{"} <span data-typed-plain>daytona</span> {"}"} <span class="k">from</span> <span class="s">"sandbar-<span data-typed-plain>daytona</span>"</span>
 
 <span class="k">const</span> client = <span class="k">await</span> Sandbar.connect(
   <span class="typed"><span data-typed>daytona</span><span class="caret" data-caret></span></span>({"{"}
 <span data-options>    apiKey: process.env.DAYTONA_API_KEY!,
     target: "us",
+    environment: Image.prepared("daytona-small"),
     networkPolicy: "daytona-default",</span>
   {"}"}),
 )</span><span data-boxd-connect hidden><span class="k">import</span> {"{"} Sandbar {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
 <span class="k">import</span> {"{"} boxdAdapter {"}"} <span class="k">from</span> <span class="s">"sandbar-boxd"</span>
 
 <span class="k">const</span> client = <span class="k">await</span> Sandbar.connect({"{"}
-  adapter: boxdAdapter,
+  adapter: <span class="typed"><span data-typed>boxdAdapter</span><span class="caret" data-caret></span></span>,
   credentials: {"{"} apiKey: process.env.BOXD_API_KEY! {"}"},
   config: {"{"} org: process.env.BOXD_ORG!, networkPolicy: <span class="s">"internet"</span> {"}"},
 {"}"})</span>
-<span class="k">try</span> {"{"}
-  <span class="k">const</span> box = <span class="k">await</span> client.sandboxes.create(<span data-create-input>{"{"}
-    environment: Image.prepared(<span class="s" data-image>"daytona-small"</span>),
-    networkPolicy: <span class="s" data-network>"daytona-default"</span>,
-  {"}"}</span>)
-  <span class="k">try</span> {"{"}
-    <span class="k">const</span> run = <span class="k">await</span> box.exec([<span class="s">"printf"</span>, <span class="s">"ready"</span>])
-    console.log(run.stdoutText())
-  {"}"} <span class="k">finally</span> {"{"} <span class="k">await</span> box.destroy() {"}"}
-{"}"} <span class="k">finally</span> {"{"} <span class="k">await</span> client.close() {"}"}</code></pre>
+<span class="k">await</span> client.sandboxes.with({"{}"}, <span class="k">async</span> (box) =&gt; {"{"}
+  <span class="k">const</span> run = <span class="k">await</span> box.exec([<span class="s">"printf"</span>, <span class="s">"ready"</span>])
+  console.log(run.stdoutText())
+{"}"})
+<span class="k">await</span> client.close()</code></pre>
               <div class="code-status" aria-live="polite">
                 <span class="status-dot" data-status-dot></span>
                 <span class="status-text" data-status>connecting…</span>
@@ -311,7 +307,7 @@ const sunBands = [
 
       const typedPlain = document.querySelectorAll<HTMLElement>("[data-typed-plain]");
 
-      const caret = document.querySelector<HTMLElement>("[data-caret]");
+      const carets = document.querySelectorAll<HTMLElement>("[data-caret]");
 
       const status = document.querySelector<HTMLElement>("[data-status]");
 
@@ -336,6 +332,7 @@ const sunBands = [
           [
             ["apiKey", "DAYTONA_API_KEY"],
             ["target", undefined, "us"],
+            ["environment", undefined, "daytona-small"],
             ["networkPolicy", undefined, "daytona-default"],
           ],
         ],
@@ -346,13 +343,7 @@ const sunBands = [
         if (!optionsNode) return;
         document.querySelector<HTMLElement>("[data-factory-connect]")!.hidden = provider === "boxd";
         document.querySelector<HTMLElement>("[data-boxd-connect]")!.hidden = provider !== "boxd";
-        document.querySelector<HTMLElement>("[data-create-input]")!.hidden = provider === "boxd";
-        const image = document.querySelector("[data-image]");
-        const network = document.querySelector("[data-network]");
-
-        if (image) image.textContent = provider === "daytona" ? '"daytona-small"' : '"base"';
-
-        if (network) network.textContent = provider === "daytona" ? '"daytona-default"' : '"blocked"';
+        document.querySelector<HTMLElement>("[data-image-import]")!.hidden = provider !== "daytona";
 
         const lines = (providerOptions.get(provider) ?? []).map(([key, env, literal]) => {
           const line = document.createElement("span");
@@ -365,7 +356,8 @@ const sunBands = [
           } else {
             value.className = "s";
             value.textContent = `"${literal}"`;
-            line.append(`    ${key}: `, value, ",");
+            if (key === "environment") line.append(`    ${key}: Image.prepared(`, value, "),");
+            else line.append(`    ${key}: `, value, ",");
           }
 
           return line;
@@ -375,7 +367,7 @@ const sunBands = [
       }
 
       function setTyped(text: string) {
-        if (typed) typed.textContent = text;
+        document.querySelectorAll<HTMLElement>("[data-typed]").forEach((node) => (node.textContent = text));
         typedPlain.forEach((node) => (node.textContent = text));
       }
 
@@ -398,10 +390,11 @@ const sunBands = [
         current = to;
         tabs.forEach((tab) => tab.setAttribute("aria-pressed", String(tab.dataset.provider === to)));
         renderOptions(to);
-        caret?.classList.remove("idle");
+        carets.forEach((caret) => caret.classList.remove("idle"));
         setStatus("connecting…", "var(--sb-code-dim)", "");
 
         let t = 0;
+        const name = to === "boxd" ? "boxdAdapter" : to;
 
         if (motionOn()) {
           for (let i = from.length; i >= 0; i--) {
@@ -410,20 +403,20 @@ const sunBands = [
             t += 35;
           }
 
-          for (let i = 1; i <= to.length; i++) {
-            const text = to.slice(0, i);
+          for (let i = 1; i <= name.length; i++) {
+            const text = name.slice(0, i);
             later(() => setTyped(text), t);
             t += 70;
           }
         } else {
-          setTyped(to);
+          setTyped(name);
         }
 
         const boot = 2000 + Math.random() * 4000;
 
         later(() => {
           const start = performance.now();
-          caret?.classList.add("idle");
+          carets.forEach((caret) => caret.classList.add("idle"));
           setStatus("creating…", "var(--sb-coral)", "0.0s");
           tick = setInterval(() => {
             if (statusTime) statusTime.textContent = ((performance.now() - start) / 1000).toFixed(1) + "s";

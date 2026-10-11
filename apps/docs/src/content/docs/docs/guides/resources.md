@@ -9,7 +9,7 @@ Connect to [E2B](/docs/providers/e2b/) or [Daytona](/docs/providers/daytona/) fi
 
 ```ts
 const text = await sandbar.sandboxes.with(
-  { environment: Image.prepared("base"), networkPolicy: "blocked" },
+  {}, // Uses the configured adapter defaults.
   async (box) => {
     console.log(box.id, (await box.inspect()).state);
     return (await box.exec(["printf", "hello"])).stdoutText();

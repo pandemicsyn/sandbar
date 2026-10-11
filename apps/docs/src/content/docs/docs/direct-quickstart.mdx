@@ -106,7 +106,9 @@ bun --env-file=.env.local run apps/docs/examples/getting-started-modal.ts
   </TabItem>
 </Tabs>
 
-You should see `Hello from Sandbar!`. Each example destroys the sandbox in `finally`, then closes the client. `close()` alone does **not** destroy compute. If creation or cleanup has an uncertain outcome, follow [Errors and recovery](/docs/guides/recovery/) before retrying.
+You should see `Hello from Sandbar!`. The Daytona and E2B examples use `sandboxes.with()` to clean up the sandbox after the callback succeeds or throws. An outer `finally` closes the client. The experimental Modal example shows manual sandbox cleanup. `close()` alone does **not** destroy compute. If creation or cleanup has an uncertain outcome, follow [Errors and recovery](/docs/guides/recovery/) before retrying.
+
+For temporary work, prefer [scoped sandbox cleanup](/docs/guides/resources/#create-and-clean-up). The scope retains snapshots and volumes, and cleanup failures preserve the callback result or error plus recovery information. Use manual `create()` when the sandbox should outlive the callback.
 
 ## Next steps
 

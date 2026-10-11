@@ -16,14 +16,10 @@ const sandbar = await Sandbar.connect(
 );
 
 try {
-  const box = await sandbar.sandboxes.create();
-
-  try {
+  await sandbar.sandboxes.with({}, async (box) => {
     const output = await box.exec(["printf", "Hello from Sandbar!\n"]);
     console.log(output.stdoutText());
-  } finally {
-    await box.destroy();
-  }
+  });
 } finally {
   await sandbar.close();
 }
