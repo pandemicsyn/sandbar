@@ -22,6 +22,7 @@
     "package:smoke": "bun run build:packages && bun run package:smoke:built",
     "changeset": "changeset",
     "version:packages": "changeset version",
+    "release:version": "bun run version:packages && bun run release:refresh-lock && bun run release:check-manifests",
     "release:check-manifests": "bun scripts/release.mjs check",
     "release:refresh-lock": "bun scripts/refresh-workspace-lock.mjs",
     "release:fixture": "bun scripts/release-fixture.mjs",
