@@ -1,5 +1,12 @@
 # @sandbar-sdk/e2b
 
+## 0.2.0
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @sandbar-sdk/adapter@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes

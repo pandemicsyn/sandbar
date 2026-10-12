@@ -1,5 +1,16 @@
 # sandbar-sdk
 
+## 0.2.0
+
+### Patch Changes
+
+- [#102](https://github.com/pandemicsyn/sandbar/pull/102) [`fb9cdd0`](https://github.com/pandemicsyn/sandbar/commit/fb9cdd04da58ce036812aa00239e9964a4161e9d) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Add byte-exact finite stdin, Python-backed filesystem metadata and safe mutations, no-clobber writes and bounded-memory file streams. Add explicit public previews over pinned routes and native size selection. Preserve the existing live baseline separately from new offline coverage.
+
+  Preserve staging paths and confirmed byte counts when file stream producers fail, without changing SDK error codes.
+
+- Updated dependencies []:
+  - @sandbar-sdk/adapter@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
