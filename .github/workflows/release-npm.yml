@@ -1,5 +1,10 @@
 name: Release npm packages
 on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/*/package.json"
+      - "packages/providers/*/package.json"
   workflow_dispatch:
     inputs:
       release_ref:
@@ -22,7 +27,63 @@ concurrency:
   group: release-npm
   cancel-in-progress: false
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      ref: ${{ steps.plan.outputs.ref }}
+      tag: ${{ steps.plan.outputs.tag }}
+      npm_tag: ${{ steps.plan.outputs.npm_tag }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+      create_tag: ${{ steps.plan.outputs.create_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Plan release
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          REQUESTED_REF: ${{ inputs.release_ref }}
+          REQUESTED_NPM_TAG: ${{ inputs.npm_tag }}
+          REQUESTED_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = workflow_dispatch ]; then
+            {
+              echo "release=true"
+              echo "ref=${REQUESTED_REF}"
+              echo "tag=${REQUESTED_REF}"
+              echo "npm_tag=${REQUESTED_NPM_TAG}"
+              echo "dry_run=${REQUESTED_DRY_RUN}"
+              echo "create_tag=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          first=$(jq -r '.[0]' scripts/release-packages.json)
+          tag="v$(jq -r .version "${first}/package.json")"
+          if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+            echo "${tag} already exists; nothing to release." >> "$GITHUB_STEP_SUMMARY"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "release=true"
+            echo "ref=${SHA}"
+            echo "tag=${tag}"
+            echo "npm_tag=auto"
+            echo "dry_run=false"
+            echo "create_tag=true"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing ${tag} from ${SHA}." >> "$GITHUB_STEP_SUMMARY"
   qualify:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -34,17 +95,23 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ inputs.release_ref }}
+          ref: ${{ needs.plan.outputs.ref }}
       - name: Validate real release ref
         env:
-          RELEASE_REF: ${{ inputs.release_ref }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_REF: ${{ needs.plan.outputs.ref }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          DRY_RUN: ${{ needs.plan.outputs.dry_run }}
+          CREATE_TAG: ${{ needs.plan.outputs.create_tag }}
         run: |
           set -euo pipefail
           git merge-base --is-ancestor HEAD origin/main
           if [ "${DRY_RUN}" = false ]; then
-            [[ "${RELEASE_REF}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || exit 1
-            test "$(git rev-parse "refs/tags/${RELEASE_REF}^{commit}")" = "$(git rev-parse HEAD)"
+            [[ "${RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || exit 1
+            if [ "${CREATE_TAG}" = true ]; then
+              test "$(git rev-parse "${RELEASE_REF}^{commit}")" = "$(git rev-parse HEAD)"
+            else
+              test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$(git rev-parse HEAD)"
+            fi
           fi
       - name: Record qualified commit
         id: identity
@@ -80,7 +147,7 @@ jobs:
         run: bun run docs:check:built
       - name: Pack qualified checkout
         env:
-          NPM_TAG: ${{ inputs.npm_tag }}
+          NPM_TAG: ${{ needs.plan.outputs.npm_tag }}
           RELEASE_ARTIFACTS: ${{ runner.temp }}/sandbar-qualified
         run: bun scripts/release.mjs dry-run
       - name: Qualify npm, pnpm and Bun installers
@@ -93,8 +160,8 @@ jobs:
           path: ${{ runner.temp }}/sandbar-qualified
           if-no-files-found: error
   publish:
-    if: inputs.dry_run == false
-    needs: qualify
+    if: needs.plan.outputs.release == 'true' && needs.plan.outputs.dry_run == 'false'
+    needs: [plan, qualify]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm
@@ -124,10 +191,26 @@ jobs:
         with:
           name: sandbar-qualified-release
           path: ${{ runner.temp }}/sandbar-qualified
+      - name: Create release tag
+        if: needs.plan.outputs.create_tag == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          SHA: ${{ needs.qualify.outputs.sha }}
+        run: |
+          set -euo pipefail
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq .object.sha 2>/dev/null || true)
+          if [ -z "${existing}" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${RELEASE_TAG}" -f sha="${SHA}" >/dev/null
+          elif [ "${existing}" != "${SHA}" ]; then
+            echo "${RELEASE_TAG} already points to ${existing}, not ${SHA}" >&2
+            exit 1
+          fi
+          git fetch --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
       - name: Publish qualified release
         env:
-          RELEASE_REF: ${{ inputs.release_ref }}
-          NPM_TAG: ${{ inputs.npm_tag }}
+          RELEASE_REF: ${{ needs.plan.outputs.tag }}
+          NPM_TAG: ${{ needs.plan.outputs.npm_tag }}
           RELEASE_APPROVED: "true"
           GH_TOKEN: ${{ github.token }}
           RELEASE_ARTIFACTS: ${{ runner.temp }}/sandbar-publish
