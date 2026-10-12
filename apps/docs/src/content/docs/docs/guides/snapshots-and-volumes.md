@@ -1,46 +1,38 @@
 ---
 title: Snapshots and volumes
-description: Capture and restore a sandbox, mount retained storage, save references, and clean up resources.
+description: Save sandbox state, keep data between sandboxes, and reopen saved resources.
 ---
 
-Snapshots retain captured sandbox state independently of the source. Volumes retain storage independently of compute. These APIs are available on SDK connections. Snapshot preservation, volume management and mounting are separate provider capabilities; support for one does not imply support for the others.
+Use a **snapshot** to save sandbox state and restore it into another sandbox. Use a **volume** to keep data after a sandbox is destroyed. Both need separate deletion when you no longer need them.
 
-Use `SandbarClient`, `SandboxHandle`, `SnapshotHandle` and `VolumeHandle` from `sandbar-sdk` for application annotations. Existing `DirectSandbarClient`, `DirectSandboxHandle` and Adapter* exports remain available for compatibility; see the [TypeScript reference](/docs/reference/typescript/#consumer-vocabulary-and-compatibility) for the staged complete-surface type parameters.
+Support varies by adapter. Capturing a snapshot, restoring it, managing volumes and mounting volumes are separate features. See [current combinations](#current-combinations) and [tested provider support](/docs/providers/support/) before choosing a workflow.
 
-Malformed caller inputs in these APIs reject with `SandbarError` (`INVALID_ARGUMENT`, effect `none`) before mutation. Unsupported restore preflight throws `UnsupportedFeatureError`; its `unmetRequirements` lists each unmet network, sizing, independent lifecycle or mount requirement. Independent lifecycle is required unless explicitly set to `false`.
-
-Create and restore use the same `mounts: MountSpec[]` descriptors from `volume.at(path)`. Daytona maps caller-selected current volumes onto a mount-free filesystem snapshot with fresh execution, using explicit `daytona-default`. Mounted restore with `blocked` rejects before allocation because earliest-workload enforcement is unqualified. Mounted-source capture, memory composition, omitted recorded mounts, volume copies/versions and resizing remain unsupported. Restores require confirmed `mountHandling: "none"` and no recorded native mounts; unknown provenance rejects.
-
-Nonempty legacy share/replace/omit maps reject with `INVALID_ARGUMENT` and migration guidance; replace them with descriptor arrays. The SDK keeps legacy empty `{}` as a deprecated mount-free runtime alias for coordinated release R and the next published release R+1, removing it at the following API release. Public types teach arrays only. Custom restore hooks must declare `snapshotRestore.mountInput: "specs"` for nonempty arrays; old hooks keep mount-free operation and receive no mounts field.
+For TypeScript annotations, import `SandbarClient`, `SandboxHandle`, `SnapshotHandle` and `VolumeHandle` from `sandbar-sdk`. See the [TypeScript reference](/docs/reference/typescript/#consumer-vocabulary-and-compatibility) for compatibility types.
 
 ## Capture and restore
 
-Start with an [E2B connection](/docs/providers/e2b/) named `sandbar` and `Image` imported from `sandbar-sdk`. The following uses `base` and requests the native `blocked` setting on create and restore. This is not verified egress isolation: the maintained probe at `431cdaa` still connected to `1.1.1.1:443` despite requested blocking. See the [failed network evidence](/docs/providers/support/); captured processes may retain outbound access after restore. On Daytona, use the configured prepared image and `daytona-default` on both create and restore when the connection uses that policy.
+Start with a connection named `sandbar`, configured with a default environment and network policy as shown in [Getting started](/docs/direct-quickstart/). The adapter must support snapshot capture and restore. E2B and Daytona support different kinds of captured state, described [below](#what-capture-preserves).
 
 ```ts
-const source = await sandbar.sandboxes.create({
-  environment: Image.prepared("base"),
-  networkPolicy: "blocked",
-});
+const source = await sandbar.sandboxes.create();
 const check = await source.checkSnapshot();
 if (check.status !== "supported") {
   await source.destroy(); // No capture was submitted.
   throw new Error(check.reason);
 }
-// If capture throws, leave the source intact for reconciliation.
+// Keep the source if capture fails: it may need recovery.
 const captured = await source.snapshot();
 console.log(captured.capture, captured.source);
 ```
 
-The caller now owns `captured` before attempting application persistence. Keep this result in the owning scope, as in the tested `captureSnapshot`/`saveSnapshot` [examples](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/recovery-outcomes.ts). A rejected save leaves `captured.snapshot.reference` and the handle available for another save or deliberate artifact cleanup; do not discard the result when handling that storage error.
+`checkSnapshot()` checks whether this source can be captured. It does not reserve a capture or promise that restore will be supported. Before creating a source for a round trip, check `(await sandbar.capabilities()).snapshots.restore` too.
+
+Keep `captured` available while saving its reference. If your save fails, you still have the handle and reference to save again or clean up deliberately.
 
 ```ts
 try {
   await saveResource(JSON.stringify(captured.snapshot.reference));
-  const restored = await captured.snapshot.restore({
-    networkPolicy: "blocked",
-    requireIndependentLifecycle: true,
-  });
+  const restored = await captured.snapshot.restore();
   try {
     console.log(await restored.inspect());
   } finally {
@@ -49,29 +41,29 @@ try {
   await captured.snapshot.delete();
   await removeSavedResource(captured.snapshot.reference);
 } finally {
-  // Capture returned successfully before this persistence/restore block began.
+  // Capture succeeded before entering this block.
   await source.destroy();
 }
 ```
 
-`saveResource` and `removeSavedResource` are your application's durable persistence functions. Remove or tombstone the saved record only after artifact deletion is confirmed. If that bookkeeping fails, reconcile the record as deleted rather than reopening it or repeating the native delete.
+`saveResource` and `removeSavedResource` represent your application's storage functions. Save references in durable, trusted storage. Remove the saved record only after deletion is confirmed. If removing the record fails, mark it as deleted during recovery instead of repeating the provider delete.
 
-Snapshot deletion is separate from source and restored-compute destruction. If saving, restore, or cleanup fails, retain the snapshot reference for reconciliation; do not delete a potentially dependent artifact.
+Restore uses the connection's configured network policy when you omit `networkPolicy`. An explicit override must be supported by that connection. By default, restore also requires the new sandbox to have a lifecycle independent of the source and snapshot. Unsupported restore requirements reject before allocation with `UnsupportedFeatureError`; `unmetRequirements` explains why.
 
-Close the connection in an outer `finally`, as in [Getting started](/docs/direct-quickstart/). If capture throws, execution never reaches the persistence/restore cleanup block, leaving the source intact. Preserve the error’s operation reference and any known partial snapshot identity using [Errors and recovery](/docs/guides/recovery/); resolve the capture/restart outcome before destroying the source. A local cancellation does not establish that the provider stopped working.
+Snapshot deletion is separate from destroying the source or restored sandbox. If restore or sandbox cleanup fails, keep the snapshot reference until you have resolved the failure. Do not delete a snapshot that may still be needed by compute.
 
-Restore requires a supported **explicit network policy**. Before creating a source for a round trip, check `(await sandbar.capabilities()).snapshots.restore`. Capture and restore support are independent; a successful capture check is not a reservation or a promise that restore is supported.
+Close the connection in an outer `finally`, as in [Getting started](/docs/direct-quickstart/). If capture throws, the second code block is never reached: keep the source, the error's operation reference and any known snapshot reference. Use [Results, errors and saved resources](/docs/guides/recovery/) to resolve capture and restart before destroying the source. Cancelling a local wait does not prove that the provider stopped working.
 
 ### What capture preserves
 
-`source.snapshot()` accepts the adapter's configured native default. Optional requirements validate that default; they do not select another capture mode.
+`source.snapshot()` uses the adapter's configured capture behavior. Optional requirements check that behavior; they do not switch capture modes.
 
-| Provider          | Captured state                            | Source interruption                                 | Restored execution                               |
-| ----------------- | ----------------------------------------- | --------------------------------------------------- | ------------------------------------------------ |
-| Daytona container | Private filesystem                        | Stop, capture, restart a previously running source  | Fresh processes; RAM is not retained             |
-| E2B               | Private filesystem, RAM and process state | Pause and resume a running source; connections drop | Resume captured processes in independent compute |
+| Provider          | Captured state                            | Effect on a running source                | Restored execution                               |
+| ----------------- | ----------------------------------------- | ----------------------------------------- | ------------------------------------------------ |
+| Daytona container | Private filesystem                        | Stop, capture, then restart               | Fresh processes; RAM is not retained             |
+| E2B               | Private filesystem, RAM and process state | Pause and resume; active connections drop | Resume captured processes in independent compute |
 
-Daytona's `snapshots: { restartAfterCapture: false }` leaves a running source stopped; an already-stopped source stays stopped. VM hot/cold capture is not mapped. E2B requires a running source with envd `v0.5.0` or newer and has no filesystem-only capture option.
+Daytona leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. VM capture is unsupported. E2B requires a running source with envd `v0.5.0` or newer and has no filesystem-only capture option.
 
 ```ts
 const captured = await source.snapshot({
@@ -79,31 +71,36 @@ const captured = await source.snapshot({
 }); // E2B can satisfy this; Daytona rejects before stopping compute.
 ```
 
-Consistency is unknown unless native evidence or caller preparation establishes it. After quiescing application writers, pass `consistency: "caller-quiesced"`. This records your attestation. `captured.capture` and `captured.source` report the actual preservation and resulting source lifecycle; snapshot inspection retains the restore-execution facts across reconnects.
+Pause application writers before capture if you need consistent data. Passing `consistency: "caller-quiesced"` records that you did so; Sandbar does not pause writers for you. Otherwise, consistency remains unknown unless the provider supplies evidence. `captured.capture` describes what was saved, and `captured.source` describes the source after capture.
+
+A restored snapshot does not strengthen the provider's network guarantees. In the maintained E2B test, requested `blocked` networking still allowed direct outbound IPv4 TCP; restored processes may retain outbound access. See [E2B networking](/docs/providers/e2b/#images-networking-and-cleanup) and the [test evidence](/docs/providers/support/).
 
 ## Create and mount a volume
 
-Use a [Daytona connection](/docs/providers/daytona/) named `sandbar` configured with `networkPolicy: "daytona-default"`. Mounts attach during sandbox creation. `volume.at(path)` only creates a descriptor; it does not attach storage or mutate the provider. Reusing the same volume in another supported sandbox creation selects its current shared data. Creating a different volume starts with independent empty storage; it does not copy the first volume. A sandbox snapshot must not be assumed to freeze external volume contents.
+A volume stores data separately from compute. `volume.at(path)` describes where to mount it; calling `at()` does not attach storage or change the provider. Pass the descriptor in `mounts` when creating a sandbox.
 
-The default `require-durable` policy blocks compute destruction when writable-volume durability cannot be confirmed. Choose `allow-unconfirmed` only when your application accepts cleanup without a confirmed write barrier. It does not establish account eligibility or promise flushed or durable writes. Finish finite writers before destroying compute.
-
-Configure the policy once on a direct connection, or override it on `destroy` or `submitDestroy`: the call option wins, then `cleanup.storage`, then `require-durable`. Configuration is validated and copied before the provider connects. For the Daytona connection used below:
+The following example uses Daytona. Configure the prepared image and network policy once on the connection:
 
 ```ts
-import { Sandbar } from "sandbar-sdk";
+import { Image, Sandbar } from "sandbar-sdk";
 import { daytona } from "@sandbar-sdk/daytona";
 
 const sandbar = await Sandbar.connect(
   daytona({
     apiKey: process.env.DAYTONA_API_KEY!,
     target: "us",
+    environment: Image.prepared("daytona-small"),
     networkPolicy: "daytona-default",
   }),
   { cleanup: { storage: "allow-unconfirmed" } },
 );
 ```
 
-Close this connection in an outer `finally` after handling owned resources, as in [Getting started](/docs/direct-quickstart/).
+The default cleanup policy, `require-durable`, prevents destruction of mounted compute when writable-storage durability cannot be confirmed. Daytona cannot currently confirm that guarantee. `allow-unconfirmed` permits destruction while accepting that writes may not be fully durable. Finish application writes first; a completed write alone does not prove shutdown durability.
+
+Set the policy once with `cleanup.storage`, as above, or override it on `destroy({ storage: ... })` or `submitDestroy({ storage: ... })`. A call's explicit policy wins over the connection default.
+
+Close this connection in an outer `finally` after handling its resources, as in [Getting started](/docs/direct-quickstart/).
 
 ```ts
 const volume = await sandbar.volumes.create({ name: "workspace-data" });
@@ -112,8 +109,6 @@ const info = await volume.inspect();
 if (info.state !== "ready") throw new Error("Volume is not ready");
 
 const box = await sandbar.sandboxes.create({
-  environment: Image.prepared("daytona-small"),
-  networkPolicy: "daytona-default",
   mounts: [volume.at("/mnt/workspace")],
 });
 try {
@@ -121,57 +116,64 @@ try {
     overwrite: true,
   });
 } finally {
-  const cleanup = await box.destroy(); // Uses the configured cleanup policy.
-  console.log(cleanup.mountDurability); // Durability can still be unconfirmed.
-  // Per-call override: await box.destroy({ storage: "require-durable" });
+  const cleanup = await box.destroy();
+  console.log(cleanup.mountDurability); // May still be unconfirmed.
 }
-// Only after compute cleanup is confirmed and the data is no longer needed:
+// Delete storage only after compute cleanup is confirmed and you no longer need the data.
 await volume.delete();
 await removeSavedResource(volume.reference);
 ```
 
-A different connection default does not change an existing recovered operation or authorize mutation replay.
+To keep the data, omit the final deletion and record removal. Mount the same volume when creating the next sandbox to use its current data. Creating a new volume gives you separate empty storage; it does not copy an existing volume. A sandbox snapshot does not freeze external volume contents.
 
-To keep the data, omit the final deletion and saved-record removal, then attach `volume.at("/mnt/workspace")` when creating the next sandbox. Volumes survive `destroy()` and `close()`, and compute TTL does not expire them. If create or destroy becomes uncertain, keep the volume reference and reconcile compute before deleting storage. A failed readiness check or write must not trigger unsafe artifact deletion. Delete only the resources your application intends to remove; automatic cleanup never adopts borrowed volumes.
+Volumes survive sandbox destruction, connection close and the sandbox's compute lifetime. If creation, saving or cleanup fails, retain any known references and resolve the compute outcome before deleting storage. Automatic cleanup does not adopt borrowed volumes.
 
-Mount paths must be absolute, normalized, nonoverlapping and outside reserved paths. Daytona supports writable subpaths. Its volumes are object-backed; mounted `writeFile` needs `overwrite: true`, and atomic no-clobber on mounted paths is unsupported. A verified write does not establish shutdown durability, POSIX semantics, locking or atomic rename guarantees.
+Mount paths must be absolute, normalized, nonoverlapping and outside reserved paths. Daytona supports writable subpaths. Its volumes use object storage and do not promise normal filesystem locking or atomic rename behavior. Mounted `writeFile` requires `overwrite: true`; atomic no-clobber writes are unsupported. See [Daytona storage details](/docs/providers/daytona/#snapshots-and-retained-volumes) and [boxd storage limits](/docs/providers/boxd/#storage-and-recovery).
 
 ### Restore private state with selected data
 
-Capture private code/configuration from a separate mount-free source. Keep the full returned snapshot and volume references in your trusted store. After destroying the source, a fresh same-scope client can reopen both resources:
+Daytona can combine a filesystem snapshot with volumes you choose at restore time. Capture private code and configuration from a source with no mounts. Save the full snapshot and volume references. A new connection with matching scope can reopen them even after the source has been destroyed:
 
 ```ts
 const snapshot = await sandbar.snapshots.get(saved.snapshot);
 const data = await sandbar.volumes.get(saved.data);
 const restored = await snapshot.restore({
-  networkPolicy: "daytona-default",
   mounts: [data.at("/data")],
 });
 ```
 
-The selected volume supplies its current shared bytes. To select independent empty data, explicitly create a new volume, retain its handle, then pass its descriptor. Omitted `mounts` or `[]` selects private captured state only. Attachment hides private snapshot bytes at the mountpoint without erasing them. No volume is copied, created implicitly, or replaced by name.
+This example uses the Daytona connection configured with `daytona-default` above. Mounted restore with `blocked` is unsupported because enforcement before the first workload runs has not been verified.
 
-Daytona validates scope, readiness, writable access, nonoverlapping paths and exact native IDs before submission, rechecks at dispatch, and verifies the complete mount set and snapshot identity. Read-only access rejects. A snapshot reference's saved capture history supports reopening after source deletion; imported snapshots with unknown provenance reject. Native mount-free classification does not certify absence of guest-created FUSE/network mounts.
+The selected volume supplies its current data. To use separate empty data, create a new volume and pass its descriptor. Omit `mounts`, or pass `[]`, to restore only private snapshot state. A mount hides any private snapshot files at that path without erasing them. Restore does not copy volumes, create them implicitly or replace them by name.
 
-When acknowledged compute cannot be verified, an uncertain restore's `error.outcome` with kind `snapshot_restore` retains `sandbox` when known and the selected `mounts`. Save those identities and the operation reference and inspect without replay. The sandbox reference stays limited to identity and native creation selectors; current mounts come from authenticated native reads during reopening, recovery and cleanup. Compute cleanup retains application volumes and requires deliberate acceptance of unconfirmed writable-storage durability.
+Daytona requires a ready snapshot known to have no recorded mounts, with filesystem preservation and fresh execution. Unknown mount history blocks restore. It checks volume scope, readiness, writable access, mount paths and exact provider IDs. Read-only restore mounts are unsupported. These checks do not detect guest-created FUSE or network mounts.
 
-The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/storage-composition.ts) and its mock test cover shared data, independently created empty data, private-only restore and full-reference reopening. These fixtures establish request mapping, not native startup ordering. The first bounded live case at `824946d` passed A startup evidence, then failed a harness snapshot-name/ID assertion before B. The corrected complete workflow passed at `5911ccc` on Bun 1.3.14 in `us` with `daytona-default` and the pinned first-action image. Both restores verified their selected marker/data profile, captured private state, current-start correlation, exact native identities and fresh-client reopening. All owned resources, including the temporary imported image, were cleaned up. This evidence covers that tested configuration.
+If restore fails with an uncertain outcome, save the operation reference and the known sandbox and volume references from `error.outcome` with kind `snapshot_restore`. Inspect those resources instead of submitting another restore. Destroying the restored sandbox retains application volumes and still follows the configured storage cleanup policy.
+
+The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/storage-composition.ts) covers shared data, separate empty data, private-only restore and reopening full references. See [live test evidence](/docs/providers/live-qualification/) for the tested Daytona configuration and its limits.
 
 ### Current combinations
 
-| Workflow                                   | Current boundary                                                                                                                                                                    |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Capture a sandbox with external mounts     | Unsupported on both adapters                                                                                                                                                        |
-| Daytona cold restore with selected volumes | Implemented for known mount-free filesystem/fresh snapshots and explicit daytona-default; first-action A/B acceptance passed at 5911ccc with the pinned image and confirmed cleanup |
-| Resource overrides, memory plus mounts     | Unsupported; empty resource overrides are equivalent to omission                                                                                                                    |
-| Daytona writable create-time mounts        | Implemented; readiness and immutable volume identity checked                                                                                                                        |
-| E2B volume CRUD                            | Mapped to private-beta native APIs; live validation blocked by account HTTP 403                                                                                                     |
-| E2B create-time mounts                     | Unsupported separately: inspected native requests/observations select names without proving exact mounted volume identity                                                           |
-| Read-only mounts or volume versions        | Not implemented on either adapter                                                                                                                                                   |
+| Workflow                               | Current support                                                                                                      |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Capture and restore private state      | Daytona filesystem capture; E2B filesystem and memory capture. boxd and Vercel snapshots are unsupported.            |
+| Capture a sandbox with external mounts | Unsupported by the Daytona and E2B adapters.                                                                         |
+| Restore with selected volumes          | Daytona only: known mount-free filesystem snapshot, fresh execution and `daytona-default`.                           |
+| Override restore resource sizes        | Unsupported by Daytona and E2B; empty overrides are treated as omitted.                                              |
+| Create a sandbox with volumes          | Daytona writable mounts with optional subpaths; boxd whole-disk read-only or writable mounts.                        |
+| Manage E2B volumes                     | Private-beta API mapping; live creation was blocked by account HTTP 403. Sandbar create-time mounts are unsupported. |
+| Manage Vercel volumes                  | Unsupported.                                                                                                         |
+| Copy or version a volume               | Unsupported by Daytona, E2B and boxd.                                                                                |
+
+boxd volumes and mounts have deterministic test coverage but no recorded live storage pass. Vercel has no recorded live acceptance. See [tested provider support](/docs/providers/support/) for evidence per workflow.
+
+Use descriptor arrays such as `[volume.at("/data")]` for mounts. Legacy nonempty share/replace/omit maps reject with `INVALID_ARGUMENT` and migration guidance; empty `{}` remains a deprecated runtime compatibility alias. Older custom adapters need `snapshotRestore.mountInput: "specs"` to accept nonempty descriptor arrays.
 
 ## Save and reopen references
 
-Resource references are versioned JSON owned by your application. They contain provider, verified scope, native identity and ownership evidence, with no API key or required signature. Existing compatibility history/receipt fields may also be present; save the full returned reference rather than constructing or trimming one. Historical observations are not fresh provider state. Persist them outside the SDK, then reopen using current valid credentials for the same verified scope:
+Resource references are versioned JSON that your application stores. They include the provider, account scope, provider identity and ownership evidence, without API keys. Save the full returned reference: trimming fields can lose the captured generation or history needed to reopen safely.
+
+Use current credentials for the same scope when reopening:
 
 ```ts
 import { validateResourceReference } from "sandbar-sdk";
@@ -182,13 +184,15 @@ console.log(await snapshot.inspect());
 // For a saved volume reference, use await sandbar.volumes.get(reference).
 ```
 
-`get()` validates scope and performs native inspection/identity checks before returning a handle. `inspect()` refreshes those facts, including readiness and generation. Validation alone does not prove that an artifact still exists or is unexpired. Daytona organization scope survives key rotation. E2B key rotation requires an authenticated, verified `teamId`; its default API-key scope changes with the key.
+Validation checks the reference's shape; it does not prove that the resource still exists. `get()` checks scope and reads the provider before returning a handle. `inspect()` refreshes the resource's state. Saved history is not current provider state.
 
-`snapshots.list({ limit: 20 })` and `volumes.list({ limit: 20 })` return bounded pages with optional cursors and explicit coverage. Inventory is not an account-wide ownership proof. Imported/listed artifacts have unknown ownership, and missing mount provenance can block restore.
+Daytona organization scope supports key rotation. For E2B, configure an authenticated, verified `teamId` if references must survive key rotation; its default scope is tied to the API key.
+
+`snapshots.list({ limit: 20 })` and `volumes.list({ limit: 20 })` return bounded pages with optional cursors and coverage information. Finding a resource in a list does not prove your application created it or owns it. Listed or imported snapshots may lack the history needed for restore.
 
 ## Failures and provider limits
 
-Ordinary `snapshot()` returns the snapshot handle, capture guarantees and observed source state. If capture succeeds but source restart definitively fails, `SandbarError` with code `SOURCE_RESTART_FAILED` exposes a typed partial outcome. Separate capture from persistence so the successful result stays in scope through a save failure:
+A successful `snapshot()` returns the snapshot handle, capture details and observed source state. A failed call may still have created a snapshot. For example, if capture succeeds but restarting the source definitively fails, `SOURCE_RESTART_FAILED` includes the saved snapshot in a partial outcome:
 
 ```ts
 import { SandbarError } from "sandbar-sdk";
@@ -203,22 +207,26 @@ try {
     const outcome = error.outcome;
     retainedSnapshot = outcome.snapshot;
     console.error(outcome.capture, outcome.restart, retainedSnapshot);
-    // Save a known reference under your application’s failure policy before rethrowing.
+    // Save any known reference using your application's failure policy before rethrowing.
   }
-  throw error; // The composite call failed; keep its known artifact identity.
+  throw error;
 }
-// If this application save rejects, captured and retainedSnapshot remain available.
+// A rejected save leaves captured and retainedSnapshot available in this scope.
 await saveResource(JSON.stringify(retainedSnapshot));
 ```
 
-An uncertain restart remains `OUTCOME_UNKNOWN` and preserves known capture details. Neither outcome calls for another capture. A failure in your save function after successful capture is an application storage failure; keep the returned reference. The [compiled examples](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/recovery-outcomes.ts) and their deterministic tests separate capture/create from saving, including rejected saves. There is a crash window between native creation and saving identity. If no identity was received, listing alone cannot associate an artifact with the request or prove no effect.
+An uncertain restart reports `OUTCOME_UNKNOWN` and keeps known capture details. Neither case is a reason to submit another capture. A failure in your save function is separate from capture: keep the returned handle and reference. The [tested recovery examples](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/recovery-outcomes.ts) show this separation.
 
-Capture, restore, volume creation and deletion also have `submit…` forms. Save operation references from uncertain errors or cancelled waits, then use same-scope `recover(reference)` to observe without replay. Existing explicit `continue()` and checkpoint callbacks are advanced compatibility paths; see [Results, errors and saved resources](/docs/guides/recovery/). Applications own persistence and reconciliation policy.
+Capture, restore, volume creation and deletion also have `submit…` methods. Save operation references when a result becomes uncertain or a wait is cancelled, then use `sandbar.recover(reference)` to observe the original operation without repeating it. Some staged operations support explicit `continue()`; see [Results, errors and saved resources](/docs/guides/recovery/) before using it.
 
-E2B restores the saved `templateId:buildUUID`, never a moving `default` build. Missing/unaddressable generations fail. Snapshot deletion targets its dedicated containing template and rejects known shared expansion; native deletion has no transactional generation precondition. Daytona deletion rechecks warm-pool dependencies, and unreadable or nonempty dependencies block deletion because the native delete can cascade. Automatic cleanup requires correlated creation evidence; explicit deletion still checks scope, identity and dependencies.
+A process can crash after provider creation but before saving the identity. If no identity was received, a list or matching name does not prove which resource belongs to that request. Keep unresolved resources under investigation rather than retrying creation or deleting by name.
 
-Lost acknowledgements can leave billable artifacts without a safely owned identity. Preserve custody and reconcile rather than retrying by name. Unknown native path exclusions, expiry and storage guarantees remain unknown. Aggregate mounted history/path size can exceed the recovery-reference limit and reject before effects. Provider-specific cleanup may report unresolved volume names instead of verified native IDs; those names grant no deletion authority.
+E2B restore selects the captured template build, never a newer `default` build. E2B snapshot deletion removes its containing template and blocks known shared use; Daytona checks warm-pool dependencies because deletion can affect dependent resources. A dependency check cannot make a provider delete transactional. See [E2B snapshot limits](/docs/providers/e2b/#runtime-snapshots-and-volumes) and [Daytona cleanup limits](/docs/providers/daytona/#runtime-snapshots).
+
+Automatic cleanup requires evidence that the application created the resource. Explicit deletion still checks scope, identity and dependencies. An unresolved volume name in a cleanup report is not a verified volume ID or permission to delete it. Very large mount histories can exceed saved-reference limits and reject before provider changes. Unknown expiry, excluded paths and storage guarantees remain unknown.
 
 ## Evidence
 
-The [generated support table](/docs/providers/support/) and [live evidence](/docs/providers/live-qualification/) preserve exact tested revisions/configuration, historical passes, blocked access and not-run cases. The maintained Bun acceptance tooling generates these claims, including the historical failed storage-composition case and the corrected full pass with confirmed cleanup. E2B volume creation is blocked by account HTTP 403, and the maintained official profile skips volume cases before setup. This does not prove that E2B lacks native volumes.
+The [generated support table](/docs/providers/support/) and [live evidence](/docs/providers/live-qualification/) record tested revisions and configurations, historical passes, blocked access and cases not run. A pass applies to its recorded configuration, not every image, account or current revision.
+
+Daytona's complete mounted-restore workflow passed at `5911ccc` with the pinned image, `us` region and `daytona-default`, including selected data, fresh-client reopening and confirmed cleanup. The earlier partial storage test remains in the evidence history. E2B volume creation was blocked by account HTTP 403, so maintained E2B acceptance skips volume cases before setup; that does not prove the provider lacks volumes.

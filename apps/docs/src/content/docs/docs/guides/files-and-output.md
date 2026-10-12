@@ -1,11 +1,11 @@
 ---
 title: Files and output
-description: Transfer text and binary files and read bounded command output.
+description: Read and write sandbox files, transfer large files, and use command output safely.
 ---
 
 ## Write and read text
 
-Use `writeTextFile` and `readTextFile` for UTF-8 without encoding boilerplate:
+Use `writeTextFile` and `readTextFile` to work with UTF-8 text. This example connects with E2B; use your chosen adapter and a writable directory in its sandbox:
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
@@ -26,11 +26,15 @@ try {
 }
 ```
 
-These helpers call the byte APIs below and inherit their limits, absolute-path validation, cancellation, errors and recovery. Limits count encoded bytes, not string length; an oversized read fails instead of returning a prefix. Reads decode the complete bounded result, replace malformed UTF-8 and consume an initial UTF-8 BOM. Empty text is valid. Text is never parsed, shortened or newline-normalized; parent directories must exist, and helpers do not resume compute. Writes default to `overwrite: false`. Pass `{ signal }` to either helper for cancellation. Each helper uses the existing file-operation tracing spans.
+The later snippets are separate examples to place inside the inner `try` block, before `box.destroy()`. They assume any input files and directories they read already exist.
+
+The parent directory must already exist. Writes leave existing files alone unless you pass `{ overwrite: true }`. Empty text is valid, and these methods do not parse JSON or change line endings.
+
+Text files use the same limits, cancellation and error handling as the byte methods below. Limits count UTF-8 bytes, which can differ from the number of characters. A read that exceeds its limit fails instead of returning part of the text. Reading replaces malformed UTF-8 with the replacement character (`�`) and removes an initial byte-order mark (BOM). Pass `{ signal }` to cancel either method. File operations do not resume a suspended sandbox.
 
 ## Write and read bytes
 
-File APIs take absolute paths inside the sandbox and preserve bytes. This example uses E2B's default `/home/user` workspace:
+Use `writeFile` and `readFile` for binary data. Paths must be absolute paths inside the sandbox. This example uses E2B's `/home/user` workspace:
 
 ```ts
 const path = "/home/user/sandbar-example.bin";
@@ -39,31 +43,31 @@ const bytes = await box.readFile(path);
 console.log(bytes);
 ```
 
-File reads accept caller cancellation while keeping `readFile(path)` available:
+To stop waiting for a file read after five seconds, pass an abort signal:
 
 ```ts
 const bytes = await box.readFile(path, { signal: AbortSignal.timeout(5000) });
 ```
 
-One fixed **30-second local deadline** covers the provider response and all file chunks. Caller abort rejects with `WAIT_ABORTED`, the local deadline with `TIMEOUT`, and client close with `CLIENT_CLOSED`. These are read-only failures with no uncertain mutation or recovery reference. Native read failures retain their error code.
+A buffered read has a fixed **30-second deadline** for the provider response and all file data. An abort signal rejects with `WAIT_ABORTED`; the deadline rejects with `TIMEOUT`; closing the client rejects with `CLIENT_CLOSED`. Reads do not change the file, so these failures have no mutation to recover. Provider read errors keep their error code.
 
-Sandbar stops the local wait promptly even if an adapter ignores its signal. It cancels and releases local readers, including streams returned after cancellation, without awaiting native cleanup. Daytona download requests and E2B detail/file requests receive cancellation signals; earlier scope inspection may finish independently. Native request cancellation is best effort and does not terminate remote commands or change sandbox lifetime. E2B retains its verified, non-resuming guest attachment checks.
+Sandbar stops local waiting promptly and asks the adapter to cancel the request. Provider cancellation is best effort: earlier checks may still finish. Cancelling a read does not terminate commands or change the sandbox lifetime.
 
-Convenience reads and writes default to **1 MiB** and buffer in memory. Pass `maxBytes` to choose a bound up to **16 MiB**; larger data uses the streaming methods below. A read exceeding its bound rejects instead of returning a prefix. The parent directory must already exist and be writable by the provider's file operations.
+Buffered reads and writes default to a **1 MiB** limit. Pass `maxBytes` to choose a limit up to **16 MiB**; your adapter may enforce a lower limit. Use the streaming methods below for larger files. The parent directory must already exist and be writable by the provider's file operations.
 
-`overwrite` defaults to `false`: writing to an existing destination must fail without replacing it. To replace a file deliberately:
+`overwrite` defaults to `false`: writing to an existing file fails without replacing it. To replace a file:
 
 ```ts
 await box.writeFile(path, new TextEncoder().encode("updated"), { overwrite: true });
 ```
 
-Daytona and E2B implement no-clobber writes using staged files and exact-destination hard links. Their images need GNU-compatible `ln -T` and a filesystem that supports hard links. Check [tested provider support](/docs/providers/support/) before relying on a custom image.
+Daytona and E2B protect existing files by writing a temporary file first, then using a hard link to publish it at the destination. Their images need GNU-compatible `ln -T` and a filesystem that supports hard links. Check [tested provider support](/docs/providers/support/) before using a custom image.
 
-For E2B, use `/home/user` for this workflow. An earlier live test failed when overwriting a user-owned file directly in root-owned sticky `/tmp`; a home-directory pass does not qualify arbitrary paths.
+For E2B, use `/home/user` for this workflow. Overwriting a user-owned file in the root-owned `/tmp` directory failed in live testing because of its sticky-bit permissions. Successful tests in `/home/user` do not guarantee the same behavior at every path.
 
 ## Directories and metadata
 
-Daytona and E2B support the same private-filesystem workflow:
+Use these methods to create directories, inspect entries, copy or move files, and remove them. This workflow is tested on Daytona and E2B sandbox filesystems; mounted storage can have different limits:
 
 ```ts
 await box.makeDirectory("/home/user/job/results", { recursive: true });
@@ -76,21 +80,27 @@ await box.moveFile("/home/user/job/copy.json", "/home/user/job/final.json");
 await box.removeFile("/home/user/job", { recursive: true });
 ```
 
-`readDirectory` returns immediate `{ name, type }` children in deterministic code-unit order, an `observedAt` timestamp and `completeness: "complete" | "unknown"`. Types are `file`, `directory`, `symlink` or `unknown`. Unknown metadata remains visible. Completeness describes the enumeration, not an atomic snapshot of a changing directory. Authentication, permission and transport failures reject.
+`readDirectory` lists the immediate children, sorted by name using JavaScript string order. Each entry has `{ name, type }`, where `type` is `file`, `directory`, `symlink` or `unknown`. The result also includes an `observedAt` timestamp and `completeness`, which is `"complete"` or `"unknown"`. Unknown entry types remain in the list. A complete list is still an observation of a directory that may change while it is being read. Authentication, permission and connection errors reject the read.
 
-`listFiles` retains its strict complete-listing contract. Both methods reject more than **1,024 entries** or **65,536 summed UTF-8 bytes in names** with `OUTPUT_CAPACITY`; invalid or duplicate children reject with `INVALID_RESPONSE`. There is no implicit recursion or pagination, and local truncation never becomes a successful unknown listing.
+`listFiles` returns only the entries and requires the adapter to provide a complete list. Neither method searches subdirectories or fetches additional pages. Both reject more than **1,024 entries** or **65,536 UTF-8 bytes across all entry names** with `OUTPUT_CAPACITY`. Invalid or duplicate entries reject with `INVALID_RESPONSE`. Sandbar does not silently shorten a list.
 
-`statFile` returns the entry type and available `sizeBytes`, `modifiedAt` and `mode`. Missing metadata is omitted. The final symlink is not followed by default, including dangling links; pass `{ followSymlinks: true }` to inspect its target. `fileExists` returns false only for confirmed entry absence. Credentials, permissions, missing compute and transport failures reject. Intermediate parent links follow the guest namespace.
+`statFile` returns the entry type and any available `sizeBytes`, `modifiedAt` and `mode`. Missing fields are omitted. If the path ends in a symlink, it inspects the link by default, even if the target is missing. Pass `{ followSymlinks: true }` to inspect the target. Symlinks in parent directories are followed.
 
-Mkdir accepts an existing directory. Without `recursive: true`, parents must exist. Removal accepts missing entries and permits files, links and empty directories; nonempty directories require explicit recursion. Directory paths collapse repeated slashes and trailing slashes, and root removal is refused. Recursive removal never walks final or descendant symlink entries. This is ordinary filesystem access, not a confinement boundary.
+`fileExists` returns `false` only when the entry is confirmed missing. Authentication, permission, unavailable compute and connection errors reject instead of returning `false`.
 
-Copy initially accepts regular-file operands only. Move renames a file or directory on the same filesystem, without a copy/delete fallback. Both reject identical source/destination paths and default to no-clobber; `{ overwrite: true }` deliberately replaces a compatible destination. Parents must exist. Copy does not promise a snapshot of a concurrently changing source, metadata cloning or storage durability. Linux native rename collision guarantees do not imply global atomicity on object-backed mounts.
+`makeDirectory` succeeds if the directory already exists. Pass `{ recursive: true }` to create missing parents. `removeFile` succeeds if the entry is already missing and can remove files, symlinks and empty directories. Removing a nonempty directory requires `{ recursive: true }`. Recursive removal removes symlinks themselves without walking their targets.
 
-Both official adapters use adapter-owned Python 3 helpers for complete directory/link observations and race-safe filesystem changes. Their private Linux filesystem requires Python 3; no-clobber native rename requires Linux `renameat2`. See the provider pages for transport and image prerequisites. Experimental Modal can reject optional hooks with `UNSUPPORTED`.
+Directory methods normalize repeated and trailing slashes. Sandbar refuses to remove `/`. These methods do not keep access inside a particular directory: paths can still pass through symlinks in parent directories.
+
+`copyFile` copies regular files. `moveFile` renames a file or directory within the same filesystem; it does not fall back to copying and deleting across filesystems. Both require existing parents, reject identical source and destination paths, and protect existing destinations by default. Pass `{ overwrite: true }` to replace a compatible destination.
+
+Copying does not freeze a changing source, preserve all metadata, or guarantee durable storage. Object-backed mounts may not provide the same atomic behavior as a local Linux filesystem.
+
+Daytona and E2B use Python 3 helpers for these directory operations. Custom images need Python 3, and moving without replacing an existing destination needs Linux `renameat2`. See the provider pages for image and transport requirements. Other adapters can reject unsupported methods with `UNSUPPORTED`.
 
 ## Large byte transfers
 
-The application supplies byte chunks and owns its download sink:
+Use `writeFileStream` and `readFileStream` for files that are too large to keep in memory. In this example, `inputChunks` supplies byte chunks, `destination.write()` saves downloaded chunks, and `signal` is your abort signal:
 
 ```ts
 const uploaded = await box.writeFileStream("/home/user/archive.bin", inputChunks, { signal });
@@ -100,17 +110,29 @@ for await (const chunk of box.readFileStream("/home/user/archive.bin", { signal 
 }
 ```
 
-These methods transfer incrementally without a default whole-file size ceiling. Pass `maxBytes` to impose one. Large chunks are split into at most **64 KiB**, with bounded queued bytes/chunks and awaited IO. Reads fail on incomplete delivery. A successful write returns the confirmed byte count; empty files and arbitrary binary bytes are valid. Slow consumer processing does not consume the network inactivity allowance.
+Streaming methods have no default total-file size limit; pass `maxBytes` to set one. Sandbar splits large chunks into pieces of at most **64 KiB** and limits how much data waits in memory. Reads reject incomplete delivery. A successful write returns the confirmed byte count. Empty files and binary data are supported. Time spent processing a downloaded chunk does not count as network inactivity.
 
-Transfers separate setup, inactivity and optional overall timeouts. Defaults are **30 seconds** for setup and **60 seconds** without active network progress, with no overall deadline. Set `transfers: { setupTimeoutMs, inactivityTimeoutMs, overallTimeoutMs }` on the SDK connection, or use these timeout fields in the per-transfer options to override the policy. Caller abort or client close stops local waiting and cancels readers promptly. The SDK requests producer cleanup with `iterator.return()`; producer-owned blocked IO must observe the caller signal to stop, since JavaScript cannot interrupt an arbitrary pending `next()`. Cancellation does not roll back already dispatched remote work. A timeout or cancellation during staging cleanup preserves `effect: "applied"` after confirmed publication, with remaining correlated temporary paths indicating unfinished cleanup.
+Streaming has three timeout settings:
 
-Writes and copies reserve same-directory staging before publication. No-clobber is enforced at publication, including concurrent destination creation. Cleanup targets only the correlated staging artifact. A lost acknowledgement or interrupted cleanup preserves known source, destination and temporary-path effects in typed errors; never automatically retry an uncertain mutation. A confirmed transfer remains confirmed if later inspection fails. Mounted storage may lack the required publish guarantee and rejects unsupported requests before effects.
+- `setupTimeoutMs`: time to start the transfer; defaults to **30 seconds**.
+- `inactivityTimeoutMs`: time without network progress; defaults to **60 seconds**.
+- `overallTimeoutMs`: total transfer time; no deadline by default.
 
-See the compiled [artifact recipe](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/directory-files.ts). Deterministic fixtures and packed consumers verify these additions separately from dated live evidence in [provider support](/docs/providers/support/).
+Set defaults with `transfers: { setupTimeoutMs, inactivityTimeoutMs, overallTimeoutMs }` when connecting, or override them in the options for one transfer.
+
+An abort signal or client close stops local waiting and asks readers and input iterators to clean up. If your input iterator is waiting on its own I/O, that I/O must observe the abort signal too. JavaScript cannot interrupt an arbitrary pending iterator call. Cancellation does not undo remote work already started.
+
+Daytona and E2B streaming writes and copies use a temporary file in the destination directory before publishing the result. With the default `overwrite: false`, publication fails if another process creates the destination during the transfer. Cleanup targets only temporary files belonging to that operation. Mounted storage may not support these guarantees; an adapter must reject unsupported requests before changing files.
+
+A lost response does not prove that a write failed. Errors retain known changes and related temporary paths. Once publication is confirmed, a later inspection or cleanup failure keeps `effect: "applied"`; remaining temporary paths show what still needs cleanup. Do not automatically retry an uncertain write.
+
+See the complete [artifact recipe](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/directory-files.ts) and [tested provider support](/docs/providers/support/) for the images and storage paths covered by live tests.
 
 ## Traversal and text lines
 
-`walkFiles` composes directory reads into deterministic depth-first traversal. It yields `{ name, type, path, relativePath, depth }` entries; the root itself is omitted and immediate children have depth 1. Directory entries are yielded before their descendants. Symlinks and unknown types are yielded without descent. Each directory must have complete enumeration; unreadable subtrees, unknown completeness and entry-budget overflow reject rather than silently skipping data.
+Use `walkFiles` to visit a directory tree. It yields `{ name, type, path, relativePath, depth }` for each entry, starting with the root's children at depth 1. The root itself is omitted. Entries are sorted by name within each directory, and each directory is followed by its contents before traversal continues to the next sibling. Symlinks and unknown entry types are yielded without being followed.
+
+Every directory must have a complete listing. Unreadable directories, unknown completeness and exceeded entry limits reject the traversal instead of silently skipping data.
 
 ```ts
 for await (const entry of box.walkFiles("/home/user/job", {
@@ -129,11 +151,15 @@ for await (const line of box.readTextLines("/home/user/job/results/events.txt", 
 }
 ```
 
-Traversal defaults to depth **32** and **10,000 observed entries**. `maxDepth` is an intentional descent boundary. Exclusions are exact canonical root-relative paths, with directory exclusions pruning whole subtrees; they are not glob patterns. Excluded entries still count against the observed-entry budget. This observes a changing namespace and does not promise a snapshot or confinement against intermediate symlinks.
+Traversal stops descending at depth **32** by default and allows **10,000 observed entries**. Set `maxDepth` and `maxEntries` to change these limits. `exclude` accepts exact paths relative to the root, such as `"cache"` or `"results/private.txt"`; it does not accept glob patterns. Paths must omit leading/trailing slashes and `.` or `..` segments. Excluding a directory skips its contents. Entries found in a listing still count toward the limit even when excluded.
 
-`readTextLines` incrementally decodes UTF-8 over `readFileStream`, including code points and CRLF split across chunks. It strips LF and CRLF delimiters, preserves lone CR, and yields a final unterminated line without adding an empty line after a final delimiter. Malformed UTF-8 uses replacement characters, matching the text helpers. The default maximum line is **1 MiB of source bytes**, excluding the delimiter; oversized lines reject with `OUTPUT_CAPACITY`. All byte-transfer options, including `maxBytes`, cancellation and timeout overrides, also apply. These SDK helpers need existing directory/stream adapter hooks, with no new provider endpoint. Range reads, batches, glob/search and tree copy remain deferred.
+Traversal does not freeze the tree while reading it or prevent paths from passing through symlinks in parent directories.
 
-The compiled artifact recipe exercises both helpers through deterministic fixtures and packed consumers. Historical live artifact passes at `2f6afe8` predate these helpers and do not qualify them; the expanded recipe passed at `e91f2d5` on both borrowed provider images with confirmed cleanup. Exact scope is recorded in provider support.
+Use `readTextLines` to read a UTF-8 file one line at a time. It handles characters and Windows line endings split across chunks. Returned lines omit LF or CRLF endings; a lone CR remains in the text. A final line without a newline is returned, and a trailing newline does not add an extra empty line. Malformed UTF-8 is replaced with `�`.
+
+The default line limit is **1 MiB of source bytes**, excluding the line ending. Larger lines reject with `OUTPUT_CAPACITY`. Set `maxLineBytes` to change it. Streaming options such as `maxBytes`, `signal` and timeout overrides also apply. These helpers require an adapter that supports directory reads and file streams, respectively. They do not add glob search, range reads or whole-tree copy.
+
+Both helpers are covered by offline tests and the shared artifact recipe. Live tests passed on the E2B and Daytona images listed in [provider support](/docs/providers/support/); those results do not qualify every custom image or mount.
 
 ## Read command output
 
@@ -148,11 +174,13 @@ if (preview.shortened) console.log("Display shortened; captured bytes remain ava
 if (result.truncated) console.warn("Command output was truncated");
 ```
 
-`stdout` and `stderr` are `Uint8Array` values. Keep those bytes for binary processing. `stdoutText(maxBytes?)`, `stderrText(maxBytes?)` and exported `outputText(bytes, maxBytes?)` decode **all captured/supplied bytes** as UTF-8 by default, without adding a suffix. Pass an explicit numeric limit to shorten text for display. Numeric display limits are safe integers from **0 to 1,048,576**, including zero. Invalid limits throw a local `RangeError`.
+Execution results keep `stdout` and `stderr` as `Uint8Array` values. Use those bytes for binary data. `stdoutText()`, `stderrText()` and the exported `outputText(bytes)` decode **all captured bytes** as UTF-8 by default.
 
-`stdoutPreview({ maxBytes? })` and `stderrPreview({ maxBytes? })` return `OutputPreview`: `{ text, shortened }`. They default to **16,384 input bytes**, using the same byte limits and text as an explicitly bounded text helper. `shortened` concerns only that stream's display: exact-bound or empty input is not shortened; nonempty input with a zero bound returns `{ text: "…", shortened: true }`. A literal ellipsis in command output does not establish display loss.
+For display, pass a byte limit such as `result.stdoutText(4096)`. If the captured bytes exceed that limit, the text ends with `…`. Display limits must be safe integers from **0 to 1,048,576**; invalid limits throw `RangeError`.
 
-For parsing captured output, check capture completeness before decoding:
+`stdoutPreview()` and `stderrPreview()` return `{ text, shortened }` and default to **16,384 input bytes**. Pass `{ maxBytes }` to change the limit. `shortened` tells you whether this preview omitted captured bytes. An empty stream or a stream exactly at the limit is not shortened. A zero limit on nonempty output returns `{ text: "…", shortened: true }`. Use the flag rather than looking for an ellipsis, which may be part of the command's own output.
+
+Before parsing captured output, check `truncated`:
 
 ```ts
 const result = await box.exec(["cat", "/home/user/report.json"]);
@@ -161,17 +189,21 @@ const report = JSON.parse(result.stdoutText());
 console.error(result.stderrText());
 ```
 
-Existing `{ full: true }` calls on either text method or `outputText(bytes, { full: true })` remain supported and equivalent to no-argument decoding. Full decoding allocates a string proportional to input size. Full options must contain only `full: true`; preview options allow only optional `maxBytes`. Invalid option objects throw `RangeError` without changing the execution result. Omitted or undefined text options decode all supplied bytes; omitted preview options use the 16 KiB default.
+`stdoutText({ full: true })`, `stderrText({ full: true })` and `outputText(bytes, { full: true })` also decode all captured bytes. Full decoding uses memory proportional to the output size. Text option objects allow only `full: true`; preview option objects allow only `maxBytes`. Invalid options throw `RangeError` without changing the captured result.
 
-The execution capture limit defaults to **1 MiB combined across both streams**, retaining stdout first and stderr with the remainder. `result.truncated` means output may be incomplete, including when a stream reaches the cap before its end can be confirmed. Capture loss and display shortening are independent: complete capture can have a shortened preview; truncated capture can have an unshortened preview. Full decoding and larger display bounds cannot recover discarded capture.
+By default, execution captures at most **1 MiB across stdout and stderr combined**, keeping stdout first and using the remaining space for stderr. Set `maxOutputBytes` in the execution request to change that limit. `result.truncated` means the captured output may be incomplete, including when a stream reaches the limit before its end can be confirmed.
 
-All helpers use standard UTF-8 replacement decoding and consume an initial UTF-8 BOM. Limits count input bytes, so clipping inside a multibyte sequence produces U+FFFD; malformed bytes and incomplete captured suffixes are also replaced. The replacement and display suffix can make the rendered string exceed the input byte bound. For strict parsing, use `new TextDecoder("utf-8", { fatal: true }).decode(result.stdout)`. A capture guard does not establish valid UTF-8 or JSON, and parsing can still fail. Never parse a bounded display string.
+Capture limits and display limits are separate. A complete result can have a shortened preview, and an incomplete result can fit entirely in a preview. Full decoding or a larger preview cannot recover bytes that were never captured.
 
-The same helpers are available on recovered execution results and on `NonzeroExitError.result` and `NoExitCodeError.result`. Code manually constructing `ExecOutput` must now implement the two preview methods and full overloads; adapter authors still return `ExecValue` byte arrays.
+Text helpers replace malformed UTF-8 with `�` and remove an initial BOM. A byte limit can cut a character in half, which also produces `�`. The replacement character and added ellipsis can make the displayed text longer in bytes than the input limit.
+
+For strict UTF-8 validation, use `new TextDecoder("utf-8", { fatal: true }).decode(result.stdout)`. Checking `truncated` does not prove that output is valid UTF-8 or JSON, so decoding and parsing can still fail. Parse the complete captured bytes, never a shortened display string.
+
+The same text and preview helpers are available on recovered execution results and on `NonzeroExitError.result` and `NoExitCodeError.result`.
 
 ## Supply finite command input
 
-`box.exec` accepts a finite UTF-8 string or exact byte array, then closes guest stdin with EOF:
+`box.exec` accepts a string or byte array as input, then closes the command's stdin to signal that no more data is coming:
 
 ```ts
 const payload = "Ada 🌊\0";
@@ -183,8 +215,14 @@ const result = await box.exec({
 console.log(result.stdoutText());
 ```
 
-String input is encoded as UTF-8. `Uint8Array` input preserves its bytes, including NUL and binary values. The payload limit is **1 MiB**; an oversized value rejects before provider dispatch. Explicit empty input still sends EOF, and omitted input is closed. The result keeps stdout, stderr and exit status separate under the ordinary capture limit. Adapters may implement this with a seekable staging file; the contract promises bytes and EOF, not a pipe descriptor. For incremental input, use [`processes.start({ command, stdin: "pipe", output: { mode: "stream" } })`](/docs/guides/text-streaming/), then `write()` and `closeStdin()`. Process stdin defaults to closed. See the [compiled finite-input example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/finite-stdin.ts) and [provider support](/docs/providers/support/); deterministic and packed coverage does not establish live provider qualification.
+Strings are encoded as UTF-8. `Uint8Array` input keeps its exact bytes, including NUL and binary data. The input limit is **1 MiB**; larger input rejects before contacting the provider. Empty or omitted input still closes stdin. Output and exit status use the same result format and capture limit as other executions.
+
+An adapter may supply this input through a temporary file rather than a pipe. For ongoing input, use [`processes.start({ command, stdin: "pipe", output: { mode: "stream" } })`](/docs/guides/text-streaming/), then call `write()` and `closeStdin()`. Process stdin defaults to closed. See the complete [finite-input example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/finite-stdin.ts) and [tested provider support](/docs/providers/support/) for provider limits and live test coverage.
 
 ## Recover an uncertain write
 
-A timeout after upload does not establish that a file was unchanged. `FilesystemError` exposes `effect` and `details`, which can retain correlated `source`, `destination`, `temporaryPaths` and `bytesTransferred`. File transfers do not return an operation recovery reference and cannot be imported through `recover()`. Inspect the destination and only the correlated staging artifacts using the original sandbox; preserve the error details and reconcile before retrying. A confirmed publication can retain `effect: "applied"` even when staging cleanup fails.
+A timeout or lost response does not prove that the destination was left unchanged. Keep the error details and check the outcome before retrying.
+
+For buffered `writeFile` and `writeTextFile` calls submitted as operations, an uncertain result can include a recovery reference. Use it with [`recover()`](/docs/guides/recovery/) to inspect the original operation. Buffered writes larger than **1 MiB** use streaming when the adapter supports it, so they follow the streaming error behavior below.
+
+`writeFileStream` does not return an operation recovery reference. Its `FilesystemError` exposes `effect` and `details`, which can include `source`, `destination`, `temporaryPaths` and `bytesTransferred`. Inspect the destination and only the related temporary files in the original sandbox. An error with `effect: "applied"` means publication was confirmed even if temporary-file cleanup failed.
