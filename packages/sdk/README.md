@@ -2,7 +2,7 @@
 
 `sandbar-sdk` uses an installed adapter in the caller's server-side Node.js or Bun process. Official Daytona and E2B adapters are available from `@sandbar-sdk/daytona` and `@sandbar-sdk/e2b`. The experimental Modal integration is installed separately as `@sandbar-sdk/modal` and uses the same public adapter contract as custom integrations. The fake provider is a deterministic test fixture. Live provider qualification remains separate from the packaged API shape.
 
-Once published, install `sandbar-sdk @sandbar-sdk/daytona` (or `sandbar-sdk @sandbar-sdk/e2b`). The unpublished SDK provider subpaths have been removed; update imports to the separate packages.
+Install `sandbar-sdk @sandbar-sdk/daytona` (or `sandbar-sdk @sandbar-sdk/e2b`).
 
 ```ts
 import { Sandbar } from "sandbar-sdk";

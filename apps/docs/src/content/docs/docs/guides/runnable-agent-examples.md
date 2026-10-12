@@ -14,7 +14,7 @@ The [examples README](https://github.com/pandemicsyn/sandbar/blob/main/examples/
 
 ## Set up and run
 
-Use **Bun 1.3.14** on the host. Packages are unpublished, so run from a checkout:
+Use **Bun 1.3.14** on the host. These examples live in the repository, so run them from a checkout:
 
 ```sh
 git clone https://github.com/pandemicsyn/sandbar.git

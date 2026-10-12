@@ -41,4 +41,4 @@ Run `bun run release:fixture` after building packages. It uses temporary package
 
 Install core plus the selected official adapter: `npm install sandbar-sdk @sandbar-sdk/daytona` or `npm install sandbar-sdk @sandbar-sdk/e2b` (equivalent pnpm/Bun commands work). Core alone supports independently authored adapters. Its official provider imports are `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, `@sandbar-sdk/boxd`, and `@sandbar-sdk/vercel`. The Vercel adapter has offline qualification and no live acceptance; its retained metadata and REST-boundary limitations remain documented. The experimental `@sandbar-sdk/modal` adapter is a separate package outside this 1.0 release workflow.
 
-Adapter authors install `@sandbar-sdk/adapter` and import `@sandbar-sdk/adapter/testing` for the conformance suite. These are package shapes for a future authorized publication; no npm release is performed by this task.
+Adapter authors install `@sandbar-sdk/adapter` and import `@sandbar-sdk/adapter/testing` for the conformance suite.
