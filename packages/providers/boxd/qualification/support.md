@@ -12,15 +12,15 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Sandbox lifecycle                   | [Conditional · passed at fcb59d40](#boxd-lifecycle) |
 | Native sandbox suspend/resume       | [Conditional · not-run](#boxd-suspension)           |
 | Protected HTTP preview              | [Unsupported · not-run](#boxd-previewProtected)     |
-| Public HTTP preview                 | [Unsupported · not-run](#boxd-previewPublic)        |
+| Public HTTP preview                 | [Conditional · not-run](#boxd-previewPublic)        |
 | Local-handle process termination    | [Unsupported · not-run](#boxd-termination)          |
 | Configured lifetime renewal         | [Conditional · not-run](#boxd-renewal)              |
 | Scoped sandbox reopening            | [Conditional · passed at fcb59d40](#boxd-reopening) |
 | Execution and captured output       | [Conditional · passed at fcb59d40](#boxd-execution) |
 | Process streams and terminals       | [Unsupported · not-run](#boxd-streaming)            |
-| Finite execution input              | [Unsupported · not-run](#boxd-finiteStdin)          |
+| Finite execution input              | [Conditional · not-run](#boxd-finiteStdin)          |
 | Binary files and overwrite          | [Conditional · passed at fcb59d40](#boxd-files)     |
-| Directory primitives                | [Unsupported · not-run](#boxd-directories)          |
+| Directory primitives                | [Conditional · not-run](#boxd-directories)          |
 | OCI image builds                    | [Unsupported · not-run](#boxd-oci)                  |
 | Measured network controls           | [Unsupported · not-run](#boxd-network)              |
 | Cold snapshot with selected storage | [Unsupported · not-run](#boxd-storageComposition)   |
@@ -28,8 +28,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Volume CRUD                         | [Conditional · not-run](#boxd-volumes)              |
 | Mounted persistence                 | [Conditional · not-run](#boxd-persistence)          |
 
-The external experimental [boxd adapter](/docs/providers/boxd/) has deterministic fixture coverage and separately maintained, dated live evidence. Its declarations are maintained in an external provider profile; it is outside the selected launch release.
-The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. Daytona baseline passed at 8449def after allowing bounded inventory convergence; the original 1505ee0 failure remains recorded. Snapshot roundtrip, volume CRUD and mounted persistence retain their 1505ee0 passes. E2B baseline and RAM snapshot roundtrip passed at 8449def; its measured network probe failed at 431cdaa. All newly owned compute and retained artifacts have confirmed cleanup, while the original E2B volume uncertainty remains unresolved. Other operation/configuration claims retain their own recorded revisions and limitations below.
+The [live evidence detail](./live-qualification.md) contains only reviewed records supplied for this external profile. Missing records remain not-run; declarations do not establish live acceptance.
 
 ## boxd caveats
 
@@ -55,7 +54,7 @@ Not implemented by this adapter.
 
 ### Public HTTP preview
 
-Not implemented by this adapter.
+Explicit preview.access public config creates pinned ports (profile 3000/3001) and disables browser protection after expiry installation. Lookup reads running machine identity and existing pinned routes; never resumes or creates routes. Default protected lookup unsupported. Native inbound access may wake compute later. Offline coverage; live not-run.
 
 <a id="boxd-termination"></a>
 
@@ -91,19 +90,19 @@ Native execution stream cancellation kills the process group; it cannot satisfy 
 
 ### Finite execution input
 
-Not implemented by this adapter.
+Native byte frames (at most 64 KiB each), up to 1 MiB input followed by native half-close/EOF. Empty and omitted input close stdin. No seekability or PTY promise. Deterministic protobuf-boundary coverage; live not-run.
 
 <a id="boxd-files"></a>
 
 ### Binary files and overwrite
 
-Bounded binary read and overwrite upload; native byte-count acknowledgement required. Atomic no-clobber is unsupported and the shared suite must assert rejection with unchanged data. Binary files/overwrite and unsupported no-clobber rejection passed in the fcb59d4 baseline with confirmed cleanup. No large-file/staged stream transfer guarantee.
+Bounded native binary reads/overwrite upload and Python 3 atomic exclusive-create writes. The fcb59d4 baseline passed binary files/overwrite plus then-unsupported no-clobber rejection; it does not qualify the expanded no-clobber/stream behavior. New helpers have offline coverage only.
 
 <a id="boxd-directories"></a>
 
 ### Directory primitives
 
-Native complete bounded readDirectory and nonrecursive mkdir / explicitly recursive remove only. Stat, existence, safe copy/move and staged streaming transfers unsupported; the full directory workflow is not qualified.
+Native complete bounded readDirectory, plus Python 3 complete list, lstat/stat/exists, recursive-opt-in mkdir/remove, copy and staged 64 KiB streams. Private Linux filesystem with hardlinks; no-clobber move requires renameat2 and cross-filesystem move rejects without copy/delete. Failed transfers retain correlated staging paths; no replay. Walk/text lines compose these hooks. Local Python workflow and protobuf transport coverage are separate; expanded file-directories live not-run.
 
 <a id="boxd-oci"></a>
 
@@ -143,7 +142,7 @@ Whole-disk create-time read-only/read-write mounts, one machine per disk even re
 
 ## Other integrations
 
-Modal is an external experimental adapter with offline native-boundary and packed consumer coverage, without live acceptance. Custom adapters supply a profile to the same ordinary Bun SDK suites. Fake is a deterministic fixture without isolation guarantees.
+This page covers only the supplied external profile. Other adapter results are recorded separately.
 
 ## Runtimes
 
@@ -151,4 +150,4 @@ The SDK targets server-side Node.js and Bun. Packed consumer checks exercise emi
 
 ## Updating support
 
-Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The bounded Daytona Bun run at 1505ee0 is recorded, including its lifecycle failure. E2B volume tests skip; identified volume-only custody does not block bounded zero-volume suites. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.
+Reviewed summaries belong in one results JSON per provider. Generate with provider-qualification/render.ts --profile <profile> --results <results-directory> --output <output-directory>; use --check for drift. Live runs require separate authorization and durable owned cleanup.

@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { execFile } from "node:child_process";
 import { z } from "zod";
 import { EventEmitter } from "node:events";
 import {
@@ -14,12 +16,14 @@ import {
   type sendUnaryData,
 } from "@grpc/grpc-js";
 import { AccountNamespace, Disks, Machines, Orgs } from "@boxd-sh/sdk";
-import { createNativeClient } from "./transport";
+import { createNativeClient, type CallContext } from "./transport";
 
 type Transport = ConstructorParameters<typeof Machines>[0];
 
 const Request = z.object({
   vmId: z.string().default(""),
+  vm: z.string().default(""),
+  enabled: z.boolean().default(false),
   diskId: z.string().default(""),
   name: z.string().default(""),
   path: z.string().default(""),
@@ -30,6 +34,10 @@ const Request = z.object({
   data: z.instanceof(Uint8Array).default(() => new Uint8Array()),
   config: z
     .object({
+      vcpu: z.number().default(0),
+      network: z
+        .object({ proxies: z.array(z.object({ name: z.string(), port: z.number() })).default([]) })
+        .optional(),
       volumes: z
         .array(z.object({ diskId: z.string(), mountPath: z.string(), readOnly: z.boolean() }))
         .default([]),
@@ -46,6 +54,8 @@ type MachineRecord = {
   billingOrg: string;
   isolated: boolean;
   deleteAtMs: number;
+  botProtection: boolean;
+  proxies: { name: string; port: number }[];
 };
 
 type DiskRecord = {
@@ -134,6 +144,8 @@ async function methods() {
     machines.list(),
     machines.delete("id"),
     machines.pause("id"),
+    machines.setBotProtection("id", false),
+    machines.proxies.list("id"),
     machines.wake("id"),
     machines.setDeleteAfter("id", 900),
     disks.create("disk", 1024 ** 3),
@@ -170,6 +182,8 @@ export async function boxdFixture() {
 
   let execFrames = [{ data: Uint8Array.of(0, 255, 128), exitCode: 0 }];
   let omitExit = false;
+  let localFilesystem = false;
+  let lostHelper = "";
   let execFailures = 0;
   let machineStates: string[] = [];
   let tokenResponse: Record<string, string | number | boolean | null> | undefined;
@@ -195,7 +209,9 @@ export async function boxdFixture() {
     if (name === "Exec") {
       implementation[name] = (call: ServerDuplexStream<unknown, object>) => {
         // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Capture decoded native frames for assertions without interpreting command contents.
-        call.on("data", (request: unknown) => calls.push({ method: name, request }));
+        call.on("data", (request: unknown) => {
+          calls.push({ method: name, request });
+        });
         call.on("end", () => {
           if (execFailures > 0) {
             execFailures--;
@@ -260,6 +276,8 @@ export async function boxdFixture() {
               billingOrg: org,
               isolated: req.isolated,
               deleteAtMs: 0,
+              botProtection: true,
+              proxies: req.config?.network?.proxies ?? [],
             });
 
             for (const volume of req.config?.volumes ?? []) {
@@ -306,6 +324,37 @@ export async function boxdFixture() {
               });
             }
 
+            break;
+          }
+
+          case "SetBotProtection": {
+            const machine = machines.get(req.vmId);
+
+            if (!machine) missing();
+            else {
+              machine.botProtection = req.enabled;
+              ok();
+            }
+
+            break;
+          }
+
+          case "ListProxies": {
+            const machine = machines.get(req.vm);
+
+            if (!machine) missing();
+            else
+              ok({
+                proxies: machine.proxies.map((proxy) => ({
+                  name: proxy.name,
+                  vmId: machine.vmId,
+                  vmName: machine.name,
+                  domain: `${proxy.name}.${machine.name}.boxd.sh`,
+                  port: proxy.port,
+                  effectivePort: proxy.port,
+                  portMode: "locked",
+                })),
+              });
             break;
           }
 
@@ -433,8 +482,53 @@ export async function boxdFixture() {
         ),
     });
 
+    const localContext = new AsyncLocalStorage<CallContext>();
+    const exec = native.machines.exec.bind(native.machines);
+    // Test-only local guest execution complements the real protobuf transport
+    // fixture. It avoids depending on Bun's loopback server for long workflows.
+    // SAFETY: The adapter always requests buffer encoding for helper commands.
+    native.machines.exec = (async (id, params) => {
+      if (!localFilesystem || !Array.isArray(params.command) || params.command[0] !== "python3")
+        return exec(id, params);
+      calls.push({ method: "LocalHelper", request: { id, command: params.command } });
+      const ctx = localContext.getStore();
+
+      if (!ctx) throw Error("Missing local helper context");
+      const command = params.command;
+
+      return new Promise<import("@boxd-sh/sdk").ExecBytesResult>((resolve, reject) => {
+        const child = execFile(
+          command[0]!,
+          command.slice(1),
+          { encoding: "buffer", maxBuffer: 1048576, timeout: 5000, signal: ctx.signal },
+          (error, stdout, stderr) => {
+            if (error) {
+              reject(error);
+
+              return;
+            }
+
+            if (lostHelper === command[3]) {
+              lostHelper = "";
+              reject(Error("Lost local helper response after effect"));
+
+              return;
+            }
+
+            ctx.confirmedExit = 0;
+            resolve({ stdout, stderr, exitCode: 0, success: true });
+          },
+        );
+
+        child.stdin?.end(ctx.stdin);
+      });
+    }) as typeof native.machines.exec;
+
     return {
       ...native,
+      run<T>(ctx: CallContext, action: () => Promise<T>) {
+        return localContext.run(ctx, () => native.run(ctx, action));
+      },
       close() {
         effects.release++;
         native.close();
@@ -444,6 +538,12 @@ export async function boxdFixture() {
 
   return {
     factory,
+    loseLocalHelperResponse(op: string) {
+      lostHelper = op;
+    },
+    localFilesystem() {
+      localFilesystem = true;
+    },
     calls,
     effects,
     machines,

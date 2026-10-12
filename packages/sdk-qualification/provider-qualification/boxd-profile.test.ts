@@ -9,9 +9,13 @@ test("boxd profile retains explicit internet routing, native expiry and honest u
     imageId: "ubuntu:24.04",
     networkPolicy: "internet",
     nativeLifetimeSeconds: 900,
+    previewAccess: "protected",
   });
   expect(profileRouting(profile, {}, routing)).toEqual(routing);
-  expect(profile.fileNoClobber).toBe(false);
+  expect(profile.fileNoClobber).toBe(true);
+  expect(profile.support.features.finiteStdin.support).toBe("conditional");
+  expect(profile.support.features.directories.support).toBe("conditional");
+  expect(profile.support.features.previewPublic.support).toBe("conditional");
   expect(profile.configuredEnvironment).toBe(true);
   expect(profile.support.features.snapshots.support).toBe("unsupported");
   expect(profile.support.features.streaming.support).toBe("unsupported");
