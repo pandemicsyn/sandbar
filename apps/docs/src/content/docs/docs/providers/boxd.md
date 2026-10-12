@@ -30,11 +30,15 @@ Use a member API key and its authenticated default org ID/slug. Userless org key
 
 ## Defaults and networking
 
-`image` defaults to boxd's authenticated cluster default OCI image. `lifetimeSeconds` defaults to 900, configurable from 60 to 3,600, and sets the default renewal window. `size` optionally selects 1/2/4/8 vCPU (respectively 4/8/16/32 GiB RAM); omitted uses account defaults. Native private disk is fixed at 100 GB. `preview` defaults to protected lookup (unsupported); explicit `{ access: "public", ports: [3000] }` creates pinned routes and disables browser protection after expiry installation. At most 16 configured ports. Native ingress remains independently public; the protected lookup default does not privatize it.
+The adapter uses these defaults:
 
-`volumes.sizeBytes` defaults to 10 GiB per new disk, configurable from 1 GiB to 1 TiB subject to native quotas.
+- **Image:** the default OCI image configured for your boxd account.
+- **Lifetime:** 15 minutes. Set `lifetimeSeconds` from 60 to 3,600 seconds; this also sets the default renewal window.
+- **Compute size:** your account default. Set `size` to 1, 2, 4 or 8 vCPUs for 4, 8, 16 or 32 GiB RAM. The machine's private disk is fixed at 100 GB.
+- **New volumes:** 10 GiB each. Set `volumes.sizeBytes` from 1 GiB to 1 TiB, subject to your quota.
+- **Preview lookup:** disabled unless you explicitly choose public access. See [Public previews](#public-previews).
 
-`networkPolicy: "internet"` is an explicit required setup choice. Ordinary `create()` uses that choice; an explicit blocked request rejects before allocation. The adapter enables native peer/metadata isolation, which **does not block internet egress**. Native allowlists do not establish Sandbar's strict blocked contract. Region and label overrides are unsupported.
+You must set `networkPolicy: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported.
 
 ## Adapter support
 
@@ -54,30 +58,61 @@ Implemented features have deterministic native-boundary coverage. The four basel
 | Public previews                                         | Explicit public setup; read-only lookup of pinned configured ports on running compute.                                                                   |
 | Strict blocked egress, protected previews, image builds | Unsupported. OCI boot does not allocate an image-build artifact.                                                                                         |
 
-Native overwrite/read/directory listing and finite stdin need no installed helper. Expanded filesystem operations require Python 3 in the chosen Linux image. Stream/copy publication needs hard links in the destination filesystem; no-clobber move needs Linux `renameat2`. Cross-filesystem move rejects without copy/delete. Mounted storage must supply those primitives and remains unqualified. A truncated native listing rejects with `OUTPUT_CAPACITY`; no successful prefixes. Stat defaults to lstat, and dangling symlinks exist. Recursive removal does not walk final symlinks. Streams transfer bounded 64 KiB chunks with backpressure, without whole-file buffering or a default total-size ceiling; ordinary buffered convenience retains 1 MiB. Each helper has a 30-second RPC bound, with SDK transfer cancellation/inactivity/overall bounds. Reads observe a changing file, not a snapshot.
+## Files and streams
 
-An interrupted or rejected streamed publication can leave a `.sandbar-<uuid>` staging file beside the destination. Transfer errors preserve its path, transferred count and confirmed effects; inspect and explicitly remove that correlated artifact or destroy owned compute. No mutation is replayed. Buffered exclusive creation has no hidden staging file; unconfirmed writes can leave partial bytes at the requested path. Cancellation reaches finite filesystem helper exec groups; ordinary exec still drains abandoned local observation until its explicit deadline.
+Native file reads, overwrite writes, directory listing and finite command input work without an installed helper. The additional filesystem operations require **Python 3 in your Linux image**: stat/exists, exclusive writes, mkdir/remove, copy/move and file streams. Sandbar does not install Python for you.
 
-`preview: { access: "public", ports: [3000, 8080] }` intentionally exposes configured routes. `box.preview(3000)` only reads the running scoped machine and an existing pinned route, verifies browser protection is disabled, and returns `{ access: "public", url }`. It never creates routes, changes protection or wakes compute. Auto-detected default routes are excluded because they may retarget another port. A URL does not prove listener readiness. Protected/header-auth previews are unsupported. Public native ingress can wake compute after lookup.
+Buffered reads and writes are limited to 1 MiB. Use file streams for larger files: they transfer 64 KiB chunks without loading the whole file into memory. Streams have no default total-size limit; SDK transfer options let you set size and time limits. Each helper call has a 30-second deadline. A streamed read can see changes made to the file while reading.
 
-Finite stdin, expanded filesystem helpers, size selection and previews have offline coverage only. They do not inherit the baseline's live pass. Sustained streaming, PTYs, signals and process reopening remain unsupported: native exec closes kill the process group, and provides no persistent process generation/attach handle. A finite filesystem helper cannot supply those guarantees; a durable supervisor would be a separate architecture addition.
+Directories are listed completely or the call fails with `OUTPUT_CAPACITY`; Sandbar does not return a successful partial list. `statFile()` inspects a symlink itself by default, and `fileExists()` returns true for dangling symlinks. Creating missing parent directories or deleting a directory's contents requires `recursive: true`. Recursive deletion does not follow a symlink at the requested path.
+
+Copying and publishing a streamed write require hard links in the destination filesystem. Moving without overwrite requires Linux `renameat2`; moving across filesystems fails without copying or deleting the source. These requirements also apply to mounted storage, which has not been live-qualified.
+
+A streamed write uses a temporary `.sandbar-<uuid>` file beside the destination. If writing or publishing fails, the error retains the temporary path, confirmed byte count and known effects. Inspect that file and explicitly remove it, or destroy compute you own. Sandbar never retries the mutation automatically. An exclusive buffered write writes directly to the requested path, so an interrupted write may leave partial contents there.
+
+## Public previews
+
+Enable public previews when connecting:
+
+```ts
+import { Sandbar } from "sandbar-sdk";
+import { boxdAdapter } from "@sandbar-sdk/boxd";
+
+const client = await Sandbar.connect({
+  adapter: boxdAdapter,
+  credentials: { apiKey: process.env.BOXD_API_KEY! },
+  config: {
+    org: "my-org",
+    networkPolicy: "internet",
+    preview: { access: "public", ports: [3000, 8080] },
+  },
+});
+```
+
+This creates routes for the selected ports and disables boxd's browser protection during sandbox setup. Configure 1–16 distinct ports. **The routes are publicly accessible.** Protected previews and authentication headers are unsupported.
+
+After starting a server, call `box.preview(3000)` to get `{ access: "public", url }`. The lookup checks the running machine and its configured route. It does not create routes, change protection or wake the machine. The returned URL does not prove your server is ready.
+
+The default `preview.access` is `"protected"`, so preview lookup fails as unsupported unless public access is selected. This setting does **not** make boxd's own ingress private. Native public traffic can still reach or wake a machine. Auto-detected routes are excluded because their target port can change.
+
+Finite stdin, expanded filesystem operations, size selection and previews have offline coverage only. They do not inherit the baseline's live pass.
 
 ## Snapshot and lifecycle behavior
 
-Native boxd snapshots capture private disk and RAM, pause/resume the source and restore memory into new compute. They are whole-machine captures, with no memory-exclusion or targeted-path option exposed here. Native selectors are versioned latest-only, with no established immutable generation or atomic version condition for restore/delete. Sandbar therefore rejects `snapshot()` before native effects; it does not expose a capture-only workflow.
+boxd snapshots include the machine’s private disk and RAM, but a newer snapshot can replace the saved version. The API does not establish a way to restore or delete one exact saved version safely. Sandbar therefore rejects `snapshot()` before creating any snapshot.
 
-`suspend()` uses native pause. `resume()` wakes standby or hibernated compute under its original UUID; RAM, processes and sockets are preserved. Metadata inspect/reopen does not intentionally wake compute. Native inbound traffic can wake sleeping machines automatically. These are adapter-owned mechanics, not per-call native-state choices.
+`suspend()` uses native pause. `resume()` wakes standby or hibernated compute under its original UUID; RAM, processes and sockets are preserved. Metadata inspect/reopen does not intentionally wake compute. Native inbound traffic can wake sleeping machines automatically. Your application uses the same `suspend()` and `resume()` calls for both native sleep states.
 
 ## Storage and recovery
 
-A disk attaches to one machine at a time, including read-only mounts. There are no subpaths or versions; native host placement can prevent a multi-disk create. Independent disks survive compute destruction and require explicit deletion. Durability/locking/rename guarantees remain unknown. Flush application writers before teardown and explicitly choose `storage: "allow-unconfirmed"` when destroying mounted compute, or configure `cleanup: { storage: "allow-unconfirmed" }` when connecting. Cleanup reports retained UUIDs and mount paths.
+A disk attaches to one machine at a time, including read-only mounts. There are no subpaths or versions; native host placement can prevent a multi-disk create. Independent disks survive compute destruction and require explicit deletion. The adapter has not established persistence, locking or rename guarantees for mounted disks. Flush application writers before teardown and explicitly choose `storage: "allow-unconfirmed"` when destroying mounted compute, or configure `cleanup: { storage: "allow-unconfirmed" }` when connecting. Cleanup reports retained UUIDs and mount paths.
 
-Create and hard-expiry installation are separate native mutations. Sandbar retains the acknowledged machine UUID before follow-up stages. If expiry installation or the initial readiness probe is unconfirmed, the error's `outcome.kind` is `"create"` and `outcome.status` is `"partial"`. Its `outcome.sandbox` is a normal persisted, reopenable sandbox reference; `outcome.setup.expiry` and `outcome.setup.readiness` independently say `"acknowledged"` or `"unconfirmed"`. A `REFERENCE_SAVE_FAILED` error also retains the known outcome when saving a reference fails. Persist that sandbox reference and use `await client.sandboxes.get(error.outcome.sandbox)` with current same-scope credentials to inspect or explicitly destroy the known machine. No provider-token decoding is necessary. Unconfirmed expiry means the machine may lack a hard expiry. Recovery observation reads metadata and never reinstalls expiry or repeats the initial readiness probe. A lost initial create acknowledgement cannot be recovered by replaying or adopting a name. Persist SDK references when work spans application invocations.
+Creating a machine and setting its expiry are separate requests. Sandbar retains the acknowledged machine UUID before follow-up stages. If expiry installation or the initial readiness probe is unconfirmed, the error's `outcome.kind` is `"create"` and `outcome.status` is `"partial"`. Its `outcome.sandbox` is a normal persisted, reopenable sandbox reference; `outcome.setup.expiry` and `outcome.setup.readiness` independently say `"acknowledged"` or `"unconfirmed"`. A `REFERENCE_SAVE_FAILED` error also retains the known outcome when saving a reference fails. Persist that sandbox reference and use `await client.sandboxes.get(error.outcome.sandbox)` with current same-scope credentials to inspect or explicitly destroy the known machine. No provider-token decoding is necessary. Unconfirmed expiry means the machine may lack a hard expiry. Recovery observation reads metadata and never reinstalls expiry or repeats the initial readiness probe. A lost initial create acknowledgement cannot be recovered by replaying or adopting a name. Persist SDK references when work spans application invocations.
 
-A lost disk-create acknowledgement can leave a disk with no saved UUID. Volume CRUD support does not provide automatic reconciliation for that case: preserve unresolved custody, inspect authenticated native inventory manually, and establish the exact identity and creation ownership before explicit cleanup. Do not replay disk creation or adopt/delete a disk by name. Independent disks have no native expiry fallback.
+A lost disk-create acknowledgement can leave a disk with no saved UUID. Volume CRUD support does not provide automatic reconciliation for that case: keep a record of the failed attempt and inspect your native disk inventory manually. Confirm the exact disk identity and that your attempt created it before deleting it. Do not replay disk creation or adopt/delete a disk by name. Independent disks have no native expiry fallback.
 
-Mutations are single-attempt. Local read cancellation reaches the transport. Buffered exec uses an explicit execution deadline; local wait cancellation is not confirmed guest termination. Closing the client drains dispatched finite commands until their deadline rather than implicitly cancelling them, then releases the channel. It does not destroy machines or disks. Missing exit evidence is unknown, never inferred success.
+Sandbar sends each mutation once. Local read cancellation reaches the transport. Buffered exec uses an explicit execution deadline; local wait cancellation is not confirmed guest termination. Closing the client drains dispatched finite commands until their deadline rather than implicitly cancelling them, then releases the channel. It does not destroy machines or disks. Missing exit evidence is unknown, never inferred success.
 
-The maintained external profile reuses the ordinary Bun sandbox and volume suites. It now declares no-clobber, finite stdin, filesystem and explicitly public preview cases while retaining their live not-run status; it independently tests disk CRUD and mounts, and keeps exact snapshot roundtrip unsupported. Further paid runs need explicit authorization. [Sanitized baseline evidence](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/boxd/qualification/live-qualification.md) records the tested revision and configuration.
+The maintained external profile reuses the ordinary Bun sandbox and volume suites. It now declares no-clobber, finite stdin, filesystem and explicitly public preview cases while retaining their live not-run status; it independently tests disk CRUD and mounts, and keeps exact snapshot roundtrip unsupported. New live tests require explicit authorization. [Sanitized baseline evidence](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/boxd/qualification/live-qualification.md) records the tested revision and configuration.
 
 See the [provider implementation brief and plan](https://github.com/pandemicsyn/sandbar/issues/41) and [official boxd SDK docs](https://docs.boxd.sh/reference/typescript-sdk).
