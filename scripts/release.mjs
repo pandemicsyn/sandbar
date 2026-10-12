@@ -226,19 +226,28 @@ function registryTags(name) {
   throw new Error(`Cannot check npm dist-tags for ${name}: ${result.stderr}`);
 }
 
-async function verifyRegistry(item, version, tag) {
-  for (let attempt = 0; attempt < 12; attempt++) {
-    if (
-      registryIntegrity(item.manifest.name, version) === item.integrity &&
-      registryTags(item.manifest.name)[tag] === version
-    )
-      return;
-    await new Promise((done) => setTimeout(done, 5000));
-  }
+// npm reads lag publishes by minutes, so wait for the whole batch against one deadline.
+async function verifyRegistry(items, version, tag) {
+  const pending = new Set(items);
+  const deadline = Date.now() + 10 * 60 * 1000;
 
-  throw new Error(
-    `${item.manifest.name}@${version} did not appear with the expected integrity and ${tag} dist-tag`,
-  );
+  while (true) {
+    for (const item of pending) {
+      if (
+        registryIntegrity(item.manifest.name, version) === item.integrity &&
+        registryTags(item.manifest.name)[tag] === version
+      )
+        pending.delete(item);
+    }
+
+    if (!pending.size) return;
+
+    if (Date.now() >= deadline)
+      throw new Error(
+        `${[...pending].map((item) => `${item.manifest.name}@${version}`).join(", ")} did not appear with the expected integrity and ${tag} dist-tag`,
+      );
+    await new Promise((done) => setTimeout(done, 10000));
+  }
 }
 
 function notes(plan) {
@@ -384,8 +393,13 @@ for (const { item, existing } of state) {
   if (!existing) run("npm", ["publish", item.archive, "--tag", tag, "--access", "public"]);
   else
     console.log(`${item.manifest.name}@${plan.version} already published with matching integrity`);
-  await verifyRegistry(item, plan.version, tag);
 }
+
+await verifyRegistry(
+  state.map(({ item }) => item),
+  plan.version,
+  tag,
+);
 
 if (!releaseExists) {
   const args = [
