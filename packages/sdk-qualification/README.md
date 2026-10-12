@@ -6,7 +6,7 @@ Qualification belongs with the harness, not in the feature specifications. This 
 
 - [SDK resource flows](resources.test.ts) exercise binary files, execution and cleanup against the process-based fake provider.
 - [SDK lifecycle tests](../sdk/src/adapter-direct.test.ts) cover reference-before-dispatch, pending tokens, scope rejection, no replay and close behavior.
-- [Package smoke](package-smoke.mjs) builds isolated consumers from actual archives, checks strict NodeNext declarations, and runs Node/Bun SDK flows. It includes Daytona/E2B and experimental Modal fixtures and an independent adapter.
+- [Package smoke](package-smoke.mjs) builds isolated consumers from actual archives, checks strict NodeNext declarations, and runs Node/Bun SDK flows. It includes Daytona/E2B, Vercel and experimental Modal fixtures, boxd import/configuration checks, and an independent adapter.
 
 Packed consumers verify import and dependency boundaries without workspace aliases masking missing packages. Passing deterministic fixtures does not establish live provider behavior. The current [CI workflow](../../.github/workflows/ci.yml) and harness define automated coverage; provider records retain their exact revisions, runtimes and configurations.
 

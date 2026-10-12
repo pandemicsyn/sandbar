@@ -3,7 +3,7 @@ title: Vercel Sandbox
 description: Use the Vercel adapter with disposable Node 24 sessions and configured network policies.
 ---
 
-Vercel Sandbox is an official adapter distributed as `@sandbar-sdk/vercel`, used alongside `sandbar-sdk`. It is implemented for immutable, nonpersistent sessions with managed Node 24 in `iad1`. Live provider behavior is unverified; package availability and publication are separate from implementation.
+Vercel Sandbox is an official adapter distributed as `@sandbar-sdk/vercel`, used alongside `sandbar-sdk`. It is implemented for immutable, nonpersistent sessions with managed Node 24 in `iad1`. The adapter landed in #93 and is included in the initial 0.1.0 release group. Live provider behavior is unverified; version preparation and registry publication are separate from implementation. Use the [checkout setup](/docs/direct-quickstart/) until a usable release is available.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
@@ -37,7 +37,7 @@ The bearer token must access the existing team, project and sandbox API. Connect
 
 Calling `client.sandboxes.create()` uses the managed prepared environment `vercel/sandbox/node:24` and the connection's configured named policy. Explicit creation inputs must select that same environment and policy. `region` defaults to `iad1`, `timeoutSeconds` defaults to 300 and accepts 60–300, and `networkPolicy` defaults to `vercel-deny-all`. The alternative `vercel-allow-all` maps to native `allow-all`; deny maps to native `deny-all`. Acknowledged policy is checked, but measured network isolation has no live acceptance. Generic `blocked`/`internet` policies, custom images, OCI builds, resource requirements and mounts are unsupported.
 
-Commands support argv, `/bin/sh` scripts, cwd/env and nonzero exits. A managed Node helper captures binary stdout/stderr in a private receipt, with a combined 1 MiB bound and truncation reporting. File reads preserve binary API bytes; writes send gzip/tar archives. Absolute paths and at most 1 MiB per file are supported. Writes require `overwrite:true`; atomic no-clobber rejects before mutation. Stdin, process handles, streaming interaction and PTYs are unsupported.
+Commands support argv, `/bin/sh` scripts, cwd/env and nonzero exits. A managed Node helper captures binary stdout/stderr in a private receipt, with a combined 1 MiB bound and truncation reporting. The adapter manages capture internally: `const result = await box.exec(["my-command"]); const bytes = result.stdout;` requires no helper installation or encoding configuration. File reads preserve binary API bytes; writes send gzip/tar archives. Absolute paths and at most 1 MiB per file are supported. Writes require `overwrite:true`; atomic no-clobber rejects before mutation. Stdin, process handles, streaming interaction and PTYs are unsupported.
 
 Destroy stops and polls the exact original session, confirming compute stop only on native `stopped` or `aborted`. It reports retained `vercel-named-sandbox-metadata`; deleting that metadata is unsupported. Native timeout is fallback, not cleanup confirmation. Close releases the local client; explicit sandbox destruction remains necessary.
 
@@ -46,3 +46,5 @@ An acknowledged create saves its exact session ID for read-only recovery. Losing
 Snapshots, memory preservation, restored execution, volumes, persistent sandboxes, mounts, suspension, resumption and lifetime renewal are unsupported. Snapshot requirements reject before capture, so no capture exclusions, source transitions or restore guarantees apply.
 
 The repository's external `vercel-profile.ts` supplies declared support, nonsecret saved routing and finite bounds to the ordinary Bun qualification suites: 300-second native lifetime, 120-second exercise and 60-second cleanup. Baseline fixtures permit one compute allocation each; storage suites skip unsupported workflows. The existing E2B-only paired network test does not qualify Vercel policies. No live evidence has been recorded. Deterministic fixtures, packed consumers and live acceptance remain separate statuses.
+
+See the generated [Vercel support declarations](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification/support.md) and [live evidence](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification/live-qualification.md) for per-feature status.

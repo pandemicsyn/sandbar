@@ -12,7 +12,7 @@ Run a command in a sandbox from your own TypeScript application. You'll need a p
 
 ## 1. Set up a checkout
 
-Sandbar packages are not published yet. Use **Bun 1.3.14** and run from a source checkout:
+A usable Sandbar release is not published yet; the registry's 0.0.0 entries are name-reservation placeholders. The source release is versioned at 0.1.0. Use **Bun 1.3.14** and run from a source checkout:
 
 ```sh
 git clone https://github.com/pandemicsyn/sandbar.git
@@ -21,7 +21,7 @@ bun install --frozen-lockfile
 bun run build:packages
 ```
 
-Already in a checkout? Run the install and build commands from its root. The workspace resolves `sandbar-sdk`, the official `@sandbar-sdk/daytona` and `@sandbar-sdk/e2b` adapters, and experimental `@sandbar-sdk/modal` locally. Once published, install `sandbar-sdk @sandbar-sdk/daytona` or `sandbar-sdk @sandbar-sdk/e2b` in your application. Modal has offline coverage and has not been live-qualified; [compare provider support](/docs/providers/support/).
+Already in a checkout? Run the install and build commands from its root. The workspace resolves `sandbar-sdk` and the separate Daytona, E2B, boxd, Vercel and experimental Modal adapter packages locally. Once published, install `sandbar-sdk @sandbar-sdk/daytona` or `sandbar-sdk @sandbar-sdk/e2b` in your application. Modal has offline coverage and has not been live-qualified; [compare provider support](/docs/providers/support/). For the newer adapters, follow [boxd setup](/docs/providers/boxd/) or [Vercel setup](/docs/providers/vercel/) and their documented limits.
 
 To run OpenCode rather than a shell command, use the [runnable agent examples](/docs/guides/runnable-agent-examples/).
 

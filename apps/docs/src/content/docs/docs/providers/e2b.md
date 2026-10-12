@@ -72,7 +72,7 @@ The expanded ordinary Bun `file-directories` case passed at `2f6afe8` on October
 
 ## Configured lifetime renewal
 
-The application workflow is the same for both official adapters:
+The application workflow is the same for Daytona and E2B:
 
 ```ts
 const box = await client.sandboxes.create();

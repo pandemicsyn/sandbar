@@ -140,7 +140,7 @@ If `terminate()` rejects `OUTCOME_UNKNOWN`, handle that error in application cod
 
 ## Current process workflows and qualification
 
-The legacy finite E2B profile retains its cumulative 1 MiB output cap because the native client accumulates output. Current explicit sustained output uses bounded transports on both built-ins; incremental exact-byte input/EOF, status, byte output, signals, terminals and reopening are implemented separately. See the [process IO contract](process-io-dx.md), [process guide](../apps/docs/src/content/docs/docs/guides/text-streaming.md) and compiled [interactive workflow](../apps/docs/examples/interactive-processes.ts). Preview resolves access independently and does not manage the server.
+The legacy finite E2B profile retains its cumulative 1 MiB output cap because the native client accumulates output. Current explicit sustained output uses bounded transports on Daytona and E2B; incremental exact-byte input/EOF, status, byte output, signals, terminals and reopening are implemented separately. See the [process IO contract](process-io-dx.md), [process guide](../apps/docs/src/content/docs/docs/guides/text-streaming.md) and compiled [interactive workflow](../apps/docs/examples/interactive-processes.ts). Preview resolves access independently and does not manage the server.
 
 Preview access (#60) has deterministic/packed coverage; Daytona protected and E2B explicit public modes passed at `3188e33` in #68. E2B private-default ingress denial remains unqualified. Unsupported preview access modes above remain separate product decisions.
 

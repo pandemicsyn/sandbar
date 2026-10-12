@@ -80,7 +80,7 @@ try {
 
 This legacy profile is for finite text commands whose output fits the budget. Use the explicit sustained/byte profiles in the [current process IO contract](process-io-dx.md) for long-running, high-volume or binary workloads. A command that buffers its own stdout may not emit timely chunks; Sandbar delivers native callbacks promptly, without waiting for exit or creating a hidden shell supervisor. `argv` uses the adapter's existing quoting rules; shell requests use its declared shell. Keep guest stdin closed; preserve cwd/env validation and reject NUL input before start.
 
-Legacy finite E2B streaming passed at `3188e33` in #68 on borrowed base with confirmed owned cleanup. Read cancellation (#51) uses one fixed 30-second local deadline across provider response/chunks, promptly releases local readers and late streams, and reports `WAIT_ABORTED`, `TIMEOUT` or `CLIENT_CLOSED` with effect none. Native cancellation is best effort. Signal-bearing file scenarios passed for both built-ins at that revision. File streaming has its separate [transfer policy](filesystem-dx.md).
+Legacy finite E2B streaming passed at `3188e33` in #68 on borrowed base with confirmed owned cleanup. Read cancellation (#51) uses one fixed 30-second local deadline across provider response/chunks, promptly releases local readers and late streams, and reports `WAIT_ABORTED`, `TIMEOUT` or `CLIENT_CLOSED` with effect none. Native cancellation is best effort. Signal-bearing file scenarios passed for Daytona and E2B at that revision. File streaming has its separate [transfer policy](filesystem-dx.md).
 
 ## Legacy regression boundaries
 
