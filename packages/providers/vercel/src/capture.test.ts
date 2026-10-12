@@ -226,3 +226,40 @@ test("capture sends finite binary stdin and EOF, including empty and early-close
     ).exitCode,
   ).toBe(0);
 });
+
+test("capture rejects corrupted staged stdin before launching the command", async () => {
+  const stdinPath = `/tmp/sandbar-input-test-${crypto.randomUUID()}`;
+  const marker = `/tmp/sandbar-input-marker-${crypto.randomUUID()}`;
+  await writeFile(stdinPath, "corrupted", { mode: 0o600, flag: "wx" });
+
+  const helper = spawnSync(
+    "node",
+    [
+      "-e",
+      captureHelper,
+      JSON.stringify({
+        ...captureSpec({
+          ...base,
+          stdin: new Uint8Array([0, 255]),
+          command: { kind: "argv", argv: ["touch", marker] },
+        }),
+        stdinPath,
+      }),
+    ],
+    { timeout: 5000, encoding: "utf8" },
+  );
+
+  const receiptPath = helper.stdout.split("\n")[0]!;
+
+  try {
+    expect(helper.status).not.toBe(0);
+    expect(helper.stderr).toContain("Finite stdin verification failed");
+    await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await rm(stdinPath, { force: true });
+
+    if (/^\/tmp\/sandbar-exec-[A-Za-z0-9]+\/receipt\.json$/.test(receiptPath))
+      await rm(dirname(receiptPath), { recursive: true, force: true });
+    await rm(marker, { force: true });
+  }
+});

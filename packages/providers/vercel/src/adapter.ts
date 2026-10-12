@@ -1524,6 +1524,17 @@ export function createVercelAdapter(
                 stdinPath,
               });
 
+              try {
+                await fsCall(input.sandbox, "reserve", stdinPath, {
+                  signal,
+                  deadline: Date.now() + 30000,
+                });
+              } catch (cause) {
+                if (cause instanceof AdapterFilesystemError && cause.details.effect === "none")
+                  return ctx.reject(cause.code, cause.message);
+                throw cause;
+              }
+
               const response = await client.request(
                 route(input.sandbox.id) + "/fs/write",
                 signal,
