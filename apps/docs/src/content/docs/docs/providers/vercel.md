@@ -1,11 +1,15 @@
 ---
 title: Vercel Sandbox
-description: Use immutable Vercel sessions with binary execution, filesystem streams, snapshots and optional processes.
+description: Run commands, work with files, and restore filesystem snapshots in disposable Vercel sandboxes.
 ---
 
-Official Vercel Sandbox adapter for Sandbar, installed separately as `@sandbar-sdk/vercel`. Implements disposable sessions, binary execution/stdin, filesystem helpers/streams, snapshots, renewal, optional public previews and universal-image processes/PTYs. Live provider behavior is unverified; deterministic fixtures and packed consumer checks are separate from live qualification.
+Use `@sandbar-sdk/vercel` with `sandbar-sdk` to run short-lived Vercel sandboxes. The adapter supports commands with byte input/output, files and file streams, filesystem snapshots, lifetime extensions, and public HTTP previews. Select the universal image to also use long-running processes and terminals.
 
-Install with `npm install sandbar-sdk @sandbar-sdk/vercel`:
+The implementation has automated and packaged-consumer tests. It has **not been tested against the live Vercel service** yet.
+
+## Connect and run a command
+
+Install with `npm install sandbar-sdk @sandbar-sdk/vercel`. Use an existing Vercel team and project, plus a token that can access their sandboxes.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
@@ -36,54 +40,63 @@ try {
 }
 ```
 
-`Sandbar.connect` verifies the team and project ownership with authenticated reads and checks project sandbox access. Scope includes the verified team ID, project ID and region. Tokens stay in credentials. Importing the adapter and constructing a connection definition perform no provider IO. The transport uses source-derived Vercel API routes audited from published SDK 3.6.1, with single-attempt requests (see [native boundary provenance](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/NATIVE.md)); `createVercelAdapter` accepts host-owned transport injection for deterministic fixtures.
+`Sandbar.connect` checks the team, project and access using read-only requests. Creating the client does not allocate compute. Keep the token in `credentials`; saved sandbox references contain no credentials.
 
-| Configuration         | Requirement/default                                                                                                                                           |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `teamId`, `projectId` | Existing team/project; authenticated ownership is checked.                                                                                                    |
-| `region`              | Default `iad1`; all 19 regions in the audited native catalog are accepted. No automatic failover.                                                             |
-| `image`               | Default `vercel/sandbox/node:24`; also Node 22, Node 26, or `vercel/sandbox/universal:latest`. The universal image enables Python-backed process/PTY support. |
-| `vcpus`               | 2 (default), 4, or 8; native memory is 2 GiB per vCPU. Account quotas apply.                                                                                  |
-| `timeoutSeconds`      | Initial lifetime 60–300 seconds, default 300.                                                                                                                 |
-| `networkPolicy`       | `vercel-deny-all` (default) or `vercel-allow-all`. No measured isolation claim.                                                                               |
-| `ports`               | Default empty; up to 15 distinct explicitly exposed public HTTP ports.                                                                                        |
-| `credentials.token`   | Bearer token with team/project sandbox access.                                                                                                                |
+## Choose the sandbox setup
 
-Ordinary `sandboxes.create()` uses the configured managed image and named policy. Explicit image/policy/region inputs must match setup. Creation validates the acknowledged session, image, CPU count, timeout, mount-free configuration and exposed routes. An incomplete or mismatched ACK preserves the known session through a partial outcome for explicit cleanup; it never substitutes a resource or repeats creation. OCI builds, arbitrary images, mounts and automatic region failover remain unsupported. Custom VCR images are native functionality, but their readiness and helper prerequisites have no implemented verified mapping here.
+| Option                | Default                  | What it controls                                                                                                   |
+| --------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `teamId`, `projectId` | Required                 | The existing team and project to use.                                                                              |
+| `region`              | `iad1`                   | One of the 19 supported Vercel regions. There is no automatic region failover.                                     |
+| `image`               | `vercel/sandbox/node:24` | Also accepts Node 22, Node 26, or `vercel/sandbox/universal:latest`. Choose universal for processes and terminals. |
+| `vcpus`               | `2`                      | Accepts 2, 4 or 8 CPUs, with 2 GiB memory per CPU. Account limits still apply.                                     |
+| `timeoutSeconds`      | `300`                    | Initial sandbox lifetime, from 60 to 300 seconds.                                                                  |
+| `networkPolicy`       | `vercel-deny-all`        | Choose the native deny policy or `vercel-allow-all`. Strict network isolation has not been independently tested.   |
+| `ports`               | `[]`                     | Up to 15 distinct public HTTP ports. Leave empty to expose none.                                                   |
+| `credentials.token`   | Required                 | Token with access to the selected team and project.                                                                |
 
-Every sandbox ID and saved reference names an immutable VM session. Destroy stops and polls that original session until `stopped` or `aborted` confirms termination, and reports `vercel-named-sandbox-metadata` retained. Named metadata is not deleted: published name-addressed DELETE has no generation predicate. Native timeout is fallback, never a cleanup receipt. Closing the client releases local transport and waits; explicitly destroy owned compute.
+`client.sandboxes.create()` uses this setup. Any image, region or policy supplied on an individual create call must match it. Arbitrary container images, OCI builds and mounted drives are not supported.
 
-`renew({ forSeconds })` sends one additive timeout extension to a running original session. The requested window is 1–300 seconds, defaulting to setup lifetime; native cumulative-runtime/plan caps still apply. The result preserves acknowledgement separately from expiry observation. A missing ACK remains unknown, even if later inspection shows a longer deadline, and is never replayed. `get`/inspect/preview never renew or resume.
+## Commands, processes and files
 
-Commands preserve argv, explicit `/bin/sh -c`, cwd/env, exit evidence and original stdout/stderr bytes. Combined finite output is bounded to 1 MiB with truthful truncation. Finite stdin accepts up to 1 MiB, staged internally with private permissions, then supplied to the child followed by EOF. Applications use ordinary `box.exec`; they configure no encoding or helper. Staged input identity is saved before upload and retained when launch acknowledgement is lost. Capture receipts and interrupted input stages can remain until compute teardown. Deadlines kill the helper's child process group; aborting a local request does not prove remote termination. Confirmed exit is checkpointed before output retrieval and survives output-read failure; recovery reads the original receipt without rerunning the command.
+Use ordinary `box.exec` for a command, with arguments or an explicit shell script. It supports working directory, environment variables, and up to 1 MiB of finite stdin. Input bytes are verified before the command starts, and stdin ends after the supplied bytes. Separate stdout and stderr preserve the original bytes, with a combined output limit of 1 MiB and a truncation indicator. See [files and command output](/docs/guides/files-and-output/).
 
-On `image: "vercel/sandbox/universal:latest"`, ordinary process and terminal calls support sustained text/original-byte output, incremental byte stdin/EOF, status, SIGTERM/SIGKILL, explicit PTYs with resize, bounded callback-exec capture, disconnect and leased reopening. A Python standard-library supervisor owns one private Unix socket and bounded pipe queue per child. It installs no packages and exposes no network listener. Native command invocations carry bounded ASCII JSON control replies; user output is encoded before entering text logs. Process runtime is bounded by the sandbox lifetime, not an invented process timeout. Local detach is separate from remote exit. Reopening fences stale attachment leases and honestly reports an output gap; no transcript replay or descendant-termination guarantee. The Node-only image choices reject these process profiles before launch because Python is not an established prerequisite there.
+For ongoing input/output or a terminal, set `image: "vercel/sandbox/universal:latest"`. The process APIs support text and binary output, byte input, closing stdin, status, SIGTERM/SIGKILL, terminal resize, and disconnect/reopen. A reopened process reports a possible output gap; it does not replay old output. Disconnecting locally does not stop the remote process. Node-only images do not provide these process features.
 
-Files preserve bytes. Buffered reads/writes are capped at 1 MiB; use SDK streams for larger files. Paths are absolute and exclude trailing slashes (except root browsing), NUL and dot segments. Directory results are complete, sorted and bounded to 1,024 entries/65,536 name bytes; overflow rejects. Stat defaults to lstat, dangling links exist, mkdir/remove honor recursive opt-in and refuse root mutation. Copy accepts regular files. Same-filesystem move never falls back to copy/delete; no-clobber move requires the universal image's Python3 and Linux `renameat2`. Other image choices support overwrite moves and reject no-clobber moves before mutation.
+File reads and writes preserve bytes. Use file streams for files larger than the 1 MiB buffered limit. Directory listing, stat, exists, mkdir, remove, copy and move are supported. Paths must be absolute. Directory listings are sorted and complete, with a limit of 1,024 entries and 65,536 bytes of names; larger listings fail instead of returning an incomplete result.
 
-Writes and copies stage in the destination directory, then publish with rename for overwrite or a race-safe hard link for no-clobber. Stream writes upload/append sequential 64 KiB chunks with bounded memory and publish only after EOF; stream reads consume the native binary body incrementally. There is no default whole-file ceiling or adapter-imposed total stream timeout. Transfer cancellation/unknown outcomes retain known temporary paths and confirmed publication effects; staging is not a rollback or durable-storage guarantee. Ordinary confirmed write conflicts clean their staging file. Interrupted stages remain within the owned sandbox until explicit teardown. Filesystem mutation observation never repeats a mutation.
+Writes and copies prepare a temporary file before replacing the destination. `overwrite: false` protects an existing destination even if another writer races the operation. Moves stay on the same filesystem; a move with `overwrite: false` requires the universal image. Recursive directory changes require explicit opt-in. Interrupted transfers report known temporary paths, which may remain until the sandbox is destroyed. See the [adapter README](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/README.md) for detailed filesystem limits.
 
-`box.preview(port)` returns the original running session's public HTTPS route for an explicitly configured port. It is read-only and is not readiness evidence. Exposed ports are public from creation, including image-owned services. Default `ports: []` publishes none. Protected previews have no implemented native credential mapping; egress policy does not provide preview authentication.
+## Lifetime, cleanup and reopening
 
-`box.snapshot()` captures native filesystem state and **terminates the disposable source session**, dropping processes/connections. It captures no RAM and never creates a replacement source to simulate restart. Only a verified mount-free disposable managed Node/universal source is accepted. Default consistency and minimum retention are unknown; exact memory, uninterrupted/source-unchanged, crash-consistency or minimum-retention requirements reject before capture. Caller-quiesced consistency is retained as a caller assertion. Scheduled deletion is unsupported. Vercel's native retention/expiration policy and billing apply; independently delete owned snapshots.
+Each sandbox reference identifies one original VM session. `box.destroy()` stops that session and waits for confirmed termination. It retains Vercel's named sandbox metadata: the native delete API addresses a reusable name, so the adapter cannot safely guarantee it would delete the original resource. Closing the client releases local resources; destroy owned sandboxes separately. The native timeout is a fallback, not proof that cleanup finished.
 
-Snapshot capture checkpoints the exact artifact ID before parsing full capture evidence. Capture requires a source created, restored or recovered from its validated creation attempt in the current connection, so its observed digest is checked against native metadata. Reopening only a sandbox reference does not retain that evidence. Saved snapshot references retain observed source/image/mount/consistency provenance, separately from authorization; fresh credentials still verify project membership and region by native reads. Capture and restore require the same configured managed image. Restore omits an image selector and requests the native snapshot source, then verifies the configured managed image, resources, policy and new session identity. Restored execution is fresh with an independent lifecycle. Snapshot inspect/list/delete use immutable artifact IDs; deletion requires a native deleted receipt, not absence alone. Native inventory entries without Sandbar's observed capture provenance report unknown mount handling and do not automatically become restorable. Original compute teardown retains named metadata; snapshot references survive it. Lost capture acknowledgement without an artifact ID cannot be safely attributed from source/name matching alone; preserve the source attempt for manual investigation rather than adopting or deleting an unrelated snapshot. No capture/restore/delete mutation is replayed to recover a response.
+`box.renew({ forSeconds: 61 })` **adds** 61 seconds to the running session's timeout. Each request accepts 1–300 seconds; Vercel's plan and total-runtime limits still apply. Inspecting or reopening a sandbox never renews or resumes it.
 
-Persistent native sandboxes cold-start a replacement session through reusable names; drives use name-addressed get-or-create, mounts and deletion without a generation predicate. Those features remain unsupported because exact saved-resource mutation identity cannot be enforced. Native persistence does not preserve RAM. No name-based replacement, deletion or drive adoption is used to claim completeness.
+Save `box.reference` in trusted application storage, then pass it to `freshClient.sandboxes.get(savedReference)` using the same team, project and region with current credentials. This reopens the original session without creating compute. A lookup searches at most 10,000 project sessions and fails if it cannot verify membership. See [resource references](/docs/guides/resources/) and [recovery](/docs/guides/recovery/).
 
-Save the ordinary sandbox reference in trusted application storage, then reopen the same session on a fresh connection with current credentials:
+If a mutation response is lost, the adapter preserves known IDs and uncertainty. Recovery reads the original operation's evidence; it never repeats create, input delivery, snapshot, restore or delete. A confirmed command exit remains available even if reading its output later fails. Unverified or interrupted input stages and capture receipts can remain until sandbox teardown.
 
-```ts
-const box = await client.sandboxes.create();
-if (!box.reference) throw new Error("Verified sandbox reference is unavailable");
-await save(box.reference); // Application-owned persistence.
-// After opening freshClient with the original team/project/region:
-const reopened = await freshClient.sandboxes.get(await load());
-console.log((await reopened.inspect()).state);
-```
+## Filesystem snapshots
 
-`save` and `load` represent your application's trusted reference store. `get` reads the original identity without creating, resuming or renewing compute. Reopened membership lookup is bounded to 100 pages of 100 sessions; an identity outside that window fails closed. Saved operation references remain useful for uncertain submitted operations and read-only reconciliation; they are separate from the sandbox's resource reference.
+**`box.snapshot()` terminates the source sandbox.** It captures filesystem state, drops processes and connections, and does not preserve RAM. Restoring creates a new, independent session with fresh execution; it does not restart the source. See [snapshots and volumes](/docs/guides/snapshots-and-volumes/) for the SDK workflow.
 
-The qualification profile selects the universal image, native lifetime 300 seconds, exercise 120 seconds and cleanup 60 seconds. Ordinary Bun workflows now cover terminating-source snapshots and additive renewal; provider fixtures cover faults separately. Loading the profile performs no IO. No live calls have been run. See [the concrete live proposal](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification-plan.md) for budgets, retained artifacts and owned cleanup; it requires separate user authorization.
+Capture requires a disposable sandbox with no mounted drives, using a supported managed image. The source must have been created or restored in the current connection, or its validated creation operation must have been recovered there. Reopening only a sandbox reference does not provide the image evidence needed for capture.
 
-Support declarations and live records are generated separately: [support](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification/support.md), [live evidence](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification/live-qualification.md). All Vercel live features remain not-run. Use the [checkout setup](/docs/direct-quickstart/) until a usable registry release is available.
+Keep the snapshot's saved reference. It records the captured source and image so later inspection and restore can check them against Vercel. Restore requires the same configured managed image. Snapshots found only through native inventory have unknown capture details and cannot automatically be restored through Sandbar.
+
+Snapshot consistency is unknown. You can explicitly assert that you stopped writes before capture; the adapter preserves that assertion without independently verifying it. Minimum retention is not guaranteed. Requests requiring RAM, an uninterrupted source, guaranteed crash consistency or guaranteed minimum retention fail before capture. Scheduled deletion is unsupported. Vercel's snapshot expiration and billing still apply; **delete owned snapshots independently of compute cleanup**.
+
+A lost capture response may leave an artifact whose ID is unknown. The adapter does not guess ownership from a name or source match. Retain the operation reference for investigation instead of creating another snapshot or deleting a possible match.
+
+## Public previews
+
+Set `ports: [3000]` in adapter configuration, then use `box.preview(3000)` to obtain the running session's public HTTPS URL. The port is public from sandbox creation, even before your application is ready. The URL itself does not prove readiness.
+
+Protected previews are not supported. Outbound network policy does not authenticate incoming requests. See [preview access](/docs/guides/preview-access/).
+
+## Remaining limits and evidence
+
+Persistent sandboxes, suspend/resume, drives and mounts remain unsupported. Their native operations use reusable names without a way to restrict a mutation to the saved resource generation. The adapter does not silently switch an old reference to a replacement session. Custom images, custom firewall rules and automatic OIDC credential discovery are also outside the implemented setup.
+
+The [native audit](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/NATIVE.md) records the published Vercel SDK 3.6.1 evidence and implementation choices. [Support declarations](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification/support.md) are separate from [live test results](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification/live-qualification.md), which remain not-run. The [live qualification proposal](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification-plan.md) lists resource budgets and cleanup requirements; running it needs separate authorization.
