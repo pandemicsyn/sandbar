@@ -1503,17 +1503,27 @@ export class AdapterSandbox {
       );
     } catch (error) {
       if (
-        error instanceof SandbarError &&
         !(error instanceof FilesystemError) &&
-        ["WAIT_ABORTED", "CLIENT_CLOSED", "TIMEOUT", "INVALID_RESPONSE"].includes(error.code)
-      )
-        throw new FilesystemError(error.code, error.message, {
-          destination: path,
-          ...retained,
-          effect:
-            retained.effect ??
-            (options.signal?.aborted && !this.client.signal.aborted ? "possible" : "unknown"),
-        });
+        ((error instanceof SandbarError &&
+          ["WAIT_ABORTED", "CLIENT_CLOSED", "TIMEOUT", "INVALID_RESPONSE"].includes(error.code)) ||
+          !!retained.temporaryPaths?.length)
+      ) {
+        const failure = new FilesystemError(
+          error instanceof SandbarError ? error.code : "UNAVAILABLE",
+          error instanceof SandbarError ? error.message : "File input stream failed",
+          {
+            destination: path,
+            ...retained,
+            effect:
+              retained.effect ??
+              (options.signal?.aborted && !this.client.signal.aborted ? "possible" : "unknown"),
+          },
+        );
+
+        failure.cause = error;
+        throw failure;
+      }
+
       throw error;
     }
   }

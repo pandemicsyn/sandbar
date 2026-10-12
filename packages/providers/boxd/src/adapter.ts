@@ -1,11 +1,13 @@
+import { filesystem, directoryValue, statValue } from "./filesystem";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Disk, Machine } from "@boxd-sh/sdk";
 import {
   AdapterError,
-  AdapterCheckpointError,
+  AdapterFilesystemError,
   MAX_DIRECTORY_ENTRIES,
   MAX_DIRECTORY_NAME_BYTES,
+  AdapterCheckpointError,
   assertResourceScope,
   defineAdapter,
   sandboxReference,
@@ -35,6 +37,18 @@ const Configuration = z.strictObject({
   org: z.string().min(1).max(128),
   networkPolicy: z.literal("internet"),
   image: z.string().min(1).max(1024).optional(),
+  preview: z
+    .strictObject({
+      access: z.enum(["protected", "public"]).default("protected"),
+      ports: z
+        .array(z.number().int().min(1).max(65535))
+        .min(1)
+        .max(16)
+        .refine((ports) => new Set(ports).size === ports.length, "Preview ports must be unique")
+        .default([3000]),
+    })
+    .default({ access: "protected", ports: [3000] }),
+  size: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(8)]).optional(),
   lifetimeSeconds: z.number().int().min(60).max(3600).default(900),
   volumes: z
     .strictObject({
@@ -102,6 +116,11 @@ function unavailable(): never {
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native thrown values are normalized and redacted at this error boundary.
 function rejection(ctx: AttemptContext, error: unknown) {
   const native = nativeError(error);
+
+  if (error instanceof AdapterFilesystemError && error.details.effect !== "none")
+    return ctx.unknown(
+      "boxd filesystem operation may have changed the requested path; do not replay",
+    );
 
   return definitiveRejection(native)
     ? ctx.reject(native.code, native.message)
@@ -302,6 +321,8 @@ export function createBoxdAdapter(
 
         if (!machine || machine.status !== "running") return null;
 
+        if (config.preview.access === "public" && machine.botProtection !== false) return null;
+
         if (machine.name !== nativeName(creation.submission))
           throw new AdapterError(
             "CONFLICT",
@@ -349,7 +370,7 @@ export function createBoxdAdapter(
           images: ["oci"],
           network: ["internet"],
           exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_BYTES },
-          fileWrite: { overwrite: true, noClobber: false },
+          fileWrite: { overwrite: true, noClobber: true },
         },
         create: {
           recovery: { version: 1, token: CreateToken },
@@ -391,6 +412,11 @@ export function createBoxdAdapter(
                     org: org.slug,
                     isolated: true,
                     config: {
+                      vcpu: config.size,
+                      proxies:
+                        config.preview.access === "public"
+                          ? config.preview.ports.map((port) => ({ name: `sandbar-${port}`, port }))
+                          : undefined,
                       autoSuspendTimeout: 0,
                       volumes: input.mounts?.map((mount) => ({
                         diskId: mount.volume.nativeId,
@@ -458,6 +484,11 @@ export function createBoxdAdapter(
 
             try {
               await requireMachine({ id: token.id }, readContext(ctx.signal));
+
+              if (config.preview.access === "public")
+                await native.run(readContext(ctx.signal), () =>
+                  native.machines.setBotProtection(token.id, false),
+                );
               await native.run({ ...readContext(ctx.signal), maxBytes: 32 }, () =>
                 native.machines.waitUntilReady(token.id, { timeout: 30000, pollInterval: 500 }),
               );
@@ -626,6 +657,7 @@ export function createBoxdAdapter(
           },
         },
         exec: {
+          finiteStdin: "bytes",
           async prepare(input, ctx) {
             await requireMachine(input.sandbox, ctx);
 
@@ -637,6 +669,8 @@ export function createBoxdAdapter(
               deadline: Date.now() + input.deadlineSeconds * 1000,
               maxBytes: input.maxOutputBytes,
               truncated: false,
+              stdin: input.stdin,
+              output: { stdout: [], stderr: [] },
             };
 
             try {
@@ -662,9 +696,59 @@ export function createBoxdAdapter(
                 truncated: call.truncated === true,
               };
             } catch (error) {
+              if (call.confirmedExit !== undefined)
+                return {
+                  exitCode: call.confirmedExit,
+                  stdout: Buffer.concat(call.output?.stdout ?? []),
+                  stderr: Buffer.concat(call.output?.stderr ?? []),
+                  truncated: true,
+                };
+
               return rejection(ctx, error);
             }
           },
+        },
+        async preview(input, ctx) {
+          if (config.preview.access !== "public")
+            throw new AdapterError("UNSUPPORTED", "boxd supports explicitly public previews only");
+
+          if (!config.preview.ports.includes(input.port))
+            throw new AdapterError(
+              "UNSUPPORTED",
+              "This preview port was not configured at adapter setup",
+            );
+          const machine = await requireMachine(input.sandbox, ctx);
+
+          if (machine.status !== "running" || machine.botProtection !== false)
+            throw new AdapterError(
+              "CONFLICT",
+              "boxd preview requires running compute with browser protection disabled",
+            );
+          const proxies = await native.run(ctx, () => native.machines.proxies.list(machine.id));
+
+          if (proxies.some((route) => route.machineId !== machine.id))
+            throw new AdapterError("CONFLICT", "boxd preview machine identity differs");
+
+          const route = proxies.find(
+            (route) =>
+              route.name === `sandbar-${input.port}` &&
+              route.port === input.port &&
+              route.portMode === "locked",
+          );
+
+          if (!route)
+            throw new AdapterError(
+              "UNSUPPORTED",
+              "Configure a public preview port at adapter setup; no existing pinned route serves this port",
+            );
+
+          if (!/^[a-z0-9.-]+$/.test(route.domain) || !route.domain.endsWith(`.${cluster.zone}`))
+            throw new AdapterError(
+              "CONFLICT",
+              "boxd preview domain differs from the verified cluster",
+            );
+
+          return { access: "public", url: `https://${route.domain}` };
         },
         files: {
           maxBytes: MAX_BYTES,
@@ -677,12 +761,6 @@ export function createBoxdAdapter(
           },
           write: {
             async prepare(input, ctx) {
-              if (!input.overwrite)
-                throw new AdapterError(
-                  "UNSUPPORTED",
-                  "boxd does not provide atomic no-clobber uploads",
-                );
-
               if (input.bytes.length > MAX_BYTES)
                 throw new AdapterError("CAPACITY", "boxd file exceeds the write bound");
               await requireMachine(input.sandbox, ctx);
@@ -691,6 +769,22 @@ export function createBoxdAdapter(
             },
             async submit(input, ctx) {
               try {
+                if (!input.overwrite) {
+                  return z
+                    .object({ bytesWritten: z.number().int().nonnegative() })
+                    .parse(
+                      await filesystem(native, input.sandbox.id).run(
+                        "write",
+                        input.path,
+                        "",
+                        false,
+                        readContext(ctx.signal),
+                        "",
+                        input.bytes,
+                      ),
+                    );
+                }
+
                 const bytesWritten = await native.run(
                   { ...readContext(ctx.signal), uploadBytes: input.bytes.length },
                   () => native.machines.files.upload(input.sandbox.id, input.path, input.bytes),
@@ -735,18 +829,92 @@ export function createBoxdAdapter(
               observedAt: new Date().toISOString(),
             };
           },
+          async list(input, ctx) {
+            await requireMachine(input.sandbox, ctx);
+
+            return directoryValue(
+              await filesystem(native, input.sandbox.id).run("list", input.path, "", false, ctx),
+            ).entries;
+          },
+          async stat(input, ctx) {
+            await requireMachine(input.sandbox, ctx);
+
+            return statValue(
+              await filesystem(native, input.sandbox.id).run(
+                "stat",
+                input.path,
+                "",
+                input.followSymlinks,
+                ctx,
+              ),
+            );
+          },
+          async exists(input, ctx) {
+            await requireMachine(input.sandbox, ctx);
+
+            return z
+              .object({ exists: z.boolean() })
+              .parse(
+                await filesystem(native, input.sandbox.id).run(
+                  "exists",
+                  input.path,
+                  "",
+                  false,
+                  ctx,
+                ),
+              ).exists;
+          },
+          async readStream(input, ctx) {
+            await requireMachine(input.sandbox, ctx);
+
+            return filesystem(native, input.sandbox.id).read(input.path, ctx);
+          },
+          async writeStream(input, ctx) {
+            await requireMachine(input.sandbox, ctx);
+
+            return filesystem(native, input.sandbox.id).write(
+              input.path,
+              input.bytes,
+              input.overwrite,
+              ctx,
+            );
+          },
+          async copy(input, ctx) {
+            await requireMachine(input.sandbox, ctx);
+
+            return filesystem(native, input.sandbox.id).transfer(
+              "copy",
+              input.source,
+              input.destination,
+              input.overwrite,
+              ctx,
+            );
+          },
+          async move(input, ctx) {
+            await requireMachine(input.sandbox, ctx);
+
+            return filesystem(native, input.sandbox.id).transfer(
+              "move",
+              input.source,
+              input.destination,
+              input.overwrite,
+              ctx,
+            );
+          },
           makeDirectory: {
             async prepare(input, ctx) {
-              if (input.recursive)
-                throw new AdapterError("UNSUPPORTED", "boxd mkdir requires an existing parent");
               await requireMachine(input.sandbox, ctx);
 
               return input;
             },
             async submit(input, ctx) {
               try {
-                await native.run(readContext(ctx.signal), () =>
-                  native.machines.files.mkdir(input.sandbox.id, input.path),
+                await filesystem(native, input.sandbox.id).run(
+                  "mkdir",
+                  input.path,
+                  "",
+                  input.recursive,
+                  readContext(ctx.signal),
                 );
 
                 return { acknowledged: true };
@@ -757,19 +925,18 @@ export function createBoxdAdapter(
           },
           remove: {
             async prepare(input, ctx) {
-              if (!input.recursive)
-                throw new AdapterError(
-                  "UNSUPPORTED",
-                  "boxd delete is recursive; opt in explicitly",
-                );
               await requireMachine(input.sandbox, ctx);
 
               return input;
             },
             async submit(input, ctx) {
               try {
-                await native.run(readContext(ctx.signal), () =>
-                  native.machines.files.delete(input.sandbox.id, input.path),
+                await filesystem(native, input.sandbox.id).run(
+                  "remove",
+                  input.path,
+                  "",
+                  input.recursive,
+                  readContext(ctx.signal),
                 );
 
                 return { acknowledged: true };

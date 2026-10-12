@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { AdapterSandbox } from "sandbar-sdk";
-import { liveEnabled, setupLive, finishLive } from "./providers";
+import { liveEnabled, setupLive, finishLive, featureSupported } from "./providers";
 
 const provider = process.env.SANDBAR_QUAL_PROVIDER ?? "daytona";
 
@@ -9,7 +9,10 @@ const access = provider === "daytona" ? "protected" : "public";
 const enabled =
   liveEnabled &&
   (provider === "daytona" ||
-    (provider === "e2b" && process.env.SANDBAR_E2B_PREVIEW_ACCESS === "public"));
+    (provider === "e2b" && process.env.SANDBAR_E2B_PREVIEW_ACCESS === "public") ||
+    (provider === "boxd" &&
+      featureSupported("previewPublic") &&
+      process.env.SANDBAR_BOXD_PREVIEW_ACCESS === "public"));
 
 describe("Sandbar native HTTP preview", () => {
   let fixture: Awaited<ReturnType<typeof setupLive>> | undefined;

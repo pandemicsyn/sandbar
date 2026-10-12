@@ -162,9 +162,6 @@ test("byte fidelity, bounded exec collection and raw upload acknowledgement", as
     expect(await box.readFile("/file")).toEqual(bytes);
     await box.writeFile("/empty", new Uint8Array(), { overwrite: true });
     expect(await box.readFile("/empty")).toEqual(new Uint8Array());
-    const uploads = fixture.calls.filter((call) => call.method === "UploadFile").length;
-    await expect(box.writeFile("/file", bytes)).rejects.toMatchObject({ code: "UNSUPPORTED" });
-    expect(fixture.calls.filter((call) => call.method === "UploadFile")).toHaveLength(uploads);
     fixture.uploadCount(0);
     await expect(box.writeFile("/file", bytes, { overwrite: true })).rejects.toBeInstanceOf(
       OutcomeUnknownError,
@@ -563,6 +560,167 @@ test("native readiness retries a failed true probe while preserving the created 
     expect(fixture.effects.create).toBe(1);
     expect(fixture.calls.filter((call) => call.method === "SetDeleteAfter")).toHaveLength(1);
     await box.destroy();
+  } finally {
+    await client.close();
+  }
+});
+
+test("public preview pins configured routes at create, verifies identity and never mutates on lookup", async () => {
+  const { fixture, adapter, connect } = await setup();
+  const defaults = await connect();
+
+  try {
+    const box = await defaults.sandboxes.create();
+    const before = fixture.calls.length;
+    await expect(box.preview(3000)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect(fixture.calls).toHaveLength(before);
+    await box.destroy();
+  } finally {
+    await defaults.close();
+  }
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {
+      org: "main",
+      networkPolicy: "internet",
+      size: 1,
+      preview: { access: "public", ports: [3000, 8080] },
+    },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  try {
+    const box = await client.sandboxes.create();
+    expect(
+      fixture.calls.filter((call) => call.method === "CreateVm").at(-1)?.request,
+    ).toMatchObject({
+      config: {
+        vcpu: 1,
+        network: {
+          proxies: [
+            { name: "sandbar-3000", port: 3000 },
+            { name: "sandbar-8080", port: 8080 },
+          ],
+        },
+      },
+    });
+    const before = fixture.calls.length;
+    expect(await box.preview(3000)).toMatchObject({
+      access: "public",
+      url: expect.stringContaining("https://sandbar-3000."),
+    });
+    expect(fixture.calls.slice(before).map((call) => call.method)).toEqual([
+      "GetVm",
+      "ListProxies",
+    ]);
+    fixture.machines.get(box.id)?.proxies.push({ name: "sandbar-9000", port: 9000 });
+    const unconfigured = fixture.calls.length;
+    await expect(box.preview(9000)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect(fixture.calls).toHaveLength(unconfigured);
+    await box.suspend();
+    const sleeping = fixture.calls.length;
+    await expect(box.preview(3000)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(fixture.calls.slice(sleeping).map((call) => call.method)).toEqual(["GetVm"]);
+    await box.destroy();
+  } finally {
+    await client.close();
+  }
+});
+
+test("read-only disk mounts are exact and reusable after fresh-client cleanup; hibernation wakes once", async () => {
+  const { fixture, connect } = await setup();
+  let client = await connect();
+
+  try {
+    const disk = await client.volumes.create({ name: "readonly" });
+    const diskRef = JSON.parse(JSON.stringify(disk.reference));
+
+    const box = await client.sandboxes.create({
+      mounts: [disk.at("/data", { access: "read-only" })],
+    });
+
+    expect(
+      fixture.calls.filter((call) => call.method === "CreateVm").at(-1)?.request,
+    ).toMatchObject({
+      config: {
+        volumes: [{ diskId: disk.reference.nativeId, mountPath: "/data", readOnly: true }],
+      },
+    });
+    const machine = fixture.machines.get(box.id)!;
+    machine.status = "hibernated";
+    expect((await box.resume()).execution).toBe("resumed");
+    expect(fixture.calls.filter((call) => call.method === "WakeVm")).toHaveLength(1);
+    const reference = box.reference;
+
+    if (!reference) throw Error("Missing sandbox reference");
+    await client.close();
+    client = await connect();
+    const reopened = await client.sandboxes.get(reference);
+    const cleanup = await reopened.destroy({ storage: "allow-unconfirmed" });
+    expect(cleanup.mountDurability).toMatchObject([{ path: "/data", status: "unconfirmed" }]);
+    const borrowed = await client.volumes.get(diskRef);
+    await borrowed.delete();
+    expect(fixture.disks.size).toBe(0);
+  } finally {
+    await client.close();
+  }
+});
+
+test("public preview rejects empty/duplicate ports before connecting", async () => {
+  const { adapter, fixture } = await setup();
+
+  for (const ports of [[], [3000, 3000]])
+    await expect(
+      Sandbar.connect({
+        adapter,
+        config: { org: "main", networkPolicy: "internet", preview: { access: "public", ports } },
+        credentials: { apiKey: "fixture-main" },
+      }),
+    ).rejects.toBeDefined();
+  expect(fixture.calls).toHaveLength(0);
+});
+
+test("exec retains confirmed exit and captured bytes after a transport failure", async () => {
+  const { fixture } = await setup();
+
+  const adapter = createBoxdAdapter((key) => {
+    const native = fixture.factory(key);
+
+    return {
+      ...native,
+      run(ctx, action) {
+        if (ctx.output) {
+          ctx.output.stdout.push(Uint8Array.of(0, 255));
+          ctx.output.stderr.push(Uint8Array.of(128));
+          ctx.confirmedExit = 7;
+
+          return Promise.reject(Error("transport failed after terminal receipt"));
+        }
+
+        return native.run(ctx, action);
+      },
+    };
+  });
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: { org: "main", networkPolicy: "internet" },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  try {
+    const box = await client.sandboxes.create();
+
+    await expect(box.exec({ command: { kind: "argv", argv: ["false"] } })).rejects.toMatchObject({
+      code: "NONZERO_EXIT",
+      result: {
+        exitCode: 7,
+        truncated: true,
+        stdout: Uint8Array.of(0, 255),
+        stderr: Uint8Array.of(128),
+      },
+    });
   } finally {
     await client.close();
   }

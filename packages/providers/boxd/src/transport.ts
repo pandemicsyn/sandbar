@@ -23,7 +23,10 @@ export type CallContext = ReadContext & {
   maxBytes?: number;
   truncated?: boolean;
   confirmedExit?: number;
+  output?: { stdout: Uint8Array[]; stderr: Uint8Array[] };
   uploadBytes?: number;
+  stdin?: Uint8Array;
+  cancelOnAbort?: boolean;
   onCreate?: (id: string) => Promise<void>;
 };
 
@@ -327,7 +330,8 @@ export function createNativeClient(
       void (async () => {
         const md = await metadata(ctx);
 
-        if (cancelled) return;
+        if (cancelled || (ctx.cancelOnAbort && ctx.signal.aborted))
+          throw new AdapterError("TIMEOUT", "boxd helper was cancelled before dispatch");
 
         const call = channel.makeBidiStreamRequest(
           path(method),
@@ -339,12 +343,21 @@ export function createNativeClient(
 
         live = call;
         executions++;
+        const abort = () => call.cancel();
+
+        if (ctx.cancelOnAbort) {
+          ctx.signal.addEventListener("abort", abort, { once: true });
+
+          if (ctx.signal.aborted) abort();
+        }
+
         let count = 0;
         let finished = false;
 
         const finish = () => {
           if (finished) return;
           finished = true;
+          ctx.signal.removeEventListener("abort", abort);
           executions--;
 
           if (closing && executions === 0) channel.close();
@@ -371,6 +384,11 @@ export function createNativeClient(
             ...message,
             data: ctx.signal.aborted ? new Uint8Array() : frame.data.subarray(0, remaining),
           } as typeof message;
+
+          if (bounded.data.length && ctx.output) {
+            const stream = z.object({ isStderr: z.boolean() }).parse(message);
+            ctx.output[stream.isStderr ? "stderr" : "stdout"].push(bounded.data);
+          }
 
           events.emit("data", bounded);
         });
@@ -401,6 +419,25 @@ export function createNativeClient(
         write(message) {
           if (live) live.write(message);
           else pending.push(message);
+
+          // The native finite collector writes one init frame, then half-closes.
+          // Insert bounded byte frames between init and EOF without decoding input.
+          if (ctx.stdin !== undefined) {
+            const input = ctx.stdin;
+            ctx.stdin = undefined;
+
+            for (let offset = 0; offset < input.length; offset += 65536) {
+              const frame = {
+                ...message,
+                command: "",
+                stdin: true,
+                data: input.subarray(offset, offset + 65536),
+              };
+
+              if (live) live.write(frame);
+              else pending.push(frame);
+            }
+          }
         },
         end() {
           ended = true;

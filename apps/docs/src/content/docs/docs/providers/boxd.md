@@ -30,7 +30,9 @@ Use a member API key and its authenticated default org ID/slug. Userless org key
 
 ## Defaults and networking
 
-`image` defaults to boxd's authenticated cluster default OCI image. `lifetimeSeconds` defaults to 900, configurable from 60 to 3,600, and sets the default renewal window. `volumes.sizeBytes` defaults to 10 GiB per new disk, configurable from 1 GiB to 1 TiB subject to native quotas.
+`image` defaults to boxd's authenticated cluster default OCI image. `lifetimeSeconds` defaults to 900, configurable from 60 to 3,600, and sets the default renewal window. `size` optionally selects 1/2/4/8 vCPU (respectively 4/8/16/32 GiB RAM); omitted uses account defaults. Native private disk is fixed at 100 GB. `preview` defaults to protected lookup (unsupported); explicit `{ access: "public", ports: [3000] }` creates pinned routes and disables browser protection after expiry installation. At most 16 configured ports. Native ingress remains independently public; the protected lookup default does not privatize it.
+
+`volumes.sizeBytes` defaults to 10 GiB per new disk, configurable from 1 GiB to 1 TiB subject to native quotas.
 
 `networkPolicy: "internet"` is an explicit required setup choice. Ordinary `create()` uses that choice; an explicit blocked request rejects before allocation. The adapter enables native peer/metadata isolation, which **does not block internet egress**. Native allowlists do not establish Sandbar's strict blocked contract. Region and label overrides are unsupported.
 
@@ -38,20 +40,27 @@ Use a member API key and its authenticated default org ID/slug. Userless org key
 
 Implemented features have deterministic native-boundary coverage. The four baseline workflows—sandbox lifecycle, captured execution, binary files/overwrite and scoped reopening—passed at `fcb59d4056b71529b7e8d0c8c3f5a2b17f76b72e` on October 11, 2026 (four cases, 15 assertions). The run used Bun 1.3.14/darwin-arm64, native SDK 0.2.15, the provider-default OCI image, explicit internet policy and a 900-second expiry. Its one owned sandbox was destroyed and the client closed; no storage was allocated. Suspend/resume, renewal, directories, disks/mounts and other configurations remain unqualified.
 
-| Feature                                       | Support                                                                                               |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Compute lifecycle                             | Create, metadata inspection, inventory, reference reopening and confirmed destruction.                |
-| Commands                                      | Buffered argv/shell with cwd/env; exact stdout/stderr bytes, combined bounded capture up to 1 MiB.    |
-| Files                                         | Binary read/overwrite write up to 1 MiB; actual upload byte-count acknowledgement required.           |
-| Directory operations                          | Complete bounded `readDirectory`; nonrecursive mkdir and explicitly recursive remove.                 |
-| Volumes                                       | Independent block disks; CRUD and create-time whole-disk read-only/read-write mounts.                 |
-| Warm lifecycle                                | Suspend/resume preserves memory, processes and sockets; renewal resets wall-clock expiry.             |
-| Snapshots                                     | Unsupported: exact generation restore/delete is not established for latest-only native snapshots.     |
-| Interactive processes                         | Unsupported: native stream cancellation kills the process group and cannot provide detach/disconnect. |
-| Other filesystem operations                   | No atomic no-clobber, stat/exists, safe copy/move or staged/large streaming transfer.                 |
-| Strict blocked egress, previews, image builds | Unsupported. OCI boot does not allocate a Sandbar image-build artifact.                               |
+| Feature                                                 | Support                                                                                                                                                  |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compute lifecycle                                       | Create, metadata inspection, inventory, reference reopening and confirmed destruction.                                                                   |
+| Commands                                                | Buffered argv/shell with cwd/env; exact stdout/stderr bytes, combined bounded capture up to 1 MiB; finite byte stdin up to 1 MiB followed by native EOF. |
+| Files                                                   | Binary read/overwrite write up to 1 MiB; actual upload byte-count acknowledgement. Default exclusive-create no-clobber helper.                           |
+| Directory operations                                    | Complete bounded directory browsing, stat/exists and recursive-opt-in mkdir/remove.                                                                      |
+| Volumes                                                 | Independent block disks; CRUD and create-time whole-disk read-only/read-write mounts.                                                                    |
+| Warm lifecycle                                          | Suspend/resume preserves memory, processes and sockets; renewal resets wall-clock expiry.                                                                |
+| Snapshots                                               | Unsupported: exact generation restore/delete is not established for latest-only native snapshots.                                                        |
+| Interactive processes                                   | Unsupported: native stream cancellation kills the process group and cannot provide detach/disconnect.                                                    |
+| Other filesystem operations                             | Python 3 regular-file copy, same-filesystem move, staged write and incremental read streams; walk/text lines compose these hooks.                        |
+| Public previews                                         | Explicit public setup; read-only lookup of pinned configured ports on running compute.                                                                   |
+| Strict blocked egress, protected previews, image builds | Unsupported. OCI boot does not allocate an image-build artifact.                                                                                         |
 
-Writes require `{ overwrite: true }`; the default no-clobber write rejects without upload. A truncated native directory response fails with `OUTPUT_CAPACITY`, rather than returning a complete-looking prefix. Finite stdin, sustained streaming, PTYs, signals and process reopening are unsupported.
+Native overwrite/read/directory listing and finite stdin need no installed helper. Expanded filesystem operations require Python 3 in the chosen Linux image. Stream/copy publication needs hard links in the destination filesystem; no-clobber move needs Linux `renameat2`. Cross-filesystem move rejects without copy/delete. Mounted storage must supply those primitives and remains unqualified. A truncated native listing rejects with `OUTPUT_CAPACITY`; no successful prefixes. Stat defaults to lstat, and dangling symlinks exist. Recursive removal does not walk final symlinks. Streams transfer bounded 64 KiB chunks with backpressure, without whole-file buffering or a default total-size ceiling; ordinary buffered convenience retains 1 MiB. Each helper has a 30-second RPC bound, with SDK transfer cancellation/inactivity/overall bounds. Reads observe a changing file, not a snapshot.
+
+An interrupted or rejected streamed publication can leave a `.sandbar-<uuid>` staging file beside the destination. Transfer errors preserve its path, transferred count and confirmed effects; inspect and explicitly remove that correlated artifact or destroy owned compute. No mutation is replayed. Buffered exclusive creation has no hidden staging file; unconfirmed writes can leave partial bytes at the requested path. Cancellation reaches finite filesystem helper exec groups; ordinary exec still drains abandoned local observation until its explicit deadline.
+
+`preview: { access: "public", ports: [3000, 8080] }` intentionally exposes configured routes. `box.preview(3000)` only reads the running scoped machine and an existing pinned route, verifies browser protection is disabled, and returns `{ access: "public", url }`. It never creates routes, changes protection or wakes compute. Auto-detected default routes are excluded because they may retarget another port. A URL does not prove listener readiness. Protected/header-auth previews are unsupported. Public native ingress can wake compute after lookup.
+
+Finite stdin, expanded filesystem helpers, size selection and previews have offline coverage only. They do not inherit the baseline's live pass. Sustained streaming, PTYs, signals and process reopening remain unsupported: native exec closes kill the process group, and provides no persistent process generation/attach handle. A finite filesystem helper cannot supply those guarantees; a durable supervisor would be a separate architecture addition.
 
 ## Snapshot and lifecycle behavior
 
@@ -69,6 +78,6 @@ A lost disk-create acknowledgement can leave a disk with no saved UUID. Volume C
 
 Mutations are single-attempt. Local read cancellation reaches the transport. Buffered exec uses an explicit execution deadline; local wait cancellation is not confirmed guest termination. Closing the client drains dispatched finite commands until their deadline rather than implicitly cancelling them, then releases the channel. It does not destroy machines or disks. Missing exit evidence is unknown, never inferred success.
 
-The maintained external profile reuses the ordinary Bun sandbox and volume suites. It distinguishes unsupported no-clobber from conflict, independently tests disk CRUD and mounts, and keeps exact snapshot roundtrip unsupported. Further paid runs need explicit authorization. [Sanitized baseline evidence](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/boxd/qualification/live-qualification.md) records the tested revision and configuration.
+The maintained external profile reuses the ordinary Bun sandbox and volume suites. It now declares no-clobber, finite stdin, filesystem and explicitly public preview cases while retaining their live not-run status; it independently tests disk CRUD and mounts, and keeps exact snapshot roundtrip unsupported. Further paid runs need explicit authorization. [Sanitized baseline evidence](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/boxd/qualification/live-qualification.md) records the tested revision and configuration.
 
 See the [provider implementation brief and plan](https://github.com/pandemicsyn/sandbar/issues/41) and [official boxd SDK docs](https://docs.boxd.sh/reference/typescript-sdk).

@@ -9,11 +9,15 @@ const Routing = z.object({
   imageId: z.string().min(1),
   networkPolicy: z.literal("internet"),
   nativeLifetimeSeconds: z.literal(900),
+  previewAccess: z.enum(["protected", "public"]).default("protected"),
 });
 
 const implemented = new Set([
   "lifecycle",
   "execution",
+  "finiteStdin",
+  "directories",
+  "previewPublic",
   "files",
   "suspension",
   "renewal",
@@ -32,7 +36,11 @@ const notes: Partial<Record<keyof typeof features, string>> = {
   renewal:
     "Native wall-clock expiry reset is implemented with acknowledgement-preserving observations. No live qualification yet.",
   files:
-    "Bounded binary read and overwrite upload; native byte-count acknowledgement required. Atomic no-clobber is unsupported and the shared suite must assert rejection with unchanged data. Binary files/overwrite and unsupported no-clobber rejection passed in the fcb59d4 baseline with confirmed cleanup. No large-file/staged stream transfer guarantee.",
+    "Bounded native binary reads/overwrite upload and Python 3 atomic exclusive-create writes. The fcb59d4 baseline passed binary files/overwrite plus then-unsupported no-clobber rejection; it does not qualify the expanded no-clobber/stream behavior. New helpers have offline coverage only.",
+  finiteStdin:
+    "Native byte frames (at most 64 KiB each), up to 1 MiB input followed by native half-close/EOF. Empty and omitted input close stdin. No seekability or PTY promise. Deterministic protobuf-boundary coverage; live not-run.",
+  previewPublic:
+    "Explicit preview.access public config creates pinned ports (profile 3000/3001) and disables browser protection after expiry installation. Lookup reads running machine identity and existing pinned routes; never resumes or creates routes. Default protected lookup unsupported. Native inbound access may wake compute later. Offline coverage; live not-run.",
   suspension:
     "Native pause/wake retain filesystem, RAM, processes and sockets. Inspect/reopen use metadata only. Native inbound traffic may wake compute. No live qualification yet.",
   volumes:
@@ -47,7 +55,7 @@ const notes: Partial<Record<keyof typeof features, string>> = {
     "Only internet policy is supported, selected explicitly at setup. Peer/metadata isolation is enabled; this does not block internet egress. Strict blocked and paired network qualification unsupported.",
   oci: "OCI images boot directly; no Sandbar image-build hook or retained image artifact.",
   directories:
-    "Native complete bounded readDirectory and nonrecursive mkdir / explicitly recursive remove only. Stat, existence, safe copy/move and staged streaming transfers unsupported; the full directory workflow is not qualified.",
+    "Native complete bounded readDirectory, plus Python 3 complete list, lstat/stat/exists, recursive-opt-in mkdir/remove, copy and staged 64 KiB streams. Private Linux filesystem with hardlinks; no-clobber move requires renameat2 and cross-filesystem move rejects without copy/delete. Failed transfers retain correlated staging paths; no replay. Walk/text lines compose these hooks. Local Python workflow and protobuf transport coverage are separate; expanded file-directories live not-run.",
 };
 
 // SAFETY: These keys are taken from the fixed features literal.
@@ -57,7 +65,7 @@ export default defineProviderProfile({
   id: "boxd",
   nativeVersion: "boxd SDK 0.2.15",
   configuredEnvironment: true,
-  fileNoClobber: false,
+  fileNoClobber: true,
   credentialVariables: ["SANDBAR_BOXD_API_KEY"],
   bounds: { nativeLifetimeSeconds: 900, exerciseMs: 240000, cleanupMs: 60000 },
   support: {
@@ -86,6 +94,7 @@ export default defineProviderProfile({
         imageId: environment.SANDBAR_BOXD_IMAGE ?? "ubuntu:24.04",
         networkPolicy: "internet",
         nativeLifetimeSeconds: 900,
+        previewAccess: environment.SANDBAR_BOXD_PREVIEW_ACCESS ?? "protected",
       },
     );
   },
@@ -107,9 +116,12 @@ export default defineProviderProfile({
         credentials: { apiKey: credentials.SANDBAR_BOXD_API_KEY },
         config: {
           org: config.org,
+          size: 1,
+          volumes: { sizeBytes: 1024 ** 3 },
           image: config.imageId,
           networkPolicy: config.networkPolicy,
           lifetimeSeconds: config.nativeLifetimeSeconds,
+          preview: { access: config.previewAccess, ports: [3000, 3001] },
         },
         cleanup: { storage: "allow-unconfirmed" },
         onReference,
