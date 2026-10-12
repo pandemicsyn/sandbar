@@ -1,5 +1,18 @@
 # @sandbar-sdk/vercel
 
+## 0.2.0
+
+### Minor Changes
+
+- [#103](https://github.com/pandemicsyn/sandbar/pull/103) [`9e6a69b`](https://github.com/pandemicsyn/sandbar/commit/9e6a69bff292662f876a1f6742a0a6536b458c04) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Expand Vercel disposable sessions with finite byte stdin, filesystem helpers and streams, terminating filesystem snapshots, renewal, public previews, and universal-image processes and PTYs. Preserve exact resource identities and uncertain-operation custody.
+
+  Add opt-in persistent filesystem suspension and explicit fresh-session resume with stable logical references, single-dispatch recovery and retained snapshot cleanup identities.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @sandbar-sdk/adapter@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
