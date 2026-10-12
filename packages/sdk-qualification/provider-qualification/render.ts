@@ -61,6 +61,7 @@ const targets = [
     renderLiveMatrix(
       reports,
       Object.fromEntries(metadata.map((profile) => [profile.id, profile.name])),
+      external ? "./support.md" : undefined,
     ),
   ],
   [

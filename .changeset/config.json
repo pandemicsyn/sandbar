@@ -13,7 +13,8 @@
       "sandbar-sdk",
       "@sandbar-sdk/daytona",
       "@sandbar-sdk/e2b",
-      "@sandbar-sdk/boxd"
+      "@sandbar-sdk/boxd",
+      "@sandbar-sdk/vercel"
     ]
   ],
   "linked": [],

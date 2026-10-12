@@ -30,6 +30,7 @@ for (const name of [
   "sandbar-sdk",
   "@sandbar-sdk/daytona",
   "@sandbar-sdk/e2b",
+  "@sandbar-sdk/vercel",
   "@sandbar-sdk/boxd",
 ])
   if (!selected.has(name)) throw new Error(`Release graph lacks ${name}`);
@@ -91,6 +92,17 @@ for (const provider of ["daytona", "e2b"]) {
     types: `import { ${provider} } from "@sandbar-sdk/${provider}"; const bound = ${provider}(${JSON.stringify(options)}); void bound;`,
   });
 }
+
+cases.push({
+  name: "vercel",
+  packageName: "@sandbar-sdk/vercel",
+  overrides: [adapterName],
+  runtime: `import { vercel, createVercelAdapter } from "@sandbar-sdk/vercel";
+if (vercel.name !== "vercel" || createVercelAdapter().name !== "vercel") throw Error("Invalid Vercel definition");
+vercel.config.parse({ teamId: "team", projectId: "project" });`,
+  types: `import { vercel, createVercelAdapter } from "@sandbar-sdk/vercel";
+const definition: typeof vercel = createVercelAdapter(); void definition;`,
+});
 
 cases.push({
   name: "boxd",

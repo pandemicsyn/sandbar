@@ -310,6 +310,11 @@ export function renderSupportMatrix(
   metadata: readonly SupportMetadata[] = officialSupport,
 ) {
   const profiles = metadata.map((profile) => supportMetadataSchema.parse(profile));
+
+  const external = profiles.some(
+    (profile) => !officialSupport.some((official) => official.id === profile.id),
+  );
+
   const historical = reports.flatMap((report) => parseReport(report).historicalEvidence ?? []);
 
   // SAFETY: Object.entries reads only the fixed feature keys and their declared scenario lists.
@@ -360,8 +365,14 @@ export function renderSupportMatrix(
       : []),
     ...markdownTable(["Feature", ...profiles.map((profile) => profile.name)], rows),
     "",
-    "The external experimental [boxd adapter](/docs/providers/boxd/) has deterministic fixture coverage and separately maintained, dated live evidence. Its declarations are maintained in an external provider profile; it is outside the selected launch release.",
-    "The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. Daytona baseline passed at 8449def after allowing bounded inventory convergence; the original 1505ee0 failure remains recorded. Snapshot roundtrip, volume CRUD and mounted persistence retain their 1505ee0 passes. E2B baseline and RAM snapshot roundtrip passed at 8449def; its measured network probe failed at 431cdaa. All newly owned compute and retained artifacts have confirmed cleanup, while the original E2B volume uncertainty remains unresolved. Other operation/configuration claims retain their own recorded revisions and limitations below.",
+    ...(external
+      ? []
+      : [
+          "The external experimental [boxd adapter](/docs/providers/boxd/) has deterministic fixture coverage and separately maintained, dated live evidence. Its declarations are maintained in an external provider profile; it is outside the selected launch release.",
+        ]),
+    external
+      ? "The [live evidence detail](./live-qualification.md) contains only reviewed records supplied for this external profile. Missing records remain not-run; declarations do not establish live acceptance."
+      : "The [live evidence detail](/docs/providers/live-qualification/) retains exact available provenance, earlier configurations and historical state acceptance. Daytona baseline passed at 8449def after allowing bounded inventory convergence; the original 1505ee0 failure remains recorded. Snapshot roundtrip, volume CRUD and mounted persistence retain their 1505ee0 passes. E2B baseline and RAM snapshot roundtrip passed at 8449def; its measured network probe failed at 431cdaa. All newly owned compute and retained artifacts have confirmed cleanup, while the original E2B volume uncertainty remains unresolved. Other operation/configuration claims retain their own recorded revisions and limitations below.",
     "",
   ];
 
@@ -382,7 +393,9 @@ export function renderSupportMatrix(
   lines.push(
     "## Other integrations",
     "",
-    "Modal is an external experimental adapter with offline native-boundary and packed consumer coverage, without live acceptance. Custom adapters supply a profile to the same ordinary Bun SDK suites. Fake is a deterministic fixture without isolation guarantees.",
+    external
+      ? "This page covers only the supplied external profile. Other adapter results are recorded separately."
+      : "Modal is an external experimental adapter with offline native-boundary and packed consumer coverage, without live acceptance. Custom adapters supply a profile to the same ordinary Bun SDK suites. Fake is a deterministic fixture without isolation guarantees.",
     "",
     "## Runtimes",
     "",
@@ -390,7 +403,9 @@ export function renderSupportMatrix(
     "",
     "## Updating support",
     "",
-    "Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The bounded Daytona Bun run at 1505ee0 is recorded, including its lifecycle failure. E2B volume tests skip; identified volume-only custody does not block bounded zero-volume suites. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.",
+    external
+      ? "Reviewed summaries belong in one results JSON per provider. Generate with provider-qualification/render.ts --profile <profile> --results <results-directory> --output <output-directory>; use --check for drift. Live runs require separate authorization and durable owned cleanup."
+      : "Reviewed summaries live in results/<provider>.json; new integration runs use standard Bun JUnit plus a small offline provenance/cleanup mapping. The bounded Daytona Bun run at 1505ee0 is recorded, including its lifecycle failure. E2B volume tests skip; identified volume-only custody does not block bounded zero-volume suites. Capability declarations and caveats live in provider-qualification/support.ts (external authors supply equivalent metadata). Generate both pages offline with `bun packages/sdk-qualification/provider-qualification/render.ts`; use `--check` for drift. Live runs require separate explicit resource authorization and durable owned cleanup.",
     "",
   );
 

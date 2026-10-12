@@ -16,6 +16,7 @@ const packages = [
   ["@sandbar-sdk/daytona", "packages/providers/daytona"],
   ["@sandbar-sdk/modal", "packages/providers/modal"],
   ["@sandbar-sdk/boxd", "packages/providers/boxd"],
+  ["@sandbar-sdk/vercel", "packages/providers/vercel"],
   ["@sandbar-sdk/e2b", "packages/providers/e2b"],
   ["sandbar-sdk", "packages/sdk"],
 ];
@@ -233,6 +234,23 @@ async function flow() {
   await box.readFile("/file");
   await box.destroy(); await volume.delete(); await client.close();
   return { filesystem, connections };
+}
+void flow;
+`;
+  else if (mode === "vercel")
+    source = `
+import { Sandbar, Image } from "sandbar-sdk";
+import { vercel } from "@sandbar-sdk/vercel";
+async function flow() {
+  const client = await Sandbar.connect({ adapter: vercel, config: { teamId: "team", projectId: "project" }, credentials: { token: "fixture" } });
+  const box = await client.sandboxes.create();
+  const reopened = await client.sandboxes.get(box.reference!);
+  void reopened;
+  const result = await box.exec(["printf", "ready"]);
+  const bytes: Uint8Array = result.stdout;
+  await box.destroy();
+  await client.close();
+  return bytes;
 }
 void flow;
 `;
@@ -536,6 +554,46 @@ try {
   }
   process.stdout.write("packed Daytona fixture flow passed\\n");
 } finally { await client.close(); }
+`;
+
+const vercelSource = `
+import assert from "node:assert/strict";
+import { Sandbar, Image } from "sandbar-sdk";
+import { createVercelAdapter, vercel } from "@sandbar-sdk/vercel";
+assert.equal(vercel.name, "vercel");
+let stopped = false, closed = 0, mutations = 0;
+const session = () => ({ id: "session_1", region: "iad1", status: stopped ? "stopped" : "running", networkPolicy: { mode: "deny-all" } });
+const adapter = createVercelAdapter(() => ({
+ close() { closed++; },
+ async fetch(input, init) {
+  const url = new URL(input);
+  assert.equal(url.origin, "https://vercel.com");
+  assert.equal(url.searchParams.get("teamId"), "team");
+  if (init.method === "POST") mutations++;
+  let value;
+  if (url.pathname === "/api/v2/teams/team") value = { id: "team" };
+  else if (url.pathname === "/api/v2/projects/project") value = { id: "project", accountId: "team" };
+  else if (url.pathname === "/api/v2/sandboxes") value = { sandboxes: [], pagination: { next: null } };
+  else if (url.pathname === "/api/v3/sandboxes") {
+   const body = JSON.parse(init.body);
+   assert.equal(body.persistent, false);
+   assert.equal(body.image, "vercel/sandbox/node:24");
+   value = { session: session(), sandbox: { name: body.name, currentSessionId: "session_1", persistent: false, status: "running", networkPolicy: { mode: "deny-all" } } };
+  } else if (url.pathname === "/api/v2/sandboxes/sessions/session_1/stop") { stopped = true; value = {}; }
+  else if (url.pathname === "/api/v2/sandboxes/sessions/session_1") value = { session: session() };
+  else throw new Error("Unexpected route " + url.pathname);
+  return Response.json(value);
+ }
+}));
+const client = await Sandbar.connect({ adapter, config: { teamId: "team", projectId: "project" }, credentials: { token: "fixture" } });
+const box = await client.sandboxes.create({ environment: Image.prepared("vercel/sandbox/node:24"), networkPolicy: "vercel-deny-all" });
+assert.equal(box.id, "session_1");
+await box.destroy();
+await client.close();
+assert.equal(stopped, true);
+assert.equal(closed, 1);
+assert.equal(mutations, 2);
+console.log("Packed Vercel adapter passed");
 `;
 
 const modalSource = `
@@ -925,6 +983,18 @@ try {
     "@sandbar-sdk/daytona": archiveOverrides["@sandbar-sdk/daytona"],
   };
 
+  const vercelDeps = { ...sdkDeps, "@sandbar-sdk/vercel": archiveOverrides["@sandbar-sdk/vercel"] };
+  const vercel = join(temporary, "vercel-consumer");
+  await consumer(vercel, vercelDeps, archiveOverrides, vercelSource);
+  await checkTypes(vercel, "vercel");
+  const vercelGraph = inspectGraph(vercel, ["sandbar-sdk", "@sandbar-sdk/vercel"]);
+
+  if (vercelGraph.some((name) => name.startsWith("@sandbar/") || name === "@vercel/sandbox"))
+    throw new Error("Vercel package leaked private or unused native dependencies");
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], vercel)}`);
+
   const modalDeps = {
     ...sdkDeps,
     "@sandbar-sdk/modal": archiveOverrides["@sandbar-sdk/modal"],
@@ -1137,6 +1207,8 @@ console.log("Packed boxd imports and local validation passed without provider IO
         "e2b",
         "@sandbar-sdk/e2b",
         "@sandbar-sdk/daytona",
+        "@sandbar-sdk/vercel",
+        "tar-stream",
       ].includes(name),
     )
   )

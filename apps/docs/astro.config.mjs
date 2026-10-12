@@ -101,6 +101,7 @@ export default defineConfig({
             { slug: "docs/providers/daytona" },
             { slug: "docs/providers/e2b" },
             { slug: "docs/providers/boxd" },
+            { slug: "docs/providers/vercel" },
             { slug: "docs/providers/live-qualification", label: "Live test evidence" },
           ],
         },
