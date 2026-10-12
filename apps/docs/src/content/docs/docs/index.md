@@ -33,12 +33,12 @@ Copy a prompt to give your coding agent the right imports, examples, and constra
 
 The [Tested provider support](/docs/providers/support/) matrix shows which operations have been exercised against real providers, along with the tested configuration and limits. Choose setup and limits for your adapter:
 
-| Adapter                                   | Current scope and evidence                                                                                                                     |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Daytona](/docs/providers/daytona/)       | Execution, files, processes and native storage/lifecycle features; dated live evidence in the support matrix.                                  |
-| [E2B](/docs/providers/e2b/)               | Execution, files, processes and native snapshots/lifecycle; measured blocked-network failure remains documented.                               |
-| [boxd](/docs/providers/boxd/)             | Experimental microVM adapter with a live baseline for lifecycle, execution, files and reopening; broader features remain unqualified.          |
-| [Vercel Sandbox](/docs/providers/vercel/) | Disposable Node 24 sessions, bounded binary execution and overwrite-only files; cleanup retains named metadata. Live qualification is not-run. |
-| [Modal](/docs/direct-quickstart/)         | Experimental adapter with offline coverage; outside the initial release group.                                                                 |
+| Adapter                                   | What you get                                                                                |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [Daytona](/docs/providers/daytona/)       | Commands, files, processes, snapshots, volumes and suspend/resume.                          |
+| [E2B](/docs/providers/e2b/)               | Commands, files, processes, snapshots and suspend/resume.                                   |
+| [boxd](/docs/providers/boxd/)             | Experimental. MicroVM sandboxes with commands, files and reconnecting to running sandboxes. |
+| [Vercel Sandbox](/docs/providers/vercel/) | Short-lived Node 24 sandboxes with commands and files.                                      |
+| [Modal](/docs/direct-quickstart/)         | Experimental. Not yet published to npm.                                                     |
 
 For API details, use the [TypeScript reference](/docs/reference/typescript/). To add a provider, start with [Write an adapter](/docs/guides/write-an-adapter/).
