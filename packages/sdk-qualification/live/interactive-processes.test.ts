@@ -7,7 +7,8 @@ import {
 } from "../../../apps/docs/examples/interactive-processes";
 import { liveEnabled, setupLive, finishLive } from "./providers";
 
-const enabled = liveEnabled && ["daytona", "e2b"].includes(process.env.SANDBAR_QUAL_PROVIDER ?? "");
+const enabled =
+  liveEnabled && ["daytona", "e2b", "vercel"].includes(process.env.SANDBAR_QUAL_PROVIDER ?? "");
 
 describe("Sandbar sustained and interactive processes", () => {
   let fixture: Awaited<ReturnType<typeof setupLive>> | undefined;

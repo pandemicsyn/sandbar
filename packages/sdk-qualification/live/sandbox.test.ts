@@ -56,6 +56,7 @@ export async function lifecycle(t: TestResources, box: AdapterSandbox, inventory
 
 export async function renewal(t: TestResources, box: AdapterSandbox) {
   t.at("sandbox/renew");
+  const prior = await box.inspect({ signal: t.signal });
   const before = Date.now();
   const result = await box.renew({ forSeconds: 61 }, { signal: t.signal });
   const after = Date.now();
@@ -69,8 +70,14 @@ export async function renewal(t: TestResources, box: AdapterSandbox) {
   const deadline = Date.parse(result.observation.expires.at);
   // Request duration plus a five-second clock tolerance; no exact deletion claim.
   expect(deadline).toBeGreaterThanOrEqual(before + resolved * 1000 - 5000);
-  expect(deadline).toBeLessThanOrEqual(after + resolved * 1000 + 5000);
-  const max = t.client.provider === "daytona" ? 86400 : 3600;
+
+  const upperBase =
+    t.client.provider === "vercel" && prior.expires.status === "known"
+      ? Math.max(after, Date.parse(prior.expires.at))
+      : after;
+
+  expect(deadline).toBeLessThanOrEqual(upperBase + resolved * 1000 + 5000);
+  const max = t.client.provider === "daytona" ? 86400 : t.client.provider === "vercel" ? 300 : 3600;
   await expect(box.renew({ forSeconds: max + 1 }, { signal: t.signal })).rejects.toMatchObject({
     code: "INVALID_ARGUMENT",
     effect: "none",
@@ -339,7 +346,12 @@ describe("Sandbar sandbox", () => {
     async () => renewal(fixture!.resources, box),
     241000,
   );
-  (liveEnabled && featureSupported("suspension") ? test : test.skip)(
+  (liveEnabled &&
+    featureSupported("suspension") &&
+    (process.env.SANDBAR_QUAL_PROVIDER !== "vercel" ||
+      process.env.SANDBAR_VERCEL_PERSISTENT === "true")
+    ? test
+    : test.skip)(
     "lifecycle-suspend-resume",
     async () => {
       const configured = fixture!;
@@ -369,7 +381,7 @@ describe("Sandbar sandbox", () => {
       const suspended = await box.suspend({ signal: t.signal });
       expect(suspended.reference).toEqual(box.reference!);
       expect(suspended.processes).toBe(
-        t.client.provider === "daytona" ? "terminated" : "preserved",
+        ["daytona", "vercel"].includes(t.client.provider) ? "terminated" : "preserved",
       );
       const reference = JSON.parse(JSON.stringify(box.reference));
       await reopenSnapshot(configured, reference, {
@@ -389,9 +401,12 @@ describe("Sandbar sandbox", () => {
       else expect(["resumed", "unknown"]).toContain(resumed.execution);
       expect(await t.read(box, path)).toEqual(bytes);
 
-      if (t.client.provider === "daytona") {
+      if (suspended.processes === "terminated") {
         expect(await t.exec(box, processAbsent)).toBe("PROCESS_ABSENT\n");
-        expect(resumed.observation.expires).toEqual(before.expires);
+
+        if (t.client.provider === "daytona")
+          expect(resumed.observation.expires).toEqual(before.expires);
+        else expect(resumed.observation.expires.status).toBe("known");
       } else {
         const after = memorySample(await t.exec(box, memoryRead));
         expect(after.nonce).toBe(memoryBefore.nonce);

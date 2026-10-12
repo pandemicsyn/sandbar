@@ -43,7 +43,8 @@ export async function snapshotRoundtrip(
     );
   selectedProfile(plan.value.profile);
 
-  expect(plan.value.profile.sourceAfter).toBe("unchanged");
+  const sourceSurvives = plan.value.profile.sourceAfter === "unchanged";
+  expect(["unchanged", "destroyed"]).toContain(plan.value.profile.sourceAfter);
   expect(plan.value.sourceState).toBe("running");
   t.at("snapshot/write");
   await source.writeFile(path, bytes, { overwrite: true, signal: t.signal });
@@ -78,15 +79,18 @@ export async function snapshotRoundtrip(
     }
   })();
 
-  expect(result.source.state).toBe("running");
-  expect((await source.inspect({ signal: t.signal })).state).toBe("running");
+  const expectedSource =
+    plan.value.profile.sourceAfter === "unchanged" ? "running" : plan.value.profile.sourceAfter;
+
+  expect(result.source.state).toBe(expectedSource);
+  expect((await source.inspect({ signal: t.signal })).state).toBe(expectedSource);
   const info = await result.snapshot.inspect({ signal: t.signal });
   expect(info.preserve).toBe(plan.value.profile.preserve);
   expect(info.restoreExecution).toBe(plan.value.profile.restoreExecution);
   expect(result.capture.preserve).toBe(plan.value.profile.preserve);
   expect(result.capture.restoreExecution).toBe(plan.value.profile.restoreExecution);
   expect(result.capture.interruption).toBe(plan.value.profile.interruption);
-  expect(info.mountHandling).toBe("none");
+  expect(info.mountHandling).toBe(plan.value.profile.mountHandling);
   expect(info.state).toBe("ready");
   t.at("snapshot/restore");
 
@@ -99,8 +103,12 @@ export async function snapshotRoundtrip(
 
   expect(restored.id).not.toBe(source.id);
   expect(await t.read(restored, path)).toEqual(bytes);
-  await source.writeFile(path, sourceChanged, { overwrite: true, signal: t.signal });
-  expect(await t.read(source, path)).toEqual(sourceChanged);
+
+  if (sourceSurvives) {
+    await source.writeFile(path, sourceChanged, { overwrite: true, signal: t.signal });
+    expect(await t.read(source, path)).toEqual(sourceChanged);
+  }
+
   expect(await t.read(restored, path)).toEqual(bytes);
 
   if (plan.value.profile.restoreExecution === "resume" && before) {
@@ -121,12 +129,14 @@ export async function snapshotRoundtrip(
 
   if (plan.value.profile.restoreExecution === "fresh") {
     expect(await t.exec(restored, processAbsent)).toBe("PROCESS_ABSENT\n");
-    expect(await t.exec(source, processAbsent)).toBe("PROCESS_ABSENT\n");
+
+    if (sourceSurvives) expect(await t.exec(source, processAbsent)).toBe("PROCESS_ABSENT\n");
   }
 
   await restored.writeFile(path, restoredChanged, { overwrite: true, signal: t.signal });
   expect(await t.read(restored, path)).toEqual(restoredChanged);
-  expect(await t.read(source, path)).toEqual(sourceChanged);
+
+  if (sourceSurvives) expect(await t.read(source, path)).toEqual(sourceChanged);
   await t.destroy("snapshot/source");
   await t.destroy("snapshot/restore");
   const saved = ResourceReference.parse(JSON.parse(JSON.stringify(result.snapshot.reference)));
@@ -136,7 +146,7 @@ export async function snapshotRoundtrip(
   const metadata = await reopened.inspect({ signal: t.signal });
   expect(metadata.reference.nativeId).toBe(saved.nativeId);
   expect(metadata.reference.generation).toBe(saved.generation);
-  expect(metadata.mountHandling).toBe("none");
+  expect(metadata.mountHandling).toBe(plan.value.profile.mountHandling);
   t.at("snapshot/restore-second");
 
   const again = await t.wait(

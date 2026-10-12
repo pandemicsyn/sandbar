@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { AdapterError, type ExecInput } from "@sandbar-sdk/adapter";
 
 // Executed by the managed Node 24 image. User argv is JSON data, never interpolated code.
@@ -6,6 +7,7 @@ import { AdapterError, type ExecInput } from "@sandbar-sdk/adapter";
 export const captureHelper = String.raw`
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const spec = JSON.parse(process.argv[1]);
 const dir = fs.mkdtempSync('/tmp/sandbar-exec-');
 fs.chmodSync(dir, 0o700);
@@ -13,10 +15,27 @@ const path = dir + '/receipt.json';
 console.log(path);
 let size = 0, truncated = false, timedOut = false, failure = false;
 const output = { stdout: [], stderr: [] };
-const child = spawn(spec.argv[0], spec.argv.slice(1), {
-  cwd: spec.cwd, env: { ...process.env, ...spec.env },
-  stdio: ['ignore', 'pipe', 'pipe'], detached: true
-});
+let inputFd;
+if (spec.stdinPath) {
+  inputFd = fs.openSync(spec.stdinPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    if(!fs.fstatSync(inputFd).isFile()) throw new Error('Finite stdin must be a regular file');
+    const b = Buffer.alloc(1048577); let size=0;
+    for(let n;size<b.length && (n=fs.readSync(inputFd,b,size,b.length-size,size));) size+=n;
+    if(size>1048576 || size!==spec.stdinSize || createHash('sha256').update(b.subarray(0,size)).digest('hex')!==spec.stdinDigest) throw new Error('Finite stdin verification failed');
+    fs.unlinkSync(spec.stdinPath);
+  } catch(error) { fs.closeSync(inputFd); throw error; }
+}
+// The complete verified file is available at offset zero with EOF at its end.
+// Descriptor inheritance avoids accepting a partial pipe write after early child exit.
+let child;
+try {
+  child = spawn(spec.argv[0], spec.argv.slice(1), {
+    cwd: spec.cwd, env: { ...process.env, ...spec.env },
+    stdio: [inputFd ?? 'ignore', 'pipe', 'pipe'], detached: true
+  });
+} finally { if(inputFd!==undefined) fs.closeSync(inputFd); }
+
 const timer = setTimeout(() => {
   timedOut = true;
   try { process.kill(-child.pid, 'SIGKILL'); } catch {}
@@ -60,6 +79,11 @@ export function captureSpec(input: ExecInput) {
     env: input.env,
     maxBytes: input.maxOutputBytes,
     timeoutMs: input.deadlineSeconds * 1000,
+    stdinSize: input.stdin?.length,
+    stdinDigest:
+      input.stdin === undefined
+        ? undefined
+        : createHash("sha256").update(input.stdin).digest("hex"),
   };
 }
 

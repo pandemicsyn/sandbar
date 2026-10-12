@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readFile, realpath, rm, stat } from "node:fs/promises";
+import { readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { type ExecInput, type Json } from "@sandbar-sdk/adapter";
 import { captureHelper, captureSpec, decodeReceipt } from "./capture";
@@ -13,10 +13,19 @@ const base: ExecInput = {
 };
 
 async function run(input: ExecInput) {
-  const helper = spawnSync("node", ["-e", captureHelper, JSON.stringify(captureSpec(input))], {
-    timeout: 5000,
-    encoding: "utf8",
-  });
+  const stdinPath =
+    input.stdin === undefined ? undefined : `/tmp/sandbar-input-test-${crypto.randomUUID()}`;
+
+  if (stdinPath) await writeFile(stdinPath, input.stdin!, { mode: 0o600, flag: "wx" });
+
+  const helper = spawnSync(
+    "node",
+    ["-e", captureHelper, JSON.stringify({ ...captureSpec(input), stdinPath })],
+    {
+      timeout: 5000,
+      encoding: "utf8",
+    },
+  );
 
   expect(helper.status).toBe(0);
   const path = helper.stdout.split("\n")[0]!;
@@ -183,4 +192,74 @@ test("receipt decoding rejects malformed, oversized, and inconsistent evidence",
     expect(() => decodeReceipt(encode(invalid), 1024)).toThrow(
       expect.objectContaining({ code: "INTERNAL" }),
     );
+});
+
+test("capture sends finite binary stdin and EOF, including empty and early-close input", async () => {
+  for (const stdin of [
+    undefined,
+    new Uint8Array(),
+    Uint8Array.from({ length: 256 }, (_, i) => i),
+    new Uint8Array(1048576).fill(255),
+  ]) {
+    const result = decodeReceipt(
+      await run({
+        ...base,
+        stdin,
+        maxOutputBytes: 1048576,
+        command: { kind: "argv", argv: ["node", "-e", "process.stdin.pipe(process.stdout)"] },
+      }),
+      1048576,
+    );
+
+    expect(result.stdout).toEqual(Buffer.from(stdin ?? new Uint8Array()));
+    expect(result.exitCode).toBe(0);
+  }
+
+  expect(
+    decodeReceipt(
+      await run({
+        ...base,
+        stdin: new Uint8Array(1048576),
+        command: { kind: "argv", argv: ["true"] },
+      }),
+      1024,
+    ).exitCode,
+  ).toBe(0);
+});
+
+test("capture rejects corrupted staged stdin before launching the command", async () => {
+  const stdinPath = `/tmp/sandbar-input-test-${crypto.randomUUID()}`;
+  const marker = `/tmp/sandbar-input-marker-${crypto.randomUUID()}`;
+  await writeFile(stdinPath, "corrupted", { mode: 0o600, flag: "wx" });
+
+  const helper = spawnSync(
+    "node",
+    [
+      "-e",
+      captureHelper,
+      JSON.stringify({
+        ...captureSpec({
+          ...base,
+          stdin: new Uint8Array([0, 255]),
+          command: { kind: "argv", argv: ["touch", marker] },
+        }),
+        stdinPath,
+      }),
+    ],
+    { timeout: 5000, encoding: "utf8" },
+  );
+
+  const receiptPath = helper.stdout.split("\n")[0]!;
+
+  try {
+    expect(helper.status).not.toBe(0);
+    expect(helper.stderr).toContain("Finite stdin verification failed");
+    await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await rm(stdinPath, { force: true });
+
+    if (/^\/tmp\/sandbar-exec-[A-Za-z0-9]+\/receipt\.json$/.test(receiptPath))
+      await rm(dirname(receiptPath), { recursive: true, force: true });
+    await rm(marker, { force: true });
+  }
 });

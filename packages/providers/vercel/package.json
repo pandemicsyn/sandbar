@@ -7,7 +7,8 @@
     "README.md",
     "LICENSE",
     "NATIVE.md",
-    "qualification"
+    "qualification",
+    "qualification-plan.md"
   ],
   "type": "module",
   "exports": {
@@ -35,7 +36,7 @@
     "url": "git+https://github.com/pandemicsyn/sandbar.git",
     "directory": "packages/providers/vercel"
   },
-  "description": "Disposable Vercel Sandbox adapter for Sandbar.",
+  "description": "Vercel Sandbox adapter for Sandbar with immutable sessions, snapshots and binary IO.",
   "bugs": {
     "url": "https://github.com/pandemicsyn/sandbar/issues"
   },
