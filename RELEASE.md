@@ -14,7 +14,7 @@
 2. The qualification job repeats lint, format, typecheck, test, build, packed Node/Bun consumers and docs checks, and installs the tarballs with npm, pnpm and Bun in isolated strict TypeScript consumers.
 3. Approve the `npm` environment when the publish job waits. It creates the `v<version>` tag on the qualified commit, then publishes all packages over OIDC and waits once for the registry to show them. It compares its commit, tarball hashes and notes with the qualification artifact and stops if they differ. `latest` is used for stable versions and `next` for prereleases. A rerun skips packages whose existing tarball integrity matches exactly and completes the rest; published versions cannot be rolled back. The GitHub release is created only after all packages verify.
 
-Manual runs remain available: run **Release npm packages** with `dry_run: true` to qualify any ref, or with an existing `v<version>` tag as `release_ref` and `dry_run: false` to publish it.
+Manual runs check out the ref they run on. Qualify a branch with `gh workflow run release-npm.yml --ref main -f dry_run=true`; publish an existing tag with `gh workflow run release-npm.yml --ref v<version> -f dry_run=false`.
 
 ## One-time setup before a real release
 
