@@ -30,8 +30,8 @@ The landing page is maintained separately in `src/pages/index.astro`.
 
 The getting started page imports `examples/getting-started-{daytona,e2b,modal}.ts`
 as its displayed code, so all three copyable examples are checked by the examples
-TypeScript project. Synchronized provider tabs switch credentials, code, and source-run commands together. The examples are not executed in offline checks because they
-create real sandboxes. Getting started uses checkout installation and workspace imports while packages are unpublished.
+TypeScript project. Synchronized provider tabs switch install commands, credentials, code, and run commands together. The examples are not executed in offline checks because they
+create real sandboxes. Getting started installs from npm; the Modal tab runs from a checkout because Modal is unpublished.
 
 The runnable agent examples page at `/docs/guides/runnable-agent-examples/`
 links to the root `examples/README.md` runbook and individual application source.

@@ -5,7 +5,7 @@ description: Resolve package, connection, execution, file, and cleanup issues.
 
 ## Package or import not found
 
-A usable Sandbar release is not published yet. The registry's `0.0.0` entries reserve package names; they are not the SDK described here. The source release is versioned at `0.1.0`. Follow [Getting started](/docs/direct-quickstart/) to install and build a source checkout, then use its workspace packages or packed artifacts. The unrelated `sandbar` npm package is not this SDK.
+Install `sandbar-sdk` and your adapter package at `0.1.0` or later; `0.0.0` versions are empty placeholders. See [Getting started](/docs/direct-quickstart/). The unrelated `sandbar` npm package is not this SDK.
 
 Import the SDK from `sandbar-sdk` and your adapter from its separate package:
 

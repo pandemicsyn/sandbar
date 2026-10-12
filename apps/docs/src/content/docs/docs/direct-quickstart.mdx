@@ -1,6 +1,6 @@
 ---
 title: Getting started
-description: Run your first sandbox command from a Sandbar checkout.
+description: Install Sandbar and run your first sandbox command.
 ---
 
 import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
@@ -10,9 +10,28 @@ import modal from "../../../../examples/getting-started-modal.ts?raw";
 
 Run a command in a sandbox from your own TypeScript application. You'll need a provider account and **Bun** to run this example. The SDK also supports server-side [Node.js](/docs/providers/support/#runtimes).
 
-## 1. Set up a checkout
+## 1. Install
 
-A usable Sandbar release is not published yet; the registry's 0.0.0 entries are name-reservation placeholders. The source release is versioned at 0.1.0. Use **Bun 1.3.14** and run from a source checkout:
+In your project, install the SDK and the adapter for your provider:
+
+<Tabs syncKey="quickstart-provider">
+  <TabItem label="Daytona">
+
+```sh
+npm install sandbar-sdk @sandbar-sdk/daytona
+```
+
+  </TabItem>
+  <TabItem label="E2B">
+
+```sh
+npm install sandbar-sdk @sandbar-sdk/e2b
+```
+
+  </TabItem>
+  <TabItem label="Modal (experimental)">
+
+The Modal adapter is not published to npm. Run it from a source checkout with **Bun 1.3.14**:
 
 ```sh
 git clone https://github.com/pandemicsyn/sandbar.git
@@ -21,13 +40,16 @@ bun install --frozen-lockfile
 bun run build:packages
 ```
 
-Already in a checkout? Run the install and build commands from its root. The workspace resolves `sandbar-sdk` and the separate Daytona, E2B, boxd, Vercel and experimental Modal adapter packages locally. Once published, install `sandbar-sdk @sandbar-sdk/daytona` or `sandbar-sdk @sandbar-sdk/e2b` in your application. Modal has offline coverage and has not been live-qualified; [compare provider support](/docs/providers/support/). For the newer adapters, follow [boxd setup](/docs/providers/boxd/) or [Vercel setup](/docs/providers/vercel/) and their documented limits.
+  </TabItem>
+</Tabs>
+
+`pnpm add` and `bun add` work too. boxd and Vercel install the same way; see [boxd setup](/docs/providers/boxd/) and [Vercel setup](/docs/providers/vercel/). [Compare provider support](/docs/providers/support/) before choosing.
 
 To run OpenCode rather than a shell command, use the [runnable agent examples](/docs/guides/runnable-agent-examples/).
 
 ## 2. Add your credentials
 
-Create an untracked `.env.local` file in the repository root:
+Create an untracked `.env.local` file in your project root (the repository root for Modal):
 
 <Tabs syncKey="quickstart-provider">
   <TabItem label="Daytona">
@@ -66,7 +88,7 @@ Add `.env.local` to your `.gitignore`. Keep credentials on the server and out of
 
 ## 3. Run a command
 
-Choose a provider. These complete examples are the checked source files you will run below:
+Choose a provider and save the example as `quickstart.ts`:
 
 <Tabs syncKey="quickstart-provider">
   <TabItem label="Daytona">
@@ -80,24 +102,26 @@ Choose a provider. These complete examples are the checked source files you will
   </TabItem>
 </Tabs>
 
-Run the selected source file from the repository root:
+Run it with Bun:
 
 <Tabs syncKey="quickstart-provider">
   <TabItem label="Daytona">
 
 ```sh
-bun --env-file=.env.local run apps/docs/examples/getting-started-daytona.ts
+bun --env-file=.env.local run quickstart.ts
 ```
 
   </TabItem>
   <TabItem label="E2B">
 
 ```sh
-bun --env-file=.env.local run apps/docs/examples/getting-started-e2b.ts
+bun --env-file=.env.local run quickstart.ts
 ```
 
   </TabItem>
   <TabItem label="Modal (experimental)">
+
+From the repository root:
 
 ```sh
 bun --env-file=.env.local run apps/docs/examples/getting-started-modal.ts

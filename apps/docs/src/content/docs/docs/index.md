@@ -5,7 +5,7 @@ description: Create sandboxes, run code, and move files with one TypeScript SDK 
 
 Sandbar is a server-side TypeScript SDK for creating sandboxes, running commands, and moving files across providers. **Daytona, E2B, boxd and Vercel are separately installed adapters.** Other providers can integrate through the public adapter API.
 
-Start with [Getting started](/docs/direct-quickstart/) to run your first command and clean up the sandbox. This site documents the current source build; packages are not yet published.
+Start with [Getting started](/docs/direct-quickstart/) to install the SDK, run your first command and clean up the sandbox.
 
 Run OpenCode inside a sandbox with the [runnable agent examples](/docs/guides/runnable-agent-examples/): capture a response or upload a file, ask the agent to edit it, and read it back. The guide includes checkout setup for Daytona and E2B.
 

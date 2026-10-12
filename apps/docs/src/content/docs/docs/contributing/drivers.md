@@ -7,7 +7,7 @@ Use `defineAdapter` from `@sandbar-sdk/adapter` to describe a provider. The defi
 
 Use `adapterSuite` from `@sandbar-sdk/adapter/testing` with a deterministic provider fixture. Include loss after effect, scope changes, binary output and recovery without another submission for every capability you claim. The fake provider is a simulation; it persists native effect evidence for these tests. Real-provider support requires separate native conformance evidence in the [support matrix](/docs/providers/support/).
 
-Packages are currently unpublished. Develop from a checkout and use local packed artifacts for consumer qualification. Modal is a separate experimental `@sandbar-sdk/modal` adapter with offline coverage; it is not a built-in SDK subpath or a live-qualified provider.
+Develop from a checkout and use local packed artifacts for consumer qualification. Modal is a separate experimental `@sandbar-sdk/modal` adapter with offline coverage; it is not a built-in SDK subpath or a live-qualified provider.
 
 ## Choose a package shape
 

@@ -3,7 +3,7 @@ title: Vercel Sandbox
 description: Use the Vercel adapter with disposable Node 24 sessions and configured network policies.
 ---
 
-Vercel Sandbox is an official adapter distributed as `@sandbar-sdk/vercel`, used alongside `sandbar-sdk`. It is implemented for immutable, nonpersistent sessions with managed Node 24 in `iad1`. The adapter landed in #93 and is included in the initial 0.1.0 release group. Live provider behavior is unverified; version preparation and registry publication are separate from implementation. Use the [checkout setup](/docs/direct-quickstart/) until a usable release is available.
+Vercel Sandbox is an official adapter distributed as `@sandbar-sdk/vercel`, used alongside `sandbar-sdk`. It is implemented for immutable, nonpersistent sessions with managed Node 24 in `iad1`. Install it with `npm install sandbar-sdk @sandbar-sdk/vercel`. Live provider behavior is unverified.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";

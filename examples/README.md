@@ -9,7 +9,7 @@ Both use Sandbar's public SDK. Provider selection changes setup; the workflows u
 
 ## Setup
 
-Use **Bun 1.3.14** from the repository root. Sandbar packages are unpublished, so run these examples from a checkout:
+Use **Bun 1.3.14** from the repository root:
 
 ```sh
 bun install --frozen-lockfile

@@ -19,9 +19,8 @@ Read these docs first:
 - https://github.com/pandemicsyn/sandbar/blob/main/examples/README.md
 
 Inspect the project and installed package versions before changing code.
-Sandbar packages are currently unpublished. Use an available source
-checkout or local packed artifacts; follow the checkout setup in the docs. Do not substitute the unrelated npm package
-named "sandbar".
+Install "sandbar-sdk" and the selected adapter package from npm. Do not
+substitute the unrelated npm package named "sandbar".
 
 Use Sandbar and Image from "sandbar-sdk", with e2b from
 "@sandbar-sdk/e2b", daytona from "@sandbar-sdk/daytona", boxdAdapter from
