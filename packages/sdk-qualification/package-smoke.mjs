@@ -562,7 +562,7 @@ import { Sandbar, Image } from "sandbar-sdk";
 import { createVercelAdapter, vercel } from "@sandbar-sdk/vercel";
 assert.equal(vercel.name, "vercel");
 let stopped = false, closed = 0, mutations = 0;
-const session = () => ({ id: "session_1", region: "iad1", status: stopped ? "stopped" : "running", networkPolicy: { mode: "deny-all" } });
+const session = () => ({ id: "session_1", region: "iad1", vcpus: 2, timeout: 300000, startedAt: 1700000000000, status: stopped ? "stopped" : "running", networkPolicy: { mode: "deny-all" } });
 const adapter = createVercelAdapter(() => ({
  close() { closed++; },
  async fetch(input, init) {
@@ -578,7 +578,7 @@ const adapter = createVercelAdapter(() => ({
    const body = JSON.parse(init.body);
    assert.equal(body.persistent, false);
    assert.equal(body.image, "vercel/sandbox/node:24");
-   value = { session: session(), sandbox: { name: body.name, currentSessionId: "session_1", persistent: false, status: "running", networkPolicy: { mode: "deny-all" } } };
+   value = { session: session(), routes: [], sandbox: { image: "vercel/sandbox/node@sha256:" + "a".repeat(64), mounts: {}, name: body.name, currentSessionId: "session_1", persistent: false, status: "running", networkPolicy: { mode: "deny-all" } } };
   } else if (url.pathname === "/api/v2/sandboxes/sessions/session_1/stop") { stopped = true; value = {}; }
   else if (url.pathname === "/api/v2/sandboxes/sessions/session_1") value = { session: session() };
   else throw new Error("Unexpected route " + url.pathname);

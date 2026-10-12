@@ -13,10 +13,23 @@ const path = dir + '/receipt.json';
 console.log(path);
 let size = 0, truncated = false, timedOut = false, failure = false;
 const output = { stdout: [], stderr: [] };
+let inputBytes;
+if (spec.stdinPath) {
+  const fd = fs.openSync(spec.stdinPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const b = Buffer.alloc(1048577); let size=0;
+    for(let n;size<b.length && (n=fs.readSync(fd,b,size,b.length-size));) size+=n;
+    if(size>1048576) throw new Error('Finite stdin exceeds byte bound');
+    inputBytes=b.subarray(0,size);
+  } finally { fs.closeSync(fd); }
+  fs.unlinkSync(spec.stdinPath);
+}
 const child = spawn(spec.argv[0], spec.argv.slice(1), {
   cwd: spec.cwd, env: { ...process.env, ...spec.env },
-  stdio: ['ignore', 'pipe', 'pipe'], detached: true
+  stdio: ['pipe', 'pipe', 'pipe'], detached: true
 });
+child.stdin.on('error', () => {});
+child.stdin.end(inputBytes);
 const timer = setTimeout(() => {
   timedOut = true;
   try { process.kill(-child.pid, 'SIGKILL'); } catch {}

@@ -12,19 +12,19 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Sandbox lifecycle                   | [Conditional · not-run](#vercel-lifecycle)          |
 | Native sandbox suspend/resume       | [Unsupported · not-run](#vercel-suspension)         |
 | Protected HTTP preview              | [Unsupported · not-run](#vercel-previewProtected)   |
-| Public HTTP preview                 | [Unsupported · not-run](#vercel-previewPublic)      |
-| Local-handle process termination    | [Unsupported · not-run](#vercel-termination)        |
-| Configured lifetime renewal         | [Unsupported · not-run](#vercel-renewal)            |
+| Public HTTP preview                 | [Conditional · not-run](#vercel-previewPublic)      |
+| Local-handle process termination    | [Supported · not-run](#vercel-termination)          |
+| Configured lifetime renewal         | [Supported · not-run](#vercel-renewal)              |
 | Scoped sandbox reopening            | [Conditional · not-run](#vercel-reopening)          |
 | Execution and captured output       | [Supported · not-run](#vercel-execution)            |
-| Process streams and terminals       | [Unsupported · not-run](#vercel-streaming)          |
-| Finite execution input              | [Unsupported · not-run](#vercel-finiteStdin)        |
-| Binary files and overwrite          | [Conditional · not-run](#vercel-files)              |
-| Directory primitives                | [Unsupported · not-run](#vercel-directories)        |
+| Process streams and terminals       | [Supported · not-run](#vercel-streaming)            |
+| Finite execution input              | [Supported · not-run](#vercel-finiteStdin)          |
+| Binary files and overwrite          | [Supported · not-run](#vercel-files)                |
+| Directory primitives                | [Supported · not-run](#vercel-directories)          |
 | OCI image builds                    | [Unsupported · not-run](#vercel-oci)                |
 | Measured network controls           | [Conditional · not-run](#vercel-network)            |
 | Cold snapshot with selected storage | [Unsupported · not-run](#vercel-storageComposition) |
-| Snapshot roundtrip                  | [Unsupported · not-run](#vercel-snapshots)          |
+| Snapshot roundtrip                  | [Supported · not-run](#vercel-snapshots)            |
 | Volume CRUD                         | [Unsupported · not-run](#vercel-volumes)            |
 | Mounted persistence                 | [Unsupported · not-run](#vercel-persistence)        |
 
@@ -36,7 +36,7 @@ The [live evidence detail](./live-qualification.md) contains only reviewed recor
 
 ### Sandbox lifecycle
 
-Immutable nonpersistent session IDs, managed Node 24 in iad1, verified team/project and a five-minute native lifetime. Destroy confirms original-session stop and reports retained named-sandbox metadata; metadata deletion is unsupported. No live qualification.
+Immutable nonpersistent session IDs, managed universal image in iad1, verified team/project and a five-minute native lifetime. Destroy confirms original-session stop and reports retained named-sandbox metadata; metadata deletion is unsupported. No live qualification.
 
 <a id="vercel-suspension"></a>
 
@@ -54,19 +54,19 @@ No protected preview routes or access credentials are exposed; sessions have no 
 
 ### Public HTTP preview
 
-No public preview routes or visibility changes are exposed; sessions have no configured ports.
+Explicit config.ports exposes public HTTPS services. Default ports remain empty; lookup is read-only and validates original running session. Profile exposes no ports by default; a separately approved preview profile is needed. No live qualification.
 
 <a id="vercel-termination"></a>
 
 ### Local-handle process termination
 
-No process handles or explicit process termination API are exposed. Bounded helper deadlines and sandbox destruction are separate behavior.
+Universal-image supervisor targets its retained child with SIGTERM/SIGKILL; acknowledgement and independent confirmed exit are separate. No automatic escalation or compute stop fallback; no live qualification.
 
 <a id="vercel-renewal"></a>
 
 ### Configured lifetime renewal
 
-No lifetime renewal is exposed; configured native lifetime is finite and cannot be extended through this adapter.
+Single additive original-session timeout extension, 1–300 seconds per requested window; account cumulative-runtime limits apply. ACK and native expiry observations remain separate; lost responses are never replayed. No live qualification.
 
 <a id="vercel-reopening"></a>
 
@@ -78,37 +78,37 @@ Ordinary sandbox.reference and sandboxes.get bind the immutable original session
 
 ### Execution and captured output
 
-Argv and /bin/sh scripts, cwd/env, nonzero exit and binary stdout/stderr through a managed Node capture helper; combined output capped at 1 MiB. No stdin, interactive processes or PTYs. Confirmed exit is checkpointed in the existing recovery token before output retrieval and survives output-read failure in the public operation reference; incomplete output remains unconfirmed. Uncertain commands are never replayed. No live qualification.
+Literal argv/shell, cwd/env, finite byte stdin, bounded original stdout/stderr, confirmed exit retained separately from output retrieval. Universal-image bounded supervisor adds sustained binary/text processes, stdin, EOF, signals, PTYs and leased reopening. Single-attempt mutation transport; no live qualification.
 
 <a id="vercel-streaming"></a>
 
 ### Process streams and terminals
 
-Captured execution only; no streaming process handles, interactive stdin or PTYs are exposed.
+Universal image supplies Python3 for the adapter-owned bounded Unix-socket supervisor; sustained text/byte output, incremental stdin/EOF, status, PTYs and leased process reopening. Local detach never certifies exit. No live qualification.
 
 <a id="vercel-finiteStdin"></a>
 
 ### Finite execution input
 
-Finite stdin is not supported by the audited published native boundary and is not exposed by this adapter.
+Adapter-owned bounded binary staging sends up to 1 MiB followed by EOF; no upstream-only native stdin dependency. Interrupted stages remain until compute teardown. No live qualification.
 
 <a id="vercel-files"></a>
 
 ### Binary files and overwrite
 
-Absolute-path binary reads and gzip/tar writes with overwrite:true, capped at 1 MiB per file. Atomic no-clobber is unsupported and rejects before effects. No live qualification.
+Binary bounded read/write with staged race-safe no-clobber publish, metadata/directories/copy/move and incremental streams. Node managed image prerequisites; Python3/Linux renameat2 for no-clobber moves. Partial transfers retain known stages; no live qualification.
 
 <a id="vercel-directories"></a>
 
 ### Directory primitives
 
-Only bounded binary file read/write is exposed; directory browsing, stat, copy, move and removal primitives are unsupported.
+Bounded complete list/readDirectory, lstat/stat, dangling-link existence, mkdir/remove, staged no-clobber files/copy and same-filesystem moves. No-clobber moves require Python3/Linux renameat2 (universal image). Incremental streams stage 64 KiB chunks. No live qualification.
 
 <a id="vercel-oci"></a>
 
 ### OCI image builds
 
-Only vercel/sandbox/node:24 is accepted; OCI builds and arbitrary prepared images are unsupported.
+Managed Node 22/24/26 and universal images are accepted; OCI builds and arbitrary prepared images are unsupported.
 
 <a id="vercel-network"></a>
 
@@ -120,25 +120,25 @@ Named vercel-deny-all and vercel-allow-all policies map to native deny-all/allow
 
 ### Cold snapshot with selected storage
 
-No snapshots, volumes or mounts are exposed, including cold snapshot composition with selected storage.
+Filesystem snapshots restore independently, but drives/mounts lack generation-safe mutation selectors; mounted snapshot composition is unsupported.
 
 <a id="vercel-snapshots"></a>
 
 ### Snapshot roundtrip
 
-No snapshot capture, memory inclusion, source lifecycle transition or restored execution is exposed; snapshot requirements reject before effects.
+Filesystem-only native capture terminates the original disposable session, drops connections and restores fresh independent compute. No RAM capture, restart or replacement of the source. Exact artifact-ID inspect/list/delete; region and project verified. Retention consistency unknown; no minimum-retention guarantee. No live qualification.
 
 <a id="vercel-volumes"></a>
 
 ### Volume CRUD
 
-No volume CRUD or retained storage cleanup API is exposed.
+Published drive creation is name-based get-or-create; deletion and mount selection have no established immutable generation predicate. No safe exact-identity mutation mapping is established.
 
 <a id="vercel-persistence"></a>
 
 ### Mounted persistence
 
-No persistent sandboxes, mounts, subpaths or read-only storage are exposed.
+Persistent cold resume selects a reusable sandbox name and replacement session without a generation precondition. Drives/mounts use reusable names. No RAM preservation or safe saved-resource mutation mapping is established.
 
 ## Other integrations
 

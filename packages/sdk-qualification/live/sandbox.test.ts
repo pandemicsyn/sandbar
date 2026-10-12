@@ -56,6 +56,7 @@ export async function lifecycle(t: TestResources, box: AdapterSandbox, inventory
 
 export async function renewal(t: TestResources, box: AdapterSandbox) {
   t.at("sandbox/renew");
+  const prior = await box.inspect({ signal: t.signal });
   const before = Date.now();
   const result = await box.renew({ forSeconds: 61 }, { signal: t.signal });
   const after = Date.now();
@@ -69,8 +70,14 @@ export async function renewal(t: TestResources, box: AdapterSandbox) {
   const deadline = Date.parse(result.observation.expires.at);
   // Request duration plus a five-second clock tolerance; no exact deletion claim.
   expect(deadline).toBeGreaterThanOrEqual(before + resolved * 1000 - 5000);
-  expect(deadline).toBeLessThanOrEqual(after + resolved * 1000 + 5000);
-  const max = t.client.provider === "daytona" ? 86400 : 3600;
+
+  const upperBase =
+    t.client.provider === "vercel" && prior.expires.status === "known"
+      ? Math.max(after, Date.parse(prior.expires.at))
+      : after;
+
+  expect(deadline).toBeLessThanOrEqual(upperBase + resolved * 1000 + 5000);
+  const max = t.client.provider === "daytona" ? 86400 : t.client.provider === "vercel" ? 300 : 3600;
   await expect(box.renew({ forSeconds: max + 1 }, { signal: t.signal })).rejects.toMatchObject({
     code: "INVALID_ARGUMENT",
     effect: "none",

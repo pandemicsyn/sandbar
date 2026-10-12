@@ -57,12 +57,13 @@ export class VercelClient {
     signal: AbortSignal,
     body?: string | Uint8Array,
     headers?: Record<string, string>,
+    method?: "GET" | "POST" | "DELETE",
   ) {
     const url = new URL(VERCEL_API + path);
     url.searchParams.set("teamId", this.teamId);
 
     const response = await this.transport.fetch(url.href, {
-      method: body === undefined ? "GET" : "POST",
+      method: method ?? (body === undefined ? "GET" : "POST"),
       redirect: "error",
       signal,
       headers: {
@@ -95,11 +96,14 @@ export class VercelClient {
     signal: AbortSignal,
     schema: z.ZodType<T>,
     body?: { [key: string]: Json | undefined },
+    method?: "GET" | "POST" | "DELETE",
   ) {
     const response = await this.request(
       path,
       signal,
       body === undefined ? undefined : JSON.stringify(body),
+      undefined,
+      method,
     );
 
     const bytes = await boundedBody(response, 2 * 1024 * 1024, signal);
