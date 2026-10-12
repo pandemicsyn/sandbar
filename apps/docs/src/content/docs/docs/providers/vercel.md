@@ -1,9 +1,11 @@
 ---
 title: Vercel Sandbox
-description: Run commands, work with files, and restore filesystem snapshots in disposable Vercel sandboxes.
+description: Run commands, work with files, suspend persistent sandboxes, and restore filesystem snapshots on Vercel.
 ---
 
 Use `@sandbar-sdk/vercel` with `sandbar-sdk` to run short-lived Vercel sandboxes. The adapter supports commands with byte input/output, files and file streams, filesystem snapshots, lifetime extensions, and public HTTP previews. Select the universal image to also use long-running processes and terminals.
+
+Set `persistent: true` to save files when compute stops and explicitly resume them in a fresh VM.
 
 The implementation has automated and packaged-consumer tests. It has **not been tested against the live Vercel service** yet.
 
@@ -53,6 +55,7 @@ try {
 | `timeoutSeconds`      | `300`                    | Initial sandbox lifetime, from 60 to 300 seconds.                                                                  |
 | `networkPolicy`       | `vercel-deny-all`        | Choose the native deny policy or `vercel-allow-all`. Strict network isolation has not been independently tested.   |
 | `ports`               | `[]`                     | Up to 15 distinct public HTTP ports. Leave empty to expose none.                                                   |
+| `persistent`          | `false`                  | Keep files across stopped sessions. Resume starts fresh compute; processes and RAM are lost.                       |
 | `credentials.token`   | Required                 | Token with access to the selected team and project.                                                                |
 
 `client.sandboxes.create()` uses this setup. Any image, region or policy supplied on an individual create call must match it. Arbitrary container images, OCI builds and mounted drives are not supported.
@@ -69,13 +72,27 @@ Writes and copies prepare a temporary file before replacing the destination. `ov
 
 ## Lifetime, cleanup and reopening
 
-Each sandbox reference identifies one original VM session. `box.destroy()` stops that session and waits for confirmed termination. It retains Vercel's named sandbox metadata: the native delete API addresses a reusable name, so the adapter cannot safely guarantee it would delete the original resource. Closing the client releases local resources; destroy owned sandboxes separately. The native timeout is a fallback, not proof that cleanup finished.
+By default, each sandbox reference identifies one original VM session. `box.destroy()` stops that session and waits for confirmed termination. It retains Vercel's named sandbox metadata because this default reference identifies only the VM session. Persistent mode tracks the logical sandbox separately, as described below. Closing the client releases local resources; destroy owned sandboxes separately. The native timeout is a fallback, not proof that cleanup finished.
 
 `box.renew({ forSeconds: 61 })` **adds** 61 seconds to the running session's timeout. Each request accepts 1–300 seconds; Vercel's plan and total-runtime limits still apply. Inspecting or reopening a sandbox never renews or resumes it.
 
 Save `box.reference` in trusted application storage, then pass it to `freshClient.sandboxes.get(savedReference)` using the same team, project and region with current credentials. This reopens the original session without creating compute. A lookup searches at most 10,000 project sessions and fails if it cannot verify membership. See [resource references](/docs/guides/resources/) and [recovery](/docs/guides/recovery/).
 
 If a mutation response is lost, the adapter preserves known IDs and uncertainty. Recovery reads the original operation's evidence; it never repeats create, input delivery, snapshot, restore or delete. A confirmed command exit remains available even if reading its output later fails. Unverified or interrupted input stages and capture receipts can remain until sandbox teardown.
+
+## Save files and resume later
+
+Set `persistent: true` in adapter configuration before creating the sandbox. Use `await box.suspend()` to stop compute and save its filesystem. Later, call `await box.resume()` to start a fresh VM with those files. The saved sandbox reference stays the same; `inspect().execution` identifies the current VM session.
+
+Suspension ends running processes and drops connections. **RAM is not saved.** Restart servers and other processes after resume. Commands, file operations, inspection and reopening never resume an inactive sandbox automatically; call `resume()` first. The session timeout also stops persistent compute and triggers Vercel's filesystem checkpoint.
+
+Save `box.reference`, close the client, and reopen with `freshClient.sandboxes.get(savedReference)` using the same persistent setup and current credentials. This works while compute is inactive. The adapter checks Vercel's creation timestamp and saved creation tag, so a detected replacement with the same name is rejected.
+
+Serialize lifecycle changes for a sandbox, including changes made outside Sandbar. Vercel has no atomic generation condition on named resume or deletion: an external actor could replace a name between validation and dispatch. The adapter checks before and after; it cannot prevent an effect on that replacement during this race. Keep Sandbar's generated names and reserved creation tags under your application's control. Changing sandbox settings outside Sandbar is unsupported; named reads reject observed mount, CPU, image, port or policy mismatches.
+
+Vercel bills stored checkpoints separately. The adapter requests one rolling checkpoint and deletion of evicted automatic checkpoints. Vercel's expiration limits still apply, so persistence is not a permanent storage guarantee. Persistent `destroy()` stops compute, deletes the named sandbox without cascading snapshot deletion, and reports retained snapshot IDs. Delete those snapshots separately when no longer needed. A lost response remains uncertain and is never retried automatically.
+
+Reusable `box.snapshot()` capture uses the default disposable mode. In persistent mode, use suspension for a checkpoint of the same logical sandbox; reusable capture is unsupported. Restoring a previously captured snapshot can create a new persistent sandbox when configured that way.
 
 ## Filesystem snapshots
 
@@ -97,6 +114,6 @@ Protected previews are not supported. Outbound network policy does not authentic
 
 ## Remaining limits and evidence
 
-Persistent sandboxes, suspend/resume, drives and mounts remain unsupported. Their native operations use reusable names without a way to restrict a mutation to the saved resource generation. The adapter does not silently switch an old reference to a replacement session. Custom images, custom firewall rules and automatic OIDC credential discovery are also outside the implemented setup.
+Drives and mounts remain unsupported. Persistent mode supports filesystem suspension and fresh execution on resume, with the concurrency and retention limits above. Custom images, custom firewall rules and automatic OIDC credential discovery are also outside the implemented setup.
 
 The [native audit](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/NATIVE.md) records the published Vercel SDK 3.6.1 evidence and implementation choices. [Support declarations](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification/support.md) are separate from [live test results](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification/live-qualification.md), which remain not-run. The [live qualification proposal](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/vercel/qualification-plan.md) lists resource budgets and cleanup requirements; running it needs separate authorization.

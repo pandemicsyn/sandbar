@@ -3,3 +3,5 @@
 ---
 
 Expand Vercel disposable sessions with finite byte stdin, filesystem helpers and streams, terminating filesystem snapshots, renewal, public previews, and universal-image processes and PTYs. Preserve exact resource identities and uncertain-operation custody.
+
+Add opt-in persistent filesystem suspension and explicit fresh-session resume with stable logical references, single-dispatch recovery and retained snapshot cleanup identities.

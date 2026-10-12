@@ -29,6 +29,28 @@ export function fixture() {
     }
   >();
 
+  const logical = new Map<
+    string,
+    {
+      name: string;
+      currentSessionId: string;
+      persistent: boolean;
+      createdAt: number;
+      tags: Record<string, string>;
+      image: string;
+      mounts: Record<string, never>;
+      region: string;
+      status: string;
+      networkPolicy: { mode: string };
+      currentSnapshotId?: string;
+    }
+  >();
+
+  let resumeCount = 0;
+  let loseResume = false;
+  let loseDelete = false;
+  let badResumeSource = false;
+  let raceDuringInventory = false;
   const files = new Map<string, Uint8Array>();
   const fsCommands = new Map<string, string>();
 
@@ -94,7 +116,6 @@ export function fixture() {
         const input = JSON.parse(String(init.body));
         expect(input).toMatchObject({
           projectId: "project-fixture",
-          persistent: false,
           timeout: 300000,
         });
         expect(input.tags.sandbarSubmission).toBeString();
@@ -111,6 +132,18 @@ export function fixture() {
         };
 
         records.set(session.id, { ...session, status: "running" });
+        logical.set(input.name, {
+          name: input.name,
+          currentSessionId: session.id,
+          persistent: input.persistent,
+          createdAt: Date.now(),
+          tags: input.tags,
+          region: input.region,
+          status: "running",
+          networkPolicy: input.networkPolicy,
+          mounts: {},
+          image: `${(input.image ?? "vercel/sandbox/node:24").split(":")[0]}@sha256:${"a".repeat(64)}`,
+        });
 
         if (lose) {
           lose = false;
@@ -134,7 +167,10 @@ export function fixture() {
             mounts: {},
             name: wrongCreateName ? "different-sandbox" : input.name,
             currentSessionId: session.id,
-            persistent: false,
+            persistent: input.persistent,
+            createdAt: logical.get(input.name)!.createdAt,
+            tags: input.tags,
+            region: input.region,
             status: "running",
             networkPolicy: input.networkPolicy,
           },
@@ -144,8 +180,24 @@ export function fixture() {
       if (route === "/api/v2/sandboxes/sessions")
         return json({ sessions: [...records.values()], pagination: { next: null } });
 
-      if (route === "/api/v2/sandboxes/snapshots")
+      if (route === "/api/v2/sandboxes/snapshots") {
+        if (raceDuringInventory) {
+          raceDuringInventory = false;
+          const box = [...logical.values()].find((v) => v.persistent)!;
+
+          const session = {
+            ...records.get(box.currentSessionId)!,
+            id: "session-raced",
+            status: "running",
+          };
+
+          records.set(session.id, session);
+          box.currentSessionId = session.id;
+          box.status = "running";
+        }
+
         return json({ snapshots: [...snapshots.values()], pagination: { next: null } });
+      }
 
       if (route.startsWith("/api/v2/sandboxes/snapshots/")) {
         const snapshot = snapshots.get(route.split("/").at(-1)!);
@@ -155,6 +207,48 @@ export function fixture() {
         if (init.method === "DELETE") snapshot.status = "deleted";
 
         return json({ snapshot });
+      }
+
+      if (/^\/api\/v2\/sandboxes\/[^/]+$/.test(route)) {
+        const box = logical.get(route.split("/").at(-1)!);
+
+        if (!box) return json({}, 404);
+
+        if (init.method === "DELETE") {
+          logical.delete(box.name);
+
+          if (loseDelete) {
+            loseDelete = false;
+            records.delete(box.currentSessionId);
+            throw new Error("lost delete ACK");
+          }
+
+          return json({ sandbox: box });
+        }
+
+        let session = records.get(box.currentSessionId)!;
+
+        if (parsed.searchParams.get("resume") === "true") {
+          resumeCount++;
+          session = {
+            ...session,
+            id: `session-resumed-${resumeCount}`,
+            status: "running",
+            sourceSnapshotId: badResumeSource ? "snap-unrelated" : box.currentSnapshotId,
+          };
+          records.set(session.id, session);
+          box.currentSessionId = session.id;
+          box.status = "running";
+
+          if (loseResume) {
+            loseResume = false;
+            throw new Error("lost resume ACK");
+          }
+
+          return json({ sandbox: box, session, resumed: true, routes: [] });
+        }
+
+        return json({ sandbox: box, session, routes: [] });
       }
 
       const sessionId = route.split("/")[5]!;
@@ -186,6 +280,24 @@ export function fixture() {
       if (route.endsWith("/stop")) {
         effects.destroy++;
         session.status = "stopped";
+        const box = [...logical.values()].find((v) => v.currentSessionId === session.id);
+
+        if (box?.persistent) {
+          box.status = "stopped";
+
+          const snapshot = {
+            id: `snap-auto-${snapshots.size + 1}`,
+            sourceSessionId: session.id,
+            region: session.region,
+            status: "created",
+            createdAt: Date.now(),
+          };
+
+          snapshots.set(snapshot.id, snapshot);
+          box.currentSnapshotId = snapshot.id;
+
+          return json({ session, sandbox: box, snapshot });
+        }
 
         return json({});
       }
@@ -315,6 +427,23 @@ export function fixture() {
     adapter: createVercelAdapter(factory),
     effects,
     files,
+    logical,
+    records,
+    get resumeCount() {
+      return resumeCount;
+    },
+    corruptResumeSource() {
+      badResumeSource = true;
+    },
+    resumeDuringNextSnapshotList() {
+      raceDuringInventory = true;
+    },
+    loseNextDeleteResponse() {
+      loseDelete = true;
+    },
+    loseNextResumeResponse() {
+      loseResume = true;
+    },
     snapshots,
     requests,
     incompleteSnapshotAck() {
@@ -1127,4 +1256,201 @@ test("fresh connections require validated creation recovery before capturing reo
   } finally {
     await second.close();
   }
+});
+
+test("persistent sandbox keeps its identity and files across explicit fresh execution resume", async () => {
+  const native = fixture();
+  const options = { adapter: native.adapter, config: { ...config, persistent: true }, credentials };
+  let client = await Sandbar.connect(options);
+  const box = await client.sandboxes.create();
+  const ref = box.reference!;
+  expect(ref.generation).toBeString();
+  expect(box.id).toStartWith("sandbar-");
+  const first = await box.inspect();
+  await box.writeFile("/saved", new Uint8Array([0, 255, 1]));
+  await box.suspend();
+  expect((await box.inspect()).state).toBe("suspended");
+  await expect(box.readFile("/saved")).rejects.toBeDefined();
+  expect(native.resumeCount).toBe(0);
+  await client.close();
+  client = await Sandbar.connect(options);
+  const reopened = await client.sandboxes.get(ref);
+  expect((await reopened.inspect()).state).toBe("suspended");
+  const result = await reopened.resume();
+  expect(result.execution).toBe("fresh");
+  expect(reopened.reference).toEqual(ref);
+  expect(result.executionIdentity).not.toEqual(first.execution);
+  expect(await reopened.readFile("/saved")).toEqual(new Uint8Array([0, 255, 1]));
+  expect(native.resumeCount).toBe(1);
+
+  const guestRequests = native.requests.filter(({ url }) =>
+    /\/sessions\/.*\/fs\/read$/.test(url.pathname),
+  );
+
+  expect(guestRequests.at(-1)!.url.pathname).toContain("session-resumed-1");
+  const destroyed = await reopened.destroy();
+  expect(destroyed.computeStopped).toBe(true);
+  expect(destroyed.retainedResources).toContain("snap-auto-1");
+  expect(native.logical.has(ref.nativeId)).toBe(false);
+  expect(native.snapshots.size).toBeGreaterThan(0);
+  await client.close();
+});
+
+test("persistent stale creation references reject a same-name replacement before resume", async () => {
+  const native = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: native.adapter,
+    config: { ...config, persistent: true },
+    credentials,
+  });
+
+  const box = await client.sandboxes.create();
+  await box.suspend();
+  native.logical.get(box.id)!.tags = { sandbarSubmission: "replacement-submission" };
+  await expect(box.resume()).rejects.toBeDefined();
+  expect(native.resumeCount).toBe(0);
+  await expect(box.inspect()).rejects.toBeDefined();
+  await client.close();
+});
+
+test("lost persistent resume response is never replayed by recovery or inspection", async () => {
+  const native = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: native.adapter,
+    config: { ...config, persistent: true },
+    credentials,
+  });
+
+  const box = await client.sandboxes.create();
+  await box.suspend();
+  native.loseNextResumeResponse();
+  await expect(box.resume()).rejects.toBeDefined();
+  expect(native.resumeCount).toBe(1);
+  expect((await box.inspect()).state).toBe("running");
+  expect(native.resumeCount).toBe(1);
+  await box.destroy();
+  await client.close();
+});
+
+test("persistent deletion recovery preserves snapshot IDs and confirms absence without replay", async () => {
+  const native = fixture();
+  const options = { adapter: native.adapter, config: { ...config, persistent: true }, credentials };
+  let client = await Sandbar.connect(options);
+  const box = await client.sandboxes.create();
+  native.snapshots.set("snap-failed", {
+    id: "snap-failed",
+    sourceSessionId: native.logical.get(box.id)!.currentSessionId,
+    region: "iad1",
+    status: "failed",
+    createdAt: Date.now(),
+  });
+  native.loseNextDeleteResponse();
+  const deletion = await box.submitDestroy();
+  await expect(deletion.wait()).rejects.toBeDefined();
+  const saved = deletion.reference;
+  await client.close();
+  client = await Sandbar.connect(options);
+  const recovered = await client.recover(saved);
+  expect(await recovered.wait()).toMatchObject({
+    computeStopped: true,
+    retainedResources: ["snap-failed", "snap-auto-2"],
+  });
+  expect(native.requests.filter(({ init }) => init.method === "DELETE")).toHaveLength(1);
+  await client.close();
+});
+
+test("lost persistent create acknowledgement recovers its deterministic name without resubmission", async () => {
+  const native = fixture();
+  const options = { adapter: native.adapter, config: { ...config, persistent: true }, credentials };
+  let client = await Sandbar.connect(options);
+  native.loseNextCreateResponse();
+  const operation = await client.sandboxes.submitCreate();
+  const saved = operation.reference;
+  await client.close();
+  client = await Sandbar.connect(options);
+  const recovered = await client.recover(saved);
+  const box = await recovered.wait();
+  expect(box).toMatchObject({ id: [...native.logical.keys()][0] });
+  expect(native.effects.create).toBe(1);
+  await client.close();
+});
+
+test("persistent inspection and resume reject a stale checkpoint from another execution", async () => {
+  const native = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: native.adapter,
+    config: { ...config, persistent: true },
+    credentials,
+  });
+
+  const box = await client.sandboxes.create();
+  await box.suspend();
+  native.snapshots.get(native.logical.get(box.id)!.currentSnapshotId!)!.sourceSessionId =
+    "session-unrelated";
+  expect((await box.inspect()).state).toBe("stopped");
+  await expect(box.resume()).rejects.toBeDefined();
+  expect(native.resumeCount).toBe(0);
+  await box.destroy();
+  await client.close();
+});
+
+test("persistent resume validates the actual restored checkpoint without replay", async () => {
+  const native = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: native.adapter,
+    config: { ...config, persistent: true },
+    credentials,
+  });
+
+  const box = await client.sandboxes.create();
+  await box.suspend();
+  native.corruptResumeSource();
+  await expect(box.resume()).rejects.toBeDefined();
+  expect(native.resumeCount).toBe(1);
+  await box.destroy();
+  await client.close();
+});
+
+test("persistent destroy refuses named deletion if execution changes during snapshot inventory", async () => {
+  const native = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: native.adapter,
+    config: { ...config, persistent: true },
+    credentials,
+  });
+
+  const box = await client.sandboxes.create();
+  native.resumeDuringNextSnapshotList();
+  await expect(box.destroy()).rejects.toBeDefined();
+  expect(native.requests.filter(({ init }) => init.method === "DELETE")).toHaveLength(0);
+  expect(native.logical.has(box.id)).toBe(true);
+  await box.destroy();
+  await client.close();
+});
+
+test("persistent references reject unsupported mount changes on the same native generation", async () => {
+  const native = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: native.adapter,
+    config: { ...config, persistent: true },
+    credentials,
+  });
+
+  const box = await client.sandboxes.create();
+  const metadata = native.logical.get(box.id)!;
+  Object.assign(metadata.mounts, { "/data": { drive: "outside-drive", mode: "read-write" } });
+
+  await expect(box.inspect()).rejects.toBeDefined();
+  await expect(box.readFile("/saved")).rejects.toBeDefined();
+  expect(native.resumeCount).toBe(0);
+  metadata.mounts = {};
+
+  await box.destroy();
+  await client.close();
 });

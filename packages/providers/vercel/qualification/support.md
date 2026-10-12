@@ -10,7 +10,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | Feature                             | Vercel Sandbox                                      |
 | ----------------------------------- | --------------------------------------------------- |
 | Sandbox lifecycle                   | [Conditional · not-run](#vercel-lifecycle)          |
-| Native sandbox suspend/resume       | [Unsupported · not-run](#vercel-suspension)         |
+| Native sandbox suspend/resume       | [Conditional · not-run](#vercel-suspension)         |
 | Protected HTTP preview              | [Unsupported · not-run](#vercel-previewProtected)   |
 | Public HTTP preview                 | [Conditional · not-run](#vercel-previewPublic)      |
 | Local-handle process termination    | [Supported · not-run](#vercel-termination)          |
@@ -36,13 +36,13 @@ The [live evidence detail](./live-qualification.md) contains only reviewed recor
 
 ### Sandbox lifecycle
 
-Immutable nonpersistent session IDs, managed universal image in iad1, verified team/project and a five-minute native lifetime. Destroy confirms original-session stop and reports retained named-sandbox metadata; metadata deletion is unsupported. No live qualification.
+Committed live profile uses disposable immutable sessions, universal image in iad1 and five-minute timeout; destroy confirms original-session stop and retains named metadata. Opt-in persistent mode instead retains a logical reference across filesystem suspension/fresh resume; destroy deletes creation-checked named metadata and reports independently retained snapshot IDs. No live qualification.
 
 <a id="vercel-suspension"></a>
 
 ### Native sandbox suspend/resume
 
-Immutable disposable sessions expose no suspend/resume mapping or retained inactive compute lifecycle.
+Opt-in persistent mode supports filesystem suspension, terminated processes and explicit fresh execution resume under one logical creation-checked reference. The committed live profile remains disposable; persistent live qualification needs a separately approved storage budget/profile. No live qualification.
 
 <a id="vercel-previewProtected"></a>
 
@@ -72,7 +72,7 @@ Single additive original-session timeout extension, 1–300 seconds per requeste
 
 ### Scoped sandbox reopening
 
-Ordinary sandbox.reference and sandboxes.get bind the immutable original session to verified team/project/iad1 scope with current credentials. Bounded project-session membership reads fail closed; reopening does not allocate, resume or renew. No live qualification.
+Disposable references bind the original session; opt-in persistent references bind generated name plus native creation timestamp/tag and inspect the current execution with resume=false. Both verify team/project/region with current credentials. Reopening does not allocate, resume or renew. No live qualification.
 
 <a id="vercel-execution"></a>
 
@@ -138,7 +138,7 @@ Published drive creation is name-based get-or-create; deletion and mount selecti
 
 ### Mounted persistence
 
-Persistent cold resume selects a reusable sandbox name and replacement session without a generation precondition. Drives/mounts use reusable names. No RAM preservation or safe saved-resource mutation mapping is established.
+Mounted drive persistence is unsupported. Opt-in persistent sandbox filesystem suspension/fresh resume is declared separately under suspension; it does not provide volume or mount APIs.
 
 ## Other integrations
 
