@@ -2,7 +2,7 @@
 
 **[Read the docs →](https://sandbarsdk.dev/docs/)**
 
-Sandbar is a TypeScript SDK for creating sandboxes, running commands, and moving files across providers. Daytona and E2B are separately installed official integrations; custom providers use the same adapter API. Run it in Node.js or Bun.
+Sandbar is a TypeScript SDK for creating sandboxes, running commands, and moving files across providers. Daytona, E2B, boxd and Vercel are separately installed adapters; custom providers use the same adapter API. Run it in Node.js or Bun.
 
 Create a sandbox, run a command, and clean up:
 
@@ -35,6 +35,6 @@ try {
 
 Install `sandbar-sdk @sandbar-sdk/e2b` once published. Set `E2B_API_KEY` to use this example. Packages are not published yet; see [Getting started](https://sandbarsdk.dev/docs/direct-quickstart/) for setup and provider examples.
 
-[Provider support](https://sandbarsdk.dev/docs/providers/support/) · [API reference](https://sandbarsdk.dev/docs/reference/typescript/) · [Roadmap](ROADMAP.md) · [License](LICENSE)
+[Vercel setup and limits](https://sandbarsdk.dev/docs/providers/vercel/) · [Provider support](https://sandbarsdk.dev/docs/providers/support/) · [API reference](https://sandbarsdk.dev/docs/reference/typescript/) · [Roadmap](ROADMAP.md) · [License](LICENSE)
 
 Repository validation and release rehearsal coverage are documented in [CI.md](CI.md).

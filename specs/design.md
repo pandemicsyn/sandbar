@@ -19,13 +19,13 @@ The SDK shares adapter validation, scope checks, binary results and mutation unc
 
 | Location | Responsibility |
 | --- | --- |
-| `packages/sdk` | Consumer resource handles, direct execution engine, recovery references and built-in subpaths |
+| `packages/sdk` | Provider-neutral consumer handles, direct execution engine and recovery references |
 | `packages/adapter` | Public adapter definitions, portable schemas, mutation runtime and conformance helpers |
 | `packages/providers/*` | Provider-specific validation, transport and fixtures |
 | `packages/provider-spi` | Private internal driver types/helpers; not the public adapter authoring surface |
 | `apps/docs` | Astro/Starlight public documentation and executable examples |
 
-Daytona and E2B are built-ins; Modal is external and experimental. The fake provider is a deterministic fixture. Provider availability and guarantees are documented in each provider's README and [qualification evidence](../packages/sdk-qualification/provider-qualification/README.md). New providers use the same public adapter API.
+Daytona, E2B, boxd and Vercel use separately installed packages and the public adapter API. boxd retains experimental support status; experimental Modal is outside the initial release group. The fake provider is a deterministic fixture. Provider availability and guarantees are documented in each provider's README and [qualification evidence](../packages/sdk-qualification/provider-qualification/README.md). New providers use the same public adapter API.
 
 ## State and recovery
 

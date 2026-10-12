@@ -368,7 +368,7 @@ export function renderSupportMatrix(
     ...(external
       ? []
       : [
-          "The external experimental [boxd adapter](/docs/providers/boxd/) has deterministic fixture coverage and separately maintained, dated live evidence. Its declarations are maintained in an external provider profile; it is outside the selected launch release.",
+          "The separately installed [boxd adapter](/docs/providers/boxd/) and [Vercel Sandbox adapter](/docs/providers/vercel/) are included in the initial release group. Their support declarations and evidence use separate provider profiles. boxd remains experimental, with a dated live baseline for lifecycle, execution, binary files and reopening. Vercel has deterministic and packed coverage; all live qualification remains not-run. Their guides link the per-feature records; this table covers Daytona and E2B.",
         ]),
     external
       ? "The [live evidence detail](./live-qualification.md) contains only reviewed records supplied for this external profile. Missing records remain not-run; declarations do not establish live acceptance."

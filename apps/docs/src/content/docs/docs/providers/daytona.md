@@ -77,7 +77,7 @@ Run OpenCode with this provider using the [runnable agent examples](/docs/guides
 
 ## Configured lifetime renewal
 
-The application workflow is the same for both official adapters:
+The application workflow is the same for Daytona and E2B:
 
 ```ts
 const box = await client.sandboxes.create();

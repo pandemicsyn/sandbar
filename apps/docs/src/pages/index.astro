@@ -8,14 +8,14 @@ import "../styles/tokens.css";
 const title = "Sandbar | One SDK. Every sandbox.";
 
 const description =
-  "Sandbar is a typed TypeScript API for Daytona and E2B sandboxes, with a public adapter API for other providers.";
+  "Sandbar is a typed TypeScript API for Daytona, E2B, boxd and Vercel sandboxes, with a public adapter API for other providers.";
 
 const fonts =
   "https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap";
 
 const github = "https://github.com/pandemicsyn/sandbar";
 
-const providers = ["daytona", "e2b", "boxd"];
+const providers = ["daytona", "e2b", "boxd", "vercel"];
 
 const install = "bun install --frozen-lockfile";
 
@@ -112,7 +112,7 @@ const sunBands = [
             <div class="eyebrow"><span></span>Sandbox router for TypeScript</div>
             <h1>One SDK.<br />Every <span class="accent-word">sandbox.</span></h1>
             <p class="lede">
-              A typed API to create, run code in, and tear down sandboxes on Daytona and E2B.
+              A typed API to create, run code in, and tear down sandboxes on Daytona, E2B, boxd and Vercel.
               Keep application workflows consistent while configuring each provider explicitly.
             </p>
             <div class="cta-stack">
@@ -179,6 +179,16 @@ const sunBands = [
   adapter: <span class="typed"><span data-typed>boxdAdapter</span><span class="caret" data-caret></span></span>,
   credentials: {"{"} apiKey: process.env.BOXD_API_KEY! {"}"},
   config: {"{"} org: process.env.BOXD_ORG!, networkPolicy: <span class="s">"internet"</span> {"}"},
+{"}"})</span><span data-vercel-connect hidden><span class="k">import</span> {"{"} Sandbar {"}"} <span class="k">from</span> <span class="s">"sandbar-sdk"</span>
+<span class="k">import</span> {"{"} vercel {"}"} <span class="k">from</span> <span class="s">"@sandbar-sdk/vercel"</span>
+
+<span class="k">const</span> client = <span class="k">await</span> Sandbar.connect({"{"}
+  adapter: <span class="typed"><span data-typed>vercel</span><span class="caret" data-caret></span></span>,
+  credentials: {"{"} token: process.env.VERCEL_TOKEN! {"}"},
+  config: {"{"}
+    teamId: process.env.SANDBAR_VERCEL_TEAM_ID!,
+    projectId: process.env.SANDBAR_VERCEL_PROJECT_ID!,
+  {"}"},
 {"}"})</span>
 <span class="k">await</span> client.sandboxes.with({"{}"}, <span class="k">async</span> (box) =&gt; {"{"}
   <span class="k">const</span> run = <span class="k">await</span> box.exec([<span class="s">"printf"</span>, <span class="s">"ready"</span>])
@@ -206,11 +216,12 @@ const sunBands = [
 
       <section class="adapters">
         <div class="wrap adapters-row">
-          <span class="adapters-label">Adapters</span>
+          <a class="adapters-label" href="/docs/#choose-a-provider">Adapters &amp; support →</a>
           <ul class="chips">
             <li class="chip chip-daytona"><span></span>Daytona</li>
             <li class="chip chip-e2b"><span></span>E2B</li>
-            <li class="chip chip-boxd"><span></span>boxd</li>
+            <li class="chip chip-boxd"><span></span>boxd (exp)</li>
+            <li class="chip chip-vercel"><span></span>Vercel</li>
             <li class="chip chip-modal"><span></span>Modal (exp)</li>
             <li class="chip chip-yours">+ your adapter</li>
           </ul>
@@ -341,8 +352,9 @@ const sunBands = [
 
       function renderOptions(provider: string) {
         if (!optionsNode) return;
-        document.querySelector<HTMLElement>("[data-factory-connect]")!.hidden = provider === "boxd";
+        document.querySelector<HTMLElement>("[data-factory-connect]")!.hidden = provider === "boxd" || provider === "vercel";
         document.querySelector<HTMLElement>("[data-boxd-connect]")!.hidden = provider !== "boxd";
+        document.querySelector<HTMLElement>("[data-vercel-connect]")!.hidden = provider !== "vercel";
         document.querySelector<HTMLElement>("[data-image-import]")!.hidden = provider !== "daytona";
 
         const lines = (providerOptions.get(provider) ?? []).map(([key, env, literal]) => {
@@ -1124,6 +1136,14 @@ const sunBands = [
       .chip-boxd span {
         border-radius: 2px;
         background: var(--sb-lav);
+      }
+      .chip-vercel {
+        background: color-mix(in srgb, var(--sb-aqua) 18%, var(--sb-surface));
+        color: var(--sb-ink);
+      }
+      .chip-vercel span {
+        background: var(--sb-ink);
+        clip-path: polygon(50% 0, 100% 100%, 0 100%);
       }
       .chip-yours {
         padding: 5px 15px;

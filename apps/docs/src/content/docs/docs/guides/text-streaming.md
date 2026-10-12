@@ -67,7 +67,7 @@ try {
 }
 ```
 
-The same single-consumer, queue, overflow and completion rules apply. Each byte chunk is at most 16 KiB, with at most 64 KiB pending. The default format is `"text"`; adapters without binary output support reject the byte profile before dispatch. Exec callbacks continue to receive text. Byte output has deterministic fixtures and live qualification on both official adapters at `5f2bd13`, including 256 KiB of all byte values on stdout and invalid UTF-8/NUL on stderr. Each run destroyed its owned sandbox and closed its client.
+The same single-consumer, queue, overflow and completion rules apply. Each byte chunk is at most 16 KiB, with at most 64 KiB pending. The default format is `"text"`; adapters without binary output support reject the byte profile before dispatch. Exec callbacks continue to receive text. Byte output has deterministic fixtures and live qualification on Daytona and E2B at `5f2bd13`, including 256 KiB of all byte values on stdout and invalid UTF-8/NUL on stderr. Each run destroyed its owned sandbox and closed its client.
 
 ## Provider transport facts
 
