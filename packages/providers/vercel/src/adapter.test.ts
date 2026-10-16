@@ -495,7 +495,7 @@ const credentials = { token: "fixture-token" };
 
 const createInput = {
   image: { kind: "prepared" as const, value: "vercel/sandbox/node:24" },
-  networkPolicy: "vercel-deny-all",
+  networkPolicy: "blocked",
 };
 
 test("Vercel native HTTP boundary passes managed adapter suite", async () => {
@@ -938,6 +938,52 @@ test("omitted create options use the configured image and network policy default
       await client.close();
     }
   }
+});
+
+test("portable network names configure Vercel and deprecated names still resolve", async () => {
+  for (const [setup, mode] of [
+    [{ network: "internet" }, "allow-all"],
+    [{ network: "blocked" }, "deny-all"],
+    [{ networkPolicy: "vercel-allow-all" }, "allow-all"],
+    [{}, "deny-all"],
+  ] as const) {
+    const native = fixture();
+    const portable = mode === "deny-all" ? "blocked" : "internet";
+    const legacy = mode === "deny-all" ? "vercel-deny-all" : "vercel-allow-all";
+
+    const client = await Sandbar.connect({
+      adapter: native.adapter,
+      config: { ...config, ...setup },
+      credentials,
+    });
+
+    try {
+      expect((await client.capabilities()).network).toEqual([portable]);
+      await client.sandboxes.create({ network: portable });
+      await client.sandboxes.create({ networkPolicy: legacy });
+      await expect(
+        client.sandboxes.create({ network: portable === "blocked" ? "internet" : "blocked" }),
+      ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+
+      const bodies = native.requests
+        .filter((request) => request.url.pathname === "/api/v3/sandboxes")
+        .map((request) => JSON.parse(String(request.init.body)));
+
+      expect(bodies).toHaveLength(2);
+
+      for (const body of bodies) expect(body).toMatchObject({ networkPolicy: { mode } });
+    } finally {
+      await client.close();
+    }
+  }
+
+  await expect(
+    Sandbar.connect({
+      adapter: fixture().adapter,
+      config: { ...config, network: "internet", networkPolicy: "vercel-allow-all" },
+      credentials,
+    }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 });
 
 test("native output-read failures preserve the user exit evidence from helper logs", async () => {

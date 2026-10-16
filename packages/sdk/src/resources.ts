@@ -20,7 +20,9 @@ import {
   UnsupportedFeatureError,
   OutcomeUnknownError,
   raceAbort,
+  resolveNetworkPolicy,
   validateResourceInput,
+  type NetworkPolicy,
   type ReadOptions,
   type SandboxHandle,
   type SnapshotHandle,
@@ -66,7 +68,12 @@ async function resourceRead<T>(
 }
 
 /** SDK restore input; native RestoreRequest remains fully resolved. */
-export type RestoreInput = Omit<RestoreRequest, "networkPolicy"> & { networkPolicy?: string };
+export type RestoreInput = Omit<RestoreRequest, "networkPolicy"> & {
+  /** Outbound network policy; omitted uses the adapter setup default. */
+  network?: NetworkPolicy;
+  /** @deprecated Use `network`. */
+  networkPolicy?: string;
+};
 
 export type WaitOptions = ReadOptions & { pollMs?: number };
 
@@ -149,9 +156,16 @@ export class AdapterSnapshot {
       normalized = { ...request, mounts: undefined };
     }
 
+    const selection = z
+      .looseObject({ network: z.string().min(1).max(128).optional() })
+      .safeParse(normalized);
+
+    if (!selection.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid restore request");
+    const { network, ...rest } = selection.data;
+
     const checked = validateResourceInput(
       RestoreRequest.partial({ networkPolicy: true }),
-      normalized,
+      rest,
       "Invalid restore request",
     );
 
@@ -159,8 +173,12 @@ export class AdapterSnapshot {
       RestoreRequest,
       {
         ...checked,
-        networkPolicy:
-          checked.networkPolicy ?? this.client.session.defaultNetworkPolicy ?? "blocked",
+        networkPolicy: resolveNetworkPolicy(
+          network,
+          checked.networkPolicy,
+          this.client.session.defaultNetworkPolicy ?? "blocked",
+          this.client.session.networkPolicyAliases,
+        ),
       },
       "Invalid restore request",
     );

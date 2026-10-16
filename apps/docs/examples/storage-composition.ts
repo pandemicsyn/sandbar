@@ -6,9 +6,9 @@ import {
   type ResourceReference,
 } from "sandbar-sdk";
 
-/** Create data explicitly first and keep its handle if compute creation fails. */
+/** Create data explicitly first and keep its handle if compute creation fails. Uses the connection's network setup. */
 export function createWriter(client: AdapterDirectClient, data: AdapterVolume) {
-  return client.sandboxes.create({ networkPolicy: "daytona-default", mounts: [data.at("/data")] });
+  return client.sandboxes.create({ mounts: [data.at("/data")] });
 }
 
 /** The caller owns writer before attempting a write. */
@@ -39,9 +39,9 @@ export async function reopenStorage(
 
 /** Passing shared data selects current bytes; passing a separately created volume selects empty independent data. */
 export function restoreWithData(snapshot: AdapterSnapshot, data: AdapterVolume) {
-  return snapshot.restore({ networkPolicy: "daytona-default", mounts: [data.at("/data")] });
+  return snapshot.restore({ mounts: [data.at("/data")] });
 }
 
 export function restorePrivateOnly(snapshot: AdapterSnapshot) {
-  return snapshot.restore({ networkPolicy: "daytona-default" });
+  return snapshot.restore();
 }

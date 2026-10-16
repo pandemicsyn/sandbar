@@ -14,9 +14,9 @@ export async function configuredWorkflow(
           apiKey,
           target: "us",
           environment: Image.prepared(image),
-          networkPolicy: "daytona-default",
+          network: "daytona-default",
         })
-      : e2b({ apiKey, templateId: "base", networkPolicy: "internet" });
+      : e2b({ apiKey, templateId: "base", network: "internet" });
 
   const client = await Sandbar.connect(adapter);
 

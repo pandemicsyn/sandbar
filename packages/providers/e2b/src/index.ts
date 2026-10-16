@@ -66,7 +66,8 @@ const Configuration = z
       .max(128)
       .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
       .default("base"),
-    networkPolicy: z.enum(["blocked", "internet"]).default("blocked"),
+    network: z.enum(["blocked", "internet"]).optional(),
+    networkPolicy: z.enum(["blocked", "internet"]).optional(),
     timeoutSeconds: z.number().int().min(60).max(3600).optional(),
     preview: z
       .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
@@ -87,9 +88,17 @@ const Configuration = z
         path: ["lifecycle", "lifetimeSeconds"],
         message: "Supply one lifetime option",
       });
+
+    if (value.network !== undefined && value.networkPolicy !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["network"],
+        message: "Supply network or the deprecated networkPolicy, not both",
+      });
   })
-  .transform((value) => ({
+  .transform(({ network, ...value }) => ({
     ...value,
+    networkPolicy: network ?? value.networkPolicy ?? "blocked",
     timeoutSeconds:
       value.lifecycle?.lifetimeSeconds === undefined
         ? (value.timeoutSeconds ?? 300)

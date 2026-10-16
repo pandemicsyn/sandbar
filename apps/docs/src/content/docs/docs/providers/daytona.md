@@ -3,7 +3,7 @@ title: Daytona
 description: Connect to Daytona with explicit region, prepared image, and network policy settings.
 ---
 
-Import `daytona` from `@sandbar-sdk/daytona`. Start with an active Linux snapshot in your target region. The example selects `daytona-default` once on connection, matching the getting-started configuration. Strict blocked networking requires eligible organization settings; see the policy section below.
+Import `daytona` from `@sandbar-sdk/daytona`. Start with an active Linux snapshot in your target region. The example selects `daytona-default` once on connection, matching the getting-started configuration. Use `internet` instead for unrestricted egress on Tier 3 and above organizations. Strict blocked networking requires eligible organization settings; see the policy section below.
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
@@ -16,7 +16,7 @@ const client = await Sandbar.connect(
     target: "us",
     environment: Image.prepared("daytona-small"),
     lifecycle: { lifetimeSeconds: 600 },
-    networkPolicy: "daytona-default",
+    network: "daytona-default",
   }),
 );
 
@@ -39,15 +39,15 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 
 ## Connection options
 
-| Option                          | Default   | Purpose                                                                          |
-| ------------------------------- | --------- | -------------------------------------------------------------------------------- |
-| `apiKey`                        | Required  | Daytona API key.                                                                 |
-| `environment`                   | Omitted   | Default prepared or OCI environment for creation; per-call environment wins.     |
-| `target`                        | Required  | Available native region ID, such as `us`.                                        |
-| `lifecycle.lifetimeSeconds`     | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `ttlMinutes`. |
-| `ttlMinutes`                    | `60`      | Native sandbox lifetime, from 1 to 1,440 minutes.                                |
-| `snapshots.restartAfterCapture` | `true`    | Restart only a previously running capture source.                                |
-| `networkPolicy`                 | `blocked` | `blocked` or explicit `daytona-default`.                                         |
+| Option                          | Default   | Purpose                                                                                     |
+| ------------------------------- | --------- | ------------------------------------------------------------------------------------------- |
+| `apiKey`                        | Required  | Daytona API key.                                                                            |
+| `environment`                   | Omitted   | Default prepared or OCI environment for creation; per-call environment wins.                |
+| `target`                        | Required  | Available native region ID, such as `us`.                                                   |
+| `lifecycle.lifetimeSeconds`     | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `ttlMinutes`.            |
+| `ttlMinutes`                    | `60`      | Native sandbox lifetime, from 1 to 1,440 minutes.                                           |
+| `snapshots.restartAfterCapture` | `true`    | Restart only a previously running capture source.                                           |
+| `network`                       | `blocked` | `blocked`, `internet` or Daytona-only `daytona-default`. Deprecated alias: `networkPolicy`. |
 
 `Sandbar.connect` verifies native organization and region with authenticated reads. Scope includes the organization, target, endpoint, and selected network policy. Use the same scope to recover a prior operation.
 
@@ -55,7 +55,7 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 
 ## Choose the policy deliberately
 
-`daytona-default` preserves Daytona's organization-managed restrictions, including essential-service access. Configure it once on the connection; omitted create and restore policies use that value. Per-call policies must match this connection’s policy; open a separately configured connection to change it. It does not promise unrestricted internet or strict blocked egress.
+`internet` requests unrestricted egress and needs an organization without limited sandbox egress; otherwise creation rejects before allocation with no fallback. `daytona-default` preserves Daytona's organization-managed restrictions, including essential-service access. Configure it once on the connection; omitted create and restore policies use that value. Per-call policies must match this connection’s policy; open a separately configured connection to change it. It does not promise unrestricted internet or strict blocked egress.
 
 Omitting the policy selects `blocked`. This requires successful organization eligibility verification and native block-all support; a restricted or unreadable eligibility response disables creation. Tier 1/2 essential-service exceptions do not meet Sandbar's strict blocked contract. There is no automatic fallback, and the adapter does not expose an unrestricted `internet` mode.
 
@@ -114,7 +114,7 @@ See [Tested provider support](/docs/providers/support/) for measured coverage an
 
 ## Snapshots and retained volumes
 
-Application-retained capture history supports independent restore after source deletion; borrowed image selectors do not become owned snapshot artifacts. Snapshot deletion rechecks organization warm pools, blocking when dependencies are present or unreadable because native deletion cascades to warm pools and unclaimed compute. Writable object-backed volumes attach at create, or during fresh restore of a known mount-free filesystem snapshot, with optional subpaths. Restore with mounts requires explicit `daytona-default`; `blocked` rejects because first-workload policy ordering is unqualified. Exact snapshot and complete selected volume IDs are checked without post-create attachment. Mounted capture and memory composition remain unsupported. The first bounded startup case at `824946d` passed A startup evidence, then failed a harness snapshot-name/ID assertion before B. The corrected full workflow passed at `5911ccc` on Bun 1.3.14 in `us` with `daytona-default` and the pinned first-action image: selected A data, independently empty B, captured private state, exact native identities and fresh-client reopening. All owned compute, volumes, capture and temporary import were cleaned up. This pass covers that tested configuration. Native readiness is checked; read-only, volume versions and verified shutdown durability are unavailable. Independent volume CRUD and mounted persistence passed in the Bun acceptance at `1505ee0`; those passes cover the recorded configuration and revision. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/).
+Application-retained capture history supports independent restore after source deletion; borrowed image selectors do not become owned snapshot artifacts. Snapshot deletion rechecks organization warm pools, blocking when dependencies are present or unreadable because native deletion cascades to warm pools and unclaimed compute. Writable object-backed volumes attach at create, or during fresh restore of a known mount-free filesystem snapshot, with optional subpaths. Restore with mounts requires `internet` or `daytona-default` networking; `blocked` rejects because first-workload policy ordering is unqualified. Exact snapshot and complete selected volume IDs are checked without post-create attachment. Mounted capture and memory composition remain unsupported. The first bounded startup case at `824946d` passed A startup evidence, then failed a harness snapshot-name/ID assertion before B. The corrected full workflow passed at `5911ccc` on Bun 1.3.14 in `us` with `daytona-default` and the pinned first-action image: selected A data, independently empty B, captured private state, exact native identities and fresh-client reopening. All owned compute, volumes, capture and temporary import were cleaned up. This pass covers that tested configuration. Native readiness is checked; read-only, volume versions and verified shutdown durability are unavailable. Independent volume CRUD and mounted persistence passed in the Bun acceptance at `1505ee0`; those passes cover the recorded configuration and revision. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/).
 
 Native mapping evidence: [Daytona snapshots](https://www.daytona.io/docs/snapshots/) and [volumes](https://www.daytona.io/docs/en/volumes/), checked against REST 0.218.0 DTOs.
 

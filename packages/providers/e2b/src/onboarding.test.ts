@@ -517,3 +517,33 @@ test.each(["blocked", "internet"] as const)(
     }
   },
 );
+
+test.each(["blocked", "internet"] as const)(
+  "portable E2B network setup and create selection: %s",
+  async (network) => {
+    const f = fixture();
+    const other = network === "internet" ? "blocked" : "internet";
+
+    const client = await Sandbar.connect({
+      adapter: f.adapter,
+      config: { network },
+      credentials: { apiKey: "fixture-key" },
+    });
+
+    try {
+      await client.sandboxes.create();
+      await client.sandboxes.create({ network: other });
+      expect(f.internetAccess).toEqual([network === "internet", other === "internet"]);
+    } finally {
+      await client.close();
+    }
+
+    await expect(
+      Sandbar.connect({
+        adapter: f.adapter,
+        config: { network, networkPolicy: network },
+        credentials: { apiKey: "fixture-key" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  },
+);

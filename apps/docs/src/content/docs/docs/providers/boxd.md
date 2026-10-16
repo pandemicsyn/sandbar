@@ -12,7 +12,7 @@ import { boxdAdapter } from "@sandbar-sdk/boxd";
 const client = await Sandbar.connect({
   adapter: boxdAdapter,
   credentials: { apiKey: process.env.BOXD_API_KEY! },
-  config: { org: "my-org", networkPolicy: "internet" },
+  config: { org: "my-org", network: "internet" },
 });
 try {
   const box = await client.sandboxes.create();
@@ -38,7 +38,7 @@ The adapter uses these defaults:
 - **New volumes:** 10 GiB each. Set `volumes.sizeBytes` from 1 GiB to 1 TiB, subject to your quota.
 - **Preview lookup:** disabled unless you explicitly choose public access. See [Public previews](#public-previews).
 
-You must set `networkPolicy: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported.
+You must set `network: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported.
 
 ## Adapter support
 
@@ -83,7 +83,7 @@ const client = await Sandbar.connect({
   credentials: { apiKey: process.env.BOXD_API_KEY! },
   config: {
     org: "my-org",
-    networkPolicy: "internet",
+    network: "internet",
     preview: { access: "public", ports: [3000, 8080] },
   },
 });

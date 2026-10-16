@@ -33,7 +33,7 @@ use /home/user for E2B file examples. For Daytona, use an active Linux
 snapshot in the verified region and configure "daytona-default" at connection
 setup unless strict blocked networking is explicitly required and supported. Do not treat provider-default access as isolation.
 
-Vercel defaults to disposable Node 24 in iad1 with vercel-deny-all. It supports
+Vercel defaults to disposable Node 24 in iad1 with blocked networking. It supports
 bounded byte output and overwrite-only files, without stdin, process streams,
 snapshots or volumes; cleanup stops compute and retains named metadata.
 boxd requires an explicit internet policy and also requires overwrite:true.

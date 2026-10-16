@@ -26,10 +26,10 @@ cp examples/.env.example examples/.env.local
 
 Edit `examples/.env.local` with the selected provider's credentials. The scripts load this ignored file explicitly.
 
-| Provider | Configuration                                              | Prerequisites                                                                                                                                                               |
-| -------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Daytona  | `DAYTONA_API_KEY`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT`    | An active Linux snapshot in the target region. Connection and creation select `daytona-default`; organization policy must permit GitHub release downloads and model access. |
-| E2B      | `E2B_API_KEY`; optional `E2B_TEMPLATE_ID` (default `base`) | A ready Linux template; creation explicitly selects `internet`.                                                                                                             |
+| Provider | Configuration                                              | Prerequisites                                                                                                                                                       |
+| -------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Daytona  | `DAYTONA_API_KEY`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT`    | An active Linux snapshot in the target region. The connection selects `daytona-default`; organization policy must permit GitHub release downloads and model access. |
+| E2B      | `E2B_API_KEY`; optional `E2B_TEMPLATE_ID` (default `base`) | A ready Linux template; creation explicitly selects `internet`.                                                                                                     |
 
 The guest needs glibc-based Linux on x64 or arm64, `curl`, `tar`, `sha256sum`, `/bin/sh`, Python 3, and the adapter's [Daytona shell/file utilities](/docs/providers/daytona/#image-requirements) or [E2B file prerequisites](/docs/providers/e2b/#files-and-commands). The helper downloads pinned standalone **OpenCode 1.18.35** from GitHub and verifies its pinned SHA-256 digest. It does not need npm in the guest.
 

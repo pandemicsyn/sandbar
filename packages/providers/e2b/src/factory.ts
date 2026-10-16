@@ -6,6 +6,9 @@ export function e2b(options: {
   apiKey: string;
   teamId?: string;
   templateId?: string;
+  /** Outbound network: `blocked` (default) or `internet`. */
+  network?: "blocked" | "internet";
+  /** @deprecated Use `network`. */
   networkPolicy?: "blocked" | "internet";
   timeoutSeconds?: number;
   preview?: { access: "protected" | "public" };
@@ -19,6 +22,7 @@ export function e2b(options: {
     {
       teamId: options.teamId,
       templateId: options.templateId,
+      network: options.network,
       networkPolicy: options.networkPolicy,
       timeoutSeconds: options.timeoutSeconds,
       lifecycle: options.lifecycle,

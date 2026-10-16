@@ -19,7 +19,7 @@ const sandbar = await Sandbar.connect(e2b({ apiKey }));
 try {
   const box = await sandbar.sandboxes.create({
     environment: Image.prepared("base"),
-    networkPolicy: "blocked",
+    network: "blocked",
   });
 
   try {

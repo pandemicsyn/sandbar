@@ -2,7 +2,6 @@ import {
   Image,
   SandbarError,
   SandboxCleanupError,
-  type CreateInput,
   type SandbarClient,
   type SandboxHandle,
 } from "sandbar-sdk";
@@ -31,9 +30,8 @@ export function providerSetup(args = process.argv.slice(2)) {
           target: required("DAYTONA_TARGET"),
           environment: Image.prepared(required("DAYTONA_SNAPSHOT")),
           lifecycle: { lifetimeSeconds: 600 },
-          networkPolicy: "daytona-default",
+          network: "daytona-default",
         }),
-        create: { networkPolicy: "daytona-default" } satisfies CreateInput,
       };
     case "e2b":
       return {
@@ -41,8 +39,8 @@ export function providerSetup(args = process.argv.slice(2)) {
           apiKey: required("E2B_API_KEY"),
           templateId: process.env.E2B_TEMPLATE_ID?.trim() || "base",
           lifecycle: { lifetimeSeconds: 600 },
+          network: "internet",
         }),
-        create: { networkPolicy: "internet" } satisfies CreateInput,
       };
     default:
       throw new Error("Choose --provider daytona or --provider e2b");

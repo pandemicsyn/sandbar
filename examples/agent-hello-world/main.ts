@@ -39,7 +39,7 @@ async function main() {
 
   try {
     await client.sandboxes.with(
-      setup.create,
+      {},
       async (box) => {
         console.error(`Created sandbox ${box.id}`);
         await installOpenCode(box, run.signal);

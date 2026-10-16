@@ -27,7 +27,7 @@ export async function previewWorkspace(client: SandbarClient, preparedImage: str
   try {
     const box = await client.sandboxes.create({
       environment: Image.prepared(preparedImage),
-      networkPolicy: "blocked",
+      network: "blocked",
     });
 
     try {

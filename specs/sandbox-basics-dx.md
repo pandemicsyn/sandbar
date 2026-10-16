@@ -6,6 +6,10 @@ The [filesystem contract](filesystem-dx.md) owns current directory, metadata, tr
 
 Configure a provider once, create a sandbox, write input, execute, read output and clean up. Creation defaults and UTF-8 helpers are implemented; current directory support supersedes the original restricted native mappings. Keep resource references, scope checks and [ordinary recovery semantics](sdk-recovery-dx.md) intact.
 
+## October 16 portable network names
+
+Every official adapter accepts `network: "blocked" | "internet"` in setup and per call, with `networkPolicy` and Vercel's `vercel-*` names kept as deprecated aliases (adapter-declared `networkPolicyAliases`, resolved by the SDK before support checks and persistence). Daytona keeps `daytona-default` as a Daytona-only setup value; its `internet` requires an organization without limited sandbox egress and shares the existing provider-managed partition, since both send the same native request. Per-call policies must still match the connection on Daytona, Vercel and boxd. Allowlists and per-call relaxation are later steps of the portable options design.
+
 ## October 11 network default acceptance (merged #90)
 
 Supersedes the earlier deliberate exclusion of network simplification below. Add optional validated immutable `session.defaultNetworkPolicy` alongside `defaultImage`, with explicit per-call policy > session default > blocked. Only undefined means default: null, empty and invalid explicit values reject. No unsupported-policy fallback. Daytona supplies its existing configured policy; E2B gains configured blocked/internet (default blocked), consistently across injectable/config factories. No generic SDK defaults bag or changes to image/lifetime/preview/snapshot defaults.

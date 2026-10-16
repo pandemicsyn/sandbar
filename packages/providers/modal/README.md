@@ -13,7 +13,7 @@ const client = await Sandbar.connect({
 });
 try {
   const box = await client.sandboxes.create({
-    environment: Image.prepared("im-existing-modal-image-id"), networkPolicy: "blocked",
+    environment: Image.prepared("im-existing-modal-image-id"), network: "blocked",
   });
   try {
     const result = await box.exec({ command: { kind: "argv", argv: ["/bin/sh", "-c", "printf ready"] } });
