@@ -1,12 +1,16 @@
+import { status } from "@grpc/grpc-js";
 import {
+  InvalidError,
   ModalClient,
   NotFoundError,
   SandboxFilesystemNotFoundError,
   type App,
+  type Image,
   type ModalClientParams,
   type Sandbox,
 } from "modal";
-import { AdapterError } from "@sandbar-sdk/adapter";
+import { z } from "zod";
+import { AdapterError, type AdapterErrorCode } from "@sandbar-sdk/adapter";
 import { ModalRouterWire, type RouterRun } from "./router-wire";
 
 export const MODAL_ENDPOINT = "https://api.modal.com:443";
@@ -134,6 +138,94 @@ export interface ModalTransport {
   close(): void;
 }
 
+/**
+ * A Modal create failure that provably left no sandbox behind. `imageBuilt` means an
+ * OCI image was built first, so the attempt still had a (possibly paid) effect.
+ */
+export class ModalCreateRejected extends AdapterError {
+  constructor(
+    code: AdapterErrorCode,
+    message: string,
+    readonly imageBuilt = false,
+  ) {
+    super(code, message);
+  }
+}
+
+// Server statuses that refuse a request before it takes effect. ALREADY_EXISTS
+// means the submission name is taken, possibly by this attempt, so it stays uncertain.
+const definitiveStatus = new Map<number, AdapterErrorCode>([
+  [status.INVALID_ARGUMENT, "INVALID_ARGUMENT"],
+  [status.NOT_FOUND, "NOT_FOUND"],
+  [status.PERMISSION_DENIED, "FORBIDDEN"],
+  [status.RESOURCE_EXHAUSTED, "CAPACITY"],
+  [status.FAILED_PRECONDITION, "CONFLICT"],
+  [status.UNAUTHENTICATED, "UNAUTHENTICATED"],
+]);
+
+const GrpcClientError = z.object({
+  name: z.literal("ClientError"),
+  code: z.number().int(),
+  details: z.string(),
+});
+
+const createSteps = {
+  lookup: "image lookup",
+  build: "image build",
+  sandbox: "sandbox creation",
+} as const;
+
+function nativeDetail(text: string, secrets: string[]): string {
+  let detail = text;
+
+  for (const secret of secrets) if (secret) detail = detail.replaceAll(secret, "[redacted]");
+
+  return detail
+    .replace(/[\p{Cc}\s]+/gu, " ")
+    .trim()
+    .slice(0, 300);
+}
+
+/**
+ * Classify a create failure by step. The read-only image lookup precedes every
+ * effect, so any failure there is a rejection. An image build or sandbox request
+ * is rejected only by a definitive server status; otherwise this returns undefined.
+ */
+export function createRejection(
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- thrown native values are classified here.
+  error: unknown,
+  step: keyof typeof createSteps,
+  secrets: string[],
+): ModalCreateRejected | undefined {
+  const grpc = GrpcClientError.safeParse(error);
+
+  if (grpc.success) {
+    // grpc-js raises this locally for an oversized response, after the server acted.
+    const local = grpc.data.details.startsWith("Received message larger than max");
+    const code = local ? undefined : definitiveStatus.get(grpc.data.code);
+
+    if (!code && step !== "lookup") return undefined;
+    const detail = nativeDetail(grpc.data.details, secrets);
+
+    return new ModalCreateRejected(
+      code ?? "UNAVAILABLE",
+      `Modal rejected ${createSteps[step]} (${status[grpc.data.code] ?? grpc.data.code})${detail ? `: ${detail}` : ""}`,
+    );
+  }
+
+  if (step !== "lookup") return undefined;
+  const detail = error instanceof Error ? nativeDetail(error.message, secrets) : "";
+
+  return new ModalCreateRejected(
+    error instanceof NotFoundError
+      ? "NOT_FOUND"
+      : error instanceof InvalidError
+        ? "INVALID_ARGUMENT"
+        : "UNAVAILABLE",
+    `Modal rejected ${createSteps.lookup}${detail ? `: ${detail}` : ""}`,
+  );
+}
+
 export const noRetryGrpcMiddleware: NonNullable<ModalClientParams["grpcMiddleware"]>[number] =
   async function* (call, options) {
     // SAFETY: the SDK middleware accepts an internal retries override at runtime;
@@ -205,20 +297,48 @@ export function createSdkTransport(input: {
       }
     },
     async create({ appId, imageId, ociReference, name, tags, timeoutMs, regions }) {
-      const image = ociReference
-        ? client.images.fromRegistry(ociReference)
-        : await client.images.fromId(imageId);
+      const secrets = [input.tokenId, input.tokenSecret];
+      let app: App;
+      let image: Image;
 
-      if (!ociReference && image.imageId !== imageId)
-        throw new Error("Modal image identity mismatch");
+      // Resolve and build first so each failure is known to precede the sandbox request.
+      try {
+        app = await appFor(appId);
+        image = ociReference
+          ? client.images.fromRegistry(ociReference)
+          : await client.images.fromId(imageId);
 
-      const sandbox = await client.sandboxes.experimentalCreate(await appFor(appId), image, {
-        name,
-        tags,
-        timeoutMs,
-        regions,
-        blockNetwork: true,
-      });
+        if (!ociReference && image.imageId !== imageId)
+          throw new Error("Modal image identity mismatch");
+      } catch (error) {
+        throw createRejection(error, "lookup", secrets) ?? error;
+      }
+
+      try {
+        await image.build(app);
+      } catch (error) {
+        throw createRejection(error, "build", secrets) ?? error;
+      }
+
+      let sandbox: Sandbox;
+
+      try {
+        sandbox = await client.sandboxes.experimentalCreate(app, image, {
+          name,
+          tags,
+          timeoutMs,
+          regions,
+          blockNetwork: true,
+        });
+      } catch (error) {
+        const rejection = createRejection(error, "sandbox", secrets);
+
+        if (!rejection) throw error;
+
+        throw ociReference
+          ? new ModalCreateRejected(rejection.code, rejection.message, true)
+          : rejection;
+      }
 
       if (!sandbox.sandboxId) throw new Error("Modal create returned no sandbox ID");
 

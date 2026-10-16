@@ -57,6 +57,7 @@ export const DriverError = z.object({
     "invalid",
     "unsupported",
     "unauthorized",
+    "forbidden",
     "not_found",
     "conflict",
     "capacity",

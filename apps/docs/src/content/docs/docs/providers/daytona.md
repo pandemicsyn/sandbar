@@ -110,6 +110,8 @@ A definitive capture failure permits one bounded restart attempt. A successful c
 
 Deletion can be asynchronous. `destroy()` waits for confirmed termination; if the response becomes uncertain, save its reference and observe instead of issuing another delete. `close()` does not stop compute. Borrowed snapshots remain untouched, and built snapshots need separate owned-artifact cleanup.
 
+When Daytona refuses a create outright, `create()` rejects with a matching error code and Daytona's own reason, for example `FORBIDDEN: Daytona rejected sandbox creation (HTTP 403): Total CPU limit exceeded`. HTTP 400 and 422 map to `INVALID_ARGUMENT`, 401 to `UNAUTHENTICATED`, 403 to `FORBIDDEN`, 404 to `NOT_FOUND` and 429 to `RATE_LIMIT`; nothing was created, so you can fix the cause and create again. The same applies when the snapshot build for an OCI image is refused. A 409, a server error or a lost response stays `OUTCOME_UNKNOWN`, and so does a sandbox refusal after an OCI snapshot was built, because that snapshot remains.
+
 See [Tested provider support](/docs/providers/support/) for measured coverage and [Errors and recovery](/docs/guides/recovery/) for handling lost responses.
 
 ## Snapshots and retained volumes

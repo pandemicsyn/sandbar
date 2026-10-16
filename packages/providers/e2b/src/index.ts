@@ -32,6 +32,7 @@ import {
 } from "@sandbar-sdk/adapter";
 import { MAX_EXEC_STDIN_BYTES } from "@sandbar-sdk/adapter/portable";
 import {
+  E2BCreateRejected,
   E2BLifecycleRejected,
   E2BRenewRejected,
   E2BDirectoryRejected,
@@ -976,8 +977,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             } catch (error) {
               if (error instanceof AdapterCheckpointError) throw error;
 
+              // A template built for this create is already an effect, so it is never a clean rejection.
+              if (error instanceof E2BCreateRejected && !name)
+                return ctx.reject(error.code, error.message);
+
               return ctx.unknown(
-                `E2B create response unavailable; observe without replay${name ? `; retained template ${templateId}` : ""}`,
+                `${error instanceof E2BCreateRejected ? error.message : "E2B create response unavailable"}; observe without replay${name ? `; retained template ${templateId}` : ""}`,
               );
             }
           },

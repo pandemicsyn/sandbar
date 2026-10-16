@@ -1,9 +1,12 @@
 import {
   Sandbox,
+  SandboxError,
   SandboxNotFoundError,
   AuthenticationError,
   InvalidArgumentError,
+  RateLimitError,
   Template,
+  TemplateError,
   Volume,
 } from "e2b";
 import {
@@ -43,6 +46,47 @@ class NativeReadError extends AdapterError {
       `E2B state read failed (${statusCode})`,
     );
   }
+}
+
+/** An E2B create refused before any sandbox existed; carries E2B's own reason. */
+export class E2BCreateRejected extends AdapterError {}
+
+const createRejections = new Map<number, ConstructorParameters<typeof AdapterError>[0]>([
+  [400, "INVALID_ARGUMENT"],
+  [403, "FORBIDDEN"],
+  [404, "NOT_FOUND"],
+  [422, "INVALID_ARGUMENT"],
+]);
+
+/**
+ * Classify a Sandbox.create failure. The pinned SDK raises AuthenticationError (401),
+ * RateLimitError (429) and InvalidArgumentError (local validation) before a sandbox
+ * exists, and SandboxError.statusCode for other HTTP rejections. TemplateError follows
+ * a created-then-killed sandbox, and 5xx or transport loss are uncertain.
+ */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- thrown native values are classified here.
+export function createRejection(error: unknown, apiKey: string): E2BCreateRejected | undefined {
+  if (!(error instanceof Error) || error instanceof TemplateError) return undefined;
+
+  const code =
+    error instanceof AuthenticationError
+      ? "UNAUTHENTICATED"
+      : error instanceof RateLimitError
+        ? "RATE_LIMIT"
+        : error instanceof InvalidArgumentError
+          ? "INVALID_ARGUMENT"
+          : error instanceof SandboxError && error.statusCode !== undefined
+            ? createRejections.get(error.statusCode)
+            : undefined;
+
+  if (!code) return undefined;
+
+  const detail = (apiKey ? error.message.replaceAll(apiKey, "[redacted]") : error.message)
+    .replace(/[\p{Cc}\s]+/gu, " ")
+    .trim()
+    .slice(0, 300);
+
+  return new E2BCreateRejected(code, `E2B rejected sandbox creation${detail ? `: ${detail}` : ""}`);
 }
 
 export class E2BLifecycleRejected extends AdapterError {
@@ -739,18 +783,22 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       return null;
     },
     async create(input) {
-      const sandbox = await Sandbox.create(input.templateId, {
-        ...opts,
-        metadata: input.metadata,
-        timeoutMs: input.timeoutMs,
-        lifecycle: { onTimeout: "kill", autoResume: false },
-        allowInternetAccess: input.allowInternetAccess,
-        network: { allowPublicTraffic: input.allowPublicTraffic ?? false },
-        volumeMounts: input.volumeMounts,
-        signal: input.signal,
-      });
+      try {
+        const sandbox = await Sandbox.create(input.templateId, {
+          ...opts,
+          metadata: input.metadata,
+          timeoutMs: input.timeoutMs,
+          lifecycle: { onTimeout: "kill", autoResume: false },
+          allowInternetAccess: input.allowInternetAccess,
+          network: { allowPublicTraffic: input.allowPublicTraffic ?? false },
+          volumeMounts: input.volumeMounts,
+          signal: input.signal,
+        });
 
-      return sandbox.sandboxId;
+        return sandbox.sandboxId;
+      } catch (error) {
+        throw createRejection(error, apiKey) ?? error;
+      }
     },
     get,
     async list(metadata, limit, nextToken) {
