@@ -68,6 +68,7 @@ const Configuration = z
     lifecycle: z
       .strictObject({
         lifetimeSeconds: z.number().int().positive().safe().max(86400).optional(),
+        idleStopSeconds: z.number().int().positive().safe().max(86400).optional(),
         suspension: z
           .strictObject({ preserve: z.enum(["filesystem", "filesystem+memory"]) })
           .optional(),
@@ -88,6 +89,10 @@ const Configuration = z
       value.lifecycle?.lifetimeSeconds === undefined
         ? (value.ttlMinutes ?? 60)
         : Math.ceil(value.lifecycle.lifetimeSeconds / 60),
+    autoStopMinutes:
+      value.lifecycle?.idleStopSeconds === undefined
+        ? 0
+        : Math.ceil(value.lifecycle.idleStopSeconds / 60),
   }));
 
 const CompactObservation = SandboxInfoSchema.omit({ reference: true });
@@ -362,6 +367,7 @@ export function createDaytonaAdapter(
           target: value.target,
           networkPolicy: value.networkPolicy,
           ttlMinutes: String(value.ttlMinutes),
+          autoStopMinutes: String(value.autoStopMinutes),
         },
       });
     } catch {
@@ -398,6 +404,7 @@ export function createDaytonaAdapter(
         target: config.target,
         networkPolicy: config.networkPolicy,
         ttlMinutes: config.ttlMinutes,
+        autoStopMinutes: config.autoStopMinutes,
         fetch: fetchImpl,
         trustedEndpoints,
       });

@@ -117,6 +117,7 @@ const Input = z.strictObject({
     target: z.string().min(1),
     networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
     ttlMinutes: z.coerce.number().int().min(1).max(1440).default(60),
+    autoStopMinutes: z.coerce.number().int().min(0).max(1440).default(0),
   }),
 });
 
@@ -128,6 +129,8 @@ export type DaytonaInput = {
   toolboxOrigin?: string;
   target: string;
   ttlMinutes?: number;
+  /** Native idle auto-stop interval in minutes; 0 disables it. */
+  autoStopMinutes?: number;
   networkPolicy?: "blocked" | "daytona-default";
   fetch?: typeof fetch;
   trustedEndpoints?: DaytonaEndpointPair[];
@@ -949,6 +952,7 @@ export class DaytonaDriver implements ProviderDriver {
           subpath: mount.subpath,
         })),
         ttlMinutes: this.config.configuration.ttlMinutes,
+        autoStopInterval: this.config.configuration.autoStopMinutes,
       };
 
       const response = await this.request(
@@ -2433,6 +2437,7 @@ export function daytonaRegistration(
         configuration: {
           ...parsed.configuration,
           ttlMinutes: String(parsed.configuration.ttlMinutes),
+          autoStopMinutes: String(parsed.configuration.autoStopMinutes),
         },
       };
     },
@@ -2525,6 +2530,7 @@ export async function daytonaProvider(input: DaytonaInput) {
       target: input.target,
       networkPolicy: input.networkPolicy ?? "blocked",
       ttlMinutes: String(input.ttlMinutes ?? 60),
+      autoStopMinutes: String(input.autoStopMinutes ?? 0),
     },
   });
 
@@ -2539,7 +2545,11 @@ export async function daytonaProvider(input: DaytonaInput) {
 
   return daytonaRegistration(input.fetch, input.trustedEndpoints).connect({
     credentials: config.credentials,
-    configuration: { ...config.configuration, ttlMinutes: String(config.configuration.ttlMinutes) },
+    configuration: {
+      ...config.configuration,
+      ttlMinutes: String(config.configuration.ttlMinutes),
+      autoStopMinutes: String(config.configuration.autoStopMinutes),
+    },
     connectionId,
   });
 }

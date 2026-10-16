@@ -45,6 +45,7 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 | `environment`                   | Omitted   | Default prepared or OCI environment for creation; per-call environment wins.     |
 | `target`                        | Required  | Available native region ID, such as `us`.                                        |
 | `lifecycle.lifetimeSeconds`     | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `ttlMinutes`. |
+| `lifecycle.idleStopSeconds`     | Omitted   | Stop after this many idle seconds; omitted disables native idle auto-stop.       |
 | `ttlMinutes`                    | `60`      | Native sandbox lifetime, from 1 to 1,440 minutes.                                |
 | `snapshots.restartAfterCapture` | `true`    | Restart only a previously running capture source.                                |
 | `networkPolicy`                 | `blocked` | `blocked` or explicit `daytona-default`.                                         |
@@ -91,6 +92,8 @@ await client.close();
 Set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and default `renew()` window. Omission keeps the existing 60-minute `ttlMinutes` default. Supplying both `lifecycle.lifetimeSeconds` and `ttlMinutes` rejects during connection before native effects. These defaults stay local to the connection: reopening uses the new connection's default only when you explicitly call `renew()`. `get()` and `inspect()` never apply it.
 
 Daytona rounds positive integer seconds upward to whole minutes: 1 → 60, 61 → 120. The resolved ceiling is 86,400 seconds (24 hours). One native TTL POST resets the hard deadline from provider processing and expiry destroys the sandbox. This clock keeps ticking while stopped or archived and can delete saved files. Idle stop and deletion after stopping are separate policies; renewing does not disable them. The returned observation reports `autoDestroyAt` when available. See [native wall-clock TTL](https://www.daytona.io/docs/en/sandboxes/#wall-clock-ttl).
+
+Daytona natively stops a sandbox after 15 idle minutes, even while background processes run. The adapter disables that by default, so a sandbox runs until its lifetime ends or you stop, suspend or destroy it. Set `lifecycle: { idleStopSeconds: 1800 }` to stop it after 30 idle minutes instead; seconds round upward to whole minutes, up to 86,400. Stopping preserves files, ends processes and keeps the lifetime clock running; `resume()` starts it again. `inspect()` reports the native policy as `idleStop`. See [native auto-stop](https://www.daytona.io/docs/en/sandboxes/).
 
 Both mappings require running compute. Use positive safe integer seconds; upper bounds and invalid inputs reject before the renewal POST without downward rounding or clamping. Native account/region/runtime limits can be tighter and native rejection remains an error. Renewal may shorten an existing longer deadline, is not additive, and does not guarantee uninterrupted execution or exact expiry scheduling. Serialize lifecycle changes across application and external controllers.
 

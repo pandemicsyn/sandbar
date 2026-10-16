@@ -11,6 +11,8 @@ export function daytona(options: {
   preview?: { access: "protected" | "public" };
   lifecycle?: {
     lifetimeSeconds?: number;
+    /** Stop the sandbox after this many idle seconds, rounded up to minutes. Omit to keep it running until its lifetime ends. */
+    idleStopSeconds?: number;
     suspension?: { preserve: "filesystem" | "filesystem+memory" };
   };
   snapshots?: { restartAfterCapture?: boolean };
