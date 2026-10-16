@@ -169,7 +169,7 @@ function fixture() {
     ) =>
       Sandbar.connect({
         adapter,
-        config: { target: "us", ...config },
+        config: { target: "us", networkPolicy: "blocked", ...config },
         credentials: { apiKey: key },
         onReference,
       }),
@@ -198,7 +198,7 @@ async function create(
 
 test("Daytona configured/default/explicit lifetime resolves upward once and stays outside identity", async () => {
   for (const [config, expected] of [
-    [{}, 3600],
+    [{}, 900],
     [{ ttlMinutes: 15 }, 900],
     [{ lifecycle: { lifetimeSeconds: 61 } }, 120],
   ] as const) {
@@ -212,12 +212,14 @@ test("Daytona configured/default/explicit lifetime resolves upward once and stay
       expect((await box.renew({ forSeconds: 61 })).requested).toEqual({ forSeconds: 120 });
       expect((await box.renew({ forSeconds: 1 })).requested).toEqual({ forSeconds: 60 });
       expect((await box.renew({ forSeconds: 86400 })).requested).toEqual({ forSeconds: 86400 });
-      expect(f.windows).toEqual([expected, 120, 60, 86400]);
+      expect((await box.renew({ forSeconds: 604801 })).requested).toEqual({ forSeconds: 604860 });
+      expect(f.windows).toEqual([expected, 120, 60, 86400, 604860]);
       expect(JSON.stringify(box.reference)).toBe(original);
       expect((await box.capabilities()).lifecycle?.renew).toMatchObject({
         status: "supported",
-        value: { maxSeconds: 86400, stepSeconds: 60, scope: "sandbox" },
+        value: { minSeconds: 60, stepSeconds: 60, scope: "sandbox" },
       });
+      expect((await box.capabilities()).lifecycle?.renew).not.toHaveProperty("value.maxSeconds");
     } finally {
       await client.close();
     }
@@ -233,7 +235,6 @@ test("Daytona renewal validation, identity, state and credential gates precede t
       0,
       -1,
       1.2,
-      86401,
       Number.MAX_SAFE_INTEGER,
       Number.MAX_SAFE_INTEGER + 1,
       Infinity,
@@ -259,7 +260,7 @@ test("Daytona renewal validation, identity, state and credential gates precede t
 
   for (const config of [
     { ttlMinutes: 1, lifecycle: { lifetimeSeconds: 60 } },
-    { lifecycle: { lifetimeSeconds: 86401 } },
+    { lifecycle: { lifetimeSeconds: 1.5 } },
     { lifecycle: { lifetimeSeconds: 0 } },
   ]) {
     const before = f.calls.length;
@@ -307,7 +308,7 @@ test("Daytona ACK survives failed GET and failed compatibility checkpoint save; 
 
   try {
     expect((await setup.box.renew()).acknowledged).toBe(true);
-    expect(g.windows).toEqual([3600]);
+    expect(g.windows).toEqual([900]);
   } finally {
     await setup.client.close();
   }
@@ -399,11 +400,11 @@ test("Daytona cancellation before dispatch vs after one held POST", async () => 
   await expect(pending).rejects.toMatchObject({
     code: "WAIT_ABORTED",
     effect: "possible",
-    reference: { kind: "sandbox_renew", renewal: { forSeconds: 3600 } },
+    reference: { kind: "sandbox_renew", renewal: { forSeconds: 900 } },
   });
   g.releasePost();
   await Bun.sleep(10);
-  expect(g.windows).toEqual([3600]);
+  expect(g.windows).toEqual([900]);
   await setup.client.close();
 });
 

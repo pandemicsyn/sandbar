@@ -6,11 +6,27 @@ import { createSdkTransport, MODAL_ENDPOINT, type ModalTransport } from "./trans
 
 const MAX_BYTES = 1_048_576;
 
+const ModalImageId = z.string().regex(/^im-[A-Za-z0-9_-]+$/, "Use an existing Modal image ID");
+
+/** Works with every adapter feature: it has a POSIX shell, coreutils and Python. */
+const DEFAULT_IMAGE = { kind: "oci" as const, value: "python:3.12-slim" };
+
 const Configuration = z.strictObject({
   appName: z.string().min(1).max(128),
   environment: z.string().min(1).max(128),
   region: z.string().min(1).max(128).optional(),
-  timeoutSeconds: z.coerce.number().int().min(60).max(3600).default(300),
+  /** Default for creates without an image: an `im-` ID, or a prepared or OCI image. */
+  image: z
+    .union([
+      ModalImageId.transform((value) => ({ kind: "prepared" as const, value })),
+      z.discriminatedUnion("kind", [
+        z.strictObject({ kind: z.literal("prepared"), value: ModalImageId }),
+        z.strictObject({ kind: z.literal("oci"), value: z.string().min(1).max(1024) }),
+      ]),
+    ])
+    .default(DEFAULT_IMAGE),
+  /** Modal allows sandboxes to run for up to 24 hours. */
+  timeoutSeconds: z.coerce.number().int().min(60).max(86_400).default(900),
 });
 
 const Credentials = z.strictObject({
@@ -115,6 +131,7 @@ export function createModalAdapter(
             region: config.region ?? "",
           },
         },
+        defaultImage: config.image,
         supports: {
           images: ["prepared", "oci"],
           network: ["blocked"],

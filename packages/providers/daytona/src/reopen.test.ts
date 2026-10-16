@@ -82,7 +82,7 @@ function fixture() {
     connect: (key = "first-key", onReference?: (ref: AdapterRecoveryReference) => void) =>
       Sandbar.connect({
         adapter,
-        config: { target: "us", ttlMinutes: 15 },
+        config: { target: "us", networkPolicy: "blocked", ttlMinutes: 15 },
         credentials: { apiKey: key },
         onReference,
       }),

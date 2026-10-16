@@ -184,7 +184,12 @@ test.each([401, 403])(
     });
 
     await expect(
-      daytonaProvider({ apiKey: "secret", target: "us", fetch: fetchImpl }),
+      daytonaProvider({
+        apiKey: "secret",
+        target: "us",
+        networkPolicy: "blocked",
+        fetch: fetchImpl,
+      }),
     ).rejects.toMatchObject({
       name: "ProviderReadError",
       code: "UNAUTHENTICATED",
@@ -221,7 +226,12 @@ test.each([401, 403])(
     });
 
     await expect(
-      daytonaProvider({ apiKey: "secret", target: "us", fetch: fetchImpl }),
+      daytonaProvider({
+        apiKey: "secret",
+        target: "us",
+        networkPolicy: "blocked",
+        fetch: fetchImpl,
+      }),
     ).rejects.toMatchObject({
       name: "ProviderReadError",
       code: "UNAUTHENTICATED",
@@ -314,7 +324,13 @@ test.each([
       async () => Response.json(value, { status }),
     );
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
+
     const capabilities = await provider.driver.capabilities(provider.scope);
     expect(capabilities.networkPolicies).toEqual([]);
     expect(capabilities.supports.inventory).toBe(true);
@@ -363,7 +379,13 @@ test("blocked egress eligibility is rechecked by prepare before submission", asy
     async () => Response.json({ id: "org-1", sandboxLimitedNetworkEgress: limited }),
   );
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
+
   limited = false;
   expect((await provider.driver.capabilities(provider.scope)).networkPolicies).toEqual(["blocked"]);
   limited = true;
@@ -468,13 +490,19 @@ test("verified direct scope, read-only preparation, one create, exact binary exe
     throw new Error(`Unexpected ${url.pathname}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "private-key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "private-key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
+
   expect(provider.scope.accountId).toBe("org-1");
   expect(provider.scope.endpoint).toBe(apiUrl);
 
   const client = await Sandbar.connect({
     adapter: createDaytonaAdapter(fetchImpl),
-    config: { target: "us" },
+    config: { target: "us", networkPolicy: "blocked" },
     credentials: { apiKey: "private-key" },
   });
 
@@ -615,7 +643,7 @@ test("public finite stdin preserves UTF-8 bytes, output streams, cwd, env and ex
 
   const client = await Sandbar.connect({
     adapter: createDaytonaAdapter(fetchImpl),
-    config: { target: "us" },
+    config: { target: "us", networkPolicy: "blocked" },
     credentials: { apiKey: "private-key" },
   });
 
@@ -761,7 +789,12 @@ test("unexpected public create response remains unknown without replay", async (
     throw new Error(`Unexpected ${url.pathname}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
 
   const result = await provider.driver.create({
     scope: provider.scope,
@@ -809,7 +842,12 @@ test.each(["stopped", "paused", "archived"])(
       throw new Error(`Unexpected ${url.pathname}`);
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
 
     const created = await provider.driver.create({
       scope: provider.scope,
@@ -869,7 +907,13 @@ test.each(["stopped", "paused", "archived", "starting"])(
       throw new Error(`Unexpected ${url.pathname}`);
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
+
     const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
 
     const execution = await provider.driver.exec({
@@ -961,7 +1005,12 @@ test("lost create response is observed by stable name without replay; scope rota
     throw new Error("Unexpected request");
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
 
   const result = await provider.driver.create({
     scope: provider.scope,
@@ -1061,7 +1110,14 @@ test("lost create response is observed by stable name without replay; scope rota
   );
   expect(posts).toBe(1);
   account = "org-2";
-  const rotated = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+
+  const rotated = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
+
   expect(rotated.scope.accountId).not.toBe(provider.scope.accountId);
 });
 
@@ -1076,7 +1132,13 @@ test("mutable OCI tags reject before mutation", async () => {
     return Response.json({ organizationId: "org-1" });
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
+
   expect(
     (
       await provider.driver.prepare({
@@ -1089,7 +1151,7 @@ test("mutable OCI tags reject before mutation", async () => {
 
   const client = await Sandbar.connect({
     adapter: createDaytonaAdapter(fetchImpl),
-    config: { target: "us" },
+    config: { target: "us", networkPolicy: "blocked" },
     credentials: { apiKey: "key" },
   });
 
@@ -1151,7 +1213,12 @@ test.each(["container", "windows", undefined] as const)(
       throw new Error(`Unexpected fixture route ${url.pathname}`);
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
 
     const prepared = await provider.driver.prepare({
       scope: provider.scope,
@@ -1224,7 +1291,12 @@ test("lost OCI build response remains unknown with no sandbox submission", async
     throw new Error(`Unexpected fixture route ${path}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
 
   const result = await provider.driver.create({
     scope: provider.scope,
@@ -1270,7 +1342,13 @@ test("generic 404 after a lost delete does not certify compute termination", asy
     throw new Error(`Unexpected fixture route ${path}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
+
   const box = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
   expect(
     (await provider.driver.destroy({ sandbox: box, identity: identity("lost-delete") })).status,
@@ -1346,7 +1424,12 @@ test.each(["absent", "file", "directory", "symlink", "missing-exit"] as const)(
       throw new Error(`Unexpected fixture route ${url.pathname}`);
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
 
     const result = await provider.driver.writeFile({
       sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
@@ -1435,7 +1518,12 @@ test("lost staging upload response is read back and committed without another up
     throw new Error(`Unexpected fixture route ${url.pathname}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
 
   const result = await provider.driver.writeFile({
     sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
@@ -1484,7 +1572,13 @@ test("lost exec and upload responses remain unknown after one submission each", 
     throw new Error(`Unexpected ${url.pathname}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
+
   const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
 
   const exec = await provider.driver.exec({
@@ -1537,7 +1631,13 @@ test.each(["missing", "read failure"])(
       throw new Error(`Unexpected ${url.pathname}`);
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
+
     const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
 
     const exec = await provider.driver.exec({
@@ -1597,7 +1697,13 @@ test("cross-wired sandbox identity and malformed execution output never complete
     throw new Error(`Unexpected ${url.pathname}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
+
   const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
   expect(
     (
@@ -1659,7 +1765,12 @@ test("POSIX capture wrapper drains a noisy command while retaining only bounded 
     throw new Error(`Unexpected ${url.pathname}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
 
   const result = await provider.driver.exec({
     sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
@@ -1714,7 +1825,13 @@ test("generated capture wrapper isolates utilities from requested PATH and prese
     throw new Error(`Unexpected ${url.pathname}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
+
   const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
 
   const cases: {
@@ -1846,7 +1963,13 @@ test.each([
       throw new Error(`Unexpected ${url.pathname}`);
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
+
     const submissionId = `frame-${_name.replaceAll(" ", "-")}`;
 
     const result = await provider.driver.exec({
@@ -1909,7 +2032,12 @@ test("local capture utility failure leaves an incomplete frame that stays unknow
     throw new Error(`Unexpected ${url.pathname}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
 
   const result = await provider.driver.exec({
     sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
@@ -2001,7 +2129,13 @@ test("write receipt is atomically published before recovery from a lost response
   });
 
   try {
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
+
     const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
     const submissionId = directory.split("/").at(-1)!;
     expect(
@@ -2050,7 +2184,13 @@ test("immediate destroyed response preserves the snapshot label read before DELE
     throw new Error(`Unexpected fixture route ${path}`);
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
+
   const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
   const result = await provider.driver.destroy({ sandbox, identity: identity("destroy-retained") });
   expect(result.status).toBe("completed");
@@ -2086,7 +2226,12 @@ test.each(["before-read", "during-read"] as const)(
       throw new Error("unexpected request");
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
 
     if (mode === "before-read") controller.abort();
 
@@ -2120,7 +2265,12 @@ test("native destroy preflight read failure is effect-free", async () => {
     throw new Error("detail unavailable");
   });
 
-  const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+  const provider = await daytonaProvider({
+    apiKey: "key",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: fetchImpl,
+  });
 
   const result = await provider.driver.destroy({
     sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
@@ -2192,7 +2342,12 @@ test.each(["file", "directory", "lost-reservation"] as const)(
     });
 
     try {
-      const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+      const provider = await daytonaProvider({
+        apiKey: "key",
+        target: "us",
+        networkPolicy: "blocked",
+        fetch: fetchImpl,
+      });
 
       const result = await provider.driver.writeFile({
         sandbox: { scope: provider.scope, nativeId: "native-1", kind: "sandbox" },
@@ -2273,7 +2428,13 @@ test.each(["exec", "write"] as const)(
       });
 
       try {
-        const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+        const provider = await daytonaProvider({
+          apiKey: "key",
+          target: "us",
+          networkPolicy: "blocked",
+          fetch: fetchImpl,
+        });
+
         const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
         const invocation = identity(directory.split("/").at(-1)!);
 
@@ -2344,7 +2505,13 @@ test.each(["confirmed", "lost"] as const)(
       throw new Error("Unexpected fixture request");
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
+
     const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
     expect(await provider.driver.destroyRetainedResources(sandbox)).toBeUndefined();
     expect(
@@ -2390,7 +2557,13 @@ test.each([{ public: true }, { networkBlockAll: false }])(
       throw new Error("Unexpected request");
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
+
     const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
 
     expect(await provider.driver.destroyRetainedResources(sandbox)).toEqual([
@@ -2431,7 +2604,13 @@ test.each([{ id: "other" }, { organizationId: "other" }, { target: "other" }])(
       return Response.json({ ...native("box", "destroyed"), ...mismatch, public: true });
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
+
     const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
 
     expect(await provider.driver.destroy({ sandbox, identity: identity("scope") })).toMatchObject({
@@ -2479,7 +2658,12 @@ test.each(["name", "imageName", "lost-read", "failed-read"] as const)(
       return new Response(null, { status: 404 });
     });
 
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
 
     const result = await provider.driver.create({
       scope: provider.scope,
@@ -2605,7 +2789,13 @@ test.each([
   });
 
   try {
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetcher });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetcher,
+    });
+
     const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
     const submissionId = directory.split("/").at(-1)!;
     const path = mode === "double-slash" ? target.replaceAll("/", "//") : target;
@@ -2703,7 +2893,13 @@ for (const cancelMode of ["stall", "reject"] as const) {
       throw Error(`Unexpected request ${url.pathname}`);
     });
 
-    const provider = await daytonaProvider({ apiKey: "fixture", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "fixture",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
+
     const controller = new AbortController();
 
     if (!(provider.driver instanceof DaytonaDriver)) throw Error("Expected Daytona driver");
@@ -2772,7 +2968,13 @@ test("REST 0.218 exec timeout is separate from HTTP observation and original rec
   });
 
   try {
-    const provider = await daytonaProvider({ apiKey: "key", target: "us", fetch: fetchImpl });
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "blocked",
+      fetch: fetchImpl,
+    });
+
     const sandbox = { scope: provider.scope, nativeId: "native-1", kind: "sandbox" as const };
     expect(
       await provider.driver.exec({

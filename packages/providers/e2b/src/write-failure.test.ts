@@ -186,7 +186,12 @@ test("write recovery retains sanitized failure across restart and distinguishes 
     close() {},
   }));
 
-  const config = { teamId: "team_one", templateId: "template_1" };
+  const config = {
+    teamId: "team_one",
+    templateId: "template_1",
+    preview: { access: "protected" as const },
+  };
+
   const credentials = { apiKey: "offline-unused" };
   const connect = () => connectAdapter(adapter, { config, credentials });
   let connection = await connect();

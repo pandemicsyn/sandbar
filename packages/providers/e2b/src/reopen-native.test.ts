@@ -144,7 +144,7 @@ test.each([
 
   const client = await Sandbar.connect({
     adapter: createE2BAdapter(() => transport),
-    config: { teamId: "team_one" },
+    config: { teamId: "team_one", preview: { access: "protected" } },
     credentials: { apiKey: "fixture-key" },
     onReference() {
       saved++;
@@ -252,7 +252,7 @@ test.each([401, 403])(
 
     const client = await Sandbar.connect({
       adapter: createE2BAdapter(() => createSdkTransport("fixture-key", fetcher)),
-      config: { teamId: "team_one" },
+      config: { teamId: "team_one", preview: { access: "protected" } },
       credentials: { apiKey: "fixture-key" },
     });
 

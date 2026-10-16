@@ -3,7 +3,7 @@ title: Vercel Sandbox
 description: Run commands, work with files, suspend persistent sandboxes, and restore filesystem snapshots on Vercel.
 ---
 
-Use `@sandbar-sdk/vercel` with `sandbar-sdk` to run short-lived Vercel sandboxes. The adapter supports commands with byte input/output, files and file streams, filesystem snapshots, lifetime extensions, and public HTTP previews. Select the universal image to also use long-running processes and terminals.
+Use `@sandbar-sdk/vercel` with `sandbar-sdk` to run short-lived Vercel sandboxes. The adapter supports commands with byte input/output, files and file streams, filesystem snapshots, lifetime extensions, and public HTTP previews. The default universal image also provides long-running processes and terminals.
 
 Set `persistent: true` to save files when compute stops and explicitly resume them in a fresh VM.
 
@@ -46,17 +46,17 @@ try {
 
 ## Choose the sandbox setup
 
-| Option                | Default                  | What it controls                                                                                                   |
-| --------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `teamId`, `projectId` | Required                 | The existing team and project to use.                                                                              |
-| `region`              | `iad1`                   | One of the 19 supported Vercel regions. There is no automatic region failover.                                     |
-| `image`               | `vercel/sandbox/node:24` | Also accepts Node 22, Node 26, or `vercel/sandbox/universal:latest`. Choose universal for processes and terminals. |
-| `vcpus`               | `2`                      | Accepts 2, 4 or 8 CPUs, with 2 GiB memory per CPU. Account limits still apply.                                     |
-| `timeoutSeconds`      | `300`                    | Initial sandbox lifetime, from 60 to 300 seconds.                                                                  |
-| `networkPolicy`       | `vercel-deny-all`        | Choose the native deny policy or `vercel-allow-all`. Strict network isolation has not been independently tested.   |
-| `ports`               | `[]`                     | Up to 15 distinct public HTTP ports. Leave empty to expose none.                                                   |
-| `persistent`          | `false`                  | Keep files across stopped sessions. Resume starts fresh compute; processes and RAM are lost.                       |
-| `credentials.token`   | Required                 | Token with access to the selected team and project.                                                                |
+| Option                | Default                           | What it controls                                                                                                                                                                                             |
+| --------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `teamId`, `projectId` | Required                          | The existing team and project to use.                                                                                                                                                                        |
+| `region`              | `iad1`                            | One of the 19 supported Vercel regions. There is no automatic region failover.                                                                                                                               |
+| `image`               | `vercel/sandbox/universal:latest` | Vercel's native default, with processes and terminals. Also accepts Node 22, Node 24 or Node 26 images. Set `vercel/sandbox/node:24` to keep using sandboxes and snapshots created with the earlier default. |
+| `vcpus`               | `2`                               | Accepts 2, 4 or 8 CPUs, with 2 GiB memory per CPU. Account limits still apply.                                                                                                                               |
+| `timeoutSeconds`      | `900`                             | Initial sandbox lifetime, from 60 to 86,400 seconds. Vercel enforces lower plan limits itself (Hobby: 45 minutes).                                                                                           |
+| `networkPolicy`       | `vercel-deny-all`                 | Choose the native deny policy or `vercel-allow-all`. Strict network isolation has not been independently tested.                                                                                             |
+| `ports`               | `[]`                              | Up to 15 distinct public HTTP ports. Leave empty to expose none.                                                                                                                                             |
+| `persistent`          | `false`                           | Keep files across stopped sessions. Resume starts fresh compute; processes and RAM are lost.                                                                                                                 |
+| `credentials.token`   | Required                          | Token with access to the selected team and project.                                                                                                                                                          |
 
 `client.sandboxes.create()` uses this setup. Any image, region or policy supplied on an individual create call must match it. Arbitrary container images, OCI builds and mounted drives are not supported.
 
@@ -64,7 +64,7 @@ try {
 
 Use ordinary `box.exec` for a command, with arguments or an explicit shell script. It supports working directory, environment variables, and up to 1 MiB of finite stdin. Input bytes are verified before the command starts, and stdin ends after the supplied bytes. Separate stdout and stderr preserve the original bytes, with a combined output limit of 1 MiB and a truncation indicator. See [files and command output](/docs/guides/files-and-output/).
 
-For ongoing input/output or a terminal, set `image: "vercel/sandbox/universal:latest"`. The process APIs support text and binary output, byte input, closing stdin, status, SIGTERM/SIGKILL, terminal resize, and disconnect/reopen. A reopened process reports a possible output gap; it does not replay old output. Disconnecting locally does not stop the remote process. Node-only images do not provide these process features.
+For ongoing input/output or a terminal, keep the default `vercel/sandbox/universal:latest` image. The process APIs support text and binary output, byte input, closing stdin, status, SIGTERM/SIGKILL, terminal resize, and disconnect/reopen. A reopened process reports a possible output gap; it does not replay old output. Disconnecting locally does not stop the remote process. Node-only images do not provide these process features.
 
 File reads and writes preserve bytes. Use file streams for files larger than the 1 MiB buffered limit. Directory listing, stat, exists, mkdir, remove, copy and move are supported. Paths must be absolute. Directory listings are sorted and complete, with a limit of 1,024 entries and 65,536 bytes of names; larger listings fail instead of returning an incomplete result.
 
@@ -74,7 +74,7 @@ Writes and copies prepare a temporary file before replacing the destination. `ov
 
 By default, each sandbox reference identifies one original VM session. `box.destroy()` stops that session and waits for confirmed termination. It retains Vercel's named sandbox metadata because this default reference identifies only the VM session. Persistent mode tracks the logical sandbox separately, as described below. Closing the client releases local resources; destroy owned sandboxes separately. The native timeout is a fallback, not proof that cleanup finished.
 
-`box.renew({ forSeconds: 61 })` **adds** 61 seconds to the running session's timeout. Each request accepts 1–300 seconds; Vercel's plan and total-runtime limits still apply. Inspecting or reopening a sandbox never renews or resumes it.
+`box.renew({ forSeconds: 61 })` **adds** 61 seconds to the running session's timeout. Each request accepts 1–86,400 seconds; Vercel caps total session time by plan (Hobby 45 minutes, Pro/Enterprise 24 hours) and native rejection remains an error. See [Vercel Sandbox pricing and limits](https://vercel.com/docs/sandbox/pricing). Inspecting or reopening a sandbox never renews or resumes it.
 
 Save `box.reference` in trusted application storage, then pass it to `freshClient.sandboxes.get(savedReference)` using the same team, project and region with current credentials. This reopens the original session without creating compute. A lookup searches at most 10,000 project sessions and fails if it cannot verify membership. See [resource references](/docs/guides/resources/) and [recovery](/docs/guides/recovery/).
 

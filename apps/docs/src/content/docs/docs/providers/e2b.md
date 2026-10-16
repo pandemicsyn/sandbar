@@ -35,14 +35,15 @@ Set `E2B_API_KEY` before running this on the server. `E2B_API_ID` is not require
 
 ## Connection options
 
-| Option                      | Default   | Purpose                                                                              |
-| --------------------------- | --------- | ------------------------------------------------------------------------------------ |
-| `apiKey`                    | Required  | Authenticated E2B API key.                                                           |
-| `networkPolicy`             | `blocked` | Default outbound request for create and restore: `blocked` or `internet`.            |
-| `templateId`                | `base`    | Public base template or a ready owned template ID/name.                              |
-| `lifecycle.lifetimeSeconds` | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `timeoutSeconds`. |
-| `timeoutSeconds`            | `300`     | Native sandbox lifetime, from 60 to 3,600 seconds.                                   |
-| `teamId`                    | Omitted   | Optional verified team scope.                                                        |
+| Option                      | Default   | Purpose                                                                               |
+| --------------------------- | --------- | ------------------------------------------------------------------------------------- |
+| `apiKey`                    | Required  | Authenticated E2B API key.                                                            |
+| `networkPolicy`             | `blocked` | Default outbound request for create and restore: `blocked` or `internet`.             |
+| `templateId`                | `base`    | Public base template or a ready owned template ID/name.                               |
+| `lifecycle.lifetimeSeconds` | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `timeoutSeconds`.  |
+| `timeoutSeconds`            | `900`     | Native sandbox lifetime, from 60 to 86,400 seconds.                                   |
+| `preview.access`            | `public`  | `public` allows inbound traffic for `box.preview(port)`; `protected` keeps it closed. |
+| `teamId`                    | Omitted   | Optional verified team scope.                                                         |
 
 For an owned template, configure its selector once with `templateId`. Supported names are untagged or use `:default`; arbitrary named tags and public aliases are outside this integration's current scope.
 
@@ -83,9 +84,9 @@ await box.destroy();
 await client.close();
 ```
 
-Set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and default `renew()` window. Omission keeps the existing 300-second `timeoutSeconds` default. Supplying both `lifecycle.lifetimeSeconds` and `timeoutSeconds` rejects during connection before native effects. These defaults stay local to the connection: reopening uses the new connection's default only when you explicitly call `renew()`. `get()` and `inspect()` never apply it.
+Set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and default `renew()` window. Omission keeps the 900-second `timeoutSeconds` default. Supplying both `lifecycle.lifetimeSeconds` and `timeoutSeconds` rejects during connection before native effects. These defaults stay local to the connection: reopening uses the new connection's default only when you explicitly call `renew()`. `get()` and `inspect()` never apply it.
 
-E2B raises positive requests below 60 seconds to 60; other seconds remain exact, up to a resolved 3,600-second SDK ceiling. One native timeout POST resets the active session deadline from provider processing. New Sandbar compute uses kill on timeout with auto-resume off. Paused retention is separate from the running-session clock: stale `endAt` is ignored while paused, and native paused state has indefinite retention requiring explicit cleanup. The returned observation reports running `endAt` when available. See [native timeout reset](https://docs.e2b.dev/api-reference/sandboxes/set-sandbox-timeout) and [paused retention](https://docs.e2b.dev/sandbox/persistence).
+E2B raises positive requests below 60 seconds to 60; other seconds remain exact, up to a resolved 86,400-second SDK ceiling matching E2B Pro's 24-hour limit. E2B enforces lower plan limits itself (Hobby: 1 hour) and native rejection remains an error; see [sandbox lifecycle](https://docs.e2b.dev/sandbox). One native timeout POST resets the active session deadline from provider processing. New Sandbar compute uses kill on timeout with auto-resume off. Paused retention is separate from the running-session clock: stale `endAt` is ignored while paused, and native paused state has indefinite retention requiring explicit cleanup. The returned observation reports running `endAt` when available. See [native timeout reset](https://docs.e2b.dev/api-reference/sandboxes/set-sandbox-timeout) and [paused retention](https://docs.e2b.dev/sandbox/persistence).
 
 Both mappings require running compute. E2B also requires known native kill-on-timeout with auto-resume off; missing or externally changed policy rejects `UNAVAILABLE` before reset. Use positive safe integer seconds; upper bounds and invalid inputs reject before the renewal POST without downward rounding or clamping. Native account/region/runtime limits can be tighter and native rejection remains an error. Renewal may shorten an existing longer deadline, is not additive, and does not guarantee uninterrupted execution or exact expiry scheduling. Serialize lifecycle changes across application and external controllers.
 
@@ -133,7 +134,7 @@ await reopened.destroy(); // explicit cleanup of the same native sandbox
 
 `e2b({ apiKey, teamId, templateId: "base", lifecycle: { suspension: { preserve: "filesystem" } } })` uses native `memory: true` pause. Its filesystem-plus-memory default satisfies either filesystem or memory minimum. Filesystem-only pause is deferred. Only running compute with known kill-on-timeout/auto-resume-off policy qualifies. Known nonempty native mounts reject `UNSUPPORTED`; absent mount metadata stays unknown and does not block preservation of the private root filesystem and RAM. Native mount enumeration does not prove all guest storage is local. External storage flush, durability, atomic consistency and remote connection continuity are excluded; changed or unknown lifecycle policy still rejects before mutation. Pausing preserves process memory and drops existing sockets; reconnect application sockets after resumption.
 
-Paused state has indefinite native retention and requires explicit cleanup; its stale running-session `endAt` is not a retention deadline. Explicit `resume()` sends one v2 connect from paused with the current adapter's resolved initial lifetime (300 seconds by default, or `lifecycle.lifetimeSeconds`). It sends no reboot override or second renewal. Execution remains `unknown`: neither saved receipts nor PIDs prove that an external actor preserved the original pause provenance. `get()`, `inspect()`, exec and files never resume implicitly. Missing, expired or deleted state is `NOT_FOUND`, with no replacement allocation.
+Paused state has indefinite native retention and requires explicit cleanup; its stale running-session `endAt` is not a retention deadline. Explicit `resume()` sends one v2 connect from paused with the current adapter's resolved initial lifetime (900 seconds by default, or `lifecycle.lifetimeSeconds`). It sends no reboot override or second renewal. Execution remains `unknown`: neither saved receipts nor PIDs prove that an external actor preserved the original pause provenance. `get()`, `inspect()`, exec and files never resume implicitly. Missing, expired or deleted state is `NOT_FOUND`, with no replacement allocation.
 
 Both operations have one dispatch stage and no automatic retry or inverse action. Already inactive suspend and already running resume reject `CONFLICT`; transitional resources reject `UNAVAILABLE`. ACK plus a target-state read establishes completion. An acknowledged partial error retains native preservation facts even if the later read fails; ACK alone does not certify target state. A lost response, 409 or 503 stays uncertain even if a later read matches the target. Use the error's recovery reference to observe without replay. Applications serialize lifecycle changes across external controllers.
 

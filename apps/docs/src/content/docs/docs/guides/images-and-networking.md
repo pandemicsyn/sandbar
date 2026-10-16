@@ -13,13 +13,13 @@ Set the default environment and network policy in adapter setup. Your applicatio
 | -------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | E2B            | `base`, or a ready owned template ID/name | `templateId` defaults to `base`. Set it to use your own template.                                         |
 | Daytona        | Active Linux snapshot ID/name             | Set `environment: Image.prepared("your-snapshot")`. It must be available in your organization and region. |
-| Vercel Sandbox | `vercel/sandbox/node:24`                  | Used automatically. Other images and runtimes are unsupported.                                            |
+| Vercel Sandbox | `vercel/sandbox/universal:latest`         | Default. Set `image` to a managed Node 22, 24 or 26 image instead; other images are unsupported.          |
 
 Daytona calls its prepared images snapshots. Selecting one as an image is different from capturing a sandbox's current state. For capture and restore, use the [snapshot APIs](/docs/guides/snapshots-and-volumes/).
 
 boxd starts directly from an OCI image instead of a prepared image. Set `image` in its adapter configuration, or omit it to use the authenticated cluster's default image. Starting from OCI does not create a separate Sandbar image-build artifact. See [boxd defaults](/docs/providers/boxd/#defaults-and-networking).
 
-An explicit `environment` on `create()` overrides the connection default if the adapter supports it. An invalid override fails; Sandbar does not silently fall back to another image. Vercel accepts only its managed Node 24 environment.
+An explicit `environment` on `create()` overrides the connection default if the adapter supports it. An invalid override fails; Sandbar does not silently fall back to another image. Vercel accepts only its configured managed image.
 
 ## Build an OCI image
 
@@ -56,8 +56,8 @@ Configure `networkPolicy` in adapter setup:
 | -------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | E2B            | `blocked` (default)         | Requests E2B's disabled-internet setting; measured strict outbound isolation has not passed.                |
 | E2B            | `internet`                  | Requests internet access.                                                                                   |
-| Daytona        | `daytona-default`           | Keeps organization-managed restrictions, including essential-service access.                                |
-| Daytona        | `blocked` (default)         | Requests strict block-all. Creation requires verified organization eligibility, with no automatic fallback. |
+| Daytona        | `daytona-default` (default) | Keeps organization-managed restrictions, including essential-service access.                                |
+| Daytona        | `blocked`                   | Requests strict block-all. Creation requires verified organization eligibility, with no automatic fallback. |
 | boxd           | `internet` (required)       | Allows internet access with native peer/metadata isolation. Strict blocked egress is unsupported.           |
 | Vercel Sandbox | `vercel-deny-all` (default) | Requests native `deny-all`; network isolation has no recorded live acceptance.                              |
 | Vercel Sandbox | `vercel-allow-all`          | Requests native `allow-all`.                                                                                |

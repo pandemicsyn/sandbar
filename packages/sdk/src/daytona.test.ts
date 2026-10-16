@@ -44,7 +44,7 @@ test("public Daytona factory forwards bounded TTL without provider IO during con
           organizationId: "org-1",
           target: "us",
           state: "started",
-          networkBlockAll: true,
+          networkBlockAll: body.networkBlockAll === true,
           public: false,
           labels: body.labels,
           snapshot: body.snapshot,
@@ -62,7 +62,7 @@ test("public Daytona factory forwards bounded TTL without provider IO during con
     const bounded = daytona({
       apiKey: "fixture",
       target: "us",
-      ttlMinutes: 15,
+      ttlMinutes: 30,
       environment: Image.prepared("snap-1"),
     });
 
@@ -76,7 +76,7 @@ test("public Daytona factory forwards bounded TTL without provider IO during con
     await expect(fallback.sandboxes.create()).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     await fallback.sandboxes.create({ environment: Image.prepared("snap-1") });
     await fallback.close();
-    expect(ttl).toEqual([15, 60]);
+    expect(ttl).toEqual([30, 15]);
     expect(snapshots).toEqual(["snap-1", "snap-1"]);
     const before = reads;
     await expect(

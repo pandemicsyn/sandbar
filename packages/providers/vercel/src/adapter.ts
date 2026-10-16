@@ -39,6 +39,9 @@ const id = z
 
 const policy = z.enum(["vercel-deny-all", "vercel-allow-all"]);
 
+/** Vercel's longest plan limit (Pro and Enterprise, 24 hours); Vercel enforces lower plan limits itself. */
+const MAX_SESSION_SECONDS = 86_400;
+
 export const vercelConfig = z.strictObject({
   teamId: id,
   projectId: id,
@@ -78,8 +81,8 @@ export const vercelConfig = z.strictObject({
       "vercel/sandbox/node:26",
       "vercel/sandbox/universal:latest",
     ])
-    .default("vercel/sandbox/node:24"),
-  timeoutSeconds: z.number().int().min(60).max(300).default(300),
+    .default("vercel/sandbox/universal:latest"),
+  timeoutSeconds: z.number().int().min(60).max(MAX_SESSION_SECONDS).default(900),
   persistent: z.boolean().default(false),
   networkPolicy: policy.default("vercel-deny-all"),
 });
@@ -1424,7 +1427,7 @@ export function createVercelAdapter(
             status: "supported" as const,
             value: {
               minSeconds: 1,
-              maxSeconds: 300,
+              maxSeconds: MAX_SESSION_SECONDS,
               stepSeconds: 1,
               scope: "running-session" as const,
             },
@@ -1435,15 +1438,18 @@ export function createVercelAdapter(
             version: 1,
             token: z.strictObject({
               reference: ResourceReference,
-              forSeconds: z.number().int().min(1).max(300),
+              forSeconds: z.number().int().min(1).max(MAX_SESSION_SECONDS),
             }),
           },
           prepare: async (input) => {
             checkReference(input.sandbox);
             const forSeconds = input.forSeconds ?? config.timeoutSeconds;
 
-            if (forSeconds < 1 || forSeconds > 300 || !Number.isInteger(forSeconds))
-              throw new AdapterError("INVALID_ARGUMENT", "Renewal window must be 1–300 seconds");
+            if (forSeconds < 1 || forSeconds > MAX_SESSION_SECONDS || !Number.isInteger(forSeconds))
+              throw new AdapterError(
+                "INVALID_ARGUMENT",
+                `Renewal window must be 1–${MAX_SESSION_SECONDS} seconds`,
+              );
 
             return { ...input, forSeconds };
           },
@@ -1494,7 +1500,7 @@ export function createVercelAdapter(
             const token = z
               .strictObject({
                 reference: ResourceReference,
-                forSeconds: z.number().int().min(1).max(300),
+                forSeconds: z.number().int().min(1).max(MAX_SESSION_SECONDS),
               })
               .parse(attempt.token);
 

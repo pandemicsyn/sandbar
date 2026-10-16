@@ -3,7 +3,7 @@ title: Daytona
 description: Connect to Daytona with explicit region, prepared image, and network policy settings.
 ---
 
-Import `daytona` from `@sandbar-sdk/daytona`. Start with an active Linux snapshot in your target region. The example selects `daytona-default` once on connection, matching the getting-started configuration. Strict blocked networking requires eligible organization settings; see the policy section below.
+Import `daytona` from `@sandbar-sdk/daytona`. Start with an active Linux snapshot in your target region. The example states the default `daytona-default` policy once on connection, matching the getting-started configuration. Strict blocked networking is an explicit opt-in that requires eligible organization settings; see the policy section below.
 
 ```ts
 import { Image, Sandbar } from "sandbar-sdk";
@@ -39,15 +39,15 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 
 ## Connection options
 
-| Option                          | Default   | Purpose                                                                          |
-| ------------------------------- | --------- | -------------------------------------------------------------------------------- |
-| `apiKey`                        | Required  | Daytona API key.                                                                 |
-| `environment`                   | Omitted   | Default prepared or OCI environment for creation; per-call environment wins.     |
-| `target`                        | Required  | Available native region ID, such as `us`.                                        |
-| `lifecycle.lifetimeSeconds`     | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `ttlMinutes`. |
-| `ttlMinutes`                    | `60`      | Native sandbox lifetime, from 1 to 1,440 minutes.                                |
-| `snapshots.restartAfterCapture` | `true`    | Restart only a previously running capture source.                                |
-| `networkPolicy`                 | `blocked` | `blocked` or explicit `daytona-default`.                                         |
+| Option                          | Default           | Purpose                                                                          |
+| ------------------------------- | ----------------- | -------------------------------------------------------------------------------- |
+| `apiKey`                        | Required          | Daytona API key.                                                                 |
+| `environment`                   | Omitted           | Default prepared or OCI environment for creation; per-call environment wins.     |
+| `target`                        | Required          | Available native region ID, such as `us`.                                        |
+| `lifecycle.lifetimeSeconds`     | Omitted           | Initial/default renewal window in seconds; mutually exclusive with `ttlMinutes`. |
+| `ttlMinutes`                    | `15`              | Native sandbox lifetime in positive whole minutes; no adapter maximum.           |
+| `snapshots.restartAfterCapture` | `true`            | Restart only a previously running capture source.                                |
+| `networkPolicy`                 | `daytona-default` | `daytona-default` or explicit `blocked`.                                         |
 
 `Sandbar.connect` verifies native organization and region with authenticated reads. Scope includes the organization, target, endpoint, and selected network policy. Use the same scope to recover a prior operation.
 
@@ -57,7 +57,9 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 
 `daytona-default` preserves Daytona's organization-managed restrictions, including essential-service access. Configure it once on the connection; omitted create and restore policies use that value. Per-call policies must match this connection’s policy; open a separately configured connection to change it. It does not promise unrestricted internet or strict blocked egress.
 
-Omitting the policy selects `blocked`. This requires successful organization eligibility verification and native block-all support; a restricted or unreadable eligibility response disables creation. Tier 1/2 essential-service exceptions do not meet Sandbar's strict blocked contract. There is no automatic fallback, and the adapter does not expose an unrestricted `internet` mode.
+Omitting the policy selects `daytona-default`. Select `blocked` explicitly for strict no-egress. It requires successful organization eligibility verification and native block-all support; a restricted or unreadable eligibility response disables creation. Tier 1/2 essential-service exceptions do not meet Sandbar's strict blocked contract. There is no automatic fallback, and the adapter does not expose an unrestricted `internet` mode.
+
+The policy is part of connection scope. Earlier releases defaulted to `blocked`; to reopen or recover sandboxes created under that implicit default, connect with `networkPolicy: "blocked"` explicitly.
 
 ## Image requirements
 
@@ -88,11 +90,11 @@ await box.destroy();
 await client.close();
 ```
 
-Set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and default `renew()` window. Omission keeps the existing 60-minute `ttlMinutes` default. Supplying both `lifecycle.lifetimeSeconds` and `ttlMinutes` rejects during connection before native effects. These defaults stay local to the connection: reopening uses the new connection's default only when you explicitly call `renew()`. `get()` and `inspect()` never apply it.
+Set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and default `renew()` window. Omission keeps the 15-minute `ttlMinutes` default. Supplying both `lifecycle.lifetimeSeconds` and `ttlMinutes` rejects during connection before native effects. These defaults stay local to the connection: reopening uses the new connection's default only when you explicitly call `renew()`. `get()` and `inspect()` never apply it.
 
-Daytona rounds positive integer seconds upward to whole minutes: 1 → 60, 61 → 120. The resolved ceiling is 86,400 seconds (24 hours). One native TTL POST resets the hard deadline from provider processing and expiry destroys the sandbox. This clock keeps ticking while stopped or archived and can delete saved files. Idle stop and deletion after stopping are separate policies; renewing does not disable them. The returned observation reports `autoDestroyAt` when available. See [native wall-clock TTL](https://www.daytona.io/docs/en/sandboxes/#wall-clock-ttl).
+Daytona rounds positive integer seconds upward to whole minutes: 1 → 60, 61 → 120. The adapter sets no maximum because Daytona documents no maximum wall-clock TTL, and renewal capabilities omit `maxSeconds`. One native TTL POST resets the hard deadline from provider processing and expiry destroys the sandbox. This clock keeps ticking while stopped or archived and can delete saved files. Idle stop and deletion after stopping are separate policies; renewing does not disable them. The returned observation reports `autoDestroyAt` when available. See [native wall-clock TTL](https://www.daytona.io/docs/en/sandboxes/#wall-clock-ttl).
 
-Both mappings require running compute. Use positive safe integer seconds; upper bounds and invalid inputs reject before the renewal POST without downward rounding or clamping. Native account/region/runtime limits can be tighter and native rejection remains an error. Renewal may shorten an existing longer deadline, is not additive, and does not guarantee uninterrupted execution or exact expiry scheduling. Serialize lifecycle changes across application and external controllers.
+Both mappings require running compute. Use positive safe integer seconds; invalid inputs reject before the renewal POST without downward rounding or clamping. Native account/region/runtime limits can be tighter and native rejection remains an error. Renewal may shorten an existing longer deadline, is not additive, and does not guarantee uninterrupted execution or exact expiry scheduling. Serialize lifecycle changes across application and external controllers.
 
 `RenewResult.requested.forSeconds` records the resolved native setting, `acknowledged: true` confirms provider acceptance, and `observation` is current metadata or `null` if the follow-up read failed. A lost ACK stays `OUTCOME_UNKNOWN` even if a later deadline looks right. `submitRenew()` and `client.recover(savedOperationReference)` use existing typed recovery; observation never sends another renewal POST. Caller cancellation before dispatch has no effect; after possible dispatch it stops local waiting with the recovery reference. Persist ordinary sandbox references in your own trusted store, and save result metadata separately when useful.
 

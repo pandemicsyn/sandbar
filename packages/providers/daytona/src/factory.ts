@@ -2,7 +2,7 @@ import { createDaytonaAdapter } from "./index";
 import type { ImageInput } from "@sandbar-sdk/adapter";
 import { bindAdapter, type BoundAdapter } from "@sandbar-sdk/adapter";
 
-/** First-party Daytona adapter. Select daytona-default explicitly on connection and create for provider-managed egress. */
+/** First-party Daytona adapter. Defaults to provider-managed daytona-default egress; select blocked for strict no-egress where the organization allows it. */
 export function daytona(options: {
   apiKey: string;
   target: string;

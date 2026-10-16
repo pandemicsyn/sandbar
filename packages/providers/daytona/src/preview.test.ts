@@ -100,7 +100,7 @@ function fixture() {
     connect: (key = "first-key", onReference?: (ref: AdapterRecoveryReference) => void) =>
       Sandbar.connect({
         adapter,
-        config: { target: "us", ttlMinutes: 15 },
+        config: { target: "us", networkPolicy: "blocked", ttlMinutes: 15 },
         credentials: { apiKey: key },
         onReference,
       }),
@@ -211,7 +211,7 @@ test("Daytona public setup rejects before native requests", async () => {
   await expect(
     Sandbar.connect({
       adapter: createDaytonaAdapter(fetcher),
-      config: { target: "us", preview: { access: "public" } },
+      config: { target: "us", networkPolicy: "blocked", preview: { access: "public" } },
       credentials: { apiKey: "key" },
     }),
   ).rejects.toMatchObject({ code: "UNSUPPORTED" });

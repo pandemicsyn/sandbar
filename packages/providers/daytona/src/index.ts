@@ -115,8 +115,8 @@ const Input = z.strictObject({
     apiUrl: z.url().default("https://app.daytona.io/api"),
     toolboxOrigin: z.url().default("https://proxy.app.daytona.io"),
     target: z.string().min(1),
-    networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
-    ttlMinutes: z.coerce.number().int().min(1).max(1440).default(60),
+    networkPolicy: z.enum(["blocked", "daytona-default"]).default("daytona-default"),
+    ttlMinutes: z.coerce.number().int().min(1).safe().default(15),
   }),
 });
 
@@ -2523,8 +2523,8 @@ export async function daytonaProvider(input: DaytonaInput) {
       apiUrl: input.apiUrl ?? "https://app.daytona.io/api",
       toolboxOrigin: input.toolboxOrigin ?? "https://proxy.app.daytona.io",
       target: input.target,
-      networkPolicy: input.networkPolicy ?? "blocked",
-      ttlMinutes: String(input.ttlMinutes ?? 60),
+      networkPolicy: input.networkPolicy ?? "daytona-default",
+      ttlMinutes: String(input.ttlMinutes ?? 15),
     },
   });
 

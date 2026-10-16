@@ -83,7 +83,7 @@ console.error(diagnostic.text);
 | Caller waiting | `exec(input, { signal })`, `submitExec` and operation `wait({ signal })` stop local waiting. After submission, `WAIT_ABORTED` carries effect possible and the existing reference. This does not kill compute. `exec` waits through submission and polling; there is **no automatic total wall-clock timer** derived from `deadlineSeconds`. |
 | Request/RPC | Provider client/HTTP observation limits. Includes preflight/setup/read latency and can fail without exit evidence. An exception is not a termination receipt. |
 | Remote execution | Daytona exposes a documented server execution timeout; Modal sends a native process timeout with a documented runtime bound. E2B's audited mapping has an RPC timeout, without established runtime enforcement. No portable process-tree termination promise follows. |
-| Sandbox expiry | E2B and Modal `timeoutSeconds` (each default 300) and Daytona `ttlMinutes` (default 60) configure separate sandbox lifetime. Expiry may interrupt execution/output; command deadline does not configure or extend sandbox expiry. |
+| Sandbox expiry | E2B and Modal `timeoutSeconds` (each default 900) and Daytona `ttlMinutes` (default 15) configure separate sandbox lifetime. Expiry may interrupt execution/output; command deadline does not configure or extend sandbox expiry. |
 
 For a caller wall-clock budget today, provide a signal explicitly:
 

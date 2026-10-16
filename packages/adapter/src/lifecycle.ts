@@ -31,7 +31,7 @@ export type RenewResult = z.infer<typeof RenewResult>;
 
 export const RenewLimits = z.strictObject({
   minSeconds: RenewRequest.shape.forSeconds,
-  maxSeconds: RenewRequest.shape.forSeconds,
+  maxSeconds: RenewRequest.shape.forSeconds.optional(),
   stepSeconds: RenewRequest.shape.forSeconds,
   scope: z.enum(["sandbox", "running-session"]),
 });

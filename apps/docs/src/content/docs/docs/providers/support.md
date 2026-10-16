@@ -161,13 +161,13 @@ E2B memory pause preserves private filesystem/RAM under the same ID; known nativ
 
 ### Protected HTTP preview
 
-Fresh traffic-token retrieval is absent from the pinned read-only detail API. Native connect may resume compute; protected preview rejects without calling it. Newly created/restored compute is private by default.
+Fresh traffic-token retrieval is absent from the pinned read-only detail API. Native connect may resume compute; protected preview rejects without calling it. Protected setup creates and restores private compute.
 
 <a id="e2b-previewPublic"></a>
 
 ### Public HTTP preview
 
-E2B explicit public access only, with observed native visibility and auto-resume off. Default/protected create and restore disable public traffic; fresh protected token lookup unsupported. Bun preview-public passed at 3188e33 with observed public visibility, HTTP content and confirmed owned cleanup. Private-default ingress denial remains unqualified.
+E2B public access, the default, with observed native visibility and auto-resume off. Protected setup disables public traffic on create and restore; fresh protected token lookup unsupported. Bun preview-public passed at 3188e33 with observed public visibility, HTTP content and confirmed owned cleanup. Protected-mode ingress denial remains unqualified.
 
 <a id="e2b-termination"></a>
 
