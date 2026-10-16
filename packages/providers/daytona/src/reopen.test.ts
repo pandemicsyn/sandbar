@@ -82,7 +82,7 @@ function fixture() {
     connect: (key = "first-key", onReference?: (ref: AdapterRecoveryReference) => void) =>
       Sandbar.connect({
         adapter,
-        config: { target: "us", ttlMinutes: 15, lifecycle: { idleStopSeconds: 300 } },
+        config: { target: "us", ttlMinutes: 15, lifecycle: { idleSeconds: 300 } },
         credentials: { apiKey: key },
         onReference,
       }),

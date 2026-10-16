@@ -68,7 +68,7 @@ const Configuration = z
     lifecycle: z
       .strictObject({
         lifetimeSeconds: z.number().int().positive().safe().max(86400).optional(),
-        idleStopSeconds: z.number().int().positive().safe().max(86400).optional(),
+        idleSeconds: z.number().int().positive().safe().max(86400).optional(),
         suspension: z
           .strictObject({ preserve: z.enum(["filesystem", "filesystem+memory"]) })
           .optional(),
@@ -90,9 +90,7 @@ const Configuration = z
         ? (value.ttlMinutes ?? 60)
         : Math.ceil(value.lifecycle.lifetimeSeconds / 60),
     autoStopMinutes:
-      value.lifecycle?.idleStopSeconds === undefined
-        ? 0
-        : Math.ceil(value.lifecycle.idleStopSeconds / 60),
+      value.lifecycle?.idleSeconds === undefined ? 0 : Math.ceil(value.lifecycle.idleSeconds / 60),
   }));
 
 const CompactObservation = SandboxInfoSchema.omit({ reference: true });

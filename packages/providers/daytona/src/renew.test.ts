@@ -163,7 +163,7 @@ function fixture() {
         ttlMinutes?: number;
         lifecycle?: {
           lifetimeSeconds?: number;
-          idleStopSeconds?: number;
+          idleSeconds?: number;
           suspension?: { preserve: "filesystem" | "filesystem+memory" };
         };
         target?: string;
@@ -232,9 +232,9 @@ test("Daytona idle auto-stop is disabled by default and configurable in seconds"
   for (const [config, minutes, idleStop] of [
     [{}, 0, null],
     [{ ttlMinutes: 15 }, 0, null],
-    [{ lifecycle: { idleStopSeconds: 61 } }, 2, { seconds: 120, action: "stop" }],
+    [{ lifecycle: { idleSeconds: 61 } }, 2, { seconds: 120, action: "stop" }],
     [
-      { lifecycle: { lifetimeSeconds: 7200, idleStopSeconds: 1800 } },
+      { lifecycle: { lifetimeSeconds: 7200, idleSeconds: 1800 } },
       30,
       { seconds: 1800, action: "stop" },
     ],
@@ -252,9 +252,9 @@ test("Daytona idle auto-stop is disabled by default and configurable in seconds"
 
   const f = fixture();
 
-  for (const idleStopSeconds of [0, -1, 1.5, 86401]) {
+  for (const idleSeconds of [0, -1, 1.5, 86401]) {
     const before = f.calls.length;
-    await expect(f.connect({ lifecycle: { idleStopSeconds } })).rejects.toMatchObject({
+    await expect(f.connect({ lifecycle: { idleSeconds } })).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
     });
     expect(f.calls.length).toBe(before);
