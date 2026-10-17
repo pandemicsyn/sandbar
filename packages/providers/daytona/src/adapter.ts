@@ -57,7 +57,8 @@ const Configuration = z
         z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
       ])
       .optional(),
-    networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
+    network: z.enum(["blocked", "internet", "daytona-default"]).optional(),
+    networkPolicy: z.enum(["blocked", "internet", "daytona-default"]).optional(),
     snapshots: z
       .strictObject({ restartAfterCapture: z.boolean().default(true) })
       .default({ restartAfterCapture: true }),
@@ -82,9 +83,17 @@ const Configuration = z
         path: ["lifecycle", "lifetimeSeconds"],
         message: "Supply one lifetime option",
       });
+
+    if (value.network !== undefined && value.networkPolicy !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["network"],
+        message: "Supply network or the deprecated networkPolicy, not both",
+      });
   })
-  .transform((value) => ({
+  .transform(({ network, ...value }) => ({
     ...value,
+    networkPolicy: network ?? value.networkPolicy ?? "blocked",
     ttlMinutes:
       value.lifecycle?.lifetimeSeconds === undefined
         ? (value.ttlMinutes ?? 60)
@@ -425,8 +434,10 @@ export function createDaytonaAdapter(
         toolboxOrigin: config.toolboxOrigin,
       };
 
-      if (config.networkPolicy === "daytona-default")
-        Object.assign(partition, { networkPolicy: config.networkPolicy });
+      // Both non-blocked policies send the same native settings, so they share the
+      // partition that existing provider-managed egress references already carry.
+      if (config.networkPolicy !== "blocked")
+        Object.assign(partition, { networkPolicy: "daytona-default" });
 
       const resourceBinding = {
         authority: { kind: "organization", id: scope.accountId! },
@@ -680,10 +691,10 @@ export function createDaytonaAdapter(
           );
 
         if (input.request.mounts?.length) {
-          if (input.request.networkPolicy !== "daytona-default")
+          if (input.request.networkPolicy === "blocked")
             throw new AdapterError(
               "UNSUPPORTED",
-              "Mounted restore requires explicit daytona-default; blocked startup enforcement is unqualified",
+              "Mounted restore requires internet or daytona-default network; blocked startup enforcement is unqualified",
             );
 
           const checked = await resourceState.fields.checkMounts!(

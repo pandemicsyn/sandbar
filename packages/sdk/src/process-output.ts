@@ -28,6 +28,17 @@ export interface ProcessTail {
 
 const encoder = new TextEncoder();
 
+/** UTF-8 length of one code point from `for...of`; a lone surrogate encodes as U+FFFD (3 bytes). */
+export function utf8Length(point: string): number {
+  const code = point.codePointAt(0)!;
+
+  if (code < 0x80) return 1;
+
+  if (code < 0x800) return 2;
+
+  return code < 0x10000 ? 3 : 4;
+}
+
 function limit(value: number | undefined, fallback: number, ceiling: number): number {
   const result = value ?? fallback;
 
@@ -88,7 +99,7 @@ class Lines {
     const state = this.streams[stream];
 
     if (state.truncated) return;
-    const bytes = encoder.encode(character).byteLength;
+    const bytes = utf8Length(character);
 
     if (state.bytes + bytes > this.maxLineBytes) state.truncated = true;
     else {

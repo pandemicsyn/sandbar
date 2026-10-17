@@ -2395,6 +2395,7 @@ export class AdapterDirectClient {
       input,
       this.session.defaultImage,
       this.session.defaultNetworkPolicy,
+      this.session.networkPolicyAliases,
     );
 
     this.checkImageBinding(request);
@@ -2448,6 +2449,7 @@ export class AdapterDirectClient {
       input,
       this.session.defaultImage,
       this.session.defaultNetworkPolicy,
+      this.session.networkPolicyAliases,
     );
 
     this.checkImageBinding(request);

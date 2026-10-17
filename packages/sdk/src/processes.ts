@@ -24,6 +24,7 @@ import {
 } from "./resource";
 import type { AdapterDirectClient } from "./adapter-direct";
 import { noteOperation } from "./observability";
+import { utf8Length } from "./process-output";
 
 export type { ProcessOutput, ProcessOutputBytes, ProcessOutputFormat } from "@sandbar-sdk/adapter";
 
@@ -327,7 +328,7 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
     let bytes = 0;
 
     for (const point of text) {
-      bytes += encoder.encode(point).length;
+      bytes += utf8Length(point);
 
       if ((!this.sustained && this.total + bytes > this.max) || this.queuedBytes + bytes > 65_536) {
         const error = new SandbarError(
@@ -343,23 +344,24 @@ class LocalProcess<F extends ProcessOutputFormat> implements ProcessHandle<F> {
 
     if (!bytes) return;
     const parts: { chunk: ProcessOutput; bytes: number }[] = [];
-    let part = "";
+    let start = 0;
+    let offset = 0;
     let partBytes = 0;
 
     for (const point of text) {
-      const size = encoder.encode(point).length;
+      const size = utf8Length(point);
 
       if (partBytes + size > 16_384) {
-        parts.push({ chunk: { stream, text: part }, bytes: partBytes });
-        part = "";
+        parts.push({ chunk: { stream, text: text.slice(start, offset) }, bytes: partBytes });
+        start = offset;
         partBytes = 0;
       }
 
-      part += point;
+      offset += point.length;
       partBytes += size;
     }
 
-    parts.push({ chunk: { stream, text: part }, bytes: partBytes });
+    parts.push({ chunk: { stream, text: text.slice(start) }, bytes: partBytes });
 
     if (this.queue.length + parts.length > 256) {
       const error = new SandbarError(

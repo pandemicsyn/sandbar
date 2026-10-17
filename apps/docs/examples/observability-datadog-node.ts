@@ -16,7 +16,7 @@ const client = await Sandbar.connect(
     apiKey: process.env.DAYTONA_API_KEY!,
     target: process.env.DAYTONA_TARGET ?? "us",
     ttlMinutes: 15,
-    networkPolicy: "daytona-default",
+    network: "daytona-default",
   }),
 );
 
@@ -24,7 +24,6 @@ try {
   await tracer.trace("sandbar-demo", async () => {
     const box = await client.sandboxes.create({
       environment: Image.prepared("daytona-small"),
-      networkPolicy: "daytona-default",
     });
 
     await box.destroy();

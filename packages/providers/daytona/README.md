@@ -13,7 +13,7 @@ const sandbar = await Sandbar.connect(daytona({
   target: 'us',
   ttlMinutes: 15,
 }));
-const sandbox = await sandbar.sandboxes.create({ environment: Image.prepared('existing-active-snapshot-id'), networkPolicy: 'blocked' });
+const sandbox = await sandbar.sandboxes.create({ environment: Image.prepared('existing-active-snapshot-id'), network: 'blocked' });
 try {
   const result = await sandbox.exec({ command: { kind: 'shell', script: 'printf ready' } });
   console.log(result.stdoutText());
@@ -34,7 +34,7 @@ The official Daytona API and toolbox endpoints are trusted by default. For a pri
 | Area | Current behavior |
 |---|---|
 | Image | Creation accepts an existing active Linux VM or container snapshot ID or name available to the organization in the configured region, or a fixed-tag/digest OCI reference. `prepare` is read-only. Explicit OCI builds submit one named container snapshot (`POST /snapshots`) and return pending work until activation; sandbox creation is a separate prepared-image operation. OCI create convenience submits the sandbox only if the build is ready after at most one ID read, otherwise creation remains unknown without replay. Mutable `latest`, `lts`, and `stable` tags are rejected. A created snapshot is retained after sandbox deletion and reported as `daytona:snapshot:<id>`. |
-| Network | `blocked` maps to native `networkBlockAll: true` only when the verified organization allows strict sandbox egress overrides. An explicit `daytona-default` connection supports only the matching create policy and retains the provider default, including essential-service access. Other policy names are rejected. Daytona's lower-tier essential-service exceptions do not satisfy Sandbar's blocked policy. The adapter checks the native flag, private preview setting and organization/target in returned sandboxes. The organization flag is an eligibility signal, not a live proof of packet filtering. |
+| Network | `blocked` maps to native `networkBlockAll: true` only when the verified organization allows strict sandbox egress overrides. `internet` sends no override and is accepted only when the verified organization does not limit sandbox egress, so it never silently means the lower-tier essential-service firewall. An explicit `daytona-default` connection retains the provider default, including essential-service access. Each connection supports only its configured policy; other policy names are rejected. Daytona's lower-tier essential-service exceptions do not satisfy Sandbar's blocked policy. The adapter checks the native flag, private preview setting and organization/target in returned sandboxes. The organization flag is an eligibility signal, not a live proof of packet filtering. |
 | Create/recovery | Sandbar prepares the snapshot before recording submission and passes its verified snapshot name (or ID when no name is available) to one native create POST. Stable submission and operation IDs are used for native labels. An uncertain create is observed by name and matching labels; absent evidence remains unknown and is never replayed. A verified sandbox later found stopped, paused or archived is recorded with its native ID and unknown readiness, rather than reported as running. |
 | Inventory | Paginated read-only results are limited to sandboxes bearing Sandbar submission labels in the verified organization and target with the connection's selected network policy. This is not a claim to enumerate every native sandbox in the account. |
 | Exec | A preflight native detail read must report `started` before toolbox execution. POSIX shell and argv commands use a quoted shell wrapper with `od` to encode exact stdout and stderr bytes, exit status, and truncation. The wrapper uses a fixed utility path; requested environment values, including `PATH`, apply only to the user command. Requires `/bin/sh`, `mktemp`, `mkfifo`, `cat`, `wc`, `head`, `od`, and `rm` in the selected snapshot. The wrapper exclusively reserves a private mode-0700 directory under `/tmp/.sandbar-exec-<submission digest>` before running the command, then writes a bounded `receipt` file inside it; existing files, directories or symlinks at the reservation path reject execution untouched; a lost response can be observed read-only while that sandbox and receipt remain available. A partial receipt continues read-only polling until the native submission time plus the command deadline and 10 seconds; an expired partial receipt, missing receipt or complete malformed frame stays unknown. After a process crash before the recovery token is returned, a partial receipt has no trusted deadline and remains unknown for manual accounting; observation never replays the command. Local abort/close stops waiting, without proving remote cancellation. |
@@ -67,22 +67,21 @@ Sources inspected September 26–27, 2026: [Daytona TypeScript SDK reference](ht
 
 ## Explicit Daytona default networking
 
-Tier 1 and Tier 2 accounts use Daytona's organization-managed default firewall, where essential services remain reachable. Select `daytona-default` explicitly on both the connection and create request:
+Tier 1 and Tier 2 accounts use Daytona's organization-managed default firewall, where essential services remain reachable. Select `daytona-default` once on the connection; omitted create policies use it:
 
 ```ts
 const sandbar = await Sandbar.connect(daytona({
   apiKey: process.env.DAYTONA_API_KEY!,
   target: 'us',
   ttlMinutes: 15,
-  networkPolicy: 'daytona-default',
+  network: 'daytona-default',
 }));
 const sandbox = await sandbar.sandboxes.create({
   environment: Image.prepared('daytona-small'),
-  networkPolicy: 'daytona-default',
 });
 ```
 
-This mode omits sandbox network overrides and verifies that native block-all is unset. It verifies sandbox organization, region and private previews as before. It performs no organization-management request; normal API-key identity and region reads remain mandatory. Prepared inputs may be an owned snapshot or an explicitly public/general borrowed snapshot, matched by ID or name, active in the verified region and Linux-compatible. Public snapshots are never owned cleanup targets.
+This mode omits sandbox network overrides and verifies that native block-all is unset. On Tier 3 and above, `network: 'internet'` sends the same native request under the portable name. It verifies sandbox organization, region and private previews as before. It performs no organization-management request; normal API-key identity and region reads remain mandatory. Prepared inputs may be an owned snapshot or an explicitly public/general borrowed snapshot, matched by ID or name, active in the verified region and Linux-compatible. Public snapshots are never owned cleanup targets.
 
 Omitting the policy still selects strict `blocked`; there is no automatic fallback. Strict block-all is unavailable on Tier 1/2 according to [Daytona network limits](https://www.daytona.io/docs/en/network-limits/). The current blocked-policy eligibility probe remains unavailable for ordinary API keys because it uses an organization-management endpoint; a 401 is not proof of account tier. Default and blocked connections have different recovery scope, so observations cannot certify one as the other. This default mode does not promise unrestricted internet or zero egress.
 

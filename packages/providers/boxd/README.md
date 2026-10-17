@@ -9,7 +9,7 @@ import { boxdAdapter } from "@sandbar-sdk/boxd";
 const client = await Sandbar.connect({
   adapter: boxdAdapter,
   credentials: { apiKey: process.env.BOXD_API_KEY! },
-  config: { org: "my-org", networkPolicy: "internet" },
+  config: { org: "my-org", network: "internet" },
 });
 try {
   const box = await client.sandboxes.create();
@@ -26,7 +26,7 @@ The organization ID/slug must match authenticated default-org inventory. Scope i
 | Setting | Behavior |
 | --- | --- |
 | `org` | Required authenticated default organization ID or slug. |
-| `networkPolicy` | Required literal `internet`; omitted per-call policy uses this explicit choice. |
+| `network` | Required literal `internet`; omitted per-call policy uses this explicit choice. Deprecated alias: `networkPolicy`. |
 | `size` | Optional 1, 2, 4 or 8 vCPU size class; RAM is respectively 4, 8, 16 or 32 GiB. Omitted uses native account defaults. Fixed native 100 GB private disk. |
 | `preview` | Access defaults to `protected` (lookup unsupported). Explicit `{ access: "public", ports: [3000] }` creates pinned HTTPS routes and disables browser protection; at most 16 ports. |
 | `image` | Optional OCI reference; defaults to the authenticated cluster's default image. |
@@ -85,7 +85,7 @@ Paths are arguments, never interpolated programs. Recursive removal does not wal
 
 ```ts
 // Choose public exposure and ports when connecting:
-// config: { org: "my-org", networkPolicy: "internet",
+// config: { org: "my-org", network: "internet",
 //   preview: { access: "public", ports: [3000, 8080] }, size: 1 }
 const preview = await box.preview(3000); // read-only; requires this configured pinned route
 ```

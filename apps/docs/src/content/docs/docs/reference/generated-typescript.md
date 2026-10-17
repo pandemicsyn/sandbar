@@ -57,6 +57,7 @@ Import from `sandbar-sdk`.
 | `ImageInput`                  | type      |
 | `MountCapabilities`           | type      |
 | `MountSpec`                   | re-export |
+| `NetworkPolicy`               | type      |
 | `NoExitCodeError`             | re-export |
 | `NonzeroExitError`            | re-export |
 | `ObservabilityOptions`        | type      |

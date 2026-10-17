@@ -116,7 +116,7 @@ const Input = z.strictObject({
     apiUrl: z.url().default("https://app.daytona.io/api"),
     toolboxOrigin: z.url().default("https://proxy.app.daytona.io"),
     target: z.string().min(1),
-    networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
+    networkPolicy: z.enum(["blocked", "internet", "daytona-default"]).default("blocked"),
     ttlMinutes: z.coerce.number().int().min(1).max(1440).default(60),
     autoStopMinutes: z.coerce.number().int().min(0).max(1440).default(0),
   }),
@@ -132,7 +132,7 @@ export type DaytonaInput = {
   ttlMinutes?: number;
   /** Native idle auto-stop interval in minutes; 0 disables it. */
   autoStopMinutes?: number;
-  networkPolicy?: "blocked" | "daytona-default";
+  networkPolicy?: "blocked" | "internet" | "daytona-default";
   fetch?: typeof fetch;
   trustedEndpoints?: DaytonaEndpointPair[];
 };
@@ -271,7 +271,7 @@ function ref(scope: NativeScope, id: string): SandboxRef {
 function observed(
   scope: NativeScope,
   sandbox: Sandbox,
-  networkPolicy: "blocked" | "daytona-default",
+  networkPolicy: "blocked" | "internet" | "daytona-default",
 ): SandboxObservation {
   if (
     sandbox.organizationId !== scope.accountId ||
@@ -562,6 +562,7 @@ export class DaytonaDriver implements ProviderDriver {
     )
       throw new Error("Daytona scope mismatch");
   }
+  /** Blocked egress and unrestricted internet both need an organization without limited egress. */
   private async supportsBlockedEgress(): Promise<boolean> {
     const accountId = this.scope.accountId;
 
@@ -588,7 +589,9 @@ export class DaytonaDriver implements ProviderDriver {
   async capabilities(scope: NativeScope) {
     this.sameScope(scope);
     const networkPolicy = this.config.configuration.networkPolicy;
-    const blockedEgress = networkPolicy === "blocked" && (await this.supportsBlockedEgress());
+
+    const unrestrictedEgress =
+      networkPolicy !== "daytona-default" && (await this.supportsBlockedEgress());
 
     return DriverCapabilities.parse({
       provider: "daytona",
@@ -598,11 +601,7 @@ export class DaytonaDriver implements ProviderDriver {
       maxFileBytes: 1_048_576,
       maxOutputBytes: 1_048_576,
       networkPolicies:
-        networkPolicy === "daytona-default"
-          ? ["daytona-default"]
-          : blockedEgress
-            ? ["blocked"]
-            : [],
+        networkPolicy === "daytona-default" || unrestrictedEgress ? [networkPolicy] : [],
     });
   }
   async prepare(input: {
@@ -629,6 +628,13 @@ export class DaytonaDriver implements ProviderDriver {
       return {
         supported: false,
         reason: "Verified Daytona organization does not support strict blocked egress",
+      };
+
+    if (input.networkPolicy === "internet" && !(await this.supportsBlockedEgress()))
+      return {
+        supported: false,
+        reason:
+          "Verified Daytona organization has limited sandbox egress, so unrestricted internet is unavailable; configure network daytona-default for Daytona's restricted egress",
       };
 
     if (input.image.kind === "oci") {
@@ -2605,7 +2611,7 @@ export async function daytonaProvider(input: DaytonaInput) {
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(
-      `${config.configuration.apiUrl}|${config.configuration.target}|${config.configuration.toolboxOrigin}${config.configuration.networkPolicy === "daytona-default" ? "|daytona-default" : ""}`,
+      `${config.configuration.apiUrl}|${config.configuration.target}|${config.configuration.toolboxOrigin}${config.configuration.networkPolicy === "blocked" ? "" : "|daytona-default"}`,
     ),
   );
 

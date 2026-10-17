@@ -21,7 +21,7 @@ Edit `examples/.env.local` with the credentials for your selected sandbox provid
 
 | Provider | Required configuration | Image and network prerequisites |
 | --- | --- | --- |
-| Daytona | `DAYTONA_API_KEY`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT` | An active Linux snapshot in your target region. `daytona-default` is selected on connection and creation; your organization's policy must permit GitHub release downloads and model endpoints. |
+| Daytona | `DAYTONA_API_KEY`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT` | An active Linux snapshot in your target region. `daytona-default` is selected on the connection; your organization's policy must permit GitHub release downloads and model endpoints. |
 | E2B | `E2B_API_KEY`; optional `E2B_TEMPLATE_ID` (default `base`) | A ready Linux template. Creation explicitly requests `internet`. |
 
 The guest image needs glibc-based Linux on x64 or arm64, `curl`, `tar`, `sha256sum`, `/bin/sh`, Python 3 and the adapter's standard shell/file utilities; see the [Daytona](../apps/docs/src/content/docs/docs/providers/daytona.md#image-requirements) and [E2B](../apps/docs/src/content/docs/docs/providers/e2b.md#files-and-commands) guides. The guest working directory is `/tmp/sandbar-agent-example`. OpenCode is installed under its `opencode/` subdirectory. Installation downloads the pinned standalone binary from GitHub releases (the x64 baseline build avoids an AVX2 requirement) and verifies its pinned SHA-256 digest before extraction. It requires outbound GitHub access; model execution needs access to the selected model service.

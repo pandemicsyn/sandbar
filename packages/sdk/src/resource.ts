@@ -53,10 +53,16 @@ export const Image = {
   },
 };
 
+/** Portable outbound network policy; adapters map it to native settings. */
+export type NetworkPolicy = "blocked" | "internet" | (string & {});
+
 export type CreateInput = {
   environment?: ImageInput;
   requirements?: { snapshot: SnapshotRequest };
   mounts?: MountSpec[];
+  /** Outbound network policy; omitted uses the adapter setup default. */
+  network?: NetworkPolicy;
+  /** @deprecated Use `network`. */
   networkPolicy?: string;
   region?: string;
   labels?: Record<string, string>;
@@ -318,11 +324,30 @@ export function checkExec(result: ExecOutput): ExecOutput {
   return result;
 }
 
+/** Resolves `network` (or deprecated `networkPolicy`) to the policy name an adapter declares. */
+export function resolveNetworkPolicy(
+  network: string | undefined,
+  networkPolicy: string | undefined,
+  fallback: string,
+  aliases: Readonly<Record<string, string>> = {},
+): string {
+  if (network !== undefined && networkPolicy !== undefined && network !== networkPolicy)
+    throw new SandbarError(
+      "INVALID_ARGUMENT",
+      "Pass either network or the deprecated networkPolicy, not both",
+    );
+
+  const requested = network ?? networkPolicy ?? fallback;
+
+  return Object.hasOwn(aliases, requested) ? aliases[requested]! : requested;
+}
+
 export function validateCreate(
   input: CreateInput | undefined,
   defaultEnvironment?: ImageInput,
   defaultNetworkPolicy = "blocked",
-): CreateInput & { environment: ImageInput; networkPolicy: string } {
+  networkPolicyAliases?: Readonly<Record<string, string>>,
+): Omit<CreateInput, "network"> & { environment: ImageInput; networkPolicy: string } {
   const parsed = z
     .strictObject({
       environment: z
@@ -348,6 +373,7 @@ export function validateCreate(
         .optional(),
       requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
       mounts: z.array(MountSpec).max(32).optional(),
+      network: z.string().min(1).max(128).optional(),
       networkPolicy: z.string().min(1).max(128).optional(),
       region: z.string().min(1).max(128).optional(),
       labels: z.record(z.string(), z.string()).optional(),
@@ -367,8 +393,18 @@ export function validateCreate(
       { ...parsed.data, environment: defaultEnvironment },
       undefined,
       defaultNetworkPolicy,
+      networkPolicyAliases,
     );
   }
+
+  const { network, ...request } = parsed.data;
+
+  const networkPolicy = resolveNetworkPolicy(
+    network,
+    request.networkPolicy,
+    defaultNetworkPolicy,
+    networkPolicyAliases,
+  );
 
   if (!parsed.data.environment.value.trim())
     throw new SandbarError("INVALID_ARGUMENT", "A prepared or OCI image is required");
@@ -378,7 +414,7 @@ export function validateCreate(
       parsed.data.environment.kind === "prepared"
         ? { kind: "prepared", imageId: parsed.data.environment.value }
         : { kind: "oci", reference: parsed.data.environment.value },
-    network: { policy: parsed.data.networkPolicy ?? defaultNetworkPolicy },
+    network: { policy: networkPolicy },
     requirements: parsed.data.requirements,
     region: parsed.data.region,
     labels: parsed.data.labels,
@@ -386,11 +422,7 @@ export function validateCreate(
 
   if (!contract.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid create request");
 
-  return {
-    ...parsed.data,
-    environment: parsed.data.environment,
-    networkPolicy: parsed.data.networkPolicy ?? defaultNetworkPolicy,
-  };
+  return { ...request, environment: parsed.data.environment, networkPolicy };
 }
 
 function isArgumentArray(input: ExecInput | readonly string[]): input is readonly string[] {

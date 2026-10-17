@@ -26,6 +26,30 @@ async function setup() {
   return { fixture, adapter, connect };
 }
 
+test("boxd setup takes network internet once, under either name", async () => {
+  const { adapter } = await setup();
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: { org: "main", network: "internet" },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  try {
+    expect((await client.capabilities()).network).toEqual(["internet"]);
+  } finally {
+    await client.close();
+  }
+
+  for (const config of [
+    { org: "main" },
+    { org: "main", network: "internet", networkPolicy: "internet" },
+  ] as const)
+    await expect(
+      Sandbar.connect({ adapter, config, credentials: { apiKey: "fixture-main" } }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+});
+
 test("native token exchange accepts user_id and additive response fields", async () => {
   const { fixture, connect } = await setup();
   const client = await connect();

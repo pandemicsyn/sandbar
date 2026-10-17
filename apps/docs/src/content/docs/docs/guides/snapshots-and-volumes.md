@@ -48,7 +48,7 @@ try {
 
 `saveResource` and `removeSavedResource` represent your application's storage functions. Save references in durable, trusted storage. Remove the saved record only after deletion is confirmed. If removing the record fails, mark it as deleted during recovery instead of repeating the provider delete.
 
-Restore uses the connection's configured network policy when you omit `networkPolicy`. An explicit override must be supported by that connection. By default, restore also requires the new sandbox to have a lifecycle independent of the source and snapshot. Unsupported restore requirements reject before allocation with `UnsupportedFeatureError`; `unmetRequirements` explains why.
+Restore uses the connection's configured network policy when you omit `network`. An explicit override must be supported by that connection. By default, restore also requires the new sandbox to have a lifecycle independent of the source and snapshot. Unsupported restore requirements reject before allocation with `UnsupportedFeatureError`; `unmetRequirements` explains why.
 
 Snapshot deletion is separate from destroying the source or restored sandbox. If restore or sandbox cleanup fails, keep the snapshot reference until you have resolved the failure. Do not delete a snapshot that may still be needed by compute.
 
@@ -90,7 +90,7 @@ const sandbar = await Sandbar.connect(
     apiKey: process.env.DAYTONA_API_KEY!,
     target: "us",
     environment: Image.prepared("daytona-small"),
-    networkPolicy: "daytona-default",
+    network: "daytona-default",
   }),
   { cleanup: { storage: "allow-unconfirmed" } },
 );
@@ -158,7 +158,7 @@ The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Capture and restore private state      | Daytona filesystem capture; E2B filesystem and memory capture. boxd and Vercel snapshots are unsupported.            |
 | Capture a sandbox with external mounts | Unsupported by the Daytona and E2B adapters.                                                                         |
-| Restore with selected volumes          | Daytona only: known mount-free filesystem snapshot, fresh execution and `daytona-default`.                           |
+| Restore with selected volumes          | Daytona only: known mount-free filesystem snapshot, fresh execution and `internet` or `daytona-default` networking.  |
 | Override restore resource sizes        | Unsupported by Daytona and E2B; empty overrides are treated as omitted.                                              |
 | Create a sandbox with volumes          | Daytona writable mounts with optional subpaths; boxd whole-disk read-only or writable mounts.                        |
 | Manage E2B volumes                     | Private-beta API mapping; live creation was blocked by account HTTP 403. Sandbar create-time mounts are unsupported. |

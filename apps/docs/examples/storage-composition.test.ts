@@ -89,6 +89,7 @@ test("compiled storage examples select shared, independent and private state thr
       return {
         scope,
         defaultImage: { kind: "prepared", value: "report-worker-v1" },
+        defaultNetworkPolicy: "daytona-default",
         supports: {
           images: ["prepared"],
           network: ["daytona-default"],
@@ -187,7 +188,7 @@ test("compiled storage examples select shared, independent and private state thr
     const data = await client.volumes.create({ name: "customer-data" });
     const writer = await createWriter(client, data);
     await seedData(writer);
-    const base = await client.sandboxes.create({ networkPolicy: "daytona-default" });
+    const base = await client.sandboxes.create();
     const captured = await capturePrivateState(base);
 
     const saved = JSON.parse(

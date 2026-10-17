@@ -24,7 +24,7 @@ const client = await Sandbar.connect({
     projectId: process.env.SANDBAR_VERCEL_PROJECT_ID!,
     region: "iad1",
     timeoutSeconds: 300,
-    networkPolicy: "vercel-deny-all",
+    network: "blocked",
   },
   credentials: { token: process.env.VERCEL_TOKEN! },
 });
@@ -46,17 +46,17 @@ try {
 
 ## Choose the sandbox setup
 
-| Option                | Default                  | What it controls                                                                                                   |
-| --------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `teamId`, `projectId` | Required                 | The existing team and project to use.                                                                              |
-| `region`              | `iad1`                   | One of the 19 supported Vercel regions. There is no automatic region failover.                                     |
-| `image`               | `vercel/sandbox/node:24` | Also accepts Node 22, Node 26, or `vercel/sandbox/universal:latest`. Choose universal for processes and terminals. |
-| `vcpus`               | `2`                      | Accepts 2, 4 or 8 CPUs, with 2 GiB memory per CPU. Account limits still apply.                                     |
-| `timeoutSeconds`      | `300`                    | Initial sandbox lifetime, from 60 to 300 seconds.                                                                  |
-| `networkPolicy`       | `vercel-deny-all`        | Choose the native deny policy or `vercel-allow-all`. Strict network isolation has not been independently tested.   |
-| `ports`               | `[]`                     | Up to 15 distinct public HTTP ports. Leave empty to expose none.                                                   |
-| `persistent`          | `false`                  | Keep files across stopped sessions. Resume starts fresh compute; processes and RAM are lost.                       |
-| `credentials.token`   | Required                 | Token with access to the selected team and project.                                                                |
+| Option                | Default                  | What it controls                                                                                                                                                                              |
+| --------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `teamId`, `projectId` | Required                 | The existing team and project to use.                                                                                                                                                         |
+| `region`              | `iad1`                   | One of the 19 supported Vercel regions. There is no automatic region failover.                                                                                                                |
+| `image`               | `vercel/sandbox/node:24` | Also accepts Node 22, Node 26, or `vercel/sandbox/universal:latest`. Choose universal for processes and terminals.                                                                            |
+| `vcpus`               | `2`                      | Accepts 2, 4 or 8 CPUs, with 2 GiB memory per CPU. Account limits still apply.                                                                                                                |
+| `timeoutSeconds`      | `300`                    | Initial sandbox lifetime, from 60 to 300 seconds.                                                                                                                                             |
+| `network`             | `blocked`                | `blocked` (native deny-all) or `internet` (native allow-all). Strict network isolation has not been independently tested. Deprecated: `networkPolicy`, `vercel-deny-all`, `vercel-allow-all`. |
+| `ports`               | `[]`                     | Up to 15 distinct public HTTP ports. Leave empty to expose none.                                                                                                                              |
+| `persistent`          | `false`                  | Keep files across stopped sessions. Resume starts fresh compute; processes and RAM are lost.                                                                                                  |
+| `credentials.token`   | Required                 | Token with access to the selected team and project.                                                                                                                                           |
 
 `client.sandboxes.create()` uses this setup. Any image, region or policy supplied on an individual create call must match it. Arbitrary container images, OCI builds and mounted drives are not supported.
 
