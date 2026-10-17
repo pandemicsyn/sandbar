@@ -849,7 +849,7 @@ test("Modal submission window covers start lookup and result; observation gets i
       return true;
     },
     async create(input) {
-      expect(input.timeoutMs).toBe(300_000);
+      expect(input.timeoutMs).toBe(900_000);
       tags = input.tags;
 
       return "sb-fixture";
@@ -931,4 +931,78 @@ test("Modal submission window covers start lookup and result; observation gets i
     await client.close();
     timer.mockRestore();
   }
+});
+
+test("Modal setup supplies a working default image and a lifetime up to 24 hours", async () => {
+  const requests: Parameters<ModalTransport["create"]>[0][] = [];
+
+  const transport: ModalTransport = {
+    async lookupApp() {
+      return "ap-fixture";
+    },
+    async imageExists() {
+      return true;
+    },
+    async create(input) {
+      requests.push(input);
+
+      return `sb-${requests.length}`;
+    },
+    async findByName(_app, _env, name) {
+      const index = requests.findIndex((request) => request.name === name);
+
+      return index < 0
+        ? null
+        : { id: `sb-${index + 1}`, tags: requests[index]!.tags, running: true };
+    },
+    async *list() {},
+    async terminate() {
+      return true;
+    },
+    async poll() {
+      return "stopped";
+    },
+    async readBytes() {
+      return new Uint8Array();
+    },
+    async fileExists() {
+      return false;
+    },
+    async start() {},
+    async stdin() {},
+    async result() {
+      return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false };
+    },
+    close() {},
+  };
+
+  const adapter = createModalAdapter(() => transport);
+  const credentials = { tokenId: "ak-fixture", tokenSecret: "as-fixture" };
+
+  for (const [config, image, timeoutMs] of [
+    [{}, { ociReference: "python:3.12-slim", imageId: "" }, 900_000],
+    [{ image: "im-custom", timeoutSeconds: 86_400 }, { imageId: "im-custom" }, 86_400_000],
+  ] as const) {
+    const client = await Sandbar.connect({
+      adapter,
+      config: { appName: "existing", environment: "main", ...config },
+      credentials,
+    });
+
+    try {
+      await client.sandboxes.create();
+      expect(requests.at(-1)).toMatchObject({ ...image, timeoutMs });
+    } finally {
+      await client.close();
+    }
+  }
+
+  for (const config of [{ timeoutSeconds: 86_401 }, { image: "not-a-modal-image" }])
+    await expect(
+      Sandbar.connect({
+        adapter,
+        config: { appName: "existing", environment: "main", ...config },
+        credentials,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 });

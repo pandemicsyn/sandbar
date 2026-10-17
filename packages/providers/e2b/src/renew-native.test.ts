@@ -155,7 +155,7 @@ function fixture() {
   ) =>
     Sandbar.connect({
       adapter: createE2BAdapter(({ apiKey }) => createSdkTransport(apiKey, fetcher)),
-      config: { teamId: "team_one", ...config },
+      config: { teamId: "team_one", preview: { access: "protected" }, ...config },
       credentials: { apiKey: key },
       onReference,
     });
@@ -198,7 +198,7 @@ async function create(
 
 test("E2B native create and renewal share configured lifetime; resolved seconds and one POST", async () => {
   for (const [config, expected] of [
-    [{}, 300],
+    [{}, 900],
     [{ timeoutSeconds: 120 }, 120],
     [{ lifecycle: { lifetimeSeconds: 1 } }, 60],
     [{ lifecycle: { lifetimeSeconds: 61 } }, 61],
@@ -217,8 +217,8 @@ test("E2B native create and renewal share configured lifetime; resolved seconds 
       expect((await box.renew()).requested.forSeconds).toBe(expected);
       expect((await box.renew({ forSeconds: 1 })).requested.forSeconds).toBe(60);
       expect((await box.renew({ forSeconds: 61 })).requested.forSeconds).toBe(61);
-      expect((await box.renew({ forSeconds: 3600 })).requested.forSeconds).toBe(3600);
-      expect(f.windows()).toEqual([expected, 60, 61, 3600]);
+      expect((await box.renew({ forSeconds: 86400 })).requested.forSeconds).toBe(86400);
+      expect(f.windows()).toEqual([expected, 60, 61, 86400]);
       expect(JSON.stringify(box.reference)).toBe(identity);
       expect((await box.inspect()).expires).toMatchObject({
         status: "known",
@@ -241,7 +241,7 @@ test("E2B bounds/conflicts/identity/state/current credentials reject before POST
       0,
       -1,
       1.1,
-      3601,
+      86401,
       Number.MAX_SAFE_INTEGER,
       Number.MAX_SAFE_INTEGER + 1,
       Infinity,
@@ -272,7 +272,7 @@ test("E2B bounds/conflicts/identity/state/current credentials reject before POST
 
   for (const config of [
     { timeoutSeconds: 60, lifecycle: { lifetimeSeconds: 60 } },
-    { lifecycle: { lifetimeSeconds: 3601 } },
+    { lifecycle: { lifetimeSeconds: 86401 } },
     { lifecycle: { lifetimeSeconds: 0 } },
   ]) {
     const before = f.calls.length;
@@ -373,11 +373,11 @@ test("E2B stops local waiting after possible dispatch and keeps the reference", 
   await expect(pending).rejects.toMatchObject({
     code: "WAIT_ABORTED",
     effect: "possible",
-    reference: { renewal: { forSeconds: 300 } },
+    reference: { renewal: { forSeconds: 900 } },
   });
   f.release();
   await Bun.sleep(10);
-  expect(f.windows()).toEqual([300]);
+  expect(f.windows()).toEqual([900]);
   await client.close();
 });
 

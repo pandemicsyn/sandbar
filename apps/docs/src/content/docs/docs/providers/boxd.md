@@ -33,10 +33,10 @@ Use a member API key and its authenticated default org ID/slug. Userless org key
 The adapter uses these defaults:
 
 - **Image:** the default OCI image configured for your boxd account.
-- **Lifetime:** 15 minutes. Set `lifetimeSeconds` from 60 to 3,600 seconds; this also sets the default renewal window.
+- **Lifetime:** 15 minutes. Set `lifetimeSeconds` to at least 60 seconds; this also sets the default renewal window. The adapter sets no maximum because boxd documents none ([`setDeleteAfter`](https://docs.boxd.sh/reference/typescript-sdk.md)), and renewal capabilities omit `maxSeconds`.
 - **Compute size:** your account default. Set `size` to 1, 2, 4 or 8 vCPUs for 4, 8, 16 or 32 GiB RAM. The machine's private disk is fixed at 100 GB.
 - **New volumes:** 10 GiB each. Set `volumes.sizeBytes` from 1 GiB to 1 TiB, subject to your quota.
-- **Preview lookup:** disabled unless you explicitly choose public access. See [Public previews](#public-previews).
+- **Preview access:** public on port 3000. Create pins a public route and disables browser protection. See [Public previews](#public-previews).
 
 You must set `network: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported.
 
@@ -55,7 +55,7 @@ Implemented features have deterministic native-boundary coverage. The four basel
 | Snapshots                                               | Unsupported: exact generation restore/delete is not established for latest-only native snapshots.                                                        |
 | Interactive processes                                   | Unsupported: native stream cancellation kills the process group and cannot provide detach/disconnect.                                                    |
 | Other filesystem operations                             | Python 3 regular-file copy, same-filesystem move, staged write and incremental read streams; walk/text lines compose these hooks.                        |
-| Public previews                                         | Explicit public setup; read-only lookup of pinned configured ports on running compute.                                                                   |
+| Public previews                                         | Default public setup; read-only lookup of pinned configured ports on running compute.                                                                    |
 | Strict blocked egress, protected previews, image builds | Unsupported. OCI boot does not allocate an image-build artifact.                                                                                         |
 
 ## Files and streams
@@ -72,7 +72,7 @@ A streamed write uses a temporary `.sandbar-<uuid>` file beside the destination.
 
 ## Public previews
 
-Enable public previews when connecting:
+Public previews are the default, with port 3000. Configure other ports when connecting:
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
@@ -93,7 +93,7 @@ This creates routes for the selected ports and disables boxd's browser protectio
 
 After starting a server, call `box.preview(3000)` to get `{ access: "public", url }`. The lookup checks the running machine and its configured route. It does not create routes, change protection or wake the machine. The returned URL does not prove your server is ready.
 
-The default `preview.access` is `"protected"`, so preview lookup fails as unsupported unless public access is selected. This setting does **not** make boxd's own ingress private. Native public traffic can still reach or wake a machine. Auto-detected routes are excluded because their target port can change.
+The default `preview.access` is `"public"` with `ports: [3000]`. Select `preview: { access: "protected" }` to keep browser protection on and create no routes; preview lookup then fails as unsupported. This setting does **not** make boxd's own ingress private. Native public traffic can still reach or wake a machine. Auto-detected routes are excluded because their target port can change.
 
 Finite stdin, expanded filesystem operations, size selection and previews have offline coverage only. They do not inherit the baseline's live pass.
 

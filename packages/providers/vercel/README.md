@@ -39,9 +39,9 @@ try {
 | --- | --- |
 | `teamId`, `projectId` | Existing team/project; authenticated ownership is checked. |
 | `region` | Default `iad1`; all 19 regions in the audited native catalog are accepted. No automatic failover. |
-| `image` | Default `vercel/sandbox/node:24`; also Node 22, Node 26, or `vercel/sandbox/universal:latest`. The universal image enables Python-backed process/PTY support. |
+| `image` | Default `vercel/sandbox/universal:latest`, matching Vercel's native default; its Python-backed process/PTY support works out of the box. Also Node 22, Node 24 or Node 26. |
 | `vcpus` | 2 (default), 4, or 8; native memory is 2 GiB per vCPU. Account quotas apply. |
-| `timeoutSeconds` | Initial lifetime 60–300 seconds, default 300. |
+| `timeoutSeconds` | Initial lifetime 60–86,400 seconds, default 900. Vercel enforces lower plan limits itself (Hobby 45 minutes; Pro/Enterprise 24 hours). |
 | `network` | `blocked` (default, native deny-all) or `internet` (native allow-all). Deprecated: `networkPolicy`, `vercel-deny-all`, `vercel-allow-all`. No measured isolation claim. |
 | `ports` | Default empty; up to 15 distinct explicitly exposed public HTTP ports. |
 | `credentials.token` | Bearer token with team/project sandbox access. |
@@ -50,7 +50,7 @@ Ordinary `sandboxes.create()` uses the configured managed image and named policy
 
 By default every sandbox ID and saved reference names an immutable VM session. Destroy stops and polls that original session until `stopped` or `aborted` confirms termination, and reports `vercel-named-sandbox-metadata` retained. Named metadata is not deleted: published name-addressed DELETE has no generation predicate. Native timeout is fallback, never a cleanup receipt. Closing the client releases local transport and waits; explicitly destroy owned compute.
 
-`renew({ forSeconds })` sends one additive timeout extension to a running original session. The requested window is 1–300 seconds, defaulting to setup lifetime; native cumulative-runtime/plan caps still apply. The result preserves acknowledgement separately from expiry observation. A missing ACK remains unknown, even if later inspection shows a longer deadline, and is never replayed. `get`/inspect/preview never renew or resume.
+`renew({ forSeconds })` sends one additive timeout extension to a running original session. The requested window is 1–86,400 seconds, defaulting to setup lifetime; Vercel caps total session time by plan ([limits](https://vercel.com/docs/sandbox/pricing)). The result preserves acknowledgement separately from expiry observation. A missing ACK remains unknown, even if later inspection shows a longer deadline, and is never replayed. `get`/inspect/preview never renew or resume.
 
 Commands preserve argv, explicit `/bin/sh -c`, cwd/env, exit evidence and original stdout/stderr bytes. Combined finite output is bounded to 1 MiB with truthful truncation. Finite stdin accepts up to 1 MiB, staged internally with private permissions, then supplied to the child followed by EOF. Applications use ordinary `box.exec`; they configure no encoding or helper. Staged input identity is saved before upload and retained when launch acknowledgement is lost. Capture receipts and interrupted input stages can remain until compute teardown. Deadlines kill the helper's child process group; aborting a local request does not prove remote termination. Confirmed exit is checkpointed before output retrieval and survives output-read failure; recovery reads the original receipt without rerunning the command.
 

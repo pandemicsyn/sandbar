@@ -278,7 +278,7 @@ void flow;
 import { Sandbar, Image } from "sandbar-sdk";
 import { daytona } from "@sandbar-sdk/daytona";
 async function flow() {
-  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15, environment: Image.prepared("snap-1") }));
+  const client = await Sandbar.connect(daytona({ target: "us", apiKey: "fixture", ttlMinutes: 15, networkPolicy: "blocked", environment: Image.prepared("snap-1") }));
   const built = await client.images.build({ source: Image.oci("alpine:3.21") });
   await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
   await client.sandboxes.checkCreate();
@@ -463,10 +463,10 @@ const daytonaSource = `
 import { Sandbar, Image } from "sandbar-sdk";
 import { createDaytonaAdapter } from "@sandbar-sdk/daytona";
 let nativeState = "started";
-let name = "", mutations = 0, snapshotName = "", labels = {}, renewalWindows = [];
+let name = "", mutations = 0, snapshotName = "", labels = {}, renewalWindows = [], blockAll = true;
 const files = new Map([["/file", Uint8Array.from([0,255])]]);
 const origin = "https://proxy.app.daytona.io/toolbox";
-const native = (state = nativeState) => ({ sandboxClass: "container", volumes: [], autoDeleteInterval: -1, labels, id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: true, public: false, toolboxProxyUrl: origin });
+const native = (state = nativeState) => ({ sandboxClass: "container", volumes: [], autoDeleteInterval: -1, labels, id: "native-1", name, organizationId: "org-1", target: "us", state, networkBlockAll: blockAll, public: false, toolboxProxyUrl: origin });
 const mock = async (input, init = {}) => {
   const url = new URL(String(input));
   const json = value => Response.json(value);
@@ -480,7 +480,7 @@ const mock = async (input, init = {}) => {
   }
   if (url.pathname.startsWith("/api/snapshots/")) return snapshotName && [snapshotName, "built-1"].includes(decodeURIComponent(url.pathname.split("/").at(-1)))
     ? json({ id: "built-1", name: snapshotName, imageName: "alpine:3.21", organizationId: "org-1", state: "active", regionIds: ["us"], sandboxClass: "container" }) : new Response(null, { status: 404 });
-  if (url.pathname === "/api/sandbox" && init.method === "POST") { nativeState = "started"; mutations++; const body = JSON.parse(init.body); name = body.name; labels = body.labels; return json(native()); }
+  if (url.pathname === "/api/sandbox" && init.method === "POST") { nativeState = "started"; mutations++; const body = JSON.parse(init.body); name = body.name; labels = body.labels; blockAll = body.networkBlockAll === true; return json(native()); }
   if (["/api/sandbox/native-1/stop", "/api/sandbox/native-1/start"].includes(url.pathname)) { mutations++; nativeState = url.pathname.endsWith("/stop") ? "stopped" : "started"; return new Response(null, {status: 204}); }
   if (url.pathname.startsWith("/api/sandbox/native-1/ttl/")) { mutations++; renewalWindows.push(Number(url.pathname.split("/").at(-1))*60); return json(native()); }
   if (url.pathname === "/api/sandbox/native-1" && init.method === "DELETE") { mutations++; return json(native("destroyed")); }
@@ -510,13 +510,13 @@ const mock = async (input, init = {}) => {
   }
   throw new Error("Unexpected fixture request: " + url.pathname);
 };
-const client = await Sandbar.connect({ adapter: createDaytonaAdapter(mock), config: { target: "us" }, credentials: { apiKey: "fixture-only" } });
+const client = await Sandbar.connect({ adapter: createDaytonaAdapter(mock), config: { target: "us", networkPolicy: "blocked" }, credentials: { apiKey: "fixture-only" } });
 try {
   const built = await client.images.build({ source: Image.oci("alpine:3.21") });
   if (built.prepared.value !== "built-1" || built.prepared.provider !== "daytona" || built.retainedResources[0]?.ownership !== "unknown" || mutations !== 1) throw Error("Daytona scoped build mismatch");
   const box = await client.sandboxes.create({ environment: Image.prepared(built.prepared), networkPolicy: "blocked" });
   if (!box.reference) throw Error("Missing packed sandbox reference");
-  const fresh = await Sandbar.connect({ adapter: createDaytonaAdapter(mock), config: { target: "us" }, credentials: { apiKey: "rotated-fixture" } });
+  const fresh = await Sandbar.connect({ adapter: createDaytonaAdapter(mock), config: { target: "us", networkPolicy: "blocked" }, credentials: { apiKey: "rotated-fixture" } });
   try {
     const reopened = await fresh.sandboxes.get(JSON.parse(JSON.stringify(box.reference)));
     if ((await reopened.inspect()).state !== "running" || reopened.id !== box.id) throw Error("Packed sandbox reopening differs");
@@ -562,7 +562,7 @@ import { Sandbar, Image } from "sandbar-sdk";
 import { createVercelAdapter, vercel } from "@sandbar-sdk/vercel";
 assert.equal(vercel.name, "vercel");
 let stopped = false, closed = 0, mutations = 0;
-const session = () => ({ id: "session_1", region: "iad1", vcpus: 2, timeout: 300000, startedAt: 1700000000000, status: stopped ? "stopped" : "running", networkPolicy: { mode: "deny-all" } });
+const session = () => ({ id: "session_1", region: "iad1", vcpus: 2, timeout: 900000, startedAt: 1700000000000, status: stopped ? "stopped" : "running", networkPolicy: { mode: "deny-all" } });
 const adapter = createVercelAdapter(() => ({
  close() { closed++; },
  async fetch(input, init) {
@@ -577,8 +577,8 @@ const adapter = createVercelAdapter(() => ({
   else if (url.pathname === "/api/v3/sandboxes") {
    const body = JSON.parse(init.body);
    assert.equal(body.persistent, false);
-   assert.equal(body.image, "vercel/sandbox/node:24");
-   value = { session: session(), routes: [], sandbox: { image: "vercel/sandbox/node@sha256:" + "a".repeat(64), mounts: {}, name: body.name, currentSessionId: "session_1", persistent: false, status: "running", networkPolicy: { mode: "deny-all" } } };
+   assert.equal(body.image, "vercel/sandbox/universal:latest");
+   value = { session: session(), routes: [], sandbox: { image: "vercel/sandbox/universal@sha256:" + "a".repeat(64), mounts: {}, name: body.name, currentSessionId: "session_1", persistent: false, status: "running", networkPolicy: { mode: "deny-all" } } };
   } else if (url.pathname === "/api/v2/sandboxes/sessions/session_1/stop") { stopped = true; value = {}; }
   else if (url.pathname === "/api/v2/sandboxes/sessions/session_1") value = { session: session() };
   else throw new Error("Unexpected route " + url.pathname);
@@ -586,7 +586,7 @@ const adapter = createVercelAdapter(() => ({
  }
 }));
 const client = await Sandbar.connect({ adapter, config: { teamId: "team", projectId: "project" }, credentials: { token: "fixture" } });
-const box = await client.sandboxes.create({ environment: Image.prepared("vercel/sandbox/node:24"), networkPolicy: "vercel-deny-all" });
+const box = await client.sandboxes.create({ networkPolicy: "vercel-deny-all" });
 assert.equal(box.id, "session_1");
 await box.destroy();
 await client.close();
@@ -702,7 +702,7 @@ const transport = {
   async get(id) { return record?.id === id ? record : null; },
   async list(metadata) { return { items: record && Object.entries(metadata).every(([k,v]) => record.metadata[k] === v) ? [record] : [] }; },
   async suspend(id) { if(id!==record?.id)throw Error("Wrong suspend ID"); record.state = "paused"; },
-  async resume(id, seconds) { if(id!==record?.id || seconds!==300)throw Error("Wrong resume intent"); record.state = "running"; },
+  async resume(id, seconds) { if(id!==record?.id || seconds!==900)throw Error("Wrong resume intent"); record.state = "running"; },
   async renew(id, seconds) { if(id!==record?.id)throw Error("Wrong renewal ID"); renewalWindows.push(seconds); },
   async kill(id) { if (id !== record?.id) throw Error("Wrong kill"); retained = record.metadata.sandbar_build ? record.templateId : ""; kills++; record = undefined; return true; },
   async run(_id, script) {
@@ -792,7 +792,7 @@ import { e2b } from "@sandbar-sdk/e2b";
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw Error("Factory construction performed provider I/O"); };
 try {
-  const daytonaAdapter = daytona({ apiKey: "fixture", target: "us", ttlMinutes: 15 });
+  const daytonaAdapter = daytona({ apiKey: "fixture", target: "us", ttlMinutes: 15, networkPolicy: "blocked" });
   const e2bAdapter = e2b({ apiKey: "fixture" });
   if (daytonaAdapter.name !== "daytona" || e2bAdapter.name !== "e2b") throw Error("Official factory identity mismatch");
   if (!daytonaAdapter.bound || !e2bAdapter.bound) throw Error("Official factory did not bind public adapter contract");

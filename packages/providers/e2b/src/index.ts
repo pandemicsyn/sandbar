@@ -53,6 +53,9 @@ const CreateToken = z.strictObject({
 
 const CreateRecoveryToken: z.ZodType<Json> = CreateToken;
 
+/** E2B's longest plan limit (Pro, 24 hours); E2B enforces lower plan limits itself. */
+const MAX_LIFETIME_SECONDS = 86_400;
+
 const Configuration = z
   .strictObject({
     teamId: z
@@ -69,13 +72,13 @@ const Configuration = z
       .default("base"),
     network: z.enum(["blocked", "internet"]).optional(),
     networkPolicy: z.enum(["blocked", "internet"]).optional(),
-    timeoutSeconds: z.number().int().min(60).max(3600).optional(),
+    timeoutSeconds: z.number().int().min(60).max(MAX_LIFETIME_SECONDS).optional(),
     preview: z
-      .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
-      .default({ access: "protected" }),
+      .strictObject({ access: z.enum(["protected", "public"]).default("public") })
+      .default({ access: "public" }),
     lifecycle: z
       .strictObject({
-        lifetimeSeconds: z.number().int().positive().safe().max(3600).optional(),
+        lifetimeSeconds: z.number().int().positive().safe().max(MAX_LIFETIME_SECONDS).optional(),
         suspension: z
           .strictObject({ preserve: z.enum(["filesystem", "filesystem+memory"]) })
           .optional(),
@@ -102,7 +105,7 @@ const Configuration = z
     networkPolicy: network ?? value.networkPolicy ?? "blocked",
     timeoutSeconds:
       value.lifecycle?.lifetimeSeconds === undefined
-        ? (value.timeoutSeconds ?? 300)
+        ? (value.timeoutSeconds ?? 900)
         : Math.max(60, value.lifecycle.lifetimeSeconds),
   }));
 
@@ -734,7 +737,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           if (config.preview.access !== "public")
             throw new AdapterError(
               "UNSUPPORTED",
-              "E2B protected preview credentials cannot be retrieved read-only after reopening; select preview.access public explicitly or use Daytona protected previews",
+              "E2B preview.access protected keeps sandboxes closed to inbound traffic and cannot return preview access; use preview.access public, the default",
             );
           ctx.signal.throwIfAborted();
           const record = await find(input.sandbox.id, input.sandbox.reference);
@@ -1602,7 +1605,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             status: "supported" as const,
             value: {
               minSeconds: 60,
-              maxSeconds: 3600,
+              maxSeconds: MAX_LIFETIME_SECONDS,
               stepSeconds: 1,
               scope: "running-session" as const,
             },
@@ -1621,7 +1624,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                   forSeconds: input.forSeconds ?? config.timeoutSeconds,
                 }).forSeconds;
 
-                if (requested > 3600)
+                if (requested > MAX_LIFETIME_SECONDS)
                   throw new AdapterError(
                     "INVALID_ARGUMENT",
                     "Renewal exceeds the adapter lifetime ceiling",

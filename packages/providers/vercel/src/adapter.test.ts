@@ -117,7 +117,7 @@ export function fixture() {
         const input = JSON.parse(String(init.body));
         expect(input).toMatchObject({
           projectId: "project-fixture",
-          timeout: 300000,
+          timeout: 900000,
         });
         expect(input.tags.sandbarSubmission).toBeString();
 
@@ -492,7 +492,11 @@ export function fixture() {
   };
 }
 
-const config = { teamId: "team-fixture", projectId: "project-fixture" };
+const config = {
+  teamId: "team-fixture",
+  projectId: "project-fixture",
+  image: "vercel/sandbox/node:24" as const,
+};
 
 const credentials = { token: "fixture-token" };
 
@@ -979,7 +983,7 @@ test("omitted create options use the configured image and network policy default
 
     const client = await Sandbar.connect({
       adapter: native.adapter,
-      config: { ...config, networkPolicy },
+      config: { teamId: config.teamId, projectId: config.projectId, networkPolicy },
       credentials,
     });
 
@@ -992,8 +996,10 @@ test("omitted create options use the configured image and network policy default
       );
 
       expect(request).toBeDefined();
+      // The universal image runs processes and terminals; Node-only images do not.
       expect(JSON.parse(String(request?.init.body))).toMatchObject({
-        image: "vercel/sandbox/node:24",
+        image: "vercel/sandbox/universal:latest",
+        timeout: 900000,
         networkPolicy: { mode: networkPolicy === "vercel-deny-all" ? "deny-all" : "allow-all" },
       });
       expect(native.effects.create).toBe(1);
@@ -1276,6 +1282,14 @@ test("Vercel scoped configuration, renewal and public previews use original sess
     expect(native.requests.filter((r) => r.url.pathname.endsWith("/extend-timeout"))).toHaveLength(
       1,
     );
+    // Pro and Enterprise sessions run up to 24 hours; Vercel enforces lower plan limits.
+    expect((await box.renew({ forSeconds: 86_400 })).requested).toEqual({ forSeconds: 86_400 });
+    await expect(box.renew({ forSeconds: 86_401 })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    expect((await box.capabilities()).lifecycle?.renew).toMatchObject({
+      value: { maxSeconds: 86_400 },
+    });
     const creation = native.requests.find((r) => r.url.pathname === "/api/v3/sandboxes")!;
     expect(JSON.parse(String(creation.init.body))).toMatchObject({
       region: "fra1",

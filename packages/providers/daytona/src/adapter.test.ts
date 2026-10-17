@@ -129,7 +129,11 @@ test.each([
   const adapter = createDaytonaAdapter(fetchImpl);
 
   const connect = () =>
-    Sandbar.connect({ adapter, config: { target: "us" }, credentials: { apiKey: "fixture" } });
+    Sandbar.connect({
+      adapter,
+      config: { target: "us", networkPolicy: "blocked" },
+      credentials: { apiKey: "fixture" },
+    });
 
   let client = await connect();
 
@@ -351,9 +355,12 @@ test("Daytona public adapter passes managed-compute scenarios with one native PO
   const report = await adapterSuite({
     adapter,
     fixture: {
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
-      alternate: { config: { target: "eu" }, credentials: { apiKey: "fixture" } },
+      alternate: {
+        config: { target: "eu", networkPolicy: "blocked" },
+        credentials: { apiKey: "fixture" },
+      },
       createInput: { image: { kind: "prepared", value: "snap-1" }, networkPolicy: "blocked" },
       counters: () => ({ ...effects }),
       expectedReleasesPerConnection: 0,
@@ -488,7 +495,11 @@ test("lost exec, write and destroy responses recover by read-only evidence after
   const adapter = createDaytonaAdapter(fetchImpl);
 
   const connect = () =>
-    Sandbar.connect({ adapter, config: { target: "us" }, credentials: { apiKey: "fixture" } });
+    Sandbar.connect({
+      adapter,
+      config: { target: "us", networkPolicy: "blocked" },
+      credentials: { apiKey: "fixture" },
+    });
 
   const first = await connect();
 
@@ -658,7 +669,7 @@ test("destroy preflight failure rejects without attempting DELETE", async () => 
 
   const client = await Sandbar.connect({
     adapter: createDaytonaAdapter(fetchImpl),
-    config: { target: "us" },
+    config: { target: "us", networkPolicy: "blocked" },
     credentials: { apiKey: "fixture" },
   });
 
@@ -721,7 +732,7 @@ test("exec receipt deadline starts after a slow preflight and survives reconnect
   const connect = () =>
     Sandbar.connect({
       adapter: createDaytonaAdapter(fetchImpl),
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
     });
 
@@ -828,7 +839,7 @@ test("tokenless image recovery reports scoped possible retention without certify
 
   const client = await Sandbar.connect({
     adapter: createDaytonaAdapter(fetchImpl),
-    config: { target: "us" },
+    config: { target: "us", networkPolicy: "blocked" },
     credentials: { apiKey: "fixture" },
   });
 
@@ -881,7 +892,7 @@ test.each(["unavailable", "throw", "existing"] as const)(
 
     const client = await Sandbar.connect({
       adapter: createDaytonaAdapter(fetchImpl),
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
     });
 
@@ -966,7 +977,7 @@ test.each(["lost-name", "known-id", "known-id-throw"] as const)(
     const connect = () =>
       Sandbar.connect({
         adapter: createDaytonaAdapter(fetchImpl),
-        config: { target: "us" },
+        config: { target: "us", networkPolicy: "blocked" },
         credentials: { apiKey: "fixture" },
       });
 
@@ -1066,7 +1077,7 @@ test.each(["started", "stopped", "destroyed"])(
 
     const client = await Sandbar.connect({
       adapter: createDaytonaAdapter(fetchImpl),
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
     });
 
@@ -1246,7 +1257,7 @@ test.each([
   const connect = () =>
     Sandbar.connect({
       adapter: createDaytonaAdapter(fetchImpl),
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
     });
 
@@ -1382,7 +1393,7 @@ test.each(["immediate", "pending", "lost"] as const)(
 
     const client = await Sandbar.connect({
       adapter: createDaytonaAdapter(fetcher),
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
     });
 
@@ -1466,7 +1477,7 @@ test.each([
 
     const client = await Sandbar.connect({
       adapter: createDaytonaAdapter(fetcher),
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
     });
 
@@ -1539,7 +1550,7 @@ test.each(["prepare", "submit"] as const)(
 
     const client = await Sandbar.connect({
       adapter: createDaytonaAdapter(fetcher),
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
       onReference(reference) {
         if (reference.kind !== "destroy") return;
@@ -1628,7 +1639,7 @@ async function interruptedMountedDestroy(mode: "tombstone" | "absent" | "checkpo
   const connect = (storage: "require-durable" | "allow-unconfirmed" = "allow-unconfirmed") =>
     Sandbar.connect({
       adapter: createDaytonaAdapter(fetcher),
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
       cleanup: { storage },
       onReference(reference) {
@@ -1777,7 +1788,7 @@ for (const mode of ["gateway", "abort", "policy"] as const) {
     const connect = (storage: "require-durable" | "allow-unconfirmed" = "require-durable") =>
       Sandbar.connect({
         adapter: createDaytonaAdapter(fetcher),
-        config: { target: "us" },
+        config: { target: "us", networkPolicy: "blocked" },
         credentials: { apiKey: "fixture" },
         cleanup: { storage },
         onReference(reference) {
@@ -1825,3 +1836,37 @@ for (const mode of ["gateway", "abort", "policy"] as const) {
     }
   });
 }
+
+test("Daytona defaults to provider-managed egress without an organization eligibility read", async () => {
+  const paths: string[] = [];
+
+  const fetchImpl: typeof fetch = Object.assign(
+    async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      paths.push(url.pathname);
+
+      if (url.pathname === "/api/api-keys/current")
+        return Response.json({ organizationId: "org-1" });
+
+      if (url.pathname === "/api/regions")
+        return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+      return new Response(null, { status: 403 });
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const client = await Sandbar.connect({
+    adapter: createDaytonaAdapter(fetchImpl),
+    config: { target: "us" },
+    credentials: { apiKey: "fixture" },
+  });
+
+  try {
+    expect((await client.capabilities()).network).toEqual(["daytona-default"]);
+    expect(client.scope.partition).toMatchObject({ networkPolicy: "daytona-default" });
+    expect(paths).not.toContain("/api/organizations/org-1");
+  } finally {
+    await client.close();
+  }
+});

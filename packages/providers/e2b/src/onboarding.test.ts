@@ -154,7 +154,12 @@ test("API-key-only defaults reopen the same scope and bind canonical base resour
 test("lost base create recovers by exact native markers after reconnect without resolving aliases", async () => {
   const f = fixture();
   f.loseNextResponse();
-  const options = { config: {}, credentials: { apiKey: "fixture-key" } };
+
+  const options = {
+    config: { preview: { access: "protected" as const } },
+    credentials: { apiKey: "fixture-key" },
+  };
+
   let connection = await connectAdapter(f.adapter, options);
   const signal = new AbortController().signal;
   const identity = { operationId: "op_one", submissionId: "sub_one", invocationKey: "inv_one" };

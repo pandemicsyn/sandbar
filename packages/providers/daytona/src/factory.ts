@@ -2,7 +2,7 @@ import { createDaytonaAdapter } from "./index";
 import type { ImageInput } from "@sandbar-sdk/adapter";
 import { bindAdapter, type BoundAdapter } from "@sandbar-sdk/adapter";
 
-/** First-party Daytona adapter. Configure `network` once here; omitted create calls use it. */
+/** First-party Daytona adapter. Configure `network` once here; omitted create calls use it. Defaults to provider-managed daytona-default egress. */
 export function daytona(options: {
   apiKey: string;
   target: string;

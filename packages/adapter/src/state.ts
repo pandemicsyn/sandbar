@@ -830,7 +830,7 @@ export const DirectCapabilities = z.strictObject({
       renew: supportSchema(
         z.strictObject({
           minSeconds: z.number().int().positive().safe(),
-          maxSeconds: z.number().int().positive().safe(),
+          maxSeconds: z.number().int().positive().safe().optional(),
           stepSeconds: z.number().int().positive().safe(),
           scope: z.enum(["sandbox", "running-session"]),
         }),

@@ -3,7 +3,7 @@ title: Preview access
 description: Access an HTTP service running inside a sandbox.
 ---
 
-Use `await box.preview(3000)` to get access to an HTTP service on port 3000 inside a running sandbox. Choose public or protected access when configuring the adapter. The available modes depend on the provider.
+Use `await box.preview(3000)` to get access to an HTTP service on port 3000 inside a running sandbox. Choose public or protected access when configuring the adapter. The available modes depend on the provider, and each adapter defaults to the mode it can serve: Daytona defaults to protected; E2B, boxd and Vercel default to public. boxd publishes port 3000 by default; Vercel publishes only the `ports` you configure.
 
 This example uses Daytona's default protected access. Replace `existing-server-snapshot` with a prepared image whose startup configuration launches an HTTP server on port 3000:
 
@@ -61,7 +61,7 @@ Daytona public access reports `UNSUPPORTED`: the native setting would publish po
 
 ## Public access with E2B
 
-E2B preview access requires an explicit public setting:
+E2B defaults to public preview access, matching E2B's native default. Setting it explicitly is equivalent:
 
 ```ts
 import { e2b } from "@sandbar-sdk/e2b";
@@ -76,11 +76,11 @@ Pass `setup` to `Sandbar.connect()`.
 
 This setting exposes the sandbox's HTTP services to anyone who can reach their URLs. Exposure begins when a sandbox is created or restored, before you call `preview()`. Lookup requires confirmed public visibility, the native `e2b.app` domain and auto-resume disabled. Connecting alone does not change the visibility of existing sandboxes.
 
-E2B creation and restore default to protected access: they disable public traffic and verify visibility before reporting success. If visibility cannot be confirmed, the operation remains uncertain and retains its confirmed resource identity for recovery and cleanup. Live tests have not yet qualified denial of incoming traffic under this private default.
+Select `preview: { access: "protected" }` to keep new sandboxes closed to inbound traffic: creation and restore disable public traffic and verify visibility before reporting success. If visibility cannot be confirmed, the operation remains uncertain and retains its confirmed resource identity for recovery and cleanup. Live tests have not yet qualified denial of incoming traffic in protected mode.
 
 Protected `preview()` reports `UNSUPPORTED` because the native read-only detail API used by the adapter cannot return the required token. Sandbar does not call E2B's native connect method to retrieve one, because that method can resume compute. It does not fall back to public access.
 
-Recovery preserves an operation's original visibility setting. Older create references without preview metadata, and version-1 restore references without a visibility field, used public access. Recovering those operations requires confirmed native public visibility, even if the current connection defaults to protected access.
+Recovery preserves an operation's original visibility setting. Older create references without preview metadata, and version-1 restore references without a visibility field, used public access. Recovering those operations requires confirmed native public visibility, even if the current connection selects protected access.
 
 ## Reuse sandbox identity, not access details
 

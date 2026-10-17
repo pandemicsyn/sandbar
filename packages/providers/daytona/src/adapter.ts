@@ -62,13 +62,13 @@ const Configuration = z
     snapshots: z
       .strictObject({ restartAfterCapture: z.boolean().default(true) })
       .default({ restartAfterCapture: true }),
-    ttlMinutes: z.coerce.number().int().min(1).max(1440).optional(),
+    ttlMinutes: z.coerce.number().int().min(1).safe().optional(),
     preview: z
       .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
       .default({ access: "protected" }),
     lifecycle: z
       .strictObject({
-        lifetimeSeconds: z.number().int().positive().safe().max(86400).optional(),
+        lifetimeSeconds: z.number().int().positive().safe().optional(),
         idleSeconds: z.number().int().positive().safe().max(86400).optional(),
         suspension: z
           .strictObject({ preserve: z.enum(["filesystem", "filesystem+memory"]) })
@@ -93,10 +93,10 @@ const Configuration = z
   })
   .transform(({ network, ...value }) => ({
     ...value,
-    networkPolicy: network ?? value.networkPolicy ?? "blocked",
+    networkPolicy: network ?? value.networkPolicy ?? "daytona-default",
     ttlMinutes:
       value.lifecycle?.lifetimeSeconds === undefined
-        ? (value.ttlMinutes ?? 60)
+        ? (value.ttlMinutes ?? 15)
         : Math.ceil(value.lifecycle.lifetimeSeconds / 60),
     autoStopMinutes:
       value.lifecycle?.idleSeconds === undefined ? 0 : Math.ceil(value.lifecycle.idleSeconds / 60),
@@ -1826,7 +1826,6 @@ export function createDaytonaAdapter(
             status: "supported" as const,
             value: {
               minSeconds: 60,
-              maxSeconds: 86400,
               stepSeconds: 60,
               scope: "sandbox" as const,
             },
@@ -1844,12 +1843,10 @@ export function createDaytonaAdapter(
               forSeconds: input.forSeconds ?? config.ttlMinutes * 60,
             }).forSeconds;
 
-            if (requested > 86400)
-              throw new AdapterError(
-                "INVALID_ARGUMENT",
-                "Renewal exceeds the adapter lifetime ceiling",
-              );
             const forSeconds = Math.ceil(requested / 60) * 60;
+
+            if (!Number.isSafeInteger(forSeconds))
+              throw new AdapterError("INVALID_ARGUMENT", "Renewal window is too large");
             const info = await inspection(input.sandbox.id, input.sandbox.reference, ctx);
 
             if (info.state !== "running")

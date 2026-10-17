@@ -221,7 +221,7 @@ test.skipIf(process.platform !== "linux")(
 
       client = await Sandbar.connect({
         adapter: createE2BAdapter(() => f.transport),
-        config: { teamId: "team" },
+        config: { teamId: "team", preview: { access: "protected" } },
         credentials: { apiKey: "fixture" },
       });
 

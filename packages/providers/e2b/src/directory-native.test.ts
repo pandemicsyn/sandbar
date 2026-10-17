@@ -91,7 +91,7 @@ function fixture() {
   const connect = (onReference?: (ref: AdapterRecoveryReference) => void) =>
     Sandbar.connect({
       adapter: createE2BAdapter(({ apiKey }) => createSdkTransport(apiKey, fetcher)),
-      config: { teamId: "team_one" },
+      config: { teamId: "team_one", preview: { access: "protected" } },
       credentials: { apiKey: "test-key" },
       onReference,
     });

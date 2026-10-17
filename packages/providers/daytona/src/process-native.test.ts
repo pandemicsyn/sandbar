@@ -316,7 +316,7 @@ test("Daytona public adapter maps interactive process HTTP workflow without nati
   try {
     client = await Sandbar.connect({
       adapter: createDaytonaAdapter(transport),
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
     });
     const box = new AdapterSandbox(client, "fixture");

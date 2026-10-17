@@ -4,7 +4,7 @@ import { Sandbar, Image } from "sandbar-sdk";
 import { createE2BAdapter } from "./index";
 import { createSdkTransport, type E2BTransport, type E2BRecord } from "./transport";
 
-async function fixture(access: "protected" | "public" = "protected") {
+async function fixture(access?: "protected" | "public") {
   let lookups = 0;
   const creates: boolean[] = [];
 
@@ -15,7 +15,7 @@ async function fixture(access: "protected" | "public" = "protected") {
     state: "running",
     domain: "e2b.app",
     lifecycle: { autoResume: false },
-    allowPublicTraffic: access === "public",
+    allowPublicTraffic: access !== "protected",
     attachmentReady: false,
   };
 
@@ -55,7 +55,7 @@ async function fixture(access: "protected" | "public" = "protected") {
 
   const client = await Sandbar.connect({
     adapter: createE2BAdapter(() => transport),
-    config: { preview: { access } },
+    config: access ? { preview: { access } } : {},
     credentials: { apiKey: "key" },
   });
 
@@ -64,8 +64,22 @@ async function fixture(access: "protected" | "public" = "protected") {
   return { client, box, record, creates, lookups: () => lookups };
 }
 
-test("E2B protected default creates private compute and refuses credential retrieval without connecting", async () => {
+test("E2B defaults to public previews that work without setup", async () => {
   const f = await fixture();
+
+  try {
+    expect(f.creates).toEqual([true]);
+    expect(await f.box.preview(3000)).toEqual({
+      access: "public",
+      url: "https://3000-box.e2b.app",
+    });
+  } finally {
+    await f.client.close();
+  }
+});
+
+test("E2B protected setup creates private compute and refuses credential retrieval without connecting", async () => {
+  const f = await fixture("protected");
 
   try {
     expect(f.creates).toEqual([false]);
@@ -77,7 +91,7 @@ test("E2B protected default creates private compute and refuses credential retri
   }
 });
 
-test("E2B public is explicit, verifies current visibility and auto-resume, and needs no guest attachment", async () => {
+test("E2B public verifies current visibility and auto-resume, and needs no guest attachment", async () => {
   const f = await fixture("public");
 
   try {

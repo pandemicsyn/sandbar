@@ -289,6 +289,11 @@ test("fresh credentials reopen saved references; warm lifecycle and renewal repo
     expect(resume.execution).toBe("resumed");
     expect(resume.connections).toBe("preserved");
     expect((await reopened.renew({ forSeconds: 61 })).observation?.expires.status).toBe("known");
+    // boxd documents no maximum lifetime, so the adapter adds none.
+    expect((await reopened.renew({ forSeconds: 604_800 })).requested).toEqual({
+      forSeconds: 604_800,
+    });
+    expect((await reopened.capabilities()).lifecycle?.renew).not.toHaveProperty("value.maxSeconds");
     await reopened.destroy();
   } finally {
     await client.close();
@@ -644,12 +649,34 @@ test("public preview pins configured routes at create, verifies identity and nev
 
   try {
     const box = await defaults.sandboxes.create();
+    expect(
+      fixture.calls.filter((call) => call.method === "CreateVm").at(-1)?.request,
+    ).toMatchObject({ config: { network: { proxies: [{ name: "sandbar-3000", port: 3000 }] } } });
+    expect(fixture.machines.get(box.id)?.botProtection).toBe(false);
+    expect(await box.preview(3000)).toMatchObject({
+      access: "public",
+      url: expect.stringContaining("https://sandbar-3000."),
+    });
+    await box.destroy();
+  } finally {
+    await defaults.close();
+  }
+
+  const protectedClient = await Sandbar.connect({
+    adapter,
+    config: { org: "main", networkPolicy: "internet", preview: { access: "protected" } },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  try {
+    const box = await protectedClient.sandboxes.create();
+    expect(fixture.machines.get(box.id)?.botProtection).toBe(true);
     const before = fixture.calls.length;
     await expect(box.preview(3000)).rejects.toMatchObject({ code: "UNSUPPORTED" });
     expect(fixture.calls).toHaveLength(before);
     await box.destroy();
   } finally {
-    await defaults.close();
+    await protectedClient.close();
   }
 
   const client = await Sandbar.connect({

@@ -44,7 +44,7 @@ const Configuration = z
     image: z.string().min(1).max(1024).optional(),
     preview: z
       .strictObject({
-        access: z.enum(["protected", "public"]).default("protected"),
+        access: z.enum(["protected", "public"]).default("public"),
         ports: z
           .array(z.number().int().min(1).max(65535))
           .min(1)
@@ -52,9 +52,9 @@ const Configuration = z
           .refine((ports) => new Set(ports).size === ports.length, "Preview ports must be unique")
           .default([3000]),
       })
-      .default({ access: "protected", ports: [3000] }),
+      .default({ access: "public", ports: [3000] }),
     size: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(8)]).optional(),
-    lifetimeSeconds: z.number().int().min(60).max(3600).default(900),
+    lifetimeSeconds: z.number().int().min(60).safe().default(900),
     volumes: z
       .strictObject({
         sizeBytes: z
@@ -731,7 +731,10 @@ export function createBoxdAdapter(
         },
         async preview(input, ctx) {
           if (config.preview.access !== "public")
-            throw new AdapterError("UNSUPPORTED", "boxd supports explicitly public previews only");
+            throw new AdapterError(
+              "UNSUPPORTED",
+              "boxd preview.access protected keeps browser protection on and exposes no preview routes; use preview.access public, the default",
+            );
 
           if (!config.preview.ports.includes(input.port))
             throw new AdapterError(
@@ -1192,7 +1195,7 @@ export function createBoxdAdapter(
         async renewCapabilities() {
           return {
             status: "supported",
-            value: { minSeconds: 60, maxSeconds: 3600, stepSeconds: 1, scope: "sandbox" },
+            value: { minSeconds: 60, stepSeconds: 1, scope: "sandbox" },
           };
         },
         renew: {
@@ -1200,10 +1203,10 @@ export function createBoxdAdapter(
             await requireMachine(input.sandbox, ctx);
             const forSeconds = input.forSeconds ?? config.lifetimeSeconds;
 
-            if (forSeconds < 60 || forSeconds > 3600)
+            if (forSeconds < 60)
               throw new AdapterError(
                 "INVALID_ARGUMENT",
-                "boxd expiry window must be 60–3600 seconds",
+                "boxd expiry window must be at least 60 seconds",
               );
 
             return { ...input, forSeconds };

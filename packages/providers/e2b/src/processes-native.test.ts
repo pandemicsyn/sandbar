@@ -203,7 +203,7 @@ async function fixture(
       async verifyAuth() {},
       async verifyTeam() {},
     })),
-    config: { teamId: "team_one" },
+    config: { teamId: "team_one", preview: { access: "protected" } },
     credentials: { apiKey: "fixture" },
   });
 

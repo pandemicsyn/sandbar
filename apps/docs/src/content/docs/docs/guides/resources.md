@@ -76,7 +76,7 @@ Inspection reports state, provider state, observation time, expiry, idle-stop po
 
 ### Renew lifetime
 
-On E2B and Daytona, set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and the default `renew()` window. Supply this option instead of E2B's `timeoutSeconds` or Daytona's `ttlMinutes`, not alongside it.
+Every adapter defaults to a 900-second (15-minute) initial lifetime. On E2B and Daytona, set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and the default `renew()` window. Supply this option instead of E2B's `timeoutSeconds` or Daytona's `ttlMinutes`, not alongside it.
 
 While the sandbox is running:
 
@@ -88,14 +88,14 @@ await box.renew({ forSeconds: 61 }); // Requests a different window.
 
 Renewal sets a new expiry window from when the provider processes the request. It does **not** add time to the old deadline, and can shorten a longer lifetime.
 
-| Adapter                                                         | Renewal window                                                                                 |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| [E2B](/docs/providers/e2b/#configured-lifetime-renewal)         | Positive integer seconds, raised to at least 60 seconds; maximum 3,600 seconds.                |
-| [Daytona](/docs/providers/daytona/#configured-lifetime-renewal) | Positive integer seconds, rounded up to whole minutes: 61 becomes 120. Maximum 86,400 seconds. |
+| Adapter                                                         | Renewal window                                                                                                      |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| [E2B](/docs/providers/e2b/#configured-lifetime-renewal)         | Positive integer seconds, raised to at least 60 seconds; maximum 86,400 seconds (Pro); E2B enforces Hobby's 1 hour. |
+| [Daytona](/docs/providers/daytona/#configured-lifetime-renewal) | Positive integer seconds, rounded up to whole minutes: 61 becomes 120. No adapter maximum.                          |
 
 Provider account limits can be tighter. `renewed.requested.forSeconds` reports the resolved setting. `acknowledged: true` means the provider accepted the request, even if the follow-up read failed and `observation` is `null`. If the acknowledgement is lost, recover the operation instead of automatically renewing again.
 
-The experimental [boxd adapter](/docs/providers/boxd/) also supports renewal and uses its own `lifetimeSeconds` configuration. [Vercel Sandbox](/docs/providers/vercel/) does not support renewal. See the [renewal example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-renew.ts) for saving and reopening a sandbox before renewal.
+The experimental [boxd adapter](/docs/providers/boxd/) also supports renewal and uses its own `lifetimeSeconds` configuration. [Vercel Sandbox](/docs/providers/vercel/#lifetime-cleanup-and-reopening) renewal instead **adds** 1–86,400 seconds per request to the running session; Vercel caps total session time by plan. See the [renewal example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-renew.ts) for saving and reopening a sandbox before renewal.
 
 ### Suspend and resume
 

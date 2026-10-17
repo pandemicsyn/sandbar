@@ -272,7 +272,13 @@ test("Daytona transfer transport streams 32 MiB with incremental multipart input
     { preconnect: fetch.preconnect },
   );
 
-  const { driver, scope } = await daytonaProvider({ apiKey: "fixture", target: "us", fetch: impl });
+  const { driver, scope } = await daytonaProvider({
+    apiKey: "fixture",
+    target: "us",
+    networkPolicy: "blocked",
+    fetch: impl,
+  });
+
   const sandbox = { kind: "sandbox" as const, nativeId: "box", scope };
 
   const written = await driver.writeFileStream({
@@ -396,7 +402,7 @@ test("Daytona public SDK preserves definitive filesystem rejections and artifact
 
     client = await Sandbar.connect({
       adapter: createDaytonaAdapter(transport),
-      config: { target: "us" },
+      config: { target: "us", networkPolicy: "blocked" },
       credentials: { apiKey: "fixture" },
     });
 
@@ -578,6 +584,7 @@ test("Daytona interrupted and malformed helpers retain possible copy effects and
     const { driver, scope } = await daytonaProvider({
       apiKey: "fixture",
       target: "us",
+      networkPolicy: "blocked",
       fetch: transport,
     });
 
