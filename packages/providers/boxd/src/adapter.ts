@@ -28,6 +28,7 @@ import {
   MAX_BYTES,
   createNativeClient,
   definitiveRejection,
+  createRejection,
   nativeError,
   type BoxdNativeClient,
   type CallContext,
@@ -445,12 +446,16 @@ export function createBoxdAdapter(
             } catch (error) {
               if (error instanceof AdapterCheckpointError) throw error;
 
-              return acknowledged
-                ? ctx.unknown(
-                    "boxd machine exists; creation metadata could not be verified",
-                    partialCreate(acknowledged, ctx),
-                  )
-                : rejection(ctx, error);
+              if (acknowledged)
+                return ctx.unknown(
+                  "boxd machine exists; creation metadata could not be verified",
+                  partialCreate(acknowledged, ctx),
+                );
+              const rejected = createRejection(error, [credentials.apiKey]);
+
+              return rejected
+                ? ctx.reject(rejected.code, rejected.message)
+                : ctx.unknown("boxd create response was not confirmed; do not replay");
             }
 
             if (!Id.safeParse(machine.id).success)

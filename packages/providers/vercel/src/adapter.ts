@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   AdapterError,
   AdapterFilesystemError,
+  type AdapterErrorCode,
   type FileTransferContext,
   type Mutation,
   type CreateInput,
@@ -26,7 +27,12 @@ import {
   type ReadContext,
   type ProcessObservationFailure,
 } from "@sandbar-sdk/adapter";
-import { boundedBody, VercelClient, type VercelTransport } from "./transport";
+import {
+  boundedBody,
+  VercelClient,
+  VercelRequestRejected,
+  type VercelTransport,
+} from "./transport";
 import { startVercelProcess, reopenVercelProcess } from "./process-native";
 import { filesystemHelper, filesystemValue, directorySchema, fileStat } from "./filesystem";
 import { captureHelper, captureSpec, decodeReceipt } from "./capture";
@@ -162,6 +168,18 @@ const execToken = z.strictObject({
 type NativeRetention = { keepLastSnapshots?: { count: number; deleteEvicted: boolean } };
 
 const maxBytes = 1048576;
+
+// Statuses Vercel returns before it accepts a sandbox. A 409 can mean an earlier
+// attempt already owns the persistent name, so it stays uncertain.
+const createRejections = new Map<number, AdapterErrorCode>([
+  [400, "INVALID_ARGUMENT"],
+  [401, "UNAUTHENTICATED"],
+  [402, "CAPACITY"],
+  [403, "FORBIDDEN"],
+  [404, "NOT_FOUND"],
+  [422, "INVALID_ARGUMENT"],
+  [429, "RATE_LIMIT"],
+]);
 
 function state(
   status: z.infer<typeof sessionSchema>["status"],
@@ -830,12 +848,24 @@ export function createVercelAdapter(
               tags: { ...input.labels, sandbarSubmission: ctx.submissionId },
             };
 
-            const acknowledgement = await client.json(
-              "/v3/sandboxes",
-              signal,
-              z.object({ session: z.object({ id }).passthrough() }).passthrough(),
-              requestBody,
-            );
+            let acknowledgement;
+
+            try {
+              acknowledgement = await client.json(
+                "/v3/sandboxes",
+                signal,
+                z.object({ session: z.object({ id }).passthrough() }).passthrough(),
+                requestBody,
+              );
+            } catch (error) {
+              if (!(error instanceof VercelRequestRejected)) throw error;
+              const message = `Vercel rejected sandbox creation (HTTP ${error.status})${error.detail ? `: ${error.detail}` : ""}`;
+              const code = createRejections.get(error.status);
+
+              return code
+                ? ctx.reject(code, message)
+                : ctx.unknown(`${message}; observe without replay`);
+            }
 
             const acknowledgedToken: z.infer<typeof createToken> = {
               version: 1,

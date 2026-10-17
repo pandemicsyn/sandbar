@@ -80,6 +80,8 @@ Save `box.reference` in trusted application storage, then pass it to `freshClien
 
 If a mutation response is lost, the adapter preserves known IDs and uncertainty. Recovery reads the original operation's evidence; it never repeats create, input delivery, snapshot, restore or delete. A confirmed command exit remains available even if reading its output later fails. Unverified or interrupted input stages and capture receipts can remain until sandbox teardown.
 
+When Vercel refuses a create outright, `create()` rejects with a matching error code and Vercel's own reason: HTTP 400 and 422 map to `INVALID_ARGUMENT`, 401 to `UNAUTHENTICATED`, 402 to `CAPACITY`, 403 to `FORBIDDEN`, 404 to `NOT_FOUND` and 429 to `RATE_LIMIT`. Nothing was created, so you can fix the cause and create again. A 409, a server error or a lost response stays `OUTCOME_UNKNOWN`.
+
 ## Save files and resume later
 
 Set `persistent: true` in adapter configuration before creating the sandbox. Use `await box.suspend()` to stop compute and save its filesystem. Later, call `await box.resume()` to start a fresh VM with those files. The saved sandbox reference stays the same; `inspect().execution` identifies the current VM session.

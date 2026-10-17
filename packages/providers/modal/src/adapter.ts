@@ -2,7 +2,12 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { AdapterError, defineAdapter } from "@sandbar-sdk/adapter";
-import { createSdkTransport, MODAL_ENDPOINT, type ModalTransport } from "./transport";
+import {
+  createSdkTransport,
+  MODAL_ENDPOINT,
+  ModalCreateRejected,
+  type ModalTransport,
+} from "./transport";
 
 const MAX_BYTES = 1_048_576;
 
@@ -194,7 +199,12 @@ export function createModalAdapter(
                 return ctx.unknown("Modal create identity could not be correlated");
 
               return { id, state: record.running ? ("running" as const) : ("unknown" as const) };
-            } catch {
+            } catch (error) {
+              if (error instanceof ModalCreateRejected)
+                return error.imageBuilt
+                  ? ctx.unknown(`${error.message}; the built image remains; observe without replay`)
+                  : ctx.reject(error.code, error.message);
+
               return ctx.unknown("Modal create response unavailable; observe without replay");
             }
           },

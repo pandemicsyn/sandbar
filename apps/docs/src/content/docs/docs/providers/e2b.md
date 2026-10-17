@@ -62,6 +62,8 @@ Prepared templates and explicit OCI builds are implemented. Builds can retain a 
 
 Destroy each sandbox explicitly, then close the client. Native timeout is a fallback, not a cleanup confirmation. The [support matrix](/docs/providers/support/) distinguishes live baseline coverage from image-build and network tests.
 
+When E2B refuses a create outright, `create()` rejects with a matching error code and E2B's own reason: HTTP 400 maps to `INVALID_ARGUMENT`, 401 to `UNAUTHENTICATED`, 403 to `FORBIDDEN`, 404 to `NOT_FOUND` and 429 (including the concurrent sandbox limit) to `RATE_LIMIT`. Nothing was created, so you can fix the cause and create again. Server errors and lost responses stay `OUTCOME_UNKNOWN`, and so does a refusal after an OCI template was built for the create, because that template remains.
+
 ## Everyday filesystem and transfers
 
 `readDirectory`, strict `listFiles`, `statFile`, `fileExists`, mkdir/remove, copy/move and byte streams share the [portable file API](/docs/guides/files-and-output/). Complete enumeration, link identity and race-safe nonrecursive removal use a bounded adapter-owned Python 3 subprocess. Paths travel as exact arguments; no human-formatted listing is parsed and no dependencies are installed. The image must supply Python 3 and Linux; no-clobber rename additionally needs Linux libc `renameat2`. Intermediate links follow the guest namespace, while final links remain entries. Directory observations do not stat each child through a remote request.
