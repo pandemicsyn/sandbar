@@ -1,5 +1,28 @@
 # @sandbar-sdk/daytona
 
+## 0.3.0
+
+### Minor Changes
+
+- [#107](https://github.com/pandemicsyn/sandbar/pull/107) [`86f460d`](https://github.com/pandemicsyn/sandbar/commit/86f460d7e2f8968ee2fc39b37f21dac1f4252e7f) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Disable Daytona's native 15-minute idle auto-stop by default so sandboxes keep running, including quiet background processes, until their configured lifetime ends. Add `lifecycle.idleSeconds` to opt into idle stopping; seconds round up to whole minutes and `inspect()` reports the resulting idle-stop policy.
+
+- [#109](https://github.com/pandemicsyn/sandbar/pull/109) [`321ae0c`](https://github.com/pandemicsyn/sandbar/commit/321ae0c97a0d35568d3e109f32d9bc60e01fed3f) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Use the same network names on every adapter. Configure `network: "blocked" | "internet"` in adapter setup and, where needed, `create({ network })` or `restore({ network })`. Vercel accepts `blocked` and `internet` in place of `vercel-deny-all` and `vercel-allow-all`. Daytona adds `internet`, which requires an organization without limited sandbox egress and never falls back to the tier-dependent `daytona-default`. The `networkPolicy` option and Vercel's native names keep working and are deprecated. Adapters can declare `networkPolicyAliases` so the SDK resolves deprecated names before support checks.
+
+- [#110](https://github.com/pandemicsyn/sandbar/pull/110) [`ce1084f`](https://github.com/pandemicsyn/sandbar/commit/ce1084fed499651b9763af4ba9152e11bac10e5c) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Make every adapter's defaults work on first use, and match lifetime limits to each provider.
+
+  - Daytona now defaults to `network: "daytona-default"`, which every account tier can create. Strict `blocked` egress stays available when you select it. Connections that relied on the old implicit `blocked` default must set `network: "blocked"` to reopen sandboxes created that way.
+  - E2B and boxd now default to `preview.access: "public"`, matching each provider's native default, so `box.preview(port)` works without extra setup. Select `preview.access: "protected"` to keep sandboxes closed to inbound traffic.
+  - Vercel now defaults to the `vercel/sandbox/universal:latest` image, so processes and terminals work without extra setup. Set `image: "vercel/sandbox/node:24"` to keep using sandboxes and snapshots created with the previous default.
+  - Every adapter now defaults to a 15-minute sandbox lifetime. Daytona previously defaulted to 60 minutes; E2B and Vercel previously defaulted to 5 minutes.
+  - Lifetime and renewal limits now match the providers. E2B and Vercel accept up to 24 hours, their longest plan limit; each provider still enforces lower plan limits. Daytona and boxd no longer impose a maximum, because neither provider documents one.
+  - Renewal capabilities omit `maxSeconds` when the provider has no maximum.
+
+### Patch Changes
+
+- [#108](https://github.com/pandemicsyn/sandbar/pull/108) [`a69d232`](https://github.com/pandemicsyn/sandbar/commit/a69d23232cf7afa7b6ae3ba24b8c0f4bc6580648) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - When a provider refuses to create a sandbox (quota, permission, invalid request, rate limit), `create()` now rejects with a matching error code such as `FORBIDDEN` or `CAPACITY` and includes the provider's own reason, instead of reporting an unknown outcome. Server errors, lost responses and refusals after an image was already built still report an unknown outcome.
+- Updated dependencies [[`321ae0c`](https://github.com/pandemicsyn/sandbar/commit/321ae0c97a0d35568d3e109f32d9bc60e01fed3f), [`ce1084f`](https://github.com/pandemicsyn/sandbar/commit/ce1084fed499651b9763af4ba9152e11bac10e5c)]:
+  - @sandbar-sdk/adapter@0.3.0
+
 ## 0.2.0
 
 ### Patch Changes
