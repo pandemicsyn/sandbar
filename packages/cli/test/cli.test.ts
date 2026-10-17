@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Json } from "@sandbar-sdk/adapter";
@@ -539,5 +539,74 @@ describe("sandbar CLI against the fake provider", () => {
 
     expect(await installed({})).toBe(false);
     expect(await installed({ SANDBAR_PROJECT_ADAPTERS: "1" })).toBe(true);
+  });
+
+  describe("password-manager credentials", () => {
+    const secretId = "0b8c4a9e-6f1d-4e2a-9c3b-5d7e8f9a0b1c";
+
+    // Stand-ins for each manager's CLI: they print the secret only for the expected reference.
+    const tools = {
+      op: `[ "$1 $2 $3" = "read --no-newline op://dev/fake/token" ] && printf %s "$FAKE_SECRET" && exit 0`,
+      bws: `[ "$1 $2 $3" = "secret get ${secretId}" ] && printf '{"id":"%s","value":"%s"}' "$3" "$FAKE_SECRET" && exit 0`,
+      pass: `[ "$1 $2" = "show dev/fake" ] && printf '%s\\nuser: ci\\n' "$FAKE_SECRET" && exit 0`,
+    };
+
+    async function installTools() {
+      const bin = join(dir, "bin");
+      await mkdir(bin);
+
+      for (const [name, body] of Object.entries(tools)) {
+        const path = join(bin, name);
+        await writeFile(path, `#!/bin/sh\n${body}\necho "no such item" >&2\nexit 1\n`);
+        await chmod(path, 0o755);
+      }
+
+      return { PATH: `${bin}:${process.env.PATH ?? ""}`, FAKE_SECRET: token };
+    }
+
+    async function useToken(reference: string) {
+      await writeConfig({
+        default: "guarded",
+        profiles: {
+          guarded: { module: fixture, export: "guarded", credentials: { token: reference } },
+        },
+      });
+    }
+
+    for (const reference of ["op://dev/fake/token", `bws://${secretId}`, "pass://dev/fake"])
+      test(`${reference.split(":")[0]} references are read when the profile connects`, async () => {
+        const env = await installTools();
+        await useToken(reference);
+
+        const result = await cli(["create", "--name", "web", "--prepared", "fake-starter"], env);
+
+        expect(result).toMatchObject({ code: 0, stdout: "web\n" });
+        expect(await readFile(join(dir, "state", "sandboxes", "web.json"), "utf8")).not.toContain(
+          token,
+        );
+      });
+
+    test("an unreadable reference is an auth error that names the reference", async () => {
+      const env = await installTools();
+      await useToken("op://dev/missing/token");
+
+      const result = await cli(["create", "--prepared", "fake-starter", "--json"], env);
+
+      expect(result.code).toBe(5);
+      expect(envelope(result).error).toMatchObject({ code: "SECRET_UNAVAILABLE" });
+      expect(envelope(result).error.message).toContain("op://dev/missing/token");
+      expect(envelope(result).error.message).toContain("no such item");
+      expect(await storeNames()).toEqual([]);
+    });
+
+    test("a missing manager CLI says what to install", async () => {
+      await useToken("pass://dev/fake");
+
+      const result = await cli(["create", "--prepared", "fake-starter", "--json"]);
+
+      expect(result.code).toBe(4);
+      expect(envelope(result).error).toMatchObject({ code: "SECRET_TOOL_MISSING" });
+      expect(envelope(result).error.hint).toContain("passwordstore.org");
+    });
   });
 });

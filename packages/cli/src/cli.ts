@@ -280,9 +280,12 @@ export const exitCodes = [
   {
     code: 4,
     meaning:
-      "unsupported by this provider or profile, adapter not installed, or store limit reached",
+      "unsupported by this provider or profile, adapter or password-manager CLI not installed, or store limit reached",
   },
-  { code: 5, meaning: "authentication or permission failure" },
+  {
+    code: 5,
+    meaning: "authentication or permission failure, or an unreadable password-manager secret",
+  },
   { code: 6, meaning: "outcome unknown: an effect may have happened, inspect before retrying" },
   { code: 7, meaning: "retryable: rate limit, capacity or unavailable before any effect" },
   { code: 8, meaning: "partial: some steps were confirmed; read error.known" },

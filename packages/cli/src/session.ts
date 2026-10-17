@@ -2,6 +2,7 @@ import type { SandbarClient, SandboxHandle } from "sandbar-sdk";
 import { loadConfig, maxSandboxes, stateDir, type Env, type LoadedConfig } from "./config";
 import { CliError, type Output } from "./output";
 import { connect, descriptor, resolveProfile, type ResolvedProfile } from "./providers";
+import { SecretReader } from "./secrets";
 import { FsStateStore, type SandboxRecord, type StateStore } from "./store";
 
 export type GlobalFlags = {
@@ -25,8 +26,11 @@ export type Context = {
 export class Session {
   private loaded?: LoadedConfig;
   private opened: SandbarClient<true>[] = [];
+  private readonly secrets: SecretReader;
 
-  constructor(readonly ctx: Context) {}
+  constructor(readonly ctx: Context) {
+    this.secrets = new SecretReader(ctx.env, ctx.signal);
+  }
 
   async config(): Promise<LoadedConfig> {
     this.loaded ??= await loadConfig(this.ctx.flags.config, this.ctx.env);
@@ -66,7 +70,7 @@ export class Session {
   }
 
   async connect(profile: ResolvedProfile): Promise<SandbarClient<true>> {
-    const client = await connect(profile, this.ctx.cwd, this.ctx.env);
+    const client = await connect(profile, this.ctx.cwd, this.ctx.env, this.secrets);
     this.opened.push(client);
 
     return client;

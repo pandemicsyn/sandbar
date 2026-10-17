@@ -19,6 +19,7 @@ import {
   type ProfileConfig,
 } from "./config";
 import { CliError, usage } from "./output";
+import type { SecretReader } from "./secrets";
 
 /**
  * How the CLI builds an official adapter from environment variables alone.
@@ -345,6 +346,7 @@ export async function loadAdapter(
   profile: ResolvedProfile,
   cwd: string,
   env: Env,
+  secrets: SecretReader,
 ): Promise<BoundAdapter> {
   const target = await resolveAdapterModule(profile, cwd, env);
   const schema = z.object({ [profile.export]: AdapterExport });
@@ -375,13 +377,22 @@ export async function loadAdapter(
 
   if ("bound" in exported) return exported;
 
-  return bindAdapter(exported, profile.config, profile.credentials);
+  // Password-manager references are read only now, when the profile is actually used.
+  const where = `profile ${profile.name}`;
+  const config = await secrets.resolve(profile.config, `${where}.config`);
+
+  const credentials = z
+    .record(z.string(), z.string())
+    .parse(await secrets.resolve(profile.credentials, `${where}.credentials`));
+
+  return bindAdapter(exported, config, credentials);
 }
 
 export async function connect(
   profile: ResolvedProfile,
   cwd: string,
   env: Env,
+  secrets: SecretReader,
 ): Promise<SandbarClient<true>> {
-  return Sandbar.connect(await loadAdapter(profile, cwd, env));
+  return Sandbar.connect(await loadAdapter(profile, cwd, env, secrets));
 }

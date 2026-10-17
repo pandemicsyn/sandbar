@@ -47,8 +47,8 @@ With `--json` (or `SANDBAR_JSON=1`) stdout holds exactly one document: `{"ok":tr
 | 1 | other failure (including a taken `--name` or an existing `cp --no-clobber` target) |
 | 2 | usage error |
 | 3 | not found |
-| 4 | unsupported, adapter not installed, or `limits.maxSandboxes` reached |
-| 5 | authentication or permission |
+| 4 | unsupported, adapter or password-manager CLI not installed, or `limits.maxSandboxes` reached |
+| 5 | authentication or permission, including a password-manager secret that cannot be read |
 | 6 | outcome unknown: an effect may have happened, inspect before retrying |
 | 7 | retryable before any effect (rate limit, capacity, unavailable) |
 | 8 | partial: some steps confirmed, see `error.known` |
@@ -75,8 +75,24 @@ SIGINT, SIGTERM and SIGHUP all stop local waiting and let `run` clean up; a seco
 
 - Profile selection: `--profile`, `SANDBAR_PROFILE`, `--provider`, `SANDBAR_PROVIDER`, then `default`.
 - `provider` names an official adapter (`@sandbar-sdk/<provider>`); `config` and `credentials` are that adapter's own settings. `module` and `export` load any adapter, either a definition or a bound adapter.
-- Credentials can be written in the profile directly, or as `env:NAME` references so the file holds no secrets. Keep the file private (`chmod 600`) if it holds keys. Env-only providers read `DAYTONA_API_KEY` and `DAYTONA_TARGET`; `E2B_API_KEY`; `BOXD_API_KEY` and `BOXD_ORG`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`; `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `MODAL_APP_NAME` and `MODAL_ENVIRONMENT`.
+- Credentials can be written in the profile directly, as `env:NAME` references, or as password-manager references (below). Keep the file private (`chmod 600`) if it holds keys. Env-only providers read `DAYTONA_API_KEY` and `DAYTONA_TARGET`; `E2B_API_KEY`; `BOXD_API_KEY` and `BOXD_ORG`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`; `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `MODAL_APP_NAME` and `MODAL_ENVIRONMENT`.
 - `limits.maxSandboxes` (or `SANDBAR_MAX_SANDBOXES`) caps how many sandboxes the store may hold. Unset means uncapped.
+
+## Password managers
+
+Any `config` or `credentials` value (including one that comes from a provider's environment variable) can name a secret in a password manager. The CLI reads it with the manager's own command-line tool, using that tool's sign-in, only when the profile connects. It never writes the value anywhere.
+
+| Reference | Read with | Sign-in |
+| --- | --- | --- |
+| `op://vault/item/field` | `op read` (1Password CLI) | desktop app integration, `op signin` or `OP_SERVICE_ACCOUNT_TOKEN` |
+| `bws://<secret-id>` | `bws secret get` (Bitwarden Secrets Manager CLI) | `BWS_ACCESS_TOKEN` |
+| `pass://path/to/entry` | `pass show` (first line of the entry) | your GPG agent |
+
+```json
+{ "profiles": { "e2b": { "provider": "e2b", "credentials": { "apiKey": "op://Dev/E2B/credential" } } } }
+```
+
+If the tool is not installed the command exits 4 (`SECRET_TOOL_MISSING`); if it cannot read the secret it exits 5 (`SECRET_UNAVAILABLE`) with the tool's own message. Each reference is read at most once per command.
 
 ## State store
 
@@ -84,7 +100,7 @@ Sandbox references are kept as one JSON file per sandbox in `~/.config/sandbar/s
 
 ## Not yet
 
-Planned for later steps: `--lifetime`/`--idle`/`--port` create flags, recursive `cp`, detached processes and logs, preview URLs, suspend/resume/renew, `gc`, image builds and records, snapshots and volumes, `sandbar adapter add`, an S3-compatible store, 1Password references (`op://vault/item/field`) for credentials and MCP mode. `--image` is passed to the adapter as an OCI image; providers that need a build first reject it before creating anything.
+Planned for later steps: `--lifetime`/`--idle`/`--port` create flags, recursive `cp`, detached processes and logs, preview URLs, suspend/resume/renew, `gc`, image builds and records, snapshots and volumes, `sandbar adapter add`, an S3-compatible store, KeePassXC and system-keyring references, and MCP mode. `--image` is passed to the adapter as an OCI image; providers that need a build first reject it before creating anything.
 
 ## Development
 

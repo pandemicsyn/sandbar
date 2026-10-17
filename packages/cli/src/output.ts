@@ -122,6 +122,8 @@ const managementExitCodes = new Map([
   ["UNSUPPORTED", 4],
   ["ADAPTER_NOT_INSTALLED", 4],
   ["LIMIT_REACHED", 4],
+  ["SECRET_TOOL_MISSING", 4],
+  ["SECRET_UNAVAILABLE", 5],
   ["UNAUTHENTICATED", 5],
   ["FORBIDDEN", 5],
 ]);
