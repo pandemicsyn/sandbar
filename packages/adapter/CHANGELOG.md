@@ -1,5 +1,20 @@
 # @sandbar-sdk/adapter
 
+## 0.3.0
+
+### Minor Changes
+
+- [#109](https://github.com/pandemicsyn/sandbar/pull/109) [`321ae0c`](https://github.com/pandemicsyn/sandbar/commit/321ae0c97a0d35568d3e109f32d9bc60e01fed3f) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Use the same network names on every adapter. Configure `network: "blocked" | "internet"` in adapter setup and, where needed, `create({ network })` or `restore({ network })`. Vercel accepts `blocked` and `internet` in place of `vercel-deny-all` and `vercel-allow-all`. Daytona adds `internet`, which requires an organization without limited sandbox egress and never falls back to the tier-dependent `daytona-default`. The `networkPolicy` option and Vercel's native names keep working and are deprecated. Adapters can declare `networkPolicyAliases` so the SDK resolves deprecated names before support checks.
+
+- [#110](https://github.com/pandemicsyn/sandbar/pull/110) [`ce1084f`](https://github.com/pandemicsyn/sandbar/commit/ce1084fed499651b9763af4ba9152e11bac10e5c) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Make every adapter's defaults work on first use, and match lifetime limits to each provider.
+
+  - Daytona now defaults to `network: "daytona-default"`, which every account tier can create. Strict `blocked` egress stays available when you select it. Connections that relied on the old implicit `blocked` default must set `network: "blocked"` to reopen sandboxes created that way.
+  - E2B and boxd now default to `preview.access: "public"`, matching each provider's native default, so `box.preview(port)` works without extra setup. Select `preview.access: "protected"` to keep sandboxes closed to inbound traffic.
+  - Vercel now defaults to the `vercel/sandbox/universal:latest` image, so processes and terminals work without extra setup. Set `image: "vercel/sandbox/node:24"` to keep using sandboxes and snapshots created with the previous default.
+  - Every adapter now defaults to a 15-minute sandbox lifetime. Daytona previously defaulted to 60 minutes; E2B and Vercel previously defaulted to 5 minutes.
+  - Lifetime and renewal limits now match the providers. E2B and Vercel accept up to 24 hours, their longest plan limit; each provider still enforces lower plan limits. Daytona and boxd no longer impose a maximum, because neither provider documents one.
+  - Renewal capabilities omit `maxSeconds` when the provider has no maximum.
+
 ## 0.2.0
 
 No changes in this release.

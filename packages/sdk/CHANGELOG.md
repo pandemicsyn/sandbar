@@ -1,5 +1,17 @@
 # sandbar-sdk
 
+## 0.3.0
+
+### Minor Changes
+
+- [#109](https://github.com/pandemicsyn/sandbar/pull/109) [`321ae0c`](https://github.com/pandemicsyn/sandbar/commit/321ae0c97a0d35568d3e109f32d9bc60e01fed3f) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Use the same network names on every adapter. Configure `network: "blocked" | "internet"` in adapter setup and, where needed, `create({ network })` or `restore({ network })`. Vercel accepts `blocked` and `internet` in place of `vercel-deny-all` and `vercel-allow-all`. Daytona adds `internet`, which requires an organization without limited sandbox egress and never falls back to the tier-dependent `daytona-default`. The `networkPolicy` option and Vercel's native names keep working and are deprecated. Adapters can declare `networkPolicyAliases` so the SDK resolves deprecated names before support checks.
+
+### Patch Changes
+
+- [#109](https://github.com/pandemicsyn/sandbar/pull/109) [`d384d6f`](https://github.com/pandemicsyn/sandbar/commit/d384d6f670bd4eec9bfc5d7cde6a9ea36221decc) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Streamed process text counts UTF-8 bytes without allocating per character, so large outputs no longer stall on CPU and garbage collection.
+- Updated dependencies [[`321ae0c`](https://github.com/pandemicsyn/sandbar/commit/321ae0c97a0d35568d3e109f32d9bc60e01fed3f), [`ce1084f`](https://github.com/pandemicsyn/sandbar/commit/ce1084fed499651b9763af4ba9152e11bac10e5c)]:
+  - @sandbar-sdk/adapter@0.3.0
+
 ## 0.2.0
 
 ### Patch Changes
