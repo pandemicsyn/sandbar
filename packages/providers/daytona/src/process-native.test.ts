@@ -251,7 +251,7 @@ test("Daytona bounds final output drain when a descendant retains a pipe", async
           argv: [
             "python3",
             "-c",
-            "import os,time; pid=os.fork(); time.sleep(2) if pid==0 else None; os._exit(0)",
+            "import os,time; pid=os.fork(); time.sleep(5) if pid==0 else None; os._exit(0)",
           ],
         },
       },
