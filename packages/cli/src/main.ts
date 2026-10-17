@@ -5,12 +5,19 @@ const controller = new AbortController();
 
 let interrupted = false;
 
-// The first interrupt cancels local waits so run can still clean up; a second one exits now.
-process.on("SIGINT", () => {
-  if (interrupted) process.exit(130);
-  interrupted = true;
-  controller.abort(new Error("Interrupted"));
-});
+// The first signal cancels local waits so run can still clean up; a second one exits now.
+// Harness timeouts usually send SIGTERM (or SIGHUP when the terminal goes away), not SIGINT.
+const signalExitCodes = { SIGINT: 130, SIGHUP: 129, SIGTERM: 143 } as const;
+
+let exitCode = 130;
+
+for (const [name, code] of Object.entries(signalExitCodes))
+  process.on(name, () => {
+    if (interrupted) process.exit(code);
+    interrupted = true;
+    exitCode = code;
+    controller.abort(new Error(`Interrupted by ${name}`));
+  });
 
 async function readStdin(): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
@@ -31,4 +38,4 @@ const code = await main(process.argv.slice(2), {
   },
 });
 
-process.exitCode = interrupted && code === 0 ? 130 : code;
+process.exitCode = interrupted && code === 0 ? exitCode : code;

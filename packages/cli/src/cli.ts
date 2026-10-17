@@ -39,7 +39,7 @@ type CommandSpec = {
   flags: Readonly<Record<string, FlagSpec>>;
   /** Accepts a command after `--`. */
   passthrough: boolean;
-  /** exec-style commands pass the remote exit code through and use 124-127 for CLI failures. */
+  /** exec-style commands pass the remote exit code through and use 125 for CLI failures. */
   remoteExit: boolean;
   examples: readonly string[];
   run: (session: Session, flags: Flags) => Promise<number>;
@@ -195,11 +195,11 @@ export const commands: readonly CommandSpec[] = [
   {
     name: "sh",
     summary: "Run a shell script in a sandbox; exits with its exit code",
-    usage: "sandbar sh <sandbox> '<script>'",
+    usage: "sandbar sh <sandbox> '<script>' | sandbar sh <sandbox> -- '<script>'",
     flags: execFlags,
-    passthrough: false,
+    passthrough: true,
     remoteExit: true,
-    examples: ["sandbar sh web 'cd /work && make test'"],
+    examples: ["sandbar sh web 'cd /work && make test'", "sandbar sh web -- '-n is fine here'"],
     run: shCommand,
   },
   {
@@ -286,7 +286,6 @@ export const exitCodes = [
   { code: 6, meaning: "outcome unknown: an effect may have happened, inspect before retrying" },
   { code: 7, meaning: "retryable: rate limit, capacity or unavailable before any effect" },
   { code: 8, meaning: "partial: some steps were confirmed; read error.known" },
-  { code: 124, meaning: "exec/run: the command hit its deadline" },
   { code: 125, meaning: "exec/run: the CLI or provider failed; details in the error" },
 ];
 
@@ -297,7 +296,7 @@ function schema() {
     commands: commands.map(({ run: _run, ...spec }) => spec),
     exitCodes,
     output: {
-      json: "With --json, stdout holds exactly one document: {ok:true,data} or {ok:false,error:{code,message,retryable,outcome,hint?,known?}}",
+      json: "With --json, stdout holds exactly one document: {ok:true,data} or {ok:false,error:{code,message,retryable,outcome,hint?,known?,details?}}",
       exec: "exec, sh and run exit with the remote command's exit code; their JSON data is {exitCode,stdout,stderr,truncated}",
     },
   };
@@ -423,7 +422,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       );
     }
 
-    if (rest && !command.passthrough && command.name !== "sh")
+    if (rest && !command.passthrough)
       throw usage(`${command.name} does not take a command after --`);
     const options = { ...globalFlags, ...command.flags };
     let parsed: ReturnType<typeof parseArgs>;
@@ -480,6 +479,6 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     const report = describeError(cause);
     out.failure(report);
 
-    return command?.remoteExit ? commandExitCode(report) : managementExitCode(report);
+    return command?.remoteExit ? commandExitCode() : managementExitCode(report);
   }
 }

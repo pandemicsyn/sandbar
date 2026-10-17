@@ -16,7 +16,7 @@ sandbar rm web
 sandbar run -- python3 -c 'print(2 + 2)'   # create, run, always destroy
 ```
 
-The adapter package must be installed where the CLI can find it: in the current project (`npm install @sandbar-sdk/e2b`), or in `~/.config/sandbar/adapters` (`cd ~/.config/sandbar/adapters && npm install @sandbar-sdk/e2b`). `sandbar providers` shows what is installed and which credentials are set.
+The adapter package must be installed where the CLI can find it: in `~/.config/sandbar/adapters` (`cd ~/.config/sandbar/adapters && npm install @sandbar-sdk/e2b`) or next to the CLI itself. Adapters receive your credentials, so the current project's `node_modules` is searched only when you opt in with `"adapters": { "searchProject": true }` or `SANDBAR_PROJECT_ADAPTERS=1`. `sandbar providers` shows what is installed and which credentials are set.
 
 ## Commands
 
@@ -25,9 +25,9 @@ The adapter package must be installed where the CLI can find it: in the current 
 | `create [--name] [--image <oci-ref> \| --prepared <id>] [--network] [--label k=v] [--if-not-exists]` | Create a sandbox, print its name |
 | `ls [--offline]` | List store records with live state (`running`, `gone`, `unreachable`, ...) |
 | `inspect <sandbox>` | State, expiry and reference |
-| `rm <sandbox>... \| --all [--force]` | Destroy and forget; only sandboxes this CLI created unless `--force` |
+| `rm <sandbox>... \| --all [--force]` | Destroy and forget; only sandboxes this CLI created unless `--force`. `--all` skips the others and reports them |
 | `exec <sandbox> [--cwd] [--env K=V] [--stdin \| --stdin-file] [--timeout] [--max-output] -- cmd...` | Run argv; exit code passes through |
-| `sh <sandbox> '<script>'` | Run a shell script; same flags as exec |
+| `sh <sandbox> '<script>'` (or `-- '<script>'`) | Run a shell script; same flags as exec |
 | `run [create and exec flags] [--keep] -- cmd...` | Create, run one command, destroy |
 | `cp <src> <dst>` | Copy one file; one side is `<sandbox>:/path` |
 | `cat <sandbox>:/path` | Print a file |
@@ -39,12 +39,12 @@ A `<sandbox>` is a store name, a native id held in the store, or `@file.json` ho
 
 ## Output and exit codes
 
-With `--json` (or `SANDBAR_JSON=1`) stdout holds exactly one document: `{"ok":true,"data":...}` or `{"ok":false,"error":{"code","message","retryable","outcome","hint?","known?"}}`. Diagnostics go to stderr.
+With `--json` (or `SANDBAR_JSON=1`) stdout holds exactly one document: `{"ok":true,"data":...}` or `{"ok":false,"error":{"code","message","retryable","outcome","hint?","known?","details?"}}`. Diagnostics go to stderr. When `rm` stops partway, `error.details` lists what was `removed`, `skipped` and `failed`.
 
 | Code | Meaning |
 | --- | --- |
 | 0 | success |
-| 1 | other failure (including a taken `--name`) |
+| 1 | other failure (including a taken `--name` or an existing `cp --no-clobber` target) |
 | 2 | usage error |
 | 3 | not found |
 | 4 | unsupported, adapter not installed, or `limits.maxSandboxes` reached |
@@ -53,7 +53,9 @@ With `--json` (or `SANDBAR_JSON=1`) stdout holds exactly one document: `{"ok":tr
 | 7 | retryable before any effect (rate limit, capacity, unavailable) |
 | 8 | partial: some steps confirmed, see `error.known` |
 
-`exec`, `sh` and `run` exit with the remote command's exit code. Their own failures use 125 (124 for a deadline), so they never look like a command's result. A missing exit status is 125 with `OUTCOME_UNKNOWN`, never 0.
+`exec`, `sh` and `run` exit with the remote command's exit code. Their own failures always use 125, so they never look like a command's result; providers report deadlines differently, so there is no separate deadline code. A missing exit status is 125 with `OUTCOME_UNKNOWN` and the captured output in `error.known.exec`, never 0. If `run` cannot destroy its sandbox it exits 125 with `CLEANUP_FAILED`, and the command's result is inside that one error document.
+
+SIGINT, SIGTERM and SIGHUP all stop local waiting and let `run` clean up; a second signal exits at once.
 
 ## Configuration
 
@@ -78,7 +80,7 @@ With `--json` (or `SANDBAR_JSON=1`) stdout holds exactly one document: `{"ok":tr
 
 ## State store
 
-Sandbox references are kept as one JSON file per sandbox in `~/.config/sandbar/state/sandboxes/<name>.json` (override with `--state-dir`, `SANDBAR_STATE_DIR` or `state.dir`). Records hold references only, never credentials. A name is claimed before the provider call, so a crash or uncertain create leaves a record that `ls` shows and `rm --force` can drop. The store sits behind a small per-record interface (create-if-absent, compare-and-swap update, paged list) so object storage can back it later.
+Sandbox references are kept as one JSON file per sandbox in `~/.config/sandbar/state/sandboxes/<name>.json` (override with `--state-dir` or `SANDBAR_STATE_DIR`, relative to the working directory, or `state.dir`, relative to the config file). Records hold references only, never credentials. A name is claimed before the provider call, so a crash or uncertain create leaves a record that `ls` shows and `rm --force` can drop. Records are written whole (a temporary file linked or renamed into place) and updates take a short per-record lock, so concurrent CLI processes on one machine never see half-written files; `ls` skips an unreadable record with a warning. The `maxSandboxes` check is best effort under concurrent creates. The store sits behind a small per-record interface (create-if-absent, compare-and-swap update, paged list) so object storage can back it later.
 
 ## Not yet
 

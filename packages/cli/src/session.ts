@@ -35,7 +35,9 @@ export class Session {
   }
 
   async store(): Promise<StateStore> {
-    return new FsStateStore(stateDir(this.ctx.flags.stateDir, await this.config(), this.ctx.env));
+    const { flags, env, cwd } = this.ctx;
+
+    return new FsStateStore(stateDir(flags.stateDir, await this.config(), env, cwd));
   }
 
   async limit(): Promise<number | null> {

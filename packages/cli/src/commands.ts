@@ -12,7 +12,16 @@ import {
   type SandboxHandle,
 } from "sandbar-sdk";
 import { z } from "zod";
-import { CliError, describeError, usage } from "./output";
+import { searchProjectAdapters } from "./config";
+import {
+  CliError,
+  describeError,
+  usage,
+  type BatchDetails,
+  type BatchItem,
+  type ExecSummary,
+  type Output,
+} from "./output";
 import { missingEnv, providers, resolveAdapterModule, type ResolvedProfile } from "./providers";
 import type { Session } from "./session";
 import {
@@ -95,14 +104,16 @@ type Created = {
   client: SandbarClient<true>;
   box: SandboxHandle<true>;
   record: SandboxRecord;
-  version: string;
   existing: boolean;
+  /** Set when the sandbox exists but its store record could not be written. */
+  unrecorded?: Error;
 };
 
 async function claimName(
   store: StateStore,
   record: Omit<SandboxRecord, "name">,
   requested?: string,
+  ifNotExists = false,
 ): Promise<Versioned> {
   for (let attempt = 0; ; attempt++) {
     const name = requested ? checkName(requested) : generatedName();
@@ -119,7 +130,9 @@ async function claimName(
         throw new CliError(
           "CONFLICT",
           cause.message,
-          "pass --if-not-exists to reuse it, or choose another --name",
+          ifNotExists
+            ? "its record is not a confirmed sandbox (still creating, or outcome unknown); check `sandbar inspect`, or drop it with `sandbar rm --force`"
+            : "pass --if-not-exists to reuse it, or choose another --name",
         );
     }
   }
@@ -174,6 +187,7 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
       reference: null,
     },
     request.name,
+    request.ifNotExists,
   );
 
   let client: SandbarClient<true>;
@@ -211,33 +225,56 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
       throw cause;
     }
 
-    await store.update(
-      "sandbox",
-      claimed.record.name,
-      { ...claimed.record, status: "unknown", reference: report.known?.reference ?? null },
-      claimed.version,
-    );
+    const reference = report.known?.reference ?? null;
+    let kept = `the store keeps ${claimed.record.name} so it can be inspected or removed`;
+
+    try {
+      await store.update(
+        "sandbox",
+        claimed.record.name,
+        { ...claimed.record, status: "unknown", reference },
+        claimed.version,
+      );
+    } catch (storeCause) {
+      kept = `the store could not record it (${describeError(storeCause).message}); keep the reference below`;
+    }
 
     throw new CliError(
-      report.code === "PARTIAL" ? "PARTIAL" : "OUTCOME_UNKNOWN",
+      report.outcome === "partial" ? "PARTIAL" : "OUTCOME_UNKNOWN",
       report.message,
-      `the store keeps ${claimed.record.name} so it can be inspected or removed`,
-      {
-        sandbox: claimed.record.name,
-        reference: report.known?.reference ?? null,
-      },
+      kept,
+      { sandbox: claimed.record.name, reference },
+      report.outcome,
     );
   }
 
   const record: SandboxRecord = { ...claimed.record, status: "created", reference: box.reference };
-  const { version } = await store.update("sandbox", record.name, record, claimed.version);
 
   if (!box.reference)
     session.ctx.out.note(
       `warning: ${profile.provider} returned no reopenable reference; later commands cannot reach ${record.name}`,
     );
 
-  return { client, box, record, version, existing: false };
+  try {
+    await store.update("sandbox", record.name, record, claimed.version);
+  } catch (cause) {
+    const unrecorded = cause instanceof Error ? cause : new Error(String(cause));
+
+    return { client, box, record, existing: false, unrecorded };
+  }
+
+  return { client, box, record, existing: false };
+}
+
+/** The sandbox exists but the store does not know it: report it, never hide it. */
+function unrecordedError(created: Created): CliError {
+  return new CliError(
+    "STORE_WRITE_FAILED",
+    `Created ${created.record.name} but could not record it in the store: ${created.unrecorded?.message}`,
+    "save the reference below to a file and use `sandbar rm @<file>` to destroy it",
+    { sandbox: created.record.name, reference: created.record.reference },
+    "partial",
+  );
 }
 
 function sandboxSummary(record: SandboxRecord) {
@@ -303,6 +340,8 @@ async function findTarget(session: Session, target: string): Promise<Versioned> 
 export async function createCommand(session: Session, flags: Flags): Promise<number> {
   const created = await createSandbox(session, createRequest(flags));
 
+  if (created.unrecorded) throw unrecordedError(created);
+
   session.ctx.out.success(
     {
       ...sandboxSummary(created.record),
@@ -337,7 +376,10 @@ async function stateOf(
 }
 
 export async function lsCommand(session: Session, flags: Flags): Promise<number> {
-  const entries = await listAll(await session.store(), "sandbox");
+  const entries = await listAll(await session.store(), "sandbox", (warning) =>
+    session.ctx.out.note(warning),
+  );
+
   const offline = flags.bool("offline");
   const clients = new Map<string, SandbarClient<true> | null>();
 
@@ -416,73 +458,164 @@ export async function inspectCommand(session: Session, flags: Flags): Promise<nu
   return 0;
 }
 
+type RemoveResult =
+  | { kind: "removed"; item: BatchItem & { retainedResources: string[] } }
+  | { kind: "skipped"; item: BatchItem };
+
+/** Why a record may not be destroyed without --force, or null when it may. */
+function refusal(record: SandboxRecord): CliError | null {
+  if (!record.reference)
+    return new CliError(
+      "UNSUPPORTED",
+      `${record.name} has no reopenable reference (status ${record.status}); it cannot be destroyed from here`,
+      "check the provider for it, then `sandbar rm --force` to drop the record",
+      { sandbox: record.name },
+    );
+
+  if (record.reference.ownership !== "verified-created")
+    return new CliError(
+      "FORBIDDEN",
+      `${record.name} was not created by this CLI (ownership ${record.reference.ownership})`,
+      "pass --force to destroy it anyway",
+      { sandbox: record.name },
+    );
+
+  return null;
+}
+
+async function removeOne(
+  session: Session,
+  store: StateStore,
+  record: SandboxRecord,
+  force: boolean,
+  all: boolean,
+): Promise<RemoveResult> {
+  const stored = record.name !== "from-file";
+  const refused = refusal(record);
+
+  if (refused && !force) {
+    // --all only touches what this CLI owns; a named sandbox that cannot be removed is an error.
+    if (all)
+      return {
+        kind: "skipped",
+        item: { name: record.name, result: "skipped", reason: refused.message },
+      };
+    throw refused;
+  }
+
+  // The provider effect is confirmed before the record is dropped, so drop it unconditionally:
+  // a concurrent edit to a record whose sandbox is already destroyed must not report failure.
+  const forget = async () => {
+    if (stored) await store.remove("sandbox", record.name);
+  };
+
+  if (!record.reference) {
+    await forget();
+
+    return {
+      kind: "removed",
+      item: { name: record.name, result: "forgotten", retainedResources: [] },
+    };
+  }
+
+  let box: SandboxHandle<true>;
+
+  try {
+    box = await session.reopen(record);
+  } catch (cause) {
+    if (!(cause instanceof SandbarError) || cause.code !== "NOT_FOUND") throw cause;
+    await forget();
+
+    return { kind: "removed", item: { name: record.name, result: "gone", retainedResources: [] } };
+  }
+
+  const destroyed = await box.destroy({ signal: session.ctx.signal });
+  await forget();
+
+  return {
+    kind: "removed",
+    item: {
+      name: record.name,
+      result: "destroyed",
+      retainedResources: destroyed.retainedResources,
+    },
+  };
+}
+
 export async function rmCommand(session: Session, flags: Flags): Promise<number> {
   const store = await session.store();
   const all = flags.bool("all");
   const force = flags.bool("force");
+  const { out } = session.ctx;
 
   if (all === Boolean(flags.positionals.length))
     throw usage("Name sandboxes to remove, or pass --all");
 
-  const targets = all
-    ? await listAll(store, "sandbox")
-    : await Promise.all(flags.positionals.map((target) => findTarget(session, target)));
+  const targets: { name: string; find: () => Promise<Versioned> }[] = all
+    ? (await listAll(store, "sandbox", (warning) => out.note(warning))).map((entry) => ({
+        name: entry.record.name,
+        find: async () => entry,
+      }))
+    : flags.positionals.map((target) => ({
+        name: target,
+        find: () => findTarget(session, target),
+      }));
 
-  const removed: {
-    name: string;
-    result: "destroyed" | "gone" | "forgotten";
-    retainedResources: string[];
-  }[] = [];
+  const details: BatchDetails & { removed: (BatchItem & { retainedResources: string[] })[] } = {
+    removed: [],
+    skipped: [],
+    failed: [],
+  };
 
-  for (const { record, version } of targets) {
-    if (!record.reference) {
-      if (!force)
-        throw new CliError(
-          "UNSUPPORTED",
-          `${record.name} has no reopenable reference (status ${record.status}); it cannot be destroyed from here`,
-          "check the provider for it, then `sandbar rm --force` to drop the record",
-          { sandbox: record.name },
-        );
-      await store.remove("sandbox", record.name, version);
-      removed.push({ name: record.name, result: "forgotten", retainedResources: [] });
-      continue;
-    }
+  let lastCause: unknown;
 
-    if (record.reference.ownership !== "verified-created" && !force)
-      throw new CliError(
-        "FORBIDDEN",
-        `${record.name} was not created by this CLI (ownership ${record.reference.ownership})`,
-        "pass --force to destroy it anyway",
-        { sandbox: record.name },
-      );
-
-    let box: SandboxHandle<true>;
-
+  // Keep going after a failure so every confirmed effect is reported.
+  for (const target of targets) {
     try {
-      box = await session.reopen(record);
+      const { record } = await target.find();
+      const result = await removeOne(session, store, record, force, all);
+
+      if (result.kind === "skipped") {
+        details.skipped.push(result.item);
+        continue;
+      }
+
+      details.removed.push(result.item);
+
+      if (result.item.result === "gone") out.note(`${result.item.name}: already gone`);
+
+      if (result.item.retainedResources.length)
+        out.note(`${result.item.name}: retained ${result.item.retainedResources.join(", ")}`);
     } catch (cause) {
-      if (!(cause instanceof SandbarError) || cause.code !== "NOT_FOUND") throw cause;
-
-      if (record.name !== "from-file") await store.remove("sandbox", record.name, version);
-      removed.push({ name: record.name, result: "gone", retainedResources: [] });
-      session.ctx.out.note(`${record.name}: already gone`);
-      continue;
+      const report = describeError(cause);
+      lastCause = cause;
+      details.failed.push({
+        name: target.name,
+        result: "failed",
+        code: report.code,
+        reason: report.message,
+      });
     }
-
-    const destroyed = await box.destroy({ signal: session.ctx.signal });
-
-    if (record.name !== "from-file") await store.remove("sandbox", record.name, version);
-    removed.push({
-      name: record.name,
-      result: "destroyed",
-      retainedResources: destroyed.retainedResources,
-    });
-
-    if (destroyed.retainedResources.length)
-      session.ctx.out.note(`${record.name}: retained ${destroyed.retainedResources.join(", ")}`);
   }
 
-  session.ctx.out.success({ removed }, removed.map((entry) => entry.name).join("\n"));
+  if (details.failed.length === 1 && targets.length === 1) throw lastCause;
+
+  if (details.failed.length)
+    throw new CliError(
+      "PARTIAL",
+      `Removed ${details.removed.length} of ${targets.length} sandboxes; ${details.failed.length} failed`,
+      "see error.details; retry the failed names once the cause is fixed",
+      undefined,
+      "partial",
+      details,
+    );
+
+  for (const item of details.skipped) out.note(`skipped ${item.name}: ${item.reason}`);
+
+  out.success(
+    { removed: details.removed, skipped: details.skipped },
+    details.removed.map((entry) => entry.name).join("\n"),
+  );
 
   return 0;
 }
@@ -523,46 +656,54 @@ function argvCommand(flags: Flags): ExecInput["command"] {
   return { kind: "argv", argv: [...flags.rest] };
 }
 
-async function runExec(
+async function execute(
   session: Session,
   box: SandboxHandle<true>,
   input: ExecInput,
-): Promise<number> {
-  let result: ExecOutput;
-
+): Promise<ExecOutput> {
   try {
-    result = await box.exec(input, { signal: session.ctx.signal });
+    return await box.exec(input, { signal: session.ctx.signal });
   } catch (cause) {
     if (!(cause instanceof NonzeroExitError)) throw cause;
-    result = cause.result;
-  }
 
-  const { out } = session.ctx;
+    return cause.result;
+  }
+}
+
+function execSummary(result: ExecOutput): ExecSummary {
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdoutText({ full: true }),
+    stderr: result.stderrText({ full: true }),
+    truncated: result.truncated,
+  };
+}
+
+/** Human mode streams the command's own output; JSON mode carries it in the one envelope. */
+function printStreams(out: Output, result: ExecOutput): void {
+  if (out.json) return;
+
+  if (result.stdout.byteLength) out.streams.stdout(result.stdout);
+
+  if (result.stderr.byteLength) out.streams.stderr(result.stderr);
+
+  if (result.truncated)
+    out.note("sandbar: output was truncated; raise --max-output to capture more");
+}
+
+/** Print a finished command and return its exit code; a missing exit status is never success. */
+function finishExec(out: Output, result: ExecOutput): number {
+  printStreams(out, result);
 
   if (result.exitCode === null)
     throw new CliError(
       "OUTCOME_UNKNOWN",
       "The command ran but the provider reported no exit status",
+      "the captured output is in error.known.exec",
+      { exec: execSummary(result) },
     );
 
-  if (out.json)
-    out.success(
-      {
-        exitCode: result.exitCode,
-        stdout: result.stdoutText({ full: true }),
-        stderr: result.stderrText({ full: true }),
-        truncated: result.truncated,
-      },
-      "",
-    );
-  else {
-    if (result.stdout.byteLength) out.streams.stdout(result.stdout);
-
-    if (result.stderr.byteLength) out.streams.stderr(result.stderr);
-
-    if (result.truncated)
-      out.note("sandbar: output was truncated; raise --max-output to capture more");
-  }
+  if (out.json) out.success(execSummary(result), "");
 
   return result.exitCode;
 }
@@ -570,17 +711,33 @@ async function runExec(
 export async function execCommand(session: Session, flags: Flags): Promise<number> {
   const { record } = await findTarget(session, onePositional(flags, "sandbox"));
   const input = await execInput(session, flags, argvCommand(flags));
+  const box = await session.reopen(record);
 
-  return runExec(session, await session.reopen(record), input);
+  return finishExec(session.ctx.out, await execute(session, box, input));
+}
+
+type ShScript = { target: string; script: string };
+
+function shScript(flags: Flags): ShScript {
+  const [target, inline] = flags.positionals;
+
+  if (flags.rest && flags.positionals.length === 1 && flags.rest.length === 1)
+    return { target: target!, script: flags.rest[0]! };
+
+  if (!flags.rest && flags.positionals.length === 2) return { target: target!, script: inline! };
+
+  throw usage(
+    "Usage: sandbar sh <sandbox> '<script>' (or put the script after --, as one argument)",
+  );
 }
 
 export async function shCommand(session: Session, flags: Flags): Promise<number> {
-  if (flags.positionals.length !== 2 || flags.rest)
-    throw usage("Usage: sandbar sh <sandbox> '<script>'");
-  const { record } = await findTarget(session, flags.positionals[0]!);
-  const input = await execInput(session, flags, { kind: "shell", script: flags.positionals[1]! });
+  const { target, script } = shScript(flags);
+  const { record } = await findTarget(session, target);
+  const input = await execInput(session, flags, { kind: "shell", script });
+  const box = await session.reopen(record);
 
-  return runExec(session, await session.reopen(record), input);
+  return finishExec(session.ctx.out, await execute(session, box, input));
 }
 
 export async function runCommand(session: Session, flags: Flags): Promise<number> {
@@ -592,39 +749,62 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
   const keep = flags.bool("keep");
   const created = await createSandbox(session, { ...request, ifNotExists: false });
   const store = await session.store();
-  let exitCode: number;
+  const { out } = session.ctx;
+  let result: ExecOutput | undefined;
+  let failure: unknown;
 
-  try {
-    exitCode = await runExec(session, created.box, input);
-  } finally {
-    if (keep) session.ctx.out.note(`kept sandbox ${created.record.name}`);
-    else {
-      // A fresh signal: cleanup must still run after an interrupt aborted the command.
-      try {
-        await created.box.destroy();
-        await store.remove("sandbox", created.record.name, created.version);
-      } catch (cause) {
-        const report = describeError(cause);
-
-        session.ctx.out.note(
-          `sandbar: cleanup of ${created.record.name} failed (${report.code}: ${report.message}); remove it with \`sandbar rm ${created.record.name}\``,
-        );
-
-        // oxlint-disable-next-line no-unsafe-finally -- A failed cleanup must replace the command's result.
-        throw new CliError(
-          "CLEANUP_FAILED",
-          `Cleanup of ${created.record.name} failed: ${report.message}`,
-          undefined,
-          {
-            sandbox: created.record.name,
-            reference: created.record.reference,
-          },
-        );
-      }
+  // An unrecorded sandbox still runs nothing and is still destroyed below.
+  if (created.unrecorded) failure = unrecordedError(created);
+  else
+    try {
+      result = await execute(session, created.box, input);
+    } catch (cause) {
+      failure = cause;
     }
+
+  if (keep) {
+    out.note(`kept sandbox ${created.record.name}`);
+
+    if (failure) throw failure;
+
+    return finishExec(out, result!);
   }
 
-  return exitCode;
+  try {
+    // A fresh signal: cleanup must still run after an interrupt aborted the command.
+    await created.box.destroy();
+    await store.remove("sandbox", created.record.name);
+  } catch (cause) {
+    const report = describeError(cause);
+
+    if (result) printStreams(out, result);
+
+    // One document: the command's result travels inside the cleanup error.
+    throw new CliError(
+      "CLEANUP_FAILED",
+      `Cleanup of ${created.record.name} failed: ${report.message}${
+        failure ? `; the command also failed: ${describeError(failure).message}` : ""
+      }`,
+      `remove it with \`sandbar rm ${created.record.name}\``,
+      {
+        sandbox: created.record.name,
+        reference: created.record.reference,
+        exec: result ? execSummary(result) : undefined,
+      },
+      "partial",
+    );
+  }
+
+  if (failure) {
+    if (failure instanceof CliError && failure.code === "STORE_WRITE_FAILED")
+      throw new CliError(
+        "STORE_WRITE_FAILED",
+        `${failure.message}; the sandbox was destroyed, so nothing was run`,
+      );
+    throw failure;
+  }
+
+  return finishExec(out, result!);
 }
 
 const RemotePath = /^([a-z0-9][a-z0-9-]{0,62}):(\/.*)$/;
@@ -675,7 +855,18 @@ export async function cpCommand(session: Session, flags: Flags): Promise<number>
     // A missing destination is the file to create.
   }
 
-  await writeFile(local, bytes);
+  try {
+    await writeFile(local, bytes, { flag: flags.bool("no-clobber") ? "wx" : "w" });
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "EEXIST")
+      throw new CliError(
+        "CONFLICT",
+        `${local} already exists`,
+        "drop --no-clobber to overwrite it",
+      );
+    throw cause;
+  }
+
   session.ctx.out.success({ sandbox: record.name, path: local, bytes: bytes.byteLength }, "");
 
   return 0;
@@ -759,6 +950,7 @@ export async function doctorCommand(session: Session): Promise<number> {
 
 export async function providersCommand(session: Session): Promise<number> {
   const { env, cwd } = session.ctx;
+  const loaded = await session.config();
 
   const rows = await Promise.all(
     providers.map(async (provider) => {
@@ -769,6 +961,7 @@ export async function providersCommand(session: Session): Promise<number> {
           module: provider.module,
           export: provider.export,
           baseDir: cwd,
+          searchProject: searchProjectAdapters(loaded, env),
           config: {},
           credentials: {},
         },

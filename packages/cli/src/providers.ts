@@ -1,5 +1,5 @@
 import { access, readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   bindAdapter,
@@ -13,6 +13,7 @@ import { z } from "zod";
 import {
   configHome,
   resolveEnvReferences,
+  searchProjectAdapters,
   type Env,
   type LoadedConfig,
   type ProfileConfig,
@@ -103,6 +104,8 @@ export type ResolvedProfile = {
   export: string;
   /** Directory a relative module path resolves against. */
   baseDir: string;
+  /** Whether the project's node_modules may supply the adapter (config adapters.searchProject). */
+  searchProject: boolean;
   config: Record<string, Json>;
   credentials: Record<string, string>;
 };
@@ -220,6 +223,7 @@ function fromProfile(
     module: profile.module ?? official?.module ?? "",
     export: profile.export ?? official?.export ?? "default",
     baseDir: loaded.dir,
+    searchProject: searchProjectAdapters(loaded, env),
     config,
     credentials,
   };
@@ -276,12 +280,25 @@ async function entryFor(packageDir: string): Promise<string | null> {
   if (!(await exists(manifestPath))) return null;
   const manifest = PackageManifest.safeParse(JSON.parse(await readFile(manifestPath, "utf8")));
 
-  return manifest.success ? join(packageDir, rootEntry(manifest.data)) : null;
+  if (!manifest.success) return null;
+  const entry = resolve(packageDir, rootEntry(manifest.data));
+  const inside = relative(packageDir, entry);
+
+  if (!inside || inside.startsWith("..") || isAbsolute(inside))
+    throw new CliError(
+      "ADAPTER_NOT_INSTALLED",
+      `${manifestPath} points its entry outside the package (${rootEntry(manifest.data)})`,
+    );
+
+  return entry;
 }
 
+const PackageName = /^(@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+
 /**
- * Adapters are installed separately. Search the project (walking up from the working
- * directory), then `~/.config/sandbar/adapters`, then the CLI's own module resolution.
+ * Adapters are installed separately and receive credentials, so they come from
+ * `~/.config/sandbar/adapters` or the CLI's own module resolution. The working directory's
+ * node_modules (walking up) is searched only when adapters.searchProject opts in.
  */
 export async function resolveAdapterModule(
   profile: ResolvedProfile,
@@ -293,15 +310,17 @@ export async function resolveAdapterModule(
   if (spec.startsWith(".") || isAbsolute(spec))
     return pathToFileURL(resolve(profile.baseDir, spec)).href;
 
-  const roots: string[] = [];
+  if (!PackageName.test(spec))
+    throw usage(`Adapter module ${spec} is not a package name or a path`);
 
-  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
-    roots.push(join(dir, "node_modules"));
+  const roots = [join(configHome(env), "adapters", "node_modules")];
 
-    if (dirname(dir) === dir) break;
-  }
+  if (profile.searchProject)
+    for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+      roots.push(join(dir, "node_modules"));
 
-  roots.push(join(configHome(env), "adapters", "node_modules"));
+      if (dirname(dir) === dir) break;
+    }
 
   for (const root of roots) {
     const entry = await entryFor(join(root, spec));
@@ -340,7 +359,7 @@ export async function loadAdapter(
       "ADAPTER_NOT_INSTALLED",
       `Cannot load adapter ${profile.module} for profile ${profile.name}: ${cause instanceof Error ? cause.message : cause}`,
       official
-        ? `install it in this project (npm install ${official.module}) or into ${join(configHome(env), "adapters")} (cd there && npm install ${official.module})`
+        ? `install it into ${join(configHome(env), "adapters")} (cd there && npm install ${official.module}); project installs need adapters.searchProject or SANDBAR_PROJECT_ADAPTERS=1`
         : "check the profile's module path",
     );
   }

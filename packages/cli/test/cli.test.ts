@@ -63,12 +63,14 @@ async function fakeResources(): Promise<FakeResource[]> {
   return (await response.json()).resources;
 }
 
-async function seedExec(argv: string[], exitCode: number, stdout: string, stderr = "") {
+async function seedExec(command: string[] | string, exitCode: number, stdout: string, stderr = "") {
   await control("/_test/seed", {
     submissionId: "*",
     action: "exec",
     command: {
-      command: { kind: "argv", argv },
+      command: Array.isArray(command)
+        ? { kind: "argv", argv: command }
+        : { kind: "shell", script: command },
       exitCode,
       stdoutBase64: Buffer.from(stdout).toString("base64"),
       stderrBase64: Buffer.from(stderr).toString("base64"),
@@ -425,5 +427,117 @@ describe("sandbar CLI against the fake provider", () => {
     const result = await cli(["ls"], { SANDBAR_JSON: "1" });
 
     expect(envelope(result)).toEqual({ ok: true, data: { sandboxes: [] } });
+  });
+
+  test("sh takes the script after -- so it may start with a dash", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await seedExec("-n is fine", 0, "ok\n");
+
+    expect(await cli(["sh", "box", "--", "-n is fine"])).toMatchObject({ code: 0, stdout: "ok\n" });
+    expect((await cli(["sh", "box", "--", "a", "b"])).code).toBe(125);
+  });
+
+  test("rm --all skips records it cannot destroy and reports them", async () => {
+    await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
+    await control("/_test/seed", {
+      submissionId: "*",
+      action: "create",
+      behavior: "ambiguous_before_effect",
+    });
+    await cli(["create", "--name", "lost", "--prepared", "fake-starter"]);
+
+    const result = await cli(["rm", "--all", "--json"]);
+
+    expect(result.code).toBe(0);
+    expect(envelope(result).data).toMatchObject({
+      removed: [{ name: "web", result: "destroyed" }],
+      skipped: [{ name: "lost", result: "skipped" }],
+    });
+    expect(await storeNames()).toEqual(["lost.json"]);
+  });
+
+  test("rm keeps going after a failure and exits 8 with per-sandbox results", async () => {
+    await cli(["create", "--name", "a", "--prepared", "fake-starter"]);
+    await cli(["create", "--name", "b", "--prepared", "fake-starter"]);
+    await control("/_test/seed", { submissionId: "*", action: "destroy", behavior: "reject" });
+
+    const result = await cli(["rm", "a", "b", "--json"]);
+    const error = envelope(result).error;
+
+    expect(result.code).toBe(8);
+    expect(error).toMatchObject({ code: "PARTIAL", outcome: "partial" });
+    expect(error.details.removed.map((item: { name: string }) => item.name)).toEqual(["b"]);
+    expect(error.details.failed.map((item: { name: string }) => item.name)).toEqual(["a"]);
+    expect(await storeNames()).toEqual(["a.json"]);
+  });
+
+  test("a run whose cleanup fails prints one document with the command result", async () => {
+    await seedExec(["echo", "hi"], 0, "hi\n");
+    await control("/_test/seed", { submissionId: "*", action: "destroy", behavior: "reject" });
+
+    const result = await cli([
+      "run",
+      "--json",
+      "--name",
+      "job",
+      "--prepared",
+      "fake-starter",
+      "--",
+      "echo",
+      "hi",
+    ]);
+
+    expect(result.code).toBe(125);
+    expect(envelope(result).error).toMatchObject({
+      code: "CLEANUP_FAILED",
+      outcome: "partial",
+      known: { sandbox: "job", exec: { exitCode: 0, stdout: "hi\n" } },
+    });
+    expect(await storeNames()).toEqual(["job.json"]);
+  });
+
+  test("a relative SANDBAR_STATE_DIR is relative to the working directory", async () => {
+    await cli(["create", "--name", "web", "--prepared", "fake-starter"], {
+      SANDBAR_STATE_DIR: "./run1",
+    });
+
+    expect(await readdir(join(dir, "run1", "sandboxes"))).toEqual(["web.json"]);
+  });
+
+  test("ls warns about an unreadable record and lists the rest", async () => {
+    await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
+    await writeFile(join(dir, "state", "sandboxes", "broken.json"), "{");
+
+    const result = await cli(["ls", "--json"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain("broken.json");
+    expect(envelope(result).data.sandboxes.map((row: { name: string }) => row.name)).toEqual([
+      "web",
+    ]);
+  });
+
+  test("cp --no-clobber also protects local files", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await writeFile(join(dir, "in.txt"), "new\n");
+    await cli(["cp", "in.txt", "box:/work/in.txt"]);
+    await writeFile(join(dir, "out.txt"), "keep\n");
+
+    expect((await cli(["cp", "--no-clobber", "box:/work/in.txt", "out.txt"])).code).toBe(1);
+    expect(await readFile(join(dir, "out.txt"), "utf8")).toBe("keep\n");
+  });
+
+  test("project node_modules supply adapters only when opted in", async () => {
+    const scope = join(dir, "node_modules", "@sandbar-sdk");
+    await mkdir(scope, { recursive: true });
+    await symlink(join(import.meta.dir, "..", "..", "providers", "e2b"), join(scope, "e2b"));
+
+    const installed = async (env: Record<string, string>) =>
+      envelope(await cli(["providers", "--json"], env)).data.providers.find(
+        (row: { id: string }) => row.id === "e2b",
+      ).installed;
+
+    expect(await installed({})).toBe(false);
+    expect(await installed({ SANDBAR_PROJECT_ADAPTERS: "1" })).toBe(true);
   });
 });

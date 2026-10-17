@@ -7,17 +7,41 @@ export class CliError extends Error {
     message: string,
     readonly hint?: string,
     readonly known?: Known,
+    /** Whether an effect may already have happened; defaults to rejected (no effect). */
+    readonly outcome: Outcome = code === "OUTCOME_UNKNOWN" ? "unknown" : "rejected",
+    /** Per-item results for batch commands that stopped partway. */
+    readonly details?: BatchDetails,
   ) {
     super(message);
     this.name = "CliError";
   }
 }
 
+export type ExecSummary = {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+};
+
+export type BatchItem = { name: string; result: string; reason?: string };
+
+export type BatchDetails = {
+  removed: BatchItem[];
+  skipped: BatchItem[];
+  failed: (BatchItem & { code: string })[];
+};
+
 export function usage(message: string, hint?: string): CliError {
   return new CliError("USAGE", message, hint);
 }
 
-export type Known = { sandbox?: string; reference?: SandboxReference | null };
+export type Known = {
+  sandbox?: string;
+  reference?: SandboxReference | null;
+  /** The command's captured result when a later step (cleanup, exit status) failed. */
+  exec?: ExecSummary;
+};
 
 export type Outcome = "rejected" | "unknown" | "partial";
 
@@ -28,6 +52,7 @@ export type ErrorReport = {
   outcome: Outcome;
   hint?: string;
   known?: Known;
+  details?: BatchDetails;
 };
 
 const retryableCodes = new Set(["RATE_LIMIT", "CAPACITY", "UNAVAILABLE"]);
@@ -41,9 +66,10 @@ export function describeError(cause: unknown): ErrorReport {
       code: cause.code,
       message: cause.message,
       retryable: false,
-      outcome: cause.code === "OUTCOME_UNKNOWN" ? "unknown" : "rejected",
+      outcome: cause.outcome,
       hint: cause.hint,
       known: cause.known,
+      details: cause.details,
     };
 
   if (cause instanceof SandbarError) {
@@ -69,6 +95,17 @@ export function describeError(cause: unknown): ErrorReport {
     };
   }
 
+  // Local file errors (a missing --stdin-file, an unreadable cp source) happen before any effect.
+  const local = cause instanceof Error && "syscall" in cause && "code" in cause;
+
+  if (local)
+    return {
+      code: "LOCAL_IO",
+      message: cause.message,
+      retryable: false,
+      outcome: "rejected",
+    };
+
   return {
     code: "INTERNAL",
     message: cause instanceof Error ? cause.message : String(cause),
@@ -79,6 +116,7 @@ export function describeError(cause: unknown): ErrorReport {
 
 const managementExitCodes = new Map([
   ["USAGE", 2],
+  ["LOCAL_IO", 2],
   ["INVALID_ARGUMENT", 2],
   ["NOT_FOUND", 3],
   ["UNSUPPORTED", 4],
@@ -99,9 +137,12 @@ export function managementExitCode(report: ErrorReport): number {
   return managementExitCodes.get(report.code) ?? 1;
 }
 
-/** exec and run pass the remote exit code through, so CLI failures use the 124-127 range. */
-export function commandExitCode(report: ErrorReport): number {
-  return report.code === "TIMEOUT" ? 124 : 125;
+/**
+ * exec, sh and run pass the remote exit code through, so every CLI-side failure is 125.
+ * Native deadlines give no portable "the command was stopped" evidence, so there is no 124.
+ */
+export function commandExitCode(): 125 {
+  return 125;
 }
 
 export type Streams = {
@@ -139,6 +180,14 @@ export class Output {
 
     if (report.known?.reference)
       this.streams.stderr(`known sandbox reference: ${JSON.stringify(report.known.reference)}\n`);
+
+    for (const item of report.details?.removed ?? []) this.streams.stdout(`${item.name}\n`);
+
+    for (const item of report.details?.skipped ?? [])
+      this.streams.stderr(`skipped ${item.name}: ${item.reason ?? item.result}\n`);
+
+    for (const item of report.details?.failed ?? [])
+      this.streams.stderr(`failed ${item.name}: ${item.code} ${item.reason ?? ""}\n`);
   }
 
   /** Diagnostics never go to stdout, so stdout stays parseable. */

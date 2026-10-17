@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ResourceReference } from "sandbar-sdk";
 import { z } from "zod";
@@ -28,8 +28,8 @@ export type RecordKind = SandboxRecord["kind"];
 export type Versioned = { record: SandboxRecord; version: string };
 
 /**
- * Per-record operations only (no rename across records, no locks, no transactions), so an
- * object store with conditional writes can implement the same contract later.
+ * Per-record operations only (no operations across records, no transactions), so an object
+ * store with conditional writes can implement the same contract later.
  */
 export interface StateStore {
   get(kind: RecordKind, name: string): Promise<Versioned | null>;
@@ -62,7 +62,17 @@ function encode(record: SandboxRecord): string {
   return `${JSON.stringify(SandboxRecord.parse(record), null, 2)}\n`;
 }
 
-/** JSON files under `<dir>/<kind>s/<name>.json`. */
+/** A lock older than this belongs to a crashed process and may be broken. */
+const STALE_LOCK_MS = 30_000;
+
+const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+/**
+ * JSON files under `<dir>/<kind>es/<name>.json`. Readers never see partial files: create links a
+ * fully written temporary file into place (failing if the name exists) and update renames one.
+ * update and remove hold a short per-record lock file so their version check is a real
+ * compare-and-swap between CLI processes.
+ */
 export class FsStateStore implements StateStore {
   constructor(readonly dir: string) {}
 
@@ -72,6 +82,40 @@ export class FsStateStore implements StateStore {
 
   private path(kind: RecordKind, name: string): string {
     return join(this.folder(kind), `${RecordName.parse(name)}.json`);
+  }
+
+  private async temporary(kind: RecordKind, name: string, text: string): Promise<string> {
+    await mkdir(this.folder(kind), { recursive: true });
+    const path = `${this.path(kind, name)}.${randomBytes(6).toString("hex")}.tmp`;
+    await writeFile(path, text, { flag: "wx" });
+
+    return path;
+  }
+
+  private async locked<T>(kind: RecordKind, name: string, action: () => Promise<T>): Promise<T> {
+    const lock = `${this.path(kind, name)}.lock`;
+    await mkdir(this.folder(kind), { recursive: true });
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await writeFile(lock, String(process.pid), { flag: "wx" });
+        break;
+      } catch (cause) {
+        if (errorCode(cause) !== "EEXIST") throw cause;
+        const held = await stat(lock).catch(() => null);
+
+        if (held && Date.now() - held.mtimeMs > STALE_LOCK_MS) await unlink(lock).catch(() => {});
+        else if (attempt >= 100)
+          throw new CliError("CONFLICT", `Store record ${name} is locked by another process`);
+        else await sleep(20);
+      }
+    }
+
+    try {
+      return await action();
+    } finally {
+      await unlink(lock).catch(() => {});
+    }
   }
 
   async get(kind: RecordKind, name: string): Promise<Versioned | null> {
@@ -84,7 +128,18 @@ export class FsStateStore implements StateStore {
       throw cause;
     }
 
-    const parsed = SandboxRecord.safeParse(JSON.parse(text));
+    let json: z.infer<ReturnType<typeof z.json>>;
+
+    try {
+      json = z.json().parse(JSON.parse(text));
+    } catch {
+      throw new CliError(
+        "STORE_INVALID",
+        `Store record ${this.path(kind, name)} is not valid JSON`,
+      );
+    }
+
+    const parsed = SandboxRecord.safeParse(json);
 
     if (!parsed.success)
       throw new CliError("STORE_INVALID", `Store record ${this.path(kind, name)} is invalid`);
@@ -98,14 +153,16 @@ export class FsStateStore implements StateStore {
     record: SandboxRecord,
   ): Promise<{ version: string }> {
     const text = encode(record);
-    await mkdir(this.folder(kind), { recursive: true });
+    const temporary = await this.temporary(kind, name, text);
 
     try {
-      await writeFile(this.path(kind, name), text, { flag: "wx" });
+      await link(temporary, this.path(kind, name));
     } catch (cause) {
       if (errorCode(cause) === "EEXIST")
         throw new CliError("CONFLICT", `Name ${name} is already in use`);
       throw cause;
+    } finally {
+      await unlink(temporary).catch(() => {});
     }
 
     return { version: versionOf(text) };
@@ -117,31 +174,33 @@ export class FsStateStore implements StateStore {
     record: SandboxRecord,
     version: string,
   ): Promise<{ version: string }> {
-    const current = await this.get(kind, name);
+    return this.locked(kind, name, async () => {
+      const current = await this.get(kind, name);
 
-    if (!current || current.version !== version)
-      throw new CliError("CONFLICT", `Store record ${name} changed concurrently`);
-    const text = encode(record);
-    const temporary = `${this.path(kind, name)}.${randomBytes(6).toString("hex")}.tmp`;
-    await writeFile(temporary, text, { flag: "wx" });
-    await rename(temporary, this.path(kind, name));
+      if (!current || current.version !== version)
+        throw new CliError("CONFLICT", `Store record ${name} changed concurrently`);
+      const text = encode(record);
+      await rename(await this.temporary(kind, name, text), this.path(kind, name));
 
-    return { version: versionOf(text) };
+      return { version: versionOf(text) };
+    });
   }
 
   async remove(kind: RecordKind, name: string, version?: string): Promise<void> {
-    if (version !== undefined) {
-      const current = await this.get(kind, name);
+    await this.locked(kind, name, async () => {
+      if (version !== undefined) {
+        const current = await this.get(kind, name);
 
-      if (current && current.version !== version)
-        throw new CliError("CONFLICT", `Store record ${name} changed concurrently`);
-    }
+        if (current && current.version !== version)
+          throw new CliError("CONFLICT", `Store record ${name} changed concurrently`);
+      }
 
-    try {
-      await unlink(this.path(kind, name));
-    } catch (cause) {
-      if (errorCode(cause) !== "ENOENT") throw cause;
-    }
+      try {
+        await unlink(this.path(kind, name));
+      } catch (cause) {
+        if (errorCode(cause) !== "ENOENT") throw cause;
+      }
+    });
   }
 
   async list(
@@ -170,7 +229,12 @@ export class FsStateStore implements StateStore {
   }
 }
 
-export async function listAll(store: StateStore, kind: RecordKind): Promise<Versioned[]> {
+/** Every readable record; an unreadable one is reported to `onInvalid` and skipped. */
+export async function listAll(
+  store: StateStore,
+  kind: RecordKind,
+  onInvalid?: (message: string) => void,
+): Promise<Versioned[]> {
   const found: Versioned[] = [];
   let cursor: string | undefined;
 
@@ -178,9 +242,14 @@ export async function listAll(store: StateStore, kind: RecordKind): Promise<Vers
     const page = await store.list(kind, cursor);
 
     for (const name of page.names) {
-      const entry = await store.get(kind, name);
+      try {
+        const entry = await store.get(kind, name);
 
-      if (entry) found.push(entry);
+        if (entry) found.push(entry);
+      } catch (cause) {
+        if (!(cause instanceof CliError) || cause.code !== "STORE_INVALID") throw cause;
+        onInvalid?.(`warning: ${cause.message}; skipped`);
+      }
     }
 
     cursor = page.cursor;

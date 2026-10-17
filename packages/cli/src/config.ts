@@ -34,6 +34,8 @@ export const CliConfig = z.strictObject({
     .strictObject({ maxSandboxes: z.number().int().positive().nullable().optional() })
     .optional(),
   images: z.strictObject({ autoBuild: z.boolean().optional() }).optional(),
+  /** Also load adapters from the working directory's node_modules (off: a checkout could plant one). */
+  adapters: z.strictObject({ searchProject: z.boolean().optional() }).optional(),
 });
 
 export type CliConfig = z.infer<typeof CliConfig>;
@@ -90,10 +92,30 @@ export async function loadConfig(
   return { path, dir: dirname(path), exists: true, value: parsed.data };
 }
 
-export function stateDir(flag: string | undefined, config: LoadedConfig, env: Env): string {
-  const chosen = flag ?? env.SANDBAR_STATE_DIR ?? config.value.state?.dir;
+/** A flag or env path is relative to the working directory; `state.dir` to the config file. */
+export function stateDir(
+  flag: string | undefined,
+  config: LoadedConfig,
+  env: Env,
+  cwd: string,
+): string {
+  const given = flag ?? env.SANDBAR_STATE_DIR;
 
-  return resolve(config.dir, expandHome(chosen ?? join(configHome(env), "state"), env));
+  if (given) return resolve(cwd, expandHome(given, env));
+  const configured = config.value.state?.dir;
+
+  if (configured) return resolve(config.dir, expandHome(configured, env));
+
+  return join(configHome(env), "state");
+}
+
+/** Whether adapters may come from the project's node_modules; opt-in, since they receive credentials. */
+export function searchProjectAdapters(config: LoadedConfig, env: Env): boolean {
+  const fromEnv = env.SANDBAR_PROJECT_ADAPTERS;
+
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv === "1" || fromEnv === "true";
+
+  return config.value.adapters?.searchProject ?? false;
 }
 
 export function maxSandboxes(config: LoadedConfig, env: Env): number | null {
