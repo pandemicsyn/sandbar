@@ -52,7 +52,7 @@ function fixture(input: { create?: Response; build?: Response }) {
   const connect = () =>
     Sandbar.connect({
       adapter: createDaytonaAdapter(fetchImpl),
-      config: { target: "us" },
+      config: { target: "us", network: "blocked" },
       credentials: { apiKey: "fixture-key" },
     });
 
