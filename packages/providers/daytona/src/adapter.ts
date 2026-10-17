@@ -191,6 +191,7 @@ const errorCodes = {
   invalid: "INVALID_ARGUMENT",
   unsupported: "UNSUPPORTED",
   unauthorized: "UNAUTHENTICATED",
+  forbidden: "FORBIDDEN",
   not_found: "NOT_FOUND",
   conflict: "CONFLICT",
   capacity: "CAPACITY",

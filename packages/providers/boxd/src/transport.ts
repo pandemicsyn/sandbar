@@ -50,6 +50,11 @@ const Token = z.object({
 
 const GrpcError = z.object({ code: z.number() });
 
+const GrpcDetails = z.object({ code: z.number(), details: z.string() });
+
+// Raw native status kept off the error object; only create rejections expose a redacted copy.
+const nativeStatus = new WeakMap<AdapterError, z.infer<typeof GrpcDetails>>();
+
 // Native error descriptions can contain credentials, command contents or paths.
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- gRPC/fetch thrown values are parsed and redacted here.
 export function nativeError(error: unknown): AdapterError {
@@ -68,10 +73,16 @@ export function nativeError(error: unknown): AdapterError {
     [status.UNIMPLEMENTED, "UNSUPPORTED"],
   ]);
 
-  return new AdapterError(
+  const adapterError = new AdapterError(
     code.success ? (codes.get(code.data.code) ?? "UNAVAILABLE") : "UNAVAILABLE",
     "boxd request failed",
   );
+
+  const grpc = GrpcDetails.safeParse(error);
+
+  if (grpc.success) nativeStatus.set(adapterError, grpc.data);
+
+  return adapterError;
 }
 
 export function definitiveRejection(error: unknown): error is AdapterError {
@@ -85,6 +96,38 @@ export function definitiveRejection(error: unknown): error is AdapterError {
       "UNAUTHENTICATED",
       "UNSUPPORTED",
     ].includes(error.code)
+  );
+}
+
+/**
+ * A create failure that provably made no machine, with boxd's own reason. Server
+ * RESOURCE_EXHAUSTED (quota) is definitive too, unless grpc-js raised it locally
+ * on an oversized response, which arrives after the server acted.
+ */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- gRPC thrown values are parsed and redacted here.
+export function createRejection(error: unknown, secrets: string[]): AdapterError | undefined {
+  const native = nativeError(error);
+  const grpc = GrpcDetails.safeParse(nativeStatus.get(native) ?? error);
+
+  const capacity =
+    native.code === "CAPACITY" &&
+    grpc.success &&
+    !grpc.data.details.startsWith("Received message larger than max");
+
+  // Create errors arrive already mapped by the unary transport.
+  if (!definitiveRejection(error) && !capacity) return undefined;
+  let detail = grpc.success ? grpc.data.details : "";
+
+  for (const secret of secrets) if (secret) detail = detail.replaceAll(secret, "[redacted]");
+  detail = detail
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/[\p{Cc}\s]+/gu, " ")
+    .trim()
+    .slice(0, 300);
+
+  return new AdapterError(
+    native.code,
+    `boxd rejected sandbox creation${grpc.success ? ` (${status[grpc.data.code] ?? grpc.data.code})` : ""}${detail ? `: ${detail}` : ""}`,
   );
 }
 
