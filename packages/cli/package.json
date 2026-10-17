@@ -1,0 +1,27 @@
+{
+  "name": "@sandbar-sdk/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent-first command line for creating and managing Sandbar sandboxes.",
+  "bin": {
+    "sandbar": "./dist/main.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && bun build src/main.ts --target node --format esm --outdir dist --external sandbar-sdk --external @sandbar-sdk/adapter --external zod"
+  },
+  "dependencies": {
+    "@sandbar-sdk/adapter": "workspace:*",
+    "sandbar-sdk": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@sandbar/provider-fake": "workspace:*"
+  },
+  "license": "Apache-2.0"
+}
