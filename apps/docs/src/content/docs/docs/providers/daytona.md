@@ -45,6 +45,7 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 | `environment`                   | Omitted   | Default prepared or OCI environment for creation; per-call environment wins.     |
 | `target`                        | Required  | Available native region ID, such as `us`.                                        |
 | `lifecycle.lifetimeSeconds`     | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `ttlMinutes`. |
+| `lifecycle.idleSeconds`         | Omitted   | Stop after this many idle seconds; omitted disables native idle auto-stop.       |
 | `ttlMinutes`                    | `60`      | Native sandbox lifetime, from 1 to 1,440 minutes.                                |
 | `snapshots.restartAfterCapture` | `true`    | Restart only a previously running capture source.                                |
 | `networkPolicy`                 | `blocked` | `blocked` or explicit `daytona-default`.                                         |
@@ -92,6 +93,8 @@ Set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifet
 
 Daytona rounds positive integer seconds upward to whole minutes: 1 → 60, 61 → 120. The resolved ceiling is 86,400 seconds (24 hours). One native TTL POST resets the hard deadline from provider processing and expiry destroys the sandbox. This clock keeps ticking while stopped or archived and can delete saved files. Idle stop and deletion after stopping are separate policies; renewing does not disable them. The returned observation reports `autoDestroyAt` when available. See [native wall-clock TTL](https://www.daytona.io/docs/en/sandboxes/#wall-clock-ttl).
 
+Daytona natively stops a sandbox after 15 idle minutes, even while background processes run. The adapter disables that by default, so a sandbox runs until its lifetime ends or you stop, suspend or destroy it. Set `lifecycle: { idleSeconds: 1800 }` to stop it after 30 idle minutes instead; seconds round upward to whole minutes, up to 86,400. Stopping preserves files, ends processes and keeps the lifetime clock running; `resume()` starts it again. `inspect()` reports the native policy as `idleStop`. See [native auto-stop](https://www.daytona.io/docs/en/sandboxes/).
+
 Both mappings require running compute. Use positive safe integer seconds; upper bounds and invalid inputs reject before the renewal POST without downward rounding or clamping. Native account/region/runtime limits can be tighter and native rejection remains an error. Renewal may shorten an existing longer deadline, is not additive, and does not guarantee uninterrupted execution or exact expiry scheduling. Serialize lifecycle changes across application and external controllers.
 
 `RenewResult.requested.forSeconds` records the resolved native setting, `acknowledged: true` confirms provider acceptance, and `observation` is current metadata or `null` if the follow-up read failed. A lost ACK stays `OUTCOME_UNKNOWN` even if a later deadline looks right. `submitRenew()` and `client.recover(savedOperationReference)` use existing typed recovery; observation never sends another renewal POST. Caller cancellation before dispatch has no effect; after possible dispatch it stops local waiting with the recovery reference. Persist ordinary sandbox references in your own trusted store, and save result metadata separately when useful.
@@ -109,6 +112,8 @@ A definitive capture failure permits one bounded restart attempt. A successful c
 ## Cleanup and recovery
 
 Deletion can be asynchronous. `destroy()` waits for confirmed termination; if the response becomes uncertain, save its reference and observe instead of issuing another delete. `close()` does not stop compute. Borrowed snapshots remain untouched, and built snapshots need separate owned-artifact cleanup.
+
+When Daytona refuses a create outright, `create()` rejects with a matching error code and Daytona's own reason, for example `FORBIDDEN: Daytona rejected sandbox creation (HTTP 403): Total CPU limit exceeded`. HTTP 400 and 422 map to `INVALID_ARGUMENT`, 401 to `UNAUTHENTICATED`, 403 to `FORBIDDEN`, 404 to `NOT_FOUND` and 429 to `RATE_LIMIT`; nothing was created, so you can fix the cause and create again. The same applies when the snapshot build for an OCI image is refused. A 409, a server error or a lost response stays `OUTCOME_UNKNOWN`, and so does a sandbox refusal after an OCI snapshot was built, because that snapshot remains.
 
 See [Tested provider support](/docs/providers/support/) for measured coverage and [Errors and recovery](/docs/guides/recovery/) for handling lost responses.
 

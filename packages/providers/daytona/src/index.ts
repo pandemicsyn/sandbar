@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   DriverCapabilities,
+  DriverError,
   DriverResult,
   NativeScope,
   ProviderReadError,
@@ -117,6 +118,7 @@ const Input = z.strictObject({
     target: z.string().min(1),
     networkPolicy: z.enum(["blocked", "daytona-default"]).default("blocked"),
     ttlMinutes: z.coerce.number().int().min(1).max(1440).default(60),
+    autoStopMinutes: z.coerce.number().int().min(0).max(1440).default(0),
   }),
 });
 
@@ -128,6 +130,8 @@ export type DaytonaInput = {
   toolboxOrigin?: string;
   target: string;
   ttlMinutes?: number;
+  /** Native idle auto-stop interval in minutes; 0 disables it. */
+  autoStopMinutes?: number;
   networkPolicy?: "blocked" | "daytona-default";
   fetch?: typeof fetch;
   trustedEndpoints?: DaytonaEndpointPair[];
@@ -369,6 +373,40 @@ async function boundedJson<T extends z.ZodType>(
       new TextDecoder("utf-8", { fatal: true }).decode(await boundedBytes(response, limit)),
     ),
   );
+}
+
+// Statuses Daytona returns before it accepts a sandbox. A 409 can mean an
+// earlier attempt already owns the submission name, so it stays uncertain.
+const createRejections = new Map<number, z.infer<typeof DriverError>["code"]>([
+  [400, "invalid"],
+  [401, "unauthorized"],
+  [403, "forbidden"],
+  [404, "not_found"],
+  [422, "invalid"],
+  [429, "rate_limit"],
+]);
+
+/** Daytona's own reason (quota, tier, snapshot state), single-line, bounded and without the API key. */
+async function nativeMessage(response: Response, apiKey: string): Promise<string | undefined> {
+  try {
+    const body = await boundedJson(
+      response,
+      z.object({ message: z.union([z.string(), z.array(z.string())]) }),
+      16_384,
+    );
+
+    const text = (Array.isArray(body.message) ? body.message.join("; ") : body.message)
+      .replaceAll(apiKey, "[redacted]")
+      .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+      .replace(/[\p{Cc}\s]+/gu, " ")
+      .trim();
+
+    return text ? text.slice(0, 300) : undefined;
+  } catch {
+    void response.body?.cancel().catch(() => undefined);
+
+    return undefined;
+  }
 }
 
 type DaytonaRequestBody = Record<
@@ -860,12 +898,20 @@ export class DaytonaDriver implements ProviderDriver {
 
         buildSubmitted = true;
 
-        const snapshot = await this.json("POST", "/snapshots", Snapshot, {
-          name: snapshotName,
-          imageName: input.image,
-          regionId: this.scope.region,
-          sandboxClass: "container",
-        });
+        const built = await this.request(
+          "POST",
+          "/snapshots",
+          JSON.stringify({
+            name: snapshotName,
+            imageName: input.image,
+            regionId: this.scope.region,
+            sandboxClass: "container",
+          }),
+          "application/json",
+        );
+
+        if (!built.ok) return await this.createRejection(built, "image build", uncertain);
+        const snapshot = await boundedJson(built, Snapshot);
 
         if (
           snapshot.organizationId !== this.scope.accountId ||
@@ -949,6 +995,7 @@ export class DaytonaDriver implements ProviderDriver {
           subpath: mount.subpath,
         })),
         ttlMinutes: this.config.configuration.ttlMinutes,
+        autoStopInterval: this.config.configuration.autoStopMinutes,
       };
 
       const response = await this.request(
@@ -958,7 +1005,14 @@ export class DaytonaDriver implements ProviderDriver {
         "application/json",
       );
 
-      if (!response.ok) throw new Error("Daytona create rejected");
+      // A built OCI snapshot is already an effect, so only a prepared image is rejected cleanly.
+      if (!response.ok)
+        return await this.createRejection(
+          response,
+          "sandbox creation",
+          uncertain,
+          retainedSnapshotId !== undefined,
+        );
       const raw = await boundedJson(response, z.unknown());
 
       const receipt = NativeSandbox.pick({
@@ -1056,6 +1110,24 @@ export class DaytonaDriver implements ProviderDriver {
     } catch {
       return uncertain("Daytona create response unavailable; observe without replay");
     }
+  }
+  private async createRejection(
+    response: Response,
+    step: string,
+    uncertain: (reason: string) => DaytonaCreateResult,
+    effectful = false,
+  ): Promise<DaytonaCreateResult> {
+    const detail = await nativeMessage(response, this.config.credentials.apiKey);
+    const message = `Daytona rejected ${step} (HTTP ${response.status})${detail ? `: ${detail}` : ""}`;
+    const code = createRejections.get(response.status);
+
+    if (!code || effectful) return uncertain(`${message}; observe without replay`);
+
+    return {
+      status: "rejected",
+      effect: "none",
+      error: { code, message, effect: "none", retry: "never" },
+    };
   }
   async inspect(value: SandboxRef): Promise<(SandboxObservation & { nativeState: string }) | null> {
     this.sameScope(value);
@@ -2433,6 +2505,7 @@ export function daytonaRegistration(
         configuration: {
           ...parsed.configuration,
           ttlMinutes: String(parsed.configuration.ttlMinutes),
+          autoStopMinutes: String(parsed.configuration.autoStopMinutes),
         },
       };
     },
@@ -2525,6 +2598,7 @@ export async function daytonaProvider(input: DaytonaInput) {
       target: input.target,
       networkPolicy: input.networkPolicy ?? "blocked",
       ttlMinutes: String(input.ttlMinutes ?? 60),
+      autoStopMinutes: String(input.autoStopMinutes ?? 0),
     },
   });
 
@@ -2539,7 +2613,11 @@ export async function daytonaProvider(input: DaytonaInput) {
 
   return daytonaRegistration(input.fetch, input.trustedEndpoints).connect({
     credentials: config.credentials,
-    configuration: { ...config.configuration, ttlMinutes: String(config.configuration.ttlMinutes) },
+    configuration: {
+      ...config.configuration,
+      ttlMinutes: String(config.configuration.ttlMinutes),
+      autoStopMinutes: String(config.configuration.autoStopMinutes),
+    },
     connectionId,
   });
 }

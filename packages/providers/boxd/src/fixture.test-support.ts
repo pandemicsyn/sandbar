@@ -188,6 +188,7 @@ export async function boxdFixture() {
   let machineStates: string[] = [];
   let tokenResponse: Record<string, string | number | boolean | null> | undefined;
   let failNextGet = false;
+  let rejectCreate: { code: number; message: string } | undefined;
   let wrongGetId = false;
   let failLifecycleRead = false;
   let downloadChunks: Uint8Array[] | undefined;
@@ -265,6 +266,12 @@ export async function boxdFixture() {
             });
             break;
           case "CreateVm": {
+            if (rejectCreate) {
+              callback(rejectCreate);
+              rejectCreate = undefined;
+              break;
+            }
+
             effects.create++;
             const id = crypto.randomUUID();
             machines.set(id, {
@@ -561,6 +568,9 @@ export async function boxdFixture() {
     },
     loseNextCreateResponse() {
       loseCreate = true;
+    },
+    rejectNextCreate(code: number, message: string) {
+      rejectCreate = { code, message };
     },
     holdNextCreateResponse() {
       holdCreate = true;

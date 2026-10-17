@@ -35,6 +35,7 @@ function fixture() {
 
   const windows: number[] = [];
   let initialMinutes = 0;
+  let autoStopInterval: number | undefined;
 
   type CreationLabels = Record<string, string>;
 
@@ -86,6 +87,7 @@ function fixture() {
       if (url.pathname === "/api/sandbox" && method === "POST") {
         creates++;
         initialMinutes = JSON.parse(String(init?.body)).ttlMinutes;
+        autoStopInterval = JSON.parse(String(init?.body)).autoStopInterval;
         Object.assign(native, JSON.parse(String(init?.body)));
 
         return Response.json(native);
@@ -144,6 +146,7 @@ function fixture() {
     creates: () => creates,
     windows,
     initialMinutes: () => initialMinutes,
+    autoStopInterval: () => autoStopInterval,
     renewMode(value: string) {
       renewMode = value;
     },
@@ -160,6 +163,7 @@ function fixture() {
         ttlMinutes?: number;
         lifecycle?: {
           lifetimeSeconds?: number;
+          idleSeconds?: number;
           suspension?: { preserve: "filesystem" | "filesystem+memory" };
         };
         target?: string;
@@ -221,6 +225,39 @@ test("Daytona configured/default/explicit lifetime resolves upward once and stay
     } finally {
       await client.close();
     }
+  }
+});
+
+test("Daytona idle auto-stop is disabled by default and configurable in seconds", async () => {
+  for (const [config, minutes, idleStop] of [
+    [{}, 0, null],
+    [{ ttlMinutes: 15 }, 0, null],
+    [{ lifecycle: { idleSeconds: 61 } }, 2, { seconds: 120, action: "stop" }],
+    [
+      { lifecycle: { lifetimeSeconds: 7200, idleSeconds: 1800 } },
+      30,
+      { seconds: 1800, action: "stop" },
+    ],
+  ] as const) {
+    const f = fixture();
+    const { client, box } = await create(f, config);
+
+    try {
+      expect(f.autoStopInterval()).toBe(minutes);
+      expect((await box.inspect()).idleStop).toEqual({ status: "known", value: idleStop });
+    } finally {
+      await client.close();
+    }
+  }
+
+  const f = fixture();
+
+  for (const idleSeconds of [0, -1, 1.5, 86401]) {
+    const before = f.calls.length;
+    await expect(f.connect({ lifecycle: { idleSeconds } })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    expect(f.calls.length).toBe(before);
   }
 });
 
