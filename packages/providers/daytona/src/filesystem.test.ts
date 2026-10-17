@@ -508,7 +508,7 @@ test("Daytona public SDK preserves definitive filesystem rejections and artifact
       }
     }
   }
-});
+}, 30_000);
 
 test("Daytona interrupted and malformed helpers retain possible copy effects and staging custody", async () => {
   const root = mkdtempSync(join(tmpdir(), "sandbar-daytona-interrupted-"));

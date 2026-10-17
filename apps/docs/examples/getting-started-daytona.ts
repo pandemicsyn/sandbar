@@ -11,7 +11,7 @@ const sandbar = await Sandbar.connect(
     target: "us",
     environment: Image.prepared("daytona-small"),
     ttlMinutes: 15,
-    networkPolicy: "daytona-default",
+    network: "daytona-default",
   }),
 );
 

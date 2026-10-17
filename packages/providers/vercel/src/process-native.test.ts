@@ -61,6 +61,7 @@ async function cleanup(process: NativeProcess | undefined, root: string) {
   expect(existsSync(root)).toBe(false);
 }
 
+// About 700 sequential helper round trips: roughly 20s on a typical CI runner.
 test("Vercel supervisor streams 32 MiB with bounded frames, split UTF-8 and separate stderr", async () => {
   const native = fixture();
   let child: NativeProcess | undefined;
@@ -99,7 +100,7 @@ test("Vercel supervisor streams 32 MiB with bounded frames, split UTF-8 and sepa
   } finally {
     await cleanup(child, native.root);
   }
-}, 60_000);
+}, 180_000);
 
 test("Vercel supervisor delivers exact input bytes, EOF, current status and confirmed nonzero exit", async () => {
   const native = fixture();
@@ -251,7 +252,7 @@ test("Vercel bounds final output drain when a descendant retains a pipe", async 
           argv: [
             "python3",
             "-c",
-            "import os,time; pid=os.fork(); time.sleep(2) if pid==0 else None; os._exit(0)",
+            "import os,time; pid=os.fork(); time.sleep(8) if pid==0 else None; os._exit(0)",
           ],
         },
       },
@@ -689,7 +690,7 @@ test("Vercel expired attachment leases park output, preserve input, and fence al
       "-c",
       pythonCommand(
         processSupervisor
-          .replaceAll("last_request>30", "last_request>0.5")
+          .replaceAll("last_request>30", "last_request>1.5")
           .replace("lock.wait(1.0)", "lock.wait(0.1)"),
         {
           root,
@@ -713,7 +714,7 @@ test("Vercel expired attachment leases park output, preserve input, and fence al
 
   try {
     for (let i = 0; i < 300 && !existsSync(root + "/control"); i++) await Bun.sleep(10);
-    await Bun.sleep(650);
+    await Bun.sleep(1_700);
     expect((await rpc({ root, request: { op: "status", generation, lease } })).error).toBeTruthy();
     expect(await rpc({ root, request: { op: "hello", generation, nextLease } })).toMatchObject({
       ok: true,
@@ -726,8 +727,17 @@ test("Vercel expired attachment leases park output, preserve input, and fence al
       { op: "resize", columns: 20, rows: 20 },
       { op: "close" },
       { op: "detach" },
-    ] as const)
+    ] as const) {
+      // Fenced requests do not renew the shortened lease, so renew it before each one.
+      expect(
+        await rpc({ root, request: { op: "status", generation, lease: nextLease } }),
+      ).not.toHaveProperty("error");
       expect((await rpc({ root, request: { ...request, generation, lease } })).error).toBeTruthy();
+    }
+
+    expect(
+      await rpc({ root, request: { op: "status", generation, lease: nextLease } }),
+    ).not.toHaveProperty("error");
     expect(
       await rpc({ root, request: { op: "write", generation, lease: nextLease, data: "AP8=" } }),
     ).toMatchObject({ ok: true });

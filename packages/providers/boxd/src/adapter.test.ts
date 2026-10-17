@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { status } from "@grpc/grpc-js";
 import { adapterSuite } from "@sandbar-sdk/adapter/testing";
 import { Sandbar, OutcomeUnknownError } from "sandbar-sdk";
 import { createBoxdAdapter } from "./adapter";
@@ -24,6 +25,30 @@ async function setup() {
 
   return { fixture, adapter, connect };
 }
+
+test("boxd setup takes network internet once, under either name", async () => {
+  const { adapter } = await setup();
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: { org: "main", network: "internet" },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  try {
+    expect((await client.capabilities()).network).toEqual(["internet"]);
+  } finally {
+    await client.close();
+  }
+
+  for (const config of [
+    { org: "main" },
+    { org: "main", network: "internet", networkPolicy: "internet" },
+  ] as const)
+    await expect(
+      Sandbar.connect({ adapter, config, credentials: { apiKey: "fixture-main" } }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+});
 
 test("native token exchange accepts user_id and additive response fields", async () => {
   const { fixture, connect } = await setup();
@@ -130,6 +155,54 @@ test("setup default policy and image produce an ordinary create; explicit blocke
     await expect(box.snapshot()).rejects.toMatchObject({ code: "UNSUPPORTED" });
     expect(fixture.effects.create).toBe(1);
     await box.destroy();
+  } finally {
+    await client.close();
+  }
+});
+
+test.each([
+  [status.RESOURCE_EXHAUSTED, "CAPACITY"],
+  [status.PERMISSION_DENIED, "FORBIDDEN"],
+  [status.INVALID_ARGUMENT, "INVALID_ARGUMENT"],
+  [status.FAILED_PRECONDITION, "CONFLICT"],
+] as const)(
+  "boxd create status %i is a clean %s rejection with the native reason",
+  async (code, expected) => {
+    const { fixture, connect } = await setup();
+    const client = await connect();
+
+    try {
+      fixture.rejectNextCreate(code, "org machine quota reached\n(fixture-main)");
+
+      const error = await client.sandboxes.create().then(
+        () => undefined,
+        (failure: Error & { code?: string }) => failure,
+      );
+
+      expect(error).toMatchObject({ code: expected });
+      expect(error?.message).toContain(
+        `boxd rejected sandbox creation (${status[code]}): org machine quota reached ([redacted])`,
+      );
+      expect(fixture.effects.create).toBe(0);
+      expect(fixture.calls.filter((call) => call.method === "CreateVm")).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test("boxd create UNAVAILABLE and oversized-response RESOURCE_EXHAUSTED stay unknown", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    fixture.rejectNextCreate(status.UNAVAILABLE, "connection reset");
+    await expect(client.sandboxes.create()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    fixture.rejectNextCreate(
+      status.RESOURCE_EXHAUSTED,
+      "Received message larger than max (9 vs. 4)",
+    );
+    await expect(client.sandboxes.create()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
   } finally {
     await client.close();
   }

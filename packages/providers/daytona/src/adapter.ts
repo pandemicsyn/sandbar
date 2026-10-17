@@ -57,7 +57,8 @@ const Configuration = z
         z.strictObject({ kind: z.literal("oci"), value: z.string().min(1) }),
       ])
       .optional(),
-    networkPolicy: z.enum(["blocked", "daytona-default"]).default("daytona-default"),
+    network: z.enum(["blocked", "internet", "daytona-default"]).optional(),
+    networkPolicy: z.enum(["blocked", "internet", "daytona-default"]).optional(),
     snapshots: z
       .strictObject({ restartAfterCapture: z.boolean().default(true) })
       .default({ restartAfterCapture: true }),
@@ -68,6 +69,7 @@ const Configuration = z
     lifecycle: z
       .strictObject({
         lifetimeSeconds: z.number().int().positive().safe().optional(),
+        idleSeconds: z.number().int().positive().safe().max(86400).optional(),
         suspension: z
           .strictObject({ preserve: z.enum(["filesystem", "filesystem+memory"]) })
           .optional(),
@@ -81,13 +83,23 @@ const Configuration = z
         path: ["lifecycle", "lifetimeSeconds"],
         message: "Supply one lifetime option",
       });
+
+    if (value.network !== undefined && value.networkPolicy !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["network"],
+        message: "Supply network or the deprecated networkPolicy, not both",
+      });
   })
-  .transform((value) => ({
+  .transform(({ network, ...value }) => ({
     ...value,
+    networkPolicy: network ?? value.networkPolicy ?? "daytona-default",
     ttlMinutes:
       value.lifecycle?.lifetimeSeconds === undefined
         ? (value.ttlMinutes ?? 15)
         : Math.ceil(value.lifecycle.lifetimeSeconds / 60),
+    autoStopMinutes:
+      value.lifecycle?.idleSeconds === undefined ? 0 : Math.ceil(value.lifecycle.idleSeconds / 60),
   }));
 
 const CompactObservation = SandboxInfoSchema.omit({ reference: true });
@@ -188,6 +200,7 @@ const errorCodes = {
   invalid: "INVALID_ARGUMENT",
   unsupported: "UNSUPPORTED",
   unauthorized: "UNAUTHENTICATED",
+  forbidden: "FORBIDDEN",
   not_found: "NOT_FOUND",
   conflict: "CONFLICT",
   capacity: "CAPACITY",
@@ -362,6 +375,7 @@ export function createDaytonaAdapter(
           target: value.target,
           networkPolicy: value.networkPolicy,
           ttlMinutes: String(value.ttlMinutes),
+          autoStopMinutes: String(value.autoStopMinutes),
         },
       });
     } catch {
@@ -398,6 +412,7 @@ export function createDaytonaAdapter(
         target: config.target,
         networkPolicy: config.networkPolicy,
         ttlMinutes: config.ttlMinutes,
+        autoStopMinutes: config.autoStopMinutes,
         fetch: fetchImpl,
         trustedEndpoints,
       });
@@ -419,8 +434,10 @@ export function createDaytonaAdapter(
         toolboxOrigin: config.toolboxOrigin,
       };
 
-      if (config.networkPolicy === "daytona-default")
-        Object.assign(partition, { networkPolicy: config.networkPolicy });
+      // Both non-blocked policies send the same native settings, so they share the
+      // partition that existing provider-managed egress references already carry.
+      if (config.networkPolicy !== "blocked")
+        Object.assign(partition, { networkPolicy: "daytona-default" });
 
       const resourceBinding = {
         authority: { kind: "organization", id: scope.accountId! },
@@ -674,10 +691,10 @@ export function createDaytonaAdapter(
           );
 
         if (input.request.mounts?.length) {
-          if (input.request.networkPolicy !== "daytona-default")
+          if (input.request.networkPolicy === "blocked")
             throw new AdapterError(
               "UNSUPPORTED",
-              "Mounted restore requires explicit daytona-default; blocked startup enforcement is unqualified",
+              "Mounted restore requires internet or daytona-default network; blocked startup enforcement is unqualified",
             );
 
           const checked = await resourceState.fields.checkMounts!(

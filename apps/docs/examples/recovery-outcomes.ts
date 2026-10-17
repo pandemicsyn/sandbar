@@ -37,7 +37,7 @@ export async function saveSnapshot(captured: SnapshotResult, save: SaveReference
 export async function reopenSnapshot(freshClient: SandbarClient, saved: ResourceReference) {
   const snapshot = await freshClient.snapshots.get(saved);
 
-  return snapshot.restore({ networkPolicy: "blocked" });
+  return snapshot.restore({ network: "blocked" });
 }
 
 /** A failed composite call may still contain a usable, confirmed capture. */

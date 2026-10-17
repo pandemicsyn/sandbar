@@ -64,6 +64,7 @@ export function fixture() {
   let hold = false;
   let resume: (() => void) | undefined;
   let createStatus = 200;
+  let createError: Json = { error: "fixture" };
   let mismatch = false;
   let malformedCreate = false;
   let malformedSnapshot = false;
@@ -112,7 +113,7 @@ export function fixture() {
       if (route === "/api/v3/sandboxes") {
         effects.create++;
 
-        if (createStatus !== 200) return json({ error: "fixture" }, createStatus);
+        if (createStatus !== 200) return json(createError, createStatus);
         const input = JSON.parse(String(init.body));
         expect(input).toMatchObject({
           projectId: "project-fixture",
@@ -459,8 +460,10 @@ export function fixture() {
       if (!resume) throw new Error("Create not held");
       resume();
     },
-    setCreateStatus(status: number) {
+    setCreateStatus(status: number, body?: Json) {
       createStatus = status;
+
+      if (body !== undefined) createError = body;
     },
     setConfirmedExit(exitCode: number) {
       confirmedExit = exitCode;
@@ -499,7 +502,7 @@ const credentials = { token: "fixture-token" };
 
 const createInput = {
   image: { kind: "prepared" as const, value: "vercel/sandbox/node:24" },
-  networkPolicy: "vercel-deny-all",
+  networkPolicy: "blocked",
 };
 
 test("Vercel native HTTP boundary passes managed adapter suite", async () => {
@@ -575,6 +578,66 @@ test("Vercel mutations dispatch once after rate limits and server errors", async
     } finally {
       await client.close();
     }
+  }
+});
+
+test.each([
+  [400, "INVALID_ARGUMENT"],
+  [401, "UNAUTHENTICATED"],
+  [402, "CAPACITY"],
+  [403, "FORBIDDEN"],
+  [404, "NOT_FOUND"],
+  [429, "RATE_LIMIT"],
+] as const)(
+  "Vercel create HTTP %i is a clean %s rejection with the native reason",
+  async (status, code) => {
+    const native = fixture();
+    native.setCreateStatus(status, {
+      error: { code: "limit", message: "Concurrent sandbox limit reached\n(fixture-token)" },
+    });
+    const client = await Sandbar.connect({ adapter: native.adapter, config, credentials });
+
+    try {
+      const error = await client.sandboxes
+        .create({
+          environment: Image.prepared(createInput.image.value),
+          networkPolicy: createInput.networkPolicy,
+        })
+        .then(
+          () => undefined,
+          (failure: Error & { code?: string }) => failure,
+        );
+
+      expect(error).toMatchObject({ code });
+      expect(error?.message).toContain(
+        `Vercel rejected sandbox creation (HTTP ${status}): Concurrent sandbox limit reached ([redacted])`,
+      );
+      expect(error?.message).not.toContain("fixture-token");
+      expect(native.effects.create).toBe(1);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test.each([409, 500, 503])("Vercel create HTTP %i stays an unknown outcome", async (status) => {
+  const native = fixture();
+  native.setCreateStatus(status, { error: { code: "busy", message: "try later" } });
+  const client = await Sandbar.connect({ adapter: native.adapter, config, credentials });
+
+  try {
+    await expect(
+      client.sandboxes.create({
+        environment: Image.prepared(createInput.image.value),
+        networkPolicy: createInput.networkPolicy,
+      }),
+    ).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      message: expect.stringContaining(`(HTTP ${status}): try later`),
+    });
+    expect(native.effects.create).toBe(1);
+  } finally {
+    await client.close();
   }
 });
 
@@ -944,6 +1007,52 @@ test("omitted create options use the configured image and network policy default
       await client.close();
     }
   }
+});
+
+test("portable network names configure Vercel and deprecated names still resolve", async () => {
+  for (const [setup, mode] of [
+    [{ network: "internet" }, "allow-all"],
+    [{ network: "blocked" }, "deny-all"],
+    [{ networkPolicy: "vercel-allow-all" }, "allow-all"],
+    [{}, "deny-all"],
+  ] as const) {
+    const native = fixture();
+    const portable = mode === "deny-all" ? "blocked" : "internet";
+    const legacy = mode === "deny-all" ? "vercel-deny-all" : "vercel-allow-all";
+
+    const client = await Sandbar.connect({
+      adapter: native.adapter,
+      config: { ...config, ...setup },
+      credentials,
+    });
+
+    try {
+      expect((await client.capabilities()).network).toEqual([portable]);
+      await client.sandboxes.create({ network: portable });
+      await client.sandboxes.create({ networkPolicy: legacy });
+      await expect(
+        client.sandboxes.create({ network: portable === "blocked" ? "internet" : "blocked" }),
+      ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+
+      const bodies = native.requests
+        .filter((request) => request.url.pathname === "/api/v3/sandboxes")
+        .map((request) => JSON.parse(String(request.init.body)));
+
+      expect(bodies).toHaveLength(2);
+
+      for (const body of bodies) expect(body).toMatchObject({ networkPolicy: { mode } });
+    } finally {
+      await client.close();
+    }
+  }
+
+  await expect(
+    Sandbar.connect({
+      adapter: fixture().adapter,
+      config: { ...config, network: "internet", networkPolicy: "vercel-allow-all" },
+      credentials,
+    }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 });
 
 test("native output-read failures preserve the user exit evidence from helper logs", async () => {

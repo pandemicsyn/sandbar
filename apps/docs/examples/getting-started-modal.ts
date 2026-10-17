@@ -21,7 +21,7 @@ const sandbar = await Sandbar.connect({
 try {
   const box = await sandbar.sandboxes.create({
     environment: Image.prepared(imageId),
-    networkPolicy: "blocked",
+    network: "blocked",
   });
 
   try {

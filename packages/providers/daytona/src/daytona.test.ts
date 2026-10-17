@@ -401,6 +401,64 @@ test("blocked egress eligibility is rechecked by prepare before submission", asy
   expect(creates).toBe(0);
 });
 
+test.each([
+  [false, ["internet"]],
+  [true, []],
+] as const)(
+  "internet needs an organization without limited egress (limited %p)",
+  async (limited, policies) => {
+    let creates = 0;
+
+    const fetchImpl = fixtureFetch(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+
+        if (url.pathname === "/api/api-keys/current")
+          return Response.json({ organizationId: "org-1" });
+
+        if (url.pathname === "/api/regions") return Response.json([region()]);
+
+        if (url.pathname === "/api/sandbox" && init?.method === "POST") creates++;
+
+        throw new Error(`Unexpected ${url.pathname}`);
+      },
+      async () => Response.json({ id: "org-1", sandboxLimitedNetworkEgress: limited }),
+    );
+
+    const provider = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "internet",
+      fetch: fetchImpl,
+    });
+
+    const managed = await daytonaProvider({
+      apiKey: "key",
+      target: "us",
+      networkPolicy: "daytona-default",
+      fetch: fetchImpl,
+    });
+
+    expect(provider.scope).toEqual(managed.scope);
+    expect((await provider.driver.capabilities(provider.scope)).networkPolicies).toEqual([
+      ...policies,
+    ]);
+
+    if (limited) {
+      const preparation = await provider.driver.prepare({
+        scope: provider.scope,
+        image: { kind: "prepared", value: "snap-1" },
+        networkPolicy: "internet",
+      });
+
+      expect(preparation).toMatchObject({ supported: false });
+      expect(preparation.reason).toContain("limited sandbox egress");
+    }
+
+    expect(creates).toBe(0);
+  },
+);
+
 test("verified direct scope, read-only preparation, one create, exact binary execution and files", async () => {
   const calls: string[] = [];
   let createdName = "";

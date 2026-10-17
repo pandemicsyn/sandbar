@@ -32,6 +32,7 @@ import {
 } from "@sandbar-sdk/adapter";
 import { MAX_EXEC_STDIN_BYTES } from "@sandbar-sdk/adapter/portable";
 import {
+  E2BCreateRejected,
   E2BLifecycleRejected,
   E2BRenewRejected,
   E2BDirectoryRejected,
@@ -69,7 +70,8 @@ const Configuration = z
       .max(128)
       .regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?(?::default)?$/)
       .default("base"),
-    networkPolicy: z.enum(["blocked", "internet"]).default("blocked"),
+    network: z.enum(["blocked", "internet"]).optional(),
+    networkPolicy: z.enum(["blocked", "internet"]).optional(),
     timeoutSeconds: z.number().int().min(60).max(MAX_LIFETIME_SECONDS).optional(),
     preview: z
       .strictObject({ access: z.enum(["protected", "public"]).default("public") })
@@ -90,9 +92,17 @@ const Configuration = z
         path: ["lifecycle", "lifetimeSeconds"],
         message: "Supply one lifetime option",
       });
+
+    if (value.network !== undefined && value.networkPolicy !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["network"],
+        message: "Supply network or the deprecated networkPolicy, not both",
+      });
   })
-  .transform((value) => ({
+  .transform(({ network, ...value }) => ({
     ...value,
+    networkPolicy: network ?? value.networkPolicy ?? "blocked",
     timeoutSeconds:
       value.lifecycle?.lifetimeSeconds === undefined
         ? (value.timeoutSeconds ?? 900)
@@ -979,8 +989,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             } catch (error) {
               if (error instanceof AdapterCheckpointError) throw error;
 
+              // A template built for this create is already an effect, so it is never a clean rejection.
+              if (error instanceof E2BCreateRejected && !name)
+                return ctx.reject(error.code, error.message);
+
               return ctx.unknown(
-                `E2B create response unavailable; observe without replay${name ? `; retained template ${templateId}` : ""}`,
+                `${error instanceof E2BCreateRejected ? error.message : "E2B create response unavailable"}; observe without replay${name ? `; retained template ${templateId}` : ""}`,
               );
             }
           },

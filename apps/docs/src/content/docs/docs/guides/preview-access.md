@@ -15,7 +15,7 @@ const client = await Sandbar.connect(
   daytona({
     apiKey: process.env.DAYTONA_API_KEY!,
     target: "us",
-    networkPolicy: "daytona-default",
+    network: "daytona-default",
     preview: { access: "protected" }, // default
   }),
 );

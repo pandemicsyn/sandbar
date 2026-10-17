@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
 import { ModalClient } from "modal";
-import { field, message, ModalRouterWire, parse } from "./router-wire";
+import { field, message, ModalRouterWire, parse, STDERR, STDOUT } from "./router-wire";
 
 const server = new grpc.Server();
 
@@ -45,6 +45,8 @@ let firstStream: "stdout" | "stderr" | undefined;
 let waitReply = message(field(1, 7));
 
 const seen: Buffer[] = [];
+
+const descriptors: (Uint8Array | number)[] = [];
 
 server.addService(
   {
@@ -96,10 +98,15 @@ server.addService(
       else callback(null, waitReply);
     },
     taskExecStdioRead(call: grpc.ServerWritableStream<Buffer, Buffer>) {
-      const descriptor = parse(call.request).get(4);
-      expect(descriptor === 1 || descriptor === 2).toBe(true);
+      // proto3: an omitted field 4 is TASK_EXEC_STDIO_FILE_DESCRIPTOR_STDOUT (0); STDERR is 1.
+      const fields = parse(call.request);
+      const descriptor = fields.get(4) ?? 0;
+      expect(descriptor === 0 || descriptor === 1).toBe(true);
+      expect(fields.has(4)).toBe(descriptor !== 0);
+      descriptors.push(descriptor);
+      const isStdout = descriptor === 0;
 
-      if (loseOutput && descriptor === 2) {
+      if (loseOutput && !isStdout) {
         call.emit(
           "error",
           Object.assign(new Error("output unavailable after exit"), {
@@ -112,14 +119,12 @@ server.addService(
 
       const emit = () => {
         call.write(
-          message(
-            field(1, descriptor === 1 ? Uint8Array.from([0, 255, 129]) : Uint8Array.from([42])),
-          ),
+          message(field(1, isStdout ? Uint8Array.from([0, 255, 129]) : Uint8Array.from([42]))),
         );
         call.end();
       };
 
-      if (firstStream) setTimeout(emit, (descriptor === 1) === (firstStream === "stdout") ? 0 : 20);
+      if (firstStream) setTimeout(emit, isStdout === (firstStream === "stdout") ? 0 : 20);
       else emit();
     },
   },
@@ -184,7 +189,9 @@ test("one native start on lost response; original ID observes binary output with
     expect(seen[0]?.includes(Buffer.from("/tmp"))).toBe(true);
     expect(seen[0]?.includes(Buffer.from("KEY"))).toBe(true);
     expect(parse(seen[0]!).get(6)).toBe(5);
+    descriptors.length = 0;
     const result = await wire.result("sb-fixture", "submission-1", 4);
+    expect(descriptors.toSorted()).toEqual([STDOUT, STDERR]);
     expect(result).toEqual({
       exitCode: 7,
       stdout: Uint8Array.from([0, 255, 129]),

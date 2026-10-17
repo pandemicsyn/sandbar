@@ -1,7 +1,12 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
-import { ModalClient } from "modal";
-import { noRetryGrpcMiddleware, readBoundedStream, readModalFile } from "./transport";
+import { AlreadyExistsError, ModalClient, NotFoundError } from "modal";
+import {
+  createRejection,
+  noRetryGrpcMiddleware,
+  readBoundedStream,
+  readModalFile,
+} from "./transport";
 import { field, message, parse } from "./router-wire";
 
 const server = new grpc.Server();
@@ -15,6 +20,8 @@ let imageSuccess = false;
 let createSuccess = false;
 
 let createRequest: Buffer | undefined;
+
+let createFailure: { code: grpc.status; details: string } | undefined;
 
 const path = "/modal.client.ModalClient/AppGetOrCreate";
 
@@ -65,7 +72,8 @@ server.addService(
       calls.set(createPath, (calls.get(createPath) ?? 0) + 1);
       createRequest = call.request;
 
-      if (createSuccess) callback(null, message(field(1, "sb-oci"), field(3, "ta-fixture")));
+      if (createFailure) callback(Object.assign(new Error(createFailure.details), createFailure));
+      else if (createSuccess) callback(null, message(field(1, "sb-oci"), field(3, "ta-fixture")));
       else callback(Object.assign(new Error("lost response"), { code: grpc.status.UNAVAILABLE }));
     },
     sandboxTerminateV2: lost(terminatePath),
@@ -326,4 +334,87 @@ test("pinned OCI path builds once and creates one V2 sandbox in the same submit"
     if (previousBuilder === undefined) delete process.env.MODAL_IMAGE_BUILDER_VERSION;
     else process.env.MODAL_IMAGE_BUILDER_VERSION = previousBuilder;
   }
+});
+
+test.each([
+  [grpc.status.PERMISSION_DENIED, "FORBIDDEN"],
+  [grpc.status.RESOURCE_EXHAUSTED, "CAPACITY"],
+  [grpc.status.INVALID_ARGUMENT, "INVALID_ARGUMENT"],
+  [grpc.status.UNAUTHENTICATED, "UNAUTHENTICATED"],
+  [grpc.status.FAILED_PRECONDITION, "CONFLICT"],
+  [grpc.status.NOT_FOUND, "NOT_FOUND"],
+  [grpc.status.UNAVAILABLE, undefined],
+  [grpc.status.DEADLINE_EXCEEDED, undefined],
+  [grpc.status.INTERNAL, undefined],
+  [grpc.status.ALREADY_EXISTS, undefined],
+] as const)("pinned SDK create status %i classifies as %s", async (code, expected) => {
+  const previous = process.env.MODAL_SERVER_URL;
+  process.env.MODAL_SERVER_URL = `http://127.0.0.1:${port}`;
+  createFailure = { code, details: "Workspace sandbox limit reached\n(as-fixture)" };
+
+  try {
+    calls.clear();
+
+    const client = new ModalClient({
+      tokenId: "ak-fixture",
+      tokenSecret: "as-fixture",
+      maxThrottleWaitSecs: 0,
+      grpcMiddleware: [noRetryGrpcMiddleware],
+    });
+
+    // SAFETY: A prebuilt image skips building; create reads only the App ID in this fixture.
+    const failure = await client.sandboxes
+      .experimentalCreate(
+        { appId: "ap-fixture", environmentName: "main" } as never,
+        {
+          imageId: "im-fixture",
+          build: async () => undefined,
+        } as never,
+      )
+      .then(
+        () => undefined,
+        (error: Error) => error,
+      );
+
+    expect(calls.get(createPath)).toBe(1);
+
+    if (code === grpc.status.ALREADY_EXISTS) expect(failure).toBeInstanceOf(AlreadyExistsError);
+    const rejection = createRejection(failure, "sandbox", ["as-fixture"]);
+
+    if (expected === undefined) expect(rejection).toBeUndefined();
+    else {
+      expect(rejection?.code).toBe(expected);
+      expect(rejection?.message).toBe(
+        `Modal rejected sandbox creation (${grpc.status[code]}): Workspace sandbox limit reached ([redacted])`,
+      );
+    }
+
+    // An image build is rejected by the same statuses; a read-only lookup by any failure.
+    expect(createRejection(failure, "build", [])?.code).toBe(expected);
+    expect(createRejection(failure, "lookup", [])?.code).toBe(expected ?? "UNAVAILABLE");
+    client.close();
+  } finally {
+    createFailure = undefined;
+
+    if (previous === undefined) delete process.env.MODAL_SERVER_URL;
+    else process.env.MODAL_SERVER_URL = previous;
+  }
+});
+
+test("image lookup failures reject; unclassified build and sandbox failures stay uncertain", () => {
+  expect(createRejection(new NotFoundError("Image im-x not found"), "lookup", [])).toMatchObject({
+    code: "NOT_FOUND",
+    message: "Modal rejected image lookup: Image im-x not found",
+  });
+  expect(createRejection(new Error("lost response"), "lookup", [])?.code).toBe("UNAVAILABLE");
+  expect(createRejection(new Error("Image build for im-x failed"), "build", [])).toBeUndefined();
+  expect(createRejection(new Error("lost response"), "sandbox", [])).toBeUndefined();
+
+  const oversized = Object.assign(new Error("oversized"), {
+    name: "ClientError",
+    code: grpc.status.RESOURCE_EXHAUSTED,
+    details: "Received message larger than max (9 vs. 4)",
+  });
+
+  expect(createRejection(oversized, "sandbox", [])).toBeUndefined();
 });

@@ -46,6 +46,17 @@ export async function boundedBody(
   return Buffer.concat(chunks, size);
 }
 
+/** A non-2xx Vercel response; `detail` is the bounded native reason when one was readable. */
+export class VercelRequestRejected extends AdapterError {
+  constructor(
+    code: ConstructorParameters<typeof AdapterError>[0],
+    readonly status: number,
+    readonly detail?: string,
+  ) {
+    super(code, `Vercel request failed (${status})`);
+  }
+}
+
 export class VercelClient {
   constructor(
     private transport: VercelTransport,
@@ -75,7 +86,7 @@ export class VercelClient {
     });
 
     if (!response.ok) {
-      void response.body?.cancel().catch(() => {});
+      const detail = await this.nativeDetail(response, signal);
 
       const code =
         response.status === 404
@@ -86,10 +97,35 @@ export class VercelClient {
               ? "RATE_LIMIT"
               : "UNAVAILABLE";
 
-      throw new AdapterError(code, `Vercel request failed (${response.status})`);
+      throw new VercelRequestRejected(code, response.status, detail);
     }
 
     return response;
+  }
+  /** Vercel's own error message, single-line, bounded and without the token. */
+  private async nativeDetail(response: Response, signal: AbortSignal): Promise<string | undefined> {
+    try {
+      const body = z
+        .object({ error: z.object({ message: z.string() }) })
+        .parse(
+          JSON.parse(
+            new TextDecoder("utf-8", { fatal: true }).decode(
+              await boundedBody(response, 16_384, signal),
+            ),
+          ),
+        );
+
+      const text = body.error.message
+        .replaceAll(this.token, "[redacted]")
+        .replace(/[\p{Cc}\s]+/gu, " ")
+        .trim();
+
+      return text ? text.slice(0, 300) : undefined;
+    } catch {
+      void response.body?.cancel().catch(() => {});
+
+      return undefined;
+    }
   }
   async json<T>(
     path: string,

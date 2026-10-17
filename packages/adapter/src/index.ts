@@ -328,6 +328,8 @@ export type AdapterSession<
   scope: Scope;
   /** Default for omitted SDK create/restore policies; native requests remain resolved. */
   readonly defaultNetworkPolicy?: string;
+  /** Deprecated policy names the SDK resolves to a portable name before checking support. */
+  readonly networkPolicyAliases?: Readonly<Record<string, string>>;
   /** Default for omitted SDK create environments; native create inputs remain required. */
   defaultImage?:
     | { kind: "prepared"; value: string; binding?: { provider: string; scope: Scope } }
@@ -909,7 +911,12 @@ export async function connectAdapter<
     if (input.signal?.aborted) throw input.signal.reason;
 
     const defaults = z
-      .object({ defaultNetworkPolicy: z.string().min(1).max(128).optional() })
+      .object({
+        defaultNetworkPolicy: z.string().min(1).max(128).optional(),
+        networkPolicyAliases: z
+          .record(z.string().min(1).max(128), z.string().min(1).max(128))
+          .optional(),
+      })
       .safeParse(session);
 
     if (!defaults.success)
@@ -920,6 +927,15 @@ export async function connectAdapter<
     if (defaults.data.defaultNetworkPolicy !== undefined) {
       Object.defineProperty(session, "defaultNetworkPolicy", {
         value: defaults.data.defaultNetworkPolicy,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+    }
+
+    if (defaults.data.networkPolicyAliases !== undefined) {
+      Object.defineProperty(session, "networkPolicyAliases", {
+        value: Object.freeze({ ...defaults.data.networkPolicyAliases }),
         enumerable: true,
         writable: false,
         configurable: false,

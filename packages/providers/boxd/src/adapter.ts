@@ -28,39 +28,56 @@ import {
   MAX_BYTES,
   createNativeClient,
   definitiveRejection,
+  createRejection,
   nativeError,
   type BoxdNativeClient,
   type CallContext,
 } from "./transport";
 
-const Configuration = z.strictObject({
-  org: z.string().min(1).max(128),
-  networkPolicy: z.literal("internet"),
-  image: z.string().min(1).max(1024).optional(),
-  preview: z
-    .strictObject({
-      access: z.enum(["protected", "public"]).default("public"),
-      ports: z
-        .array(z.number().int().min(1).max(65535))
-        .min(1)
-        .max(16)
-        .refine((ports) => new Set(ports).size === ports.length, "Preview ports must be unique")
-        .default([3000]),
-    })
-    .default({ access: "public", ports: [3000] }),
-  size: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(8)]).optional(),
-  lifetimeSeconds: z.number().int().min(60).safe().default(900),
-  volumes: z
-    .strictObject({
-      sizeBytes: z
-        .number()
-        .int()
-        .min(1024 ** 3)
-        .max(1024 ** 4)
-        .default(10 * 1024 ** 3),
-    })
-    .default({ sizeBytes: 10 * 1024 ** 3 }),
-});
+const Configuration = z
+  .strictObject({
+    org: z.string().min(1).max(128),
+    /** Required consent: boxd offers unrestricted egress only. */
+    network: z.literal("internet").optional(),
+    /** @deprecated Use `network`. */
+    networkPolicy: z.literal("internet").optional(),
+    image: z.string().min(1).max(1024).optional(),
+    preview: z
+      .strictObject({
+        access: z.enum(["protected", "public"]).default("public"),
+        ports: z
+          .array(z.number().int().min(1).max(65535))
+          .min(1)
+          .max(16)
+          .refine((ports) => new Set(ports).size === ports.length, "Preview ports must be unique")
+          .default([3000]),
+      })
+      .default({ access: "public", ports: [3000] }),
+    size: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(8)]).optional(),
+    lifetimeSeconds: z.number().int().min(60).safe().default(900),
+    volumes: z
+      .strictObject({
+        sizeBytes: z
+          .number()
+          .int()
+          .min(1024 ** 3)
+          .max(1024 ** 4)
+          .default(10 * 1024 ** 3),
+      })
+      .default({ sizeBytes: 10 * 1024 ** 3 }),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.network === undefined) === (value.networkPolicy === undefined))
+      ctx.addIssue({
+        code: "custom",
+        path: ["network"],
+        message: 'Configure network: "internet"; boxd does not offer blocked egress',
+      });
+  })
+  .transform(({ network, ...value }) => ({
+    ...value,
+    networkPolicy: network ?? value.networkPolicy ?? "internet",
+  }));
 
 const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
@@ -429,12 +446,16 @@ export function createBoxdAdapter(
             } catch (error) {
               if (error instanceof AdapterCheckpointError) throw error;
 
-              return acknowledged
-                ? ctx.unknown(
-                    "boxd machine exists; creation metadata could not be verified",
-                    partialCreate(acknowledged, ctx),
-                  )
-                : rejection(ctx, error);
+              if (acknowledged)
+                return ctx.unknown(
+                  "boxd machine exists; creation metadata could not be verified",
+                  partialCreate(acknowledged, ctx),
+                );
+              const rejected = createRejection(error, [credentials.apiKey]);
+
+              return rejected
+                ? ctx.reject(rejected.code, rejected.message)
+                : ctx.unknown("boxd create response was not confirmed; do not replay");
             }
 
             if (!Id.safeParse(machine.id).success)

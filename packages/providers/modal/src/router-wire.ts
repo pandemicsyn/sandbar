@@ -12,6 +12,14 @@ const SERVICE = "/modal.task_command_router.TaskCommandRouter";
 
 const encoder = new TextEncoder();
 
+// TaskExecStdioFileDescriptor, not the ContainerProcess FileDescriptor (stdout = 1, stderr = 2):
+// the native SDK maps to these values before calling TaskExecStdioRead.
+export const STDOUT = 0;
+
+export const STDERR = 1;
+
+type StdioDescriptor = typeof STDOUT | typeof STDERR;
+
 function varint(value: number): number[] {
   if (!Number.isSafeInteger(value) || value < 0) throw new RangeError("Invalid protobuf integer");
   const out: number[] = [];
@@ -257,7 +265,9 @@ export class ModalRouterWire {
     const { taskId, client, metadata } = await this.connect(sandboxId, signal);
 
     try {
-      const collect = (descriptor: number): Promise<{ bytes: Uint8Array; truncated: boolean }> =>
+      const collect = (
+        descriptor: StdioDescriptor,
+      ): Promise<{ bytes: Uint8Array; truncated: boolean }> =>
         new Promise((resolve, reject) => {
           this.assertActive(signal);
           const chunks: Uint8Array[] = [];
@@ -268,7 +278,10 @@ export class ModalRouterWire {
             `${SERVICE}/TaskExecStdioRead`,
             (value: Uint8Array) => Buffer.from(value),
             (value: Buffer) => value,
-            message(field(1, taskId), field(2, execId), field(4, descriptor)),
+            // proto3 omits default-valued scalars, so stdout (0) is sent without field 4.
+            descriptor === STDOUT
+              ? message(field(1, taskId), field(2, execId))
+              : message(field(1, taskId), field(2, execId), field(4, descriptor)),
             metadata,
           );
 
@@ -313,8 +326,7 @@ export class ModalRouterWire {
           message(field(1, taskId), field(2, execId)),
           signal,
         ),
-        // Modal FileDescriptor enum: stdout = 1, stderr = 2 (0 is unspecified).
-        Promise.all([collect(1), collect(2)]),
+        Promise.all([collect(STDOUT), collect(STDERR)]),
       ]);
 
       const wait = parse(waitBytes);

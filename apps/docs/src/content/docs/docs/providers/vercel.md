@@ -24,7 +24,7 @@ const client = await Sandbar.connect({
     projectId: process.env.SANDBAR_VERCEL_PROJECT_ID!,
     region: "iad1",
     timeoutSeconds: 300,
-    networkPolicy: "vercel-deny-all",
+    network: "blocked",
   },
   credentials: { token: process.env.VERCEL_TOKEN! },
 });
@@ -53,7 +53,7 @@ try {
 | `image`               | `vercel/sandbox/universal:latest` | Vercel's native default, with processes and terminals. Also accepts Node 22, Node 24 or Node 26 images. Set `vercel/sandbox/node:24` to keep using sandboxes and snapshots created with the earlier default. |
 | `vcpus`               | `2`                               | Accepts 2, 4 or 8 CPUs, with 2 GiB memory per CPU. Account limits still apply.                                                                                                                               |
 | `timeoutSeconds`      | `900`                             | Initial sandbox lifetime, from 60 to 86,400 seconds. Vercel enforces lower plan limits itself (Hobby: 45 minutes).                                                                                           |
-| `networkPolicy`       | `vercel-deny-all`                 | Choose the native deny policy or `vercel-allow-all`. Strict network isolation has not been independently tested.                                                                                             |
+| `network`             | `blocked`                         | `blocked` (native deny-all) or `internet` (native allow-all). Strict network isolation has not been independently tested. Deprecated: `networkPolicy`, `vercel-deny-all`, `vercel-allow-all`.                |
 | `ports`               | `[]`                              | Up to 15 distinct public HTTP ports. Leave empty to expose none.                                                                                                                                             |
 | `persistent`          | `false`                           | Keep files across stopped sessions. Resume starts fresh compute; processes and RAM are lost.                                                                                                                 |
 | `credentials.token`   | Required                          | Token with access to the selected team and project.                                                                                                                                                          |
@@ -79,6 +79,8 @@ By default, each sandbox reference identifies one original VM session. `box.dest
 Save `box.reference` in trusted application storage, then pass it to `freshClient.sandboxes.get(savedReference)` using the same team, project and region with current credentials. This reopens the original session without creating compute. A lookup searches at most 10,000 project sessions and fails if it cannot verify membership. See [resource references](/docs/guides/resources/) and [recovery](/docs/guides/recovery/).
 
 If a mutation response is lost, the adapter preserves known IDs and uncertainty. Recovery reads the original operation's evidence; it never repeats create, input delivery, snapshot, restore or delete. A confirmed command exit remains available even if reading its output later fails. Unverified or interrupted input stages and capture receipts can remain until sandbox teardown.
+
+When Vercel refuses a create outright, `create()` rejects with a matching error code and Vercel's own reason: HTTP 400 and 422 map to `INVALID_ARGUMENT`, 401 to `UNAUTHENTICATED`, 402 to `CAPACITY`, 403 to `FORBIDDEN`, 404 to `NOT_FOUND` and 429 to `RATE_LIMIT`. Nothing was created, so you can fix the cause and create again. A 409, a server error or a lost response stays `OUTCOME_UNKNOWN`.
 
 ## Save files and resume later
 

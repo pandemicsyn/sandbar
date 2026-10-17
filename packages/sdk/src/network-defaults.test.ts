@@ -36,7 +36,11 @@ const info: SnapshotInfo = {
   },
 };
 
-async function fixture(defaultNetworkPolicy?: string, pendingRestore = false) {
+async function fixture(
+  defaultNetworkPolicy?: string,
+  pendingRestore = false,
+  networkPolicyAliases?: Record<string, string>,
+) {
   const creates: string[] = [];
   const restores: SnapshotRestoreInput[] = [];
 
@@ -48,6 +52,7 @@ async function fixture(defaultNetworkPolicy?: string, pendingRestore = false) {
       return {
         scope,
         defaultNetworkPolicy,
+        networkPolicyAliases,
         defaultImage: { kind: "prepared" as const, value: "base" },
         supports: { images: ["prepared" as const], network: ["blocked", "internet"] },
         async create(input) {
@@ -118,12 +123,55 @@ test.each([undefined, "internet"])(
   },
 );
 
+test("network selects a policy, and deprecated aliases resolve before support checks", async () => {
+  const f = await fixture("blocked", false, { "native-open": "internet" });
+
+  try {
+    await f.client.sandboxes.create({ network: "internet" });
+    await f.client.sandboxes.create({ networkPolicy: "native-open" });
+    await f.client.sandboxes.create({ network: "native-open" });
+    await f.client.sandboxes.create({ network: "internet", networkPolicy: "internet" });
+    const operation = await f.client.sandboxes.submitCreate({ network: "native-open" });
+    await operation.wait();
+    expect(operation.reference.networkPolicy).toBe("internet");
+    expect(f.creates).toEqual(["internet", "internet", "internet", "internet", "internet"]);
+    await f.snapshot.restore({ network: "internet" });
+    await f.snapshot.restore({ networkPolicy: "native-open" });
+    expect(f.restores.map((input) => input.request.networkPolicy)).toEqual([
+      "internet",
+      "internet",
+    ]);
+
+    await expect(
+      f.client.sandboxes.create({ network: "internet", networkPolicy: "blocked" }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(
+      f.snapshot.restore({ network: "internet", networkPolicy: "blocked" }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(f.client.sandboxes.create({ network: "unsupported" })).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+    });
+    expect((await f.client.capabilities()).network).toEqual(["blocked", "internet"]);
+    expect(f.creates).toHaveLength(5);
+    expect(f.restores).toHaveLength(2);
+  } finally {
+    await f.client.close();
+  }
+});
+
+test.each(["", 42, null])("invalid adapter network alias map is rejected: %p", async (value) => {
+  await expect(
+    fixture(undefined, false, JSON.parse(JSON.stringify({ old: value }))),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+});
+
 test("invalid explicit policy and restore inputs reject before native work", async () => {
   const f = await fixture("internet");
 
   try {
-    for (const value of [null, "", 42]) {
-      const input = JSON.parse(JSON.stringify({ networkPolicy: value }));
+    for (const input of [null, "", 42].flatMap((value) =>
+      [{ networkPolicy: value }, { network: value }].map((v) => JSON.parse(JSON.stringify(v))),
+    )) {
       await expect(f.client.sandboxes.checkCreate(input)).rejects.toMatchObject({
         code: "INVALID_ARGUMENT",
       });

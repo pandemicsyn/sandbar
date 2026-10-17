@@ -10,7 +10,7 @@ const client = await Sandbar.connect(e2b({ apiKey: process.env.E2B_API_KEY! }));
 
 const box = await client.sandboxes.create({
   environment: Image.prepared("base"),
-  networkPolicy: "blocked",
+  network: "blocked",
 });
 
 await box.writeFile("/home/user/data.bin", Uint8Array.from([0, 255, 129]), { overwrite: false });
@@ -26,7 +26,7 @@ To build an OCI image as a separate, recoverable operation, use the common image
 const built = await client.images.build({ source: Image.oci("node:24") });
 const box = await client.sandboxes.create({
   environment: Image.prepared(built.prepared),
-  networkPolicy: "blocked",
+  network: "blocked",
 });
 ```
 

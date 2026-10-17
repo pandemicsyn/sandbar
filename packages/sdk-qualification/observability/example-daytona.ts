@@ -4,8 +4,9 @@ import { bindAdapter } from "@sandbar-sdk/adapter";
 import { fixtureAdapter } from "./adapter";
 
 /** Only the provider boundary is replaced; the published example executes unchanged. */
-export function daytona(options: { target: string }) {
+export function daytona(options: { target: string; network?: string }) {
   assert.equal(options.target, "us");
+  assert.equal(options.network, "daytona-default");
   const fixture = fixtureAdapter({ exitCode: 0 });
 
   const adapter = defineAdapter({
@@ -18,6 +19,8 @@ export function daytona(options: { target: string }) {
 
       return {
         ...session,
+        // Like the real adapter, omitted create policies use the configured network.
+        defaultNetworkPolicy: options.network,
         supports: { ...session.supports, network: ["daytona-default" as const] },
       };
     },

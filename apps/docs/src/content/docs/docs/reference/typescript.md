@@ -83,7 +83,7 @@ Build results contain `prepared` and `retainedResources`. A prepared handle is b
 | `box.destroy({ signal?, storage? })`                                 | Wait for confirmed compute termination.                                       |
 | `sandbar.close()`                                                    | Release client resources; does not destroy sandboxes.                         |
 
-Creation input accepts `environment`, `networkPolicy`, `region`, `labels`, `mounts: MountSpec[]` and `requirements: { snapshot: SnapshotRequest }`. Omitted input resolves the adapter's configured environment. Optional operations reject with `UNSUPPORTED` when their hooks or requested guarantees are absent; current access/state can instead be unavailable or unknown.
+Creation input accepts `environment`, `network` (deprecated alias `networkPolicy`), `region`, `labels`, `mounts: MountSpec[]` and `requirements: { snapshot: SnapshotRequest }`. Omitted input resolves the adapter's configured environment. Optional operations reject with `UNSUPPORTED` when their hooks or requested guarantees are absent; current access/state can instead be unavailable or unknown.
 
 ## Lifecycle and saved storage
 

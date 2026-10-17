@@ -35,21 +35,21 @@ Set `E2B_API_KEY` before running this on the server. `E2B_API_ID` is not require
 
 ## Connection options
 
-| Option                      | Default   | Purpose                                                                               |
-| --------------------------- | --------- | ------------------------------------------------------------------------------------- |
-| `apiKey`                    | Required  | Authenticated E2B API key.                                                            |
-| `networkPolicy`             | `blocked` | Default outbound request for create and restore: `blocked` or `internet`.             |
-| `templateId`                | `base`    | Public base template or a ready owned template ID/name.                               |
-| `lifecycle.lifetimeSeconds` | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `timeoutSeconds`.  |
-| `timeoutSeconds`            | `900`     | Native sandbox lifetime, from 60 to 86,400 seconds.                                   |
-| `preview.access`            | `public`  | `public` allows inbound traffic for `box.preview(port)`; `protected` keeps it closed. |
-| `teamId`                    | Omitted   | Optional verified team scope.                                                         |
+| Option                      | Default   | Purpose                                                                                                      |
+| --------------------------- | --------- | ------------------------------------------------------------------------------------------------------------ |
+| `apiKey`                    | Required  | Authenticated E2B API key.                                                                                   |
+| `network`                   | `blocked` | Default outbound request for create and restore: `blocked` or `internet`. Deprecated alias: `networkPolicy`. |
+| `templateId`                | `base`    | Public base template or a ready owned template ID/name.                                                      |
+| `lifecycle.lifetimeSeconds` | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `timeoutSeconds`.                         |
+| `timeoutSeconds`            | `900`     | Native sandbox lifetime, from 60 to 86,400 seconds.                                                          |
+| `preview.access`            | `public`  | `public` allows inbound traffic for `box.preview(port)`; `protected` keeps it closed.                        |
+| `teamId`                    | Omitted   | Optional verified team scope.                                                                                |
 
 For an owned template, configure its selector once with `templateId`. Supported names are untagged or use `:default`; arbitrary named tags and public aliases are outside this integration's current scope.
 
 Without `teamId`, Sandbar verifies the API key with an authenticated read and binds recovery to that key's scope. Rotating the key changes scope. With `teamId`, Sandbar verifies the team; this allows same-team key rotation without changing authority. Switching scope modes requires a separate connection.
 
-`create()`, `create({ labels: { job: "report" } })`, `checkCreate()` and `submitCreate()` use `templateId`, including its existing `base` default. An explicit per-call `environment` wins for that call only. Invalid or unavailable overrides never fall back to `base`; scoped prepared images retain scope checks. Omitted networking uses the configured `networkPolicy`, which defaults to blocked. Per-call blocked/internet overrides apply only to that request. Default-creation live acceptance remains unrun.
+`create()`, `create({ labels: { job: "report" } })`, `checkCreate()` and `submitCreate()` use `templateId`, including its existing `base` default. An explicit per-call `environment` wins for that call only. Invalid or unavailable overrides never fall back to `base`; scoped prepared images retain scope checks. Omitted networking uses the configured `network`, which defaults to blocked. Per-call blocked/internet overrides apply only to that request. Default-creation live acceptance remains unrun.
 
 ## Files and commands
 
@@ -62,6 +62,8 @@ The adapter supports argument arrays and Bash shell scripts, working directory a
 Prepared templates and explicit OCI builds are implemented. Builds can retain a template after sandbox destruction; see [Images and networking](/docs/guides/images-and-networking/). The adapter maps `blocked` and `internet` to E2B's native internet-access setting. The maintained paired probe failed at `431cdaa`: requested blocking still allowed direct IPv4 TCP, while hostname resolution failed. There is no passing outbound-isolation claim; see the [generated network evidence](/docs/providers/support/). Region selection is not supported.
 
 Destroy each sandbox explicitly, then close the client. Native timeout is a fallback, not a cleanup confirmation. The [support matrix](/docs/providers/support/) distinguishes live baseline coverage from image-build and network tests.
+
+When E2B refuses a create outright, `create()` rejects with a matching error code and E2B's own reason: HTTP 400 maps to `INVALID_ARGUMENT`, 401 to `UNAUTHENTICATED`, 403 to `FORBIDDEN`, 404 to `NOT_FOUND` and 429 (including the concurrent sandbox limit) to `RATE_LIMIT`. Nothing was created, so you can fix the cause and create again. Server errors and lost responses stay `OUTCOME_UNKNOWN`, and so does a refusal after an OCI template was built for the create, because that template remains.
 
 ## Everyday filesystem and transfers
 

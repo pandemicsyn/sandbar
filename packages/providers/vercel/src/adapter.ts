@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   AdapterError,
   AdapterFilesystemError,
+  type AdapterErrorCode,
   type FileTransferContext,
   type Mutation,
   type CreateInput,
@@ -26,7 +27,12 @@ import {
   type ReadContext,
   type ProcessObservationFailure,
 } from "@sandbar-sdk/adapter";
-import { boundedBody, VercelClient, type VercelTransport } from "./transport";
+import {
+  boundedBody,
+  VercelClient,
+  VercelRequestRejected,
+  type VercelTransport,
+} from "./transport";
 import { startVercelProcess, reopenVercelProcess } from "./process-native";
 import { filesystemHelper, filesystemValue, directorySchema, fileStat } from "./filesystem";
 import { captureHelper, captureSpec, decodeReceipt } from "./capture";
@@ -37,7 +43,16 @@ const id = z
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/);
 
-const policy = z.enum(["vercel-deny-all", "vercel-allow-all"]);
+const policy = z.enum(["blocked", "internet", "vercel-deny-all", "vercel-allow-all"]);
+
+/** Deprecated native spellings, resolved to portable names for config and SDK inputs. */
+const networkPolicyAliases = {
+  "vercel-deny-all": "blocked",
+  "vercel-allow-all": "internet",
+} as const;
+
+const portablePolicy = (value: z.infer<typeof policy>): "blocked" | "internet" =>
+  value === "blocked" || value === "internet" ? value : networkPolicyAliases[value];
 
 /** Vercel's longest plan limit (Pro and Enterprise, 24 hours); Vercel enforces lower plan limits itself. */
 const MAX_SESSION_SECONDS = 86_400;
@@ -84,7 +99,9 @@ export const vercelConfig = z.strictObject({
     .default("vercel/sandbox/universal:latest"),
   timeoutSeconds: z.number().int().min(60).max(MAX_SESSION_SECONDS).default(900),
   persistent: z.boolean().default(false),
-  networkPolicy: policy.default("vercel-deny-all"),
+  network: policy.optional(),
+  /** @deprecated Use `network`. */
+  networkPolicy: policy.optional(),
 });
 
 const sessionSchema = z.object({
@@ -155,6 +172,18 @@ type NativeRetention = { keepLastSnapshots?: { count: number; deleteEvicted: boo
 
 const maxBytes = 1048576;
 
+// Statuses Vercel returns before it accepts a sandbox. A 409 can mean an earlier
+// attempt already owns the persistent name, so it stays uncertain.
+const createRejections = new Map<number, AdapterErrorCode>([
+  [400, "INVALID_ARGUMENT"],
+  [401, "UNAUTHENTICATED"],
+  [402, "CAPACITY"],
+  [403, "FORBIDDEN"],
+  [404, "NOT_FOUND"],
+  [422, "INVALID_ARGUMENT"],
+  [429, "RATE_LIMIT"],
+]);
+
 function state(
   status: z.infer<typeof sessionSchema>["status"],
 ): "running" | "destroyed" | "unknown" {
@@ -210,6 +239,13 @@ export function createVercelAdapter(
     config: vercelConfig,
     credentials: z.strictObject({ token: z.string().min(1) }),
     async connect({ config, credentials, host }) {
+      if (config.network !== undefined && config.networkPolicy !== undefined)
+        throw new AdapterError(
+          "INVALID_ARGUMENT",
+          "Supply network or the deprecated networkPolicy, not both",
+        );
+
+      const networkPolicy = portablePolicy(config.network ?? config.networkPolicy ?? "blocked");
       const transport = factory();
       host.onClose(() => transport.close?.());
       const client = new VercelClient(transport, credentials.token, config.teamId);
@@ -230,7 +266,7 @@ export function createVercelAdapter(
         throw new AdapterError("UNAUTHENTICATED", "Vercel project/team identity mismatch");
       await client.json(`/v2/sandboxes?project=${project.id}&limit=1`, signal, page);
       const image = config.image;
-      const mode = config.networkPolicy === "vercel-deny-all" ? "deny-all" : "allow-all";
+      const mode = networkPolicy === "blocked" ? "deny-all" : "allow-all";
       const route = (sandboxId: string) => `/v2/sandboxes/sessions/${id.parse(sandboxId)}`;
 
       const scope = {
@@ -752,7 +788,7 @@ export function createVercelAdapter(
             if (
               input.image.kind !== "prepared" ||
               input.image.value !== image ||
-              input.networkPolicy !== config.networkPolicy ||
+              input.networkPolicy !== networkPolicy ||
               (input.region && input.region !== config.region) ||
               input.mounts?.length
             )
@@ -815,12 +851,24 @@ export function createVercelAdapter(
               tags: { ...input.labels, sandbarSubmission: ctx.submissionId },
             };
 
-            const acknowledgement = await client.json(
-              "/v3/sandboxes",
-              signal,
-              z.object({ session: z.object({ id }).passthrough() }).passthrough(),
-              requestBody,
-            );
+            let acknowledgement;
+
+            try {
+              acknowledgement = await client.json(
+                "/v3/sandboxes",
+                signal,
+                z.object({ session: z.object({ id }).passthrough() }).passthrough(),
+                requestBody,
+              );
+            } catch (error) {
+              if (!(error instanceof VercelRequestRejected)) throw error;
+              const message = `Vercel rejected sandbox creation (HTTP ${error.status})${error.detail ? `: ${error.detail}` : ""}`;
+              const code = createRejections.get(error.status);
+
+              return code
+                ? ctx.reject(code, message)
+                : ctx.unknown(`${message}; observe without replay`);
+            }
 
             const acknowledgedToken: z.infer<typeof createToken> = {
               version: 1,
@@ -1085,7 +1133,7 @@ export function createVercelAdapter(
           mounts: [],
           mountHandling: mountFree ? "none" : "unknown",
           restore: {
-            networkPolicies: [config.networkPolicy],
+            networkPolicies: [networkPolicy],
             resources: false,
             mounts: false,
             independentLifecycle: true,
@@ -1180,10 +1228,11 @@ export function createVercelAdapter(
       return {
         scope,
         defaultImage: { kind: "prepared", value: image },
-        defaultNetworkPolicy: config.networkPolicy,
+        defaultNetworkPolicy: networkPolicy,
+        networkPolicyAliases,
         supports: {
           images: ["prepared"],
-          network: [config.networkPolicy],
+          network: [networkPolicy],
           exec: { commands: ["argv", "shell"], maxOutputBytes: maxBytes },
           fileWrite: { overwrite: true, noClobber: true },
         },
@@ -1571,7 +1620,7 @@ export function createVercelAdapter(
           restore: {
             status: "supported" as const,
             value: {
-              networkPolicies: [config.networkPolicy],
+              networkPolicies: [networkPolicy],
               resources: false,
               mounts: false,
               independentLifecycle: true,
@@ -1819,7 +1868,7 @@ export function createVercelAdapter(
             checkSnapshot(input.snapshot);
 
             if (
-              input.request.networkPolicy !== config.networkPolicy ||
+              input.request.networkPolicy !== networkPolicy ||
               input.request.resources ||
               input.request.mounts?.length
             )
@@ -1849,7 +1898,7 @@ export function createVercelAdapter(
             const mutation = makeCreation(input.snapshot.nativeId);
 
             return mutation.submit(
-              { image: { kind: "prepared", value: image }, networkPolicy: config.networkPolicy },
+              { image: { kind: "prepared", value: image }, networkPolicy },
               ctx,
             );
           },

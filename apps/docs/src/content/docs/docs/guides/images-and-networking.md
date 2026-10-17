@@ -50,22 +50,31 @@ Pass the full `built.prepared` value to `Image.prepared()`: it includes the prov
 
 ## Select a network policy
 
-Configure `networkPolicy` in adapter setup:
+Configure `network` once in adapter setup. Every adapter uses the same names, so switching providers does not change application code:
 
-| Provider       | Policy                      | Meaning                                                                                                     |
+| Provider       | `network`                   | Meaning                                                                                                     |
 | -------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | E2B            | `blocked` (default)         | Requests E2B's disabled-internet setting; measured strict outbound isolation has not passed.                |
 | E2B            | `internet`                  | Requests internet access.                                                                                   |
-| Daytona        | `daytona-default` (default) | Keeps organization-managed restrictions, including essential-service access.                                |
 | Daytona        | `blocked`                   | Requests strict block-all. Creation requires verified organization eligibility, with no automatic fallback. |
+| Daytona        | `internet`                  | Unrestricted egress. Creation requires an organization without limited sandbox egress (Tier 3 and above).   |
+| Daytona        | `daytona-default` (default) | Daytona-only setup value: keeps organization-managed restrictions, including essential-service access.      |
 | boxd           | `internet` (required)       | Allows internet access with native peer/metadata isolation. Strict blocked egress is unsupported.           |
-| Vercel Sandbox | `vercel-deny-all` (default) | Requests native `deny-all`; network isolation has no recorded live acceptance.                              |
-| Vercel Sandbox | `vercel-allow-all`          | Requests native `allow-all`.                                                                                |
+| Vercel Sandbox | `blocked` (default)         | Requests native `deny-all`; network isolation has no recorded live acceptance.                              |
+| Vercel Sandbox | `internet`                  | Requests native `allow-all`.                                                                                |
+
+```ts
+// Only the adapter setup differs between providers.
+const client = await Sandbar.connect(e2b({ apiKey, network: "internet" }));
+const box = await client.sandboxes.create();
+```
 
 A requested policy is not proof of isolation. E2B's maintained test still connected by direct IPv4 TCP when `blocked` was requested, even though hostname resolution failed. Prepared-image baseline tests do not test outbound isolation. See [network test evidence](/docs/providers/live-qualification/) before relying on a policy to isolate untrusted code.
 
-Daytona's `daytona-default` does not promise unrestricted internet or strict blocked egress. Its adapter has no unrestricted `internet` policy. boxd's peer/metadata isolation does not block outbound internet. Vercel uses its own policy names; generic `blocked` and `internet` are unsupported.
+Daytona's `internet` never falls back to `daytona-default`: on a Tier 1 or Tier 2 organization it rejects before allocation, because Daytona's default firewall there only reaches essential services. Choose `daytona-default` in setup when that restricted egress is acceptable. boxd's peer/metadata isolation does not block outbound internet.
 
-Omitted create and restore policies use the connection default. An explicit per-call override must be supported by that connection: E2B accepts `blocked` or `internet`, while Daytona and Vercel require a match with the configured policy. boxd accepts only `internet`. Empty or null policies reject rather than selecting a fallback.
+Omitted create and restore policies use the connection default, so most applications never pass `network` per call. An explicit `create({ network })` or `restore({ network })` must be supported by that connection: E2B accepts `blocked` or `internet`, while Daytona and Vercel require a match with the configured policy. boxd accepts only `internet`. Empty or null policies reject rather than selecting a fallback. `client.capabilities().network` lists what the connection accepts.
+
+The option was previously named `networkPolicy`, and Vercel used `vercel-deny-all` and `vercel-allow-all`. Those spellings still work and are deprecated; passing both `network` and `networkPolicy` with different values rejects.
 
 `snapshot.restore()` uses the current connection's policy, not the captured sandbox's networking. Saved operations keep the policy resolved at submission when you recover them. Outbound policies do not open a public preview URL; see [Preview access](/docs/guides/preview-access/).

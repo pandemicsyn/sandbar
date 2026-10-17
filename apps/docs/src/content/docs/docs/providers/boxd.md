@@ -12,7 +12,7 @@ import { boxdAdapter } from "@sandbar-sdk/boxd";
 const client = await Sandbar.connect({
   adapter: boxdAdapter,
   credentials: { apiKey: process.env.BOXD_API_KEY! },
-  config: { org: "my-org", networkPolicy: "internet" },
+  config: { org: "my-org", network: "internet" },
 });
 try {
   const box = await client.sandboxes.create();
@@ -38,7 +38,7 @@ The adapter uses these defaults:
 - **New volumes:** 10 GiB each. Set `volumes.sizeBytes` from 1 GiB to 1 TiB, subject to your quota.
 - **Preview access:** public on port 3000. Create pins a public route and disables browser protection. See [Public previews](#public-previews).
 
-You must set `networkPolicy: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported.
+You must set `network: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported.
 
 ## Adapter support
 
@@ -83,7 +83,7 @@ const client = await Sandbar.connect({
   credentials: { apiKey: process.env.BOXD_API_KEY! },
   config: {
     org: "my-org",
-    networkPolicy: "internet",
+    network: "internet",
     preview: { access: "public", ports: [3000, 8080] },
   },
 });
@@ -104,6 +104,8 @@ boxd snapshots include the machine’s private disk and RAM, but a newer snapsho
 `suspend()` uses native pause. `resume()` wakes standby or hibernated compute under its original UUID; RAM, processes and sockets are preserved. Metadata inspect/reopen does not intentionally wake compute. Native inbound traffic can wake sleeping machines automatically. Your application uses the same `suspend()` and `resume()` calls for both native sleep states.
 
 ## Storage and recovery
+
+When boxd refuses a create outright, `create()` rejects with a matching error code and boxd's own reason, for example `CAPACITY: boxd rejected sandbox creation (RESOURCE_EXHAUSTED): …` for a quota. Nothing was created, so you can fix the cause and create again. Lost or unconfirmed responses stay `OUTCOME_UNKNOWN`.
 
 A disk attaches to one machine at a time, including read-only mounts. There are no subpaths or versions; native host placement can prevent a multi-disk create. Independent disks survive compute destruction and require explicit deletion. The adapter has not established persistence, locking or rename guarantees for mounted disks. Flush application writers before teardown and explicitly choose `storage: "allow-unconfirmed"` when destroying mounted compute, or configure `cleanup: { storage: "allow-unconfirmed" }` when connecting. Cleanup reports retained UUIDs and mount paths.
 

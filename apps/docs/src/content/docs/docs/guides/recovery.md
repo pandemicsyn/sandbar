@@ -24,7 +24,7 @@ Snapshot behavior depends on the adapter:
 
 Read the returned `capture` for the confirmed guarantees and `source` for the source state observed when the call finishes. An `observedAt` timestamp records a past observation; it does not promise the provider is still in that state.
 
-E2B and Daytona reject captures with external mounts and reject resource-size overrides during restore. Daytona can restore known filesystem snapshots that start fresh processes with selected volume mounts under an explicit `daytona-default` network policy. Restoring memory together with mounts remains unsupported. Omit mounts or pass an empty array for private filesystem state. The SDK temporarily also accepts the legacy empty-object alias. See [snapshots and volumes](/docs/guides/snapshots-and-volumes/) for the full options and limits.
+E2B and Daytona reject captures with external mounts and reject resource-size overrides during restore. Daytona can restore known filesystem snapshots that start fresh processes with selected volume mounts under `internet` or `daytona-default` networking. Restoring memory together with mounts remains unsupported. Omit mounts or pass an empty array for private filesystem state. The SDK temporarily also accepts the legacy empty-object alias. See [snapshots and volumes](/docs/guides/snapshots-and-volumes/) for the full options and limits.
 
 If `database.save` fails after capture returns, the capture still succeeded and you still have its handle and reference. There is also a crash window between native creation and saving that reference. Sandbar does not guarantee that a create-and-save workflow happens exactly once; your application must choose how to manage that window.
 

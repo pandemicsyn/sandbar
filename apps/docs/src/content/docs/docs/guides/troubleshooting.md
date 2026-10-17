@@ -20,18 +20,18 @@ The experimental Modal adapter is `@sandbar-sdk/modal`; `sandbar-sdk/modal` is n
 
 Check that credentials are available to the server process, then check the adapter's required setup:
 
-| Provider | Check                                                                                                    |
-| -------- | -------------------------------------------------------------------------------------------------------- |
-| E2B      | Pass an API key, commonly stored as `E2B_API_KEY`. `E2B_API_ID` is not an API key.                       |
-| Daytona  | Pass `apiKey` and an available target region, such as `target: "us"`.                                    |
-| boxd     | Pass a member API key, your authenticated default organization ID/slug, and `networkPolicy: "internet"`. |
-| Vercel   | Pass a bearer token with access to the configured `teamId`, `projectId` and sandbox API.                 |
+| Provider | Check                                                                                              |
+| -------- | -------------------------------------------------------------------------------------------------- |
+| E2B      | Pass an API key, commonly stored as `E2B_API_KEY`. `E2B_API_ID` is not an API key.                 |
+| Daytona  | Pass `apiKey` and an available target region, such as `target: "us"`.                              |
+| boxd     | Pass a member API key, your authenticated default organization ID/slug, and `network: "internet"`. |
+| Vercel   | Pass a bearer token with access to the configured `teamId`, `projectId` and sandbox API.           |
 
 `Sandbar.connect` verifies credentials and scope using provider reads. Connecting successfully does not guarantee access to every image, policy or operation. Follow the [provider setup guides](/docs/providers/support/) for account and configuration limits.
 
 ## Daytona creation reports unsupported networking
 
-To use Daytona's organization-managed restrictions, set `networkPolicy: "daytona-default"` in adapter setup. Omitted create and restore policies inherit that value; you do not need to repeat it on each call.
+To use Daytona's organization-managed restrictions, set `network: "daytona-default"` in adapter setup (or `network: "internet"` on Tier 3 and above). Omitted create and restore policies inherit that value; you do not need to repeat it on each call.
 
 Omitting the policy during setup selects strict `blocked`, which requires verified organization eligibility and can be unavailable. An explicit per-call policy must match the connection's policy. Sandbar does not silently relax it. See [Daytona networking](/docs/providers/daytona/#choose-the-policy-deliberately).
 

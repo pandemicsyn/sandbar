@@ -15,7 +15,7 @@ const client = await Sandbar.connect({
     projectId: process.env.SANDBAR_VERCEL_PROJECT_ID!,
     region: "iad1",
     timeoutSeconds: 300,
-    networkPolicy: "vercel-deny-all",
+    network: "blocked",
   },
   credentials: { token: process.env.VERCEL_TOKEN! },
 });
@@ -42,7 +42,7 @@ try {
 | `image` | Default `vercel/sandbox/universal:latest`, matching Vercel's native default; its Python-backed process/PTY support works out of the box. Also Node 22, Node 24 or Node 26. |
 | `vcpus` | 2 (default), 4, or 8; native memory is 2 GiB per vCPU. Account quotas apply. |
 | `timeoutSeconds` | Initial lifetime 60–86,400 seconds, default 900. Vercel enforces lower plan limits itself (Hobby 45 minutes; Pro/Enterprise 24 hours). |
-| `networkPolicy` | `vercel-deny-all` (default) or `vercel-allow-all`. No measured isolation claim. |
+| `network` | `blocked` (default, native deny-all) or `internet` (native allow-all). Deprecated: `networkPolicy`, `vercel-deny-all`, `vercel-allow-all`. No measured isolation claim. |
 | `ports` | Default empty; up to 15 distinct explicitly exposed public HTTP ports. |
 | `credentials.token` | Bearer token with team/project sandbox access. |
 

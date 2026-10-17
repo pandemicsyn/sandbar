@@ -5,7 +5,7 @@ export async function boxdExample(apiKey: string, org: string) {
   const client = await Sandbar.connect({
     adapter: boxdAdapter,
     credentials: { apiKey },
-    config: { org, networkPolicy: "internet" },
+    config: { org, network: "internet" },
   });
 
   try {
