@@ -1,8 +1,25 @@
 import { expect, spyOn, test } from "bun:test";
 import type { ProcessOutput, ProcessOutputBytes } from "@sandbar-sdk/adapter";
-import { createProcessTail, readProcessLines } from "./process-output";
+import { createProcessTail, readProcessLines, utf8Length } from "./process-output";
 
 const encode = (text: string) => new TextEncoder().encode(text);
+
+test("UTF-8 length counting matches TextEncoder for every code point width and lone surrogates", () => {
+  for (const point of [
+    "a",
+    "\u007f",
+    "\u0080",
+    "é",
+    "\u07ff",
+    "\u0800",
+    "雪",
+    "\uffff",
+    "😀",
+    "\ud800",
+    "\udfff",
+  ])
+    expect(utf8Length(point)).toBe(encode(point).byteLength);
+});
 
 async function* output(chunks: ProcessOutputBytes[]) {
   yield* chunks;

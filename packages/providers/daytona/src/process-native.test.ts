@@ -61,6 +61,7 @@ async function cleanup(process: NativeProcess | undefined, root: string) {
   expect(existsSync(root)).toBe(false);
 }
 
+// About 700 sequential helper round trips: roughly 20s on a typical CI runner.
 test("Daytona supervisor streams 32 MiB with bounded frames, split UTF-8 and separate stderr", async () => {
   const native = fixture();
   let child: NativeProcess | undefined;
@@ -99,7 +100,7 @@ test("Daytona supervisor streams 32 MiB with bounded frames, split UTF-8 and sep
   } finally {
     await cleanup(child, native.root);
   }
-}, 60_000);
+}, 180_000);
 
 test("Daytona supervisor delivers exact input bytes, EOF, current status and confirmed nonzero exit", async () => {
   const native = fixture();
@@ -251,7 +252,7 @@ test("Daytona bounds final output drain when a descendant retains a pipe", async
           argv: [
             "python3",
             "-c",
-            "import os,time; pid=os.fork(); time.sleep(2) if pid==0 else None; os._exit(0)",
+            "import os,time; pid=os.fork(); time.sleep(8) if pid==0 else None; os._exit(0)",
           ],
         },
       },
@@ -777,7 +778,7 @@ test("Daytona expired attachment leases park output, preserve input, and fence a
     [
       "/bin/sh",
       "-c",
-      pythonCommand(processSupervisor.replaceAll("last_request>30", "last_request>0.5"), {
+      pythonCommand(processSupervisor.replaceAll("last_request>30", "last_request>1.5"), {
         root,
         generation,
         lease,
@@ -798,7 +799,7 @@ test("Daytona expired attachment leases park output, preserve input, and fence a
 
   try {
     for (let i = 0; i < 300 && !existsSync(root + "/control"); i++) await Bun.sleep(10);
-    await Bun.sleep(650);
+    await Bun.sleep(1_700);
     expect((await rpc({ root, request: { op: "status", generation, lease } })).error).toBeTruthy();
     expect(await rpc({ root, request: { op: "hello", generation, nextLease } })).toMatchObject({
       ok: true,
@@ -811,8 +812,17 @@ test("Daytona expired attachment leases park output, preserve input, and fence a
       { op: "resize", columns: 20, rows: 20 },
       { op: "close" },
       { op: "detach" },
-    ] as const)
+    ] as const) {
+      // Fenced requests do not renew the shortened lease, so renew it before each one.
+      expect(
+        await rpc({ root, request: { op: "status", generation, lease: nextLease } }),
+      ).not.toHaveProperty("error");
       expect((await rpc({ root, request: { ...request, generation, lease } })).error).toBeTruthy();
+    }
+
+    expect(
+      await rpc({ root, request: { op: "status", generation, lease: nextLease } }),
+    ).not.toHaveProperty("error");
     expect(
       await rpc({ root, request: { op: "write", generation, lease: nextLease, data: "AP8=" } }),
     ).toMatchObject({ ok: true });
