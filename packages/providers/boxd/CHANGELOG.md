@@ -1,5 +1,12 @@
 # @sandbar-sdk/boxd
 
+## 0.4.0
+
+### Patch Changes
+
+- Updated dependencies [[`3a0e3df`](https://github.com/pandemicsyn/sandbar/commit/3a0e3dff3b5c5ec55955efe0da4497cf7b7efcbb)]:
+  - @sandbar-sdk/adapter@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes

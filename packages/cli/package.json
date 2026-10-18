@@ -1,6 +1,6 @@
 {
   "name": "@sandbar-sdk/cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": false,
   "type": "module",
   "description": "Agent-first command line for creating and managing Sandbar sandboxes.",

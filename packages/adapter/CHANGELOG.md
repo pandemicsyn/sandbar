@@ -1,5 +1,11 @@
 # @sandbar-sdk/adapter
 
+## 0.4.0
+
+### Minor Changes
+
+- [#114](https://github.com/pandemicsyn/sandbar/pull/114) [`3a0e3df`](https://github.com/pandemicsyn/sandbar/commit/3a0e3dff3b5c5ec55955efe0da4497cf7b7efcbb) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `capabilities()` reports `imageBuild`: whether `images.build()` can turn an OCI image into a prepared image on this connection.
+
 ## 0.3.0
 
 ### Minor Changes
