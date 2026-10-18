@@ -22,6 +22,7 @@ import {
   type Streams,
 } from "./output";
 import { Session, type Context } from "./session";
+import { skillCommand } from "./skill";
 import type { Env } from "./config";
 
 type FlagSpec = {
@@ -269,6 +270,22 @@ export const commands: readonly CommandSpec[] = [
     remoteExit: false,
     examples: ["sandbar providers --json"],
     run: providersCommand,
+  },
+  {
+    name: "skill",
+    summary: "Print the agent skill for this CLI, or install it for your coding agents",
+    usage: "sandbar skill [install [--project]]",
+    flags: {
+      project: {
+        type: "boolean",
+        description:
+          "Install into this folder's .agents/skills (and .claude/skills) instead of your home",
+      },
+    },
+    passthrough: false,
+    remoteExit: false,
+    examples: ["sandbar skill", "sandbar skill install", "sandbar skill install --project"],
+    run: skillCommand,
   },
 ];
 

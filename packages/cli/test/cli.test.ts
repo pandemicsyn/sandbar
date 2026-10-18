@@ -84,9 +84,10 @@ async function cli(
   args: string[],
   env: Record<string, string> = {},
   stdin?: string,
+  cwd = dir,
 ): Promise<Result> {
   const child = Bun.spawn(["bun", main, ...args], {
-    cwd: dir,
+    cwd,
     env: {
       PATH: process.env.PATH ?? "",
       HOME: dir,
@@ -607,6 +608,68 @@ describe("sandbar CLI against the fake provider", () => {
       expect(result.code).toBe(4);
       expect(envelope(result).error).toMatchObject({ code: "SECRET_TOOL_MISSING" });
       expect(envelope(result).error.hint).toContain("passwordstore.org");
+    });
+  });
+
+  describe("skill", () => {
+    const installed = (base: string, agent: string) =>
+      join(base, agent, "skills", "sandbar-cli", "SKILL.md");
+
+    test("prints the bundled skill", async () => {
+      const bundled = await readFile(
+        join(import.meta.dir, "..", "..", "..", "skills", "sandbar-cli", "SKILL.md"),
+        "utf8",
+      );
+
+      expect(await cli(["skill"])).toMatchObject({ code: 0, stdout: bundled });
+    });
+
+    test("install writes .agents and, where Claude Code is set up, .claude", async () => {
+      await mkdir(join(dir, ".claude"));
+
+      const first = envelope(await cli(["skill", "install", "--json"]));
+
+      expect(first.data.installed.map((entry: { result: string }) => entry.result)).toEqual([
+        "written",
+        "written",
+      ]);
+      expect(await readFile(installed(dir, ".claude"), "utf8")).toContain("name: sandbar-cli");
+
+      const again = envelope(await cli(["skill", "install", "--json"]));
+
+      expect(again.data.installed.map((entry: { result: string }) => entry.result)).toEqual([
+        "unchanged",
+        "unchanged",
+      ]);
+    });
+
+    test("install never replaces a copy installed another way", async () => {
+      const foreign = installed(dir, ".agents");
+      await mkdir(join(foreign, ".."), { recursive: true });
+      await writeFile(foreign, "my own notes\n");
+
+      const result = await cli(["skill", "install", "--json"]);
+
+      expect(result.code).toBe(1);
+      expect(envelope(result).error.code).toBe("CONFLICT");
+      expect(await readFile(foreign, "utf8")).toBe("my own notes\n");
+    });
+
+    test("--project installs into the working directory", async () => {
+      const project = join(dir, "project");
+      await mkdir(project);
+
+      const result = await cli(
+        ["skill", "install", "--project"],
+        { HOME: join(dir, "home") },
+        undefined,
+        project,
+      );
+
+      expect(result.code).toBe(0);
+      expect(await readFile(installed(project, ".agents"), "utf8")).toContain(
+        "sandbar skill install",
+      );
     });
   });
 });

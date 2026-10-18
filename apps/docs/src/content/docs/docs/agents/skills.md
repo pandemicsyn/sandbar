@@ -21,6 +21,8 @@ npx skills add pandemicsyn/sandbar --skill sandbar-cli -g
 
 `-g` installs the skill for your user. Leave it out to install into the current project instead, so everyone working in the repository gets it.
 
+The CLI also carries its own copy of `sandbar-cli`, matching its version. `sandbar skill install` writes it to `~/.agents/skills` (and `~/.claude/skills` when Claude Code is set up), and `sandbar skill install --project` writes it into the current folder. `sandbar skill` prints it.
+
 For an agent without a skill system, copy the `SKILL.md` contents into its project or user instructions.
 
 ## What the skills do not do
