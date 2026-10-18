@@ -1666,3 +1666,44 @@ test("persistent listing carries native generation evidence and no creation rece
     await client.close();
   }
 });
+
+test("Vercel sends create env as native session defaults and never saves or echoes a value", async () => {
+  const secret = "CANARY-vercel-env-secret";
+  const native = fixture();
+  const saved: Json[] = [];
+
+  const client = await Sandbar.connect({
+    adapter: native.adapter,
+    config,
+    credentials,
+    onReference(reference) {
+      saved.push(structuredClone(reference));
+    },
+  });
+
+  try {
+    expect((await client.capabilities()).createEnv).toBe(true);
+    const operation = await client.sandboxes.submitCreate({ env: { API_TOKEN: secret } });
+    const box = await operation.wait();
+    const creations = native.requests.filter((r) => r.url.pathname === "/api/v3/sandboxes");
+    expect(creations).toHaveLength(1);
+    expect(JSON.parse(String(creations[0]!.init.body)).env).toEqual({ API_TOKEN: secret });
+    expect(JSON.stringify([operation.reference, box.reference, saved])).not.toContain(secret);
+    await box.destroy();
+
+    native.setCreateStatus(400, { error: { message: `env API_TOKEN=${secret} is invalid` } });
+
+    const error = await client.sandboxes.create({ env: { API_TOKEN: secret } }).then(
+      () => undefined,
+      (cause: Error) => cause,
+    );
+
+    expect(String(error?.message)).not.toContain(secret);
+    expect(String(error?.message)).toContain("API_TOKEN=[redacted]");
+    expect(error).toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(native.effects.create).toBe(2);
+    expect(JSON.stringify(saved)).not.toContain(secret);
+  } finally {
+    await client.close();
+  }
+});

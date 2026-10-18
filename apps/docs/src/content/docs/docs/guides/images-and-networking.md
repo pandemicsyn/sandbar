@@ -78,3 +78,30 @@ Omitted create and restore policies use the connection default, so most applicat
 The option was previously named `networkPolicy`, and Vercel used `vercel-deny-all` and `vercel-allow-all`. Those spellings still work and are deprecated; passing both `network` and `networkPolicy` with different values rejects.
 
 `snapshot.restore()` uses the current connection's policy, not the captured sandbox's networking. Saved operations keep the policy resolved at submission when you recover them. Outbound policies do not open a public preview URL; see [Preview access](/docs/guides/preview-access/).
+
+## Set environment variables
+
+Pass `env` at creation to set variables for every command, process and terminal in the sandbox. A per-call `env` on `exec()` or `processes.start()` overrides the same name for that call only:
+
+```ts
+const box = await client.sandboxes.create({
+  env: { API_TOKEN: process.env.API_TOKEN!, NODE_ENV: "production" },
+});
+
+await box.exec(["node", "app.js"]); // sees API_TOKEN and NODE_ENV=production
+await box.exec({ command: { kind: "argv", argv: ["node", "app.js"] }, env: { NODE_ENV: "test" } });
+```
+
+The variables belong to the sandbox: they still apply after `sandboxes.get(reference)` reopens it in another process, without passing them again. Names match `[A-Za-z_][A-Za-z0-9_]*`; values are strings without NUL. A request holds at most 128 variables and 64 KiB of names and values. Invalid input rejects with `INVALID_ARGUMENT` before any provider call, and the message never repeats a name or value. An empty `env` asks for nothing.
+
+Values are often secrets, so Sandbar never writes them into operation references, recovery tokens, telemetry or its own error messages, and adapters redact an echoed value from provider error text. The provider still stores them with the sandbox, and any process inside it can read them.
+
+| Provider       | Create-time `env`                                                               |
+| -------------- | ------------------------------------------------------------------------------- |
+| Daytona        | Native sandbox `env` on creation.                                               |
+| E2B            | Native sandbox `envs` on creation.                                              |
+| Vercel Sandbox | Native session `env` on creation; persistent sandboxes keep it on resume.       |
+| Modal          | Native sandbox environment, sent with the single create request (experimental). |
+| boxd           | Unsupported: boxd's native machine env is not established for exec sessions.    |
+
+`client.capabilities().createEnv` reports whether the connection supports it. On a connection that does not, `checkCreate({ env })` returns `unsupported` and `create({ env })` rejects with `UnsupportedFeatureError` before allocating anything; pass the variables per call with `exec({ env })` instead. `snapshot.restore()` does not take `env`; whether a restored sandbox keeps the source's variables depends on the provider's snapshot, so pass them per call if a restored sandbox needs them. Live provider acceptance of create-time variables has not been run.

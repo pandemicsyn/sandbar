@@ -54,6 +54,8 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 
 `create()`, `create({ labels: { job: "report" } })`, `checkCreate()` and `submitCreate()` use the configured environment. Without one, pass `create({ environment: Image.prepared("your-snapshot") })`; missing both rejects with `INVALID_ARGUMENT` before creation. Scoped prepared images retain scope checks. An invalid override never falls back or triggers an unrequested build. Default-creation live acceptance remains unrun.
 
+`create({ env })` sends the variables as the native sandbox `env` in the single create request, so they apply to every command and process, including after reopening; per-call `env` overrides a name. Values are not saved in recovery references and are redacted from Daytona's error text. See [environment variables](/docs/guides/images-and-networking/#set-environment-variables). Live acceptance remains unrun.
+
 ## Choose the policy deliberately
 
 `internet` requests unrestricted egress and needs an organization without limited sandbox egress; otherwise creation rejects before allocation with no fallback. `daytona-default` preserves Daytona's organization-managed restrictions, including essential-service access. Configure it once on the connection; omitted create and restore policies use that value. Per-call policies must match this connection’s policy; open a separately configured connection to change it. It does not promise unrestricted internet or strict blocked egress.

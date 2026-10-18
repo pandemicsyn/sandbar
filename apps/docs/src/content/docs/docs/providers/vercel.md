@@ -60,6 +60,8 @@ try {
 
 `client.sandboxes.create()` uses this setup. Any image, region or policy supplied on an individual create call must match it. Arbitrary container images, OCI builds and mounted drives are not supported.
 
+`create({ env })` sets Vercel's native session `env`, which every command inherits unless its own `env` overrides a name; it applies after reopening. Values are not saved in recovery tokens and are redacted from Vercel's error text. Snapshot restore does not take `env`. See [environment variables](/docs/guides/images-and-networking/#set-environment-variables). Live acceptance remains unrun.
+
 ## Commands, processes and files
 
 Use ordinary `box.exec` for a command, with arguments or an explicit shell script. It supports working directory, environment variables, and up to 1 MiB of finite stdin. Input bytes are verified before the command starts, and stdin ends after the supplied bytes. Separate stdout and stderr preserve the original bytes, with a combined output limit of 1 MiB and a truncation indicator. See [files and command output](/docs/guides/files-and-output/).

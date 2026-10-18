@@ -396,7 +396,11 @@ const createRejections = new Map<number, z.infer<typeof DriverError>["code"]>([
 ]);
 
 /** Daytona's own reason (quota, tier, snapshot state), single-line, bounded and without the API key. */
-async function nativeMessage(response: Response, apiKey: string): Promise<string | undefined> {
+async function nativeMessage(
+  response: Response,
+  apiKey: string,
+  values: readonly string[] = [],
+): Promise<string | undefined> {
   try {
     const body = await boundedJson(
       response,
@@ -404,8 +408,14 @@ async function nativeMessage(response: Response, apiKey: string): Promise<string
       16_384,
     );
 
-    const text = (Array.isArray(body.message) ? body.message.join("; ") : body.message)
-      .replaceAll(apiKey, "[redacted]")
+    // Create-time environment values may be secrets; a native echo never reaches a message.
+    const text = [apiKey, ...values]
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length)
+      .reduce(
+        (message, secret) => message.replaceAll(secret, "[redacted]"),
+        Array.isArray(body.message) ? body.message.join("; ") : body.message,
+      )
       .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
       .replace(/[\p{Cc}\s]+/gu, " ")
       .trim();
@@ -858,6 +868,8 @@ export class DaytonaDriver implements ProviderDriver {
     networkPolicy: string;
     labels?: Record<string, string>;
     mounts?: import("@sandbar-sdk/adapter").MountSpec[];
+    /** Native sandbox-wide environment; never copied into results or messages. */
+    env?: Record<string, string>;
     signal?: AbortSignal;
   }): Promise<DaytonaCreateResult> {
     this.sameScope(input.scope);
@@ -925,7 +937,8 @@ export class DaytonaDriver implements ProviderDriver {
           "application/json",
         );
 
-        if (!built.ok) return await this.createRejection(built, "image build", uncertain);
+        if (!built.ok)
+          return await this.createRejection(built, "image build", uncertain, false, input.env);
         const snapshot = await boundedJson(built, Snapshot);
 
         if (
@@ -1004,6 +1017,7 @@ export class DaytonaDriver implements ProviderDriver {
         target: this.scope.region,
         public: false,
         labels,
+        env: input.env && Object.keys(input.env).length ? input.env : undefined,
         volumes: input.mounts?.map((mount) => ({
           volumeId: mount.volume.nativeId,
           mountPath: mount.path,
@@ -1027,6 +1041,7 @@ export class DaytonaDriver implements ProviderDriver {
           "sandbox creation",
           uncertain,
           retainedSnapshotId !== undefined,
+          input.env,
         );
       const raw = await boundedJson(response, z.unknown());
 
@@ -1131,8 +1146,14 @@ export class DaytonaDriver implements ProviderDriver {
     step: string,
     uncertain: (reason: string) => DaytonaCreateResult,
     effectful = false,
+    env?: Record<string, string>,
   ): Promise<DaytonaCreateResult> {
-    const detail = await nativeMessage(response, this.config.credentials.apiKey);
+    const detail = await nativeMessage(
+      response,
+      this.config.credentials.apiKey,
+      Object.values(env ?? {}),
+    );
+
     const message = `Daytona rejected ${step} (HTTP ${response.status})${detail ? `: ${detail}` : ""}`;
     const code = createRejections.get(response.status);
 

@@ -51,6 +51,8 @@ Without `teamId`, Sandbar verifies the API key with an authenticated read and bi
 
 `create()`, `create({ labels: { job: "report" } })`, `checkCreate()` and `submitCreate()` use `templateId`, including its existing `base` default. An explicit per-call `environment` wins for that call only. Invalid or unavailable overrides never fall back to `base`; scoped prepared images retain scope checks. Omitted networking uses the configured `network`, which defaults to blocked. Per-call blocked/internet overrides apply only to that request. Default-creation live acceptance remains unrun.
 
+`create({ env })` sets the native sandbox `envs` on creation, which E2B applies to every command and process, including after reopening; per-call `env` overrides a name. Values are not saved in recovery tokens and are redacted from E2B's error text. See [environment variables](/docs/guides/images-and-networking/#set-environment-variables). Live acceptance remains unrun.
+
 ## Files and commands
 
 Use `/home/user` for general file workflows on `base`. The [runnable agent examples](/docs/guides/runnable-agent-examples/) separately passed in their own `/tmp/sandbar-agent-example` workspace with explicit `internet` networking. The live baseline covers binary transfer, overwrite, and no-clobber in `/home/user`. An earlier overwrite attempt directly in sticky `/tmp` failed; custom paths, users, and images need their own validation.

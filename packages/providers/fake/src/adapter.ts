@@ -142,6 +142,7 @@ export function createFakeAdapter(options: { url: string; token: string; fetch?:
           network: caps.networkPolicies,
           exec: { commands: ["argv", "shell"], maxOutputBytes: caps.maxOutputBytes },
           fileWrite: { overwrite: true, noClobber: true },
+          createEnv: true,
         },
         create: {
           recovery: { version: 1, token: Token },
@@ -160,6 +161,7 @@ export function createFakeAdapter(options: { url: string; token: string; fetch?:
               image: result.effectiveImage,
               networkPolicy: input.networkPolicy,
               labels: input.labels,
+              env: input.env,
             };
           },
           async submit(input, ctx) {
@@ -170,6 +172,7 @@ export function createFakeAdapter(options: { url: string; token: string; fetch?:
                 image: input.image,
                 networkPolicy: input.networkPolicy,
                 labels: input.labels,
+                env: input.env,
               }),
               ctx,
               bindingScope,

@@ -218,6 +218,7 @@ export class FakeProviderDriver implements ProviderDriver {
     image: string;
     networkPolicy: string;
     labels?: Record<string, string>;
+    env?: Record<string, string>;
   }) {
     return this.mutation(
       {
@@ -227,6 +228,7 @@ export class FakeProviderDriver implements ProviderDriver {
         image: input.image,
         networkPolicy: input.networkPolicy,
         labels: input.labels,
+        env: input.env,
       },
       input.identity.submissionId,
     );

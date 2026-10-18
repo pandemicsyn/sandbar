@@ -98,6 +98,19 @@ const createFlags = {
     description: "blocked or internet; default is the profile's policy",
   },
   label: { type: "string", multiple: true, value: "k=v", description: "Label to set (repeatable)" },
+  env: {
+    type: "string",
+    multiple: true,
+    value: "K=V",
+    description:
+      "Environment variable for every command in the sandbox (repeatable; K alone copies it from here)",
+  },
+  "env-file": {
+    type: "string",
+    multiple: true,
+    value: "path",
+    description: "Read K=V lines into the sandbox environment (repeatable; --env wins)",
+  },
   build: {
     type: "boolean",
     description: "Build --image now if this provider needs a build and none is recorded",
@@ -110,7 +123,13 @@ const execFlags = {
     type: "string",
     multiple: true,
     value: "K=V",
-    description: "Environment variable (repeatable)",
+    description: "Environment variable for this command (repeatable; K alone copies it from here)",
+  },
+  "env-file": {
+    type: "string",
+    multiple: true,
+    value: "path",
+    description: "Read K=V lines into this command's environment (repeatable; --env wins)",
   },
   stdin: { type: "boolean", description: "Send this process's stdin to the command" },
   "stdin-file": {
@@ -131,7 +150,7 @@ export const commands: readonly CommandSpec[] = [
     name: "create",
     summary: "Create a sandbox and print its name",
     usage:
-      "sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>]",
+      "sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>] [--env K=V]...",
     flags: {
       ...createFlags,
       "if-not-exists": {
@@ -144,6 +163,7 @@ export const commands: readonly CommandSpec[] = [
     examples: [
       "sandbar create --name web --network internet",
       "sandbar create --name job-42 --if-not-exists --json",
+      "sandbar create --name ci --env-file .env --env API_TOKEN",
     ],
     run: createCommand,
   },

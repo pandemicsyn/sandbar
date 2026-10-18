@@ -20,7 +20,13 @@ import {
 } from "./resources";
 import { LifecycleInput, SuspendResult, ResumeResult, RenewInput, RenewResult } from "./lifecycle";
 import { z } from "zod";
-import { CreateSandboxInput, ExecRequest, FilePath, MAX_EXEC_STDIN_BYTES } from "./portable";
+import {
+  CreateEnv,
+  CreateSandboxInput,
+  ExecRequest,
+  FilePath,
+  MAX_EXEC_STDIN_BYTES,
+} from "./portable";
 import {
   AdapterError,
   createAttemptContext,
@@ -171,6 +177,7 @@ const CreateInputSchema = z.strictObject({
   labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
   requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
   mounts: z.array(MountSpec).max(32).optional(),
+  env: CreateEnv.optional(),
 });
 
 const ImageBuildInputSchema = z.strictObject({
@@ -605,6 +612,14 @@ function checkCapability(
       !session.supports.network.includes(request.networkPolicy)
     )
       throw new AdapterError("UNSUPPORTED", "Requested image or network policy is unsupported");
+
+    if (request.env && !Object.keys(request.env).length) delete request.env;
+
+    if (request.env && !session.supports.createEnv)
+      throw new AdapterError(
+        "UNSUPPORTED",
+        "Create-time environment variables are unsupported by this adapter",
+      );
 
     return request;
   }

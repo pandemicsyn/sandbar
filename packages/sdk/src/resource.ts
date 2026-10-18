@@ -10,6 +10,7 @@ import type { OperationKind, RetainedArtifact, Scope } from "@sandbar-sdk/adapte
 import { z } from "zod";
 import type { AdapterSnapshot, AdapterVolume } from "./resources";
 import {
+  CreateEnv,
   CreateSandboxInput,
   ExecCommand,
   ExecRequest,
@@ -66,6 +67,12 @@ export type CreateInput = {
   networkPolicy?: string;
   region?: string;
   labels?: Record<string, string>;
+  /**
+   * Environment variables for every command, process and terminal in the sandbox,
+   * including after reopen. A per-call `env` entry overrides the same key. Values are
+   * never saved in recovery references or included in errors and telemetry.
+   */
+  env?: Record<string, string>;
 };
 
 export type ExecInput = {
@@ -377,10 +384,28 @@ export function validateCreate(
       networkPolicy: z.string().min(1).max(128).optional(),
       region: z.string().min(1).max(128).optional(),
       labels: z.record(z.string(), z.string()).optional(),
+      env: CreateEnv.optional(),
     })
     .safeParse(input === undefined ? {} : input);
 
-  if (!parsed.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid create request");
+  if (!parsed.success) {
+    // Report only the bounds; environment keys and values never enter a message.
+    if (
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JavaScript callers can pass any create input.
+      typeof input === "object" &&
+      input !== null &&
+      input.env !== undefined &&
+      !CreateEnv.safeParse(input.env).success
+    )
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Invalid create env: use at most 128 names matching [A-Za-z_][A-Za-z0-9_]* with string values without NUL, 64 KiB in total",
+      );
+
+    throw new SandbarError("INVALID_ARGUMENT", "Invalid create request");
+  }
+
+  const env = parsed.data.env && Object.keys(parsed.data.env).length ? parsed.data.env : undefined;
 
   if (parsed.data.environment === undefined) {
     if (defaultEnvironment === undefined)
@@ -397,7 +422,7 @@ export function validateCreate(
     );
   }
 
-  const { network, ...request } = parsed.data;
+  const { network, env: _env, ...request } = parsed.data;
 
   const networkPolicy = resolveNetworkPolicy(
     network,
@@ -422,7 +447,14 @@ export function validateCreate(
 
   if (!contract.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid create request");
 
-  return { ...request, environment: parsed.data.environment, networkPolicy };
+  const resolved: Omit<CreateInput, "network"> & {
+    environment: ImageInput;
+    networkPolicy: string;
+  } = { ...request, environment: parsed.data.environment, networkPolicy };
+
+  if (env) resolved.env = env;
+
+  return resolved;
 }
 
 function isArgumentArray(input: ExecInput | readonly string[]): input is readonly string[] {

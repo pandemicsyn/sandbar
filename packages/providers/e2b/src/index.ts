@@ -772,6 +772,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           network: ["internet", "blocked"],
           exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_BYTES },
           fileWrite: { overwrite: true, noClobber: true },
+          createEnv: true,
         },
         imageBuild: {
           async prepare(input) {
@@ -949,14 +950,17 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
               if (name) Object.assign(metadata, { sandbar_build: name });
 
-              const id = await transport.create({
+              const request: Parameters<E2BTransport["create"]>[0] = {
                 templateId,
                 timeoutMs: config.timeoutSeconds * 1000,
                 allowInternetAccess: input.networkPolicy === "internet",
                 allowPublicTraffic: token.allowPublicTraffic,
                 metadata,
                 signal: ctx.signal,
-              });
+              };
+
+              if (input.env) request.env = input.env;
+              const id = await transport.create(request);
 
               if (!nativeId.test(id)) return ctx.unknown("E2B create returned an invalid ID");
               token.sandboxId = id;

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ExecCommand } from "@sandbar-sdk/adapter/portable";
+import { CreateEnv, ExecCommand } from "@sandbar-sdk/adapter/portable";
 import { InvocationIdentity, NativeScope, SandboxRef } from "@sandbar/provider-spi";
 
 export const FakeInventoryCursor = z
@@ -16,6 +16,7 @@ export const FakeAction = z.discriminatedUnion("kind", [
     image: z.string().min(1),
     networkPolicy: z.string().min(1),
     labels: z.record(z.string(), z.string()).optional(),
+    env: CreateEnv.optional(),
   }),
   z.strictObject({ kind: z.literal("inspect"), ref: SandboxRef }),
   z.strictObject({

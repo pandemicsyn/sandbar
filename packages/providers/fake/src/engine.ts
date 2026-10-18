@@ -78,6 +78,8 @@ const ResourceSchema = z.strictObject({
   image: z.string(),
   networkPolicy: z.string(),
   labels: z.record(z.string(), z.string()),
+  /** Sandbox-wide environment; exec fixtures match it merged under per-call env. */
+  env: z.record(z.string(), z.string()).optional(),
   files: z.record(z.string(), FakeFileBytesBase64),
   sequence: z.number().int().nonnegative(),
 });
@@ -529,6 +531,7 @@ export class FakeProviderEngine {
     image: string;
     networkPolicy: string;
     labels?: Record<string, string>;
+    env?: Record<string, string>;
   }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
 
@@ -574,7 +577,8 @@ export class FakeProviderEngine {
         if (this.state.resources.length >= MAX_RESOURCES)
           return { result: this.rejection("capacity"), loseResponse: false };
         const ref = this.ref(input.scope, "sandbox");
-        this.state.resources.push({
+
+        const resource: z.infer<typeof ResourceSchema> = {
           ref,
           state: "running",
           image: input.image,
@@ -582,7 +586,10 @@ export class FakeProviderEngine {
           labels: input.labels ?? {},
           files: {},
           sequence: 1,
-        });
+        };
+
+        if (input.env && Object.keys(input.env).length) resource.env = { ...input.env };
+        this.state.resources.push(resource);
 
         const result: z.infer<typeof DriverResult> = {
           status: "completed",
@@ -690,7 +697,7 @@ export class FakeProviderEngine {
           !fixture ||
           canonicalJson(fixture.command) !== canonicalJson(input.command) ||
           fixture.cwd !== input.cwd ||
-          canonicalJson(fixture.env ?? {}) !== canonicalJson(input.env ?? {}) ||
+          canonicalJson(fixture.env ?? {}) !== canonicalJson({ ...resource.env, ...input.env }) ||
           (fixture.deadlineSeconds !== undefined &&
             fixture.deadlineSeconds !== input.deadlineSeconds)
         )

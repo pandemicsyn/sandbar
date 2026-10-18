@@ -959,6 +959,7 @@ export function createDaytonaAdapter(
           network: caps.networkPolicies,
           exec: { commands: ["argv", "shell"], maxOutputBytes: caps.maxOutputBytes },
           fileWrite: { overwrite: true, noClobber: true },
+          createEnv: true,
         },
         imageBuild: {
           recovery: { version: 1, token: ImageToken },
@@ -1068,6 +1069,7 @@ export function createDaytonaAdapter(
               networkPolicy: input.networkPolicy,
               labels: input.labels,
               mounts: input.mounts,
+              env: input.env,
             };
           },
           async submit(input, ctx) {
@@ -1079,6 +1081,7 @@ export function createDaytonaAdapter(
               networkPolicy: input.networkPolicy,
               labels: input.labels,
               mounts: input.mounts,
+              env: input.env,
               signal: ctx.signal,
             });
 

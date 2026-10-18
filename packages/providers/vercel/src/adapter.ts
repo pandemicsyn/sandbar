@@ -886,6 +886,8 @@ export function createVercelAdapter(
               failoverRegions: [],
               networkPolicy: { mode },
               tags: { ...input.labels, sandbarSubmission: ctx.submissionId },
+              // Native session defaults; every command inherits them unless its own env overrides.
+              env: input.env && Object.keys(input.env).length ? input.env : undefined,
             };
 
             let acknowledgement;
@@ -899,7 +901,17 @@ export function createVercelAdapter(
               );
             } catch (error) {
               if (!(error instanceof VercelRequestRejected)) throw error;
-              const message = `Vercel rejected sandbox creation (HTTP ${error.status})${error.detail ? `: ${error.detail}` : ""}`;
+
+              // Create-time environment values may be secrets; a native echo never reaches a message.
+              const detail = Object.values(input.env ?? {})
+                .filter(Boolean)
+                .sort((a, b) => b.length - a.length)
+                .reduce(
+                  (text, secret) => text.replaceAll(secret, "[redacted]"),
+                  error.detail ?? "",
+                );
+
+              const message = `Vercel rejected sandbox creation (HTTP ${error.status})${detail ? `: ${detail}` : ""}`;
               const code = createRejections.get(error.status);
 
               return code
@@ -1272,6 +1284,7 @@ export function createVercelAdapter(
           network: [networkPolicy],
           exec: { commands: ["argv", "shell"], maxOutputBytes: maxBytes },
           fileWrite: { overwrite: true, noClobber: true },
+          createEnv: true,
         },
         suspensionCapabilities: async () =>
           config.persistent

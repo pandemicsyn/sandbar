@@ -27,6 +27,23 @@ export const guarded = defineAdapter({
   },
 });
 
+/** The fake adapter without create-time env, like a provider that cannot guarantee it. */
+export const withoutCreateEnv = bindAdapter(
+  defineAdapter({
+    name: "fake",
+    displayName: "Fake test provider without create env",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect({ host }) {
+      const session = await definition.connect({ config: {}, credentials: {}, host });
+
+      return { ...session, supports: { ...session.supports, createEnv: false } };
+    },
+  }),
+  {},
+  {},
+);
+
 const builds = process.env.SANDBAR_FAKE_BUILDS;
 
 const built = {

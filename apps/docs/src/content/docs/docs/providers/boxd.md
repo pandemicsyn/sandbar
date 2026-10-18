@@ -38,7 +38,7 @@ The adapter uses these defaults:
 - **New volumes:** 10 GiB each. Set `volumes.sizeBytes` from 1 GiB to 1 TiB, subject to your quota.
 - **Preview access:** public on port 3000. Create pins a public route and disables browser protection. See [Public previews](#public-previews).
 
-You must set `network: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported.
+You must set `network: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported. Create-time `env` is unsupported: boxd's machine `env` is not established to reach exec sessions, so `create({ env })` rejects with `UnsupportedFeatureError` before allocation and `capabilities().createEnv` is `false`. Pass variables per call with `exec({ env })`; see [environment variables](/docs/guides/images-and-networking/#set-environment-variables).
 
 ## Adapter support
 

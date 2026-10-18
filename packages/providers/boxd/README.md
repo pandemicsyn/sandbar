@@ -33,7 +33,7 @@ The organization ID/slug must match authenticated default-org inventory. Scope i
 | `lifetimeSeconds` | Initial hard expiry/default renewal window: 900 seconds, minimum 60, no adapter maximum (boxd documents none for `setDeleteAfter`). |
 | `volumes.sizeBytes` | Per-new-disk size: 10 GiB, configurable 1 GiB–1 TiB; native quotas still apply. |
 
-Create uses peer/metadata isolation, with **internet egress allowed**. `isolated` is not deny-all networking. Explicit blocked policy, regions and labels are rejected before allocation. The production endpoint is fixed. Native image startup can run workload code before the separate expiry-setting request; create and expiry installation are not atomic.
+Create uses peer/metadata isolation, with **internet egress allowed**. `isolated` is not deny-all networking. Explicit blocked policy, regions and labels are rejected before allocation. Create-time `env` is unsupported (`supports.createEnv` is absent): boxd's machine `env` configures the image's main process and is not established for exec sessions, so the SDK rejects `create({ env })` before allocation; pass `exec({ env })` instead. The production endpoint is fixed. Native image startup can run workload code before the separate expiry-setting request; create and expiry installation are not atomic.
 
 ## Support
 

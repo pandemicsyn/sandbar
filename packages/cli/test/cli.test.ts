@@ -1173,3 +1173,120 @@ describe("sandbar CLI against the fake provider", () => {
     });
   });
 });
+
+describe("create-time environment", () => {
+  const secret = "CANARY-cli-env-secret";
+
+  async function storeText() {
+    const directory = join(dir, "state");
+    const files = await readdir(directory, { recursive: true }).catch(() => []);
+
+    const texts = await Promise.all(
+      files.map((file) => readFile(join(directory, String(file)), "utf8").catch(() => "")),
+    );
+
+    return texts.join("\n");
+  }
+
+  test("--env-file, --env and --env NAME reach the native create and no value is kept", async () => {
+    await writeFile(
+      join(dir, "ci.env"),
+      `# comment\nexport MODE=file\nQUOTED="a b"\n\nAPI_TOKEN=from-file\n`,
+    );
+
+    const created = await cli(
+      [
+        "create",
+        "--name",
+        "box",
+        "--prepared",
+        "fake-starter",
+        "--env-file",
+        "ci.env",
+        "--env",
+        "MODE=flag",
+        "--env",
+        "API_TOKEN",
+        "--json",
+      ],
+      { API_TOKEN: secret },
+    );
+
+    expect(created.code).toBe(0);
+    expect(envelope(created).data.name).toBe("box");
+    expect(`${created.stdout}${created.stderr}`).not.toContain(secret);
+    expect(`${created.stdout}${created.stderr}`).not.toContain("from-file");
+    expect(await storeText()).not.toContain(secret);
+
+    const [resource] = await fakeResources();
+    // SAFETY: The fake engine's test state includes the native create-time environment.
+    expect((resource as FakeResource & { env?: Record<string, string> }).env).toEqual({
+      MODE: "flag",
+      QUOTED: "a b",
+      API_TOKEN: secret,
+    });
+
+    // The fake matches an exec fixture against the sandbox env merged under the call's env.
+    await control("/_test/seed", {
+      submissionId: "*",
+      action: "exec",
+      command: {
+        command: { kind: "argv", argv: ["printenv"] },
+        env: { MODE: "call", QUOTED: "a b", API_TOKEN: secret },
+        exitCode: 0,
+        stdoutBase64: Buffer.from("ok\n").toString("base64"),
+      },
+    });
+
+    expect(await cli(["exec", "box", "--env", "MODE=call", "--", "printenv"])).toMatchObject({
+      code: 0,
+      stdout: "ok\n",
+    });
+    expect(await storeText()).not.toContain(secret);
+  });
+
+  test("an adapter without create env fails before creating and echoes no value", async () => {
+    await writeConfig({
+      default: "fake",
+      profiles: { fake: { module: fixture, export: "withoutCreateEnv" } },
+    });
+
+    const result = await cli([
+      "create",
+      "--name",
+      "box",
+      "--prepared",
+      "fake-starter",
+      "--env",
+      `API_TOKEN=${secret}`,
+      "--json",
+    ]);
+
+    expect(result.code).not.toBe(0);
+    expect(envelope(result).error.code).toBe("UNSUPPORTED");
+    expect(`${result.stdout}${result.stderr}`).not.toContain(secret);
+    expect(await fakeResources()).toEqual([]);
+    expect(await storeNames()).toEqual([]);
+  });
+
+  test("malformed env input is a usage error that names no value", async () => {
+    await writeFile(join(dir, "bad.env"), `GOOD=1\n${secret}\n`);
+
+    for (const args of [
+      ["--env-file", "bad.env"],
+      ["--env", `9BAD=${secret}`],
+      ["--env", "UNSET_FOR_TEST"],
+      ["--env-file", "missing.env"],
+    ]) {
+      const result = await cli(["create", "--prepared", "fake-starter", ...args, "--json"]);
+
+      expect(result.code).toBe(2);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(secret);
+    }
+
+    expect(envelope(await cli(["create", "--env-file", "bad.env", "--json"])).error.message).toBe(
+      "--env-file bad.env:2 must be NAME=VALUE with a valid NAME",
+    );
+    expect(await fakeResources()).toEqual([]);
+  });
+});

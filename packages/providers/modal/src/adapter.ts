@@ -165,6 +165,7 @@ export function createModalAdapter(
           network: ["blocked"],
           exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_BYTES },
           fileWrite: { overwrite: true, noClobber: true },
+          createEnv: true,
         },
         create: {
           async prepare(input) {
@@ -197,6 +198,7 @@ export function createModalAdapter(
               imageId: input.image.kind === "prepared" ? input.image.value : "",
               ociReference: input.image.kind === "oci" ? input.image.value : undefined,
               labels: input.labels ?? {},
+              env: input.env,
             };
           },
           async submit(input, ctx) {
@@ -217,6 +219,8 @@ export function createModalAdapter(
               };
 
               if (input.ociReference) request.ociReference = input.ociReference;
+
+              if (input.env) request.env = input.env;
 
               if (config.region) request.regions = [config.region];
               const id = await transport.create(request);

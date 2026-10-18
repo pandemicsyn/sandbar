@@ -64,8 +64,12 @@ const createRejections = new Map<number, ConstructorParameters<typeof AdapterErr
  * exists, and SandboxError.statusCode for other HTTP rejections. TemplateError follows
  * a created-then-killed sandbox, and 5xx or transport loss are uncertain.
  */
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- thrown native values are classified here.
-export function createRejection(error: unknown, apiKey: string): E2BCreateRejected | undefined {
+export function createRejection(
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- thrown native values are classified here.
+  error: unknown,
+  apiKey: string,
+  values: readonly string[] = [],
+): E2BCreateRejected | undefined {
   if (!(error instanceof Error) || error instanceof TemplateError) return undefined;
 
   const code =
@@ -81,7 +85,11 @@ export function createRejection(error: unknown, apiKey: string): E2BCreateReject
 
   if (!code) return undefined;
 
-  const detail = (apiKey ? error.message.replaceAll(apiKey, "[redacted]") : error.message)
+  // Create-time environment values may be secrets; a native echo never reaches a message.
+  const detail = [apiKey, ...values]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .reduce((message, secret) => message.replaceAll(secret, "[redacted]"), error.message)
     .replace(/[\p{Cc}\s]+/gu, " ")
     .trim()
     .slice(0, 300);
@@ -205,6 +213,8 @@ export type E2BTransport = {
     allowInternetAccess: boolean;
     allowPublicTraffic?: boolean;
     volumeMounts?: Record<string, string>;
+    /** Native sandbox-wide `envs`; values may be secrets and never enter messages. */
+    env?: Record<string, string>;
     signal?: AbortSignal;
   }): Promise<string>;
   get(id: string): Promise<E2BRecord | null>;
@@ -792,12 +802,13 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
           allowInternetAccess: input.allowInternetAccess,
           network: { allowPublicTraffic: input.allowPublicTraffic ?? false },
           volumeMounts: input.volumeMounts,
+          envs: input.env,
           signal: input.signal,
         });
 
         return sandbox.sandboxId;
       } catch (error) {
-        throw createRejection(error, apiKey) ?? error;
+        throw createRejection(error, apiKey, Object.values(input.env ?? {})) ?? error;
       }
     },
     get,

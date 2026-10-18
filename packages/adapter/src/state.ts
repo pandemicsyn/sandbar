@@ -799,6 +799,15 @@ export async function checkCreate(
       reason: `Network policy '${input.networkPolicy}' is unsupported by this connection; supported policies: ${session.supports.network.join(", ") || "none"}. Configure a separate connection with the requested policy if the adapter supports it.`,
     };
 
+  if (input.env && Object.keys(input.env).length && !session.supports.createEnv)
+    return {
+      status: "unsupported",
+      reason: "Create-time environment variables are unsupported by this adapter",
+    };
+
+  // Read-only capability hooks never need (possibly secret) environment values.
+  const { env: _env, ...probe } = input;
+
   if (input.mounts?.length) {
     const mounts = z.array(MountSpec).max(32).parse(input.mounts);
 
@@ -806,7 +815,7 @@ export async function checkCreate(
       return { status: "unsupported", reason: "Create-time mounts are not implemented" };
 
     const result = await readBeforeDeadline(
-      (ctx) => session.checkMounts!({ ...input, mounts }, ctx),
+      (ctx) => session.checkMounts!({ ...probe, mounts }, ctx),
       context,
     );
 
@@ -816,7 +825,7 @@ export async function checkCreate(
   let snapshot: SnapshotPlan | undefined;
 
   if (input.requirements?.snapshot) {
-    const caps = await stateCapabilities(session, { create: input }, context);
+    const caps = await stateCapabilities(session, { create: probe }, context);
     const result = resolveSnapshot(caps.snapshots.capture, input.requirements.snapshot, "running");
 
     if (result.status !== "supported") return result;
@@ -876,6 +885,8 @@ export const DirectCapabilities = z.strictObject({
   /** `images.build()` turns an OCI image into a prepared one on this connection. */
   imageBuild: z.boolean(),
   network: z.array(z.string()),
+  /** `create({ env })` sets sandbox-wide environment variables on this connection. */
+  createEnv: z.boolean().optional(),
   exec: z.boolean(),
   inspect: z.boolean(),
   inventory: z.boolean(),

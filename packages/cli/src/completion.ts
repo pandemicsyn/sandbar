@@ -22,7 +22,7 @@ type Candidate = { value: string; description?: string };
 
 type Completion = { candidates: Candidate[]; directive: number };
 
-const fileFlags = new Set(["config", "state-dir", "stdin-file"]);
+const fileFlags = new Set(["config", "state-dir", "stdin-file", "env-file"]);
 
 /** Commands whose positional arguments name sandboxes, and how many. */
 const sandboxArguments = new Map([

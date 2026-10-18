@@ -64,6 +64,12 @@ export type CreateInput = {
   labels?: Record<string, string>;
   requirements?: { snapshot: SnapshotRequest };
   mounts?: import("./resources").MountSpec[];
+  /**
+   * Sandbox-wide environment for every command, process and terminal; a per-call `env`
+   * entry overrides the same key. Values may be secrets: never persist them in recovery
+   * tokens or include them in messages. Requires `supports.createEnv`.
+   */
+  env?: Record<string, string>;
 };
 
 export type CreateValue = {
@@ -315,6 +321,11 @@ export type Guarantees<C extends Command["kind"] = Command["kind"]> = {
   network: readonly string[];
   exec?: { commands: readonly C[]; maxOutputBytes: number };
   fileWrite?: { overwrite: boolean; noClobber: boolean };
+  /**
+   * Create-time `env` is applied natively (or durably re-read) for every command, process
+   * and terminal, including after reopen in another process. Absent rejects create `env`.
+   */
+  createEnv?: boolean;
 };
 
 export type AdapterSession<

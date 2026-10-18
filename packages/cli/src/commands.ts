@@ -70,11 +70,13 @@ type CreateRequest = {
   prepared?: string;
   network?: string;
   labels: Record<string, string>;
+  /** Sandbox-wide environment; values never reach the store, output or messages. */
+  env: Record<string, string>;
   /** Build --image now when the provider needs a build and none is recorded. */
   build: boolean;
 };
 
-function createRequest(flags: Flags): CreateRequest {
+function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRequest {
   if (flags.string("image") && flags.string("prepared"))
     throw usage("Pass either --image or --prepared, not both");
 
@@ -88,7 +90,63 @@ function createRequest(flags: Flags): CreateRequest {
     prepared: flags.string("prepared"),
     network: flags.string("network"),
     labels: parsePairs(flags.strings("label"), "label"),
+    env,
   };
+}
+
+const EnvName = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * `--env-file` lines, then `--env` flags (later wins). `--env NAME` copies NAME from this
+ * process so a secret stays out of shell history. Values may be secrets: messages name at
+ * most a file and line, never a value.
+ */
+async function envFlags(session: Session, flags: Flags): Promise<Record<string, string>> {
+  const env: Record<string, string> = {};
+
+  for (const file of flags.strings("env-file")) {
+    const path = resolve(session.ctx.cwd, file);
+    let text: string;
+
+    try {
+      text = await readFile(path, "utf8");
+    } catch {
+      throw usage(`--env-file ${file} could not be read`);
+    }
+
+    for (const [index, raw] of text.split(/\r?\n/).entries()) {
+      const line = raw.trim();
+
+      if (!line || line.startsWith("#")) continue;
+      const assignment = line.startsWith("export ") ? line.slice(7).trimStart() : line;
+      const split = assignment.indexOf("=");
+      const name = split > 0 ? assignment.slice(0, split).trim() : "";
+
+      if (!EnvName.test(name))
+        throw usage(`--env-file ${file}:${index + 1} must be NAME=VALUE with a valid NAME`);
+      const value = assignment.slice(split + 1).trim();
+      const quoted = /^(["'])(.*)\1$/s.exec(value);
+      env[name] = quoted ? quoted[2]! : value;
+    }
+  }
+
+  for (const entry of flags.strings("env")) {
+    const split = entry.indexOf("=");
+    const name = split < 0 ? entry : entry.slice(0, split);
+
+    if (!EnvName.test(name))
+      throw usage("--env expects NAME=VALUE or NAME, with NAME like [A-Za-z_][A-Za-z0-9_]*");
+
+    if (split >= 0) env[name] = entry.slice(split + 1);
+    else {
+      const inherited = session.ctx.env[name];
+
+      if (inherited === undefined) throw usage(`--env ${name} is not set in this environment`);
+      env[name] = inherited;
+    }
+  }
+
+  return env;
 }
 
 /** The create input; `--image` is resolved after connecting, because it depends on the provider. */
@@ -97,6 +155,7 @@ function createInput(request: CreateRequest): CreateInput {
     environment: request.prepared ? Image.prepared(request.prepared) : undefined,
     network: request.network,
     labels: Object.keys(request.labels).length ? request.labels : undefined,
+    env: Object.keys(request.env).length ? request.env : undefined,
   };
 }
 
@@ -359,7 +418,10 @@ async function findTarget(session: Session, target: string): Promise<Target> {
 }
 
 export async function createCommand(session: Session, flags: Flags): Promise<number> {
-  const created = await createSandbox(session, createRequest(flags));
+  const created = await createSandbox(
+    session,
+    createRequest(flags, await envFlags(session, flags)),
+  );
 
   if (created.unrecorded) throw unrecordedError(created);
 
@@ -912,7 +974,7 @@ async function execInput(
 
   const timeout = flags.string("timeout");
   const maxOutput = flags.string("max-output");
-  const env = parsePairs(flags.strings("env"), "env");
+  const env = await envFlags(session, flags);
 
   return {
     command,
@@ -1021,6 +1083,7 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
   if (flags.positionals.length)
     throw usage("run takes no positional arguments; put the command after --");
   const command = argvCommand(flags);
+  // run's --env and --env-file apply to its one command, which works on every provider.
   const request = createRequest(flags);
   const input = await execInput(session, flags, command);
   const keep = flags.bool("keep");

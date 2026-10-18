@@ -2395,6 +2395,7 @@ export class AdapterDirectClient {
       commands: [...(support.exec?.commands ?? [])],
       images: [...support.images],
       imageBuild: !!this.session.imageBuild,
+      createEnv: !!support.createEnv,
       network: [...support.network],
       exec: !!this.session.exec && !!support.exec,
       inspect: !!this.session.inspect,
@@ -2448,6 +2449,7 @@ export class AdapterDirectClient {
           labels: request.labels,
           requirements: request.requirements,
           mounts: request.mounts,
+          env: request.env,
         },
         { signal, deadline: Date.now() + 30_000 },
       ),
@@ -2512,6 +2514,7 @@ export class AdapterDirectClient {
         labels: request.labels,
         requirements: request.requirements,
         mounts: request.mounts,
+        env: request.env,
       },
       (result, ref) => {
         if (result.kind !== "completed" || !("id" in result.value)) throw asUnknown(ref);

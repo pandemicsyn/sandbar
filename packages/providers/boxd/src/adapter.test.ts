@@ -873,3 +873,25 @@ test("boxd lists org machines with unknown-ownership references that reopen", as
     await client.close();
   }
 });
+
+test("boxd declares create env unsupported and rejects it before any native call", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    expect((await client.capabilities()).createEnv).toBe(false);
+    const calls = fixture.calls.length;
+
+    for (const create of [client.sandboxes.create, client.sandboxes.submitCreate])
+      await expect(create({ env: { API_TOKEN: "fixture-env-value" } })).rejects.toMatchObject({
+        name: "UnsupportedFeatureError",
+        code: "UNSUPPORTED",
+        effect: "none",
+      });
+    expect(fixture.effects.create).toBe(0);
+    expect(fixture.calls.slice(calls).map((call) => call.method)).not.toContain("CreateVm");
+    expect(JSON.stringify(fixture.calls)).not.toContain("fixture-env-value");
+  } finally {
+    await client.close();
+  }
+});
