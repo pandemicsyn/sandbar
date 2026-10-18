@@ -56,7 +56,7 @@ try {
     cpSync(join(root, name), join(temporary, name));
   }
 
-  for (const name of ["packages", "scripts", ".changeset", "examples"]) {
+  for (const name of ["packages", "scripts", ".changeset", "examples", "skills"]) {
     copyTree(join(root, name), join(temporary, name));
   }
 

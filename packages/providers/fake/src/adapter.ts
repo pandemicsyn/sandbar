@@ -2,7 +2,9 @@ import { z } from "zod";
 import {
   AdapterError,
   defineAdapter,
+  sandboxReference,
   type AttemptContext,
+  type Scope,
   type ObserveContext,
 } from "@sandbar-sdk/adapter";
 import type { DriverResult } from "@sandbar/provider-spi";
@@ -33,12 +35,17 @@ function failure(result: Exclude<DriverResult, { status: "completed" }>, ctx: At
   return ctx.unknown(result.status === "unknown" ? result.reason : "Fake result is uncertain");
 }
 
-function createResult(result: DriverResult, ctx: AttemptContext) {
+function createResult(result: DriverResult, ctx: AttemptContext, scope: Scope) {
   if (result.status === "completed") {
     if (result.value.kind !== "sandbox") return ctx.unknown("Fake returned another result kind");
+    const id = result.value.observation.ref.nativeId;
 
     return {
-      id: result.value.observation.ref.nativeId,
+      id,
+      reference: sandboxReference("fake", scope, id, {
+        operation: ctx.operationId,
+        submission: ctx.submissionId,
+      }),
       state:
         result.value.observation.state === "running" ? ("running" as const) : ("unknown" as const),
     };
@@ -50,19 +57,32 @@ function createResult(result: DriverResult, ctx: AttemptContext) {
   return failure(result, ctx);
 }
 
-function observedCreate(result: DriverResult, ctx: ObserveContext, submissionId: string) {
+function observedCreate(
+  result: DriverResult,
+  ctx: ObserveContext,
+  attempt: { operationId: string; submissionId: string },
+  scope: Scope,
+) {
   if (result.status === "completed") {
     if (result.value.kind !== "sandbox") return ctx.unknown("Fake returned another result kind");
+    const id = result.value.observation.ref.nativeId;
 
     return {
-      id: result.value.observation.ref.nativeId,
+      id,
+      reference: sandboxReference("fake", scope, id, {
+        operation: attempt.operationId,
+        submission: attempt.submissionId,
+      }),
       state:
         result.value.observation.state === "running" ? ("running" as const) : ("unknown" as const),
     };
   }
 
   if (result.status === "pending")
-    return ctx.pending({ submissionId }, { pollAfterMs: result.observeAfterMs });
+    return ctx.pending(
+      { submissionId: attempt.submissionId },
+      { pollAfterMs: result.observeAfterMs },
+    );
 
   return ctx.unknown("Fake observation did not confirm completion");
 }
@@ -91,11 +111,32 @@ export function createFakeAdapter(options: { url: string; token: string; fetch?:
 
       const caps = await driver.capabilities(scope);
 
-      return {
-        scope: {
-          authority: { kind: "fixture", id: "fake-local" },
-          partition: { endpoint: new URL(options.url).origin, region: "local" },
+      const bindingScope = {
+        authority: { kind: "fixture", id: "fake-local" },
+        partition: { endpoint: new URL(options.url).origin, region: "local" },
+      };
+
+      const info = (observation: {
+        state: "running" | "destroyed" | "unknown";
+        observedAt: string;
+      }) => ({
+        state: observation.state === "running" ? ("running" as const) : ("unknown" as const),
+        nativeState: observation.state,
+        observedAt: observation.observedAt,
+        expires: { status: "unknown" as const, reason: "Fake sandboxes have no native expiry" },
+        idleStop: { status: "unknown" as const, reason: "Fake sandboxes have no idle policy" },
+        retention: {
+          status: "unknown" as const,
+          reason: "Fake sandboxes have no retention policy",
         },
+        execution: {
+          status: "unknown" as const,
+          reason: "Fake sandboxes have no execution identity",
+        },
+      });
+
+      return {
+        scope: bindingScope,
         supports: {
           images: ["prepared"],
           network: caps.networkPolicies,
@@ -131,6 +172,7 @@ export function createFakeAdapter(options: { url: string; token: string; fetch?:
                 labels: input.labels,
               }),
               ctx,
+              bindingScope,
             );
           },
           async observe(attempt, ctx) {
@@ -140,8 +182,16 @@ export function createFakeAdapter(options: { url: string; token: string; fetch?:
               operationId: attempt.operationId,
             });
 
-            return result ? observedCreate(result, ctx, attempt.submissionId) : null;
+            return result ? observedCreate(result, ctx, attempt, bindingScope) : null;
           },
+        },
+        async reopen(reference) {
+          const observation = await driver.inspect(native(reference.nativeId));
+
+          if (!observation || observation.state === "destroyed")
+            throw new AdapterError("NOT_FOUND", "Fake sandbox does not exist");
+
+          return { reference, ...info(observation) };
         },
         destroy: {
           async submit(box, ctx) {

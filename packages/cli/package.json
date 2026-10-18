@@ -1,0 +1,42 @@
+{
+  "name": "@sandbar-sdk/cli",
+  "version": "0.2.0",
+  "private": false,
+  "type": "module",
+  "description": "Agent-first command line for creating and managing Sandbar sandboxes.",
+  "bin": {
+    "sandbar": "./dist/main.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && bun build src/main.ts --target node --format esm --outdir dist --external sandbar-sdk --external @sandbar-sdk/adapter --external zod"
+  },
+  "dependencies": {
+    "@sandbar-sdk/adapter": "workspace:*",
+    "sandbar-sdk": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@sandbar/provider-fake": "workspace:*"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pandemicsyn/sandbar.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/pandemicsyn/sandbar/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

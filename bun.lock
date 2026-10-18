@@ -60,6 +60,21 @@
         "zod": "4.6.5",
       },
     },
+    "packages/cli": {
+      "name": "@sandbar-sdk/cli",
+      "version": "0.2.0",
+      "bin": {
+        "sandbar": "./dist/main.js",
+      },
+      "dependencies": {
+        "@sandbar-sdk/adapter": "workspace:*",
+        "sandbar-sdk": "workspace:*",
+        "zod": "4.6.5",
+      },
+      "devDependencies": {
+        "@sandbar/provider-fake": "workspace:*",
+      },
+    },
     "packages/provider-spi": {
       "name": "@sandbar/provider-spi",
       "version": "0.0.0",
@@ -727,6 +742,8 @@
     "@sandbar-sdk/adapter": ["@sandbar-sdk/adapter@workspace:packages/adapter"],
 
     "@sandbar-sdk/boxd": ["@sandbar-sdk/boxd@workspace:packages/providers/boxd"],
+
+    "@sandbar-sdk/cli": ["@sandbar-sdk/cli@workspace:packages/cli"],
 
     "@sandbar-sdk/daytona": ["@sandbar-sdk/daytona@workspace:packages/providers/daytona"],
 

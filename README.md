@@ -35,6 +35,8 @@ try {
 
 Install with `npm install sandbar-sdk @sandbar-sdk/e2b` and set `E2B_API_KEY` to run this example. See [Getting started](https://sandbarsdk.dev/docs/direct-quickstart/) for other providers.
 
+Using a coding agent? `npx skills add pandemicsyn/sandbar --skill sandbar -g` teaches it the SDK; see [Agent skills](https://sandbarsdk.dev/docs/agents/skills/).
+
 [Vercel setup and limits](https://sandbarsdk.dev/docs/providers/vercel/) · [Provider support](https://sandbarsdk.dev/docs/providers/support/) · [API reference](https://sandbarsdk.dev/docs/reference/typescript/) · [Roadmap](ROADMAP.md) · [License](LICENSE)
 
 Repository validation and release rehearsal coverage are documented in [CI.md](CI.md).
