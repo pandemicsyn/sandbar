@@ -232,16 +232,17 @@ sandbar run --network internet -- curl -sI https://example.com
 
 ## image
 
-Build OCI images for providers that need it, and list or forget the builds.
+Build OCI images for providers that need it, and list, delete or forget the builds.
 
 ```sh
-sandbar image build <oci-ref> [--name <name>] [--refresh] | ls | inspect <name> | forget <name>
+sandbar image build <oci-ref> [--name <name>] [--refresh] | ls [--remote] | inspect <name> | rm <name> | forget <name>
 ```
 
 | Flag            | Description                                                             |
 | --------------- | ----------------------------------------------------------------------- |
 | `--name <name>` | Record name for a build (default: from the reference, like python-3-12) |
 | `--refresh`     | Build again even if this reference is recorded                          |
+| `--remote`      | List the images on the provider for this profile, not the local records |
 
 Examples:
 
@@ -249,6 +250,8 @@ Examples:
 sandbar image build python:3.12 --provider e2b
 sandbar create --image python:3.12 --provider e2b
 sandbar image ls
+sandbar image ls --remote --provider e2b
+sandbar image rm python-3-12
 sandbar image forget python-3-12
 ```
 

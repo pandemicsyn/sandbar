@@ -58,7 +58,7 @@ try {
 | `persistent`          | `false`                           | Keep files across stopped sessions. Resume starts fresh compute; processes and RAM are lost.                                                                                                                 |
 | `credentials.token`   | Required                          | Token with access to the selected team and project.                                                                                                                                                          |
 
-`client.sandboxes.create()` uses this setup. Any image, region or policy supplied on an individual create call must match it. Arbitrary container images, OCI builds and mounted drives are not supported.
+`client.sandboxes.create()` uses this setup. Any image, region or policy supplied on an individual create call must match it. Arbitrary container images, OCI builds and mounted drives are not supported. Image get, list and delete are unsupported too: Vercel only offers its managed images, so `images.*` reject with `UNSUPPORTED`.
 
 `create({ env })` sets Vercel's native session `env`, which every command inherits unless its own `env` overrides a name; it applies after reopening. Values are not saved in recovery tokens and are redacted from Vercel's error text. Snapshot restore does not take `env`. See [environment variables](/docs/guides/images-and-networking/#set-environment-variables). Live acceptance remains unrun.
 

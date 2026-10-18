@@ -111,7 +111,7 @@ Complete listFiles/readDirectory, statFile, existence and recursive-opt-in mkdir
 
 ### OCI image builds
 
-Implemented; retained image ownership/cleanup and a separately authorized build budget are prerequisites. No live build acceptance.
+Implemented; retained image ownership/cleanup and a separately authorized build budget are prerequisites. images.get/list/delete map native snapshots; delete refuses general, captured-sandbox and warm-pool-dependent snapshots before one unreplayed DELETE, with deterministic native-boundary coverage only. No live build or image-deletion acceptance.
 
 <a id="daytona-network"></a>
 
@@ -221,7 +221,7 @@ Complete listFiles/readDirectory and statFile use a bounded Python3 helper; nati
 
 ### OCI image builds
 
-Implemented; retained templates require separate ownership/cleanup and budget approval. No live build acceptance.
+Implemented; retained templates require separate ownership/cleanup and budget approval. images.get/list/delete map templates; delete refuses public, multi-build, alias-shadowed, snapshot-backed and sandbox-dependent templates before one unreplayed DELETE, with deterministic native-boundary coverage only. No live build or image-deletion acceptance.
 
 <a id="e2b-network"></a>
 

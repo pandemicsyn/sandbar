@@ -57,6 +57,7 @@ Implemented features have deterministic native-boundary coverage. The four basel
 | Other filesystem operations                             | Python 3 regular-file copy, same-filesystem move, staged write and incremental read streams; walk/text lines compose these hooks.                        |
 | Public previews                                         | Default public setup; read-only lookup of pinned configured ports on running compute.                                                                    |
 | Strict blocked egress, protected previews, image builds | Unsupported. OCI boot does not allocate an image-build artifact.                                                                                         |
+| Image get, list and delete                              | Unsupported: boxd boots OCI images directly and has no provider-side image resource to manage. `images.*` reject with `UNSUPPORTED`.                     |
 
 ## Files and streams
 

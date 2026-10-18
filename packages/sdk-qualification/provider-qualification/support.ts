@@ -131,7 +131,7 @@ export const officialSupport: SupportMetadata[] = [
       },
       oci: {
         support: "conditional",
-        note: "Implemented; retained image ownership/cleanup and a separately authorized build budget are prerequisites. No live build acceptance.",
+        note: "Implemented; retained image ownership/cleanup and a separately authorized build budget are prerequisites. images.get/list/delete map native snapshots; delete refuses general, captured-sandbox and warm-pool-dependent snapshots before one unreplayed DELETE, with deterministic native-boundary coverage only. No live build or image-deletion acceptance.",
       },
       network: {
         support: "conditional",
@@ -209,7 +209,7 @@ export const officialSupport: SupportMetadata[] = [
       },
       oci: {
         support: "conditional",
-        note: "Implemented; retained templates require separate ownership/cleanup and budget approval. No live build acceptance.",
+        note: "Implemented; retained templates require separate ownership/cleanup and budget approval. images.get/list/delete map templates; delete refuses public, multi-build, alias-shadowed, snapshot-backed and sandbox-dependent templates before one unreplayed DELETE, with deterministic native-boundary coverage only. No live build or image-deletion acceptance.",
       },
       network: {
         support: "supported",

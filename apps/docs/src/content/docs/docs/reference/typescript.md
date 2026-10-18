@@ -7,7 +7,7 @@ Import `Sandbar` and `Image` from `sandbar-sdk`. The official provider factories
 
 ## Consumer vocabulary and compatibility
 
-Use `SandbarClient`, `SandboxHandle`, `SnapshotHandle`, `VolumeHandle`, `OperationHandle<T>`, `RecoveryReference`, `ConnectOptions` and `CloseOptions` in application annotations. Adapter-author contracts remain in `@sandbar-sdk/adapter`.
+Use `SandbarClient`, `SandboxHandle`, `SnapshotHandle`, `VolumeHandle`, `ImageHandle`, `OperationHandle<T>`, `RecoveryReference`, `ConnectOptions` and `CloseOptions` in application annotations. Adapter-author contracts remain in `@sandbar-sdk/adapter`.
 
 Factory results preserve the complete advanced API and existing runtime identity. During this compatibility stage their declarations use `SandbarClient<true>` and `SandboxHandle<true>`; `true` is a type parameter, not a runtime setting. Default annotations retain the previous structural views, which applications may implement or mock. Concrete operation results provide their kind type parameter, preserving `kind` narrowing and `continue()`, while `OperationHandle<T>` alone keeps the original minimal observation/wait interface.
 
@@ -40,14 +40,18 @@ const sandbar = await Sandbar.connect({
 
 ## Images
 
-| API                                             | Behavior                                                                    |
-| ----------------------------------------------- | --------------------------------------------------------------------------- |
-| `Image.prepared(value)`                         | Select an existing image ID/name or scoped `PreparedImage` result.          |
-| `Image.oci(reference)`                          | Describe an OCI source supported by the adapter.                            |
-| `sandbar.images.build({ source }, { signal? })` | Build and wait for a scoped prepared image plus retained-resource metadata. |
-| `sandbar.images.submitBuild(input, options?)`   | Submit a build and return an operation handle.                              |
+| API                                                   | Behavior                                                                    |
+| ----------------------------------------------------- | --------------------------------------------------------------------------- |
+| `Image.prepared(value)`                               | Select an existing image ID/name or scoped `PreparedImage` result.          |
+| `Image.oci(reference)`                                | Describe an OCI source supported by the adapter.                            |
+| `sandbar.images.build({ source }, { signal? })`       | Build and wait for a scoped prepared image plus retained-resource metadata. |
+| `sandbar.images.submitBuild(input, options?)`         | Submit a build and return an operation handle.                              |
+| `sandbar.images.get(reference)`                       | Reopen a scoped image reference as an `ImageHandle`.                        |
+| `sandbar.images.list({ limit, cursor? })`             | Read scoped image inventory and coverage.                                   |
+| `image.inspect()`                                     | Read state, visibility, source and known native dependencies.               |
+| `image.delete()` / `sandbar.images.delete(reference)` | Delete an eligible image; `submitDelete` returns an operation handle.       |
 
-Build results contain `prepared` and `retainedResources`. A prepared handle is bound to its verified provider scope. Destroying a sandbox does not delete a built image. See [Images and networking](/docs/guides/images-and-networking/).
+Build results contain `prepared`, `retainedResources` and `reference`, an image resource reference whose ownership is `verified-created` only when the adapter proved the build created it. A prepared handle is bound to its verified provider scope. Destroying a sandbox does not delete a built image. See [Images and networking](/docs/guides/images-and-networking/).
 
 ## Sandboxes
 

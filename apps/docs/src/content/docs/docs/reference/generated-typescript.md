@@ -15,6 +15,7 @@ Import from `sandbar-sdk`.
 | `AdapterCapabilities`         | type      |
 | `AdapterConnectOptions`       | type      |
 | `AdapterDirectClient`         | re-export |
+| `AdapterImage`                | re-export |
 | `AdapterOperation`            | re-export |
 | `AdapterRecoveryReference`    | type      |
 | `AdapterSandbox`              | re-export |
@@ -54,6 +55,8 @@ Import from `sandbar-sdk`.
 | `FileWriteOptions`            | type      |
 | `Image`                       | re-export |
 | `ImageBuildResult`            | type      |
+| `ImageHandle`                 | type      |
+| `ImageInfo`                   | re-export |
 | `ImageInput`                  | type      |
 | `MountCapabilities`           | type      |
 | `MountSpec`                   | re-export |

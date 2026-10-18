@@ -46,7 +46,30 @@ Creation uses the connection's network policy. Close the connection in an outer 
 
 Pass the full `built.prepared` value to `Image.prepared()`: it includes the provider and verified scope, so another account or scope cannot accidentally use it. Public OCI references are supported; the SDK has no shared private-registry credential option. Daytona requires a version tag or SHA-256 digest and rejects `latest`, `lts` and `stable`. Use a digest when you need an exact immutable image.
 
-**Destroying a sandbox does not delete its built template or snapshot.** Keep `built.retainedResources` available and arrange separate provider-side cleanup for artifacts you own, including when sandbox creation fails. A record with unknown ownership does not prove that deletion is safe. Borrowed prepared images are never sandbox cleanup targets.
+**Destroying a sandbox does not delete its built template or snapshot.** Keep `built.reference` (or `built.retainedResources`) available and delete images you own separately, including when sandbox creation fails. Borrowed prepared images are never sandbox cleanup targets.
+
+## Inspect, list and delete images
+
+`built.reference` is a resource reference of kind `"image"`. Its `ownership` is `"verified-created"` only when the adapter proved this build created the image; a build recovered after a lost response reports `"unknown"`. Persist the whole reference, then reopen and delete the image with it:
+
+```ts
+const image = await sandbar.images.get(built.reference);
+console.log(await image.inspect()); // state, visibility, source and known dependencies
+await image.delete(); // or sandbar.images.delete(built.reference)
+```
+
+`images.list({ limit: 20, cursor })` returns a bounded page of the provider's images with a `coverage` value, like [snapshot and volume inventory](/docs/guides/snapshots-and-volumes/). Finding an image in a list does not prove you own it, so listed items have unknown ownership. `(await sandbar.capabilities()).imageManagement` reports whether inspect, list and delete are supported; a missing operation rejects with `UNSUPPORTED`.
+
+Deletion follows the snapshot deletion rules. The reference must match the connection's provider and scope. The adapter refuses public or shared images, captured sandbox snapshots (delete those with `snapshots.delete()`) and images that sandboxes or other native resources still use, rejecting with no effect before it sends anything. Deletion sends one native request and never resends it. If the response is lost and the image is not then observed gone, `delete()` rejects with `OUTCOME_UNKNOWN`; `submitDelete()` returns an operation whose saved reference you can recover later to learn whether the image is gone.
+
+| Provider       | Images                      | Get, list and delete                                                                                                   |
+| -------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| E2B            | Templates                   | Supported. Delete only removes a private, single-build template that no sandbox uses. See [E2B](/docs/providers/e2b/). |
+| Daytona        | Native snapshots            | Supported. Delete refuses general snapshots and snapshots used by warm pools. See [Daytona](/docs/providers/daytona/). |
+| boxd           | OCI images, booted directly | Unsupported: there is no provider-side image resource.                                                                 |
+| Vercel Sandbox | Managed images only         | Unsupported.                                                                                                           |
+
+Image deletion has deterministic test coverage only; no live deletion has been recorded.
 
 ## Select a network policy
 
