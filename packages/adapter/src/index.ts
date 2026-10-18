@@ -49,7 +49,15 @@ export type RetainedArtifact = {
   cleanup: "manual" | "provider_expiry" | "none_known";
 };
 
-export type ImageBuildValue = { preparedId: string; retainedResources: RetainedArtifact[] };
+export type ImageBuildValue = {
+  preparedId: string;
+  retainedResources: RetainedArtifact[];
+  /**
+   * The built image as a scoped `image` reference whose native ID is `preparedId`. Use
+   * `verified-created` ownership only when native evidence proves this attempt created it.
+   */
+  image?: ResourceReference;
+};
 
 export * from "./resources";
 
@@ -397,6 +405,21 @@ export type AdapterSession<
     ctx: ReadContext,
   ) => Promise<{
     items: import("./resources").SnapshotInfo[];
+    nextCursor?: string;
+    coverage: "provider-scope" | "sandbar-managed";
+  }>;
+  imageDelete?: Mutation<ResourceReference, import("./resources").ArtifactDeletionResult>;
+  imageInspect?: (
+    ref: ResourceReference,
+    ctx: ReadContext,
+  ) => Promise<import("./resources").ImageInfo>;
+  /** Inventory coverage established by this adapter; omit when unknown. */
+  imageListCoverage?: "provider-scope" | "sandbar-managed";
+  imageList?: (
+    input: import("./resources").InventoryInput,
+    ctx: ReadContext,
+  ) => Promise<{
+    items: import("./resources").ImageInfo[];
     nextCursor?: string;
     coverage: "provider-scope" | "sandbar-managed";
   }>;

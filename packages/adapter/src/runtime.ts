@@ -64,6 +64,7 @@ export type RuntimeSession = Omit<
   | "snapshotCapture"
   | "snapshotRestore"
   | "snapshotDelete"
+  | "imageDelete"
   | "volumeCreate"
   | "volumeDelete"
 > & {
@@ -74,6 +75,7 @@ export type RuntimeSession = Omit<
   snapshotCapture?: unknown;
   snapshotRestore?: { mountInput?: "specs" };
   snapshotDelete?: unknown;
+  imageDelete?: unknown;
   volumeCreate?: unknown;
   volumeDelete?: unknown;
   imageBuild?: unknown;
@@ -104,6 +106,7 @@ export type OperationKind =
   | "file_mkdir"
   | "file_remove"
   | "image_build"
+  | "image_delete"
   | "sandbox_suspend"
   | "sandbox_resume"
   | "sandbox_renew"
@@ -219,6 +222,7 @@ const CreateValueSchema = z.strictObject({
 
 const ImageBuildValueSchema = z.strictObject({
   preparedId: Id,
+  image: ResourceReference.extend({ kind: z.literal("image") }).optional(),
   retainedResources: z
     .array(
       z.strictObject({
@@ -255,6 +259,12 @@ const ExecValueSchema = z.strictObject({
 });
 
 const MAX_OUTPUT = 1_048_576;
+
+const deletedKinds = {
+  snapshot_delete: "snapshot",
+  volume_delete: "volume",
+  image_delete: "image",
+} as const;
 
 function checkedRecoveryVersion(version: number): number {
   if (!Number.isSafeInteger(version) || version <= 0)
@@ -387,7 +397,7 @@ async function validateValue(
 
   if (kind === "volume_create") return VolumeInfo.parse(value);
 
-  if (kind === "snapshot_delete" || kind === "volume_delete")
+  if (kind === "snapshot_delete" || kind === "volume_delete" || kind === "image_delete")
     return ArtifactDeletionResult.parse(value);
 
   if (kind === "image_build") return ImageBuildValueSchema.parse(value);
@@ -514,6 +524,9 @@ function select(session: RuntimeSession, kind: OperationKind): Mutation<unknown,
     case "image_build":
       op = session.imageBuild;
       break;
+    case "image_delete":
+      op = session.imageDelete;
+      break;
     case "destroy":
       op = session.destroy;
       break;
@@ -579,10 +592,10 @@ function checkCapability(
     return value;
   }
 
-  if (kind === "snapshot_delete" || kind === "volume_delete") {
+  if (kind === "snapshot_delete" || kind === "volume_delete" || kind === "image_delete") {
     const ref = ResourceReference.parse(input);
 
-    if (ref.kind !== (kind === "snapshot_delete" ? "snapshot" : "volume"))
+    if (ref.kind !== deletedKinds[kind])
       throw new AdapterError("INVALID_ARGUMENT", "Wrong resource kind");
     assertResourceScope(ref, { provider: ref.provider, scope: session.scope });
 

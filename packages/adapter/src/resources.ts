@@ -8,6 +8,7 @@ export {
   SnapshotCaptureValue,
   SnapshotRestoreInput,
   ArtifactDeletionResult,
+  ImageInfo,
   MountCapabilities,
   RestoreCapabilities,
   VolumeCapabilities,

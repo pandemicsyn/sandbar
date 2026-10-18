@@ -10,7 +10,15 @@ import {
 } from "@sandbar/provider-spi";
 import type { ExecCommand } from "@sandbar-sdk/adapter/portable";
 import { z } from "zod";
-import { FakeAction, FakeInventoryCursor, FakeEvent, FakeFileBytesBase64 } from "./protocol";
+import {
+  FAKE_STARTER_IMAGE,
+  FakeAction,
+  FakeInventoryCursor,
+  FakeEvent,
+  FakeFileBytesBase64,
+  FakeImage,
+  FakeImageDeleteResult,
+} from "./protocol";
 
 const InventoryResponse = z.strictObject({
   items: z.array(SandboxObservation),
@@ -197,19 +205,24 @@ export class FakeProviderDriver implements ProviderDriver {
   }) {
     const cap = await this.capabilities(input.scope);
 
-    const supported =
+    const known =
       input.image.kind === "prepared" &&
-      input.image.value === "fake-starter" &&
+      (input.image.value === FAKE_STARTER_IMAGE ||
+        (FakeImage.shape.id.safeParse(input.image.value).success &&
+          (await this.inspectImage(input.scope, { imageId: input.image.value })) !== null));
+
+    const supported =
+      known &&
       input.networkPolicy === "blocked" &&
       (!input.region || input.region === "local") &&
       cap.networkPolicies.includes("blocked");
 
     return supported
-      ? { supported: true, effectiveImage: "fake-starter" }
+      ? { supported: true, effectiveImage: input.image.value }
       : {
           supported: false,
           reason:
-            "Fake provider only supports prepared fake-starter, local region, blocked network",
+            "Fake provider only supports prepared fake-starter or a built image, local region, blocked network",
         };
   }
   async create(input: {
@@ -340,6 +353,94 @@ export class FakeProviderDriver implements ProviderDriver {
     }
 
     return result;
+  }
+  /** Submit one build; a lost or invalid response is unknown and is never resubmitted. */
+  async buildImage(input: { scope: NativeScope; identity: InvocationIdentity; source: string }) {
+    let value: z.infer<typeof FakeHttpJson>;
+
+    try {
+      value = await this.call({ kind: "imageBuild", ...input });
+    } catch (error) {
+      if (error instanceof FakeTransportError && [400, 401, 403, 413].includes(error.status))
+        return {
+          status: "rejected" as const,
+          reason: `Fake image build rejected (${error.status})`,
+        };
+
+      return { status: "unknown" as const, reason: "Fake image build response unavailable" };
+    }
+
+    const parsed = z
+      .strictObject({ image: FakeImage.nullable(), created: z.boolean() })
+      .safeParse(value);
+
+    if (!parsed.success)
+      return { status: "unknown" as const, reason: "Fake image build response is invalid" };
+
+    if (!parsed.data.image)
+      return { status: "rejected" as const, reason: "Fake image build was not accepted" };
+
+    if (
+      parsed.data.image.submissionId !== input.identity.submissionId ||
+      parsed.data.image.source !== input.source
+    )
+      return { status: "unknown" as const, reason: "Fake image build returned another image" };
+
+    return {
+      status: "completed" as const,
+      image: parsed.data.image,
+      created: parsed.data.created,
+    };
+  }
+  async inspectImage(scope: NativeScope, query: { imageId?: string; submissionId?: string }) {
+    const value = await this.readCall({ kind: "imageInspect", scope, ...query });
+
+    if (value === null) return null;
+    const image = FakeImage.safeParse(value);
+
+    if (
+      !image.success ||
+      (query.imageId !== undefined && image.data.id !== query.imageId) ||
+      (query.submissionId !== undefined && image.data.submissionId !== query.submissionId)
+    )
+      throw new ProviderReadError(
+        "INVALID_RESPONSE",
+        "Fake image inspection returned another image",
+      );
+
+    return image.data;
+  }
+  async listImages(input: { scope: NativeScope; cursor?: string; limit: number }) {
+    const parsed = z
+      .strictObject({
+        items: z.array(FakeImage).max(input.limit),
+        nextCursor: FakeInventoryCursor.optional(),
+      })
+      .safeParse(await this.readCall({ kind: "imageList", ...input }));
+
+    if (!parsed.success)
+      throw new ProviderReadError("INVALID_RESPONSE", "Fake image inventory response is invalid");
+
+    return parsed.data;
+  }
+  /** Submit one delete; a lost or invalid response is unknown and is never resubmitted. */
+  async deleteImage(input: { scope: NativeScope; identity: InvocationIdentity; imageId: string }) {
+    let value: z.infer<typeof FakeHttpJson>;
+
+    try {
+      value = await this.call({ kind: "imageDelete", ...input });
+    } catch (error) {
+      if (error instanceof FakeTransportError && [400, 401, 403, 413].includes(error.status))
+        return { status: "transport_rejected" as const, httpStatus: error.status };
+
+      return { status: "unknown" as const };
+    }
+
+    const parsed = FakeImageDeleteResult.safeParse(value);
+
+    return parsed.success && parsed.data.imageId === input.imageId
+      ? parsed.data
+      : { status: "unknown" as const };
   }
   async events(scope: NativeScope) {
     const value = await this.readCall({ kind: "events", scope });

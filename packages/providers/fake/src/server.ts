@@ -109,7 +109,9 @@ export async function startFakeProviderServer(options: FakeServerOptions) {
             action.kind === "create" ||
             action.kind === "exec" ||
             action.kind === "writeFile" ||
-            action.kind === "destroy"
+            action.kind === "destroy" ||
+            action.kind === "imageBuild" ||
+            action.kind === "imageDelete"
           ) {
             return json({
               status: "rejected",
@@ -138,13 +140,17 @@ export async function startFakeProviderServer(options: FakeServerOptions) {
               networkPolicies: ["blocked"],
             });
           case "create": {
-            if (action.image !== "fake-starter" || action.networkPolicy !== "blocked")
+            if (
+              !engine.image(action.scope, { imageId: action.image }) ||
+              action.networkPolicy !== "blocked"
+            )
               return json({
                 status: "rejected",
                 effect: "none",
                 error: {
                   code: "unsupported",
-                  message: "Fake provider supports fake-starter with blocked network only",
+                  message:
+                    "Fake provider supports fake-starter or a built image with blocked network only",
                   effect: "none",
                   retry: "never",
                 },
@@ -193,6 +199,25 @@ export async function startFakeProviderServer(options: FakeServerOptions) {
             return json(await engine.observe(action.scope, action.submissionId));
           case "events":
             return json(engine.events(action.scope));
+          case "imageBuild": {
+            const outcome = await engine.buildImage(action);
+
+            return outcome.loseResponse
+              ? json({ error: "response_lost" }, 504)
+              : json({ image: outcome.image, created: outcome.created });
+          }
+
+          case "imageInspect":
+            return json(engine.image(action.scope, action));
+          case "imageList":
+            return json(engine.images(action.scope, action.cursor, action.limit));
+          case "imageDelete": {
+            const outcome = await engine.deleteImage(action);
+
+            return outcome.loseResponse
+              ? json({ error: "response_lost" }, 504)
+              : json(outcome.result);
+          }
         }
       } catch (error) {
         return error instanceof ZodError

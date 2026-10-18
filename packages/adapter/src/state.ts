@@ -443,6 +443,23 @@ export const ArtifactDeletionResult = z.strictObject({
 
 export type ArtifactDeletionResult = z.infer<typeof ArtifactDeletionResult>;
 
+/** A prepared image observed on the provider; the native ID is the `Image.prepared()` value. */
+export const ImageInfo = z.strictObject({
+  reference: ResourceReference.refine((ref) => ref.kind === "image"),
+  state: z.enum(["creating", "ready", "deleting", "unknown"]),
+  createdAt: z.iso.datetime().nullable(),
+  /** OCI source the provider recorded for the build; null when unknown or not built from OCI. */
+  source: z.strictObject({ kind: z.literal("oci"), value: z.string().min(1).max(1024) }).nullable(),
+  visibility: z.enum(["private", "public", "unknown"]),
+  /** Known native resources using this image; null when they could not be verified. */
+  nativeDependencies: z
+    .array(z.strictObject({ kind: z.string().min(1).max(128), id: z.string().min(1).max(512) }))
+    .max(128)
+    .nullable(),
+});
+
+export type ImageInfo = z.infer<typeof ImageInfo>;
+
 export const MountCapabilities = z.strictObject({
   timing: z.literal("create"),
   access: z
@@ -559,6 +576,12 @@ export type StateCapabilities = {
   snapshots: {
     capture: Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>;
     restore: Support<RestoreCapabilities>;
+    inspect: Support<{}>;
+    list: Support<{ coverage: "provider-scope" | "sandbar-managed" }>;
+    delete: Support<{}>;
+  };
+  /** Inspection, inventory and deletion of prepared images on this connection. */
+  imageManagement: {
     inspect: Support<{}>;
     list: Support<{ coverage: "provider-scope" | "sandbar-managed" }>;
     delete: Support<{}>;
@@ -689,6 +712,15 @@ export async function stateCapabilities(
           : { status: "unknown", reason: "Snapshot inventory coverage is not established" }
         : unsupportedState(),
       delete: implemented(!!session.snapshotDelete),
+    },
+    imageManagement: {
+      inspect: implemented(!!session.imageInspect),
+      list: session.imageList
+        ? session.imageListCoverage
+          ? { status: "supported", value: { coverage: session.imageListCoverage } }
+          : { status: "unknown", reason: "Image inventory coverage is not established" }
+        : unsupportedState(),
+      delete: implemented(!!session.imageDelete),
     },
     volumes:
       resources.volumes.status === "supported"
@@ -904,6 +936,15 @@ export const DirectCapabilities = z.strictObject({
     ),
     delete: supportSchema(z.strictObject({})),
   }),
+  imageManagement: z
+    .strictObject({
+      inspect: supportSchema(z.strictObject({})),
+      list: supportSchema(
+        z.strictObject({ coverage: z.enum(["provider-scope", "sandbar-managed"]) }),
+      ),
+      delete: supportSchema(z.strictObject({})),
+    })
+    .optional(),
   volumes: supportSchema(VolumeCapabilities),
   mounts: supportSchema(MountCapabilities).optional(),
   suspension: supportSchema(
@@ -917,7 +958,7 @@ export const DirectCapabilities = z.strictObject({
 
 export type DirectCapabilities = Omit<
   z.infer<typeof DirectCapabilities>,
-  "snapshots" | "volumes" | "suspension"
+  "snapshots" | "volumes" | "suspension" | "imageManagement"
 > &
   Omit<StateCapabilities, "mounts"> & { mounts?: Support<MountCapabilities> };
 

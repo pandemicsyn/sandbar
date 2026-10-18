@@ -7,6 +7,7 @@ import {
   assertResourceIdentity,
   MountSpec,
   SnapshotInfo,
+  ImageInfo,
   VolumeInfo,
   RestoreRequest,
   VolumeCreateInput,
@@ -27,6 +28,8 @@ import {
   type ReadOptions,
   type SandboxHandle,
   type SnapshotHandle,
+  type ImageHandle,
+  type PreparedImage,
   type VolumeHandle,
   type OperationHandle,
 } from "./resource";
@@ -83,7 +86,7 @@ export type SnapshotResult = Omit<SnapshotCaptureValue, "snapshot"> & { snapshot
 export function checkedResource(
   client: AdapterDirectClient,
   ref: ResourceReference,
-  kind: "snapshot" | "volume",
+  kind: "snapshot" | "volume" | "image",
 ): ResourceReference {
   client.ensureOpen();
   const parsed = ResourceReference.safeParse(ref);
@@ -264,6 +267,68 @@ export class AdapterSnapshot {
   }
 }
 
+/** Use the ImageHandle type for consumer annotations. */
+export class AdapterImage {
+  readonly reference: ResourceReference;
+  constructor(
+    private readonly client: AdapterDirectClient,
+    reference: ResourceReference,
+  ) {
+    this.reference = freezeReference(checkedResource(client, reference, "image"));
+  }
+  get provider(): string {
+    return this.reference.provider;
+  }
+  /** Native image ID; the value `Image.prepared()` selects. */
+  get id(): string {
+    return this.reference.nativeId;
+  }
+  /** The scoped prepared image for `Image.prepared()`. */
+  get prepared(): PreparedImage {
+    return {
+      kind: "prepared",
+      value: this.reference.nativeId,
+      provider: this.reference.provider,
+      scope: structuredClone(this.reference.scope),
+    };
+  }
+  async inspect(options: WaitOptions = {}): Promise<ImageInfo> {
+    const ref = checkedResource(this.client, this.reference, "image");
+
+    if (!this.client.session.imageInspect)
+      throw new UnsupportedFeatureError("image inspection", [
+        "This adapter does not implement image inspection",
+      ]);
+
+    const info = ImageInfo.parse(
+      await resourceRead(
+        this.client,
+        (ctx) => this.client.session.imageInspect!(ref, ctx),
+        options.signal,
+      ),
+    );
+
+    this.client.ensureOpen();
+    assertResourceIdentity(info.reference, ref);
+
+    return info;
+  }
+  /** Delete this image on the provider. Sandboxes and other artifacts are never deleted with it. */
+  async submitDelete(
+    options: WaitOptions = {},
+  ): Promise<OperationHandle<ArtifactDeletionResult, OperationKind>> {
+    if (!this.client.session.imageDelete)
+      throw new UnsupportedFeatureError("image delete", [
+        "This adapter does not implement image deletion",
+      ]);
+
+    return deleteResource(this.client, this.reference, "image", options);
+  }
+  async delete(options: WaitOptions = {}): Promise<ArtifactDeletionResult> {
+    return (await this.submitDelete(options)).wait(options);
+  }
+}
+
 /** Use the VolumeHandle type for consumer annotations. This compatibility runtime class remains supported. */
 export class AdapterVolume {
   readonly reference: ResourceReference;
@@ -318,16 +383,22 @@ export class AdapterVolume {
   }
 }
 
+const deleteKinds = {
+  snapshot: "snapshot_delete",
+  volume: "volume_delete",
+  image: "image_delete",
+} as const;
+
 function deleteResource(
   client: AdapterDirectClient,
   reference: ResourceReference,
-  kind: "snapshot" | "volume",
+  kind: "snapshot" | "volume" | "image",
   options: WaitOptions,
 ): Promise<OperationHandle<ArtifactDeletionResult, OperationKind>> {
   const ref = checkedResource(client, reference, kind);
 
   return client.submit(
-    kind === "snapshot" ? "snapshot_delete" : "volume_delete",
+    deleteKinds[kind],
     ref,
     (result, recovery) => {
       if (result.kind !== "completed" || !("deleted" in result.value))
@@ -454,7 +525,53 @@ export function resourceManagers(client: AdapterDirectClient) {
     },
   };
 
-  return { snapshots, volumes };
+  const images = {
+    /** Inspect a saved image reference and return a handle bound to this connection. */
+    async get(ref: ResourceReference): Promise<ImageHandle> {
+      const handle = new AdapterImage(client, ref);
+      const info = await handle.inspect();
+
+      return new AdapterImage(client, info.reference);
+    },
+    async list(input: InventoryInput) {
+      client.ensureOpen();
+
+      const request = validateResourceInput(
+        InventoryInput,
+        input,
+        "Invalid image inventory request",
+      );
+
+      if (!client.session.imageList)
+        throw new UnsupportedFeatureError("image inventory", [
+          "This adapter does not implement image inventory",
+        ]);
+
+      const page = await resourceRead(client, (ctx) => client.session.imageList!(request, ctx));
+
+      client.ensureOpen();
+
+      const checked = z
+        .strictObject({
+          items: z.array(ImageInfo).max(request.limit),
+          nextCursor: z.string().max(4096).optional(),
+          coverage: z.enum(["provider-scope", "sandbar-managed"]),
+        })
+        .parse(page);
+
+      checked.items.forEach((info) => checkedResource(client, info.reference, "image"));
+
+      return checked;
+    },
+    async submitDelete(ref: ResourceReference, options: WaitOptions = {}) {
+      return new AdapterImage(client, ref).submitDelete(options);
+    },
+    async delete(ref: ResourceReference, options: WaitOptions = {}) {
+      return new AdapterImage(client, ref).delete(options);
+    },
+  };
+
+  return { snapshots, volumes, images };
 }
 
 /** Page size used by `sandboxes.list()` when `limit` is omitted. */
@@ -586,7 +703,12 @@ export function decodeResourceResult(
   if (ref.kind === "volume_create" && "filesystem" in value)
     return new AdapterVolume(client, value.reference);
 
-  if ((ref.kind === "volume_delete" || ref.kind === "snapshot_delete") && "deleted" in value) {
+  if (
+    (ref.kind === "volume_delete" ||
+      ref.kind === "snapshot_delete" ||
+      ref.kind === "image_delete") &&
+    "deleted" in value
+  ) {
     if (!ref.resource) throw new OutcomeUnknownError(ref);
     assertResourceIdentity(value.reference, ref.resource);
 

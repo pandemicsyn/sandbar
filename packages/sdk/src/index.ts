@@ -67,6 +67,7 @@ export type {
   DirectSandboxHandle,
   SandboxHandle,
   SnapshotHandle,
+  ImageHandle,
   VolumeHandle,
   ReadOptions,
   OperationHandle,
@@ -104,7 +105,7 @@ export type {
   CreatePlan,
 } from "@sandbar-sdk/adapter";
 
-export { AdapterSnapshot, AdapterVolume } from "./resources";
+export { AdapterSnapshot, AdapterVolume, AdapterImage } from "./resources";
 
 export type {
   SnapshotResult,
@@ -118,6 +119,7 @@ export type {
 export {
   MountSpec,
   SnapshotInfo,
+  ImageInfo,
   VolumeInfo,
   RestoreRequest,
   VolumeCreateInput,

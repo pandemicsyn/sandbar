@@ -8,7 +8,7 @@ import type {
 } from "./adapter-direct";
 import type { OperationKind, RetainedArtifact, Scope } from "@sandbar-sdk/adapter";
 import { z } from "zod";
-import type { AdapterSnapshot, AdapterVolume } from "./resources";
+import type { AdapterImage, AdapterSnapshot, AdapterVolume } from "./resources";
 import {
   CreateEnv,
   CreateSandboxInput,
@@ -29,6 +29,11 @@ export type PreparedImage = {
 export type ImageBuildResult = {
   prepared: PreparedImage;
   retainedResources: RetainedArtifact[];
+  /**
+   * The built image as a scoped reference for `images.get()` and `images.delete()`. Ownership is
+   * `verified-created` only when the adapter proved this build created it; otherwise `unknown`.
+   */
+  reference: import("@sandbar-sdk/adapter").ResourceReference<"image">;
 };
 
 export type { OciImage, ImageInput } from "@sandbar-sdk/adapter";
@@ -160,6 +165,9 @@ export type SandbarClient<Advanced extends boolean = false> = Advanced extends t
 
 /** A retained snapshot, with independent restore and deletion operations. */
 export type SnapshotHandle = AdapterSnapshot;
+
+/** A prepared image on the provider, with inspection and explicit deletion. */
+export type ImageHandle = AdapterImage;
 
 /** Retained storage, with explicit mount descriptors and deletion. */
 export type VolumeHandle = AdapterVolume;
