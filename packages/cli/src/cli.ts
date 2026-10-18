@@ -267,9 +267,9 @@ export const commands: readonly CommandSpec[] = [
   },
   {
     name: "image",
-    summary: "Build OCI images for providers that need it, and list or forget the builds",
+    summary: "Build OCI images for providers that need it, and list, delete or forget the builds",
     usage:
-      "sandbar image build <oci-ref> [--name <name>] [--refresh] | ls | inspect <name> | forget <name>",
+      "sandbar image build <oci-ref> [--name <name>] [--refresh] | ls [--remote] | inspect <name> | rm <name> | forget <name>",
     flags: {
       name: {
         type: "string",
@@ -277,6 +277,10 @@ export const commands: readonly CommandSpec[] = [
         description: "Record name for a build (default: from the reference, like python-3-12)",
       },
       refresh: { type: "boolean", description: "Build again even if this reference is recorded" },
+      remote: {
+        type: "boolean",
+        description: "List the images on the provider for this profile, not the local records",
+      },
     },
     passthrough: false,
     remoteExit: false,
@@ -284,6 +288,8 @@ export const commands: readonly CommandSpec[] = [
       "sandbar image build python:3.12 --provider e2b",
       "sandbar create --image python:3.12 --provider e2b",
       "sandbar image ls",
+      "sandbar image ls --remote --provider e2b",
+      "sandbar image rm python-3-12",
       "sandbar image forget python-3-12",
     ],
     run: imageCommand,

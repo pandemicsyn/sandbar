@@ -153,7 +153,7 @@ export async function complete(
     if (positionals.length === 0)
       return { candidates: imageActions.map((action) => ({ value: action })), directive: 0 };
 
-    if (positionals.length === 1 && (positionals[0] === "inspect" || positionals[0] === "forget")) {
+    if (positionals.length === 1 && ["inspect", "forget", "rm"].includes(positionals[0]!)) {
       const entries = await listAll(await session.store(), "image");
 
       return {

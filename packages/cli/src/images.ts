@@ -1,9 +1,12 @@
 import { randomBytes } from "node:crypto";
+import { z } from "zod";
 import {
   Image,
   SandbarError,
   type ImageBuildResult,
+  type ImageInfo,
   type ImageInput,
+  type ResourceReference,
   type SandbarClient,
 } from "sandbar-sdk";
 import type { Flags } from "./commands";
@@ -21,9 +24,15 @@ import {
 
 type Entry = Versioned<ImageRecord>;
 
-const BuildResult = ImageRecord.pick({ prepared: true, retainedResources: true }).extend({
+const BuildResult = ImageRecord.pick({
+  prepared: true,
+  retainedResources: true,
+  reference: true,
+}).extend({
   prepared: ImageRecord.shape.prepared.unwrap(),
 });
+
+const DeleteResult = z.looseObject({ deleted: z.literal(true) });
 
 /** A name from the reference's last path segment, e.g. ghcr.io/org/tool:1.2 gives tool-1-2. */
 function derivedName(source: string): string {
@@ -41,7 +50,11 @@ async function findBuild(store: StateStore, profile: string, source: string) {
   const entries = await listAll(store, "image");
 
   return entries.find(
-    ({ record }) => record.profile === profile && record.source === source && record.prepared,
+    ({ record }) =>
+      record.profile === profile &&
+      record.source === source &&
+      record.prepared &&
+      record.status !== "deleting",
   );
 }
 
@@ -175,6 +188,7 @@ async function buildImage(
     createdAt: new Date().toISOString(),
     prepared: result.prepared,
     retainedResources: mergeRetained(claimed.record.retainedResources, result.retainedResources),
+    reference: result.reference,
   };
 
   try {
@@ -349,7 +363,12 @@ async function inspectImage(session: Session, args: readonly string[]) {
   ];
 
   session.ctx.out.success(
-    { ...summary(record), preparedImage: record.prepared, recovery: record.recovery ?? null },
+    {
+      ...summary(record),
+      preparedImage: record.prepared,
+      reference: record.reference ?? null,
+      recovery: record.recovery ?? null,
+    },
     lines.join("\n"),
   );
 
@@ -366,7 +385,7 @@ async function forgetImage(session: Session, args: readonly string[]) {
 
   if (record.retainedResources.length)
     lines.push(
-      `${record.provider} still holds these; delete them with the provider's own tools if you no longer need them:`,
+      `${record.provider} still holds these; forget never deletes them (\`sandbar image rm\` does, where the provider supports it):`,
       ...retainedLines(record),
     );
 
@@ -378,7 +397,226 @@ async function forgetImage(session: Session, args: readonly string[]) {
   return 0;
 }
 
-export const imageActions = ["build", "ls", "inspect", "forget"] as const;
+/** The recorded build as an image reference; older records never claim verified ownership. */
+function recordReference(record: ImageRecord): ResourceReference | null {
+  if (record.reference) return record.reference;
+
+  if (!record.prepared) return null;
+
+  return {
+    version: 1,
+    kind: "image",
+    provider: record.prepared.provider,
+    scope: structuredClone(record.prepared.scope),
+    nativeId: record.prepared.value,
+    ownership: "unknown",
+  };
+}
+
+/** Drop a record once its provider image is confirmed gone, unless it changed meanwhile. */
+async function forgetDeleted(store: StateStore, entry: Entry) {
+  const current = await store.get("image", entry.record.name);
+
+  if (current?.version === entry.version)
+    await store.remove("image", entry.record.name, entry.version);
+}
+
+function deletedOutput(session: Session, record: ImageRecord, result: "deleted" | "gone") {
+  const prepared = record.prepared?.value ?? null;
+  const others = record.retainedResources.filter((item) => item.id !== prepared);
+  const lines = [result === "gone" ? `${record.name} was already gone` : `deleted ${record.name}`];
+
+  if (others.length)
+    lines.push(
+      `${record.provider} still holds these from earlier builds:`,
+      ...retainedLines({ ...record, retainedResources: others }),
+    );
+
+  session.ctx.out.success(
+    { name: record.name, result, prepared, retainedResources: others },
+    lines.join("\n"),
+  );
+
+  return 0;
+}
+
+/**
+ * Delete the recorded build on the provider, then the record. An uncertain delete keeps the
+ * record as `deleting` with its operation reference; running rm again observes that operation
+ * and never submits a second delete.
+ */
+async function rmImage(session: Session, args: readonly string[]) {
+  if (args.length !== 1) throw usage("Expected exactly one image name");
+  const store = await session.store();
+  const entry = await recoverBuild(session, store, await findImage(store, args[0]!));
+  const { record } = entry;
+  const client = await session.connect(await session.profileNamed(record.profile));
+
+  if (record.status === "deleting") {
+    if (record.recovery?.kind !== "image_delete")
+      throw new CliError("OUTCOME_UNKNOWN", `${record.name} has no saved delete to check`);
+    let value: unknown;
+
+    try {
+      value = await (await client.recover(record.recovery)).observe();
+    } catch (cause) {
+      if (!(cause instanceof SandbarError) || cause.effect === "none") throw cause;
+    }
+
+    if (!DeleteResult.safeParse(value).success)
+      throw new CliError(
+        "OUTCOME_UNKNOWN",
+        `The delete of ${record.name} is still unconfirmed`,
+        `the store keeps ${record.name}; run \`sandbar image rm ${record.name}\` again later`,
+        { image: record.name, recovery: record.recovery },
+      );
+    await forgetDeleted(store, entry);
+
+    return deletedOutput(session, record, "deleted");
+  }
+
+  const reference = recordReference(record);
+
+  if (record.status !== "built" || !reference)
+    throw new CliError(
+      "CONFLICT",
+      `${record.name} has no confirmed build to delete`,
+      "`sandbar image inspect` checks an uncertain build; `sandbar image forget` drops the record",
+    );
+
+  const capabilities = await client.capabilities();
+
+  if (capabilities.imageManagement.delete.status !== "supported")
+    throw new CliError(
+      "UNSUPPORTED",
+      `${record.provider} cannot delete images through Sandbar`,
+      "`sandbar image forget` drops the record; delete the image with the provider's own tools",
+    );
+
+  const shared = (await listAll(store, "image")).find(
+    (other) =>
+      other.record.name !== record.name &&
+      other.record.profile === record.profile &&
+      other.record.prepared?.value === reference.nativeId,
+  );
+
+  if (shared)
+    throw new CliError(
+      "CONFLICT",
+      `${record.name} and ${shared.record.name} record the same provider image`,
+      "forget one record first, so the other is not left pointing at a deleted image",
+    );
+
+  try {
+    await client.images.delete(reference, { signal: session.ctx.signal });
+  } catch (cause) {
+    const report = describeError(cause);
+
+    if (report.outcome === "rejected" && report.code === "NOT_FOUND") {
+      await forgetDeleted(store, entry);
+
+      return deletedOutput(session, record, "gone");
+    }
+
+    if (report.outcome === "rejected") throw cause;
+
+    const recovery = report.known?.recovery;
+    let kept = `the store keeps ${record.name}; run \`sandbar image rm ${record.name}\` again to check`;
+
+    try {
+      await store.update(
+        "image",
+        record.name,
+        { ...record, status: "deleting", recovery },
+        entry.version,
+      );
+    } catch (storeCause) {
+      kept = `the store could not record it (${describeError(storeCause).message}); keep the reference below`;
+    }
+
+    throw new CliError("OUTCOME_UNKNOWN", report.message, kept, {
+      image: record.name,
+      recovery,
+    });
+  }
+
+  await forgetDeleted(store, entry);
+
+  return deletedOutput(session, record, "deleted");
+}
+
+function remoteRow(info: ImageInfo, records: Entry[]) {
+  const recorded = records.find(({ record }) => record.prepared?.value === info.reference.nativeId)
+    ?.record.name;
+
+  return {
+    id: info.reference.nativeId,
+    state: info.state,
+    visibility: info.visibility,
+    source: info.source?.value ?? null,
+    createdAt: info.createdAt,
+    record: recorded ?? null,
+    reference: info.reference,
+  };
+}
+
+/** List the provider's images for this profile, marking those this store recorded. */
+async function lsRemote(session: Session) {
+  const profile = await session.profile();
+  const client = await session.connect(profile);
+  const capabilities = await client.capabilities();
+
+  if (capabilities.imageManagement.list.status !== "supported")
+    throw new CliError(
+      "UNSUPPORTED",
+      `${profile.provider} cannot list images through Sandbar`,
+      "`sandbar image ls` shows the builds this store recorded",
+    );
+
+  const records = (await listAll(await session.store(), "image")).filter(
+    ({ record }) => record.profile === profile.name,
+  );
+
+  const rows: ReturnType<typeof remoteRow>[] = [];
+  let cursor: string | undefined;
+  let coverage = capabilities.imageManagement.list.value.coverage;
+
+  // A bounded walk: at most 1000 images, so a huge account cannot stall the command.
+  for (let page = 0; page < 10; page++) {
+    const result = await client.images.list({ limit: 100, cursor });
+    coverage = result.coverage;
+    rows.push(...result.items.map((info) => remoteRow(info, records)));
+    cursor = result.nextCursor;
+
+    if (!cursor) break;
+  }
+
+  if (cursor) session.ctx.out.note(`showing the first ${rows.length} images; more exist`);
+
+  const lines = rows.map((row) =>
+    [
+      row.id.padEnd(28),
+      row.state.padEnd(9),
+      row.visibility.padEnd(10),
+      (row.record ?? "-").padEnd(20),
+      row.source ?? "-",
+    ].join(" "),
+  );
+
+  session.ctx.out.success(
+    { profile: profile.name, coverage, images: rows, truncated: !!cursor },
+    rows.length
+      ? [
+          `${"ID".padEnd(28)} ${"STATE".padEnd(9)} ${"VISIBILITY".padEnd(10)} ${"RECORD".padEnd(20)} SOURCE`,
+          ...lines,
+        ].join("\n")
+      : `no images on ${profile.provider} for profile ${profile.name}`,
+  );
+
+  return 0;
+}
+
+export const imageActions = ["build", "ls", "inspect", "rm", "forget"] as const;
 
 export async function imageCommand(session: Session, flags: Flags): Promise<number> {
   const [action, ...args] = flags.positionals;
@@ -386,15 +624,20 @@ export async function imageCommand(session: Session, flags: Flags): Promise<numb
   if ((flags.string("name") || flags.bool("refresh")) && action !== "build")
     throw usage("--name and --refresh only apply to `sandbar image build`");
 
+  if (flags.bool("remote") && action !== "ls")
+    throw usage("--remote only applies to `sandbar image ls`");
+
   switch (action) {
     case "build":
       return buildCommand(session, flags, args);
     case "ls":
       if (args.length) throw usage("image ls takes no arguments");
 
-      return lsImages(session);
+      return flags.bool("remote") ? lsRemote(session) : lsImages(session);
     case "inspect":
       return inspectImage(session, args);
+    case "rm":
+      return rmImage(session, args);
     case "forget":
       return forgetImage(session, args);
     default:

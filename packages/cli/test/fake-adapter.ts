@@ -44,23 +44,37 @@ export const withoutCreateEnv = bindAdapter(
   {},
 );
 
+/** The fake adapter without image inspection, inventory or deletion, like boxd or Vercel. */
+export const plain = bindAdapter(
+  defineAdapter({
+    name: "fake",
+    displayName: "Fake test provider without image management",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect({ host }) {
+      const {
+        imageInspect: _inspect,
+        imageList: _list,
+        imageListCoverage: _coverage,
+        imageDelete: _delete,
+        ...session
+      } = await definition.connect({ config: {}, credentials: {}, host });
+
+      return session;
+    },
+  }),
+  {},
+  {},
+);
+
 const builds = process.env.SANDBAR_FAKE_BUILDS;
 
-const built = {
-  preparedId: "fake-starter",
-  retainedResources: [
-    {
-      kind: "fake-image",
-      id: "fake-starter",
-      ownership: "verified" as const,
-      cleanup: "manual" as const,
-    },
-  ],
-};
+const building = createFakeAdapter({ url, token, imageBuild: true });
 
 /**
- * The fake adapter with an image build, standing in for build-first providers such as E2B. Every
- * build lands on fake-starter; a `lost/` reference loses the build's response.
+ * The fake adapter with its simulated image build, standing in for build-first providers such as
+ * E2B. Each build is a new fake image; a `lost/` reference loses the build and delete responses.
+ * SANDBAR_FAKE_BUILDS logs every submitted build.
  */
 export const builder = bindAdapter(
   defineAdapter({
@@ -69,21 +83,19 @@ export const builder = bindAdapter(
     config: z.strictObject({}),
     credentials: z.strictObject({}),
     async connect({ host }) {
-      const session = await definition.connect({ config: {}, credentials: {}, host });
+      const session = await building.connect({ config: {}, credentials: {}, host });
+      const build = session.imageBuild;
+
+      if (!build || !("submit" in build)) throw new Error("The fake must build images");
 
       return {
         ...session,
         imageBuild: {
+          ...build,
           async submit(input, ctx) {
             if (builds) await appendFile(builds, `${input.source.value}\n`);
 
-            if (input.source.value.startsWith("lost/"))
-              return ctx.unknown("The fake lost the build response");
-
-            return built;
-          },
-          async observe() {
-            return built;
+            return build.submit(input, ctx);
           },
         },
       };

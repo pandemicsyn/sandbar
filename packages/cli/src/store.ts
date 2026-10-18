@@ -45,8 +45,11 @@ export const ImageRecord = z.strictObject({
   format: z.literal(1),
   kind: z.literal("image"),
   name: RecordName,
-  /** `building` claims the name before the provider call; `unknown` keeps an uncertain build. */
-  status: z.enum(["building", "built", "unknown"]),
+  /**
+   * `building` claims the name before the provider call; `unknown` keeps an uncertain build;
+   * `deleting` keeps a delete whose outcome is unknown until `sandbar image rm` confirms it.
+   */
+  status: z.enum(["building", "built", "unknown", "deleting"]),
   profile: z.string().min(1),
   provider: z.string().min(1),
   createdAt: z.iso.datetime({ offset: true }),
@@ -61,8 +64,10 @@ export const ImageRecord = z.strictObject({
       scope: ResourceReference.shape.scope,
     })
     .nullable(),
-  /** Provider-side artifacts the build left behind; the SDK cannot delete them yet. */
+  /** Provider-side artifacts the build left behind. `sandbar image rm` deletes the built image. */
   retainedResources: z.array(RetainedResource),
+  /** The SDK's scoped image reference for the build; absent on records from older CLIs. */
+  reference: ResourceReference.extend({ kind: z.literal("image") }).optional(),
   recovery: z
     .custom<RecoveryReference>(
       (value) => z.record(z.string(), z.unknown()).safeParse(value).success,

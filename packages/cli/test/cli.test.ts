@@ -1028,9 +1028,11 @@ describe("sandbar CLI against the fake provider", () => {
         source: "python:3.12",
         profile: "builder",
         status: "built",
-        prepared: "fake-starter",
+        prepared: "fake-image-1",
         built: true,
-        retainedResources: [{ kind: "fake-image", id: "fake-starter", cleanup: "manual" }],
+        retainedResources: [
+          { kind: "fake-image", id: "fake-image-1", cleanup: "manual", ownership: "verified" },
+        ],
       });
 
       const again = await image(["image", "build", "python:3.12", "--json"]);
@@ -1145,7 +1147,12 @@ describe("sandbar CLI against the fake provider", () => {
       const inspected = await image(["image", "inspect", "tool-1", "--json"]);
 
       expect(inspected.code).toBe(0);
-      expect(envelope(inspected).data).toMatchObject({ status: "built", prepared: "fake-starter" });
+      expect(envelope(inspected).data).toMatchObject({
+        status: "built",
+        prepared: "fake-image-1",
+        // Found again after a lost response, so the build does not claim verified ownership.
+        reference: { kind: "image", nativeId: "fake-image-1", ownership: "unknown" },
+      });
       expect(await buildLog()).toEqual(["lost/tool:1"]);
     });
 
@@ -1155,7 +1162,8 @@ describe("sandbar CLI against the fake provider", () => {
       const forgot = await image(["image", "forget", "py"]);
 
       expect(forgot.code).toBe(0);
-      expect(forgot.stdout).toContain("fake-image fake-starter (cleanup manual");
+      expect(forgot.stdout).toContain("fake-image fake-image-1 (cleanup manual");
+      expect(forgot.stdout).toContain("forget never deletes them");
       expect((await image(["image", "inspect", "py", "--json"])).code).toBe(3);
 
       const named = await image(["image", "build", "python:3.12", "--name", "Bad Name", "--json"]);
@@ -1163,10 +1171,118 @@ describe("sandbar CLI against the fake provider", () => {
       expect(named.code).toBe(2);
     });
 
+    test("image rm deletes the built image on the provider and then the record", async () => {
+      const built = await image(["image", "build", "python:3.12", "--json"]);
+
+      expect(envelope(built).data.prepared).toBe("fake-image-1");
+
+      const remote = await image(["image", "ls", "--remote", "--json"]);
+
+      expect(remote.code).toBe(0);
+      expect(envelope(remote).data).toMatchObject({
+        profile: "builder",
+        coverage: "provider-scope",
+      });
+      expect(
+        envelope(remote).data.images.map((row: { id: string; record: string | null }) => [
+          row.id,
+          row.record,
+        ]),
+      ).toEqual([
+        ["fake-starter", null],
+        ["fake-image-1", "python-3-12"],
+      ]);
+      expect((await image(["image", "ls", "--remote"])).stdout).toContain("python-3-12");
+
+      const removed = await image(["image", "rm", "python-3-12", "--json"]);
+
+      expect(removed.code).toBe(0);
+      expect(envelope(removed).data).toMatchObject({
+        name: "python-3-12",
+        result: "deleted",
+        prepared: "fake-image-1",
+        retainedResources: [],
+      });
+      expect((await image(["image", "inspect", "python-3-12", "--json"])).code).toBe(3);
+
+      const after = await image(["image", "ls", "--remote", "--json"]);
+
+      expect(envelope(after).data.images.map((row: { id: string }) => row.id)).toEqual([
+        "fake-starter",
+      ]);
+    });
+
+    test("image rm refuses an image a sandbox still uses and keeps the record", async () => {
+      await image(["image", "build", "python:3.12"]);
+      expect((await image(["create", "--name", "py", "--image", "python:3.12"])).code).toBe(0);
+
+      const refused = await image(["image", "rm", "python-3-12", "--json"]);
+
+      expect(refused.code).not.toBe(0);
+      expect(refused.code).not.toBe(6);
+      expect(envelope(refused).error).toMatchObject({ code: "CONFLICT", outcome: "rejected" });
+      expect((await image(["image", "inspect", "python-3-12", "--json"])).code).toBe(0);
+
+      expect((await image(["rm", "py"])).code).toBe(0);
+      expect((await image(["image", "rm", "python-3-12"])).code).toBe(0);
+    });
+
+    test("an uncertain image rm keeps the record and a second rm confirms without resubmitting", async () => {
+      await image(["image", "build", "lost/tool:2"]);
+      expect((await image(["image", "inspect", "tool-2", "--json"])).code).toBe(0);
+
+      const lost = await image(["image", "rm", "tool-2", "--json"]);
+
+      expect(lost.code).toBe(6);
+      expect(envelope(lost).error).toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: "unknown",
+        known: { image: "tool-2", recovery: { kind: "image_delete" } },
+      });
+
+      const kept = await image(["image", "inspect", "tool-2", "--json"]);
+
+      expect(envelope(kept).data.status).toBe("deleting");
+
+      // A deleting record is never reused for a create.
+      const create = await image(["create", "--image", "lost/tool:2", "--json"]);
+
+      expect(envelope(create).error.code).toBe("UNSUPPORTED");
+
+      const confirmed = await image(["image", "rm", "tool-2", "--json"]);
+
+      expect(confirmed.code).toBe(0);
+      expect(envelope(confirmed).data).toMatchObject({ name: "tool-2", result: "deleted" });
+      expect((await image(["image", "inspect", "tool-2", "--json"])).code).toBe(3);
+    });
+
+    test("image ls --remote reports an unsupported provider and --remote is ls-only", async () => {
+      await writeConfig({
+        default: "builder",
+        profiles: {
+          builder: { module: fixture, export: "builder" },
+          plain: { module: fixture, export: "plain" },
+        },
+      });
+      await image(["image", "build", "python:3.12", "--name", "py"]);
+
+      const listed = await image(["image", "ls", "--remote", "--profile", "plain", "--json"]);
+
+      expect(listed.code).toBe(4);
+      expect(envelope(listed).error.message).toBe("plain cannot list images through Sandbar");
+
+      expect((await image(["image", "ls", "py", "--remote"])).code).toBe(2);
+      expect((await image(["image", "inspect", "py", "--remote"])).code).toBe(2);
+    });
+
     test("image completion offers actions and recorded names", async () => {
       await image(["image", "build", "python:3.12"]);
 
       expect((await cli(["__complete", "--", "image", ""])).stdout).toContain("build");
+      expect((await cli(["__complete", "--", "image", ""])).stdout).toContain("rm");
+      expect((await cli(["__complete", "--", "image", "rm", ""])).stdout).toContain(
+        "python-3-12\tpython:3.12 on builder",
+      );
       expect((await cli(["__complete", "--", "image", "forget", ""])).stdout).toContain(
         "python-3-12\tpython:3.12 on builder",
       );
