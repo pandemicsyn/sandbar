@@ -169,6 +169,11 @@ const ImageToken = Token.extend({
     .string()
     .regex(/^[A-Za-z0-9._:-]{1,128}$/)
     .optional(),
+  /** Native ID returned by this attempt's own POST; discovered IDs never set it. */
+  acknowledgedId: z
+    .string()
+    .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+    .optional(),
 });
 
 function destroyOutcome(token: z.infer<typeof DestroyToken>): OperationOutcome {
@@ -455,6 +460,15 @@ export function createDaytonaAdapter(
         authority: { kind: "organization", id: scope.accountId! },
         partition,
       };
+
+      const builtImage = (id: string, acknowledged: boolean): ResourceReference => ({
+        version: 1,
+        kind: "image",
+        provider: "daytona",
+        scope: structuredClone(resourceBinding),
+        nativeId: id,
+        ownership: acknowledged ? "verified-created" : "unknown",
+      });
 
       const resourceState = daytonaState({
         scope: { authority: { kind: "organization", id: scope.accountId! }, partition },
@@ -983,20 +997,23 @@ export function createDaytonaAdapter(
 
             if (result.status === "rejected") return ctx.reject("UNAVAILABLE", result.reason);
 
-            if (result.status !== "completed") {
-              const token: z.infer<typeof ImageToken> = {
-                submissionId: ctx.submissionId,
-                image: input.source.value,
-              };
+            // A completed submit carries the native ID from this attempt's acknowledged POST.
+            if (result.status === "completed")
+              return { ...result.value, image: builtImage(result.value.preparedId, true) };
 
-              if (result.snapshotId) token.snapshotId = result.snapshotId;
+            const token: z.infer<typeof ImageToken> = {
+              submissionId: ctx.submissionId,
+              image: input.source.value,
+            };
 
-              if (discoveryDeadline !== undefined) token.discoveryDeadline = discoveryDeadline;
-
-              return ctx.pending(token, { pollAfterMs: 500 });
+            if (result.snapshotId) {
+              token.snapshotId = result.snapshotId;
+              token.acknowledgedId = result.snapshotId;
             }
 
-            return result.value;
+            if (discoveryDeadline !== undefined) token.discoveryDeadline = discoveryDeadline;
+
+            return ctx.pending(token, { pollAfterMs: 500 });
           },
           async observe(attempt, ctx) {
             const token = ImageToken.safeParse(attempt.token);
@@ -1041,7 +1058,16 @@ export function createDaytonaAdapter(
                 { pollAfterMs: 500 },
               );
 
-            return result.status === "completed" ? result.value : ctx.unknown(result.reason);
+            // Only an ID saved from this attempt's acknowledged POST proves who created it.
+            return result.status === "completed"
+              ? {
+                  ...result.value,
+                  image: builtImage(
+                    result.value.preparedId,
+                    token.data.acknowledgedId === result.value.preparedId,
+                  ),
+                }
+              : ctx.unknown(result.reason);
           },
         },
         create: {

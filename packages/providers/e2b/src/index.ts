@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { e2bState } from "./state-native";
+import { e2bImages } from "./images-native";
 import {
   SandboxInfoSchema,
   LifecycleInput,
@@ -528,6 +529,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         partition: { endpoint: E2B_ENDPOINT, template: config.templateId },
       };
 
+      const images = e2bImages({ scope: boundScope, transport, teamId: config.teamId });
+
       const resources = e2bState({
         scope: boundScope,
         transport,
@@ -721,6 +724,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
       return {
         ...resources.fields,
+        ...images.fields,
         defaultImage: { kind: "prepared", value: config.templateId },
         defaultNetworkPolicy: config.networkPolicy,
         scope: {
@@ -820,6 +824,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                     cleanup: "manual" as const,
                   },
                 ],
+                // This attempt's own build call returned the template and build identity.
+                image: images.reference(build.templateId, "verified-created", build.buildId),
               };
             } catch {
               return ctx.unknown(`E2B image build ${name} outcome unavailable; observe only`);
@@ -844,6 +850,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                   cleanup: "manual" as const,
                 },
               ],
+              // Discovered by build name rather than acknowledged, so ownership stays unknown.
+              image: images.reference(build.templateId, "unknown", build.buildId),
             };
           },
         },

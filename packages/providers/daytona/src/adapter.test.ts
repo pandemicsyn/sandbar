@@ -202,6 +202,16 @@ test.each([
     expect(image.retainedResources).toEqual([
       { kind: "daytona-snapshot", id: "built-1", ownership: "unknown", cleanup: "manual" },
     ]);
+    // Only a native ID from this attempt's acknowledged POST proves who created the image.
+    expect(result).toMatchObject({
+      reference: {
+        kind: "image",
+        provider: "daytona",
+        nativeId: "built-1",
+        scope: client.scope,
+        ownership: lost ? "unknown" : "verified-created",
+      },
+    });
     expect(creates).toBe(0);
     await expect(
       client.sandboxes.create({
