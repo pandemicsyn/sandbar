@@ -333,6 +333,8 @@ describe("sandbar CLI against the fake provider", () => {
     const record = JSON.parse(await readFile(join(dir, "state", "sandboxes", "web.json"), "utf8"));
 
     expect(record.status).toBe("unknown");
+    expect(record.recovery).toMatchObject({ kind: "create" });
+    expect(envelope(result).error.known.recovery).toEqual(record.recovery);
 
     const refused = await cli(["rm", "web"]);
 
@@ -400,6 +402,19 @@ describe("sandbar CLI against the fake provider", () => {
     );
     expect(schema.exitCodes.map((entry: { code: number }) => entry.code)).toContain(125);
 
+    const manifest = JSON.parse(
+      await readFile(join(import.meta.dir, "..", "package.json"), "utf8"),
+    );
+
+    const version = await cli(["--version"]);
+
+    expect(schema.cliVersion).toBe(manifest.version);
+    expect(version).toMatchObject({ code: 0, stdout: `${manifest.version}\n` });
+    expect(JSON.parse((await cli(["-V", "--json"])).stdout)).toEqual({
+      ok: true,
+      data: { version: manifest.version },
+    });
+
     const help = await cli(["exec", "--help"]);
 
     expect(help.code).toBe(0);
@@ -439,6 +454,40 @@ describe("sandbar CLI against the fake provider", () => {
 
     expect(await cli(["sh", "box", "--", "-n is fine"])).toMatchObject({ code: 0, stdout: "ok\n" });
     expect((await cli(["sh", "box", "--", "a", "b"])).code).toBe(125);
+  });
+
+  test("rm recovers a create whose response was lost and destroys the sandbox", async () => {
+    await control("/_test/seed", {
+      submissionId: "*",
+      action: "create",
+      behavior: "lost_after_effect",
+    });
+
+    const result = await cli(["create", "--name", "web", "--prepared", "fake-starter", "--json"]);
+
+    expect(result.code).toBe(6);
+    expect(envelope(result).error.known).toMatchObject({
+      sandbox: "web",
+      reference: null,
+      recovery: { kind: "create" },
+    });
+    expect((await fakeResources()).map((resource) => resource.state)).toEqual(["running"]);
+
+    const removed = await cli(["rm", "web", "--json"]);
+
+    expect(removed.code).toBe(0);
+    expect(removed.stderr).toContain("recovered the uncertain create");
+    expect(envelope(removed).data.removed).toMatchObject([{ name: "web", result: "destroyed" }]);
+    expect((await fakeResources()).map((resource) => resource.state)).toEqual(["destroyed"]);
+    expect(await storeNames()).toEqual([]);
+  });
+
+  test("a sandbox named from-file is an ordinary store record", async () => {
+    await cli(["create", "--name", "from-file", "--prepared", "fake-starter"]);
+
+    expect((await cli(["rm", "from-file"])).code).toBe(0);
+    expect(await storeNames()).toEqual([]);
+    expect((await fakeResources()).map((resource) => resource.state)).toEqual(["destroyed"]);
   });
 
   test("rm --all skips records it cannot destroy and reports them", async () => {

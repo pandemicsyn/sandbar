@@ -4,5 +4,6 @@
   "packages/providers/daytona",
   "packages/providers/e2b",
   "packages/providers/boxd",
-  "packages/providers/vercel"
+  "packages/providers/vercel",
+  "packages/cli"
 ]

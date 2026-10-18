@@ -19,6 +19,7 @@ const packages = [
   ["@sandbar-sdk/vercel", "packages/providers/vercel"],
   ["@sandbar-sdk/e2b", "packages/providers/e2b"],
   ["sandbar-sdk", "packages/sdk"],
+  ["@sandbar-sdk/cli", "packages/cli"],
 ];
 
 const forbidden = new Set([
@@ -73,6 +74,7 @@ async function pack(directory) {
       "@sandbar-sdk/daytona",
       "@sandbar-sdk/e2b",
       "@sandbar-sdk/boxd",
+      "@sandbar-sdk/cli",
     ].includes(manifest.name)
   ) {
     for (const path of contents.filter((path) => /\.(?:js|d\.ts)$/.test(path))) {
@@ -1261,6 +1263,75 @@ console.log("Packed boxd imports and local validation passed without provider IO
     console.log(
       `${runtime}: ${run(runtime, ["consumer.mjs"], direct, { FAKE_URL: fixture.fakeUrl, FAKE_TOKEN: fixture.fakeToken })}`,
     );
+  }
+
+  // The packed CLI installs on its own, finds a configured adapter module and drives the fake.
+  const cli = join(temporary, "cli-consumer");
+  await consumer(
+    cli,
+    {
+      "@sandbar-sdk/cli": archiveOverrides["@sandbar-sdk/cli"],
+      "@sandbar/provider-fake": archiveOverrides["@sandbar/provider-fake"],
+    },
+    archiveOverrides,
+    `import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
+export const fake = createFakeAdapter({ url: process.env.FAKE_URL, token: process.env.FAKE_TOKEN });
+`,
+  );
+  await writeFile(
+    join(cli, "sandbar.json"),
+    JSON.stringify({
+      default: "fake",
+      profiles: { fake: { module: "./consumer.mjs", export: "fake" } },
+    }),
+  );
+  const cliGraph = inspectGraph(cli, ["@sandbar-sdk/cli"]);
+
+  if (cliGraph.some((name) => name.startsWith("@sandbar/") || forbidden.has(name)))
+    throw new Error(`CLI package leaked private dependencies: ${cliGraph}`);
+
+  const cliVersion = JSON.parse(
+    await readFile(join(root, "packages/cli/package.json"), "utf8"),
+  ).version;
+
+  const cliEnv = {
+    HOME: cli,
+    XDG_CONFIG_HOME: "",
+    SANDBAR_CONFIG: join(cli, "sandbar.json"),
+    SANDBAR_STATE_DIR: join(cli, "state"),
+    FAKE_URL: fixture.fakeUrl,
+    FAKE_TOKEN: fixture.fakeToken,
+  };
+
+  for (const runtime of ["node", "bun"]) {
+    const sandbar = (...args) =>
+      run(runtime, ["node_modules/@sandbar-sdk/cli/dist/main.js", ...args], cli, cliEnv);
+
+    if (sandbar("--version") !== cliVersion) throw new Error(`${runtime}: CLI version differs`);
+
+    if (JSON.parse(sandbar("schema")).cliVersion !== cliVersion)
+      throw new Error(`${runtime}: CLI schema version differs`);
+    await fixture.fakeControl("/_test/seed", {
+      submissionId: "*",
+      action: "exec",
+      behavior: "normal",
+      command: {
+        command: { kind: "argv", argv: ["cli", "packed"] },
+        exitCode: 0,
+        stdoutBase64: Buffer.from("packed cli\n").toString("base64"),
+      },
+    });
+
+    const result = JSON.parse(
+      sandbar("run", "--json", "--prepared", "fake-starter", "--", "cli", "packed"),
+    );
+
+    if (!result.ok || result.data.stdout !== "packed cli\n" || result.data.sandbox.kept)
+      throw new Error(`${runtime}: packed CLI run failed: ${JSON.stringify(result)}`);
+
+    if (JSON.parse(sandbar("ls", "--json")).data.sandboxes.length)
+      throw new Error(`${runtime}: packed CLI run left a store record`);
+    console.log(`${runtime}: packed CLI run passed`);
   }
 
   console.log(

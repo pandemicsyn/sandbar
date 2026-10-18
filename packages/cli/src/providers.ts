@@ -59,7 +59,11 @@ export const providers: readonly ProviderDescriptor[] = [
     export: "boxdAdapter",
     experimental: true,
     credentials: { apiKey: "BOXD_API_KEY" },
-    config: { org: { env: "BOXD_ORG", required: true } },
+    config: {
+      org: { env: "BOXD_ORG", required: true },
+      // boxd always allows internet egress, so its adapter requires choosing that explicitly.
+      network: { env: "BOXD_NETWORK", required: true },
+    },
   },
   {
     id: "vercel",

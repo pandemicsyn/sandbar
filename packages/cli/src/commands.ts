@@ -1,6 +1,7 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import {
+  AdapterSandbox,
   Image,
   NonzeroExitError,
   ResourceReference,
@@ -226,13 +227,14 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
     }
 
     const reference = report.known?.reference ?? null;
+    const recovery = report.known?.recovery;
     let kept = `the store keeps ${claimed.record.name} so it can be inspected or removed`;
 
     try {
       await store.update(
         "sandbox",
         claimed.record.name,
-        { ...claimed.record, status: "unknown", reference },
+        { ...claimed.record, status: "unknown", reference, recovery },
         claimed.version,
       );
     } catch (storeCause) {
@@ -243,7 +245,7 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
       report.outcome === "partial" ? "PARTIAL" : "OUTCOME_UNKNOWN",
       report.message,
       kept,
-      { sandbox: claimed.record.name, reference },
+      { sandbox: claimed.record.name, reference, recovery },
       report.outcome,
     );
   }
@@ -290,8 +292,11 @@ function sandboxSummary(record: SandboxRecord) {
   };
 }
 
+/** A store entry, or a reference read from `@file.json` that has no store record. */
+export type Target = Versioned & { fromFile?: true };
+
 /** A store name, a native id held in the store, or `@file.json` with a saved reference. */
-async function findTarget(session: Session, target: string): Promise<Versioned> {
+async function findTarget(session: Session, target: string): Promise<Target> {
   const store = await session.store();
 
   if (target.startsWith("@")) {
@@ -315,6 +320,7 @@ async function findTarget(session: Session, target: string): Promise<Versioned> 
         reference: { ...parsed.data, kind: "sandbox" },
       },
       version: "",
+      fromFile: true,
     };
   }
 
@@ -437,7 +443,12 @@ function onePositional(flags: Flags, what: string): string {
 }
 
 export async function inspectCommand(session: Session, flags: Flags): Promise<number> {
-  const { record } = await findTarget(session, onePositional(flags, "sandbox"));
+  const { record } = await recoverCreate(
+    session,
+    await session.store(),
+    await findTarget(session, onePositional(flags, "sandbox")),
+  );
+
   const box = await session.reopen(record);
   const info = await box.inspect({ signal: session.ctx.signal });
 
@@ -487,14 +498,82 @@ function refusal(record: SandboxRecord): CliError | null {
   return null;
 }
 
+/** Whether two records describe the same sandbox, so a replacement under the name is left alone. */
+function sameSandbox(a: SandboxRecord, b: SandboxRecord): boolean {
+  if (a.createdAt !== b.createdAt || a.provider !== b.provider || a.profile !== b.profile)
+    return false;
+
+  return !a.reference || !b.reference || a.reference.nativeId === b.reference.nativeId;
+}
+
+/**
+ * Drop a record after its provider effect is confirmed. A concurrent edit of the same sandbox
+ * must not report failure, but a replacement created under the name since must keep its record.
+ */
+export async function forget(store: StateStore, target: Target): Promise<void> {
+  if (target.fromFile) return;
+
+  for (let attempt = 0; ; attempt++) {
+    const current = await store.get("sandbox", target.record.name);
+
+    if (!current || !sameSandbox(current.record, target.record)) return;
+
+    try {
+      await store.remove("sandbox", target.record.name, current.version);
+
+      return;
+    } catch (cause) {
+      if (!(cause instanceof CliError) || cause.code !== "CONFLICT" || attempt === 2) throw cause;
+    }
+  }
+}
+
+/**
+ * An uncertain create saved the SDK's operation reference: observe the original operation
+ * (never resubmitting it) and record the sandbox when the provider confirms one.
+ */
+async function recoverCreate(session: Session, store: StateStore, target: Target): Promise<Target> {
+  const { record } = target;
+
+  if (target.fromFile || record.status !== "unknown" || record.reference || !record.recovery)
+    return target;
+
+  if (record.recovery.kind !== "create") return target;
+
+  const client = await session.connect(await session.profileNamed(record.profile));
+  let value: unknown;
+
+  try {
+    value = await (await client.recover(record.recovery)).observe();
+  } catch (cause) {
+    if (cause instanceof SandbarError && cause.effect !== "none") return target;
+    throw cause;
+  }
+
+  if (!(value instanceof AdapterSandbox)) return target;
+
+  const { recovery: _recovery, ...rest } = record;
+  const recovered: SandboxRecord = { ...rest, status: "created", reference: value.reference };
+  const { version } = await store.update("sandbox", record.name, recovered, target.version);
+  session.ctx.out.note(`${record.name}: recovered the uncertain create as ${value.id}`);
+
+  return { record: recovered, version };
+}
+
 async function removeOne(
   session: Session,
   store: StateStore,
-  record: SandboxRecord,
+  found: Target,
   force: boolean,
   all: boolean,
 ): Promise<RemoveResult> {
-  const stored = record.name !== "from-file";
+  // --force must still drop a record whose recovery cannot run (for example a removed profile).
+  const target = await recoverCreate(session, store, found).catch((cause: unknown) => {
+    if (force) return found;
+    throw cause;
+  });
+
+  const { record } = target;
   const refused = refusal(record);
 
   if (refused && !force) {
@@ -507,14 +586,8 @@ async function removeOne(
     throw refused;
   }
 
-  // The provider effect is confirmed before the record is dropped, so drop it unconditionally:
-  // a concurrent edit to a record whose sandbox is already destroyed must not report failure.
-  const forget = async () => {
-    if (stored) await store.remove("sandbox", record.name);
-  };
-
   if (!record.reference) {
-    await forget();
+    await forget(store, target);
 
     return {
       kind: "removed",
@@ -528,13 +601,13 @@ async function removeOne(
     box = await session.reopen(record);
   } catch (cause) {
     if (!(cause instanceof SandbarError) || cause.code !== "NOT_FOUND") throw cause;
-    await forget();
+    await forget(store, target);
 
     return { kind: "removed", item: { name: record.name, result: "gone", retainedResources: [] } };
   }
 
   const destroyed = await box.destroy({ signal: session.ctx.signal });
-  await forget();
+  await forget(store, target);
 
   return {
     kind: "removed",
@@ -555,7 +628,7 @@ export async function rmCommand(session: Session, flags: Flags): Promise<number>
   if (all === Boolean(flags.positionals.length))
     throw usage("Name sandboxes to remove, or pass --all");
 
-  const targets: { name: string; find: () => Promise<Versioned> }[] = all
+  const targets: { name: string; find: () => Promise<Target> }[] = all
     ? (await listAll(store, "sandbox", (warning) => out.note(warning))).map((entry) => ({
         name: entry.record.name,
         find: async () => entry,
@@ -576,8 +649,7 @@ export async function rmCommand(session: Session, flags: Flags): Promise<number>
   // Keep going after a failure so every confirmed effect is reported.
   for (const target of targets) {
     try {
-      const { record } = await target.find();
-      const result = await removeOne(session, store, record, force, all);
+      const result = await removeOne(session, store, await target.find(), force, all);
 
       if (result.kind === "skipped") {
         details.skipped.push(result.item);

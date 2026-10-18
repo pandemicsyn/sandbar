@@ -2,7 +2,7 @@
 
 `sandbar` creates and manages sandboxes on any Sandbar provider from the command line. It is built for agents first: it never prompts, every command has a stable `--json` form, and exit codes say what to do next.
 
-Status: first delivery step (private workspace package, not published). Adapters are installed separately.
+Install it with `npm install -g @sandbar-sdk/cli` (or `bun add -g @sandbar-sdk/cli`); `sandbar --version` prints the installed version. Adapters are installed separately.
 
 ## Quick start
 
@@ -91,7 +91,7 @@ The CLI carries an agent skill that matches its own version. `sandbar skill` pri
 
 - Profile selection: `--profile`, `SANDBAR_PROFILE`, `--provider`, `SANDBAR_PROVIDER`, then `default`.
 - `provider` names an official adapter (`@sandbar-sdk/<provider>`); `config` and `credentials` are that adapter's own settings. `module` and `export` load any adapter, either a definition or a bound adapter.
-- Credentials can be written in the profile directly, as `env:NAME` references, or as password-manager references (below). Keep the file private (`chmod 600`) if it holds keys. Env-only providers read `DAYTONA_API_KEY` and `DAYTONA_TARGET`; `E2B_API_KEY`; `BOXD_API_KEY` and `BOXD_ORG`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`; `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `MODAL_APP_NAME` and `MODAL_ENVIRONMENT`.
+- Credentials can be written in the profile directly, as `env:NAME` references, or as password-manager references (below). Keep the file private (`chmod 600`) if it holds keys. Env-only providers read `DAYTONA_API_KEY` and `DAYTONA_TARGET`; `E2B_API_KEY`; `BOXD_API_KEY`, `BOXD_ORG` and `BOXD_NETWORK=internet` (boxd always allows egress, so its adapter requires choosing it); `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`; `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `MODAL_APP_NAME` and `MODAL_ENVIRONMENT`.
 - `limits.maxSandboxes` (or `SANDBAR_MAX_SANDBOXES`) caps how many sandboxes the store may hold. Unset means uncapped.
 
 ## Password managers
@@ -112,7 +112,7 @@ If the tool is not installed the command exits 4 (`SECRET_TOOL_MISSING`); if it 
 
 ## State store
 
-Sandbox references are kept as one JSON file per sandbox in `~/.config/sandbar/state/sandboxes/<name>.json` (override with `--state-dir` or `SANDBAR_STATE_DIR`, relative to the working directory, or `state.dir`, relative to the config file). Records hold references only, never credentials. A name is claimed before the provider call, so a crash or uncertain create leaves a record that `ls` shows and `rm --force` can drop. Records are written whole (a temporary file linked or renamed into place) and updates take a short per-record lock, so concurrent CLI processes on one machine never see half-written files; `ls` skips an unreadable record with a warning. The `maxSandboxes` check is best effort under concurrent creates. The store sits behind a small per-record interface (create-if-absent, compare-and-swap update, paged list) so object storage can back it later.
+Sandbox references are kept as one JSON file per sandbox in `~/.config/sandbar/state/sandboxes/<name>.json` (override with `--state-dir` or `SANDBAR_STATE_DIR`, relative to the working directory, or `state.dir`, relative to the config file). Records hold references only, never credentials. A name is claimed before the provider call, so a crash or uncertain create leaves a record that `ls` shows. An uncertain create also keeps the SDK's recovery reference: `rm` and `inspect` use it to ask how the original request ended (never resending it) and `rm` destroys the sandbox if one was made; otherwise `rm --force` drops the record. Records are written whole (a temporary file linked or renamed into place) and updates take a short per-record lock, so concurrent CLI processes on one machine never see half-written files; `ls` skips an unreadable record with a warning. The `maxSandboxes` check is best effort under concurrent creates. The store sits behind a small per-record interface (create-if-absent, compare-and-swap update, paged list) so object storage can back it later.
 
 ## Not yet
 

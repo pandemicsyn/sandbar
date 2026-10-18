@@ -62,7 +62,7 @@
     },
     "packages/cli": {
       "name": "@sandbar-sdk/cli",
-      "version": "0.0.0",
+      "version": "0.2.0",
       "bin": {
         "sandbar": "./dist/main.js",
       },

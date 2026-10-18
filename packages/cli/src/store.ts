@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { link, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ResourceReference } from "sandbar-sdk";
+import { ResourceReference, type RecoveryReference } from "sandbar-sdk";
 import { z } from "zod";
 import { CliError, usage } from "./output";
 
@@ -19,6 +19,12 @@ export const SandboxRecord = z.strictObject({
   labels: z.record(z.string(), z.string()),
   image: z.string().optional(),
   reference: ResourceReference.extend({ kind: z.literal("sandbox") }).nullable(),
+  /** The SDK's operation reference for an uncertain create; the SDK validates it on recovery. */
+  recovery: z
+    .custom<RecoveryReference>(
+      (value) => z.record(z.string(), z.unknown()).safeParse(value).success,
+    )
+    .optional(),
 });
 
 export type SandboxRecord = z.infer<typeof SandboxRecord>;

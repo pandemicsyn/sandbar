@@ -1,4 +1,9 @@
-import { OutcomeUnknownError, SandbarError, type SandboxReference } from "sandbar-sdk";
+import {
+  OutcomeUnknownError,
+  SandbarError,
+  type RecoveryReference,
+  type SandboxReference,
+} from "sandbar-sdk";
 
 /** A failure the CLI detected itself, before or around provider calls. */
 export class CliError extends Error {
@@ -39,6 +44,8 @@ export function usage(message: string, hint?: string): CliError {
 export type Known = {
   sandbox?: string;
   reference?: SandboxReference | null;
+  /** The SDK's operation reference for an uncertain create; `sandbar rm` uses it to recover. */
+  recovery?: RecoveryReference;
   /** The command's captured result when a later step (cleanup, exit status) failed. */
   exec?: ExecSummary;
 };
@@ -75,10 +82,12 @@ export function describeError(cause: unknown): ErrorReport {
   if (cause instanceof SandbarError) {
     const partial = cause.outcome?.status === "partial";
 
-    const known: Known | undefined =
-      cause.outcome && "sandbox" in cause.outcome && cause.outcome.sandbox
-        ? { reference: cause.outcome.sandbox }
-        : undefined;
+    let known: Known | undefined;
+
+    if (cause.outcome && "sandbox" in cause.outcome && cause.outcome.sandbox)
+      known = { reference: cause.outcome.sandbox };
+
+    if (cause.reference) known = { ...known, recovery: cause.reference };
 
     const outcome: Outcome = partial
       ? "partial"
@@ -182,6 +191,10 @@ export class Output {
 
     if (report.known?.reference)
       this.streams.stderr(`known sandbox reference: ${JSON.stringify(report.known.reference)}\n`);
+    else if (report.known?.recovery)
+      this.streams.stderr(
+        `operation recovery reference: ${JSON.stringify(report.known.recovery)}\n`,
+      );
 
     for (const item of report.details?.removed ?? []) this.streams.stdout(`${item.name}\n`);
 

@@ -32,6 +32,7 @@ for (const name of [
   "@sandbar-sdk/e2b",
   "@sandbar-sdk/vercel",
   "@sandbar-sdk/boxd",
+  "@sandbar-sdk/cli",
 ])
   if (!selected.has(name)) throw new Error(`Release graph lacks ${name}`);
 
@@ -110,6 +111,19 @@ cases.push({
   overrides: [adapterName],
   runtime: `import { boxdAdapter } from "@sandbar-sdk/boxd"; if (boxdAdapter.name !== "boxd") throw Error("Unexpected adapter");`,
   types: `import { boxdAdapter } from "@sandbar-sdk/boxd"; const name: string = boxdAdapter.name; void name;`,
+});
+
+const cliVersion = selected.get("@sandbar-sdk/cli").manifest.version;
+
+// The CLI is a binary, not a library: each installer must link `sandbar` and run it.
+cases.push({
+  name: "cli",
+  packageName: "@sandbar-sdk/cli",
+  overrides: [adapterName, sdkName],
+  runtime: `import { execFileSync } from "node:child_process";
+const output = execFileSync("node_modules/.bin/sandbar", ["--version"], { encoding: "utf8" });
+if (output.trim() !== ${JSON.stringify(cliVersion)}) throw Error(\`Unexpected CLI version \${output}\`);`,
+  types: "export {};",
 });
 
 const temporary = mkdtempSync(join(tmpdir(), "sandbar-installers-"));

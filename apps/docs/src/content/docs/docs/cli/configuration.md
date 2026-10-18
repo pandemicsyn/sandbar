@@ -9,15 +9,15 @@ The CLI works with environment variables alone. For anything more, it reads `~/.
 
 Set `SANDBAR_PROVIDER` (or pass `--provider`) and the provider's own variables:
 
-| Provider  | Variables                                                                                   |
-| --------- | ------------------------------------------------------------------------------------------- |
-| `daytona` | `DAYTONA_API_KEY`, `DAYTONA_TARGET`                                                         |
-| `e2b`     | `E2B_API_KEY`                                                                               |
-| `boxd`    | `BOXD_API_KEY`, `BOXD_ORG`                                                                  |
-| `vercel`  | `VERCEL_TOKEN`, optionally `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`                         |
-| `modal`   | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, optionally `MODAL_APP_NAME` and `MODAL_ENVIRONMENT` |
+| Provider  | Variables                                                                     |
+| --------- | ----------------------------------------------------------------------------- |
+| `daytona` | `DAYTONA_API_KEY`, `DAYTONA_TARGET`                                           |
+| `e2b`     | `E2B_API_KEY`                                                                 |
+| `boxd`    | `BOXD_API_KEY`, `BOXD_ORG`, `BOXD_NETWORK=internet`                           |
+| `vercel`  | `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`                         |
+| `modal`   | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `MODAL_APP_NAME`, `MODAL_ENVIRONMENT` |
 
-`sandbar providers` shows which of these are missing.
+`sandbar providers` shows which of these are missing. boxd always allows internet egress, so its adapter asks you to choose that explicitly with `BOXD_NETWORK=internet` (or `"network": "internet"` in a profile's config).
 
 ## Profiles
 
@@ -83,6 +83,6 @@ The CLI remembers each sandbox as a small JSON file in `~/.config/sandbar/state/
 
 Use a different folder with `--state-dir` or `SANDBAR_STATE_DIR` (relative to the current directory), or `"state": { "kind": "fs", "dir": "..." }` in `sandbar.json` (relative to that file). A separate folder per project or per CI job keeps their sandboxes apart.
 
-The name is recorded before the provider is called. If a create fails in a way that may still have made a sandbox, the record stays with status `unknown`, so `sandbar ls` shows it. Once you have checked the provider, `sandbar rm --force <name>` drops it.
+The name is recorded before the provider is called. If a create fails in a way that may still have made a sandbox, the record stays with status `unknown`, so `sandbar ls` shows it. The record also keeps the SDK's recovery reference for that create, so `sandbar rm <name>` and `sandbar inspect <name>` first ask the provider how the original request ended, without sending it again. If the sandbox exists, `rm` destroys it. If the provider still cannot say, check it yourself; `sandbar rm --force <name>` then drops the record.
 
 Concurrent `sandbar` processes on one machine can share a state folder safely.

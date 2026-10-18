@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import manifest from "../package.json" with { type: "json" };
 import {
   catCommand,
   cpCommand,
@@ -70,6 +71,7 @@ const globalFlags = {
     description: "State store folder (default ~/.config/sandbar/state, also SANDBAR_STATE_DIR)",
   },
   help: { type: "boolean", short: "h", description: "Show help" },
+  version: { type: "boolean", short: "V", description: "Print the CLI version" },
 } satisfies Record<string, FlagSpec>;
 
 const createFlags = {
@@ -332,6 +334,7 @@ export const exitCodes = [
 function schema() {
   return {
     version: 1,
+    cliVersion: manifest.version,
     globalFlags,
     commands: commands.map(({ run: _run, ...spec }) => spec),
     exitCodes,
@@ -462,6 +465,12 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
   const command = commands.find((candidate) => candidate.name === name);
 
   try {
+    if (!name && (head.includes("--version") || head.includes("-V"))) {
+      out.success({ version: manifest.version }, manifest.version);
+
+      return 0;
+    }
+
     if (!name) {
       out.streams.stdout(`${topHelp()}\n`);
 

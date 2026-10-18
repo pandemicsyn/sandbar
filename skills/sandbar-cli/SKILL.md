@@ -82,7 +82,7 @@ Other commands:
 
 ## When things go wrong
 
-- **Never repeat a create after exit 6 or `outcome: "unknown"`.** The store keeps the name in status `unknown`; check `sandbar ls --json`. If the user agrees it is gone, `sandbar rm --force <name>` drops the record.
+- **Never repeat a create after exit 6 or `outcome: "unknown"`.** The store keeps the name in status `unknown`; check `sandbar ls --json`. `sandbar rm <name>` first asks the provider how that create ended (never resending it) and destroys the sandbox if one exists. If it still exits 4 because the outcome is unknown, and the user agrees it is gone, `sandbar rm --force <name>` drops the record.
 - **`run` exits 125 with `CLEANUP_FAILED`**: the command result is in `error.known.exec`, but the sandbox is still running. Tell the user and run the `rm` from the hint.
 - **`rm` exits 8**: `error.details` lists what was `removed`, `skipped` and `failed`. Retry only the failed names once the cause is fixed.
 - **`STORE_WRITE_FAILED`**: the sandbox exists but was not recorded. The reference is in `error.known.reference`; save it to a file and destroy with `sandbar rm @file.json`.

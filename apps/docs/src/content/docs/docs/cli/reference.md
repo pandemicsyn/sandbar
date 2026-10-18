@@ -16,6 +16,7 @@ These work with every command.
 | `--provider <id>`   | Official provider from environment credentials (also SANDBAR_PROVIDER)       |
 | `--config <path>`   | Config file (default ~/.config/sandbar/sandbar.json, also SANDBAR_CONFIG)    |
 | `--state-dir <dir>` | State store folder (default ~/.config/sandbar/state, also SANDBAR_STATE_DIR) |
+| `-V, --version`     | Print the CLI version                                                        |
 
 ## Output
 
