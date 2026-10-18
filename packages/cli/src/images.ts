@@ -473,14 +473,15 @@ async function rmImage(session: Session, args: readonly string[], force: boolean
     } catch (cause) {
       if (!(cause instanceof SandbarError)) throw cause;
 
-      if (cause.effect === "none") {
-        // A definitive answer leaves nothing to observe: keep the build so rm can run again.
-        const { recovery: _recovery, ...rest } = record;
-        await store
-          .update("image", record.name, { ...rest, status: "built" }, entry.version)
-          .catch(() => undefined);
-        throw cause;
-      }
+      // The check failed, not the delete: the SDK never certifies a recovered delete as having
+      // no effect, so the record keeps `deleting` and its recovery for a later check.
+      if (cause.effect === "none")
+        throw new CliError(
+          cause.code,
+          cause.message,
+          `the store keeps ${record.name} deleting; run \`sandbar image rm ${record.name}\` again with profile ${record.profile} connected to the account the delete was sent from`,
+          { image: record.name, recovery: record.recovery },
+        );
     }
 
     if (!DeleteResult.safeParse(value).success)

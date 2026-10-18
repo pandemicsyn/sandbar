@@ -1333,14 +1333,15 @@ describe("sandbar CLI against the fake provider", () => {
       expect((await image(["image", "rm", "python-3-12"])).code).toBe(0);
     });
 
-    test("a definitively refused check of an uncertain delete restores the build", async () => {
+    test("a failed check of an uncertain delete keeps the record deleting", async () => {
       await image(["image", "build", "lost/tool:2"]);
       expect((await image(["image", "rm", "tool-2", "--force"])).code).toBe(6);
-      expect(envelope(await image(["image", "inspect", "tool-2", "--json"])).data.status).toBe(
-        "deleting",
-      );
 
-      // The profile now reaches another account, which refuses to check the saved delete.
+      const saved = envelope(await image(["image", "inspect", "tool-2", "--json"])).data;
+
+      expect(saved.status).toBe("deleting");
+
+      // The profile now reaches another account, which cannot check the saved delete.
       await writeConfig({
         default: "builder",
         profiles: { builder: { module: fixture, export: "otherAccount" } },
@@ -1349,11 +1350,26 @@ describe("sandbar CLI against the fake provider", () => {
       const checked = await image(["image", "rm", "tool-2", "--json"]);
 
       expect(checked.code).toBe(5);
-      expect(envelope(checked).error).toMatchObject({ code: "FORBIDDEN", outcome: "rejected" });
+      expect(envelope(checked).error).toMatchObject({
+        code: "FORBIDDEN",
+        known: { image: "tool-2", recovery: { kind: "image_delete" } },
+      });
+      expect(envelope(checked).error.hint).toContain("account the delete was sent from");
 
-      const restored = envelope(await image(["image", "inspect", "tool-2", "--json"])).data;
+      const kept = envelope(await image(["image", "inspect", "tool-2", "--json"])).data;
 
-      expect(restored).toMatchObject({ status: "built", prepared: "fake-image-1", recovery: null });
+      expect(kept).toMatchObject({ status: "deleting", recovery: saved.recovery });
+
+      // Back on the original account, rm checks the saved delete and completes.
+      await writeConfig({
+        default: "builder",
+        profiles: { builder: { module: fixture, export: "builder" } },
+      });
+
+      const confirmed = await image(["image", "rm", "tool-2", "--json"]);
+
+      expect(confirmed.code).toBe(0);
+      expect(envelope(confirmed).data).toMatchObject({ name: "tool-2", result: "deleted" });
     });
 
     test("image ls --remote reports an unsupported provider and --remote is ls-only", async () => {
