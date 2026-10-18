@@ -534,6 +534,66 @@ describe("sandbar CLI against the fake provider", () => {
     expect((await fakeResources()).map((resource) => resource.state)).toEqual(["destroyed"]);
   });
 
+  test("ls --remote lists provider sandboxes and adopt records one without owning it", async () => {
+    await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
+    const elsewhere = { SANDBAR_STATE_DIR: join(dir, "elsewhere") };
+    const create = ["create", "--prepared", "fake-starter", "--json"];
+    const other = envelope(await cli(create, elsewhere)).data.id;
+    const gone = envelope(await cli(create, elsewhere)).data.id;
+    await cli(["rm", "--all"], elsewhere);
+    // Another store created and destroyed two sandboxes; this store only knows web.
+    expect(await storeNames()).toEqual(["web.json"]);
+
+    const listed = envelope(await cli(["ls", "--remote", "--json"]));
+    const web = JSON.parse(await readFile(join(dir, "state", "sandboxes", "web.json"), "utf8"));
+    expect(listed.data).toMatchObject({ provider: "fake", coverage: "provider-scope" });
+    expect(listed.data.complete).toBe(true);
+    expect(
+      listed.data.sandboxes.map((row: { id: string; name: string | null; state: string }) => [
+        row.id,
+        row.name,
+        row.state,
+      ]),
+    ).toEqual([
+      [web.reference.nativeId, "web", "running"],
+      [other, null, "destroyed"],
+      [gone, null, "destroyed"],
+    ]);
+    expect(listed.data.sandboxes[1]).toMatchObject({ reopenable: true, ownership: "unknown" });
+
+    const human = await cli(["ls", "--remote"]);
+    expect(human.code).toBe(0);
+    expect(human.stdout.split("\n")[0]).toMatch(/^ID\s+STATE\s+NAME\s+OWNERSHIP$/);
+    expect(human.stderr).toContain("fake lists every sandbox");
+
+    // A destroyed listed sandbox is never recorded.
+    const destroyed = await cli(["adopt", gone, "--json"]);
+    expect(envelope(destroyed)).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(destroyed.code).toBe(3);
+
+    const live = envelope(await cli(create, elsewhere)).data.id;
+    const adopted = envelope(await cli(["adopt", live, "--name", "borrowed", "--json"]));
+    expect(adopted.data).toMatchObject({ name: "borrowed", id: live, adopted: true });
+    expect(await storeNames()).toEqual(["borrowed.json", "web.json"]);
+    expect(envelope(await cli(["inspect", "borrowed", "--json"])).data.info.state).toBe("running");
+
+    const again = envelope(await cli(["adopt", live, "--json"]));
+    expect(again).toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+    expect(envelope(await cli(["adopt", "missing-id", "--json"])).error.code).toBe("NOT_FOUND");
+    expect((await cli(["ls", "--remote", "--offline"])).code).toBe(2);
+
+    const all = envelope(await cli(["rm", "--all", "--json"]));
+    expect(all.data).toMatchObject({
+      removed: [{ name: "web", result: "destroyed" }],
+      skipped: [{ name: "borrowed", result: "skipped" }],
+    });
+
+    const refused = await cli(["rm", "borrowed", "--json"]);
+    expect(envelope(refused)).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+    expect((await cli(["rm", "borrowed", "--force"])).code).toBe(0);
+    expect(await storeNames()).toEqual([]);
+  });
+
   test("rm --all skips records it cannot destroy and reports them", async () => {
     await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
     await control("/_test/seed", {

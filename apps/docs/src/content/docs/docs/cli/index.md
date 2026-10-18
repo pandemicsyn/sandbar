@@ -46,6 +46,8 @@ To keep provider settings in one place instead of environment variables, see [Co
 
 `sandbar ls` shows every sandbox the CLI knows about with its live state (`running`, `gone`, `unreachable` and so on). `sandbar ls --offline` skips the provider calls.
 
+`sandbar ls --remote` asks the selected profile's provider instead, so it also shows sandboxes created elsewhere. It prints whether the provider listed every sandbox in the account scope or only ones created through Sandbar. The `NAME` column shows the store name for sandboxes the CLI already knows. To work with a listed sandbox by name, record it with `sandbar adopt <id> --name <name>`; adopt reopens it first and fails if the provider cannot give a verifiable reference. The CLI did not create adopted sandboxes, so `rm --all` skips them and `rm <name>` needs `--force`.
+
 ## Commands and arguments
 
 - `exec` passes the command after `--` as separate arguments, with no shell. Use `sh` when you need pipes, redirects or `&&`.

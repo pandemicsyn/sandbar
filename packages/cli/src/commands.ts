@@ -11,6 +11,8 @@ import {
   type ExecOutput,
   type SandbarClient,
   type SandboxHandle,
+  type SandboxList,
+  type SandboxListEntry,
 } from "sandbar-sdk";
 import { z } from "zod";
 import { searchProjectAdapters, valueAvailable, type Env, type LoadedConfig } from "./config";
@@ -301,6 +303,7 @@ function sandboxSummary(record: SandboxRecord) {
     createdAt: record.createdAt,
     labels: record.labels,
     image: record.image ?? null,
+    adopted: record.adopted ?? false,
   };
 }
 
@@ -393,7 +396,183 @@ async function stateOf(
   }
 }
 
+/** Pages fetched by `ls --remote` and `adopt` before they stop and report an incomplete listing. */
+const REMOTE_PAGES = 20;
+
+type RemoteListing = {
+  items: SandboxListEntry[];
+  coverage: SandboxList["coverage"];
+  /** False when the provider had more pages than this CLI reads. */
+  complete: boolean;
+};
+
+/** Page through the provider's sandbox listing, stopping early once `until` matches an item. */
+async function remoteSandboxes(
+  client: SandbarClient<true>,
+  until?: (item: SandboxListEntry) => boolean,
+): Promise<RemoteListing> {
+  const items: SandboxListEntry[] = [];
+  let cursor: string | undefined;
+  let coverage: SandboxList["coverage"] = "provider-scope";
+
+  for (let page = 0; page < REMOTE_PAGES; page++) {
+    const result = await client.sandboxes.list({ cursor, limit: 100 });
+    coverage = result.coverage;
+    items.push(...result.items);
+    cursor = result.nextCursor;
+
+    if (!cursor || (until && result.items.some(until))) return { items, coverage, complete: true };
+  }
+
+  return { items, coverage, complete: false };
+}
+
+const coverageNote = {
+  "provider-scope": "every sandbox this profile's account and scope can see",
+  "sandbar-managed": "only sandboxes created through Sandbar in this profile's scope",
+} satisfies Record<SandboxList["coverage"], string>;
+
+function renderTable(rows: string[][]): string {
+  const widths = rows[0]!.map((_, column) => Math.max(...rows.map((row) => row[column]!.length)));
+
+  return rows
+    .map((row) =>
+      row
+        .map((cell, column) => cell.padEnd(widths[column]!))
+        .join("  ")
+        .trimEnd(),
+    )
+    .join("\n");
+}
+
+/** `ls --remote`: the provider's own listing for the selected profile, matched to store names. */
+async function remoteLs(session: Session): Promise<number> {
+  const { out } = session.ctx;
+  const profile = await session.profile();
+  const entries = await listAll(await session.store(), "sandbox", (warning) => out.note(warning));
+  const client = await session.connect(profile);
+  const listing = await remoteSandboxes(client);
+
+  const nameOf = (id: string) =>
+    entries.find(
+      ({ record }) => record.provider === profile.provider && record.reference?.nativeId === id,
+    )?.record.name ?? null;
+
+  const rows = listing.items.map((item) => ({
+    id: item.id,
+    state: item.state,
+    name: nameOf(item.id),
+    reopenable: item.reference !== null,
+    ownership: item.reference?.ownership ?? null,
+    reference: item.reference,
+  }));
+
+  out.note(`${profile.provider} lists ${coverageNote[listing.coverage]}`);
+
+  if (!listing.complete)
+    out.note(`warning: showing the first ${rows.length} sandboxes; the provider has more`);
+
+  out.success(
+    {
+      provider: profile.provider,
+      profile: profile.name,
+      coverage: listing.coverage,
+      complete: listing.complete,
+      sandboxes: rows,
+    },
+    rows.length
+      ? renderTable([
+          ["ID", "STATE", "NAME", "OWNERSHIP"],
+          ...rows.map((row) => [
+            row.id,
+            row.state,
+            row.name ?? "-",
+            row.ownership ?? "not reopenable",
+          ]),
+        ])
+      : "",
+  );
+
+  return 0;
+}
+
+/** Record a provider-listed sandbox in the store so other commands can reach it by name. */
+export async function adoptCommand(session: Session, flags: Flags): Promise<number> {
+  const id = onePositional(flags, "sandbox id");
+  const requested = flags.string("name");
+  const store = await session.store();
+  const profile = await session.profile();
+
+  const known = (await listAll(store, "sandbox")).find(
+    ({ record }) => record.provider === profile.provider && record.reference?.nativeId === id,
+  );
+
+  if (known)
+    throw new CliError(
+      "CONFLICT",
+      `${id} is already in the store as ${known.record.name}`,
+      `use \`sandbar inspect ${known.record.name}\``,
+    );
+
+  const client = await session.connect(profile);
+  const listing = await remoteSandboxes(client, (item) => item.id === id);
+  const listed = listing.items.find((item) => item.id === id);
+
+  if (!listed)
+    throw new CliError(
+      "NOT_FOUND",
+      `${profile.provider} does not list a sandbox ${id} for profile ${profile.name}`,
+      listing.complete
+        ? "list what it does show with `sandbar ls --remote`"
+        : "the listing was cut short; check the provider's own tools",
+    );
+
+  if (!listed.reference)
+    throw new CliError(
+      "UNSUPPORTED",
+      `${profile.provider} lists ${id} without a reopenable reference`,
+      "this provider cannot verify that sandbox's identity, so the CLI cannot reach it",
+    );
+
+  // Reopen first so a destroyed or unreachable sandbox never gets a record.
+  const box = await client.sandboxes.get(listed.reference, { signal: session.ctx.signal });
+
+  const record: Omit<SandboxRecord, "name"> = {
+    format: 1,
+    kind: "sandbox",
+    status: "created",
+    profile: profile.name,
+    provider: profile.provider,
+    createdAt: new Date().toISOString(),
+    labels: {},
+    reference: listed.reference,
+    adopted: true,
+  };
+
+  let claimed: Versioned;
+
+  try {
+    claimed = await claimName(store, record, requested);
+  } catch (cause) {
+    if (cause instanceof CliError && cause.code === "CONFLICT")
+      throw new CliError("CONFLICT", cause.message, "choose another --name");
+    throw cause;
+  }
+
+  session.ctx.out.success(
+    { ...sandboxSummary(claimed.record), id: box.id, reference: claimed.record.reference },
+    claimed.record.name,
+  );
+
+  return 0;
+}
+
 export async function lsCommand(session: Session, flags: Flags): Promise<number> {
+  if (flags.bool("remote") && flags.bool("offline"))
+    throw usage("Pass either --remote or --offline, not both");
+
+  if (flags.bool("remote")) return remoteLs(session);
+
   const entries = await listAll(await session.store(), "sandbox", (warning) =>
     session.ctx.out.note(warning),
   );
@@ -496,6 +675,14 @@ function refusal(record: SandboxRecord): CliError | null {
       "UNSUPPORTED",
       `${record.name} has no reopenable reference (status ${record.status}); it cannot be destroyed from here`,
       "check the provider for it, then `sandbar rm --force` to drop the record",
+      { sandbox: record.name },
+    );
+
+  if (record.adopted)
+    return new CliError(
+      "FORBIDDEN",
+      `${record.name} was adopted from a provider listing, not created by this CLI`,
+      "pass --force to destroy it anyway",
       { sandbox: record.name },
     );
 

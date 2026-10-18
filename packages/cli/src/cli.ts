@@ -7,6 +7,7 @@ import {
   doctorCommand,
   execCommand,
   Flags,
+  adoptCommand,
   inspectCommand,
   lsCommand,
   providersCommand,
@@ -149,14 +150,34 @@ export const commands: readonly CommandSpec[] = [
   {
     name: "ls",
     summary: "List sandboxes in the store with their current state",
-    usage: "sandbar ls [--offline]",
+    usage: "sandbar ls [--offline | --remote]",
     flags: {
       offline: { type: "boolean", description: "Show stored records without asking providers" },
+      remote: {
+        type: "boolean",
+        description: "List the profile's sandboxes from the provider instead of the store",
+      },
     },
     passthrough: false,
     remoteExit: false,
-    examples: ["sandbar ls", "sandbar ls --json"],
+    examples: ["sandbar ls", "sandbar ls --json", "sandbar ls --remote --provider daytona"],
     run: lsCommand,
+  },
+  {
+    name: "adopt",
+    summary: "Add a sandbox from the provider's listing to the store so other commands reach it",
+    usage: "sandbar adopt <id> [--name <name>]",
+    flags: {
+      name: {
+        type: "string",
+        value: "name",
+        description: "Store name (default: generated, like sb-1a2b3)",
+      },
+    },
+    passthrough: false,
+    remoteExit: false,
+    examples: ["sandbar ls --remote", "sandbar adopt 4f1c2a --name worker"],
+    run: adoptCommand,
   },
   {
     name: "inspect",

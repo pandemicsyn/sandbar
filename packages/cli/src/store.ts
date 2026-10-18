@@ -19,6 +19,11 @@ export const SandboxRecord = z.strictObject({
   labels: z.record(z.string(), z.string()),
   image: z.string().optional(),
   reference: ResourceReference.extend({ kind: z.literal("sandbox") }).nullable(),
+  /**
+   * Set by `sandbar adopt`: the record came from a provider listing, not a create by this CLI, so
+   * `rm` refuses it without --force and `rm --all` skips it. Absent on created records.
+   */
+  adopted: z.literal(true).optional(),
   /** The SDK's operation reference for an uncertain create; the SDK validates it on recovery. */
   recovery: z
     .custom<RecoveryReference>(

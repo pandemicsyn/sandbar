@@ -70,18 +70,39 @@ sandbar create --name job-42 --if-not-exists --json
 List sandboxes in the store with their current state.
 
 ```sh
-sandbar ls [--offline]
+sandbar ls [--offline | --remote]
 ```
 
-| Flag        | Description                                  |
-| ----------- | -------------------------------------------- |
-| `--offline` | Show stored records without asking providers |
+| Flag        | Description                                                         |
+| ----------- | ------------------------------------------------------------------- |
+| `--offline` | Show stored records without asking providers                        |
+| `--remote`  | List the profile's sandboxes from the provider instead of the store |
 
 Examples:
 
 ```sh
 sandbar ls
 sandbar ls --json
+sandbar ls --remote --provider daytona
+```
+
+## adopt
+
+Add a sandbox from the provider's listing to the store so other commands reach it.
+
+```sh
+sandbar adopt <id> [--name <name>]
+```
+
+| Flag            | Description                                    |
+| --------------- | ---------------------------------------------- |
+| `--name <name>` | Store name (default: generated, like sb-1a2b3) |
+
+Examples:
+
+```sh
+sandbar ls --remote
+sandbar adopt 4f1c2a --name worker
 ```
 
 ## inspect
