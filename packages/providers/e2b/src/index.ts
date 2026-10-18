@@ -1740,6 +1740,34 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
           return { items, nextCursor: page.nextToken };
         },
+        async sandboxList(input) {
+          await verifyAuthority();
+
+          const page = await transport.list(
+            { sandbar_scope: scopeMarker },
+            input.limit,
+            input.cursor,
+          );
+
+          return {
+            // Only sandboxes carrying this binding's Sandbar creation markers are listed.
+            coverage: "sandbar-managed" as const,
+            items: page.items.filter(owned).map((record) => ({
+              id: record.id,
+              state:
+                record.state === "running"
+                  ? ("running" as const)
+                  : record.state === "paused"
+                    ? ("suspended" as const)
+                    : ("unknown" as const),
+              reference: sandboxReference("e2b", boundScope, record.id, {
+                operation: record.metadata.sandbar_operation!,
+                submission: record.metadata.sandbar_submission!,
+              }),
+            })),
+            nextCursor: page.nextToken,
+          };
+        },
         processes: transport.startText
           ? {
               supports: {

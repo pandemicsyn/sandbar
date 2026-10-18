@@ -39,7 +39,7 @@ In both cases, the typed `outcome` preserves the snapshot reference and confirme
 
 `OutcomeUnknownError` means a remote effect may have occurred but its outcome cannot be confirmed, such as after a lost response. Save the error's operation reference and any known resource IDs or partial results. If no snapshot identity was received, the SDK cannot invent one.
 
-Where supported, `snapshots.list`, `volumes.list`, `get` and `inspect` can help you investigate. A list alone cannot link an artifact to the failed request or prove the request had no effect. E2B and Daytona report snapshot list coverage as `provider-scope`: their inventory is not limited to resources created through Sandbar. A listed entry can still lack details needed to restore or delete it. Check its reference and inspect its supported guarantees.
+Where supported, `sandboxes.list`, `snapshots.list`, `volumes.list`, `get` and `inspect` can help you investigate. A list alone cannot link an artifact to the failed request or prove the request had no effect. E2B and Daytona report snapshot list coverage as `provider-scope`: their inventory is not limited to resources created through Sandbar. A listed entry can still lack details needed to restore or delete it. Check its reference and inspect its supported guarantees.
 
 An uncertain restore has outcome kind `snapshot_restore`. It preserves selected mount descriptors in `outcome.mounts` and, when known, the acknowledged sandbox identity in `outcome.sandbox`. Save these with the operation reference. They identify what is known about the original attempt; recovery does not create a replacement or repeat the restore.
 
@@ -49,7 +49,7 @@ The [compiled recovery example](https://github.com/pandemicsyn/sandbar/blob/main
 
 ## Reopen compute and recover lifecycle changes
 
-Save `sandbox.reference` and pass it to `client.sandboxes.get(reference)` to reopen the same compute. Reopening checks identity and current access. It does not resume the sandbox, extend its lifetime or prove that a previous mutation succeeded. A reference can be `null` if the adapter could not verify identity; do not construct one from the display ID.
+Save `sandbox.reference` and pass it to `client.sandboxes.get(reference)` to reopen the same compute. Reopening checks identity and current access. It does not resume the sandbox, extend its lifetime or prove that a previous mutation succeeded. A reference can be `null` if the adapter could not verify identity; do not construct one from the display ID. When a reference was not saved, [`sandboxes.list()`](/docs/guides/resources/#list-sandboxes) can supply one for a listed sandbox, but a listing alone does not show which request created it.
 
 Renewal, suspension and resumption have separate **operation references** for investigating their original requests. Pass one to `client.recover()` to get an operation handle, then observe or wait for the original result. These steps do not retry the lifecycle request.
 

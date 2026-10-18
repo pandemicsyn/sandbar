@@ -248,6 +248,28 @@ export function createFakeAdapter(options: { url: string; token: string; fetch?:
             nextCursor: page.nextCursor,
           };
         },
+        async sandboxList(input) {
+          const page = await driver.inventory({ scope, cursor: input.cursor, limit: input.limit });
+
+          return {
+            // The fake lists every sandbox in its scope and records no creation correlation, so
+            // references carry no receipt and claim no ownership.
+            coverage: "provider-scope" as const,
+            items: page.items.map((item) => ({
+              id: item.ref.nativeId,
+              state: item.state,
+              reference: {
+                version: 1 as const,
+                kind: "sandbox" as const,
+                provider: "fake",
+                scope: bindingScope,
+                nativeId: item.ref.nativeId,
+                ownership: "unknown" as const,
+              },
+            })),
+            nextCursor: page.nextCursor,
+          };
+        },
         exec: {
           recovery: { version: 1, token: Token },
           async submit(input, ctx) {

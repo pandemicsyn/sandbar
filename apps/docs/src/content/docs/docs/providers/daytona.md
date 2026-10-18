@@ -133,6 +133,8 @@ Persist `sandbox.reference` from create, restore or recovered results, then use 
 
 References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its fresh-process `lifecycle-reopen` case passed at `3188e33` in us with confirmed owned cleanup, for the recorded configuration. Configured renewal is available; native suspension/resumption are available on eligible unmounted compute.
 
+`sandboxes.list()` reports `coverage: "sandbar-managed"`: it lists only sandboxes in the configured organization and target that carry Sandbar submission labels, confirmed by one native detail read per candidate. Listed references are `verified-created` and reopen with `get()`. A sandbox missing its operation label is listed with `reference: null`. Pages can hold fewer items than `limit` because filtering happens after the native page read. This listing has deterministic fixture coverage only.
+
 Daytona validates organization, region, endpoint, toolbox origin, native network policy and private visibility. `autoDestroyAt` remains a sandbox-wide expiry while stopped/archived. Idle-stop and deletion-after-stop intervals are separate observed policies. A rotated key in the same organization works with the same binding.
 
 ## Bounded execution deadlines

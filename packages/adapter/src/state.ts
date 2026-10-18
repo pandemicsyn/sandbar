@@ -482,6 +482,28 @@ export const InventoryInput = z.strictObject({
 
 export type InventoryInput = z.infer<typeof InventoryInput>;
 
+/**
+ * One listed sandbox. `reference` is the same verified reference `reopen` accepts, or null when the
+ * adapter cannot rebuild it from native evidence (for example, missing creation markers or no
+ * reopen support). Never synthesize ownership, generation or creation correlation for a listing.
+ */
+export const SandboxListItem = z.strictObject({
+  id: z.string().min(1).max(512),
+  state: SandboxState,
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).nullable(),
+});
+
+export type SandboxListItem = Omit<z.infer<typeof SandboxListItem>, "reference"> & {
+  reference: SandboxReference | null;
+};
+
+/** A bounded page of listed sandboxes and the scope the listing covers. */
+export type SandboxListPage = {
+  items: SandboxListItem[];
+  nextCursor?: string;
+  coverage: "provider-scope" | "sandbar-managed";
+};
+
 export const DestroyInput = z.strictObject({
   id: z.string().min(1).max(512),
   reference: ResourceReference.extend({ kind: z.literal("sandbox") }).optional(),

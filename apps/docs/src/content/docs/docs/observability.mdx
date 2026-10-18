@@ -176,7 +176,7 @@ To supply a provider directly, use `tracing: { tracerProvider }`. You must still
 
 ## Interpret spans and errors
 
-SDK span names are fixed and use OpenTelemetry's `INTERNAL` kind. They cover connection, support queries, inventory, sandbox creation, image builds, execution, files, previews, processes, terminals, inspection, destruction, operation observation/recovery and client close.
+SDK span names are fixed and use OpenTelemetry's `INTERNAL` kind. They cover connection, support queries, inventory, sandbox listing, sandbox creation, image builds, execution, files, previews, processes, terminals, inspection, destruction, operation observation/recovery and client close.
 
 The work inside an operation appears as `sandbar.prepare`, `sandbar.submit` and `sandbar.wait`. Explicit advanced observation uses `sandbar.observe`. Convenience calls avoid duplicate spans for their internal public submit/wait methods. Waiting records a poll count and at most eight state-change events; it does not create a span for every unchanged poll.
 

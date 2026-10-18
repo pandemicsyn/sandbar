@@ -90,6 +90,9 @@ import {
   AdapterVolume,
   resourceManagers,
   decodeCapture,
+  listSandboxes,
+  type SandboxList,
+  type SandboxListInput,
   type SnapshotResult,
   type WaitOptions,
 } from "./resources";
@@ -293,6 +296,20 @@ function acknowledgedLifecycleOutcome(
   });
 
   return value.success ? value.data : undefined;
+}
+
+/** Derive legacy inventory items from a listing when an adapter only implements `sandboxList`. */
+async function inventoryFromList(page: Promise<import("@sandbar-sdk/adapter").SandboxListPage>) {
+  const { items, nextCursor } = await page;
+
+  return {
+    items: items.map((item) => ({
+      id: item.id,
+      state:
+        item.state === "running" || item.state === "destroyed" ? item.state : ("unknown" as const),
+    })),
+    nextCursor,
+  };
 }
 
 function unsupported(feature: string): never {
@@ -2017,6 +2034,8 @@ export class AdapterDirectClient {
       options?: SandboxScopeOptions,
     ) => Promise<T>;
     get: (reference: SandboxReference, options?: WaitOptions) => Promise<SandboxHandle<true>>;
+    /** List a bounded page of sandboxes; listed references reopen with `get`. */
+    list: (input?: SandboxListInput) => Promise<SandboxList>;
     checkCreate: (input?: CreateInput) => Promise<Support<CreatePlan>>;
     create: (
       input?: CreateInput,
@@ -2058,7 +2077,7 @@ export class AdapterDirectClient {
       inventory: async (input) => {
         this.ensureOpen();
 
-        if (!this.session.inventory) unsupported("inventory");
+        if (!this.session.inventory && !this.session.sandboxList) unsupported("inventory");
 
         const checked = z
           .strictObject({
@@ -2067,12 +2086,13 @@ export class AdapterDirectClient {
           })
           .parse(input);
 
+        const ctx = { signal: this.signal, deadline: Date.now() + 30_000 };
+
         const result = await readWhileOpen(
           this,
-          this.session.inventory(checked, {
-            signal: this.signal,
-            deadline: Date.now() + 30_000,
-          }),
+          this.session.inventory
+            ? this.session.inventory(checked, ctx)
+            : inventoryFromList(this.session.sandboxList!(checked, ctx)),
         );
 
         return z
@@ -2302,6 +2322,7 @@ export class AdapterDirectClient {
     this.sandboxes = {
       with: (input, callback, options) => withSandbox(this, input, callback, options),
       get: (reference, options = {}) => this.reopenSandbox(reference, options),
+      list: (input) => listSandboxes(this, input),
       checkCreate: (input) => this.checkCreate(input),
       create: async (input, options = {}) =>
         waitFor(this.telemetry, await internalMethod(this.submitCreate)(input, options), options),
@@ -2329,6 +2350,7 @@ export class AdapterDirectClient {
     });
     instrument(this.images, "build", this.telemetry, "sandbar.image.build", { effect: "applied" });
     instrument(this.operations, "inventory", this.telemetry, "sandbar.sandbox.inventory");
+    instrument(this.sandboxes, "list", this.telemetry, "sandbar.sandbox.list");
     instrument(this.operations, "prepare", this.telemetry, "sandbar.prepare", { phase: true });
     instrument(this.operations, "observe", this.telemetry, "sandbar.observe", { phase: true });
   }
@@ -2376,7 +2398,7 @@ export class AdapterDirectClient {
       network: [...support.network],
       exec: !!this.session.exec && !!support.exec,
       inspect: !!this.session.inspect,
-      inventory: !!this.session.inventory,
+      inventory: !!this.session.inventory || !!this.session.sandboxList,
       readFile: !!this.session.files?.read,
       writeFile: !!this.session.files?.write,
       maxOutputBytes: support.exec?.maxOutputBytes ?? 0,

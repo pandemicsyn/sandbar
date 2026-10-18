@@ -46,7 +46,7 @@ Implemented features have deterministic native-boundary coverage. The four basel
 
 | Feature                                                 | Support                                                                                                                                                  |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compute lifecycle                                       | Create, metadata inspection, inventory, reference reopening and confirmed destruction.                                                                   |
+| Compute lifecycle                                       | Create, metadata inspection, inventory and listing, reference reopening and confirmed destruction.                                                       |
 | Commands                                                | Buffered argv/shell with cwd/env; exact stdout/stderr bytes, combined bounded capture up to 1 MiB; finite byte stdin up to 1 MiB followed by native EOF. |
 | Files                                                   | Binary read/overwrite write up to 1 MiB; actual upload byte-count acknowledgement. Default exclusive-create no-clobber helper.                           |
 | Directory operations                                    | Complete bounded directory browsing, stat/exists and recursive-opt-in mkdir/remove.                                                                      |

@@ -74,6 +74,38 @@ A missing or deleted sandbox returns `NOT_FOUND`. Other problems, such as denied
 
 Inspection reports state, provider state, observation time, expiry, idle-stop policy, retention policy, and execution identity when known. Unknown expiry does not mean unlimited lifetime. A past expiry time alone does not prove that the sandbox was deleted.
 
+### List sandboxes
+
+`sandboxes.list()` returns one page of sandboxes in the connection's scope. Each item has an `id`, a `state` and a `reference` that `sandboxes.get()` accepts:
+
+```ts
+let cursor: string | undefined;
+do {
+  const page = await sandbar.sandboxes.list({ cursor }); // limit: 1-100, default 50
+  for (const item of page.items)
+    if (item.state === "running" && item.reference)
+      console.log(item.id, (await sandbar.sandboxes.get(item.reference)).id);
+  cursor = page.nextCursor;
+} while (cursor);
+```
+
+Pass the returned `nextCursor` to read the next page; it is absent on the last page. A page can hold fewer items than `limit` when the adapter filters native results. `coverage` reports what the listing includes, using the same values as `snapshots.list()` and `volumes.list()`:
+
+- `"provider-scope"`: every sandbox the connection's account and scope can see, including ones not created through Sandbar.
+- `"sandbar-managed"`: only sandboxes carrying verifiable Sandbar creation markers.
+
+`reference` is `null` when the adapter cannot rebuild a verified identity for that sandbox, for example when creation markers are missing or the adapter cannot reopen sandboxes. The sandbox is still listed. Listed references never claim more than the provider shows: `ownership` is `"verified-created"` only when native creation markers prove that Sandbar created it, and is otherwise `"unknown"`. A listing does not prove that your application created a sandbox, so do not use it alone to decide what to clean up. Destroyed sandboxes can still appear with `state: "destroyed"`; `get()` reports `NOT_FOUND` for them.
+
+| Adapter                                                  | Coverage                                                  | Listed references                                                                                                        |
+| -------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| [Daytona](/docs/providers/daytona/)                      | `sandbar-managed` (organization and target)               | `verified-created` from Sandbar labels; `null` when a creation label is missing. One detail read per labelled candidate. |
+| [E2B](/docs/providers/e2b/)                              | `sandbar-managed` (team or API key, and template)         | `verified-created` from Sandbar metadata. Paused sandboxes list as `suspended`.                                          |
+| [boxd (experimental)](/docs/providers/boxd/)             | `provider-scope` (verified org)                           | `unknown` ownership; `null` for machines without a UUID.                                                                 |
+| [Vercel Sandbox (experimental)](/docs/providers/vercel/) | Sessions: `provider-scope`; persistent: `sandbar-managed` | `unknown` ownership with no creation receipt. Persistent references keep the native generation used to reopen by name.   |
+| Modal (experimental)                                     | `provider-scope` (verified App)                           | Always `null`: the Modal adapter cannot reopen sandboxes.                                                                |
+
+`operations.inventory()` remains available and returns only `id` and `state`.
+
 ### Renew lifetime
 
 Every adapter defaults to a 900-second (15-minute) initial lifetime. On E2B and Daytona, set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and the default `renew()` window. Supply this option instead of E2B's `timeoutSeconds` or Daytona's `ttlMinutes`, not alongside it.

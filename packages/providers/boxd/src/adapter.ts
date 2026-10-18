@@ -600,6 +600,27 @@ export function createBoxdAdapter(
             input,
           );
         },
+        async sandboxList(input, ctx) {
+          const machines = await native.run(ctx, () => native.machines.list({ org: org.slug }));
+
+          if (machines.some((machine) => machine.org?.id !== org.id))
+            throw new AdapterError("CONFLICT", "boxd inventory org mismatch");
+          const listed = page(machines, input);
+
+          return {
+            // boxd lists every machine in the verified org and records no Sandbar creation
+            // correlation, so listed references claim no ownership.
+            coverage: "provider-scope" as const,
+            items: listed.items.map((machine) => ({
+              id: machine.id,
+              state: state(machine.status),
+              reference: Id.safeParse(machine.id).success
+                ? { ...reference("sandbox", machine.id), ownership: "unknown" as const }
+                : null,
+            })),
+            nextCursor: listed.nextCursor,
+          };
+        },
         destroy: {
           recovery: { version: 1, token: DestroyToken },
           async prepare(input, ctx) {

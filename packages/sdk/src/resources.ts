@@ -11,6 +11,7 @@ import {
   RestoreRequest,
   VolumeCreateInput,
   InventoryInput,
+  SandboxListItem,
   type ArtifactDeletionResult,
   type OperationKind,
   type SnapshotCaptureValue,
@@ -454,6 +455,84 @@ export function resourceManagers(client: AdapterDirectClient) {
   };
 
   return { snapshots, volumes };
+}
+
+/** Page size used by `sandboxes.list()` when `limit` is omitted. */
+export const DEFAULT_SANDBOX_LIST_LIMIT = 50;
+
+/** Optional page selection for `sandboxes.list()`; `limit` is 1-100 and defaults to 50. */
+export type SandboxListInput = { cursor?: string; limit?: number };
+
+/** One listed sandbox; `reference` is null when the adapter cannot verify a reopenable identity. */
+export type SandboxListEntry = {
+  id: string;
+  state: import("@sandbar-sdk/adapter").SandboxState;
+  reference: import("@sandbar-sdk/adapter").SandboxReference | null;
+};
+
+/** A bounded page of sandboxes and whether it covers the provider scope or only Sandbar-created ones. */
+export type SandboxList = {
+  items: SandboxListEntry[];
+  nextCursor?: string;
+  coverage: "provider-scope" | "sandbar-managed";
+};
+
+const SandboxListPage = z.strictObject({
+  items: z.array(SandboxListItem).max(100),
+  nextCursor: z.string().max(4096).optional(),
+  coverage: z.enum(["provider-scope", "sandbar-managed"]),
+});
+
+export async function listSandboxes(
+  client: AdapterDirectClient,
+  input: SandboxListInput = {},
+): Promise<SandboxList> {
+  client.ensureOpen();
+
+  const request = validateResourceInput(
+    InventoryInput,
+    { cursor: input.cursor, limit: input.limit ?? DEFAULT_SANDBOX_LIST_LIMIT },
+    "Invalid sandbox list request",
+  );
+
+  const list = client.session.sandboxList?.bind(client.session);
+
+  if (!list) throw new SandbarError("UNSUPPORTED", "Sandbox listing is unsupported");
+
+  let page: Awaited<ReturnType<typeof list>>;
+
+  try {
+    page = await resourceRead(client, (ctx) => list(request, ctx));
+  } catch (error) {
+    if (error instanceof AdapterError) throw new SandbarError(error.code, error.message);
+    throw error;
+  }
+
+  client.ensureOpen();
+  const parsed = SandboxListPage.safeParse(page);
+
+  if (!parsed.success || parsed.data.items.length > request.limit)
+    throw new SandbarError("INVALID_RESPONSE", "Provider returned an invalid sandbox list");
+
+  for (const item of parsed.data.items) {
+    if (!item.reference) continue;
+
+    if (item.reference.nativeId !== item.id || item.reference.history !== undefined)
+      throw new SandbarError(
+        "INVALID_RESPONSE",
+        "Provider listed an inconsistent sandbox reference",
+      );
+
+    try {
+      assertResourceScope(item.reference, { provider: client.provider, scope: client.scope });
+    } catch (error) {
+      if (error instanceof AdapterError)
+        throw new SandbarError("INVALID_RESPONSE", "Provider listed a sandbox outside this scope");
+      throw error;
+    }
+  }
+
+  return structuredClone(parsed.data);
 }
 
 export function decodeCapture(

@@ -97,9 +97,9 @@ export function fixture() {
       if (route.startsWith("/api/v2/projects/"))
         return json({ id: route.split("/").at(-1)!, accountId: mismatch ? "wrong-team" : teamId });
 
-      if (route === "/api/v2/sandboxes")
-        return json({
-          sandboxes: [...records.values()].map((session) => ({
+      if (route === "/api/v2/sandboxes") {
+        const all = [
+          ...[...records.values()].map((session) => ({
             ...session,
             name: session.id,
             currentSessionId: session.id,
@@ -107,8 +107,18 @@ export function fixture() {
             mounts: {},
             image: `vercel/sandbox/node@sha256:${"a".repeat(64)}`,
           })),
-          pagination: { next: null },
+          // Persistent named sandboxes follow their session records.
+          ...[...logical.values()].filter((box) => box.persistent),
+        ];
+
+        const offset = Number(parsed.searchParams.get("cursor") ?? "0");
+        const limit = Number(parsed.searchParams.get("limit") ?? "100");
+
+        return json({
+          sandboxes: all.slice(offset, offset + limit),
+          pagination: { next: offset + limit < all.length ? String(offset + limit) : null },
         });
+      }
 
       if (route === "/api/v3/sandboxes") {
         effects.create++;
@@ -1576,4 +1586,83 @@ test("persistent references reject unsupported mount changes on the same native 
 
   await box.destroy();
   await client.close();
+});
+
+test("session-mode listing pages project sessions with references that reopen", async () => {
+  const native = fixture();
+  const client = await Sandbar.connect({ adapter: native.adapter, config, credentials });
+
+  try {
+    const boxes = [await client.sandboxes.create(), await client.sandboxes.create()];
+    native.records.set("session-elsewhere", {
+      id: "session-elsewhere",
+      region: "sfo1",
+      status: "running",
+      networkPolicy: { mode: "deny-all" },
+    });
+    await boxes[1]!.destroy();
+    const before = native.requests.length;
+
+    const first = await client.sandboxes.list({ limit: 1 });
+    expect(first.coverage).toBe("provider-scope");
+    expect(first.nextCursor).toBe("1");
+    expect(first.items).toEqual([
+      {
+        id: boxes[0]!.id,
+        state: "running",
+        reference: expect.objectContaining({ nativeId: boxes[0]!.id, ownership: "unknown" }),
+      },
+    ]);
+    expect(first.items[0]!.reference?.generation).toBeUndefined();
+
+    const rest = await client.sandboxes.list({ cursor: first.nextCursor, limit: 2 });
+    // The other-region session fills the page slot but is excluded from this binding's listing.
+    expect(rest.items.map(({ id, state }) => ({ id, state }))).toEqual([
+      { id: boxes[1]!.id, state: "destroyed" },
+    ]);
+    expect(rest.nextCursor).toBeUndefined();
+
+    const listings = native.requests
+      .slice(before)
+      .filter(({ url }) => url.pathname === "/api/v2/sandboxes");
+
+    expect(listings.map(({ url }) => url.searchParams.get("cursor"))).toEqual([null, "1"]);
+    expect(native.requests.slice(before)).toHaveLength(2);
+
+    expect((await client.sandboxes.get(first.items[0]!.reference!)).id).toBe(boxes[0]!.id);
+    await boxes[0]!.destroy();
+  } finally {
+    await client.close();
+  }
+});
+
+test("persistent listing carries native generation evidence and no creation receipt", async () => {
+  const native = fixture();
+  const options = { adapter: native.adapter, config: { ...config, persistent: true }, credentials };
+  const client = await Sandbar.connect(options);
+
+  try {
+    const box = await client.sandboxes.create();
+    native.logical.set("untagged", {
+      ...native.logical.get(box.id)!,
+      name: "untagged",
+      tags: {},
+    });
+
+    const page = await client.sandboxes.list();
+    expect(page.coverage).toBe("sandbar-managed");
+    expect(page.items.map((item) => item.id)).toEqual([box.id]);
+
+    const listed = page.items[0]!.reference!;
+    expect(listed.generation).toBe(box.reference!.generation);
+    expect(listed.ownership).toBe("unknown");
+    expect(listed.receipt).toBeUndefined();
+
+    const reopened = await client.sandboxes.get(listed);
+    expect(reopened.id).toBe(box.id);
+    expect((await reopened.inspect()).state).toBe("running");
+    await box.destroy();
+  } finally {
+    await client.close();
+  }
 });

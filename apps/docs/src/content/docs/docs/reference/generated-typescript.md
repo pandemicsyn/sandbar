@@ -103,6 +103,9 @@ Import from `sandbar-sdk`.
 | `SandboxCleanupError`         | re-export |
 | `SandboxHandle`               | type      |
 | `SandboxInfo`                 | type      |
+| `SandboxList`                 | type      |
+| `SandboxListEntry`            | type      |
+| `SandboxListInput`            | type      |
 | `SandboxReference`            | type      |
 | `SandboxScopeCallbackOutcome` | type      |
 | `SandboxScopeOptions`         | type      |

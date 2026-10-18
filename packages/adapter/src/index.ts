@@ -515,6 +515,11 @@ export type AdapterSession<
     items: { id: string; state: "running" | "destroyed" | "unknown" }[];
     nextCursor?: string;
   }>;
+  /** Bounded sandbox listing with reopenable references; backs `sandboxes.list()`. */
+  sandboxList?: (
+    input: import("./resources").InventoryInput,
+    ctx: ReadContext,
+  ) => Promise<import("./state").SandboxListPage>;
 };
 
 export type AdapterDefinition<C extends z.ZodType, K extends z.ZodType, S = AdapterSession> = {

@@ -115,6 +115,29 @@ export function createModalAdapter(
           throw new AdapterError("UNAUTHENTICATED", "Modal App identity changed");
       };
 
+      const listPage = async (input: { cursor?: string; limit: number }) => {
+        await verify();
+        const offset = input.cursor === undefined ? 0 : Number(input.cursor);
+
+        if (!Number.isSafeInteger(offset) || offset < 0)
+          throw new AdapterError("INVALID_ARGUMENT", "Invalid inventory cursor");
+        const items: { id: string; state: "running" | "unknown" }[] = [];
+        let position = 0;
+
+        for await (const value of transport.list(appId)) {
+          if (position++ < offset) continue;
+          const record = RecordSchema.parse(value);
+          items.push({ id: record.id, state: record.running ? "running" : "unknown" });
+
+          if (items.length > input.limit) break;
+        }
+
+        return {
+          items: items.slice(0, input.limit),
+          nextCursor: items.length > input.limit ? String(offset + input.limit) : undefined,
+        };
+      };
+
       const find = async (id: string): Promise<RecordValue | null> => {
         await verify();
 
@@ -299,25 +322,17 @@ export function createModalAdapter(
             : null;
         },
         async inventory(input) {
-          await verify();
-          const offset = input.cursor === undefined ? 0 : Number(input.cursor);
-
-          if (!Number.isSafeInteger(offset) || offset < 0)
-            throw new AdapterError("INVALID_ARGUMENT", "Invalid inventory cursor");
-          const items: { id: string; state: "running" | "unknown" }[] = [];
-          let position = 0;
-
-          for await (const value of transport.list(appId)) {
-            if (position++ < offset) continue;
-            const record = RecordSchema.parse(value);
-            items.push({ id: record.id, state: record.running ? "running" : "unknown" });
-
-            if (items.length > input.limit) break;
-          }
+          return listPage(input);
+        },
+        async sandboxList(input) {
+          const page = await listPage(input);
 
           return {
-            items: items.slice(0, input.limit),
-            nextCursor: items.length > input.limit ? String(offset + input.limit) : undefined,
+            // Every sandbox in the verified App is listed. This adapter has no reopen support,
+            // so listed sandboxes carry no reference.
+            coverage: "provider-scope" as const,
+            items: page.items.map((item) => ({ ...item, reference: null })),
+            nextCursor: page.nextCursor,
           };
         },
         exec: {

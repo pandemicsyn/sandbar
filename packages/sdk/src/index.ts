@@ -106,7 +106,14 @@ export type {
 
 export { AdapterSnapshot, AdapterVolume } from "./resources";
 
-export type { SnapshotResult, WaitOptions, RestoreInput } from "./resources";
+export type {
+  SnapshotResult,
+  WaitOptions,
+  RestoreInput,
+  SandboxList,
+  SandboxListEntry,
+  SandboxListInput,
+} from "./resources";
 
 export {
   MountSpec,

@@ -31,3 +31,20 @@ export async function reopenSandbox(freshClient: SandbarClient, saved: SandboxRe
 
   return { sandbox, info, bytes, result };
 }
+
+/** Page through the listing and reopen running sandboxes that carry a verified reference. */
+export async function reopenListed(client: SandbarClient) {
+  const reopened = [];
+  let cursor: string | undefined;
+
+  do {
+    const page = await client.sandboxes.list({ cursor });
+
+    for (const item of page.items)
+      if (item.state === "running" && item.reference)
+        reopened.push(await client.sandboxes.get(item.reference));
+    cursor = page.nextCursor;
+  } while (cursor);
+
+  return reopened;
+}

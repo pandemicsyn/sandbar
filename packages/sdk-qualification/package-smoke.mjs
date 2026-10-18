@@ -345,7 +345,7 @@ void flow;
 `;
   else if (mode === "direct")
     source = `
-import { Sandbar, Image, type SandbarClient, type SandboxHandle, type DirectSandbarClient, type DirectSandboxHandle, type OutputPreview, type ExecOutput, outputText } from "sandbar-sdk";
+import { Sandbar, Image, type SandbarClient, type SandboxHandle, type DirectSandbarClient, type DirectSandboxHandle, type OutputPreview, type ExecOutput, type SandboxList, type SandboxListEntry, outputText } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake/adapter";
 async function flow() {
   const client: DirectSandbarClient = await Sandbar.connect({ adapter: createFakeAdapter({ url: "http://127.0.0.1:1234", token: "example-token-123456" }), config: {}, credentials: {} });
@@ -359,6 +359,11 @@ async function flow() {
   const commonSandbox: SandboxHandle = box;
   const destroy: SandboxHandle["destroy"] = box.destroy;
   void commonClient; void commonSandbox; void destroy;
+  const listed: SandboxList = await client.sandboxes.list({ limit: 10 });
+  const entry: SandboxListEntry | undefined = listed.items[0];
+  if (entry?.reference) await client.sandboxes.get(entry.reference);
+  const coverage: "provider-scope" | "sandbar-managed" = listed.coverage;
+  void coverage;
   const argv = ["fixture"] as const;
   const result = await box.exec(argv);
   const operation = await box.submitExec(argv);
@@ -433,6 +438,9 @@ try {
   });
   if (!owned || scoped !== owned.id) throw new Error("Scoped callback value missing");
   if ((await owned.inspect()).state !== "destroyed") throw new Error("Scoped compute cleanup missing");
+  const listed = await client.sandboxes.list();
+  const live = listed.items.find((item) => item.id === box.id);
+  if (!live?.reference || (await client.sandboxes.get(live.reference)).id !== box.id) throw new Error("Listed sandbox did not reopen");
   const command = { kind: "argv", argv: ["fixture", "packed"] };
   const result = await box.exec(command.argv);
   if (result.exitCode !== 0 || result.stdout.length !== 4 || result.stdout[0] !== 255 || result.stdout[1] !== 0) throw new Error("Binary execution output changed");

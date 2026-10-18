@@ -158,6 +158,15 @@ function volumeContains(native: Sandbox, path: string): boolean {
 
 type DaytonaInventoryPage = Awaited<ReturnType<ProviderDriver["inventory"]>>;
 
+/** A Sandbar-labelled sandbox with the creation labels its reference is built from. */
+type DaytonaListedSandbox = {
+  observation: SandboxObservation;
+  nativeState: string;
+  creation?: { operation: string; submission: string };
+};
+
+type DaytonaListingPage = { items: DaytonaListedSandbox[]; nextCursor?: string };
+
 function endpointConfigurationError(field: "apiUrl" | "toolboxOrigin"): z.ZodError {
   return new z.ZodError([
     {
@@ -1147,13 +1156,22 @@ export class DaytonaDriver implements ProviderDriver {
       : null;
   }
   async inventory(input: { scope: NativeScope; cursor?: string; limit: number }) {
+    const page = await this.listing(input);
+    const result: DaytonaInventoryPage = { items: page.items.map((item) => item.observation) };
+
+    if (page.nextCursor) result.nextCursor = page.nextCursor;
+
+    return result;
+  }
+  /** Sandbar-labelled sandboxes with their verified native state and creation labels. */
+  async listing(input: { scope: NativeScope; cursor?: string; limit: number }) {
     this.sameScope(input.scope);
     const query = new URLSearchParams({ limit: String(input.limit) });
 
     if (input.cursor) query.set("cursor", input.cursor);
     const page = await this.json("GET", `/sandbox?${query}`, ListResponse);
 
-    const result: DaytonaInventoryPage = { items: [] };
+    const result: DaytonaListingPage = { items: [] };
 
     for (const listed of page.items) {
       if (
@@ -1169,8 +1187,18 @@ export class DaytonaDriver implements ProviderDriver {
         detail &&
         detail.labels?.["sandbar.submission"] === listed.labels["sandbar.submission"] &&
         detail.labels?.["sandbar.operation"] === listed.labels["sandbar.operation"]
-      )
-        result.items.push(observed(this.scope, detail, this.config.configuration.networkPolicy));
+      ) {
+        const operation = detail.labels["sandbar.operation"];
+        const submission = detail.labels["sandbar.submission"];
+
+        const item: DaytonaListedSandbox = {
+          observation: observed(this.scope, detail, this.config.configuration.networkPolicy),
+          nativeState: detail.state,
+        };
+
+        if (operation && submission) item.creation = { operation, submission };
+        result.items.push(item);
+      }
     }
 
     if (page.nextCursor) result.nextCursor = page.nextCursor;

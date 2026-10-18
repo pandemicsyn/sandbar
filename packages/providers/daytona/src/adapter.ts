@@ -236,6 +236,18 @@ function requireDestroyTokenCapacity(token: z.infer<typeof DestroyToken>): void 
     throw new AdapterError("CAPACITY", "Daytona destroy custody exceeds recovery token bound");
 }
 
+const states = new Map<string, import("@sandbar-sdk/adapter").SandboxState>([
+  ["started", "running"],
+  ["stopped", "stopped"],
+  ["archived", "suspended"],
+  ["starting", "restoring"],
+  ["restoring", "restoring"],
+  ["resuming", "restoring"],
+  ["creating", "creating"],
+  ["destroying", "destroying"],
+  ["destroyed", "destroyed"],
+]);
+
 // Retained labels are summaries; mountDurability preserves the full scoped native identity.
 function retainedVolumeLabel(nativeId: string): string {
   const label = `daytona-volume:${nativeId}`;
@@ -488,18 +500,6 @@ export function createDaytonaAdapter(
             throw new AdapterError("CONFLICT", "Native sandbox creation correlation is missing");
           assertSandboxReference(reference, expected);
         }
-
-        const states = new Map<string, import("@sandbar-sdk/adapter").SandboxState>([
-          ["started", "running"],
-          ["stopped", "stopped"],
-          ["archived", "suspended"],
-          ["starting", "restoring"],
-          ["restoring", "restoring"],
-          ["resuming", "restoring"],
-          ["creating", "creating"],
-          ["destroying", "destroying"],
-          ["destroyed", "destroyed"],
-        ]);
 
         return {
           ...unknownSandboxFacts(),
@@ -1967,6 +1967,27 @@ export function createDaytonaAdapter(
 
           return {
             items: page.items.map((item) => ({ id: item.ref.nativeId, state: item.state })),
+            nextCursor: page.nextCursor,
+          };
+        },
+        async sandboxList(input) {
+          const page = await driver.listing({ scope, cursor: input.cursor, limit: input.limit });
+
+          return {
+            // Only sandboxes carrying verified Sandbar submission labels are listed.
+            coverage: "sandbar-managed" as const,
+            items: page.items.map((item) => ({
+              id: item.observation.ref.nativeId,
+              state: states.get(item.nativeState) ?? "unknown",
+              reference: item.creation
+                ? sandboxReference(
+                    "daytona",
+                    resourceBinding,
+                    item.observation.ref.nativeId,
+                    item.creation,
+                  )
+                : null,
+            })),
             nextCursor: page.nextCursor,
           };
         },

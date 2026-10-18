@@ -56,6 +56,7 @@ Build results contain `prepared` and `retainedResources`. A prepared handle is b
 | `sandbar.sandboxes.create(input?, { signal? })`                      | Submit creation and wait for a sandbox handle.                                |
 | `sandbar.sandboxes.submitCreate(input?, options?)`                   | Submit creation and return an operation handle.                               |
 | `sandbar.sandboxes.get(reference, { signal?, pollMs? })`             | Reopen the same verified sandbox without resuming or renewing it.             |
+| `sandbar.sandboxes.list({ limit?, cursor? })`                        | Page scoped sandboxes with state, coverage and reopenable references.         |
 | `sandbar.sandboxes.checkCreate(input?)`                              | Read-only evaluation of environment and snapshot requirements.                |
 | `sandbar.capabilities()` / `box.capabilities()`                      | Observe supported profiles and current eligibility.                           |
 | `box.reference`                                                      | Verified `SandboxReference`, or `null` for adapters without identity support. |
@@ -136,7 +137,7 @@ An SDK operation exposes `reference`, `durability: "process"`, `observe()`, and 
 
 ## Advanced lifecycle
 
-`sandbar.operations.inventory({ limit, cursor? })` reads scoped inventory where supported. `operations.prepare(kind, input)` returns a single-use prepared attempt; its `submit(identity, { beforeSubmit })` hook lets an application commit a durable submission marker before native IO. Returning false or throwing in the hook prevents dispatch.
+`sandbar.operations.inventory({ limit, cursor? })` reads scoped `{ id, state }` inventory where supported; `sandboxes.list()` adds references. `operations.prepare(kind, input)` returns a single-use prepared attempt; its `submit(identity, { beforeSubmit })` hook lets an application commit a durable submission marker before native IO. Returning false or throwing in the hook prevents dispatch.
 
 Persist accepted pending tokens with their versions. `operations.observe(...)` reads prior evidence without preparing or submitting again. These lower-level calls use adapter input shapes and require application-owned persistence. See [Asynchronous adapter recovery](/docs/guides/adapter-recovery/).
 
