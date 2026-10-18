@@ -78,7 +78,11 @@ export default defineConfig({
         },
         {
           label: "Build with an agent",
-          items: [{ slug: "docs/agents/build-with-sdk" }, { slug: "docs/agents/build-a-provider" }],
+          items: [
+            { slug: "docs/agents/skills" },
+            { slug: "docs/agents/build-with-sdk" },
+            { slug: "docs/agents/build-a-provider" },
+          ],
         },
         {
           label: "Using the SDK",
