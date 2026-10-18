@@ -602,6 +602,32 @@ describe("sandbar CLI against the fake provider", () => {
     expect(await storeNames()).toEqual([]);
   });
 
+  test("ls --remote and adopt match stored sandboxes by scope, not native id alone", async () => {
+    await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
+    const path = join(dir, "state", "sandboxes", "web.json");
+    const web = JSON.parse(await readFile(path, "utf8"));
+    const id = web.reference.nativeId;
+
+    // The same native id in another project of the same provider, like two Vercel `worker`s.
+    web.reference.scope.partition = { ...web.reference.scope.partition, project: "elsewhere" };
+    await writeFile(path, JSON.stringify(web));
+
+    const listed = envelope(await cli(["ls", "--remote", "--json"]));
+    expect(listed.data.sandboxes).toMatchObject([{ id, name: null }]);
+
+    const adopted = envelope(await cli(["adopt", id, "--name", "here", "--json"]));
+    expect(adopted.data).toMatchObject({ name: "here", id, adopted: true });
+
+    const relisted = envelope(await cli(["ls", "--remote", "--json"]));
+    expect(relisted.data.sandboxes).toMatchObject([{ id, name: "here" }]);
+    expect(envelope(await cli(["adopt", id, "--json"])).error.code).toBe("CONFLICT");
+
+    // An id that names two stored sandboxes is refused rather than guessed.
+    const ambiguous = envelope(await cli(["inspect", id, "--json"]));
+    expect(ambiguous).toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+    expect(envelope(await cli(["inspect", "here", "--json"])).data.info.state).toBe("running");
+  });
+
   test("rm --all skips records it cannot destroy and reports them", async () => {
     await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
     await control("/_test/seed", {

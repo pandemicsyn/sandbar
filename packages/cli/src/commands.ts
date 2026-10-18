@@ -6,6 +6,7 @@ import {
   NonzeroExitError,
   ResourceReference,
   SandbarError,
+  assertResourceScope,
   type CreateInput,
   type ExecInput,
   type ExecOutput,
@@ -448,11 +449,19 @@ async function findTarget(session: Session, target: string): Promise<Target> {
     if (entry) return entry;
   }
 
-  const byId = (await listAll(store, "sandbox")).find(
+  const byId = (await listAll(store, "sandbox")).filter(
     (entry) => entry.record.reference?.nativeId === target,
   );
 
-  if (byId) return byId;
+  // The same native id can exist in two accounts or projects; never guess between them.
+  if (byId.length > 1)
+    throw new CliError(
+      "CONFLICT",
+      `${target} names more than one stored sandbox: ${byId.map((entry) => entry.record.name).join(", ")}`,
+      "use the store name instead of the id",
+    );
+
+  if (byId[0]) return byId[0];
 
   throw new CliError(
     "NOT_FOUND",
@@ -559,15 +568,13 @@ async function remoteLs(session: Session): Promise<number> {
   const client = await session.connect(profile);
   const listing = await remoteSandboxes(client);
 
-  const nameOf = (id: string) =>
-    entries.find(
-      ({ record }) => record.provider === profile.provider && record.reference?.nativeId === id,
-    )?.record.name ?? null;
+  const nameOf = (item: SandboxListEntry) =>
+    entries.find(({ record }) => storesSandbox(record, profile, client, item))?.record.name ?? null;
 
   const rows = listing.items.map((item) => ({
     id: item.id,
     state: item.state,
-    name: nameOf(item.id),
+    name: nameOf(item),
     reopenable: item.reference !== null,
     ownership: item.reference?.ownership ?? null,
     reference: item.reference,
@@ -609,9 +616,16 @@ export async function adoptCommand(session: Session, flags: Flags): Promise<numb
   const store = await session.store();
   const profile = await session.profile();
 
-  const known = (await listAll(store, "sandbox")).find(
-    ({ record }) => record.provider === profile.provider && record.reference?.nativeId === id,
-  );
+  const client = await session.connect(profile);
+  const listing = await remoteSandboxes(client, (item) => item.id === id);
+  const listed = listing.items.find((item) => item.id === id);
+
+  // Native ids repeat across accounts and projects; only the same scoped resource is a duplicate.
+  const known =
+    listed &&
+    (await listAll(store, "sandbox")).find(({ record }) =>
+      storesSandbox(record, profile, client, listed),
+    );
 
   if (known)
     throw new CliError(
@@ -619,10 +633,6 @@ export async function adoptCommand(session: Session, flags: Flags): Promise<numb
       `${id} is already in the store as ${known.record.name}`,
       `use \`sandbar inspect ${known.record.name}\``,
     );
-
-  const client = await session.connect(profile);
-  const listing = await remoteSandboxes(client, (item) => item.id === id);
-  const listed = listing.items.find((item) => item.id === id);
 
   if (!listed)
     throw new CliError(
@@ -801,6 +811,37 @@ function refusal(record: SandboxRecord): CliError | null {
     );
 
   return null;
+}
+
+/** Whether a stored record is this listed sandbox: same provider, verified scope and identity. */
+function storesSandbox(
+  record: SandboxRecord,
+  profile: ResolvedProfile,
+  client: SandbarClient<true>,
+  item: SandboxListEntry,
+): boolean {
+  const stored = record.reference;
+
+  if (!stored || record.provider !== profile.provider || stored.nativeId !== item.id) return false;
+
+  if (
+    item.reference?.generation !== undefined &&
+    stored.generation !== undefined &&
+    stored.generation !== item.reference.generation
+  )
+    return false;
+
+  try {
+    assertResourceScope(stored, {
+      provider: client.provider,
+      scope: item.reference?.scope ?? client.scope,
+    });
+
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "CONFLICT") return false;
+    throw error;
+  }
 }
 
 /** Whether two records describe the same sandbox, so a replacement under the name is left alone. */

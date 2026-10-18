@@ -898,18 +898,14 @@ export function createVercelAdapter(
                 signal,
                 z.object({ session: z.object({ id }).passthrough() }).passthrough(),
                 requestBody,
+                undefined,
+                // Create-time environment values may be secrets; a native echo never reaches a message.
+                Object.values(input.env ?? {}),
               );
             } catch (error) {
               if (!(error instanceof VercelRequestRejected)) throw error;
 
-              // Create-time environment values may be secrets; a native echo never reaches a message.
-              const detail = Object.values(input.env ?? {})
-                .filter(Boolean)
-                .sort((a, b) => b.length - a.length)
-                .reduce(
-                  (text, secret) => text.replaceAll(secret, "[redacted]"),
-                  error.detail ?? "",
-                );
+              const detail = error.detail ?? "";
 
               const message = `Vercel rejected sandbox creation (HTTP ${error.status})${detail ? `: ${detail}` : ""}`;
               const code = createRejections.get(error.status);

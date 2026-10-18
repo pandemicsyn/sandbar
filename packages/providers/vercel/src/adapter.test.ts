@@ -1707,3 +1707,27 @@ test("Vercel sends create env as native session defaults and never saves or echo
     await client.close();
   }
 });
+
+test("Vercel redacts multi-line and long create env values before shortening native errors", async () => {
+  const multiline = "CANARY-first-line\nCANARY-second-line";
+  const long = `CANARY-${"x".repeat(400)}`;
+  const native = fixture();
+  const client = await Sandbar.connect({ adapter: native.adapter, config, credentials });
+
+  try {
+    for (const secret of [multiline, long]) {
+      native.setCreateStatus(400, { error: { message: `env API_TOKEN=${secret} is invalid` } });
+
+      const error = await client.sandboxes.create({ env: { API_TOKEN: secret } }).then(
+        () => undefined,
+        (cause: Error) => cause,
+      );
+
+      expect(error).toMatchObject({ code: "INVALID_ARGUMENT" });
+      expect(String(error?.message)).toContain("API_TOKEN=[redacted] is invalid");
+      expect(String(error?.message)).not.toContain("CANARY");
+    }
+  } finally {
+    await client.close();
+  }
+});
