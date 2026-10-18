@@ -16,6 +16,10 @@ Copy a prompt to give your coding agent the right imports, examples, and constra
 - [Build an application with Sandbar](/docs/agents/build-with-sdk/)
 - [Build a provider integration for Sandbar](/docs/agents/build-a-provider/)
 
+## Use the command line
+
+The [`sandbar` CLI](/docs/cli/) creates, uses and cleans up sandboxes from your shell, with JSON output and exit codes designed for coding agents.
+
 ## Use the SDK
 
 | Task                                  | Guide                                                        |

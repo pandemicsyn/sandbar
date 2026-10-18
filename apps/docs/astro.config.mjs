@@ -85,6 +85,15 @@ export default defineConfig({
           ],
         },
         {
+          label: "Command line",
+          items: [
+            { slug: "docs/cli", label: "Overview" },
+            { slug: "docs/cli/configuration" },
+            { slug: "docs/cli/shell-and-agents" },
+            { slug: "docs/cli/reference" },
+          ],
+        },
+        {
           label: "Using the SDK",
           items: [
             { slug: "docs/guides/resources" },
