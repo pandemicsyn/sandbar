@@ -918,4 +918,198 @@ describe("sandbar CLI against the fake provider", () => {
       expect(await storeNames()).toEqual([]);
     });
   });
+
+  describe("images", () => {
+    let builds: string;
+
+    beforeEach(async () => {
+      builds = join(dir, "builds.log");
+      await writeConfig({
+        default: "builder",
+        profiles: {
+          builder: { module: fixture, export: "builder" },
+          fake: { module: fixture, export: "fake" },
+        },
+      });
+    });
+
+    const image = (args: string[]) => cli(args, { SANDBAR_FAKE_BUILDS: builds });
+
+    async function buildLog() {
+      try {
+        return (await readFile(builds, "utf8")).trim().split("\n");
+      } catch {
+        return [];
+      }
+    }
+
+    test("--image on a build-first provider fails before any effect until it is built", async () => {
+      const result = await image(["create", "--image", "python:3.12", "--json"]);
+
+      expect(result.code).toBe(4);
+      expect(envelope(result).error).toMatchObject({
+        code: "UNSUPPORTED",
+        outcome: "rejected",
+        message:
+          "image python:3.12 is not built for profile builder; run: sandbar image build python:3.12",
+      });
+      expect(envelope(result).error.hint).toContain("--build");
+      expect(await buildLog()).toEqual([]);
+      expect(await storeNames()).toEqual([]);
+      expect(await fakeResources()).toEqual([]);
+    });
+
+    test("image build records the prepared image and create reuses it without rebuilding", async () => {
+      const built = await image(["image", "build", "python:3.12", "--json"]);
+
+      expect(built.code).toBe(0);
+      expect(envelope(built).data).toMatchObject({
+        name: "python-3-12",
+        source: "python:3.12",
+        profile: "builder",
+        status: "built",
+        prepared: "fake-starter",
+        built: true,
+        retainedResources: [{ kind: "fake-image", id: "fake-starter", cleanup: "manual" }],
+      });
+
+      const again = await image(["image", "build", "python:3.12", "--json"]);
+
+      expect(envelope(again).data).toMatchObject({ name: "python-3-12", built: false });
+
+      for (let round = 0; round < 2; round++) {
+        await seedExec(["true"], 0, "");
+        const run = await image(["run", "--image", "python:3.12", "--", "true"]);
+
+        expect(run.code).toBe(0);
+      }
+
+      expect(await buildLog()).toEqual(["python:3.12"]);
+
+      const created = await image(["create", "--name", "py", "--image", "python:3.12", "--json"]);
+
+      expect(created.code).toBe(0);
+
+      const inspected = await image(["inspect", "py", "--json"]);
+
+      expect(envelope(inspected).data.image).toBe("python:3.12");
+
+      const listed = await image(["image", "ls", "--json"]);
+
+      expect(envelope(listed).data.images.map((row: { name: string }) => row.name)).toEqual([
+        "python-3-12",
+      ]);
+    });
+
+    test("a build is per profile and --refresh builds again", async () => {
+      await writeConfig({
+        default: "builder",
+        profiles: {
+          builder: { module: fixture, export: "builder" },
+          other: { module: fixture, export: "builder" },
+        },
+      });
+
+      await image(["image", "build", "python:3.12"]);
+
+      const other = await image([
+        "create",
+        "--profile",
+        "other",
+        "--image",
+        "python:3.12",
+        "--json",
+      ]);
+
+      expect(envelope(other).error.code).toBe("UNSUPPORTED");
+
+      const refreshed = await image(["image", "build", "python:3.12", "--refresh", "--json"]);
+
+      expect(envelope(refreshed).data).toMatchObject({ name: "python-3-12", built: true });
+      expect(await buildLog()).toEqual(["python:3.12", "python:3.12"]);
+    });
+
+    test("--build builds a missing image during create, once", async () => {
+      const created = await image(["create", "--image", "node:24", "--build", "--json"]);
+
+      expect(created.code).toBe(0);
+      expect(created.stderr).toContain("building node:24");
+
+      await image(["create", "--image", "node:24", "--build"]);
+
+      expect(await buildLog()).toEqual(["node:24"]);
+      expect(await readdir(join(dir, "state", "images"))).toEqual(["node-24.json"]);
+    });
+
+    test("images.autoBuild opts every create into building", async () => {
+      await writeConfig({
+        default: "builder",
+        profiles: { builder: { module: fixture, export: "builder" } },
+        images: { autoBuild: true },
+      });
+
+      expect((await image(["create", "--image", "node:24"])).code).toBe(0);
+      expect(await buildLog()).toEqual(["node:24"]);
+    });
+
+    test("a provider without image builds gets the OCI reference unchanged", async () => {
+      const result = await image([
+        "create",
+        "--profile",
+        "fake",
+        "--image",
+        "python:3.12",
+        "--json",
+      ]);
+
+      expect(result.code).toBe(4);
+      expect(envelope(result).error.message).toContain("fake cannot create this sandbox");
+
+      const build = await image(["image", "build", "python:3.12", "--profile", "fake", "--json"]);
+
+      expect(build.code).toBe(4);
+      expect(envelope(build).error.message).toBe("fake does not build images");
+      expect(await buildLog()).toEqual([]);
+    });
+
+    test("an uncertain build keeps its record and inspect recovers it", async () => {
+      const lost = await image(["image", "build", "lost/tool:1", "--json"]);
+
+      expect(lost.code).toBe(6);
+      expect(envelope(lost).error).toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        known: { image: "tool-1" },
+      });
+      expect(envelope(lost).error.known.recovery.kind).toBe("image_build");
+
+      const inspected = await image(["image", "inspect", "tool-1", "--json"]);
+
+      expect(inspected.code).toBe(0);
+      expect(envelope(inspected).data).toMatchObject({ status: "built", prepared: "fake-starter" });
+      expect(await buildLog()).toEqual(["lost/tool:1"]);
+    });
+
+    test("forget drops the record and lists what the provider still holds", async () => {
+      await image(["image", "build", "python:3.12", "--name", "py"]);
+
+      const forgot = await image(["image", "forget", "py"]);
+
+      expect(forgot.code).toBe(0);
+      expect(forgot.stdout).toContain("fake-image fake-starter (cleanup manual");
+      expect((await image(["image", "inspect", "py", "--json"])).code).toBe(3);
+
+      const named = await image(["image", "build", "python:3.12", "--name", "Bad Name", "--json"]);
+
+      expect(named.code).toBe(2);
+    });
+
+    test("image completion offers actions and recorded names", async () => {
+      await image(["image", "build", "python:3.12"]);
+
+      expect((await cli(["__complete", "--", "image", ""])).stdout).toContain("build");
+      expect((await cli(["__complete", "--", "image", "forget", ""])).stdout).toContain(
+        "python-3-12\tpython:3.12 on builder",
+      );
+    });
+  });
 });

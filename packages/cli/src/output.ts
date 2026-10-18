@@ -43,6 +43,8 @@ export function usage(message: string, hint?: string): CliError {
 
 export type Known = {
   sandbox?: string;
+  /** The image record an uncertain `sandbar image build` keeps. */
+  image?: string;
   reference?: SandboxReference | null;
   /** The SDK's operation reference for an uncertain create; `sandbar rm` uses it to recover. */
   recovery?: RecoveryReference;

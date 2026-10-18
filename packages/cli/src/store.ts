@@ -29,23 +29,74 @@ export const SandboxRecord = z.strictObject({
 
 export type SandboxRecord = z.infer<typeof SandboxRecord>;
 
-export type RecordKind = SandboxRecord["kind"];
+export const RetainedResource = z.strictObject({
+  kind: z.string().min(1),
+  id: z.string().min(1),
+  ownership: z.enum(["verified", "unknown"]),
+  cleanup: z.enum(["manual", "provider_expiry", "none_known"]),
+});
 
-export type Versioned = { record: SandboxRecord; version: string };
+export const ImageRecord = z.strictObject({
+  format: z.literal(1),
+  kind: z.literal("image"),
+  name: RecordName,
+  /** `building` claims the name before the provider call; `unknown` keeps an uncertain build. */
+  status: z.enum(["building", "built", "unknown"]),
+  profile: z.string().min(1),
+  provider: z.string().min(1),
+  createdAt: z.iso.datetime({ offset: true }),
+  /** The OCI reference as typed; `--image` matches it exactly, so a mutable tag keeps its build. */
+  source: z.string().min(1),
+  /** The SDK's prepared image, bound to the provider account and scope that built it. */
+  prepared: z
+    .strictObject({
+      kind: z.literal("prepared"),
+      value: z.string().min(1),
+      provider: z.string().min(1),
+      scope: ResourceReference.shape.scope,
+    })
+    .nullable(),
+  /** Provider-side artifacts the build left behind; the SDK cannot delete them yet. */
+  retainedResources: z.array(RetainedResource),
+  recovery: z
+    .custom<RecoveryReference>(
+      (value) => z.record(z.string(), z.unknown()).safeParse(value).success,
+    )
+    .optional(),
+});
+
+export type ImageRecord = z.infer<typeof ImageRecord>;
+
+type Records = { sandbox: SandboxRecord; image: ImageRecord };
+
+export type RecordKind = keyof Records;
+
+/** The schema that guards each kind of record on every read and write. */
+type RecordSchemas = { [K in RecordKind]: z.ZodType<Records[K]> };
+
+const schemas: RecordSchemas = { sandbox: SandboxRecord, image: ImageRecord };
+
+const folders = { sandbox: "sandboxes", image: "images" } satisfies Record<RecordKind, string>;
+
+export type Versioned<R = SandboxRecord> = { record: R; version: string };
 
 /**
  * Per-record operations only (no operations across records, no transactions), so an object
  * store with conditional writes can implement the same contract later.
  */
 export interface StateStore {
-  get(kind: RecordKind, name: string): Promise<Versioned | null>;
+  get<K extends RecordKind>(kind: K, name: string): Promise<Versioned<Records[K]> | null>;
   /** Claims a name; CONFLICT when it is taken. */
-  create(kind: RecordKind, name: string, record: SandboxRecord): Promise<{ version: string }>;
-  /** Compare-and-swap on the version returned by get/create; CONFLICT on mismatch. */
-  update(
-    kind: RecordKind,
+  create<K extends RecordKind>(
+    kind: K,
     name: string,
-    record: SandboxRecord,
+    record: Records[K],
+  ): Promise<{ version: string }>;
+  /** Compare-and-swap on the version returned by get/create; CONFLICT on mismatch. */
+  update<K extends RecordKind>(
+    kind: K,
+    name: string,
+    record: Records[K],
     version: string,
   ): Promise<{ version: string }>;
   remove(kind: RecordKind, name: string, version?: string): Promise<void>;
@@ -64,8 +115,8 @@ function versionOf(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-function encode(record: SandboxRecord): string {
-  return `${JSON.stringify(SandboxRecord.parse(record), null, 2)}\n`;
+function encode<K extends RecordKind>(kind: K, record: Records[K]): string {
+  return `${JSON.stringify(schemas[kind].parse(record), null, 2)}\n`;
 }
 
 /** A lock older than this belongs to a crashed process and may be broken. */
@@ -74,7 +125,7 @@ const STALE_LOCK_MS = 30_000;
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
 /**
- * JSON files under `<dir>/<kind>es/<name>.json`. Readers never see partial files: create links a
+ * JSON files under `<dir>/sandboxes/<name>.json` and `<dir>/images/<name>.json`. Readers never see partial files: create links a
  * fully written temporary file into place (failing if the name exists) and update renames one.
  * update and remove hold a short per-record lock file so their version check is a real
  * compare-and-swap between CLI processes.
@@ -83,7 +134,7 @@ export class FsStateStore implements StateStore {
   constructor(readonly dir: string) {}
 
   private folder(kind: RecordKind): string {
-    return join(this.dir, `${kind}es`);
+    return join(this.dir, folders[kind]);
   }
 
   private path(kind: RecordKind, name: string): string {
@@ -124,7 +175,7 @@ export class FsStateStore implements StateStore {
     }
   }
 
-  async get(kind: RecordKind, name: string): Promise<Versioned | null> {
+  async get<K extends RecordKind>(kind: K, name: string): Promise<Versioned<Records[K]> | null> {
     let text: string;
 
     try {
@@ -145,7 +196,7 @@ export class FsStateStore implements StateStore {
       );
     }
 
-    const parsed = SandboxRecord.safeParse(json);
+    const parsed = schemas[kind].safeParse(json);
 
     if (!parsed.success)
       throw new CliError("STORE_INVALID", `Store record ${this.path(kind, name)} is invalid`);
@@ -153,12 +204,12 @@ export class FsStateStore implements StateStore {
     return { record: parsed.data, version: versionOf(text) };
   }
 
-  async create(
-    kind: RecordKind,
+  async create<K extends RecordKind>(
+    kind: K,
     name: string,
-    record: SandboxRecord,
+    record: Records[K],
   ): Promise<{ version: string }> {
-    const text = encode(record);
+    const text = encode(kind, record);
     const temporary = await this.temporary(kind, name, text);
 
     try {
@@ -174,10 +225,10 @@ export class FsStateStore implements StateStore {
     return { version: versionOf(text) };
   }
 
-  async update(
-    kind: RecordKind,
+  async update<K extends RecordKind>(
+    kind: K,
     name: string,
-    record: SandboxRecord,
+    record: Records[K],
     version: string,
   ): Promise<{ version: string }> {
     return this.locked(kind, name, async () => {
@@ -185,7 +236,7 @@ export class FsStateStore implements StateStore {
 
       if (!current || current.version !== version)
         throw new CliError("CONFLICT", `Store record ${name} changed concurrently`);
-      const text = encode(record);
+      const text = encode(kind, record);
       await rename(await this.temporary(kind, name, text), this.path(kind, name));
 
       return { version: versionOf(text) };
@@ -236,12 +287,12 @@ export class FsStateStore implements StateStore {
 }
 
 /** Every readable record; an unreadable one is reported to `onInvalid` and skipped. */
-export async function listAll(
+export async function listAll<K extends RecordKind>(
   store: StateStore,
-  kind: RecordKind,
+  kind: K,
   onInvalid?: (message: string) => void,
-): Promise<Versioned[]> {
-  const found: Versioned[] = [];
+): Promise<Versioned<Records[K]>[]> {
+  const found: Versioned<Records[K]>[] = [];
   let cursor: string | undefined;
 
   do {

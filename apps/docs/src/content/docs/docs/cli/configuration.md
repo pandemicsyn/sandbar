@@ -73,6 +73,10 @@ References also work in a provider's environment variable, for example `E2B_API_
 
 `limits.maxSandboxes` (or `SANDBAR_MAX_SANDBOXES`) caps how many sandboxes the CLI will keep at once. A `create` or `run` over the cap exits 4 before contacting the provider. There is no cap unless you set one. The check is a safety net, not a guarantee: two creates started at the same moment can both pass it.
 
+## Image builds
+
+E2B and Daytona build an OCI image into a provider template or snapshot before a sandbox can start from it. By default `create --image` and `run --image` use only builds recorded with `sandbar image build`, and fail before creating anything otherwise. `"images": { "autoBuild": true }` builds a missing image on demand instead, once per reference and profile. Leave it off for agents that run `--image` in a loop unattended: each new reference starts a slow build that may cost money and leaves a provider-side resource.
+
 ## Where adapters are loaded from
 
 Adapters receive your credentials, so the CLI loads them only from `~/.config/sandbar/adapters` or from its own installation. To use adapters installed in the current project's `node_modules`, opt in with `"adapters": { "searchProject": true }` in `sandbar.json` or `SANDBAR_PROJECT_ADAPTERS=1`.

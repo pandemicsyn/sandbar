@@ -57,7 +57,7 @@ sandbar rm --json job-1
 - `exec` takes an argv after `--`; no shell runs. Use `sh` only when you need pipes, redirects or `&&`. For a script that starts with `-`, put it after `--`: `sandbar sh job-1 -- '-n ...'`.
 - `--env K=V` (repeatable), `--cwd`, `--stdin` or `--stdin-file <path>`, `--timeout 30s|5m|1h`, `--max-output 1m`.
 - `cp` copies one file; one side is `<sandbox>:/absolute/path`. `--no-clobber` refuses to overwrite.
-- `--image <oci-ref>` boots an OCI image where the provider supports it; `--prepared <id>` uses a provider template or snapshot. On providers that need an image built first, `--image` fails with exit 4 before creating anything.
+- `--image <oci-ref>` boots an OCI image where the provider supports it; `--prepared <id>` uses a provider template or snapshot. On providers that need a build first (E2B, Daytona), `--image` fails with exit 4 and `UNSUPPORTED` before creating anything until `sandbar image build <oci-ref>` has run once for that profile; later creates reuse the build. Build once rather than passing `--build` in a loop: a build is slow, may cost money and leaves a provider-side resource. `sandbar image ls` shows the builds; `sandbar image forget <name>` drops a record and lists what the provider still holds.
 - `sandbar ls --json` lists known sandboxes with their live state (`running`, `gone`, `unreachable`, ...). `sandbar inspect --json <name>` shows state, expiry and the saved reference.
 
 Always `rm` what you created before finishing, even after failures. `rm` only destroys sandboxes this CLI created; never pass `--force` or `rm --all` unless the user asked.

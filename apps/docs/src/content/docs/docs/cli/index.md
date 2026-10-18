@@ -51,7 +51,7 @@ To keep provider settings in one place instead of environment variables, see [Co
 - `exec` passes the command after `--` as separate arguments, with no shell. Use `sh` when you need pipes, redirects or `&&`.
 - `exec`, `sh` and `run` exit with the remote command's own exit code, so `sandbar exec web -- test -f /x && echo yes` works as expected. Failures of the CLI itself exit 125.
 - `cp` copies one file in either direction; the sandbox side is written `<name>:/absolute/path`. `cat <name>:/path` prints a file.
-- `--image <ref>` boots an OCI image on providers that can; `--prepared <id>` picks a provider template or snapshot. Providers that need an image built first reject `--image` before creating anything.
+- `--image <oci-ref>` boots an OCI image on boxd and Modal. E2B and Daytona need it built once with `sandbar image build <oci-ref>`; until then `--image` fails before creating anything, and `--build` builds it during the command instead. `--prepared <id>` picks a provider template or snapshot. `sandbar image ls`, `inspect` and `forget` manage the recorded builds; `forget` lists the provider-side templates or snapshots you still need to delete yourself.
 
 ## JSON output for agents and scripts
 
