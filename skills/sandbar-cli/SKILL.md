@@ -40,7 +40,7 @@ sandbar run --json -- python3 -c 'print(2 + 2)'
 sandbar run --json --prepared base --timeout 5m -- sh -c 'pip install -q requests && python3 app.py'
 ```
 
-Pass the command after `--` as separate arguments. Its data is `{exitCode, stdout, stderr, truncated}`.
+Pass the command after `--` as separate arguments. Its data is `{exitCode, stdout, stderr, truncated, sandbox}`, where `sandbox` names the sandbox it created and destroyed.
 
 ## Longer work: create, use, remove
 
@@ -86,7 +86,7 @@ Other commands:
 - **`run` exits 125 with `CLEANUP_FAILED`**: the command result is in `error.known.exec`, but the sandbox is still running. Tell the user and run the `rm` from the hint.
 - **`rm` exits 8**: `error.details` lists what was `removed`, `skipped` and `failed`. Retry only the failed names once the cause is fixed.
 - **`STORE_WRITE_FAILED`**: the sandbox exists but was not recorded. The reference is in `error.known.reference`; save it to a file and destroy with `sandbar rm @file.json`.
-- Interrupting `run` (Ctrl-C, SIGTERM) still destroys its sandbox; a second signal exits immediately and may leave it running.
+- Interrupting `run` (Ctrl-C, SIGTERM) still destroys its sandbox and exits 130 (143 for SIGTERM) with `INTERRUPTED`. A second signal exits immediately and may leave it running.
 
 ## Discover more
 

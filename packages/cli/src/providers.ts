@@ -89,13 +89,20 @@ export function descriptor(id: string): ProviderDescriptor | undefined {
   return providers.find((provider) => provider.id === id);
 }
 
-export function missingEnv(provider: ProviderDescriptor, env: Env): string[] {
-  return [
-    ...Object.values(provider.credentials),
-    ...Object.values(provider.config)
-      .filter((entry) => entry.required)
-      .map((entry) => entry.env),
-  ].filter((name) => !env[name]);
+/** Environment variables an official provider still needs; `covered` names keys set elsewhere. */
+export function missingEnv(
+  provider: ProviderDescriptor,
+  env: Env,
+  covered: ReadonlySet<string> = new Set(),
+): string[] {
+  const needed = [
+    ...Object.entries(provider.credentials),
+    ...Object.entries(provider.config).flatMap(([key, entry]) =>
+      entry.required ? [[key, entry.env] as const] : [],
+    ),
+  ];
+
+  return needed.flatMap(([key, name]) => (covered.has(key) || env[name] ? [] : [name]));
 }
 
 export type ResolvedProfile = {

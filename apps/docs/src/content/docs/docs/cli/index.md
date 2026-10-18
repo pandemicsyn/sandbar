@@ -32,7 +32,7 @@ sandbar sh web 'ls -la /home/user | head'
 sandbar rm web
 ```
 
-For one command in a throwaway sandbox, `run` creates it, runs the command and always destroys it, even when the command fails or you press Ctrl-C:
+For one command in a throwaway sandbox, `run` creates it, runs the command and always destroys it, even when the command fails or you press Ctrl-C (it then exits 130):
 
 ```sh
 sandbar run -- python3 -c 'print(2 + 2)'

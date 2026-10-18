@@ -370,10 +370,13 @@ describe("sandbar CLI against the fake provider", () => {
     expect(envelope(missing).error.message).toContain("DAYTONA_TARGET");
   });
 
-  test("doctor connects without creating", async () => {
-    const result = envelope(await cli(["doctor", "--json"]));
+  test("doctor connects without creating and reports create support as data", async () => {
+    const run = await cli(["doctor", "--json"]);
+    const result = envelope(run);
 
+    expect(run.code).toBe(0);
     expect(result.data).toMatchObject({ profile: "fake", provider: "fake", connected: true });
+    expect(result.data.create.status).toBe("unavailable");
     expect(await fakeResources()).toHaveLength(0);
   });
 
@@ -714,6 +717,105 @@ describe("sandbar CLI against the fake provider", () => {
       for (const shell of ["zsh", "bash", "fish"])
         expect((await cli(["completion", shell])).stdout).toContain("sandbar __complete");
       expect((await cli(["completion", "tcsh"])).code).toBe(2);
+    });
+  });
+
+  describe("findings from the first live run", () => {
+    test("run --json names the sandbox it created and destroyed", async () => {
+      await seedExec(["true"], 0, "");
+
+      const result = await cli([
+        "run",
+        "--json",
+        "--name",
+        "job",
+        "--prepared",
+        "fake-starter",
+        "--",
+        "true",
+      ]);
+
+      const resources = await fakeResources();
+
+      expect(envelope(result).data.sandbox).toEqual({
+        name: "job",
+        id: resources[0]!.ref.nativeId,
+        kept: false,
+      });
+    });
+
+    test("inspect prints the reference once", async () => {
+      await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
+
+      const data = envelope(await cli(["inspect", "web", "--json"])).data;
+
+      expect(data.reference).toMatchObject({ kind: "sandbox" });
+      expect(data.info.reference).toBeUndefined();
+    });
+
+    test("providers does not ask for variables a profile already sets", async () => {
+      await writeConfig({
+        profiles: {
+          us: { provider: "daytona", config: { target: "us" }, credentials: { apiKey: "k" } },
+        },
+      });
+
+      const daytona = envelope(await cli(["providers", "--json"])).data.providers.find(
+        (row: { id: string }) => row.id === "daytona",
+      );
+
+      expect(daytona.missingEnv).toEqual([]);
+    });
+
+    test("an interrupted run destroys its sandbox and says so", async () => {
+      await control("/_test/seed", {
+        submissionId: "*",
+        action: "exec",
+        delayObservations: 100,
+        command: { command: { kind: "argv", argv: ["sleep", "60"] }, exitCode: 0 },
+      });
+
+      const child = Bun.spawn(
+        [
+          "bun",
+          main,
+          "run",
+          "--json",
+          "--name",
+          "job",
+          "--prepared",
+          "fake-starter",
+          "--",
+          "sleep",
+          "60",
+        ],
+        {
+          cwd: dir,
+          env: {
+            PATH: process.env.PATH ?? "",
+            HOME: dir,
+            SANDBAR_CONFIG: join(dir, "sandbar.json"),
+            SANDBAR_STATE_DIR: join(dir, "state"),
+            SANDBAR_FAKE_URL: server.url.origin,
+            SANDBAR_FAKE_TOKEN: token,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+
+      for (let attempt = 0; attempt < 100 && !(await fakeResources()).length; attempt++)
+        await Bun.sleep(50);
+      await Bun.sleep(300);
+      child.kill("SIGINT");
+
+      const [stdout, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+      const error = envelope({ code, stdout, stderr: "" }).error;
+
+      expect(code).toBe(130);
+      expect(error).toMatchObject({ code: "INTERRUPTED", known: { sandbox: "job" } });
+      expect((await fakeResources()).map((resource) => resource.state)).toEqual(["destroyed"]);
+      expect(await storeNames()).toEqual([]);
     });
   });
 });

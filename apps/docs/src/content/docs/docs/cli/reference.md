@@ -21,7 +21,7 @@ These work with every command.
 
 With `--json`, stdout holds exactly one document: `{ok:true,data}` or `{ok:false,error:{code,message,retryable,outcome,hint?,known?,details?}}`. Diagnostics always go to stderr.
 
-`exec`, `sh` and `run` exit with the remote command's exit code; their JSON data is `{exitCode,stdout,stderr,truncated}`.
+`exec`, `sh` and `run` exit with the remote command's exit code; their JSON data is `{exitCode,stdout,stderr,truncated}`, and run adds sandbox `{name,id,kept}`.
 
 ## Exit codes
 
@@ -37,6 +37,7 @@ With `--json`, stdout holds exactly one document: `{ok:true,data}` or `{ok:false
 | 7    | retryable: rate limit, capacity or unavailable before any effect                                               |
 | 8    | partial: some steps were confirmed; read error.known                                                           |
 | 125  | exec/run: the CLI or provider failed; details in the error                                                     |
+| 130  | interrupted by SIGINT (129 for SIGHUP, 143 for SIGTERM); an interrupted run still destroys its sandbox         |
 
 ## create
 

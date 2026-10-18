@@ -12,7 +12,7 @@ import {
   type SandboxHandle,
 } from "sandbar-sdk";
 import { z } from "zod";
-import { searchProjectAdapters } from "./config";
+import { searchProjectAdapters, type LoadedConfig } from "./config";
 import {
   CliError,
   describeError,
@@ -451,7 +451,11 @@ export async function inspectCommand(session: Session, flags: Flags): Promise<nu
   ];
 
   session.ctx.out.success(
-    { ...sandboxSummary(record), info, reference: record.reference },
+    {
+      ...sandboxSummary(record),
+      info: { ...info, reference: undefined },
+      reference: record.reference,
+    },
     lines.join("\n"),
   );
 
@@ -691,8 +695,10 @@ function printStreams(out: Output, result: ExecOutput): void {
     out.note("sandbar: output was truncated; raise --max-output to capture more");
 }
 
+type RunSandbox = { name: string; id: string | null; kept: boolean };
+
 /** Print a finished command and return its exit code; a missing exit status is never success. */
-function finishExec(out: Output, result: ExecOutput): number {
+function finishExec(out: Output, result: ExecOutput, sandbox?: RunSandbox): number {
   printStreams(out, result);
 
   if (result.exitCode === null)
@@ -703,7 +709,7 @@ function finishExec(out: Output, result: ExecOutput): number {
       { exec: execSummary(result) },
     );
 
-  if (out.json) out.success(execSummary(result), "");
+  if (out.json) out.success({ ...execSummary(result), sandbox }, "");
 
   return result.exitCode;
 }
@@ -749,9 +755,15 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
   const keep = flags.bool("keep");
   const created = await createSandbox(session, { ...request, ifNotExists: false });
   const store = await session.store();
-  const { out } = session.ctx;
+  const { out, signal } = session.ctx;
   let result: ExecOutput | undefined;
   let failure: unknown;
+
+  const sandbox = (kept: boolean): RunSandbox => ({
+    name: created.record.name,
+    id: created.record.reference?.nativeId ?? null,
+    kept,
+  });
 
   // An unrecorded sandbox still runs nothing and is still destroyed below.
   if (created.unrecorded) failure = unrecordedError(created);
@@ -767,7 +779,7 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
 
     if (failure) throw failure;
 
-    return finishExec(out, result!);
+    return finishExec(out, result!, sandbox(true));
   }
 
   try {
@@ -795,6 +807,17 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
     );
   }
 
+  if (failure && signal.aborted)
+    // The interrupt only stopped local waiting; cleanup is confirmed, so say so instead of
+    // passing on the SDK's "outcome unknown" wait error.
+    throw new CliError(
+      "INTERRUPTED",
+      `Interrupted; sandbox ${created.record.name} was destroyed`,
+      "the command may have partly run before the sandbox was destroyed",
+      { sandbox: created.record.name, reference: created.record.reference },
+      "partial",
+    );
+
   if (failure) {
     if (failure instanceof CliError && failure.code === "STORE_WRITE_FAILED")
       throw new CliError(
@@ -804,7 +827,7 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
     throw failure;
   }
 
-  return finishExec(out, result!);
+  return finishExec(out, result!, sandbox(false));
 }
 
 const RemotePath = /^([a-z0-9][a-z0-9-]{0,62}):(\/.*)$/;
@@ -945,7 +968,19 @@ export async function doctorCommand(session: Session): Promise<number> {
     ].join("\n"),
   );
 
-  return plan.status === "supported" ? 0 : 4;
+  // doctor itself succeeded; whether create would work is reported in its data.
+  return 0;
+}
+
+function profileKeys(loaded: LoadedConfig, provider: string): Set<string> {
+  return new Set(
+    Object.values(loaded.value.profiles ?? {})
+      .filter((profile) => profile.provider === provider)
+      .flatMap((profile) => [
+        ...Object.keys(profile.config ?? {}),
+        ...Object.keys(profile.credentials ?? {}),
+      ]),
+  );
 }
 
 export async function providersCommand(session: Session): Promise<number> {
@@ -984,7 +1019,8 @@ export async function providersCommand(session: Session): Promise<number> {
         module: provider.module,
         experimental: provider.experimental,
         installed,
-        missingEnv: missingEnv(provider, env),
+        // A profile that sets a value itself doesn't need the environment variable.
+        missingEnv: missingEnv(provider, env, profileKeys(loaded, provider.id)),
       };
     }),
   );

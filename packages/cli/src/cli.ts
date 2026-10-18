@@ -322,6 +322,11 @@ export const exitCodes = [
   { code: 7, meaning: "retryable: rate limit, capacity or unavailable before any effect" },
   { code: 8, meaning: "partial: some steps were confirmed; read error.known" },
   { code: 125, meaning: "exec/run: the CLI or provider failed; details in the error" },
+  {
+    code: 130,
+    meaning:
+      "interrupted by SIGINT (129 for SIGHUP, 143 for SIGTERM); an interrupted run still destroys its sandbox",
+  },
 ];
 
 function schema() {
@@ -332,7 +337,7 @@ function schema() {
     exitCodes,
     output: {
       json: "With --json, stdout holds exactly one document: {ok:true,data} or {ok:false,error:{code,message,retryable,outcome,hint?,known?,details?}}",
-      exec: "exec, sh and run exit with the remote command's exit code; their JSON data is {exitCode,stdout,stderr,truncated}",
+      exec: "exec, sh and run exit with the remote command's exit code; their JSON data is {exitCode,stdout,stderr,truncated}, and run adds sandbox {name,id,kept}",
     },
   };
 }

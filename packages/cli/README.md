@@ -57,7 +57,7 @@ With `--json` (or `SANDBAR_JSON=1`) stdout holds exactly one document: `{"ok":tr
 
 `exec`, `sh` and `run` exit with the remote command's exit code. Their own failures always use 125, so they never look like a command's result; providers report deadlines differently, so there is no separate deadline code. A missing exit status is 125 with `OUTCOME_UNKNOWN` and the captured output in `error.known.exec`, never 0. If `run` cannot destroy its sandbox it exits 125 with `CLEANUP_FAILED`, and the command's result is inside that one error document.
 
-SIGINT, SIGTERM and SIGHUP all stop local waiting and let `run` clean up; a second signal exits at once.
+SIGINT, SIGTERM and SIGHUP all stop local waiting and let `run` clean up, then exit 130, 143 or 129 (`INTERRUPTED` for `run`); a second signal exits at once.
 
 ## Shell completion
 

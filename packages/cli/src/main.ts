@@ -38,4 +38,5 @@ const code = await main(process.argv.slice(2), {
   },
 });
 
-process.exitCode = interrupted && code === 0 ? exitCode : code;
+// An interrupted run reports 128 + signal like other CLIs, whatever happened before it.
+process.exitCode = interrupted ? exitCode : code;
