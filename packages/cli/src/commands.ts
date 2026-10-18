@@ -13,7 +13,7 @@ import {
   type SandboxHandle,
 } from "sandbar-sdk";
 import { z } from "zod";
-import { searchProjectAdapters, type LoadedConfig } from "./config";
+import { searchProjectAdapters, valueAvailable, type Env, type LoadedConfig } from "./config";
 import {
   CliError,
   describeError,
@@ -223,6 +223,14 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
 
     if (report.outcome === "rejected") {
       await store.remove("sandbox", claimed.record.name, claimed.version);
+
+      // Adapters without a default image reject an argument-free create in SDK terms.
+      if (report.code === "INVALID_ARGUMENT" && !input.environment)
+        throw new CliError(
+          "INVALID_ARGUMENT",
+          `${profile.provider} needs an image for this sandbox: ${report.message}`,
+          "pass --prepared <id> (a provider template or snapshot) or --image <oci-ref>",
+        );
       throw cause;
     }
 
@@ -1044,14 +1052,17 @@ export async function doctorCommand(session: Session): Promise<number> {
   return 0;
 }
 
-function profileKeys(loaded: LoadedConfig, provider: string): Set<string> {
+/** Settings a profile for this provider supplies, so `providers` does not ask for their variables. */
+function profileKeys(loaded: LoadedConfig, provider: string, env: Env): Set<string> {
   return new Set(
     Object.values(loaded.value.profiles ?? {})
       .filter((profile) => profile.provider === provider)
-      .flatMap((profile) => [
-        ...Object.keys(profile.config ?? {}),
-        ...Object.keys(profile.credentials ?? {}),
-      ]),
+      .flatMap((profile) =>
+        [
+          ...Object.entries(profile.config ?? {}),
+          ...Object.entries(profile.credentials ?? {}),
+        ].flatMap(([key, value]) => (valueAvailable(value, env) ? [key] : [])),
+      ),
   );
 }
 
@@ -1092,7 +1103,7 @@ export async function providersCommand(session: Session): Promise<number> {
         experimental: provider.experimental,
         installed,
         // A profile that sets a value itself doesn't need the environment variable.
-        missingEnv: missingEnv(provider, env, profileKeys(loaded, provider.id)),
+        missingEnv: missingEnv(provider, env, profileKeys(loaded, provider.id, env)),
       };
     }),
   );

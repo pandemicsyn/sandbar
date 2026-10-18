@@ -134,6 +134,13 @@ export function maxSandboxes(config: LoadedConfig, env: Env): number | null {
 
 const EnvReference = z.string().regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/);
 
+/** Whether a profile value is usable here: an `env:NAME` reference needs NAME to be set. */
+export function valueAvailable(value: JsonValue, env: Env): boolean {
+  const reference = EnvReference.safeParse(value);
+
+  return !reference.success || Boolean(env[reference.data.slice(4)]);
+}
+
 type JsonValue = z.infer<ReturnType<typeof z.json>>;
 
 /** Replace `env:NAME` strings with the variable's value; credentials never live in files. */

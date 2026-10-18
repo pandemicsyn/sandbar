@@ -357,6 +357,15 @@ describe("sandbar CLI against the fake provider", () => {
     expect((await cli(["exec", "box"])).code).toBe(125);
   });
 
+  test("a create without an image says how to pick one", async () => {
+    const result = await cli(["create", "--name", "web", "--json"]);
+
+    expect(result.code).toBe(2);
+    expect(envelope(result).error).toMatchObject({ code: "INVALID_ARGUMENT", outcome: "rejected" });
+    expect(envelope(result).error.hint).toContain("--prepared");
+    expect(await storeNames()).toEqual([]);
+  });
+
   test("a missing profile or provider credential is a usage error", async () => {
     await writeConfig({});
 
@@ -814,6 +823,16 @@ describe("sandbar CLI against the fake provider", () => {
       );
 
       expect(daytona.missingEnv).toEqual([]);
+
+      await writeConfig({
+        profiles: { e2b: { provider: "e2b", credentials: { apiKey: "env:E2B_API_KEY" } } },
+      });
+
+      const e2b = envelope(await cli(["providers", "--json"])).data.providers.find(
+        (row: { id: string }) => row.id === "e2b",
+      );
+
+      expect(e2b.missingEnv).toEqual(["E2B_API_KEY"]);
     });
 
     test("an interrupted run destroys its sandbox and says so", async () => {
