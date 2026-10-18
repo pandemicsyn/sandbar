@@ -23,6 +23,7 @@ import {
   type Streams,
 } from "./output";
 import { Session, type Context } from "./session";
+import { imageCommand } from "./images";
 import { skillCommand } from "./skill";
 import { complete, completionCommand, formatCompletion } from "./completion";
 import type { Env } from "./config";
@@ -98,7 +99,7 @@ const createFlags = {
   label: { type: "string", multiple: true, value: "k=v", description: "Label to set (repeatable)" },
   build: {
     type: "boolean",
-    description: "Build --image first when the provider needs it (not available yet)",
+    description: "Build --image now if this provider needs a build and none is recorded",
   },
 } satisfies Record<string, FlagSpec>;
 
@@ -224,6 +225,29 @@ export const commands: readonly CommandSpec[] = [
     run: runCommand,
   },
   {
+    name: "image",
+    summary: "Build OCI images for providers that need it, and list or forget the builds",
+    usage:
+      "sandbar image build <oci-ref> [--name <name>] [--refresh] | ls | inspect <name> | forget <name>",
+    flags: {
+      name: {
+        type: "string",
+        value: "name",
+        description: "Record name for a build (default: from the reference, like python-3-12)",
+      },
+      refresh: { type: "boolean", description: "Build again even if this reference is recorded" },
+    },
+    passthrough: false,
+    remoteExit: false,
+    examples: [
+      "sandbar image build python:3.12 --provider e2b",
+      "sandbar create --image python:3.12 --provider e2b",
+      "sandbar image ls",
+      "sandbar image forget python-3-12",
+    ],
+    run: imageCommand,
+  },
+  {
     name: "cp",
     summary: "Copy one file to or from a sandbox",
     usage: "sandbar cp <src> <dst>   (one side is <sandbox>:/path)",
@@ -314,7 +338,7 @@ export const exitCodes = [
   {
     code: 4,
     meaning:
-      "unsupported by this provider or profile, adapter or password-manager CLI not installed, or store limit reached",
+      "unsupported by this provider or profile, adapter missing or broken, password-manager CLI not installed, or store limit reached",
   },
   {
     code: 5,

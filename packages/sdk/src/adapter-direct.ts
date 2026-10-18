@@ -2372,6 +2372,7 @@ export class AdapterDirectClient {
       observedAt: new Date().toISOString(),
       commands: [...(support.exec?.commands ?? [])],
       images: [...support.images],
+      imageBuild: !!this.session.imageBuild,
       network: [...support.network],
       exec: !!this.session.exec && !!support.exec,
       inspect: !!this.session.inspect,

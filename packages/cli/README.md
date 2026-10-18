@@ -29,6 +29,8 @@ The adapter package must be installed where the CLI can find it: in `~/.config/s
 | `exec <sandbox> [--cwd] [--env K=V] [--stdin \| --stdin-file] [--timeout] [--max-output] -- cmd...` | Run argv; exit code passes through |
 | `sh <sandbox> '<script>'` (or `-- '<script>'`) | Run a shell script; same flags as exec |
 | `run [create and exec flags] [--keep] -- cmd...` | Create, run one command, destroy |
+| `image build <oci-ref> [--name] [--refresh]` | Build an OCI image on a provider that needs a build first, and record it |
+| `image ls`, `image inspect <name>`, `image forget <name>` | List, show or drop image records; `forget` lists what the provider still holds |
 | `cp <src> <dst>` | Copy one file; one side is `<sandbox>:/path` |
 | `cat <sandbox>:/path` | Print a file |
 | `doctor` | Check config, credentials and the connection; creates nothing |
@@ -49,7 +51,7 @@ With `--json` (or `SANDBAR_JSON=1`) stdout holds exactly one document: `{"ok":tr
 | 1 | other failure (including a taken `--name` or an existing `cp --no-clobber` target) |
 | 2 | usage error |
 | 3 | not found |
-| 4 | unsupported, adapter or password-manager CLI not installed, or `limits.maxSandboxes` reached |
+| 4 | unsupported, adapter missing (`ADAPTER_NOT_INSTALLED`) or failing to load (`ADAPTER_LOAD_FAILED`), password-manager CLI not installed, or `limits.maxSandboxes` reached |
 | 5 | authentication or permission, including a password-manager secret that cannot be read |
 | 6 | outcome unknown: an effect may have happened, inspect before retrying |
 | 7 | retryable before any effect (rate limit, capacity, unavailable) |
@@ -67,7 +69,7 @@ source <(sandbar completion bash)   # add to ~/.bashrc
 sandbar completion fish > ~/.config/fish/completions/sandbar.fish
 ```
 
-Completion covers commands, flags, `--provider` ids, `--profile` names from `sandbar.json`, and sandbox names for `exec`, `sh`, `inspect`, `rm`, `cp` and `cat`. Sandbox names come from the local store, so pressing tab never calls a provider.
+Completion covers commands, flags, `--provider` ids, `--profile` names from `sandbar.json`, sandbox names for `exec`, `sh`, `inspect`, `rm`, `cp` and `cat`, and image record names for `image inspect` and `image forget`. Sandbox names come from the local store, so pressing tab never calls a provider.
 
 ## Agent skill
 
@@ -110,13 +112,30 @@ Any `config` or `credentials` value (including one that comes from a provider's 
 
 If the tool is not installed the command exits 4 (`SECRET_TOOL_MISSING`); if it cannot read the secret it exits 5 (`SECRET_UNAVAILABLE`) with the tool's own message. Each reference is read at most once per command.
 
+## Images
+
+`--image` always takes an OCI reference, such as `python:3.12` or `ghcr.io/org/tool@sha256:...`. A provider-specific template or snapshot goes in the profile's `image` setting or `--prepared <id>`.
+
+- boxd and Modal boot the OCI image directly. Nothing is built or kept.
+- E2B and Daytona must build it into a prepared image first. A build is slow, may cost money, and leaves a provider-side template or snapshot behind that destroying a sandbox does not delete. So `create --image` and `run --image` only use a build already recorded for the same reference and profile; otherwise they fail with exit 4 before creating anything, naming the command to run:
+
+  ```sh
+  sandbar image build python:3.12 --provider e2b   # once
+  sandbar run --image python:3.12 --provider e2b -- python3 --version
+  ```
+
+  Pass `--build` to build a missing image during `create` or `run`, or set `"images": { "autoBuild": true }` in `sandbar.json` to always do so. Each reference is built once per profile either way.
+- Vercel takes neither and rejects `--image`.
+
+`sandbar image build` records the reference as typed, the profile, the prepared image (bound to the provider account that built it) and the provider-side resources it left. Running it again for a recorded reference does nothing unless you pass `--refresh`, which builds again, for example after a mutable tag such as `python:3.12` moved; pin a digest for an exact image. `image forget` removes the record and prints the resources the provider still holds; the CLI cannot delete them yet, so remove them with the provider's own tools when you no longer need them. A build whose outcome is unknown (exit 6) keeps its record, and `image inspect` asks the provider again how it ended. Providers do not report a resolved digest, so records do not have one.
+
 ## State store
 
-Sandbox references are kept as one JSON file per sandbox in `~/.config/sandbar/state/sandboxes/<name>.json` (override with `--state-dir` or `SANDBAR_STATE_DIR`, relative to the working directory, or `state.dir`, relative to the config file). Records hold references only, never credentials. A name is claimed before the provider call, so a crash or uncertain create leaves a record that `ls` shows. An uncertain create also keeps the SDK's recovery reference: `rm` and `inspect` use it to ask how the original request ended (never resending it) and `rm` destroys the sandbox if one was made; otherwise `rm --force` drops the record. Records are written whole (a temporary file linked or renamed into place) and updates take a short per-record lock, so concurrent CLI processes on one machine never see half-written files; `ls` skips an unreadable record with a warning. The `maxSandboxes` check is best effort under concurrent creates. The store sits behind a small per-record interface (create-if-absent, compare-and-swap update, paged list) so object storage can back it later.
+Sandbox references are kept as one JSON file per sandbox in `~/.config/sandbar/state/sandboxes/<name>.json`, and image records in `images/<name>.json` next to it (override with `--state-dir` or `SANDBAR_STATE_DIR`, relative to the working directory, or `state.dir`, relative to the config file). Records hold references only, never credentials. A name is claimed before the provider call, so a crash or uncertain create leaves a record that `ls` shows. An uncertain create also keeps the SDK's recovery reference: `rm` and `inspect` use it to ask how the original request ended (never resending it) and `rm` destroys the sandbox if one was made; otherwise `rm --force` drops the record. Records are written whole (a temporary file linked or renamed into place) and updates take a short per-record lock, so concurrent CLI processes on one machine never see half-written files; `ls` skips an unreadable record with a warning. The `maxSandboxes` check is best effort under concurrent creates. The store sits behind a small per-record interface (create-if-absent, compare-and-swap update, paged list) so object storage can back it later.
 
 ## Not yet
 
-Planned for later steps: `--lifetime`/`--idle`/`--port` create flags, recursive `cp`, detached processes and logs, preview URLs, suspend/resume/renew, `gc`, image builds and records, snapshots and volumes, `sandbar adapter add`, an S3-compatible store, KeePassXC and system-keyring references, and MCP mode. `--image` is passed to the adapter as an OCI image; providers that need a build first reject it before creating anything.
+Planned for later steps: `--lifetime`/`--idle`/`--port` create flags, recursive `cp`, detached processes and logs, preview URLs, suspend/resume/renew, `gc`, deleting built images (`image rm`), snapshots and volumes, `sandbar adapter add`, an S3-compatible store, KeePassXC and system-keyring references, and MCP mode.
 
 ## Development
 
@@ -125,3 +144,5 @@ Tests run the real CLI as a subprocess against the fake provider; they make no p
 ```sh
 bun test packages/cli
 ```
+
+Inside this repository the official adapters are development dependencies of the CLI, so `bun packages/cli/src/main.ts` finds them from any directory without an adapters install.

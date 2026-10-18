@@ -23,6 +23,7 @@ import {
   type ExecSummary,
   type Output,
 } from "./output";
+import { imageEnvironment } from "./images";
 import { missingEnv, providers, resolveAdapterModule, type ResolvedProfile } from "./providers";
 import type { Session } from "./session";
 import {
@@ -67,19 +68,18 @@ type CreateRequest = {
   prepared?: string;
   network?: string;
   labels: Record<string, string>;
+  /** Build --image now when the provider needs a build and none is recorded. */
+  build: boolean;
 };
 
 function createRequest(flags: Flags): CreateRequest {
   if (flags.string("image") && flags.string("prepared"))
     throw usage("Pass either --image or --prepared, not both");
 
-  if (flags.bool("build"))
-    throw usage(
-      "--build is not available yet",
-      "build images in a later CLI release; for now use a prepared image or a provider that boots OCI images directly",
-    );
+  if (flags.bool("build") && !flags.string("image")) throw usage("--build needs --image");
 
   return {
+    build: flags.bool("build"),
     name: flags.string("name"),
     ifNotExists: flags.bool("if-not-exists"),
     image: flags.string("image"),
@@ -89,13 +89,10 @@ function createRequest(flags: Flags): CreateRequest {
   };
 }
 
+/** The create input; `--image` is resolved after connecting, because it depends on the provider. */
 function createInput(request: CreateRequest): CreateInput {
   return {
-    environment: request.image
-      ? Image.oci(request.image)
-      : request.prepared
-        ? Image.prepared(request.prepared)
-        : undefined,
+    environment: request.prepared ? Image.prepared(request.prepared) : undefined,
     network: request.network,
     labels: Object.keys(request.labels).length ? request.labels : undefined,
   };
@@ -197,6 +194,15 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
   try {
     client = await session.connect(profile);
 
+    if (request.image)
+      input.environment = await imageEnvironment(
+        session,
+        client,
+        profile,
+        request.image,
+        request.build,
+      );
+
     if (input.environment) {
       const plan = await client.sandboxes.checkCreate(input);
 
@@ -204,9 +210,7 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
         throw new CliError(
           "UNSUPPORTED",
           `${profile.provider} cannot create this sandbox: ${plan.reason}`,
-          request.image
-            ? "this provider may need the image built first (sandbar image build arrives in a later release), or use --prepared with a provider image"
-            : undefined,
+          request.image ? "use --prepared with a provider image instead" : undefined,
         );
     }
   } catch (cause) {

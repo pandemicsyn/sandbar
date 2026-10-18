@@ -25,6 +25,11 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@sandbar-sdk/boxd": "workspace:*",
+    "@sandbar-sdk/daytona": "workspace:*",
+    "@sandbar-sdk/e2b": "workspace:*",
+    "@sandbar-sdk/modal": "workspace:*",
+    "@sandbar-sdk/vercel": "workspace:*",
     "@sandbar/provider-fake": "workspace:*"
   },
   "license": "Apache-2.0",

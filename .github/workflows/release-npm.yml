@@ -188,12 +188,14 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq .object.sha 2>/dev/null || true)
-          if [ -z "${existing}" ]; then
+          # gh prints the 404 body on stdout, so test the exit status, not the output.
+          if existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq .object.sha 2>/dev/null); then
+            if [ "${existing}" != "${SHA}" ]; then
+              echo "${RELEASE_TAG} already points to ${existing}, not ${SHA}" >&2
+              exit 1
+            fi
+          else
             gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${RELEASE_TAG}" -f sha="${SHA}" >/dev/null
-          elif [ "${existing}" != "${SHA}" ]; then
-            echo "${RELEASE_TAG} already points to ${existing}, not ${SHA}" >&2
-            exit 1
           fi
           git fetch --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
       - name: Publish qualified release

@@ -23,7 +23,7 @@ An explicit `environment` on `create()` overrides the connection default if the 
 
 ## Build an OCI image
 
-E2B and Daytona implement `images.build()` to turn an OCI image into a reusable prepared image. Builds are separate provider operations and may incur build and storage charges. boxd boots OCI images directly and does not implement this build API; Vercel supports neither custom OCI images nor builds. Check [tested provider support](/docs/providers/support/) for live coverage.
+E2B and Daytona implement `images.build()` to turn an OCI image into a reusable prepared image. Builds are separate provider operations and may incur build and storage charges. boxd boots OCI images directly and does not implement this build API; Vercel supports neither custom OCI images nor builds. `(await client.capabilities()).imageBuild` is `true` on connections that implement the build. Check [tested provider support](/docs/providers/support/) for live coverage.
 
 Start with an E2B or Daytona connection named `sandbar`:
 

@@ -1,3 +1,4 @@
+import { appendFile } from "node:fs/promises";
 import { bindAdapter, defineAdapter } from "@sandbar-sdk/adapter";
 import { createFakeAdapter } from "@sandbar/provider-fake";
 import { z } from "zod";
@@ -25,3 +26,52 @@ export const guarded = defineAdapter({
     return definition.connect({ config: {}, credentials: {}, host });
   },
 });
+
+const builds = process.env.SANDBAR_FAKE_BUILDS;
+
+const built = {
+  preparedId: "fake-starter",
+  retainedResources: [
+    {
+      kind: "fake-image",
+      id: "fake-starter",
+      ownership: "verified" as const,
+      cleanup: "manual" as const,
+    },
+  ],
+};
+
+/**
+ * The fake adapter with an image build, standing in for build-first providers such as E2B. Every
+ * build lands on fake-starter; a `lost/` reference loses the build's response.
+ */
+export const builder = bindAdapter(
+  defineAdapter({
+    name: "fake",
+    displayName: "Fake test provider that builds images",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect({ host }) {
+      const session = await definition.connect({ config: {}, credentials: {}, host });
+
+      return {
+        ...session,
+        imageBuild: {
+          async submit(input, ctx) {
+            if (builds) await appendFile(builds, `${input.source.value}\n`);
+
+            if (input.source.value.startsWith("lost/"))
+              return ctx.unknown("The fake lost the build response");
+
+            return built;
+          },
+          async observe() {
+            return built;
+          },
+        },
+      };
+    },
+  }),
+  {},
+  {},
+);

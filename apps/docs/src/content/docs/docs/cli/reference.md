@@ -26,19 +26,19 @@ With `--json`, stdout holds exactly one document: `{ok:true,data}` or `{ok:false
 
 ## Exit codes
 
-| Code | Meaning                                                                                                        |
-| ---- | -------------------------------------------------------------------------------------------------------------- |
-| 0    | success                                                                                                        |
-| 1    | other failure                                                                                                  |
-| 2    | usage error; fix the command                                                                                   |
-| 3    | not found                                                                                                      |
-| 4    | unsupported by this provider or profile, adapter or password-manager CLI not installed, or store limit reached |
-| 5    | authentication or permission failure, or an unreadable password-manager secret                                 |
-| 6    | outcome unknown: an effect may have happened, inspect before retrying                                          |
-| 7    | retryable: rate limit, capacity or unavailable before any effect                                               |
-| 8    | partial: some steps were confirmed; read error.known                                                           |
-| 125  | exec/run: the CLI or provider failed; details in the error                                                     |
-| 130  | interrupted by SIGINT (129 for SIGHUP, 143 for SIGTERM); an interrupted run still destroys its sandbox         |
+| Code | Meaning                                                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 0    | success                                                                                                                        |
+| 1    | other failure                                                                                                                  |
+| 2    | usage error; fix the command                                                                                                   |
+| 3    | not found                                                                                                                      |
+| 4    | unsupported by this provider or profile, adapter missing or broken, password-manager CLI not installed, or store limit reached |
+| 5    | authentication or permission failure, or an unreadable password-manager secret                                                 |
+| 6    | outcome unknown: an effect may have happened, inspect before retrying                                                          |
+| 7    | retryable: rate limit, capacity or unavailable before any effect                                                               |
+| 8    | partial: some steps were confirmed; read error.known                                                                           |
+| 125  | exec/run: the CLI or provider failed; details in the error                                                                     |
+| 130  | interrupted by SIGINT (129 for SIGHUP, 143 for SIGTERM); an interrupted run still destroys its sandbox                         |
 
 ## create
 
@@ -48,15 +48,15 @@ Create a sandbox and print its name.
 sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>]
 ```
 
-| Flag                 | Description                                                        |
-| -------------------- | ------------------------------------------------------------------ |
-| `--name <name>`      | Store name (default: generated, like sb-1a2b3)                     |
-| `--image <oci-ref>`  | OCI image, e.g. python:3.12; default is the profile's image        |
-| `--prepared <id>`    | Provider-prepared image id (template, snapshot name)               |
-| `--network <policy>` | blocked or internet; default is the profile's policy               |
-| `--label <k=v>`      | Label to set (repeatable)                                          |
-| `--build`            | Build --image first when the provider needs it (not available yet) |
-| `--if-not-exists`    | Return the named sandbox if it is still alive instead of failing   |
+| Flag                 | Description                                                           |
+| -------------------- | --------------------------------------------------------------------- |
+| `--name <name>`      | Store name (default: generated, like sb-1a2b3)                        |
+| `--image <oci-ref>`  | OCI image, e.g. python:3.12; default is the profile's image           |
+| `--prepared <id>`    | Provider-prepared image id (template, snapshot name)                  |
+| `--network <policy>` | blocked or internet; default is the profile's policy                  |
+| `--label <k=v>`      | Label to set (repeatable)                                             |
+| `--build`            | Build --image now if this provider needs a build and none is recorded |
+| `--if-not-exists`    | Return the named sandbox if it is still alive instead of failing      |
 
 Examples:
 
@@ -178,21 +178,21 @@ Create a sandbox, run one command, and always destroy it.
 sandbar run [create flags] [exec flags] [--keep] -- <command> [args...]
 ```
 
-| Flag                   | Description                                                        |
-| ---------------------- | ------------------------------------------------------------------ |
-| `--name <name>`        | Store name (default: generated, like sb-1a2b3)                     |
-| `--image <oci-ref>`    | OCI image, e.g. python:3.12; default is the profile's image        |
-| `--prepared <id>`      | Provider-prepared image id (template, snapshot name)               |
-| `--network <policy>`   | blocked or internet; default is the profile's policy               |
-| `--label <k=v>`        | Label to set (repeatable)                                          |
-| `--build`              | Build --image first when the provider needs it (not available yet) |
-| `--cwd <dir>`          | Working directory in the sandbox                                   |
-| `--env <K=V>`          | Environment variable (repeatable)                                  |
-| `--stdin`              | Send this process's stdin to the command                           |
-| `--stdin-file <path>`  | Send a local file as the command's stdin                           |
-| `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                 |
-| `--max-output <size>`  | Captured output limit, e.g. 1m                                     |
-| `--keep`               | Keep the sandbox and print its name on stderr                      |
+| Flag                   | Description                                                           |
+| ---------------------- | --------------------------------------------------------------------- |
+| `--name <name>`        | Store name (default: generated, like sb-1a2b3)                        |
+| `--image <oci-ref>`    | OCI image, e.g. python:3.12; default is the profile's image           |
+| `--prepared <id>`      | Provider-prepared image id (template, snapshot name)                  |
+| `--network <policy>`   | blocked or internet; default is the profile's policy                  |
+| `--label <k=v>`        | Label to set (repeatable)                                             |
+| `--build`              | Build --image now if this provider needs a build and none is recorded |
+| `--cwd <dir>`          | Working directory in the sandbox                                      |
+| `--env <K=V>`          | Environment variable (repeatable)                                     |
+| `--stdin`              | Send this process's stdin to the command                              |
+| `--stdin-file <path>`  | Send a local file as the command's stdin                              |
+| `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                    |
+| `--max-output <size>`  | Captured output limit, e.g. 1m                                        |
+| `--keep`               | Keep the sandbox and print its name on stderr                         |
 
 Exits with the remote command's exit code; failures of the CLI itself exit 125.
 
@@ -201,6 +201,28 @@ Examples:
 ```sh
 sandbar run -- python3 -c 'print(2 + 2)'
 sandbar run --network internet -- curl -sI https://example.com
+```
+
+## image
+
+Build OCI images for providers that need it, and list or forget the builds.
+
+```sh
+sandbar image build <oci-ref> [--name <name>] [--refresh] | ls | inspect <name> | forget <name>
+```
+
+| Flag            | Description                                                             |
+| --------------- | ----------------------------------------------------------------------- |
+| `--name <name>` | Record name for a build (default: from the reference, like python-3-12) |
+| `--refresh`     | Build again even if this reference is recorded                          |
+
+Examples:
+
+```sh
+sandbar image build python:3.12 --provider e2b
+sandbar create --image python:3.12 --provider e2b
+sandbar image ls
+sandbar image forget python-3-12
 ```
 
 ## cp

@@ -1,5 +1,6 @@
 import type { Flags } from "./commands";
 import { usage } from "./output";
+import { imageActions } from "./images";
 import { providers } from "./providers";
 import type { Session } from "./session";
 import { listAll } from "./store";
@@ -147,6 +148,25 @@ export async function complete(
       candidates: [{ value: "install", description: "Install the skill for your agents" }],
       directive: 0,
     };
+
+  if (command.name === "image") {
+    if (positionals.length === 0)
+      return { candidates: imageActions.map((action) => ({ value: action })), directive: 0 };
+
+    if (positionals.length === 1 && (positionals[0] === "inspect" || positionals[0] === "forget")) {
+      const entries = await listAll(await session.store(), "image");
+
+      return {
+        candidates: entries.map(({ record }) => ({
+          value: record.name,
+          description: `${record.source} on ${record.profile}`,
+        })),
+        directive: 0,
+      };
+    }
+
+    return none;
+  }
 
   if (command.name === "completion" && positionals.length === 0)
     return { candidates: shells.map((shell) => ({ value: shell })), directive: 0 };

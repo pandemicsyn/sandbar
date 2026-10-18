@@ -851,6 +851,8 @@ export const DirectCapabilities = z.strictObject({
     .optional(),
   commands: z.array(z.enum(["argv", "shell"])),
   images: z.array(z.enum(["prepared", "oci"])),
+  /** `images.build()` turns an OCI image into a prepared one on this connection. */
+  imageBuild: z.boolean(),
   network: z.array(z.string()),
   exec: z.boolean(),
   inspect: z.boolean(),

@@ -43,6 +43,8 @@ export function usage(message: string, hint?: string): CliError {
 
 export type Known = {
   sandbox?: string;
+  /** The image record an uncertain `sandbar image build` keeps. */
+  image?: string;
   reference?: SandboxReference | null;
   /** The SDK's operation reference for an uncertain create; `sandbar rm` uses it to recover. */
   recovery?: RecoveryReference;
@@ -130,6 +132,7 @@ const managementExitCodes = new Map([
   ["NOT_FOUND", 3],
   ["UNSUPPORTED", 4],
   ["ADAPTER_NOT_INSTALLED", 4],
+  ["ADAPTER_LOAD_FAILED", 4],
   ["LIMIT_REACHED", 4],
   ["SECRET_TOOL_MISSING", 4],
   ["SECRET_UNAVAILABLE", 5],
