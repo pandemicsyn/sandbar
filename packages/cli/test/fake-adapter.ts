@@ -1,5 +1,6 @@
 import { appendFile } from "node:fs/promises";
 import { bindAdapter, defineAdapter } from "@sandbar-sdk/adapter";
+import { AdapterImage } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake";
 import { z } from "zod";
 
@@ -71,10 +72,32 @@ const builds = process.env.SANDBAR_FAKE_BUILDS;
 
 const building = createFakeAdapter({ url, token, imageBuild: true });
 
+/** The fake session with its simulated image build; SANDBAR_FAKE_BUILDS logs every build. */
+async function buildingSession(host: Parameters<typeof building.connect>[0]["host"]) {
+  const session = await building.connect({ config: {}, credentials: {}, host });
+  const build = session.imageBuild;
+
+  if (!build || !("submit" in build)) throw new Error("The fake must build images");
+
+  return {
+    ...session,
+    imageBuild: {
+      ...build,
+      async submit(
+        input: Parameters<typeof build.submit>[0],
+        ctx: Parameters<typeof build.submit>[1],
+      ) {
+        if (builds) await appendFile(builds, `${input.source.value}\n`);
+
+        return build.submit(input, ctx);
+      },
+    },
+  };
+}
+
 /**
  * The fake adapter with its simulated image build, standing in for build-first providers such as
  * E2B. Each build is a new fake image; a `lost/` reference loses the build and delete responses.
- * SANDBAR_FAKE_BUILDS logs every submitted build.
  */
 export const builder = bindAdapter(
   defineAdapter({
@@ -82,22 +105,47 @@ export const builder = bindAdapter(
     displayName: "Fake test provider that builds images",
     config: z.strictObject({}),
     credentials: z.strictObject({}),
-    async connect({ host }) {
-      const session = await building.connect({ config: {}, credentials: {}, host });
-      const build = session.imageBuild;
+    connect: ({ host }) => buildingSession(host),
+  }),
+  {},
+  {},
+);
 
-      if (!build || !("submit" in build)) throw new Error("The fake must build images");
+/**
+ * A builder whose image delete fails outside the SDK's operation tracking, so the outcome is
+ * unknown and no operation reference exists to observe. Connecting patches this process's SDK.
+ */
+export const unobservableDelete = bindAdapter(
+  defineAdapter({
+    name: "fake",
+    displayName: "Fake test provider whose image deletes cannot be observed",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect({ host }) {
+      AdapterImage.prototype.delete = async () => {
+        throw new Error("Fake image delete failed without an operation reference");
+      };
+
+      return buildingSession(host);
+    },
+  }),
+  {},
+  {},
+);
+
+/** The builder connected to another account, so references saved by `builder` do not match it. */
+export const otherAccount = bindAdapter(
+  defineAdapter({
+    name: "fake",
+    displayName: "Fake test provider in another account",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect({ host }) {
+      const session = await buildingSession(host);
 
       return {
         ...session,
-        imageBuild: {
-          ...build,
-          async submit(input, ctx) {
-            if (builds) await appendFile(builds, `${input.source.value}\n`);
-
-            return build.submit(input, ctx);
-          },
-        },
+        scope: { ...session.scope, authority: { kind: "fixture", id: "other" } },
       };
     },
   }),

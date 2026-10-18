@@ -443,9 +443,10 @@ function deletedOutput(session: Session, record: ImageRecord, result: "deleted" 
 /**
  * Delete the recorded build on the provider, then the record. An uncertain delete keeps the
  * record as `deleting` with its operation reference; running rm again observes that operation
- * and never submits a second delete.
+ * and never submits a second delete. Without `force`, only builds this CLI verifiably created
+ * are deleted.
  */
-async function rmImage(session: Session, args: readonly string[]) {
+async function rmImage(session: Session, args: readonly string[], force: boolean) {
   if (args.length !== 1) throw usage("Expected exactly one image name");
   const store = await session.store();
   const entry = await recoverBuild(session, store, await findImage(store, args[0]!));
@@ -453,14 +454,33 @@ async function rmImage(session: Session, args: readonly string[]) {
   const client = await session.connect(await session.profileNamed(record.profile));
 
   if (record.status === "deleting") {
-    if (record.recovery?.kind !== "image_delete")
-      throw new CliError("OUTCOME_UNKNOWN", `${record.name} has no saved delete to check`);
+    if (record.recovery?.kind !== "image_delete") {
+      // Nothing to observe: return the record to `built` so it is never stuck deleting.
+      const { recovery: _recovery, ...rest } = record;
+      await store.update("image", record.name, { ...rest, status: "built" }, entry.version);
+      throw new CliError(
+        "OUTCOME_UNKNOWN",
+        `${record.name} has no saved delete to check`,
+        `the store keeps ${record.name} as built; check the provider (\`sandbar image ls --remote\`) before running \`sandbar image rm ${record.name}\` again, which sends a new delete`,
+        { image: record.name },
+      );
+    }
+
     let value: unknown;
 
     try {
       value = await (await client.recover(record.recovery)).observe();
     } catch (cause) {
-      if (!(cause instanceof SandbarError) || cause.effect === "none") throw cause;
+      if (!(cause instanceof SandbarError)) throw cause;
+
+      if (cause.effect === "none") {
+        // A definitive answer leaves nothing to observe: keep the build so rm can run again.
+        const { recovery: _recovery, ...rest } = record;
+        await store
+          .update("image", record.name, { ...rest, status: "built" }, entry.version)
+          .catch(() => undefined);
+        throw cause;
+      }
     }
 
     if (!DeleteResult.safeParse(value).success)
@@ -482,6 +502,14 @@ async function rmImage(session: Session, args: readonly string[]) {
       "CONFLICT",
       `${record.name} has no confirmed build to delete`,
       "`sandbar image inspect` checks an uncertain build; `sandbar image forget` drops the record",
+    );
+
+  if (reference.ownership !== "verified-created" && !force)
+    throw new CliError(
+      "FORBIDDEN",
+      `${record.name} was not created by this CLI (ownership ${reference.ownership})`,
+      "pass --force to delete it anyway",
+      { image: record.name },
     );
 
   const capabilities = await client.capabilities();
@@ -521,6 +549,15 @@ async function rmImage(session: Session, args: readonly string[]) {
     if (report.outcome === "rejected") throw cause;
 
     const recovery = report.known?.recovery;
+
+    // Without an operation reference there is nothing to observe, so the record stays `built`.
+    if (!recovery)
+      throw new CliError(
+        "OUTCOME_UNKNOWN",
+        report.message,
+        `the store keeps ${record.name} as built and there is no saved delete to check; check the provider (\`sandbar image ls --remote\`) before running \`sandbar image rm ${record.name}\` again, which sends a new delete`,
+        { image: record.name },
+      );
     let kept = `the store keeps ${record.name}; run \`sandbar image rm ${record.name}\` again to check`;
 
     try {
@@ -627,6 +664,9 @@ export async function imageCommand(session: Session, flags: Flags): Promise<numb
   if (flags.bool("remote") && action !== "ls")
     throw usage("--remote only applies to `sandbar image ls`");
 
+  if (flags.bool("force") && action !== "rm")
+    throw usage("--force only applies to `sandbar image rm`");
+
   switch (action) {
     case "build":
       return buildCommand(session, flags, args);
@@ -637,7 +677,7 @@ export async function imageCommand(session: Session, flags: Flags): Promise<numb
     case "inspect":
       return inspectImage(session, args);
     case "rm":
-      return rmImage(session, args);
+      return rmImage(session, args, flags.bool("force"));
     case "forget":
       return forgetImage(session, args);
     default:

@@ -235,7 +235,7 @@ sandbar run --network internet -- curl -sI https://example.com
 Build OCI images for providers that need it, and list, delete or forget the builds.
 
 ```sh
-sandbar image build <oci-ref> [--name <name>] [--refresh] | ls [--remote] | inspect <name> | rm <name> | forget <name>
+sandbar image build <oci-ref> [--name <name>] [--refresh] | ls [--remote] | inspect <name> | rm <name> [--force] | forget <name>
 ```
 
 | Flag            | Description                                                             |
@@ -243,6 +243,7 @@ sandbar image build <oci-ref> [--name <name>] [--refresh] | ls [--remote] | insp
 | `--name <name>` | Record name for a build (default: from the reference, like python-3-12) |
 | `--refresh`     | Build again even if this reference is recorded                          |
 | `--remote`      | List the images on the provider for this profile, not the local records |
+| `--force`       | Delete a recorded image this CLI did not verifiably create              |
 
 Examples:
 

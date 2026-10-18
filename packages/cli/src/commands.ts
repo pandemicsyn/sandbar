@@ -96,6 +96,49 @@ function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRe
 
 const EnvName = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+const escapes = new Map([
+  ["n", "\n"],
+  ['"', '"'],
+  ["\\", "\\"],
+]);
+
+/**
+ * One `--env-file` value: unquoted text up to a ` #` comment, trimmed; `"..."` with `\n`, `\"`
+ * and `\\` escapes; or literal `'...'`. A comment may follow a closing quote. The error names
+ * the problem only, since the value may be a secret.
+ */
+function envFileValue(text: string): { value: string } | { error: string } {
+  const value = text.trimStart();
+  const quote = value[0];
+
+  if (quote !== '"' && quote !== "'") return { value: text.replace(/\s#.*$/s, "").trim() };
+
+  let parsed = "";
+  let end = -1;
+
+  for (let at = 1; at < value.length; at++) {
+    const char = value[at]!;
+
+    if (char === quote) {
+      end = at;
+      break;
+    }
+
+    if (quote === '"' && char === "\\" && at + 1 < value.length) {
+      const next = value[++at]!;
+      parsed += escapes.get(next) ?? `\\${next}`;
+    } else parsed += char;
+  }
+
+  if (end < 0)
+    return { error: "has an unterminated quoted value; multi-line values are not supported" };
+
+  if (!/^\s*(#.*)?$/s.test(value.slice(end + 1)))
+    return { error: "has text after the closing quote" };
+
+  return { value: parsed };
+}
+
 /**
  * `--env-file` lines, then `--env` flags (later wins). `--env NAME` copies NAME from this
  * process so a secret stays out of shell history. Values may be secrets: messages name at
@@ -124,9 +167,10 @@ async function envFlags(session: Session, flags: Flags): Promise<Record<string, 
 
       if (!EnvName.test(name))
         throw usage(`--env-file ${file}:${index + 1} must be NAME=VALUE with a valid NAME`);
-      const value = assignment.slice(split + 1).trim();
-      const quoted = /^(["'])(.*)\1$/s.exec(value);
-      env[name] = quoted ? quoted[2]! : value;
+      const parsed = envFileValue(assignment.slice(split + 1));
+
+      if ("error" in parsed) throw usage(`--env-file ${file}:${index + 1} ${parsed.error}`);
+      env[name] = parsed.value;
     }
   }
 
@@ -607,7 +651,7 @@ export async function adoptCommand(session: Session, flags: Flags): Promise<numb
     provider: profile.provider,
     createdAt: new Date().toISOString(),
     labels: {},
-    reference: listed.reference,
+    reference: box.reference ?? listed.reference,
     adopted: true,
   };
 

@@ -269,7 +269,7 @@ export const commands: readonly CommandSpec[] = [
     name: "image",
     summary: "Build OCI images for providers that need it, and list, delete or forget the builds",
     usage:
-      "sandbar image build <oci-ref> [--name <name>] [--refresh] | ls [--remote] | inspect <name> | rm <name> | forget <name>",
+      "sandbar image build <oci-ref> [--name <name>] [--refresh] | ls [--remote] | inspect <name> | rm <name> [--force] | forget <name>",
     flags: {
       name: {
         type: "string",
@@ -280,6 +280,10 @@ export const commands: readonly CommandSpec[] = [
       remote: {
         type: "boolean",
         description: "List the images on the provider for this profile, not the local records",
+      },
+      force: {
+        type: "boolean",
+        description: "Delete a recorded image this CLI did not verifiably create",
       },
     },
     passthrough: false,
