@@ -49,7 +49,7 @@ With `--json` (or `SANDBAR_JSON=1`) stdout holds exactly one document: `{"ok":tr
 | 1 | other failure (including a taken `--name` or an existing `cp --no-clobber` target) |
 | 2 | usage error |
 | 3 | not found |
-| 4 | unsupported, adapter or password-manager CLI not installed, or `limits.maxSandboxes` reached |
+| 4 | unsupported, adapter missing (`ADAPTER_NOT_INSTALLED`) or failing to load (`ADAPTER_LOAD_FAILED`), password-manager CLI not installed, or `limits.maxSandboxes` reached |
 | 5 | authentication or permission, including a password-manager secret that cannot be read |
 | 6 | outcome unknown: an effect may have happened, inspect before retrying |
 | 7 | retryable before any effect (rate limit, capacity, unavailable) |
@@ -125,3 +125,5 @@ Tests run the real CLI as a subprocess against the fake provider; they make no p
 ```sh
 bun test packages/cli
 ```
+
+Inside this repository the official adapters are development dependencies of the CLI, so `bun packages/cli/src/main.ts` finds them from any directory without an adapters install.

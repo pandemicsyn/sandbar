@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Json } from "@sandbar-sdk/adapter";
 import { startFakeProviderServer } from "@sandbar/provider-fake/server";
 
@@ -117,6 +117,22 @@ function envelope(result: Result) {
   expect(lines).toHaveLength(1);
 
   return JSON.parse(lines[0]!);
+}
+
+/** A stand-in adapter package `@acme/sandbar-fake` that re-exports the test fixture. */
+async function adapterPackage(
+  root: string,
+  exports: Json,
+  source = `export * from ${JSON.stringify(fixture)};\n`,
+  entry = "index.js",
+) {
+  const directory = join(root, "@acme", "sandbar-fake");
+  await mkdir(join(directory, dirname(entry)), { recursive: true });
+  await writeFile(
+    join(directory, "package.json"),
+    JSON.stringify({ name: "@acme/sandbar-fake", type: "module", exports }),
+  );
+  await writeFile(join(directory, entry), source);
 }
 
 async function storeNames() {
@@ -431,24 +447,43 @@ describe("sandbar CLI against the fake provider", () => {
     expect((await cli(["--help"])).stdout).toContain("Quick start");
   });
 
-  test("providers finds adapters installed in ~/.config/sandbar/adapters", async () => {
-    const before = envelope(await cli(["providers", "--json"]));
-
-    expect(before.data.providers.find((row: { id: string }) => row.id === "e2b")).toMatchObject({
-      installed: false,
-      missingEnv: ["E2B_API_KEY"],
+  test("adapters load from ~/.config/sandbar/adapters, including nested conditional exports", async () => {
+    await writeConfig({
+      default: "acme",
+      profiles: { acme: { module: "@acme/sandbar-fake", export: "fake" } },
     });
 
-    const scope = join(dir, ".config", "sandbar", "adapters", "node_modules", "@sandbar-sdk");
-    await mkdir(scope, { recursive: true });
-    await symlink(join(import.meta.dir, "..", "..", "providers", "e2b"), join(scope, "e2b"));
+    const missing = await cli(["doctor", "--json"]);
 
-    const after = envelope(await cli(["providers", "--json"], { E2B_API_KEY: "test-key" }));
+    expect(missing.code).toBe(4);
+    expect(envelope(missing).error.code).toBe("ADAPTER_NOT_INSTALLED");
 
-    expect(after.data.providers.find((row: { id: string }) => row.id === "e2b")).toMatchObject({
-      installed: true,
-      missingEnv: [],
+    await adapterPackage(
+      join(dir, ".config", "sandbar", "adapters", "node_modules"),
+      { ".": { node: { import: { types: "./lib/entry.d.ts", default: "./lib/entry.js" } } } },
+      undefined,
+      "lib/entry.js",
+    );
+
+    expect((await cli(["doctor", "--json"])).code).toBe(0);
+  });
+
+  test("an installed adapter that fails to load is not reported as missing", async () => {
+    await writeConfig({
+      default: "acme",
+      profiles: { acme: { module: "@acme/sandbar-fake", export: "fake" } },
     });
+    await adapterPackage(
+      join(dir, ".config", "sandbar", "adapters", "node_modules"),
+      "./index.js",
+      'import "@acme/not-installed-dependency";\n',
+    );
+
+    const result = await cli(["doctor", "--json"]);
+
+    expect(result.code).toBe(4);
+    expect(envelope(result).error).toMatchObject({ code: "ADAPTER_LOAD_FAILED" });
+    expect(envelope(result).error.message).toContain("@acme/not-installed-dependency");
   });
 
   test("SANDBAR_JSON=1 switches every command to JSON", async () => {
@@ -590,17 +625,14 @@ describe("sandbar CLI against the fake provider", () => {
   });
 
   test("project node_modules supply adapters only when opted in", async () => {
-    const scope = join(dir, "node_modules", "@sandbar-sdk");
-    await mkdir(scope, { recursive: true });
-    await symlink(join(import.meta.dir, "..", "..", "providers", "e2b"), join(scope, "e2b"));
+    await writeConfig({
+      default: "acme",
+      profiles: { acme: { module: "@acme/sandbar-fake", export: "fake" } },
+    });
+    await adapterPackage(join(dir, "node_modules"), "./index.js");
 
-    const installed = async (env: Record<string, string>) =>
-      envelope(await cli(["providers", "--json"], env)).data.providers.find(
-        (row: { id: string }) => row.id === "e2b",
-      ).installed;
-
-    expect(await installed({})).toBe(false);
-    expect(await installed({ SANDBAR_PROJECT_ADAPTERS: "1" })).toBe(true);
+    expect((await cli(["doctor", "--json"])).code).toBe(4);
+    expect((await cli(["doctor", "--json"], { SANDBAR_PROJECT_ADAPTERS: "1" })).code).toBe(0);
   });
 
   describe("password-manager credentials", () => {

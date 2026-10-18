@@ -1,6 +1,6 @@
 import { access, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   bindAdapter,
   type AdapterDefinition,
@@ -241,20 +241,9 @@ function fromProfile(
   };
 }
 
-const ConditionalEntry = z.object({
-  import: z.string().optional(),
-  default: z.string().optional(),
-});
-
 const PackageManifest = z.object({
   main: z.string().optional(),
-  exports: z
-    .union([
-      z.string(),
-      z.object({ ".": z.union([z.string(), ConditionalEntry]).optional() }),
-      ConditionalEntry,
-    ])
-    .optional(),
+  exports: z.json().optional(),
 });
 
 async function exists(path: string): Promise<boolean> {
@@ -267,23 +256,56 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-function rootEntry(manifest: z.infer<typeof PackageManifest>): string {
-  const field = manifest.exports;
-  const plain = z.string().safeParse(field);
+/** Conditions Node applies to an ESM import, matched in the manifest's own key order. */
+const importConditions = new Set(["import", "node", "default"]);
+
+/** Node's export-target resolution: a string, the first resolvable array item, or a condition map. */
+function exportTarget(value: z.infer<ReturnType<typeof z.json>>): string | null {
+  const plain = z.string().safeParse(value);
 
   if (plain.success) return plain.data;
-  const dotted = z.object({ ".": z.union([z.string(), ConditionalEntry]) }).safeParse(field);
-  const target = dotted.success ? dotted.data["."] : field;
-  const direct = z.string().safeParse(target);
 
-  if (direct.success) return direct.data;
-  const conditional = ConditionalEntry.safeParse(target);
+  const list = z.array(z.json()).safeParse(value);
 
-  return (
-    (conditional.success && (conditional.data.import ?? conditional.data.default)) ||
-    manifest.main ||
-    "index.js"
-  );
+  if (list.success) {
+    for (const item of list.data) {
+      const target = exportTarget(item);
+
+      if (target) return target;
+    }
+
+    return null;
+  }
+
+  const conditions = z.record(z.string(), z.json()).safeParse(value);
+
+  if (!conditions.success) return null;
+
+  for (const [condition, nested] of Object.entries(conditions.data)) {
+    if (!importConditions.has(condition)) continue;
+
+    const target = exportTarget(nested);
+
+    if (target) return target;
+  }
+
+  return null;
+}
+
+function rootEntry(manifest: z.infer<typeof PackageManifest>): string {
+  const exports = manifest.exports;
+
+  if (exports === undefined || exports === null) return manifest.main || "index.js";
+
+  // An exports map keyed by subpath names the package root as ".".
+  const subpaths = z.record(z.string(), z.json()).safeParse(exports);
+
+  const root =
+    subpaths.success && Object.keys(subpaths.data).some((key) => key.startsWith("."))
+      ? subpaths.data["."]
+      : exports;
+
+  return (root === undefined ? null : exportTarget(root)) ?? manifest.main ?? "index.js";
 }
 
 async function entryFor(packageDir: string): Promise<string | null> {
@@ -353,6 +375,13 @@ const AdapterExport = z.custom<
   AdapterDefinition<z.ZodType, z.ZodType, RuntimeSession> | BoundAdapter
 >(isAdapter);
 
+/** Whether a failed import means the adapter itself is absent, rather than broken. */
+async function adapterMissing(target: string, spec: string, message: string): Promise<boolean> {
+  if (target.startsWith("file:")) return !(await exists(fileURLToPath(target)));
+
+  return message.includes(`'${spec}'`) || message.includes(`"${spec}"`);
+}
+
 export async function loadAdapter(
   profile: ResolvedProfile,
   cwd: string,
@@ -366,14 +395,23 @@ export async function loadAdapter(
   try {
     parsed = schema.safeParse(await import(target));
   } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
     const official = descriptor(profile.provider);
 
+    if (await adapterMissing(target, profile.module, message))
+      throw new CliError(
+        "ADAPTER_NOT_INSTALLED",
+        `Cannot load adapter ${profile.module} for profile ${profile.name}: ${message}`,
+        official
+          ? `install it into ${join(configHome(env), "adapters")} (cd there && npm install ${official.module}); project installs need adapters.searchProject or SANDBAR_PROJECT_ADAPTERS=1`
+          : "check the profile's module path",
+      );
+
+    // The adapter was found, so the failure came from inside it or one of its dependencies.
     throw new CliError(
-      "ADAPTER_NOT_INSTALLED",
-      `Cannot load adapter ${profile.module} for profile ${profile.name}: ${cause instanceof Error ? cause.message : cause}`,
-      official
-        ? `install it into ${join(configHome(env), "adapters")} (cd there && npm install ${official.module}); project installs need adapters.searchProject or SANDBAR_PROJECT_ADAPTERS=1`
-        : "check the profile's module path",
+      "ADAPTER_LOAD_FAILED",
+      `Adapter ${profile.module} for profile ${profile.name} is installed but failed to load: ${message}`,
+      "reinstall the adapter and its dependencies; the message above comes from the adapter package",
     );
   }
 

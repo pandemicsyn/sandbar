@@ -314,7 +314,7 @@ export const exitCodes = [
   {
     code: 4,
     meaning:
-      "unsupported by this provider or profile, adapter or password-manager CLI not installed, or store limit reached",
+      "unsupported by this provider or profile, adapter missing or broken, password-manager CLI not installed, or store limit reached",
   },
   {
     code: 5,
