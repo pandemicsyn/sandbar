@@ -186,7 +186,11 @@ try {
     registryFile,
     JSON.stringify({
       packages: { [first.name]: first.integrity },
-      tags: { [first.name]: { latest: "0.1.1" } },
+      tags: {
+        // Bootstrap placeholders hold latest until the first real release.
+        ...Object.fromEntries(qualified.packages.map((item) => [item.name, { latest: "0.0.0" }])),
+        [first.name]: { latest: "0.1.1" },
+      },
     }),
   );
   writeFileSync(
@@ -285,6 +289,27 @@ if (args[1] === "view") {
   )
     throw new Error("GitHub inspection failure allowed npm publication");
 
+  const last = qualified.packages.at(-1);
+  const bootstrapped = JSON.parse(unpublishedRegistry);
+
+  delete bootstrapped.tags[last.name];
+  writeFileSync(registryFile, JSON.stringify(bootstrapped));
+  rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
+
+  const unbootstrapped = spawnSync("bun", ["scripts/release.mjs", "publish"], {
+    cwd: temporary,
+    env: { ...process.env, ...publishEnv },
+    encoding: "utf8",
+  });
+
+  if (
+    unbootstrapped.status === 0 ||
+    !unbootstrapped.stderr.includes(`${last.name} not on npm yet; nothing was published`) ||
+    readFileSync(registryFile, "utf8") !== JSON.stringify(bootstrapped)
+  )
+    throw new Error(`Package missing from npm allowed a partial publish: ${unbootstrapped.stderr}`);
+
+  writeFileSync(registryFile, unpublishedRegistry);
   rmSync(publishEnv.RELEASE_ARTIFACTS, { recursive: true, force: true });
   run("bun", ["scripts/release.mjs", "publish"], temporary, publishEnv);
   const published = JSON.parse(readFileSync(registryFile, "utf8"));

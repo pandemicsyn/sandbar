@@ -366,6 +366,15 @@ const state = packed.map((item) => ({
   tags: registryTags(item.manifest.name),
 }));
 
+// Trusted publishing only works for packages that already exist on npm, so a package missing
+// from the registry would fail mid-batch after earlier packages went live.
+const missing = state.filter(({ tags }) => !Object.keys(tags).length);
+
+if (missing.length)
+  throw new Error(
+    `${missing.map(({ item }) => item.manifest.name).join(", ")} not on npm yet; nothing was published. Run \`bun run release:bootstrap publish\` and \`bun run release:bootstrap trust <name>\` first (RELEASE.md, npm bootstrap)`,
+  );
+
 for (const { item, existing } of state) {
   if (existing && existing !== item.integrity)
     throw new Error(
