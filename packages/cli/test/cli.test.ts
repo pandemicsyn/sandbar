@@ -672,4 +672,48 @@ describe("sandbar CLI against the fake provider", () => {
       );
     });
   });
+
+  describe("shell completion", () => {
+    const values = async (...words: string[]) => {
+      const lines = (await cli(["__complete", "--", ...words])).stdout.trim().split("\n");
+
+      return {
+        values: lines.slice(0, -1).map((line) => line.split("\t")[0]),
+        directive: lines.at(-1),
+      };
+    };
+
+    test("completes commands, flags and provider ids", async () => {
+      expect((await values("")).values).toContain("exec");
+      expect((await values("exec", "web", "--ti")).values).toContain("--timeout");
+      expect((await values("--provider", "")).values).toEqual([
+        "daytona",
+        "e2b",
+        "boxd",
+        "vercel",
+        "modal",
+      ]);
+      expect((await values("--config", "")).directive).toBe(":2");
+    });
+
+    test("completes sandbox names from the store without calling the provider", async () => {
+      await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
+      await control("/_test/reset", {});
+
+      expect((await values("exec", "")).values).toEqual(["web"]);
+      expect((await values("exec", "web", "")).values).toEqual([]);
+      expect(await values("cp", "")).toEqual({ values: ["web:"], directive: ":3" });
+      expect((await values("exec", "web", "--", "")).directive).toBe(":2");
+    });
+
+    test("profile names come from sandbar.json", async () => {
+      expect((await values("--profile", "")).values).toEqual(["fake"]);
+    });
+
+    test("prints a script for each shell", async () => {
+      for (const shell of ["zsh", "bash", "fish"])
+        expect((await cli(["completion", shell])).stdout).toContain("sandbar __complete");
+      expect((await cli(["completion", "tcsh"])).code).toBe(2);
+    });
+  });
 });

@@ -35,6 +35,7 @@ The adapter package must be installed where the CLI can find it: in `~/.config/s
 | `providers` | Official providers, install state and missing credentials |
 | `schema` | Machine-readable description of every command, flag and exit code |
 | `skill [install [--project]]` | Print the agent skill for this CLI, or install it for your coding agents |
+| `completion <zsh\|bash\|fish>` | Print a shell completion script |
 
 A `<sandbox>` is a store name, a native id held in the store, or `@file.json` holding a saved sandbox reference.
 
@@ -57,6 +58,16 @@ With `--json` (or `SANDBAR_JSON=1`) stdout holds exactly one document: `{"ok":tr
 `exec`, `sh` and `run` exit with the remote command's exit code. Their own failures always use 125, so they never look like a command's result; providers report deadlines differently, so there is no separate deadline code. A missing exit status is 125 with `OUTCOME_UNKNOWN` and the captured output in `error.known.exec`, never 0. If `run` cannot destroy its sandbox it exits 125 with `CLEANUP_FAILED`, and the command's result is inside that one error document.
 
 SIGINT, SIGTERM and SIGHUP all stop local waiting and let `run` clean up; a second signal exits at once.
+
+## Shell completion
+
+```sh
+source <(sandbar completion zsh)    # add to ~/.zshrc
+source <(sandbar completion bash)   # add to ~/.bashrc
+sandbar completion fish > ~/.config/fish/completions/sandbar.fish
+```
+
+Completion covers commands, flags, `--provider` ids, `--profile` names from `sandbar.json`, and sandbox names for `exec`, `sh`, `inspect`, `rm`, `cp` and `cat`. Sandbox names come from the local store, so pressing tab never calls a provider.
 
 ## Agent skill
 

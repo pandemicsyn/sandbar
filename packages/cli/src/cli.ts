@@ -23,6 +23,7 @@ import {
 } from "./output";
 import { Session, type Context } from "./session";
 import { skillCommand } from "./skill";
+import { complete, completionCommand, formatCompletion } from "./completion";
 import type { Env } from "./config";
 
 type FlagSpec = {
@@ -287,6 +288,20 @@ export const commands: readonly CommandSpec[] = [
     examples: ["sandbar skill", "sandbar skill install", "sandbar skill install --project"],
     run: skillCommand,
   },
+  {
+    name: "completion",
+    summary: "Print a shell completion script for zsh, bash or fish",
+    usage: "sandbar completion <zsh|bash|fish>",
+    flags: {},
+    passthrough: false,
+    remoteExit: false,
+    examples: [
+      "source <(sandbar completion zsh)   # in ~/.zshrc",
+      "source <(sandbar completion bash)  # in ~/.bashrc",
+      "sandbar completion fish > ~/.config/fish/completions/sandbar.fish",
+    ],
+    run: completionCommand,
+  },
 ];
 
 export const exitCodes = [
@@ -402,8 +417,36 @@ export type Io = {
   readStdin: () => Promise<Uint8Array>;
 };
 
+/** The shell scripts from `sandbar completion` call `sandbar __complete -- <words>`. */
+async function completeWords(words: readonly string[], io: Io): Promise<number> {
+  const flagValue = (name: string) => {
+    const index = words.indexOf(`--${name}`);
+
+    return index === -1 ? undefined : words[index + 1];
+  };
+
+  const session = new Session({
+    env: io.env,
+    cwd: io.cwd,
+    out: new Output(false, io.streams),
+    signal: io.signal,
+    readStdin: io.readStdin,
+    flags: { json: false, config: flagValue("config"), stateDir: flagValue("state-dir") },
+  });
+
+  try {
+    io.streams.stdout(formatCompletion(await complete(words, commands, globalFlags, session)));
+  } catch {
+    io.streams.stdout(":0\n");
+  }
+
+  return 0;
+}
+
 /** Run one CLI invocation and return its exit code. */
 export async function main(argv: readonly string[], io: Io): Promise<number> {
+  if (argv[0] === "__complete") return completeWords(argv.slice(argv[1] === "--" ? 2 : 1), io);
+
   const separator = argv.indexOf("--");
   const head = separator === -1 ? argv : argv.slice(0, separator);
   const rest = separator === -1 ? null : argv.slice(separator + 1);
