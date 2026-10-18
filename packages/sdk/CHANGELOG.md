@@ -1,5 +1,12 @@
 # sandbar-sdk
 
+## 0.5.0
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @sandbar-sdk/adapter@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
