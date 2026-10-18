@@ -1,5 +1,18 @@
 # @sandbar-sdk/cli
 
+## 0.4.0
+
+### Minor Changes
+
+- [#114](https://github.com/pandemicsyn/sandbar/pull/114) [`3a0e3df`](https://github.com/pandemicsyn/sandbar/commit/3a0e3dff3b5c5ec55955efe0da4497cf7b7efcbb) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Add `sandbar image build`, `image ls`, `image inspect` and `image forget`. On providers that build images first (E2B, Daytona), `--image` uses the build recorded for that reference and profile and fails before creating anything when there is none; `--build` or `images.autoBuild` builds it on demand.
+
+### Patch Changes
+
+- [#114](https://github.com/pandemicsyn/sandbar/pull/114) [`bee2b53`](https://github.com/pandemicsyn/sandbar/commit/bee2b5337aa87acc387db7ba542a58af63ca9bd5) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Report an installed adapter that fails to load as `ADAPTER_LOAD_FAILED` (exit 4) with the adapter's own error, instead of calling it not installed, and resolve adapter packages whose `exports` use nested conditions.
+- Updated dependencies [[`3a0e3df`](https://github.com/pandemicsyn/sandbar/commit/3a0e3dff3b5c5ec55955efe0da4497cf7b7efcbb)]:
+  - sandbar-sdk@0.4.0
+  - @sandbar-sdk/adapter@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
