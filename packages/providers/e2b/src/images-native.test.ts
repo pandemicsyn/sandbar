@@ -110,8 +110,11 @@ function fixture() {
         return {
           items: page.map((value) => ({
             templateId: value.templateId,
-            buildId: value.builds[0]?.buildId ?? "none",
-            buildStatus: value.builds[0]?.status ?? "error",
+            // Like the native listing: the latest ready build, or the nil UUID when none is ready.
+            buildId:
+              [...value.builds].reverse().find((build) => build.status === "ready")?.buildId ??
+              "00000000-0000-0000-0000-000000000000",
+            buildStatus: value.builds[value.builds.length - 1]?.status ?? "error",
             names: [...value.names, ...(value.aliases ?? [])],
           })),
           nextCursor: start + limit < all.length ? String(start + limit) : undefined,
@@ -201,6 +204,26 @@ test("E2B builds a template image and deletes it with one native DELETE", async 
     expect(await image.delete()).toEqual({ deleted: true, reference: built.reference });
     expect(f.calls).toMatchObject({ build: 1, deleteTemplate: 1 });
     await expect(image.inspect()).rejects.toMatchObject({ code: "NOT_FOUND" });
+  } finally {
+    await client.close();
+  }
+});
+
+test("a template with no ready build lists without a build generation and still inspects", async () => {
+  const f = fixture();
+  const client = await f.connect();
+
+  try {
+    const built = await client.images.build({ source: { kind: "oci", value: "node:22" } });
+    f.templates.get("built_template")!.builds = [{ buildId: "build_pending", status: "building" }];
+
+    const page = await client.images.list({ limit: 10 });
+    expect(page.items).toMatchObject([{ state: "creating" }]);
+    expect(page.items[0]!.reference.generation).toBeUndefined();
+    expect(page.items[0]!.reference.nativeId).toBe(built.reference.nativeId);
+
+    const listed = await client.images.get(page.items[0]!.reference);
+    expect(await listed.inspect()).toMatchObject({ state: "creating" });
   } finally {
     await client.close();
   }

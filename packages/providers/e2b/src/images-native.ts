@@ -248,6 +248,8 @@ export function e2bImages(input: { scope: Scope; transport: E2BTransport; teamId
     return ctx.reject("UNAVAILABLE", "Image deletion cancelled before dispatch");
   }
 
+  const NIL_BUILD = "00000000-0000-0000-0000-000000000000";
+
   const fields: Fields = {
     imageInspect: (ref) => inspect(ref),
     imageListCoverage: "provider-scope",
@@ -261,19 +263,24 @@ export function e2bImages(input: { scope: Scope; transport: E2BTransport; teamId
       return {
         items: values.items
           .filter((value) => templateId.test(value.templateId))
-          .map((value) => ({
-            reference: reference(value.templateId, "unknown", value.buildId),
-            state:
-              value.buildStatus === "ready"
-                ? "ready"
+          .map((value) => {
+            // The listing names the latest ready build, or the nil UUID when none is ready yet;
+            // buildStatus describes the latest build of any kind.
+            const ready = value.buildId && value.buildId !== NIL_BUILD ? value.buildId : undefined;
+
+            return {
+              reference: reference(value.templateId, "unknown", ready),
+              state: ready
+                ? ("ready" as const)
                 : value.buildStatus === "error"
-                  ? "unknown"
-                  : "creating",
-            createdAt: null,
-            source: null,
-            visibility: "unknown",
-            nativeDependencies: null,
-          })),
+                  ? ("unknown" as const)
+                  : ("creating" as const),
+              createdAt: null,
+              source: null,
+              visibility: "unknown",
+              nativeDependencies: null,
+            };
+          }),
         nextCursor: values.nextCursor,
         coverage: "provider-scope",
       };

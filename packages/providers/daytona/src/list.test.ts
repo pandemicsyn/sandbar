@@ -33,7 +33,7 @@ function native(id: string, overrides: Partial<NativeFixture> = {}): NativeFixtu
   };
 }
 
-function fixture(sandboxes: NativeFixture[]) {
+function fixture(sandboxes: NativeFixture[], listOmitsState = false) {
   const calls: string[] = [];
 
   const fetcher: typeof fetch = Object.assign(
@@ -71,7 +71,12 @@ function fixture(sandboxes: NativeFixture[]) {
       if (url.pathname === "/api/sandbox" && method === "GET") {
         const offset = Number(url.searchParams.get("cursor") ?? "0");
         const limit = Number(url.searchParams.get("limit"));
-        const items = sandboxes.slice(offset, offset + limit);
+
+        // Daytona's list item makes state optional; the detail read always carries it.
+        const items = sandboxes
+          .slice(offset, offset + limit)
+          .map(({ state, ...rest }) => (listOmitsState ? rest : { ...rest, state }));
+
         const next = offset + limit < sandboxes.length ? String(offset + limit) : null;
 
         return Response.json({ items, nextCursor: next });
@@ -141,6 +146,18 @@ test("Daytona lists only verified Sandbar-labelled sandboxes with reopenable ref
     const reopened = await client.sandboxes.get(first.items[0]!.reference!);
     expect(reopened.id).toBe("labelled");
     expect((await client.sandboxes.get(second.items[2]!.reference!)).id).toBe(created.id);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona lists a sandbox whose list item has no state, using the detail read", async () => {
+  const f = fixture([native("labelled")], true);
+  const client = await f.connect();
+
+  try {
+    const page = await client.sandboxes.list({ limit: 10 });
+    expect(page.items).toEqual([expect.objectContaining({ id: "labelled", state: "running" })]);
   } finally {
     await client.close();
   }

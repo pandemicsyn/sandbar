@@ -91,7 +91,10 @@ const NativeSandbox = z.object({
     .optional(),
 });
 
-const ListedSandbox = NativeSandbox.omit({ networkBlockAll: true, public: true });
+// List items may omit state; every caller re-reads the sandbox detail before relying on it.
+const ListedSandbox = NativeSandbox.omit({ networkBlockAll: true, public: true }).extend({
+  state: z.string().optional(),
+});
 
 const ListResponse = z.object({
   items: z.array(ListedSandbox),

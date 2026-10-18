@@ -529,9 +529,9 @@ export function daytonaState(input: {
       state:
         v.state === "active" && v.regionIds?.includes(input.target)
           ? "ready"
-          : ["building", "pending", "pulling"].includes(v.state)
+          : ["building", "pending", "pulling", "snapshotting"].includes(v.state)
             ? "creating"
-            : ["removing", "deleting", "pending_delete"].includes(v.state)
+            : v.state === "removing"
               ? "deleting"
               : "unknown",
       createdAt: Number.isFinite(created) ? new Date(created).toISOString() : null,
