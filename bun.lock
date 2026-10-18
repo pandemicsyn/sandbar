@@ -33,6 +33,7 @@
       "devDependencies": {
         "@astrojs/check": "0.9.6",
         "@sandbar-sdk/adapter": "workspace:*",
+        "@sandbar-sdk/boat": "workspace:*",
         "@sandbar-sdk/boxd": "workspace:*",
         "@sandbar-sdk/daytona": "workspace:*",
         "@sandbar-sdk/e2b": "workspace:*",
@@ -72,6 +73,7 @@
         "zod": "4.6.5",
       },
       "devDependencies": {
+        "@sandbar-sdk/boat": "workspace:*",
         "@sandbar-sdk/boxd": "workspace:*",
         "@sandbar-sdk/daytona": "workspace:*",
         "@sandbar-sdk/e2b": "workspace:*",
@@ -86,6 +88,18 @@
       "dependencies": {
         "@sandbar-sdk/adapter": "workspace:*",
         "zod": "4.6.5",
+      },
+    },
+    "packages/providers/boat": {
+      "name": "@sandbar-sdk/boat",
+      "version": "0.3.0",
+      "dependencies": {
+        "@boatdev/sdk": "1.9.9",
+        "@sandbar-sdk/adapter": "workspace:*",
+        "zod": "4.6.5",
+      },
+      "devDependencies": {
+        "sandbar-sdk": "workspace:*",
       },
     },
     "packages/providers/boxd": {
@@ -184,6 +198,7 @@
         "zod": "4.6.5",
       },
       "devDependencies": {
+        "@sandbar-sdk/boat": "workspace:*",
         "@sandbar-sdk/boxd": "workspace:*",
         "@sandbar-sdk/daytona": "workspace:*",
         "@sandbar-sdk/e2b": "workspace:*",
@@ -245,6 +260,8 @@
     "@babel/parser": ["@babel/parser@7.29.9", "", { "dependencies": { "@babel/types": "^7.29.8" }, "bin": "./bin/babel-parser.js" }, "sha512-CjXrNHTnvqBVqHgdBysY3vk2T8tpJHb5/RMeHJBTyVa9xgugCB0CJTx/3oO8RV2QRQP391RWpB7D6hLjm8V9uA=="],
 
     "@babel/types": ["@babel/types@7.29.8", "", { "dependencies": { "@babel/helper-string-parser": "^7.29.7", "@babel/helper-validator-identifier": "^7.29.7" } }, "sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg=="],
+
+    "@boatdev/sdk": ["@boatdev/sdk@1.9.9", "", {}, "sha512-VsemzYh6sfLA+XFH5To22rGfwL+rXVy6TlXZ0Zi2bAheh6Iw8c1vdNWdmQxOHV/lSd5eVia3iDx+Cve4Lmlf6Q=="],
 
     "@boxd-sh/sdk": ["@boxd-sh/sdk@0.2.15", "", { "dependencies": { "@bufbuild/protobuf": "^2.10.2", "@grpc/grpc-js": "^1.12.0" } }, "sha512-wAYx+oXlOmHH856yzQY+oodBbek6+Di/jiOuCg4GPIJoA96Nbl+Bi8YuELA3L8pHwKqULpFf5fLUvOaE9eJIPA=="],
 
@@ -746,6 +763,8 @@
 
     "@sandbar-sdk/adapter": ["@sandbar-sdk/adapter@workspace:packages/adapter"],
 
+    "@sandbar-sdk/boat": ["@sandbar-sdk/boat@workspace:packages/providers/boat"],
+
     "@sandbar-sdk/boxd": ["@sandbar-sdk/boxd@workspace:packages/providers/boxd"],
 
     "@sandbar-sdk/cli": ["@sandbar-sdk/cli@workspace:packages/cli"],
@@ -1125,8 +1144,6 @@
     "is-hexadecimal": ["is-hexadecimal@2.0.1", "", {}, "sha512-DgZQp241c8oO6cA1SbTEWiXeoxV42vlcJxgH+B3hi1AiqqKruZR3ZGF8In3fj4+/y/7rHvlOZLZtgJ/4ttYGZg=="],
 
     "is-plain-obj": ["is-plain-obj@4.1.0", "", {}, "sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg=="],
-
-    "jiti": ["jiti@2.7.0", "", { "bin": { "jiti": "lib/jiti-cli.mjs" } }, "sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ=="],
 
     "jju": ["jju@1.4.0", "", {}, "sha512-8wb9Yw966OSxApiCt0K3yNJL8pnNeIv+OEq2YMidz4FKP6nonSRoOXc80iXY4JaN2FC11B9qsNmDsm+ZOfMROA=="],
 

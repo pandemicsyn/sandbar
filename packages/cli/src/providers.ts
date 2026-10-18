@@ -66,6 +66,17 @@ export const providers: readonly ProviderDescriptor[] = [
     },
   },
   {
+    id: "boat",
+    module: "@sandbar-sdk/boat",
+    export: "boatAdapter",
+    experimental: true,
+    credentials: { apiKey: "BOAT_API_KEY" },
+    config: {
+      // Boat sandboxes always have outbound internet, so the adapter requires choosing it.
+      network: { env: "BOAT_NETWORK", required: true },
+    },
+  },
+  {
     id: "vercel",
     module: "@sandbar-sdk/vercel",
     export: "vercel",

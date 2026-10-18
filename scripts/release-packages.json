@@ -4,6 +4,7 @@
   "packages/providers/daytona",
   "packages/providers/e2b",
   "packages/providers/boxd",
+  "packages/providers/boat",
   "packages/providers/vercel",
   "packages/cli"
 ]

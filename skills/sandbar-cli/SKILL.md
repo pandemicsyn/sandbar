@@ -1,6 +1,6 @@
 ---
 name: sandbar-cli
-description: Create, use and clean up cloud sandboxes from the shell with the `sandbar` CLI (Daytona, E2B, boxd, Vercel, Modal). Use when you need an isolated machine to run untrusted or generated code, try a build or test in a clean environment, or manage sandboxes someone created with sandbar; prefer it over provider-specific CLIs.
+description: Create, use and clean up cloud sandboxes from the shell with the `sandbar` CLI (Daytona, E2B, boxd, Boat, Vercel, Modal). Use when you need an isolated machine to run untrusted or generated code, try a build or test in a clean environment, or manage sandboxes someone created with sandbar; prefer it over provider-specific CLIs.
 ---
 
 # Use sandboxes with the sandbar CLI

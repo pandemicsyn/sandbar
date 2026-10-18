@@ -32,6 +32,7 @@ for (const name of [
   "@sandbar-sdk/e2b",
   "@sandbar-sdk/vercel",
   "@sandbar-sdk/boxd",
+  "@sandbar-sdk/boat",
   "@sandbar-sdk/cli",
 ])
   if (!selected.has(name)) throw new Error(`Release graph lacks ${name}`);
@@ -111,6 +112,14 @@ cases.push({
   overrides: [adapterName],
   runtime: `import { boxdAdapter } from "@sandbar-sdk/boxd"; if (boxdAdapter.name !== "boxd") throw Error("Unexpected adapter");`,
   types: `import { boxdAdapter } from "@sandbar-sdk/boxd"; const name: string = boxdAdapter.name; void name;`,
+});
+
+cases.push({
+  name: "boat",
+  packageName: "@sandbar-sdk/boat",
+  overrides: [adapterName],
+  runtime: `import { boatAdapter } from "@sandbar-sdk/boat"; if (boatAdapter.name !== "boat") throw Error("Unexpected adapter");`,
+  types: `import { boatAdapter } from "@sandbar-sdk/boat"; const name: string = boatAdapter.name; void name;`,
 });
 
 const cliVersion = selected.get("@sandbar-sdk/cli").manifest.version;

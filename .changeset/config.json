@@ -14,6 +14,7 @@
       "@sandbar-sdk/daytona",
       "@sandbar-sdk/e2b",
       "@sandbar-sdk/boxd",
+      "@sandbar-sdk/boat",
       "@sandbar-sdk/vercel",
       "@sandbar-sdk/cli"
     ]

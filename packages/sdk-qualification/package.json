@@ -16,6 +16,7 @@
     "@sandbar-sdk/daytona": "workspace:*",
     "@sandbar-sdk/e2b": "workspace:*",
     "@sandbar-sdk/boxd": "workspace:*",
+    "@sandbar-sdk/boat": "workspace:*",
     "@sandbar-sdk/vercel": "workspace:*"
   }
 }

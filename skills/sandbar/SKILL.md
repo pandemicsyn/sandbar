@@ -1,6 +1,6 @@
 ---
 name: sandbar
-description: Build application code that creates and drives cloud sandboxes with the Sandbar TypeScript SDK (sandbar-sdk) on Daytona, E2B, boxd or Vercel. Use when writing or changing code that imports sandbar-sdk or an @sandbar-sdk/<provider> adapter, or when asked to run untrusted or generated code in a sandbox from a Node.js or Bun service.
+description: Build application code that creates and drives cloud sandboxes with the Sandbar TypeScript SDK (sandbar-sdk) on Daytona, E2B, boxd, Boat or Vercel. Use when writing or changing code that imports sandbar-sdk or an @sandbar-sdk/<provider> adapter, or when asked to run untrusted or generated code in a sandbox from a Node.js or Bun service.
 ---
 
 # Build with the Sandbar SDK
@@ -20,6 +20,7 @@ Sandbar is one TypeScript API over several sandbox providers. The application ta
 | E2B      | `@sandbar-sdk/e2b`     | `Sandbar.connect(e2b({ apiKey }))`                                                                                          |
 | Daytona  | `@sandbar-sdk/daytona` | `Sandbar.connect(daytona({ apiKey, target: "us", environment: Image.prepared("<snapshot>"), network: "daytona-default" }))` |
 | boxd     | `@sandbar-sdk/boxd`    | `Sandbar.connect({ adapter: boxdAdapter, credentials: { apiKey }, config: { org, network: "internet" } })`                  |
+| Boat     | `@sandbar-sdk/boat`    | `Sandbar.connect({ adapter: boatAdapter, credentials: { apiKey }, config: { network: "internet" } })`                       |
 | Vercel   | `@sandbar-sdk/vercel`  | `Sandbar.connect({ adapter: vercel, credentials: { token }, config: { teamId, projectId } })`                               |
 
 `connect` verifies credentials with read-only calls and allocates nothing. Put provider choices (region, network policy, defaults) in this setup, not in every call.
@@ -103,6 +104,7 @@ Never build a reference by hand from a sandbox id. `get()` never creates or resu
 - **Daytona:** set the network policy at connection (`"daytona-default"`, or `"internet"` on higher tiers). Omitting it means strict `blocked`, which may be unavailable. Create from an active snapshot in the chosen region.
 - **E2B:** the `base` template works out of the box; use `/home/user`.
 - **boxd:** needs `network: "internet"` and an org; files are capped at 1 MiB and need `overwrite: true`.
+- **Boat:** needs `network: "internet"`; files live under `/home/user` or `/tmp`, are capped at 5 MiB and need `overwrite: true`. Sandboxes get none of the Boat account's secrets unless `environment` names one. `suspend()` archives the disk; `resume()` starts a fresh machine.
 - **Vercel:** disposable Node 24 sandboxes with blocked networking by default; no stdin, process streams, snapshots or volumes; files need `overwrite: true`.
 
 Check `await client.sandboxes.checkCreate(input)` before an unusual create; it is read-only and reports `supported`, `unsupported`, `unavailable` or `unknown`.

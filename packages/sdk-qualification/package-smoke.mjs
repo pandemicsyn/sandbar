@@ -16,6 +16,7 @@ const packages = [
   ["@sandbar-sdk/daytona", "packages/providers/daytona"],
   ["@sandbar-sdk/modal", "packages/providers/modal"],
   ["@sandbar-sdk/boxd", "packages/providers/boxd"],
+  ["@sandbar-sdk/boat", "packages/providers/boat"],
   ["@sandbar-sdk/vercel", "packages/providers/vercel"],
   ["@sandbar-sdk/e2b", "packages/providers/e2b"],
   ["sandbar-sdk", "packages/sdk"],
@@ -74,6 +75,7 @@ async function pack(directory) {
       "@sandbar-sdk/daytona",
       "@sandbar-sdk/e2b",
       "@sandbar-sdk/boxd",
+      "@sandbar-sdk/boat",
       "@sandbar-sdk/cli",
     ].includes(manifest.name)
   ) {
@@ -236,6 +238,24 @@ async function flow() {
   await box.readFile("/file");
   await box.destroy(); await volume.delete(); await client.close();
   return { filesystem, connections };
+}
+void flow;
+`;
+  else if (mode === "boat")
+    source = `
+import { Sandbar, Image } from "sandbar-sdk";
+import { boatAdapter } from "@sandbar-sdk/boat";
+async function flow() {
+  const client = await Sandbar.connect({ adapter: boatAdapter, config: { network: "internet", machine: "small" }, credentials: { apiKey: "fixture" } });
+  const box = await client.sandboxes.create({ environment: Image.prepared("ubuntu-24.04") });
+  const suspended = await box.suspend();
+  const preserve: "filesystem" | "filesystem+memory" = suspended.preserve;
+  await box.resume();
+  await box.exec(["true"]);
+  await box.writeFile("/home/user/file", new Uint8Array([0,255]), { overwrite: true });
+  await box.readFile("/home/user/file");
+  await box.destroy(); await client.close();
+  return { preserve };
 }
 void flow;
 `;
@@ -1024,6 +1044,29 @@ console.log("Packed boxd imports and local validation passed without provider IO
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], boxd)}`);
+
+  const boat = join(temporary, "boat-consumer");
+  await consumer(
+    boat,
+    { ...sdkDeps, "@sandbar-sdk/boat": archiveOverrides["@sandbar-sdk/boat"] },
+    archiveOverrides,
+    `
+import { Sandbar } from "sandbar-sdk";
+import { boatAdapter } from "@sandbar-sdk/boat";
+if (boatAdapter.name !== "boat") throw Error("External adapter identity mismatch");
+if (boatAdapter.config.safeParse({}).success) throw Error("Internet setup must be explicit");
+try {
+  await Sandbar.connect({ adapter: boatAdapter, config: {}, credentials: { apiKey: "fixture" } });
+  throw Error("Invalid configuration accepted");
+} catch (error) { if (error.code !== "INVALID_ARGUMENT") throw error; }
+console.log("Packed Boat imports and local validation passed without provider IO");
+`,
+  );
+  await checkTypes(boat, "boat");
+  inspectGraph(boat, ["sandbar-sdk", "@sandbar-sdk/boat"]);
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], boat)}`);
 
   const e2bDeps = { ...sdkDeps, "@sandbar-sdk/e2b": archiveOverrides["@sandbar-sdk/e2b"] };
 
