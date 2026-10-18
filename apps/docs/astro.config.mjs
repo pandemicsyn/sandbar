@@ -114,6 +114,7 @@ export default defineConfig({
             { slug: "docs/providers/daytona" },
             { slug: "docs/providers/e2b" },
             { slug: "docs/providers/boxd", label: "boxd", badge: "exp" },
+            { slug: "docs/providers/boat", label: "Boat", badge: "exp" },
             { slug: "docs/providers/vercel", badge: "exp" },
             { slug: "docs/providers/live-qualification", label: "Live test evidence" },
           ],

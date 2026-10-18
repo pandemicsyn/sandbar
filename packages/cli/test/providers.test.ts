@@ -13,6 +13,7 @@ beforeEach(async () => {
   const scope = join(home, ".config", "sandbar", "adapters", "node_modules", "@sandbar-sdk");
   await mkdir(scope, { recursive: true });
   await symlink(join(import.meta.dir, "..", "..", "providers", "boxd"), join(scope, "boxd"));
+  await symlink(join(import.meta.dir, "..", "..", "providers", "boat"), join(scope, "boat"));
 });
 
 afterEach(async () => {
@@ -37,4 +38,24 @@ test("environment-only boxd setup names and binds its required network choice", 
   );
 
   expect(bound.name).toBe("boxd");
+});
+
+test("environment-only Boat setup names and binds its required network choice", async () => {
+  const env = { HOME: home, BOAT_API_KEY: "key" };
+
+  expect(missingEnv(descriptor("boat")!, env)).toEqual(["BOAT_NETWORK"]);
+
+  const ready = { ...env, BOAT_NETWORK: "internet" };
+  const profile = resolveProfile({ provider: "boat" }, await loadConfig(undefined, ready), ready);
+
+  expect(profile.config).toEqual({ network: "internet" });
+
+  const bound = await loadAdapter(
+    profile,
+    home,
+    ready,
+    new SecretReader(ready, new AbortController().signal),
+  );
+
+  expect(bound.name).toBe("boat");
 });

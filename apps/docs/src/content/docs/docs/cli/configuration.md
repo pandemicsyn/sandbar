@@ -14,10 +14,11 @@ Set `SANDBAR_PROVIDER` (or pass `--provider`) and the provider's own variables:
 | `daytona` | `DAYTONA_API_KEY`, `DAYTONA_TARGET`                                           |
 | `e2b`     | `E2B_API_KEY`                                                                 |
 | `boxd`    | `BOXD_API_KEY`, `BOXD_ORG`, `BOXD_NETWORK=internet`                           |
+| `boat`    | `BOAT_API_KEY`, `BOAT_NETWORK=internet`                                       |
 | `vercel`  | `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`                         |
 | `modal`   | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `MODAL_APP_NAME`, `MODAL_ENVIRONMENT` |
 
-`sandbar providers` shows which of these are missing. boxd always allows internet egress, so its adapter asks you to choose that explicitly with `BOXD_NETWORK=internet` (or `"network": "internet"` in a profile's config).
+`sandbar providers` shows which of these are missing. boxd and Boat always allow internet egress, so their adapters ask you to choose that explicitly with `BOXD_NETWORK=internet` or `BOAT_NETWORK=internet` (or `"network": "internet"` in a profile's config).
 
 ## Profiles
 

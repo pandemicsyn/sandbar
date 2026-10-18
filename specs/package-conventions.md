@@ -11,6 +11,7 @@
 | Official E2B adapter | `@sandbar-sdk/e2b` | `@sandbar-sdk/e2b` |
 | Experimental Modal adapter | `@sandbar-sdk/modal` | `@sandbar-sdk/modal` |
 | boxd adapter (experimental) | `@sandbar-sdk/boxd` | `@sandbar-sdk/boxd` |
+| Boat adapter (experimental) | `@sandbar-sdk/boat` | `@sandbar-sdk/boat` |
 | Official Vercel adapter | `@sandbar-sdk/vercel` | `@sandbar-sdk/vercel` |
 | Command line (`sandbar` binary) | `@sandbar-sdk/cli` | none; run `sandbar` |
 | Custom adapter authoring | `@sandbar-sdk/adapter` | `@sandbar-sdk/adapter` |
@@ -57,7 +58,7 @@ Private implementation workspaces may be bundled into adapter artifacts. Their u
 
 ## Implementation and release acceptance
 
-The initial 0.1.0 fixed, lockstep public release group is `@sandbar-sdk/adapter`, `sandbar-sdk`, `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, `@sandbar-sdk/boxd`, and `@sandbar-sdk/vercel`; `@sandbar-sdk/cli` joins the group from its first release. Separate installation does not require independent release infrastructure. Keep the existing release machinery and release the actual distributable graph. Modal remains outside this group.
+The initial 0.1.0 fixed, lockstep public release group is `@sandbar-sdk/adapter`, `sandbar-sdk`, `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, `@sandbar-sdk/boxd`, `@sandbar-sdk/boat`, and `@sandbar-sdk/vercel`; `@sandbar-sdk/cli` joins the group from its first release. Separate installation does not require independent release infrastructure. Keep the existing release machinery and release the actual distributable graph. Modal remains outside this group.
 
 Qualify real tarballs in isolated consumers: core alone, core plus each released provider, combined Daytona/E2B, and an independently authored adapter. Verify strict NodeNext declarations, Node/Bun execution, private-workspace isolation and npm/pnpm/Bun installation. Archive overrides may resolve transitive local packages without adding undeclared root dependencies.
 

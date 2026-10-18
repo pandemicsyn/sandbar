@@ -25,6 +25,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@sandbar-sdk/boat": "workspace:*",
     "@sandbar-sdk/boxd": "workspace:*",
     "@sandbar-sdk/daytona": "workspace:*",
     "@sandbar-sdk/e2b": "workspace:*",

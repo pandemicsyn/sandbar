@@ -2,7 +2,7 @@
 
 **[Read the docs →](https://sandbarsdk.dev/docs/)**
 
-Sandbar is a TypeScript SDK for creating sandboxes, running commands, and moving files across providers. Daytona, E2B, boxd and Vercel are separately installed adapters; custom providers use the same adapter API. Run it in Node.js or Bun.
+Sandbar is a TypeScript SDK for creating sandboxes, running commands, and moving files across providers. Daytona, E2B, boxd, Boat and Vercel are separately installed adapters; custom providers use the same adapter API. Run it in Node.js or Bun.
 
 Create a sandbox, run a command, and clean up:
 
