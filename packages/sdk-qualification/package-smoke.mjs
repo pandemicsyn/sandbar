@@ -17,6 +17,7 @@ const packages = [
   ["@sandbar-sdk/modal", "packages/providers/modal"],
   ["@sandbar-sdk/boxd", "packages/providers/boxd"],
   ["@sandbar-sdk/boat", "packages/providers/boat"],
+  ["@sandbar-sdk/runloop", "packages/providers/runloop"],
   ["@sandbar-sdk/vercel", "packages/providers/vercel"],
   ["@sandbar-sdk/e2b", "packages/providers/e2b"],
   ["sandbar-sdk", "packages/sdk"],
@@ -76,6 +77,7 @@ async function pack(directory) {
       "@sandbar-sdk/e2b",
       "@sandbar-sdk/boxd",
       "@sandbar-sdk/boat",
+      "@sandbar-sdk/runloop",
       "@sandbar-sdk/cli",
     ].includes(manifest.name)
   ) {
@@ -256,6 +258,26 @@ async function flow() {
   await box.readFile("/home/user/file");
   await box.destroy(); await client.close();
   return { preserve };
+}
+void flow;
+`;
+  else if (mode === "runloop")
+    source = `
+import { Sandbar, Image } from "sandbar-sdk";
+import { runloopAdapter } from "@sandbar-sdk/runloop";
+async function flow() {
+  const client = await Sandbar.connect({ adapter: runloopAdapter, config: { resources: { vcpus: 2 }, lifecycle: { idleSeconds: 600 } }, credentials: { apiKey: "fixture" } });
+  const box = await client.sandboxes.create({ environment: Image.prepared("runloop-default"), networkPolicy: "blocked" });
+  const { snapshot } = await box.snapshot();
+  const restored = await snapshot.restore();
+  const preview = await restored.preview(3000);
+  const url: string = preview.url;
+  await box.suspend(); await box.resume();
+  await box.exec(["true"]);
+  await box.writeFile("/home/user/file", new Uint8Array([0,255]), { overwrite: true });
+  await box.readFile("/home/user/file");
+  await snapshot.delete(); await restored.destroy(); await box.destroy(); await client.close();
+  return { url };
 }
 void flow;
 `;
@@ -1075,6 +1097,29 @@ console.log("Packed Boat imports and local validation passed without provider IO
 
   for (const runtime of ["node", "bun"])
     console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], boat)}`);
+
+  const runloop = join(temporary, "runloop-consumer");
+  await consumer(
+    runloop,
+    { ...sdkDeps, "@sandbar-sdk/runloop": archiveOverrides["@sandbar-sdk/runloop"] },
+    archiveOverrides,
+    `
+import { Sandbar } from "sandbar-sdk";
+import { runloopAdapter } from "@sandbar-sdk/runloop";
+if (runloopAdapter.name !== "runloop") throw Error("External adapter identity mismatch");
+if (runloopAdapter.config.parse({}).network !== "blocked") throw Error("Egress must default to blocked");
+try {
+  await Sandbar.connect({ adapter: runloopAdapter, config: { lifecycle: { lifetimeSeconds: 600, idleSeconds: 300 } }, credentials: { apiKey: "fixture" } });
+  throw Error("Invalid configuration accepted");
+} catch (error) { if (error.code !== "INVALID_ARGUMENT") throw error; }
+console.log("Packed Runloop imports and local validation passed without provider IO");
+`,
+  );
+  await checkTypes(runloop, "runloop");
+  inspectGraph(runloop, ["sandbar-sdk", "@sandbar-sdk/runloop"]);
+
+  for (const runtime of ["node", "bun"])
+    console.log(`${runtime}: ${run(runtime, ["consumer.mjs"], runloop)}`);
 
   const e2bDeps = { ...sdkDeps, "@sandbar-sdk/e2b": archiveOverrides["@sandbar-sdk/e2b"] };
 

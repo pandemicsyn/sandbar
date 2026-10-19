@@ -9,7 +9,7 @@ import "../styles/tokens.css";
 const title = "Sandbar | One SDK. Every sandbox.";
 
 const description =
-  "Sandbar is a typed TypeScript API for Daytona, E2B, boxd, Boat and Vercel sandboxes, with a public adapter API for other providers.";
+  "Sandbar is a typed TypeScript API for Daytona, E2B, boxd, Boat, Runloop and Vercel sandboxes, with a public adapter API for other providers.";
 
 const fonts =
   "https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap";
@@ -153,7 +153,7 @@ const sunBands = [
             <div class="eyebrow"><span></span>Sandbox router for TypeScript</div>
             <h1>One SDK.<br />Every <span class="accent-word">sandbox.</span></h1>
             <p class="lede">
-              A typed API to create, run code in, and tear down sandboxes on Daytona, E2B, boxd, Boat and Vercel.
+              A typed API to create, run code in, and tear down sandboxes on Daytona, E2B, boxd, Boat, Runloop and Vercel.
               Keep application workflows consistent while configuring each provider explicitly.
             </p>
             <div class="cta-stack">
@@ -263,6 +263,7 @@ const sunBands = [
             <li class="chip chip-e2b"><span></span>E2B</li>
             <li class="chip chip-boxd"><span></span>boxd (exp)</li>
             <li class="chip chip-boat"><span></span>Boat (exp)</li>
+            <li class="chip chip-runloop"><span></span>Runloop (exp)</li>
             <li class="chip chip-vercel"><span></span>Vercel</li>
             <li class="chip chip-modal"><span></span>Modal (exp)</li>
             <li class="chip chip-yours">+ your adapter</li>
@@ -1396,6 +1397,15 @@ const sunBands = [
         background: var(--sb-coral);
         border-radius: 1px 1px 4px 4px;
         clip-path: polygon(0 25%, 100% 25%, 80% 100%, 20% 100%);
+      }
+      .chip-runloop {
+        background: color-mix(in srgb, var(--sb-pink) 18%, var(--sb-surface));
+        color: var(--sb-ink);
+      }
+      .chip-runloop span {
+        border: 2px solid var(--sb-pink);
+        border-radius: 50%;
+        background: transparent;
       }
       .chip-vercel {
         background: color-mix(in srgb, var(--sb-aqua) 18%, var(--sb-surface));

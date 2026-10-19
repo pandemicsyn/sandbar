@@ -53,6 +53,7 @@ When no native size is big enough, `Sandbar.connect` rejects with `UNSUPPORTED` 
 | boxd    | Smallest size class: 1, 2, 4 or 8 vCPUs with 4 GiB of memory per vCPU.                                        |
 | Vercel  | Smallest vCPU count (1 or an even number up to 32) with 2 GiB per vCPU. Your plan's limit still applies.      |
 | Boat    | Smallest machine type: `small` 2/4 GiB, `default` 4/8 GiB, `large` 8/16 GiB, `xlarge` 16/32 GiB.              |
+| Runloop | Smallest size from `X_SMALL` 0.5/1 GiB to `XX_LARGE` 8/32 GiB, then a custom 16 vCPU size with 32 or 64 GiB.  |
 | Modal   | Reserved exactly as given; `vcpus` may be fractional. Reported only when both numbers are set.                |
 | Daytona | Applied when the adapter builds a snapshot from an OCI image. A prepared snapshot must already meet the size. |
 | E2B     | Applied when the adapter builds a template from an OCI image. A prepared template must already meet the size. |

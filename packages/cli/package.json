@@ -29,6 +29,7 @@
     "@sandbar-sdk/boxd": "workspace:*",
     "@sandbar-sdk/daytona": "workspace:*",
     "@sandbar-sdk/e2b": "workspace:*",
+    "@sandbar-sdk/runloop": "workspace:*",
     "@sandbar-sdk/modal": "workspace:*",
     "@sandbar-sdk/vercel": "workspace:*",
     "@sandbar/provider-fake": "workspace:*"

@@ -878,6 +878,7 @@ describe("sandbar CLI against the fake provider", () => {
         "e2b",
         "boxd",
         "boat",
+        "runloop",
         "vercel",
         "modal",
       ]);
