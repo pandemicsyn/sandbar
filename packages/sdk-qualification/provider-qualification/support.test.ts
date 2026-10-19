@@ -278,8 +278,7 @@ function overview(records: QualificationRecord[]) {
   return renderSupportOverview([parseReport({ schemaVersion: 1, records })]);
 }
 
-const ociCell = (text: string) =>
-  `| Build images | [${text}](/docs/providers/live-qualification/#daytona-oci)`;
+const ociCell = (text: string) => `| Build images | ${text} |`;
 
 test("overview cells report live results only, never fixture or packed passes", () => {
   const compact = (page: string) => page.replace(/ +\|/g, " |").replace(/\| +/g, "| ");
@@ -294,9 +293,7 @@ test("overview cells report live results only, never fixture or packed passes", 
   expect(compact(overview([{ ...record("passed"), runCleanup: "incomplete" }]))).toContain(
     ociCell("Live test blocked"),
   );
-  expect(compact(overview([]))).toContain(
-    "| Public HTTP previews | [Not supported](/docs/providers/live-qualification/#daytona-previewPublic)",
-  );
+  expect(compact(overview([]))).toContain("| Public HTTP previews | Not supported |");
 });
 
 test("overview provider rows count live-passed features and mark experimental providers", () => {

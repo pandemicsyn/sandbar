@@ -311,7 +311,8 @@ const featureEntries = Object.entries(features) as [
   { label: string; scenarios: readonly Scenario[]; workflow?: Scenario },
 ][];
 
-const evidenceHref = "/docs/providers/live-qualification/";
+const evidenceHref =
+  "https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/provider-qualification/LIVE-EVIDENCE.md";
 
 function featureMatrix(reports: readonly QualificationReport[], profiles: SupportMetadata[]) {
   const historical = reports.flatMap((report) => parseReport(report).historicalEvidence ?? []);
@@ -583,7 +584,7 @@ export function renderSupportOverview(
               ? "Live test blocked"
               : "Not tested live";
 
-    return `[${text}](${evidenceHref}#${profile.id}-${id})`;
+    return text;
   };
 
   const featureRows = featureEntries.map(([id, feature]) => [
@@ -612,7 +613,7 @@ export function renderSupportOverview(
     "",
     "## What has been tested live",
     "",
-    `This table covers the supported providers. ${new Intl.ListFormat("en", { type: "conjunction" }).format(experimental.map((status) => status.name))} are experimental; see the notes above and each provider's guide. Each cell links to the recorded evidence and its fine print.`,
+    `This table covers the supported providers. ${new Intl.ListFormat("en", { type: "conjunction" }).format(experimental.map((status) => status.name))} are experimental; see the notes above and each provider's guide.`,
     "",
     ...markdownTable(["Feature", ...profiles.map((profile) => profile.name)], featureRows),
     "",
@@ -630,7 +631,7 @@ export function renderSupportOverview(
     "",
     "## Evidence",
     "",
-    `The [live test evidence](${evidenceHref}) lists every recorded run with its date, SDK commit, image, region and network setting, plus the detailed caveats behind each cell above.`,
+    `The [live test evidence](${evidenceHref}) in the repository lists every recorded run with its date, SDK commit, image, region and network setting, plus the detailed caveats behind each cell above.`,
     "",
   ].join("\n");
 }

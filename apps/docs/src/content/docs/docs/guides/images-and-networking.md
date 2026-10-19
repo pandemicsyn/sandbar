@@ -17,7 +17,7 @@ Set the default environment and network policy in adapter setup. Your applicatio
 
 Daytona calls its prepared images snapshots. Selecting one as an image is different from capturing a sandbox's current state. For capture and restore, use the [snapshot APIs](/docs/guides/snapshots-and-volumes/).
 
-boxd starts directly from an OCI image instead of a prepared image. Set `image` in its adapter configuration, or omit it to use the authenticated cluster's default image. Starting from OCI does not create a separate Sandbar image-build artifact. See [boxd defaults](/docs/providers/boxd/#defaults-and-networking).
+boxd starts directly from an OCI image instead of a prepared image. Set `image` in its adapter configuration, or omit it to use the authenticated cluster's default image. Starting from OCI does not create a separate Sandbar image-build artifact. See [boxd defaults](/docs/providers/boxd/#setup).
 
 An explicit `environment` on `create()` overrides the connection default if the adapter supports it. An invalid override fails; Sandbar does not silently fall back to another image. Vercel accepts only its configured managed image.
 
@@ -92,7 +92,7 @@ const client = await Sandbar.connect(e2b({ apiKey, network: "internet" }));
 const box = await client.sandboxes.create();
 ```
 
-A requested policy is not proof of isolation. E2B's maintained test still connected by direct IPv4 TCP when `blocked` was requested, even though hostname resolution failed. Prepared-image baseline tests do not test outbound isolation. See [network test evidence](/docs/providers/live-qualification/) before relying on a policy to isolate untrusted code.
+A requested policy is not proof of isolation. E2B's maintained test still connected by direct IPv4 TCP when `blocked` was requested, even though hostname resolution failed. Prepared-image baseline tests do not test outbound isolation. See [provider support](/docs/providers/support/#known-limits) before relying on a policy to isolate untrusted code.
 
 Daytona's `internet` never falls back to `daytona-default`: on a Tier 1 or Tier 2 organization it rejects before allocation, because Daytona's default firewall there only reaches essential services. Choose `daytona-default` in setup when that restricted egress is acceptable. boxd's peer/metadata isolation does not block outbound internet.
 

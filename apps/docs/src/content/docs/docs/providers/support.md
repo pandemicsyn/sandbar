@@ -23,28 +23,28 @@ A live pass covers the image, region and network setting it ran with, not every 
 
 ## What has been tested live
 
-This table covers the supported providers. boxd, Vercel Sandbox, Boat, Runloop, and Modal are experimental; see the notes above and each provider's guide. Each cell links to the recorded evidence and its fine print.
+This table covers the supported providers. boxd, Vercel Sandbox, Boat, Runloop, and Modal are experimental; see the notes above and each provider's guide.
 
-| Feature                               | Daytona                                                                       | E2B                                                                         |
-| ------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Create, inspect and destroy sandboxes | [Tested live](/docs/providers/live-qualification/#daytona-lifecycle)          | [Tested live](/docs/providers/live-qualification/#e2b-lifecycle)            |
-| Pause and resume                      | [Tested live](/docs/providers/live-qualification/#daytona-suspension)         | [Tested live](/docs/providers/live-qualification/#e2b-suspension)           |
-| Protected HTTP previews               | [Tested live](/docs/providers/live-qualification/#daytona-previewProtected)   | [Not supported](/docs/providers/live-qualification/#e2b-previewProtected)   |
-| Public HTTP previews                  | [Not supported](/docs/providers/live-qualification/#daytona-previewPublic)    | [Tested live](/docs/providers/live-qualification/#e2b-previewPublic)        |
-| Stop a running command                | [Tested live](/docs/providers/live-qualification/#daytona-termination)        | [Tested live](/docs/providers/live-qualification/#e2b-termination)          |
-| Extend a sandbox's lifetime           | [Tested live](/docs/providers/live-qualification/#daytona-renewal)            | [Tested live](/docs/providers/live-qualification/#e2b-renewal)              |
-| Reconnect to a sandbox later          | [Tested live](/docs/providers/live-qualification/#daytona-reopening)          | [Tested live](/docs/providers/live-qualification/#e2b-reopening)            |
-| Run commands and capture output       | [Tested live](/docs/providers/live-qualification/#daytona-execution)          | [Tested live](/docs/providers/live-qualification/#e2b-execution)            |
-| Stream output and use terminals       | [Tested live](/docs/providers/live-qualification/#daytona-streaming)          | [Tested live](/docs/providers/live-qualification/#e2b-streaming)            |
-| Send input to a command               | [Not tested live](/docs/providers/live-qualification/#daytona-finiteStdin)    | [Not tested live](/docs/providers/live-qualification/#e2b-finiteStdin)      |
-| Read and write files                  | [Tested live](/docs/providers/live-qualification/#daytona-files)              | [Tested live](/docs/providers/live-qualification/#e2b-files)                |
-| List, copy and move files             | [Tested live](/docs/providers/live-qualification/#daytona-directories)        | [Tested live](/docs/providers/live-qualification/#e2b-directories)          |
-| Build images                          | [Not tested live](/docs/providers/live-qualification/#daytona-oci)            | [Not tested live](/docs/providers/live-qualification/#e2b-oci)              |
-| Block outbound network                | [Not tested live](/docs/providers/live-qualification/#daytona-network)        | [**Failed live test**](/docs/providers/live-qualification/#e2b-network)     |
-| Restore a snapshot with volumes       | [Tested live](/docs/providers/live-qualification/#daytona-storageComposition) | [Not supported](/docs/providers/live-qualification/#e2b-storageComposition) |
-| Snapshot and restore                  | [Tested live](/docs/providers/live-qualification/#daytona-snapshots)          | [Tested live](/docs/providers/live-qualification/#e2b-snapshots)            |
-| Create and delete volumes             | [Tested live](/docs/providers/live-qualification/#daytona-volumes)            | [Not supported](/docs/providers/live-qualification/#e2b-volumes)            |
-| Mount volumes                         | [Tested live](/docs/providers/live-qualification/#daytona-persistence)        | [Not supported](/docs/providers/live-qualification/#e2b-persistence)        |
+| Feature                               | Daytona         | E2B                  |
+| ------------------------------------- | --------------- | -------------------- |
+| Create, inspect and destroy sandboxes | Tested live     | Tested live          |
+| Pause and resume                      | Tested live     | Tested live          |
+| Protected HTTP previews               | Tested live     | Not supported        |
+| Public HTTP previews                  | Not supported   | Tested live          |
+| Stop a running command                | Tested live     | Tested live          |
+| Extend a sandbox's lifetime           | Tested live     | Tested live          |
+| Reconnect to a sandbox later          | Tested live     | Tested live          |
+| Run commands and capture output       | Tested live     | Tested live          |
+| Stream output and use terminals       | Tested live     | Tested live          |
+| Send input to a command               | Not tested live | Not tested live      |
+| Read and write files                  | Tested live     | Tested live          |
+| List, copy and move files             | Tested live     | Tested live          |
+| Build images                          | Not tested live | Not tested live      |
+| Block outbound network                | Not tested live | **Failed live test** |
+| Restore a snapshot with volumes       | Tested live     | Not supported        |
+| Snapshot and restore                  | Tested live     | Tested live          |
+| Create and delete volumes             | Tested live     | Not supported        |
+| Mount volumes                         | Tested live     | Not supported        |
 
 ## Known limits
 
@@ -67,4 +67,4 @@ The SDK targets server-side Node.js and Bun. Packed package checks run the publi
 
 ## Evidence
 
-The [live test evidence](/docs/providers/live-qualification/) lists every recorded run with its date, SDK commit, image, region and network setting, plus the detailed caveats behind each cell above.
+The [live test evidence](https://github.com/pandemicsyn/sandbar/blob/main/packages/sdk-qualification/provider-qualification/LIVE-EVIDENCE.md) in the repository lists every recorded run with its date, SDK commit, image, region and network setting, plus the detailed caveats behind each cell above.

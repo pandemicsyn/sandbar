@@ -73,7 +73,7 @@ const captured = await source.snapshot({
 
 Pause application writers before capture if you need consistent data. Passing `consistency: "caller-quiesced"` records that you did so; Sandbar does not pause writers for you. Otherwise, consistency remains unknown unless the provider supplies evidence. `captured.capture` describes what was saved, and `captured.source` describes the source after capture.
 
-A restored snapshot does not strengthen the provider's network guarantees. In the maintained E2B test, requested `blocked` networking still allowed direct outbound IPv4 TCP; restored processes may retain outbound access. See [E2B networking](/docs/providers/e2b/#images-networking-and-cleanup) and the [test evidence](/docs/providers/support/).
+A restored snapshot does not strengthen the provider's network guarantees. In the maintained E2B test, requested `blocked` networking still allowed direct outbound IPv4 TCP; restored processes may retain outbound access. See [E2B networking](/docs/providers/e2b/#network-and-previews) and the [test evidence](/docs/providers/support/).
 
 ## Create and mount a volume
 
@@ -128,7 +128,7 @@ To keep the data, omit the final deletion and record removal. Mount the same vol
 
 Volumes survive sandbox destruction, connection close and the sandbox's compute lifetime. If creation, saving or cleanup fails, retain any known references and resolve the compute outcome before deleting storage. Automatic cleanup does not adopt borrowed volumes.
 
-Mount paths must be absolute, normalized, nonoverlapping and outside reserved paths. Daytona supports writable subpaths. Its volumes use object storage and do not promise normal filesystem locking or atomic rename behavior. Mounted `writeFile` requires `overwrite: true`; atomic no-clobber writes are unsupported. See [Daytona storage details](/docs/providers/daytona/#snapshots-and-retained-volumes) and [boxd storage limits](/docs/providers/boxd/#storage-and-recovery).
+Mount paths must be absolute, normalized, nonoverlapping and outside reserved paths. Daytona supports writable subpaths. Its volumes use object storage and do not promise normal filesystem locking or atomic rename behavior. Mounted `writeFile` requires `overwrite: true`; atomic no-clobber writes are unsupported. See [Daytona storage details](/docs/providers/daytona/#snapshots-and-volumes) and [boxd storage limits](/docs/providers/boxd/#storage-and-recovery).
 
 ### Restore private state with selected data
 
@@ -150,7 +150,7 @@ Daytona requires a ready snapshot known to have no recorded mounts, with filesys
 
 If restore fails with an uncertain outcome, save the operation reference and the known sandbox and volume references from `error.outcome` with kind `snapshot_restore`. Inspect those resources instead of submitting another restore. Destroying the restored sandbox retains application volumes and still follows the configured storage cleanup policy.
 
-The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/storage-composition.ts) covers shared data, separate empty data, private-only restore and reopening full references. See [live test evidence](/docs/providers/live-qualification/) for the tested Daytona configuration and its limits.
+The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/storage-composition.ts) covers shared data, separate empty data, private-only restore and reopening full references. See [provider support](/docs/providers/support/) for what has been tested live.
 
 ### Current combinations
 
@@ -221,12 +221,12 @@ Capture, restore, volume creation and deletion also have `submit…` methods. Sa
 
 A process can crash after provider creation but before saving the identity. If no identity was received, a list or matching name does not prove which resource belongs to that request. Keep unresolved resources under investigation rather than retrying creation or deleting by name.
 
-E2B restore selects the captured template build, never a newer `default` build. E2B snapshot deletion removes its containing template and blocks known shared use; Daytona checks warm-pool dependencies because deletion can affect dependent resources. A dependency check cannot make a provider delete transactional. See [E2B snapshot limits](/docs/providers/e2b/#runtime-snapshots-and-volumes) and [Daytona cleanup limits](/docs/providers/daytona/#runtime-snapshots).
+E2B restore selects the captured template build, never a newer `default` build. E2B snapshot deletion removes its containing template and blocks known shared use; Daytona checks warm-pool dependencies because deletion can affect dependent resources. A dependency check cannot make a provider delete transactional. See [E2B snapshot limits](/docs/providers/e2b/#lifetime-pause-and-snapshots) and [Daytona cleanup limits](/docs/providers/daytona/#snapshots-and-volumes).
 
 Automatic cleanup requires evidence that the application created the resource. Explicit deletion still checks scope, identity and dependencies. An unresolved volume name in a cleanup report is not a verified volume ID or permission to delete it. Very large mount histories can exceed saved-reference limits and reject before provider changes. Unknown expiry, excluded paths and storage guarantees remain unknown.
 
 ## Evidence
 
-The [generated support table](/docs/providers/support/) and [live evidence](/docs/providers/live-qualification/) record tested revisions and configurations, historical passes, blocked access and cases not run. A pass applies to its recorded configuration, not every image, account or current revision.
+[Provider support](/docs/providers/support/) shows what has been tested live and links to the recorded runs. A pass applies to its recorded configuration, not every image, account or current revision.
 
 Daytona's complete mounted-restore workflow passed at `5911ccc` with the pinned image, `us` region and `daytona-default`, including selected data, fresh-client reopening and confirmed cleanup. The earlier partial storage test remains in the evidence history. E2B volume creation was blocked by account HTTP 403, so maintained E2B acceptance skips volume cases before setup; that does not prove the provider lacks volumes.

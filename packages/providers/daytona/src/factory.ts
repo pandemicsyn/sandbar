@@ -16,7 +16,7 @@ export function daytona(options: {
     suspension?: { preserve: "filesystem" | "filesystem+memory" };
   };
   snapshots?: { restartAfterCapture?: boolean };
-  /** Outbound network: `blocked` (default), `internet`, or Daytona's tier-dependent `daytona-default`. */
+  /** Outbound network: `blocked`, `internet`, or Daytona's tier-dependent `daytona-default` (default). */
   network?: "blocked" | "internet" | "daytona-default";
   /** @deprecated Use `network`. */
   networkPolicy?: "blocked" | "internet" | "daytona-default";

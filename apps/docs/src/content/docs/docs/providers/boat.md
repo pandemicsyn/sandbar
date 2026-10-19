@@ -28,7 +28,7 @@ try {
 
 Create an API key in the Boat dashboard. `connect` verifies it with `GET /me` and scopes everything to that account id. Sandboxes made by other members of a Boat organization are outside the scope: inspect, reopen and inventory reject or skip them.
 
-## Defaults and setup
+## Setup
 
 | Setting                     | Default        | Notes                                                                                                                                                                                             |
 | --------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -40,18 +40,18 @@ Create an API key in the Boat dashboard. `connect` verifies it with `GET /me` an
 
 Boat runs sandboxes in the EU (Germany, Finland, France) and does not let you pick a region, so `region` and `labels` are rejected. Mounts, snapshot requirements and image builds are unsupported.
 
-## Adapter support
+## What works
 
-Everything below has deterministic native-boundary coverage (the real generated client against a fixture). **No live Boat run has been made yet.**
+Everything below is tested on every change, using the real Boat client against a simulated API. **No live Boat run has been made yet.**
 
-| Feature           | Support                                                                                                                                                 |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compute lifecycle | Create with an `Idempotency-Key`, inspect, inventory, reference reopening, and destroy by permanent delete with confirmed teardown.                     |
-| Commands          | argv and shell, with `cwd` and `env`; exact stdout/stderr bytes up to 1 MiB per stream; finite byte stdin; deadlines up to 600 seconds.                 |
-| Files             | Binary read and overwrite write up to 5 MiB, under `/home/user` or `/tmp`. No-clobber writes are unsupported.                                           |
-| Suspend/resume    | `suspend()` archives the disk and stops the machine; `resume()` restores the disk onto a fresh machine. Memory, processes and connections are not kept. |
-| Renewal           | `renew()` sets a new auto-stop window of 60 seconds to 30 days.                                                                                         |
-| Unsupported       | Snapshots, volumes, previews, interactive processes, directory operations, blocked egress, regions and labels.                                          |
+| Feature           | Support                                                                                                                                                 | Live tested |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| Compute lifecycle | Create with an `Idempotency-Key`, inspect, inventory, reference reopening, and destroy by permanent delete with confirmed teardown.                     | No          |
+| Commands          | argv and shell, with `cwd` and `env`; exact stdout/stderr bytes up to 1 MiB per stream; finite byte stdin; deadlines up to 600 seconds.                 | No          |
+| Files             | Binary read and overwrite write up to 5 MiB, under `/home/user` or `/tmp`. No-clobber writes are unsupported.                                           | No          |
+| Suspend/resume    | `suspend()` archives the disk and stops the machine; `resume()` restores the disk onto a fresh machine. Memory, processes and connections are not kept. | No          |
+| Renewal           | `renew()` sets a new auto-stop window of 60 seconds to 30 days.                                                                                         | No          |
+| Unsupported       | Snapshots, volumes, previews, interactive processes, directory operations, blocked egress, regions and labels.                                          | —           |
 
 ## How commands keep bytes and arguments
 

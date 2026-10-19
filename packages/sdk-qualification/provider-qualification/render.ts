@@ -29,11 +29,10 @@ const metadata = external ? [external.support] : officialSupport;
 
 const directory = option("--results") ?? fileURLToPath(new URL("./results/", import.meta.url));
 
-const output = fileURLToPath(
-  new URL(
-    "../../../apps/docs/src/content/docs/docs/providers/live-qualification.md",
-    import.meta.url,
-  ),
+const output = fileURLToPath(new URL("./LIVE-EVIDENCE.md", import.meta.url));
+
+const supportPage = fileURLToPath(
+  new URL("../../../apps/docs/src/content/docs/docs/providers/support.md", import.meta.url),
 );
 
 const files = (await readdir(directory)).filter((name) => name.endsWith(".json")).sort();
@@ -84,14 +83,22 @@ if (external && !outputDirectory) throw new Error("External metadata requires --
 const targets = [
   [
     outputDirectory ? join(outputDirectory, "live-qualification.md") : output,
-    renderLiveMatrix(
-      reports,
-      Object.fromEntries(metadata.map((profile) => [profile.id, profile.name])),
-      external ? "./support.md" : undefined,
-    ) + (external ? "" : `\n${renderSupportDetails(reports, metadata)}`),
+    external
+      ? renderLiveMatrix(
+          reports,
+          Object.fromEntries(metadata.map((profile) => [profile.id, profile.name])),
+          "./support.md",
+        )
+      : // The repository copy has no docs frontmatter; it links back to the published overview.
+        renderLiveMatrix(
+          reports,
+          Object.fromEntries(metadata.map((profile) => [profile.id, profile.name])),
+          "https://sandbarsdk.dev/docs/providers/support/",
+        ).replace(/^---\n[\s\S]*?\n---\n\n/, "# Live test evidence\n\n") +
+        `\n${renderSupportDetails(reports, metadata)}`,
   ],
   [
-    outputDirectory ? join(outputDirectory, "support.md") : join(output, "..", "support.md"),
+    outputDirectory ? join(outputDirectory, "support.md") : supportPage,
     external
       ? renderSupportMatrix(reports, metadata)
       : renderSupportOverview([...reports, ...packageReports], metadata),

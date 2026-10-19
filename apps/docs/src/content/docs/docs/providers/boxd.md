@@ -1,9 +1,9 @@
 ---
 title: boxd
-description: Use the boxd adapter for microVMs, independent disks and warm lifecycle operations.
+description: Use the boxd adapter for microVMs booted from OCI images, with suspend/resume, independent disks and public previews.
 ---
 
-The `@sandbar-sdk/boxd` package implements the public Sandbar adapter interface. Install it with `npm install sandbar-sdk @sandbar-sdk/boxd`; it is experimental. Use Node 20+ or Bun. Native SDK version: `@boxd-sh/sdk@0.2.15`.
+The `@sandbar-sdk/boxd` package implements the public Sandbar adapter interface for [boxd](https://docs.boxd.sh) microVMs. Install it with `npm install sandbar-sdk @sandbar-sdk/boxd`; it is experimental, because only the basic workflows have run live. Use Node 20+ or Bun. Native SDK version: `@boxd-sh/sdk@0.2.15`.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
@@ -26,96 +26,74 @@ try {
 }
 ```
 
-Use a member API key and its authenticated default org ID/slug. Userless org keys and custom endpoints are outside this adapter's initial scope. Sandbar verifies org identity and cluster zone; saved references work with current same-scope credentials.
+Use a member API key. `connect` checks that `org` is the key's authenticated default org (by ID or slug) and reads the cluster zone; everything is scoped to that org. Userless org keys and custom endpoints are not supported.
 
-## Defaults and networking
+## Setup
 
-The adapter uses these defaults:
+| Setting             | Default               | Notes                                                                                                                                                                               |
+| ------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `org`               | required              | The authenticated default org's ID or slug.                                                                                                                                         |
+| `network`           | required              | Must be `"internet"`. boxd isolates machines from peers and metadata services, but has no egress controls. Deprecated alias: `networkPolicy`.                                       |
+| `image`             | cluster default image | An OCI image reference. boxd boots it directly.                                                                                                                                     |
+| `resources`         | account default size  | Minimum `{ vcpus, memoryMiB }`. Picks the smallest of 1, 2, 4 or 8 vCPUs with 4, 8, 16 or 32 GiB RAM. Deprecated alias: `size` (a vCPU count). The private disk is fixed at 100 GB. |
+| `lifetimeSeconds`   | 900                   | At least 60 seconds, no maximum. Also the default `renew()` window.                                                                                                                 |
+| `preview.access`    | `public`              | `public` creates routes and turns off boxd's browser protection. `protected` keeps protection on and creates no routes. See [Public previews](#public-previews).                    |
+| `preview.ports`     | `[3000]`              | 1 to 16 distinct ports to route when `access` is `public`.                                                                                                                          |
+| `volumes.sizeBytes` | 10 GiB                | Size of each new disk, from 1 GiB to 1 TiB, subject to your quota.                                                                                                                  |
 
-- **Image:** the default OCI image configured for your boxd account.
-- **Lifetime:** 15 minutes. Set `lifetimeSeconds` to at least 60 seconds; this also sets the default renewal window. The adapter sets no maximum because boxd documents none ([`setDeleteAfter`](https://docs.boxd.sh/reference/typescript-sdk.md)), and renewal capabilities omit `maxSeconds`.
-- **Compute size:** your account default. Set `resources: { vcpus, memoryMiB }` to pick the smallest size class that meets both: 1, 2, 4 or 8 vCPUs with 4, 8, 16 or 32 GiB RAM. `inspect().resources` reports the machine's size. The deprecated `size` key still takes a vCPU count. The machine's private disk is fixed at 100 GB.
-- **New volumes:** 10 GiB each. Set `volumes.sizeBytes` from 1 GiB to 1 TiB, subject to your quota.
-- **Preview access:** public on port 3000. Create pins a public route and disables browser protection. See [Public previews](#public-previews).
+Create-time `env` is rejected with `UnsupportedFeatureError` before allocation, because boxd machine variables are not known to reach commands. Pass variables per call with `exec({ env })`; see [environment variables](/docs/guides/images-and-networking/#set-environment-variables). `region` and `labels` are rejected.
 
-You must set `network: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported. Create-time `env` is unsupported: boxd's machine `env` is not established to reach exec sessions, so `create({ env })` rejects with `UnsupportedFeatureError` before allocation and `capabilities().createEnv` is `false`. Pass variables per call with `exec({ env })`; see [environment variables](/docs/guides/images-and-networking/#set-environment-variables).
+## What works
 
-## Adapter support
+| Feature                      | Support                                                                           | Live tested |
+| ---------------------------- | --------------------------------------------------------------------------------- | ----------- |
+| Sandbox lifecycle            | Create, inspect and destroy.                                                      | Yes         |
+| Reconnect later              | Reopen a saved reference with credentials for the same org.                       | Yes         |
+| Lifetime renewal             | `renew()` resets the expiry; at least 60 seconds, no maximum.                     | No          |
+| Pause and resume             | Keeps memory, processes and sockets.                                              | No          |
+| Commands                     | argv and shell, with `cwd` and `env`; exact output bytes, up to 1 MiB combined.   | Yes         |
+| Streaming and terminals      | Not supported.                                                                    | —           |
+| Command input                | Finite stdin up to 1 MiB.                                                         | No          |
+| Files                        | Binary read and overwrite write up to 1 MiB; no-clobber writes; streams.          | Yes         |
+| Directories                  | List, stat, exists, mkdir, remove, copy and move. Most need Python 3.             | No          |
+| HTTP previews                | Public routes on configured ports. Protected previews are not supported.          | No          |
+| Images                       | Boots OCI images. Image builds and image get, list and delete are not supported.  | No          |
+| Network controls             | Not supported. Internet access is always on.                                      | —           |
+| Snapshots                    | Not supported.                                                                    | —           |
+| Volumes and mounts           | Independent disks: create, inspect, list, delete and whole-disk mounts at create. | No          |
+| Listing sandboxes and images | Lists every machine in the org, with no ownership claim. Images: not supported.   | No          |
 
-Implemented features have deterministic native-boundary coverage. The four baseline workflows—sandbox lifecycle, captured execution, binary files/overwrite and scoped reopening—passed at `fcb59d4056b71529b7e8d0c8c3f5a2b17f76b72e` on October 11, 2026 (four cases, 15 assertions). The run used Bun 1.3.14/darwin-arm64, native SDK 0.2.15, the provider-default OCI image, explicit internet policy and a 900-second expiry. Its one owned sandbox was destroyed and the client closed; no storage was allocated. Suspend/resume, renewal, directories, disks/mounts and other configurations remain unqualified.
+Live results cover the tested image, region and network setting; see [Provider support](/docs/providers/support/).
 
-| Feature                                                 | Support                                                                                                                                                  |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compute lifecycle                                       | Create, metadata inspection, inventory and listing, reference reopening and confirmed destruction.                                                       |
-| Commands                                                | Buffered argv/shell with cwd/env; exact stdout/stderr bytes, combined bounded capture up to 1 MiB; finite byte stdin up to 1 MiB followed by native EOF. |
-| Files                                                   | Binary read/overwrite write up to 1 MiB; actual upload byte-count acknowledgement. Default exclusive-create no-clobber helper.                           |
-| Directory operations                                    | Complete bounded directory browsing, stat/exists and recursive-opt-in mkdir/remove.                                                                      |
-| Volumes                                                 | Independent block disks; CRUD and create-time whole-disk read-only/read-write mounts.                                                                    |
-| Warm lifecycle                                          | Suspend/resume preserves memory, processes and sockets; renewal resets wall-clock expiry.                                                                |
-| Snapshots                                               | Unsupported: exact generation restore/delete is not established for latest-only native snapshots.                                                        |
-| Interactive processes                                   | Unsupported: native stream cancellation kills the process group and cannot provide detach/disconnect.                                                    |
-| Other filesystem operations                             | Python 3 regular-file copy, same-filesystem move, staged write and incremental read streams; walk/text lines compose these hooks.                        |
-| Public previews                                         | Default public setup; read-only lookup of pinned configured ports on running compute.                                                                    |
-| Strict blocked egress, protected previews, image builds | Unsupported. OCI boot does not allocate an image-build artifact.                                                                                         |
-| Image get, list and delete                              | Unsupported: boxd boots OCI images directly and has no provider-side image resource to manage. `images.*` reject with `UNSUPPORTED`.                     |
+## Files and Python
 
-## Files and streams
+Native reads, overwrite writes, `readDirectory()` and command input need nothing in the image. `listFiles()`, stat/exists, no-clobber writes, mkdir/remove, copy/move and file streams need **Python 3 in your Linux image**; Sandbar does not install it. Each helper call has a 30-second deadline.
 
-Native file reads, overwrite writes, `readDirectory()` and finite command input work without an installed helper. `listFiles()` uses the Python helper. The additional filesystem operations require **Python 3 in your Linux image**: stat/exists, exclusive writes, mkdir/remove, copy/move and file streams. Sandbar does not install Python for you.
+Use streams for files over 1 MiB; they move 64 KiB chunks with no default size limit, and a streamed read can see concurrent changes. Directory listings are complete or fail with `OUTPUT_CAPACITY`.
 
-Buffered reads and writes are limited to 1 MiB. Use file streams for larger files: they transfer 64 KiB chunks without loading the whole file into memory. Streams have no default total-size limit; SDK transfer options let you set size and time limits. Each helper call has a 30-second deadline. A streamed read can see changes made to the file while reading.
-
-Directories are listed completely or the call fails with `OUTPUT_CAPACITY`; Sandbar does not return a successful partial list. `statFile()` inspects a symlink itself by default, and `fileExists()` returns true for dangling symlinks. Creating missing parent directories or deleting a directory's contents requires `recursive: true`. Recursive deletion does not follow a symlink at the requested path.
-
-Copying or publishing a streamed write without overwrite requires hard links in the destination filesystem. Overwrite publication uses a same-filesystem rename. Moving without overwrite requires Linux `renameat2`; moving across filesystems fails without copying or deleting the source. These requirements also apply to mounted storage, which has not been live-qualified.
-
-A streamed write uses a temporary `.sandbar-<uuid>` file beside the destination. If writing or publishing fails, the error retains the temporary path, known effects and a confirmed byte count when available. Inspect that file and explicitly remove it, or destroy compute you own. Sandbar never retries the mutation automatically. An exclusive buffered write writes directly to the requested path, so an interrupted write may leave partial contents there.
+Copies and streamed writes without overwrite need hard links in the destination filesystem, and moves without overwrite need Linux `renameat2`. Moves across filesystems fail without touching the source. A failed streamed write can leave a `.sandbar-<uuid>` temporary file beside the destination, named in the error; an interrupted no-clobber buffered write can leave partial contents. See [files and output](/docs/guides/files-and-output/).
 
 ## Public previews
 
-Public previews are the default, with port 3000. Configure other ports when connecting:
+Public previews are the default. To route more ports, set `preview: { access: "public", ports: [3000, 8080] }` when connecting. **These routes are open to anyone with the URL.** After starting a server, `box.preview(3000)` returns `{ access: "public", url }`. It only looks up the existing route on a running machine; it does not create routes or wake the machine, and the URL does not prove your server is ready.
 
-```ts
-import { Sandbar } from "sandbar-sdk";
-import { boxdAdapter } from "@sandbar-sdk/boxd";
-
-const client = await Sandbar.connect({
-  adapter: boxdAdapter,
-  credentials: { apiKey: process.env.BOXD_API_KEY! },
-  config: {
-    org: "my-org",
-    network: "internet",
-    preview: { access: "public", ports: [3000, 8080] },
-  },
-});
-```
-
-This creates routes for the selected ports and disables boxd's browser protection during sandbox setup. Configure 1–16 distinct ports. **The routes are publicly accessible.** Protected previews and authentication headers are unsupported.
-
-After starting a server, call `box.preview(3000)` to get `{ access: "public", url }`. The lookup checks the running machine and its configured route. It does not create routes, change protection or wake the machine. The returned URL does not prove your server is ready.
-
-The default `preview.access` is `"public"` with `ports: [3000]`. Select `preview: { access: "protected" }` to keep browser protection on and create no routes; preview lookup then fails as unsupported. This setting does **not** make boxd's own ingress private. Native public traffic can still reach or wake a machine. Auto-detected routes are excluded because their target port can change.
-
-Finite stdin, expanded filesystem operations, size selection and previews have offline coverage only. They do not inherit the baseline's live pass.
-
-## Snapshot and lifecycle behavior
-
-boxd snapshots include the machine’s private disk and RAM, but a newer snapshot can replace the saved version. The API does not establish a way to restore or delete one exact saved version safely. Sandbar therefore rejects `snapshot()` before creating any snapshot.
-
-`suspend()` uses native pause. `resume()` wakes standby or hibernated compute under its original UUID; RAM, processes and sockets are preserved. Metadata inspect/reopen does not intentionally wake compute. Native inbound traffic can wake sleeping machines automatically. Your application uses the same `suspend()` and `resume()` calls for both native sleep states.
+With `preview: { access: "protected" }`, preview lookup fails as unsupported. This does not make boxd's own ingress private: native traffic can still reach or wake a machine. See [preview access](/docs/guides/preview-access/).
 
 ## Storage and recovery
 
-When boxd refuses a create outright, `create()` rejects with a matching error code and boxd's own reason, for example `CAPACITY: boxd rejected sandbox creation (RESOURCE_EXHAUSTED): …` for a quota. Nothing was created, so you can fix the cause and create again. Lost or unconfirmed responses stay `OUTCOME_UNKNOWN`.
+`suspend()` uses boxd's native pause, and `resume()` wakes the machine under the same ID. Inspecting or reopening does not wake it; inbound traffic can.
 
-A disk attaches to one machine at a time, including read-only mounts. There are no subpaths or versions; native host placement can prevent a multi-disk create. Independent disks survive compute destruction and require explicit deletion. The adapter has not established persistence, locking or rename guarantees for mounted disks. Flush application writers before teardown and explicitly choose `storage: "allow-unconfirmed"` when destroying mounted compute, or configure `cleanup: { storage: "allow-unconfirmed" }` when connecting. Cleanup reports retained UUIDs and mount paths.
+A disk attaches to one machine at a time, including read-only mounts, with no subpaths. Disks survive destroy and must be deleted explicitly; they have no expiry. Persistence and locking on mounted disks are not established, so destroying a machine with mounts fails with `UNSUPPORTED` unless you pass `storage: "allow-unconfirmed"` (or set `cleanup: { storage: "allow-unconfirmed" }` when connecting). Flush writers first. Cleanup reports the retained disk IDs.
 
-Creating a machine and setting its expiry are separate requests. Sandbar retains the acknowledged machine UUID before follow-up stages. If expiry installation, public preview protection setup or the initial readiness check is unconfirmed, the error's `outcome.kind` is `"create"` and `outcome.status` is `"partial"`. Its `outcome.sandbox` is a normal persisted, reopenable sandbox reference; `outcome.setup.expiry` and `outcome.setup.readiness` independently say `"acknowledged"` or `"unconfirmed"`. A `REFERENCE_SAVE_FAILED` error also retains the known outcome when saving a reference fails. Persist that sandbox reference and use `await client.sandboxes.get(error.outcome.sandbox)` with current same-scope credentials to inspect or explicitly destroy the known machine. No provider-token decoding is necessary. Unconfirmed expiry means the machine may lack a hard expiry. Recovery observation reads metadata and never reinstalls expiry or repeats the initial readiness probe. A lost initial create acknowledgement cannot be recovered by replaying or adopting a name. Persist SDK references when work spans application invocations.
+A refused create carries a matching code and boxd's reason, for example `CAPACITY` for a quota. Creating a machine and setting its expiry are separate steps: if expiry, preview setup or the first readiness check is unconfirmed, you get a partial create whose `outcome.sandbox` you can reopen and destroy, and the machine may have no expiry. A disk whose create response was lost is not tracked; check your boxd disks and confirm it is yours before deleting it. See [recovery](/docs/guides/recovery/#partial-and-unknown-outcomes).
 
-A lost disk-create acknowledgement can leave a disk with no saved UUID. Volume CRUD support does not provide automatic reconciliation for that case: keep a record of the failed attempt and inspect your native disk inventory manually. Confirm the exact disk identity and that your attempt created it before deleting it. Do not replay disk creation or adopt/delete a disk by name. Independent disks have no native expiry fallback.
+## Limits
 
-Sandbar sends each mutation once. Local read cancellation reaches the transport. Buffered exec uses an explicit execution deadline; local wait cancellation is not confirmed guest termination. Closing the client drains dispatched finite commands until their deadline rather than implicitly cancelling them, then releases the channel. It does not destroy machines or disks. Missing exit evidence is unknown, never inferred success.
+- Internet access is always on; blocked and allowlisted networks are rejected.
+- Public previews are reachable by anyone with the URL, and protected previews are unsupported.
+- Snapshots are rejected before anything is created: boxd keeps only the latest snapshot, so an exact saved version cannot be restored or deleted safely.
+- Create-time `env`, regions, labels, image builds and image management are unsupported.
+- Buffered command output, stdin and file transfers are limited to 1 MiB; most filesystem operations need Python 3.
+- Disks survive destroy and must be deleted explicitly. Closing the client destroys nothing.
 
-The maintained external profile reuses the ordinary Bun sandbox and volume suites. It now declares no-clobber, finite stdin, filesystem and explicitly public preview cases while retaining their live not-run status; it independently tests disk CRUD and mounts, and keeps exact snapshot roundtrip unsupported. New live tests require explicit authorization. [Sanitized baseline evidence](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/boxd/qualification/live-qualification.md) records the tested revision and configuration.
-
-See the [provider implementation brief and plan](https://github.com/pandemicsyn/sandbar/issues/41) and [official boxd SDK docs](https://docs.boxd.sh/reference/typescript-sdk).
+See the [provider research issue](https://github.com/pandemicsyn/sandbar/issues/41), [live test evidence](https://github.com/pandemicsyn/sandbar/blob/main/packages/providers/boxd/qualification/live-qualification.md) and the [boxd TypeScript SDK docs](https://docs.boxd.sh/reference/typescript-sdk).

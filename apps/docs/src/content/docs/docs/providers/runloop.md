@@ -28,7 +28,7 @@ try {
 
 Create an API key in the Runloop dashboard. `connect` verifies it with `GET /v1/accounts/me`, requires an enabled account, and scopes everything to that account id.
 
-## Defaults and setup
+## Setup
 
 | Setting                     | Default           | Notes                                                                                                                                                                                                                                      |
 | --------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -41,19 +41,19 @@ Create an API key in the Runloop dashboard. `connect` verifies it with `GET /v1/
 
 Create-time `env` is sent as Runloop environment variables. `region`, `labels` and mounts are rejected.
 
-## Adapter support
+## What works
 
-Everything below has deterministic native-boundary coverage against an in-memory Runloop API. **No live Runloop run has been made yet.**
+Everything below is tested against a simulated Runloop API on every change. **No live Runloop run has been made yet.**
 
-| Feature           | Support                                                                                                                                    |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Compute lifecycle | Create, inspect, inventory, `sandboxes.list()`, reference reopening, and destroy by confirmed shutdown.                                    |
-| Commands          | argv and shell, with `cwd` and `env`; exact stdout/stderr bytes up to 1 MiB per stream; finite byte stdin; deadlines up to an hour.        |
-| Files             | Binary read and overwrite write up to 64 MiB. No-clobber writes are unsupported.                                                           |
-| Suspend/resume    | `suspend()` keeps the disk; `resume()` starts fresh processes. Memory and connections are not kept.                                        |
-| Snapshots         | `snapshot()` captures the disk while the Devbox keeps running; `restore()` creates a new Devbox from it; list, inspect and delete.         |
-| Previews          | `preview(port)` returns the Devbox tunnel URL for that port, created with the Devbox.                                                      |
-| Unsupported       | OCI images and image builds, volumes, mounts, egress allowlists, renewal, interactive processes, directory operations, regions and labels. |
+| Feature           | Support                                                                                                                                    | Live tested |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------- |
+| Compute lifecycle | Create, inspect, inventory, `sandboxes.list()`, reference reopening, and destroy by confirmed shutdown.                                    | No          |
+| Commands          | argv and shell, with `cwd` and `env`; exact stdout/stderr bytes up to 1 MiB per stream; finite byte stdin; deadlines up to an hour.        | No          |
+| Files             | Binary read and overwrite write up to 64 MiB. No-clobber writes are unsupported.                                                           | No          |
+| Suspend/resume    | `suspend()` keeps the disk; `resume()` starts fresh processes. Memory and connections are not kept.                                        | No          |
+| Snapshots         | `snapshot()` captures the disk while the Devbox keeps running; `restore()` creates a new Devbox from it; list, inspect and delete.         | No          |
+| Previews          | `preview(port)` returns the Devbox tunnel URL for that port, created with the Devbox.                                                      | No          |
+| Unsupported       | OCI images and image builds, volumes, mounts, egress allowlists, renewal, interactive processes, directory operations, regions and labels. | —           |
 
 ## How commands keep bytes and arguments
 
