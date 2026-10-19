@@ -50,6 +50,51 @@ test("boxd setup takes network internet once, under either name", async () => {
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 });
 
+test("boxd resources pick the smallest size class and inspect reports the real size", async () => {
+  const { fixture, adapter } = await setup();
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: { org: "main", network: "internet", resources: { vcpus: 3, memoryMiB: 4096 } },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  try {
+    const box = await client.sandboxes.create();
+    expect(
+      fixture.calls.filter((call) => call.method === "CreateVm").at(-1)?.request,
+    ).toMatchObject({ config: { vcpu: 4 } });
+    expect((await box.inspect()).resources).toEqual({
+      status: "known",
+      value: { vcpus: 4, memoryMiB: 16384 },
+    });
+    await box.destroy();
+  } finally {
+    await client.close();
+  }
+
+  const before = fixture.calls.length;
+  await expect(
+    Sandbar.connect({
+      adapter,
+      config: { org: "main", network: "internet", resources: { memoryMiB: 65536 } },
+      credentials: { apiKey: "fixture-main" },
+    }),
+  ).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+    message: expect.stringContaining("largest is 8 vCPU / 32768 MiB"),
+  });
+  expect(fixture.calls).toHaveLength(before);
+
+  await expect(
+    Sandbar.connect({
+      adapter,
+      config: { org: "main", network: "internet", size: 2, resources: { vcpus: 2 } },
+      credentials: { apiKey: "fixture-main" },
+    }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+});
+
 test("native token exchange accepts user_id and additive response fields", async () => {
   const { fixture, connect } = await setup();
   const client = await connect();

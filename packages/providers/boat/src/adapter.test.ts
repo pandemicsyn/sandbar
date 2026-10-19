@@ -125,6 +125,50 @@ test("create sends the submission as Idempotency-Key, withholds account secrets 
   }
 });
 
+test("Boat resources pick the smallest machine type and inspect reports its size", async () => {
+  const { fixture, adapter } = setup();
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: { ...config, resources: { vcpus: 3 } },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  try {
+    const box = await client.sandboxes.create();
+    expect(fixture.calls.find((call) => call.path === "/sandboxes")?.body).toMatchObject({
+      type: "default",
+    });
+    expect((await box.inspect()).resources).toEqual({
+      status: "known",
+      value: { vcpus: 4, memoryMiB: 8192 },
+    });
+    await box.destroy();
+  } finally {
+    await client.close();
+  }
+
+  const before = fixture.calls.length;
+  await expect(
+    Sandbar.connect({
+      adapter,
+      config: { ...config, resources: { vcpus: 32 } },
+      credentials: { apiKey: "fixture-main" },
+    }),
+  ).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+    message: expect.stringContaining("largest is 16 vCPU / 32768 MiB"),
+  });
+  await expect(
+    Sandbar.connect({
+      adapter,
+      config: { ...config, machine: "small", resources: { vcpus: 2 } },
+      credentials: { apiKey: "fixture-main" },
+    }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(fixture.calls).toHaveLength(before);
+});
+
 test("create refusals are clean rejections; in-flight idempotency and 5xx stay unknown", async () => {
   const { fixture, connect } = setup();
   const client = await connect();

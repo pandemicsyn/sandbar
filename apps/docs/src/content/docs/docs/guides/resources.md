@@ -32,6 +32,33 @@ Use `sandboxes.create()` and `box.destroy()` when you need to manage the sandbox
 
 **`close()` does not destroy a sandbox.** It releases local client resources. Destroy compute you no longer need, and close the client after your work and cleanup finish.
 
+### Choose a sandbox size
+
+Set `resources` in adapter setup to ask for at least a number of vCPUs and MiB of memory. The adapter picks the smallest native size that meets both, so you may get more than you asked for, never less:
+
+```ts
+const client = await Sandbar.connect({
+  adapter: boxdAdapter,
+  credentials: { apiKey: process.env.BOXD_API_KEY! },
+  config: { org: "my-org", network: "internet", resources: { vcpus: 2, memoryMiB: 4096 } },
+});
+const box = await client.sandboxes.create();
+console.log((await box.inspect()).resources); // { status: "known", value: { vcpus: 2, memoryMiB: 8192 } }
+```
+
+When no native size is big enough, `Sandbar.connect` rejects with `UNSUPPORTED` before contacting the provider, and the message names the provider's largest size. `inspect().resources` reports the size the sandbox actually has, or `unknown` when the provider does not say.
+
+| Adapter | How `resources` is applied                                                                                    |
+| ------- | ------------------------------------------------------------------------------------------------------------- |
+| boxd    | Smallest size class: 1, 2, 4 or 8 vCPUs with 4 GiB of memory per vCPU.                                        |
+| Vercel  | Smallest vCPU count (1 or an even number up to 32) with 2 GiB per vCPU. Your plan's limit still applies.      |
+| Boat    | Smallest machine type: `small` 2/4 GiB, `default` 4/8 GiB, `large` 8/16 GiB, `xlarge` 16/32 GiB.              |
+| Modal   | Reserved exactly as given; `vcpus` may be fractional. Reported only when both numbers are set.                |
+| Daytona | Applied when the adapter builds a snapshot from an OCI image. A prepared snapshot must already meet the size. |
+| E2B     | Applied when the adapter builds a template from an OCI image. A prepared template must already meet the size. |
+
+Daytona and E2B fix a sandbox's size when they build its snapshot or template. With `resources` set, they build OCI images (including `images.build`) at that size, rounded up to whole vCPUs and whole GiB on Daytona or an even number of MiB on E2B. Before creating from a prepared image, they read its size and reject with `UNSUPPORTED` if it is smaller or unreported, so E2B's public `base` template is rejected. Snapshot restores keep the size of the captured sandbox.
+
 ### Cleanup options and failures
 
 The third argument to `with(input, callback, options)` accepts:

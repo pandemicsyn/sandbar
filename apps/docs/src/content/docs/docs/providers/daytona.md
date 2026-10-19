@@ -49,6 +49,7 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 | `ttlMinutes`                    | `15`              | Native sandbox lifetime in positive whole minutes; no adapter maximum.                      |
 | `snapshots.restartAfterCapture` | `true`            | Restart only a previously running capture source.                                           |
 | `network`                       | `daytona-default` | `blocked`, `internet` or Daytona-only `daytona-default`. Deprecated alias: `networkPolicy`. |
+| `resources`                     | Omitted           | Minimum `{ vcpus, memoryMiB }` for OCI snapshot builds; prepared snapshots must meet it.    |
 
 `Sandbar.connect` verifies native organization and region with authenticated reads. Scope includes the organization, target, endpoint, and selected network policy. Use the same scope to recover a prior operation.
 

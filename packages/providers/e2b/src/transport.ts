@@ -148,6 +148,9 @@ const Templates = z
       buildID: z.string().min(1).max(128),
       buildStatus: z.enum(["building", "waiting", "ready", "error"]),
       names: z.array(z.string().min(1).max(256)).max(100),
+      /** Native size fixed at build: whole vCPUs and MiB of memory. */
+      cpuCount: z.number().optional(),
+      memoryMB: z.number().optional(),
     }),
   )
   .max(100);
@@ -165,7 +168,13 @@ export type E2BRecord = {
   /** Native detail proves guest IO can attach without resuming or changing lifetime. */
   attachmentReady?: boolean;
   volumeMounts?: { name: string; path: string }[];
+  /** The sandbox's native size: whole vCPUs and MiB of memory. */
+  cpuCount?: number;
+  memoryMB?: number;
 };
+
+/** An E2B template build size; E2B fixes it when the template is built. */
+export type E2BTemplateSize = { cpuCount?: number; memoryMB?: number };
 
 export type E2BTemplateState = {
   templateId: string;
@@ -224,7 +233,16 @@ export type E2BTransport = {
   verifyAuth(): Promise<void>;
   verifyTeam(teamId: string): Promise<void>;
   verifyTemplate(teamId: string | undefined, templateId: string): Promise<string>;
-  buildImage(reference: string, name: string): Promise<{ templateId: string; buildId: string }>;
+  /** The size a ready team template was built with; null when it is not listed with one. */
+  templateSize?(
+    teamId: string | undefined,
+    templateId: string,
+  ): Promise<{ cpuCount: number; memoryMB: number } | null>;
+  buildImage(
+    reference: string,
+    name: string,
+    size?: E2BTemplateSize,
+  ): Promise<{ templateId: string; buildId: string }>;
   findBuild(
     teamId: string | undefined,
     name: string,
@@ -408,6 +426,8 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       .optional(),
     endAt: z.string().nullable().optional(),
     volumeMounts: z.array(z.object({ name: z.string(), path: z.string() })).optional(),
+    cpuCount: z.number().optional(),
+    memoryMB: z.number().optional(),
   });
 
   async function lifecyclePost(
@@ -502,6 +522,8 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         allowPublicTraffic: info.network?.allowPublicTraffic,
         lifecycle: info.lifecycle,
         volumeMounts: info.volumeMounts,
+        cpuCount: info.cpuCount,
+        memoryMB: info.memoryMB,
       };
     } catch (error) {
       if (error instanceof SandboxNotFoundError) return null;
@@ -835,8 +857,25 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
       throw new Error("E2B template is not a ready template in the verified team");
     },
-    async buildImage(reference, name) {
-      const result = await Template.build(Template().fromImage(reference), name, opts);
+    async templateSize(teamId, templateId) {
+      for await (const templates of teamTemplates(teamId)) {
+        const found = templates.find(
+          (value) => value.templateID === templateId && value.buildStatus === "ready",
+        );
+
+        if (found)
+          return found.cpuCount !== undefined && found.memoryMB !== undefined
+            ? { cpuCount: found.cpuCount, memoryMB: found.memoryMB }
+            : null;
+      }
+
+      return null;
+    },
+    async buildImage(reference, name, size) {
+      const result = await Template.build(Template().fromImage(reference), name, {
+        ...opts,
+        ...size,
+      });
 
       return { templateId: result.templateId, buildId: result.buildId };
     },

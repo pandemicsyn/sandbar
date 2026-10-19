@@ -75,12 +75,21 @@ function error(status: number, code: string, extra: { [key: string]: Json } = {}
   });
 }
 
+/** Sizes from docs.boat.dev/pricing, as the API reports them. */
+const SIZES = new Map([
+  ["small", { vcpu: 2, memoryGB: 4 }],
+  ["default", { vcpu: 4, memoryGB: 8 }],
+  ["large", { vcpu: 8, memoryGB: 16 }],
+  ["xlarge", { vcpu: 16, memoryGB: 32 }],
+]);
+
 function view(box: FixtureSandbox) {
   return {
     id: box.id,
     name: box.name,
     state: box.state,
     type: box.type,
+    ...SIZES.get(box.type),
     ttlSeconds: box.ttlSeconds,
     archiveAfter:
       box.ttlSeconds === null

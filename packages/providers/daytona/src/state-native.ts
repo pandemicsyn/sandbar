@@ -72,6 +72,9 @@ const NativeBox = z
     autoDestroyAt: z.string().nullable().optional(),
     autoStopInterval: z.number().nullable().optional(),
     autoDeleteInterval: z.number().nullable().optional(),
+    /** Native quota: CPU cores and memory in GiB. */
+    cpu: z.number().optional(),
+    memory: z.number().optional(),
     volumes: z
       .array(
         z.object({ volumeId: z.string(), mountPath: z.string(), subpath: z.string().optional() }),

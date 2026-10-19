@@ -291,6 +291,7 @@ test("legacy adapter inspection remains useful with null reference and unsupport
       reference: null,
       nativeState: null,
       expires: { status: "unknown" },
+      resources: { status: "unknown" },
     });
     expect((await client.capabilities()).lifecycle.reopen.status).toBe("unsupported");
     await expect(client.sandboxes.get(f.reference)).rejects.toMatchObject({ code: "UNSUPPORTED" });
@@ -548,6 +549,8 @@ for (const facts of [
   { retention: { status: "known", value: { autoDeleteAfterStoppedSeconds: -1 } } },
   { nativeState: 7 },
   { execution: { status: "known", value: { nativeId: "" } } },
+  { resources: { status: "known", value: { vcpus: 0, memoryMiB: 1024 } } },
+  { resources: { status: "known", value: { vcpus: 2, memoryMiB: 1.5 } } },
   { unexpectedFact: true },
   { reference: { kind: "sandbox" } },
 ]) {

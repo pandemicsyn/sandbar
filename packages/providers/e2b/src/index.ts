@@ -14,6 +14,9 @@ import {
   assertSandboxReference,
   assertResourceScope,
   unknownSandboxFacts,
+  ResourceMinimums,
+  type Fact,
+  type SandboxResources,
   nativeDeadline,
   type SandboxInfo,
   type SandboxReference,
@@ -42,6 +45,7 @@ import {
   MAX_BYTES,
   shellQuote,
   type E2BRecord,
+  type E2BTemplateSize,
   type E2BTransport,
 } from "./transport";
 
@@ -73,6 +77,11 @@ const Configuration = z
       .default("base"),
     network: z.enum(["blocked", "internet"]).optional(),
     networkPolicy: z.enum(["blocked", "internet"]).optional(),
+    /**
+     * Minimum size. E2B fixes a size when it builds a template, so OCI images are built with it
+     * and a prepared template must already meet it.
+     */
+    resources: ResourceMinimums.optional(),
     timeoutSeconds: z.number().int().min(60).max(MAX_LIFETIME_SECONDS).optional(),
     preview: z
       .strictObject({ access: z.enum(["protected", "public"]).default("public") })
@@ -111,6 +120,31 @@ const Configuration = z
   }));
 
 const CompactObservation = SandboxInfoSchema.omit({ reference: true });
+
+/** Native build size: whole vCPUs and an even number of MiB, rounded up from the minimums. */
+function templateBuildSize(minimums: ResourceMinimums | undefined) {
+  if (!minimums) return undefined;
+  const size: E2BTemplateSize = {};
+
+  if (minimums.vcpus !== undefined) size.cpuCount = Math.ceil(minimums.vcpus);
+
+  if (minimums.memoryMiB !== undefined) size.memoryMB = Math.ceil(minimums.memoryMiB / 2) * 2;
+
+  return size;
+}
+
+function recordSize(record: E2BRecord): Fact<SandboxResources> {
+  const { cpuCount, memoryMB } = record;
+
+  return cpuCount !== undefined &&
+    Number.isSafeInteger(cpuCount) &&
+    cpuCount > 0 &&
+    memoryMB !== undefined &&
+    Number.isSafeInteger(memoryMB) &&
+    memoryMB > 0
+    ? { status: "known", value: { vcpus: cpuCount, memoryMiB: memoryMB } }
+    : { status: "unknown", reason: "E2B did not report the sandbox size" };
+}
 
 const SuspendToken = z.strictObject({
   acknowledged: z.literal(true),
@@ -302,6 +336,31 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
       await verifyAuthority();
 
+      // A prepared template keeps the size it was built with, so check it before any effect.
+      const checkTemplateSize = async (templateId: string) => {
+        const minimums = config.resources;
+
+        if (!minimums || (minimums.vcpus === undefined && minimums.memoryMiB === undefined)) return;
+
+        const size =
+          templateId === "base" ? null : await transport.templateSize?.(config.teamId, templateId);
+
+        if (!size)
+          throw new AdapterError(
+            "UNSUPPORTED",
+            `E2B could not confirm the size of template ${templateId}; use an OCI image so the adapter builds it with these resources`,
+          );
+
+        if (
+          (minimums.vcpus !== undefined && size.cpuCount < minimums.vcpus) ||
+          (minimums.memoryMiB !== undefined && size.memoryMB < minimums.memoryMiB)
+        )
+          throw new AdapterError(
+            "UNSUPPORTED",
+            `E2B template ${templateId} has ${size.cpuCount} vCPU / ${size.memoryMB} MiB, below the configured resources; build it with these resources`,
+          );
+      };
+
       if (config.templateId !== "base")
         await transport.verifyTemplate(config.teamId, config.templateId);
 
@@ -422,6 +481,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
             record.state === "paused"
               ? { status: "known", value: { autoDeleteAfterStoppedSeconds: null } }
               : unknownSandboxFacts().retention,
+          resources: recordSize(record),
         };
       };
 
@@ -797,7 +857,11 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
               if (ctx.signal.aborted)
                 return ctx.unknown(`E2B image build ${name} was not submitted after cancellation`);
 
-              const build = await transport.buildImage(input.source.value, name);
+              const build = await transport.buildImage(
+                input.source.value,
+                name,
+                templateBuildSize(config.resources),
+              );
 
               if (!nativeId.test(build.templateId))
                 return ctx.unknown(`E2B image build ${name} returned an invalid template ID`);
@@ -879,9 +943,12 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
               if (!nativeId.test(templateId))
                 throw new AdapterError("INVALID_ARGUMENT", "E2B returned an invalid template ID");
+              await checkTemplateSize(templateId);
 
               return { ...input, image: { ...input.image, value: templateId } };
             }
+
+            if (input.image.kind === "prepared") await checkTemplateSize(input.image.value);
 
             return input;
           },
@@ -918,7 +985,11 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                     `E2B image build ${name} was not submitted after cancellation`,
                   );
 
-                const build = await transport.buildImage(input.image.value, name);
+                const build = await transport.buildImage(
+                  input.image.value,
+                  name,
+                  templateBuildSize(config.resources),
+                );
 
                 if (!nativeId.test(build.templateId))
                   return ctx.unknown(`E2B image build ${name} returned an invalid template ID`);

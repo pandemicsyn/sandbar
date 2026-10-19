@@ -111,6 +111,10 @@ export interface ModalTransport {
     name: string;
     tags: Record<string, string>;
     timeoutMs: number;
+    /** CPU reservation in cores; may be fractional. */
+    cpu?: number;
+    /** Memory reservation in MiB. */
+    memoryMiB?: number;
     regions?: string[];
     /** Native sandbox environment, sent in the single create request; values may be secrets. */
     env?: Record<string, string>;
@@ -299,7 +303,18 @@ export function createSdkTransport(input: {
         throw error;
       }
     },
-    async create({ appId, imageId, ociReference, name, tags, timeoutMs, regions, env }) {
+    async create({
+      appId,
+      imageId,
+      ociReference,
+      name,
+      tags,
+      timeoutMs,
+      cpu,
+      memoryMiB,
+      regions,
+      env,
+    }) {
       // Environment values may be secrets; native error details never echo them.
       const secrets = [input.tokenId, input.tokenSecret, ...Object.values(env ?? {})].sort(
         (a, b) => b.length - a.length,
@@ -331,6 +346,10 @@ export function createSdkTransport(input: {
       const params: SandboxCreateParams = { name, tags, timeoutMs, regions, blockNetwork: true };
 
       if (env) params.env = env;
+
+      if (cpu !== undefined) params.cpu = cpu;
+
+      if (memoryMiB !== undefined) params.memoryMiB = memoryMiB;
 
       try {
         sandbox = await client.sandboxes.experimentalCreate(app, image, params);

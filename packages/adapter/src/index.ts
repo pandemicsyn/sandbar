@@ -61,6 +61,8 @@ export type ImageBuildValue = {
 
 export * from "./resources";
 
+export * from "./sizing";
+
 export * from "./lifecycle";
 
 export * from "./preview";

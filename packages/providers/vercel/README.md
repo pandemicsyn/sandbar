@@ -40,7 +40,7 @@ try {
 | `teamId`, `projectId` | Existing team/project; authenticated ownership is checked. |
 | `region` | Default `iad1`; all 19 regions in the audited native catalog are accepted. No automatic failover. |
 | `image` | Default `vercel/sandbox/universal:latest`, matching Vercel's native default; its Python-backed process/PTY support works out of the box. Also Node 22, Node 24 or Node 26. |
-| `vcpus` | 2 (default), 4, or 8; native memory is 2 GiB per vCPU. Account quotas apply. |
+| `resources` | Optional minimum `{ vcpus, memoryMiB }`; picks the smallest of 1 or an even 2–32 vCPUs, with native memory of 2 GiB per vCPU, and rejects at connect when none is big enough. Default 2 vCPUs. Plan limits apply. `inspect().resources` reports the session size. Deprecated alias: `vcpus` (2, 4 or 8). |
 | `timeoutSeconds` | Initial lifetime 60–86,400 seconds, default 900. Vercel enforces lower plan limits itself (Hobby 45 minutes; Pro/Enterprise 24 hours). |
 | `network` | `blocked` (default, native deny-all) or `internet` (native allow-all). Deprecated: `networkPolicy`, `vercel-deny-all`, `vercel-allow-all`. No measured isolation claim. |
 | `ports` | Default empty; up to 15 distinct explicitly exposed public HTTP ports. |

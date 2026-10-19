@@ -34,7 +34,7 @@ The adapter uses these defaults:
 
 - **Image:** the default OCI image configured for your boxd account.
 - **Lifetime:** 15 minutes. Set `lifetimeSeconds` to at least 60 seconds; this also sets the default renewal window. The adapter sets no maximum because boxd documents none ([`setDeleteAfter`](https://docs.boxd.sh/reference/typescript-sdk.md)), and renewal capabilities omit `maxSeconds`.
-- **Compute size:** your account default. Set `size` to 1, 2, 4 or 8 vCPUs for 4, 8, 16 or 32 GiB RAM. The machine's private disk is fixed at 100 GB.
+- **Compute size:** your account default. Set `resources: { vcpus, memoryMiB }` to pick the smallest size class that meets both: 1, 2, 4 or 8 vCPUs with 4, 8, 16 or 32 GiB RAM. `inspect().resources` reports the machine's size. The deprecated `size` key still takes a vCPU count. The machine's private disk is fixed at 100 GB.
 - **New volumes:** 10 GiB each. Set `volumes.sizeBytes` from 1 GiB to 1 TiB, subject to your quota.
 - **Preview access:** public on port 3000. Create pins a public route and disables browser protection. See [Public previews](#public-previews).
 

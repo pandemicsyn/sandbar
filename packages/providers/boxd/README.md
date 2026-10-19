@@ -27,7 +27,7 @@ The organization ID/slug must match authenticated default-org inventory. Scope i
 | --- | --- |
 | `org` | Required authenticated default organization ID or slug. |
 | `network` | Required literal `internet`; omitted per-call policy uses this explicit choice. Deprecated alias: `networkPolicy`. |
-| `size` | Optional 1, 2, 4 or 8 vCPU size class; RAM is respectively 4, 8, 16 or 32 GiB. Omitted uses native account defaults. Fixed native 100 GB private disk. |
+| `resources` | Optional minimum `{ vcpus, memoryMiB }`; picks the smallest 1, 2, 4 or 8 vCPU size class (RAM respectively 4, 8, 16 or 32 GiB) and rejects at connect when none is big enough. Omitted uses native account defaults. `inspect().resources` reports the machine's size. Deprecated alias: `size` (a vCPU count). Fixed native 100 GB private disk. |
 | `preview` | Defaults to `{ access: "public", ports: [3000] }`: create pins HTTPS routes and disables browser protection; at most 16 ports. Explicit `protected` keeps browser protection on with no routes (lookup unsupported). |
 | `image` | Optional OCI reference; defaults to the authenticated cluster's default image. |
 | `lifetimeSeconds` | Initial hard expiry/default renewal window: 900 seconds, minimum 60, no adapter maximum (boxd documents none for `setDeleteAfter`). |

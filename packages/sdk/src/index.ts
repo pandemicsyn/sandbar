@@ -39,6 +39,7 @@ export type {
   AdvancedOperationKind,
   AdvancedIdentity,
   AdvancedObservation,
+  SandboxInfo,
 } from "./adapter-direct";
 
 export const Sandbar = { connect: connectDirect };
@@ -98,10 +99,11 @@ export type {
   ResumeResult,
   RenewRequest,
   RenewResult,
-  SandboxInfo,
   Preview,
   Fact,
   Deadline,
+  ResourceMinimums,
+  SandboxResources,
   CreatePlan,
 } from "@sandbar-sdk/adapter";
 

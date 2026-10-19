@@ -1313,6 +1313,49 @@ test("Vercel scoped configuration, renewal and public previews use original sess
   }
 });
 
+test("Vercel resources pick the smallest vCPU count and inspect reports the session size", async () => {
+  const native = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: native.adapter,
+    config: { ...config, resources: { vcpus: 3, memoryMiB: 4096 } },
+    credentials,
+  });
+
+  try {
+    const box = await client.sandboxes.create();
+    const creation = native.requests.find((r) => r.url.pathname === "/api/v3/sandboxes")!;
+    expect(JSON.parse(String(creation.init.body))).toMatchObject({ resources: { vcpus: 4 } });
+    expect((await box.inspect()).resources).toEqual({
+      status: "known",
+      value: { vcpus: 4, memoryMiB: 8192 },
+    });
+  } finally {
+    await client.close();
+  }
+
+  const before = native.requests.length;
+
+  await expect(
+    Sandbar.connect({
+      adapter: native.adapter,
+      config: { ...config, resources: { memoryMiB: 131072 } },
+      credentials,
+    }),
+  ).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+    message: expect.stringContaining("largest is 32 vCPU / 65536 MiB"),
+  });
+  await expect(
+    Sandbar.connect({
+      adapter: native.adapter,
+      config: { ...config, vcpus: 2, resources: { vcpus: 2 } },
+      credentials,
+    }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  expect(native.requests).toHaveLength(before);
+});
+
 test("Vercel incremental writes publish exact bytes once and retain no-clobber collisions", async () => {
   const native = fixture();
   const client = await Sandbar.connect({ adapter: native.adapter, config, credentials });
