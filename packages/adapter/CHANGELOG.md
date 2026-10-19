@@ -1,5 +1,11 @@
 # @sandbar-sdk/adapter
 
+## 0.7.0
+
+### Minor Changes
+
+- [#122](https://github.com/pandemicsyn/sandbar/pull/122) [`43d2993`](https://github.com/pandemicsyn/sandbar/commit/43d2993dde9e28bfe068f6264670cccef5553daf) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Add the portable `resources: { vcpus, memoryMiB }` adapter setting, given as minimums, and `inspect().resources`, which reports the size a sandbox actually has or `unknown`. Adapter authors get `ResourceMinimums`, `SandboxResources` and `smallestSize()`, which picks the smallest native size that meets the minimums and otherwise throws `UNSUPPORTED` naming the largest size. `SandboxInfo.resources` is optional for adapters; the SDK always fills it in.
+
 ## 0.6.0
 
 ### Minor Changes
